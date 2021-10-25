@@ -6,35 +6,38 @@ const fs = require("fs");
 const child_process = require("child_process");
 const snippetsDir = path.resolve(__dirname, "../snippets");
 const serverURL = process.env.TEST_SERVER_URL || "http://localhost:8080";
-
+const USE_EXISTING_PROCESS = process.env.USE_EXISTING_PROCESS || false;
 const DISABLE_HMR = !!process.env.DISABLE_HMR;
 const bunFlags = [
   `--origin=${serverURL}`,
   DISABLE_HMR && "--disable-hmr",
 ].filter(Boolean);
 const bunExec = process.env.BUN_BIN || "bun";
-const bunProcess = child_process.spawn(bunExec, bunFlags, {
-  cwd: snippetsDir,
-  stdio: "pipe",
-  env: {
-    ...process.env,
-    DISABLE_BUN_ANALYTICS: "1",
-  },
 
-  shell: false,
-});
-console.log("$", bunExec, bunFlags.join(" "));
+var bunProcess;
+if (!USE_EXISTING_PROCESS) {
+  bunProcess = child_process.spawn(bunExec, bunFlags, {
+    cwd: snippetsDir,
+    stdio: "pipe",
+    env: {
+      ...process.env,
+      DISABLE_BUN_ANALYTICS: "1",
+    },
+
+    shell: false,
+  });
+  console.log("$", bunExec, bunFlags.join(" "));
+  bunProcess.stderr.pipe(process.stderr);
+  bunProcess.stdout.pipe(process.stdout);
+  bunProcess.once("error", (err) => {
+    console.error("❌ bun error", err);
+    process.exit(1);
+  });
+  process.on("beforeExit", () => {
+    bunProcess?.kill(0);
+  });
+}
 const isDebug = bunExec.endsWith("-debug");
-
-bunProcess.stderr.pipe(process.stderr);
-bunProcess.stdout.pipe(process.stdout);
-bunProcess.once("error", (err) => {
-  console.error("❌ bun error", err);
-  process.exit(1);
-});
-process.on("beforeExit", () => {
-  bunProcess?.kill(0);
-});
 
 function writeSnapshot(name, code) {
   let file = path.join(__dirname, "../snapshots", name);
@@ -61,7 +64,8 @@ function writeSnapshot(name, code) {
 }
 
 async function main() {
-  const browser = await puppeteer.launch();
+  const launchOptions = USE_EXISTING_PROCESS ? { devtools: true } : undefined;
+  const browser = await puppeteer.launch(launchOptions);
   const promises = [];
   let allTestsPassed = true;
 
@@ -69,6 +73,13 @@ async function main() {
     var page;
     try {
       page = await browser.newPage();
+      if (USE_EXISTING_PROCESS) {
+        await page.evaluate(`
+        globalThis.BUN_DEBUG_MODE = true;
+      `);
+      }
+
+      var shouldClose = true;
       page.on("console", (obj) =>
         console.log(`[console.${obj.type()}] ${obj.text()}`)
       );
@@ -89,6 +100,7 @@ async function main() {
 
       console.log(`✅ ${key}`);
     } catch (e) {
+      if (USE_EXISTING_PROCESS) shouldClose = false;
       allTestsPassed = false;
       console.log(`❌ ${key}: ${(e && e.message) || e}`);
     } finally {
@@ -102,7 +114,7 @@ async function main() {
       }
     }
 
-    await page.close();
+    if (shouldClose) await page.close();
   }
 
   const tests = require("./snippets.json");
@@ -112,16 +124,18 @@ async function main() {
     await runPage(test);
   }
 
-  await browser.close();
-  bunProcess.kill(0);
+  if (!USE_EXISTING_PROCESS || (USE_EXISTING_PROCESS && allTestsPassed)) {
+    bunProcess && bunProcess.kill(0);
 
-  if (!allTestsPassed) {
-    console.error(`❌ browser test failed`);
-    process.exit(1);
-  } else {
-    console.log(`✅ browser test passed`);
-    bunProcess.kill(0);
-    process.exit(0);
+    if (!allTestsPassed) {
+      console.error(`❌ browser test failed`);
+      process.exit(1);
+    } else {
+      console.log(`✅ browser test passed`);
+      bunProcess && bunProcess.kill(0);
+      process.exit(0);
+    }
+    await browser.close();
   }
 }
 

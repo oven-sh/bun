@@ -1762,6 +1762,17 @@ pub const RequestContext = struct {
                     threadlocal var buffer: MutableString = undefined;
                     threadlocal var has_loaded_buffer: bool = false;
 
+                    pub fn reserveNext(rctx: *SocketPrinterInternal, count: u32) anyerror![*]u8 {
+                        try buffer.growIfNeeded(count);
+                        return return @ptrCast([*]u8, &buffer.list.items.ptr[buffer.list.items.len]);
+                    }
+
+                    pub fn advanceBy(rctx: *SocketPrinterInternal, count: u32) void {
+                        if (comptime Environment.isDebug) std.debug.assert(buffer.list.items.len + count < buffer.list.capacity);
+
+                        buffer.list.items = buffer.list.items.ptr[0 .. buffer.list.items.len + count];
+                    }
+
                     pub fn init(rctx: *RequestContext, _loader: Options.Loader) SocketPrinterInternal {
                         if (!has_loaded_buffer) {
                             buffer = MutableString.init(default_allocator, 0) catch unreachable;
@@ -1841,6 +1852,8 @@ pub const RequestContext = struct {
                     SocketPrinterInternal.writeAll,
                     SocketPrinterInternal.getLastByte,
                     SocketPrinterInternal.getLastLastByte,
+                    SocketPrinterInternal.reserveNext,
+                    SocketPrinterInternal.advanceBy,
                 );
                 const loader = ctx.bundler.options.loaders.get(result.file.input.name.ext) orelse .file;
 

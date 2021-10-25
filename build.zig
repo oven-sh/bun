@@ -286,7 +286,7 @@ pub fn build(b: *std.build.Builder) !void {
         obj.setBuildMode(mode);
         obj.linkLibC();
         obj.linkLibCpp();
-
+        obj.strip = false;
         obj.bundle_compiler_rt = true;
 
         if (target.getOsTag() == .linux) {

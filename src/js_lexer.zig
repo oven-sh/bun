@@ -137,7 +137,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             };
         }
 
-        pub fn loc(self: *LexerType) logger.Loc {
+        pub inline fn loc(self: *const LexerType) logger.Loc {
             return logger.usize2Loc(self.start);
         }
 
@@ -222,7 +222,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
 
         pub fn deinit(this: *LexerType) void {}
 
-        pub fn decodeEscapeSequences(lexer: *LexerType, start: usize, text: string, comptime BufType: type, buf_: *BufType) !void {
+        fn decodeEscapeSequences(lexer: *LexerType, start: usize, text: string, comptime BufType: type, buf_: *BufType) !void {
             var buf = buf_.*;
             defer buf_.* = buf;
             if (comptime is_json) lexer.is_ascii_only = false;
@@ -259,34 +259,36 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                         const c2 = iter.c;
 
                         const width2 = iter.width;
-                        switch (iter.c) {
+                        switch (c2) {
+                            // https://mathiasbynens.be/notes/javascript-escapes#single
                             'b' => {
-                                buf.append(std.mem.readIntNative(u16, "\\b")) catch unreachable;
+                                buf.append(8) catch unreachable;
                                 continue;
                             },
                             'f' => {
-                                buf.append(std.mem.readIntNative(u16, "\\f")) catch unreachable;
+                                buf.append(9) catch unreachable;
                                 continue;
                             },
                             'n' => {
-                                buf.append(std.mem.readIntNative(u16, "\\n")) catch unreachable;
-                                continue;
-                            },
-                            'r' => {
-                                buf.append(std.mem.readIntNative(u16, "\\r")) catch unreachable;
-                                continue;
-                            },
-                            't' => {
-                                buf.append(std.mem.readIntNative(u16, "\\t")) catch unreachable;
+                                buf.append(10) catch unreachable;
                                 continue;
                             },
                             'v' => {
-                                if (comptime is_json) {
-                                    lexer.end = start + iter.i - width2;
-                                    try lexer.syntaxError();
-                                }
-
-                                buf.append(std.mem.readIntNative(u16, "\\v")) catch unreachable;
+                                // Vertical tab is invalid JSON
+                                // We're going to allow it.
+                                // if (comptime is_json) {
+                                //     lexer.end = start + iter.i - width2;
+                                //     try lexer.syntaxError();
+                                // }
+                                buf.append(11) catch unreachable;
+                                continue;
+                            },
+                            't' => {
+                                buf.append(12) catch unreachable;
+                                continue;
+                            },
+                            'r' => {
+                                buf.append(13) catch unreachable;
                                 continue;
                             },
 
@@ -575,7 +577,8 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                         }
 
                         switch (lexer.code_point) {
-                            'f', 't', 'r', 'n', '`', '\'', '0', '"', 0x2028, 0x2029 => {
+                            // 0 cannot be in this list because it may be a legacy octal literal
+                            'v', 'f', 't', 'r', 'n', '`', '\'', '"', 0x2028, 0x2029 => {
                                 try lexer.step();
                                 continue :stringLiteral;
                             },
@@ -673,7 +676,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
 
             // Reset string literal
             const base = if (comptime quote == 0) lexer.start else lexer.start + 1;
-            lexer.string_literal_slice = lexer.source.contents[base..@minimum(lexer.source.contents.len, lexer.end - string_literal_details.suffix_len)];
+            lexer.string_literal_slice = lexer.source.contents[base..@minimum(lexer.source.contents.len, lexer.end - @as(usize, string_literal_details.suffix_len))];
             lexer.string_literal_is_ascii = !string_literal_details.needs_slow_path;
             lexer.string_literal_buffer.shrinkRetainingCapacity(0);
             if (string_literal_details.needs_slow_path) {
@@ -2278,7 +2281,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             // them. <CR><LF> and <CR> LineTerminatorSequences are normalized to
             // <LF> for both TV and TRV. An explicit EscapeSequence is needed to
             // include a <CR> or <CR><LF> sequence.
-            var bytes = MutableString.initCopy(lexer.allocator, text) catch unreachable;
+            var bytes = MutableString.init(lexer.allocator, text.len) catch unreachable;
             var end: usize = 0;
             var i: usize = 0;
             var c: u8 = '0';

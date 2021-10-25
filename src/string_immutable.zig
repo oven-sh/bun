@@ -549,39 +549,52 @@ pub fn utf16EqlString(text: []const u16, str: string) bool {
 // This is a clone of golang's "utf8.EncodeRune" that has been modified to encode using
 // WTF-8 instead. See https://simonsapin.github.io/wtf-8/ for more info.
 pub fn encodeWTF8Rune(p: []u8, r: i32) u3 {
-    // Negative values are erroneous. Making it unsigned addresses the problem.
-    const i = @intCast(u32, r);
-    switch (i) {
+    return @call(
+        .{
+            .modifier = .always_inline,
+        },
+        encodeWTF8RuneT,
+        .{
+            p,
+            u32,
+            @intCast(u32, r),
+        },
+    );
+}
+
+pub fn encodeWTF8RuneT(p: []u8, comptime R: type, r: R) u3 {
+    switch (r) {
         0...0x7F => {
             p[0] = @intCast(u8, r);
             return 1;
         },
         (0x7F + 1)...0x7FF => {
-            p[0] = 0xC0 | @intCast(u8, r >> 6);
-            p[1] = 0x80 | @intCast(u8, r) & 0x3F;
+            p[0] = @truncate(u8, 0xC0 | ((r >> 6)));
+            p[1] = @truncate(u8, 0x80 | (r & 0x3F));
             return 2;
         },
         (0x7FF + 1)...0xFFFF => {
-            p[0] = 0xE0 | @intCast(u8, r >> 12);
-            p[1] = 0x80 | @intCast(u8, r >> 6) & 0x3F;
-            p[2] = 0x80 | @intCast(u8, r) & 0x3F;
+            p[0] = @truncate(u8, 0xE0 | ((r >> 12)));
+            p[1] = @truncate(u8, 0x80 | ((r >> 6) & 0x3F));
+            p[2] = @truncate(u8, 0x80 | (r & 0x3F));
             return 3;
         },
         else => {
-            p[0] = 0xF0 | @intCast(u8, r >> 18);
-            p[1] = 0x80 | @intCast(u8, r >> 12) & 0x3F;
-            p[2] = 0x80 | @intCast(u8, r >> 6) & 0x3F;
-            p[3] = 0x80 | @intCast(u8, r) & 0x3F;
+            p[0] = @truncate(u8, 0xF0 | ((r >> 18)));
+            p[1] = @truncate(u8, 0x80 | ((r >> 12) & 0x3F));
+            p[2] = @truncate(u8, 0x80 | ((r >> 6) & 0x3F));
+            p[3] = @truncate(u8, 0x80 | (r & 0x3F));
             return 4;
         },
     }
 }
 
 pub fn containsNonBmpCodePoint(text: string) bool {
-    var iter = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
+    var iter = CodepointIterator.init(text);
+    var curs = CodepointIterator.Cursor{};
 
-    while (iter.nextCodepoint()) |codepoint| {
-        if (codepoint > 0xFFFF) {
+    while (iter.next(&curs)) {
+        if (curs.c > 0xFFFF) {
             return true;
         }
     }
@@ -659,16 +672,6 @@ pub fn toASCIIHexValue(character: u8) u8 {
 }
 
 pub inline fn utf8ByteSequenceLength(first_byte: u8) u3 {
-    return switch (first_byte) {
-        0b0000_0000...0b0111_1111 => 1,
-        0b1100_0000...0b1101_1111 => 2,
-        0b1110_0000...0b1110_1111 => 3,
-        0b1111_0000...0b1111_0111 => 4,
-        else => 0,
-    };
-}
-
-pub inline fn utf8ByteSequenceLength32(first_byte: u8) u32 {
     return switch (first_byte) {
         0b0000_0000...0b0111_1111 => 1,
         0b1100_0000...0b1101_1111 => 2,

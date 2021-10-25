@@ -720,3 +720,6 @@ run-unit:
 	
 
 test: build-unit run-unit
+
+integration-test-dev: 
+	USE_EXISTING_PROCESS=true node integration/scripts/browser.js

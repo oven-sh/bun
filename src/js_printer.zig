@@ -265,6 +265,29 @@ pub fn NewPrinter(
             }
         }
 
+        fn fmt(p: *Printer, comptime str: string, args: anytype) !void {
+            const len = @call(
+                .{
+                    .modifier = .always_inline,
+                },
+                std.fmt.count,
+                .{ str, args },
+            );
+            var ptr = try p.writer.reserveNext(
+                len,
+            );
+
+            const written = @call(
+                .{
+                    .modifier = .always_inline,
+                },
+                std.fmt.bufPrint,
+                .{ ptr[0..len], str, args },
+            ) catch unreachable;
+
+            p.writer.advance(written.len);
+        }
+
         pub fn print(p: *Printer, str: anytype) void {
             switch (@TypeOf(str)) {
                 comptime_int, u16, u8 => {
@@ -538,12 +561,6 @@ pub fn NewPrinter(
                             backtick_cost += 1;
                         }
                     },
-                    '\r', '\n' => {
-                        if (comptime isDebug) {
-                            std.debug.assert(allow_backtick);
-                        }
-                        return '`';
-                    },
                     else => {},
                 }
                 i += 1;
@@ -578,22 +595,22 @@ pub fn NewPrinter(
         }
 
         pub fn printQuotedUTF16(e: *Printer, text: []const u16, quote: u8) void {
-            // utf-8 is a max of 4 bytes
-            // we leave two extra chars for "\" and "u"
-            var temp = [6]u8{ 0, 0, 0, 0, 0, 0 };
             var i: usize = 0;
             const n: usize = text.len;
 
             // e(text.len) catch unreachable;
 
             while (i < n) {
-                const c = @as(u21, text[i]);
+                const CodeUnitType = u21;
+
+                const c = @as(CodeUnitType, text[i]);
                 i += 1;
-                var r: u21 = 0;
+                var r: CodeUnitType = 0;
                 var width: u3 = 0;
 
                 // TODO: here
                 switch (c) {
+
                     // Special-case the null character since it may mess with code written in C
                     // that treats null characters as the end of the string.
                     0x00 => {
@@ -603,6 +620,38 @@ pub fn NewPrinter(
                         } else {
                             e.print("\\0");
                         }
+                    },
+
+                    'a'...'z',
+                    'A'...'Z',
+                    '0'...'9',
+                    '_',
+                    '-',
+                    '(',
+                    '[',
+                    '{',
+                    '<',
+                    '>',
+                    ')',
+                    ']',
+                    '}',
+                    ',',
+                    ':',
+                    ';',
+                    '.',
+                    '?',
+                    '!',
+                    '@',
+                    '#',
+                    '%',
+                    '^',
+                    '&',
+                    '*',
+                    '+',
+                    '=',
+                    ' ',
+                    => {
+                        e.print(@intCast(u8, c));
                     },
 
                     // Special-case the bell character since it may cause dumping this file to
@@ -620,7 +669,7 @@ pub fn NewPrinter(
                     },
                     '\n' => {
                         if (quote == '`') {
-                            e.print("\n");
+                            e.print('\n');
                         } else {
                             e.print("\\n");
                         }
@@ -633,32 +682,34 @@ pub fn NewPrinter(
                         e.print("\\v");
                     },
                     // "\\"
-                    92 => {
+                    '\\' => {
                         e.print("\\\\");
                     },
+
                     '\'' => {
                         if (quote == '\'') {
-                            e.print("\\");
+                            e.print('\\');
                         }
                         e.print("'");
                     },
+
                     '"' => {
                         if (quote == '"') {
-                            e.print("\\");
+                            e.print('\\');
                         }
 
                         e.print("\"");
                     },
                     '`' => {
                         if (quote == '`') {
-                            e.print("\\");
+                            e.print('\\');
                         }
 
                         e.print("`");
                     },
                     '$' => {
                         if (quote == '`' and i < n and text[i] == '{') {
-                            e.print("\\");
+                            e.print('\\');
                         }
 
                         e.print('$');
@@ -672,19 +723,16 @@ pub fn NewPrinter(
                     0xFEFF => {
                         e.print("\\uFEFF");
                     },
+
                     else => {
                         switch (c) {
-                            // Common case: just append a single byte
-                            // we know it's not 0 since we already checked
-                            1...last_ascii => {
-                                e.print(@intCast(u8, c));
-                            },
+                            
                             first_high_surrogate...last_high_surrogate => {
 
                                 // Is there a next character?
 
                                 if (i < n) {
-                                    const c2 = text[i];
+                                    const c2: CodeUnitType = @as(CodeUnitType, text[i]);
 
                                     if (c2 >= first_high_surrogate and c2 <= last_low_surrogate) {
                                         // this is some magic to me
@@ -692,48 +740,62 @@ pub fn NewPrinter(
                                         i += 1;
                                         // Escape this character if UTF-8 isn't allowed
                                         if (ascii_only) {
-                                            // this is more magic!!
-                                            const bytes = [_]u8{
+                                            var ptr = e.writer.reserve(12) catch unreachable;
+                                            ptr[0..12].* = [_]u8{
                                                 '\\', 'u', hex_chars[c >> 12],  hex_chars[(c >> 8) & 15],  hex_chars[(c >> 4) & 15],  hex_chars[c & 15],
                                                 '\\', 'u', hex_chars[c2 >> 12], hex_chars[(c2 >> 8) & 15], hex_chars[(c2 >> 4) & 15], hex_chars[c2 & 15],
                                             };
-                                            e.print(&bytes);
+                                            e.writer.advance(12);
 
                                             continue;
                                             // Otherwise, encode to UTF-8
                                         } else {
-                                            width = std.unicode.utf8Encode(r, &temp) catch unreachable;
-                                            e.print(temp[0..width]);
+                                            var ptr = e.writer.reserve(4) catch unreachable;
+                                            e.writer.advance(strings.encodeWTF8RuneT(ptr[0..4], CodeUnitType, r));
                                             continue;
                                         }
                                     }
                                 }
 
-                                // Write an unpaired high surrogate
-                                temp = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
-                                e.print(&temp);
+                                {
+                                    // Write an unpaired high surrogate
+                                    var ptr = e.writer.reserve(6) catch unreachable;
+                                    ptr[0..6].* = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
+                                    e.writer.advance(6);
+                                }
                             },
                             // Is this an unpaired low surrogate or four-digit hex escape?
                             first_low_surrogate...last_low_surrogate => {
                                 // Write an unpaired high surrogate
-                                temp = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
-                                e.print(&temp);
+                                var ptr = e.writer.reserve(6) catch unreachable;
+                                ptr[0..6].* = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
+                                e.writer.advance(6);
                             },
                             else => {
                                 // this extra branch should get compiled
                                 if (ascii_only) {
                                     if (c > 0xFF) {
+                                        var ptr = e.writer.reserve(6) catch unreachable;
                                         // Write an unpaired high surrogate
-                                        temp = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
-                                        e.print(&temp);
+                                        ptr[0..6].* = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
+                                        e.writer.advance(6);
                                     } else {
                                         // Can this be a two-digit hex escape?
-                                        const quad = [_]u8{ '\\', 'x', hex_chars[c >> 4], hex_chars[c & 15] };
-                                        e.print(&quad);
+                                        var ptr = e.writer.reserve(4) catch unreachable;
+                                        ptr[0..4].* = [_]u8{ '\\', 'x', hex_chars[c >> 4], hex_chars[c & 15] };
+                                        e.writer.advance(4);
                                     }
                                 } else {
-                                    width = std.unicode.utf8Encode(c, &temp) catch unreachable;
-                                    e.print(temp[0..width]);
+                                    // chars < 255 as two digit hex escape
+                                    if (c < 0xFF) {
+                                        var ptr = e.writer.reserve(4) catch unreachable;
+                                        ptr[0..4].* = [_]u8{ '\\', 'x', hex_chars[c >> 4], hex_chars[c & 15] };
+                                        e.writer.advance(4);
+                                        continue;
+                                    }
+
+                                    var ptr = e.writer.reserve(4) catch return;
+                                    e.writer.advance(strings.encodeWTF8RuneT(ptr[0..4], CodeUnitType, c));
                                 }
                             },
                         }
@@ -3849,6 +3911,8 @@ pub fn NewWriter(
     writeAllFn: fn (ctx: *ContextType, buf: anytype) anyerror!usize,
     getLastByte: fn (ctx: *const ContextType) u8,
     getLastLastByte: fn (ctx: *const ContextType) u8,
+    reserveNext: fn (ctx: *ContextType, count: u32) anyerror![*]u8,
+    advanceBy: fn (ctx: *ContextType, count: u32) void,
 ) type {
     return struct {
         const Self = @This();
@@ -3898,6 +3962,15 @@ pub fn NewWriter(
 
         pub inline fn prevPrevChar(writer: *const Self) u8 {
             return @call(.{ .modifier = .always_inline }, getLastLastByte, .{&writer.ctx});
+        }
+
+        pub fn reserve(writer: *Self, count: u32) anyerror![*]u8 {
+            return try reserveNext(&writer.ctx, count);
+        }
+
+        pub fn advance(writer: *Self, count: u32) void {
+            advanceBy(&writer.ctx, count);
+            writer.written += @intCast(i32, count);
         }
 
         pub const Error = error{FormatError};
@@ -4015,6 +4088,16 @@ const FileWriterInternal = struct {
         return if (buffer.list.items.len > 1) buffer.list.items[buffer.list.items.len - 2] else 0;
     }
 
+    pub fn reserveNext(ctx: *FileWriterInternal, count: u32) anyerror![*]u8 {
+        try buffer.growIfNeeded(count);
+        return @ptrCast([*]u8, &buffer.list.items.ptr[buffer.list.items.len]);
+    }
+    pub fn advanceBy(ctx: *FileWriterInternal, count: u32) void {
+        if (comptime Environment.isDebug) std.debug.assert(buffer.list.items.len + count < buffer.list.capacity);
+
+        buffer.list.items = buffer.list.items.ptr[0 .. buffer.list.items.len + count];
+    }
+
     pub fn done(
         ctx: *FileWriterInternal,
     ) anyerror!void {
@@ -4101,6 +4184,16 @@ pub const BufferWriter = struct {
         return if (ctx.buffer.list.items.len > 1) ctx.buffer.list.items[ctx.buffer.list.items.len - 2] else 0;
     }
 
+    pub fn reserveNext(ctx: *BufferWriter, count: u32) anyerror![*]u8 {
+        try ctx.buffer.growIfNeeded(count);
+        return @ptrCast([*]u8, &ctx.buffer.list.items.ptr[ctx.buffer.list.items.len]);
+    }
+    pub fn advanceBy(ctx: *BufferWriter, count: u32) void {
+        if (comptime Environment.isDebug) std.debug.assert(ctx.buffer.list.items.len + count < ctx.buffer.list.capacity);
+
+        ctx.buffer.list.items = ctx.buffer.list.items.ptr[0 .. ctx.buffer.list.items.len + count];
+    }
+
     pub fn reset(ctx: *BufferWriter) void {
         ctx.buffer.reset();
         ctx.approximate_newline_count = 0;
@@ -4127,8 +4220,18 @@ pub const BufferPrinter = NewWriter(
     BufferWriter.writeAll,
     BufferWriter.getLastByte,
     BufferWriter.getLastLastByte,
+    BufferWriter.reserveNext,
+    BufferWriter.advanceBy,
 );
-pub const FileWriter = NewWriter(FileWriterInternal, FileWriterInternal.writeByte, FileWriterInternal.writeAll, FileWriterInternal.getLastByte, FileWriterInternal.getLastLastByte);
+pub const FileWriter = NewWriter(
+    FileWriterInternal,
+    FileWriterInternal.writeByte,
+    FileWriterInternal.writeAll,
+    FileWriterInternal.getLastByte,
+    FileWriterInternal.getLastLastByte,
+    FileWriterInternal.reserveNext,
+    FileWriterInternal.advanceBy,
+);
 pub fn NewFileWriter(file: std.fs.File) FileWriter {
     var internal = FileWriterInternal.init(file);
     return FileWriter.init(internal);

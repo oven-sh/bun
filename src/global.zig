@@ -87,7 +87,10 @@ pub const Output = struct {
     }
 
     var _source_for_test: if (isTest) Output.Source else void = undefined;
+    var _source_for_test_set = false;
     pub fn initTest() void {
+        if (_source_for_test_set) return;
+        _source_for_test_set = true;
         var in = std.io.getStdErr();
         var out = std.io.getStdOut();
         _source_for_test = Output.Source.init(out, in);

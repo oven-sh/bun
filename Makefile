@@ -437,6 +437,7 @@ jsc-bindings: jsc-bindings-headers jsc-bindings-mac
 jsc-bindings-headers:
 	mkdir -p src/javascript/jsc/bindings-obj/
 	zig build headers
+	zig fmt src/javascript/jsc/bindings/headers.zig
 
 bump: 
 	expr $(BUILD_ID) + 1 > build-id

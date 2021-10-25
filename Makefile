@@ -360,7 +360,7 @@ api:
 	prettier --write src/api/schema.d.ts
 
 node-fallbacks: 
-	@cd src/node-fallbacks; npm install; npm run --silent build
+	@cd src/node-fallbacks; pnpm install; npm run --silent build
 
 fallback_decoder:
 	@esbuild --target=esnext  --bundle src/fallback.ts --format=iife --platform=browser --minify > src/fallback.out.js
@@ -369,7 +369,7 @@ runtime_js:
 	@NODE_ENV=production esbuild --define:process.env.NODE_ENV="production" --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.out.js; cat src/runtime.footer.js >> src/runtime.out.js
 
 bun_error:
-	@cd packages/bun-error; npm install; npm run --silent build
+	@cd packages/bun-error; pnpm install; npm run --silent build
 
 fetch:
 	cd misctools; zig build-obj -Drelease-fast ./fetch.zig -fcompiler-rt -lc --main-pkg-path ../
@@ -495,7 +495,7 @@ mkdir-dev:
 	mkdir -p $(DEBUG_PACKAGE_DIR)/bin
 
 test-install:
-	cd integration/scripts && npm install
+	cd integration/scripts && pnpm install
 
 test-all: test-install test-with-hmr test-no-hmr
 

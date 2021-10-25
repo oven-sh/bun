@@ -1068,7 +1068,10 @@ pub const E = struct {
 
     pub const Spread = struct { value: ExprNodeIndex };
 
+    /// JavaScript string literal type
     pub const String = struct {
+        // A version of this where `utf8` and `value` are stored in a packed union, with len as a single u32 was attempted.
+        // It did not improve benchmarks. Neither did converting this from a heap-allocated type to a stack-allocated type.
         value: []const u16 = &.{},
         utf8: string = &([_]u8{}),
         prefer_template: bool = false,
@@ -2268,7 +2271,7 @@ pub const Expr = struct {
     var false_bool = E.Boolean{ .value = false };
     var bool_values = [_]*E.Boolean{ &false_bool, &true_bool };
 
-    pub  fn init(comptime Type: type, st: Type, loc: logger.Loc) Expr {
+    pub fn init(comptime Type: type, st: Type, loc: logger.Loc) Expr {
         icount += 1;
 
         switch (Type) {
@@ -5384,7 +5387,7 @@ pub const Macro = struct {
                                     return self.writeElement(el.*);
                                 },
                                 .e_string => |str| {
-                                    self.args.appendAssumeCapacity(Expr.alloc(self.allocator, E.BigInt, E.BigInt{ .value = std.mem.trimRight(u8, str.utf8, "n") }, value.loc));
+                                    self.args.appendAssumeCapacity(Expr.init(E.BigInt, E.BigInt{ .value = std.mem.trimRight(u8, str.utf8, "n") }, value.loc));
                                 },
                                 .e_big_int => |bigint| {
                                     self.args.appendAssumeCapacity(value);
@@ -5615,7 +5618,7 @@ pub const Macro = struct {
 
                             switch (value.data) {
                                 .e_string => |str| {
-                                    self.args.appendAssumeCapacity(Expr.alloc(self.allocator, E.RegExp, E.RegExp{ .value = str.utf8 }, value.loc));
+                                    self.args.appendAssumeCapacity(Expr.init(E.RegExp, E.RegExp{ .value = str.utf8 }, value.loc));
                                 },
                                 .e_reg_exp => {
                                     self.args.appendAssumeCapacity(value);
@@ -5951,7 +5954,7 @@ pub const Macro = struct {
                         self.p.recordUsage(self.bun_jsx_ref);
                         _ = self.writeNodeType(JSNode.Tag.fragment, element.properties, element.children, loc);
                         var call_args = self.p.allocator.alloc(Expr, 1) catch unreachable;
-                        call_args[0] = Expr.alloc(self.p.allocator, E.Array, E.Array{ .items = self.args.items }, loc);
+                        call_args[0] = Expr.init(E.Array, E.Array{ .items = self.args.items }, loc);
 
                         return Expr.init(
                             E.Call,
@@ -6445,9 +6448,9 @@ pub const Macro = struct {
                                 },
                             };
                         } else if (wtf_string.is8Bit()) {
-                            expr.* = Expr.alloc(writer.allocator, E.String, E.String{ .utf8 = wtf_string.characters8()[0..wtf_string.length()] }, writer.loc);
+                            expr.* = Expr.init(E.String, E.String{ .utf8 = wtf_string.characters8()[0..wtf_string.length()] }, writer.loc);
                         } else if (wtf_string.is16Bit()) {
-                            expr.* = Expr.alloc(writer.allocator, E.String, E.String{ .value = wtf_string.characters16()[0..wtf_string.length()] }, writer.loc);
+                            expr.* = Expr.init(E.String, E.String{ .value = wtf_string.characters16()[0..wtf_string.length()] }, writer.loc);
                         } else {
                             unreachable;
                         }
@@ -7089,10 +7092,9 @@ test "Stmt.init" {
 
 test "Expr.init" {
     var allocator = std.heap.page_allocator;
-    const ident = Expr.alloc(allocator, E.Identifier, E.Identifier{}, logger.Loc{ .start = 100 });
+    const ident = Expr.init(E.Identifier, E.Identifier{}, logger.Loc{ .start = 100 });
     var list = [_]Expr{ident};
-    var expr = Expr.alloc(
-        allocator,
+    var expr = Expr.init(
         E.Array,
         E.Array{ .items = list[0..] },
         logger.Loc{ .start = 1 },

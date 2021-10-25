@@ -3317,7 +3317,7 @@ pub fn NewParser(
                         }
                     }
                 }
-                return Expr.init(std.meta.Child(Type), t, loc);
+                return Expr.init(std.meta.Child(Type), t.*, loc);
             } else {
                 if (comptime only_scan_imports_and_do_not_visit) {
                     if (Type == E.Call) {
@@ -3333,7 +3333,7 @@ pub fn NewParser(
                         }
                     }
                 }
-                return Expr.alloc(p.allocator, Type, t, loc);
+                return Expr.init(Type, t, loc);
             }
         }
 

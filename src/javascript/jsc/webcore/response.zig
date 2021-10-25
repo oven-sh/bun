@@ -430,10 +430,6 @@ pub const Fetch = struct {
         }
 
         var url_zig_str = ZigString.init("");
-        JSValue.fromRef(arguments[0]).toZigString(
-            &url_zig_str,
-            VirtualMachine.vm.global,
-        );
         var url_str = url_zig_str.slice();
         if (url_str.len == 0) {
             const fetch_error = fetch_error_blank_url;
@@ -1232,8 +1228,27 @@ pub const Body = struct {
                     return body;
                 }
 
+                if (!wtf_string.is8Bit()) {
+                    var js_string = js.JSValueToStringCopy(ctx, body_ref, exception);
+                    defer js.JSStringRelease(js_string);
+                    body.ptr_allocator = default_allocator;
+                    const len = js.JSStringGetLength(js_string);
+                    var body_string = default_allocator.alloc(u8, len + 1) catch unreachable;
+                    body.ptr = body_string.ptr;
+                    body.len = body_string.len;
+                    body.value = .{ .String = body_string.ptr[0..js.JSStringGetUTF8CString(js_string, body_string.ptr, body_string.len)] };
+                    return body;
+                }
+
+                var slice = wtf_string.characters8()[0..wtf_string.length()];
+
+                if (slice.len == 0) {
+                    body.value = .{ .String = "" };
+                    return body;
+                }
+
                 body.value = Value{
-                    .String = wtf_string.characters8()[0..wtf_string.length()],
+                    .String = slice,
                 };
                 // body.ptr = body.
                 // body.len = body.value.String.len;str.characters8()[0..len] };
@@ -1599,7 +1614,7 @@ pub const FetchEvent = struct {
                 Output.printElapsed(@intToFloat(f64, (this.request_context.timer.lap())) / std.time.ns_per_ms);
 
                 Output.prettyError(
-                    " <b>/{s}<r><d> - <b>{d}<r> <d>transpiled, <d><b>{d}<r> <d>imports<r>\n",
+                    " <b>{s}<r><d> - <b>{d}<r> <d>transpiled, <d><b>{d}<r> <d>imports<r>\n",
                     .{
                         this.request_context.matched_route.?.name,
                         VirtualMachine.vm.transpiled_count,
@@ -1662,6 +1677,15 @@ pub const FetchEvent = struct {
         }
 
         defer this.request_context.done();
+        defer {
+            if (response.body.ptr_allocator) |alloc| {
+                if (response.body.ptr) |ptr| {
+                    alloc.free(ptr[0..response.body.len]);
+                }
+
+                response.body.ptr_allocator = null;
+            }
+        }
 
         this.request_context.writeStatusSlow(response.body.init.status_code) catch return js.JSValueMakeUndefined(ctx);
         this.request_context.prepareToSendBody(content_length_, false) catch return js.JSValueMakeUndefined(ctx);

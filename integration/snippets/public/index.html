@@ -10,7 +10,6 @@
       globalThis.console.assert = (condition, ...content) => {
         if (!condition) {
           throw new Error(content.join(" "));
-          
         }
       };
       globalThis.getModuleScriptSrc = async (name) => {
@@ -50,10 +49,28 @@
           );
         }
 
-        return await testFunction();
+        if (globalThis.BUN_DEBUG_MODE) {
+          try {
+            return await testFunction();
+          } catch (exception) {
+            console.error(exception);
+            debugger;
+            throw exception;
+          }
+        } else {
+          return await testFunction();
+        }
       };
 
       if (globalThis.location.pathname.endsWith("-test")) {
+        const script = document.createElement("script");
+        script.src = globalThis.location.pathname.substring(
+          0,
+          location.pathname.length - "-test".length
+        );
+        script.type = "module";
+        document.body.appendChild(script);
+
         globalThis.testDone = (path) => alert(`test ${path} success`);
         globalThis.testFail = (path) => alert(`!test ${path} fail`);
         runTest(

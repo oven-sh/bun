@@ -24,9 +24,10 @@ export default __cJS2eSM(function(module, exports) {
   require(_login_b977_0);
   require(_login_b977_1);
   Object.defineProperty(module.exports,"login",{get: () => _login, enumerable: true, configurable: true});
-  var test = function test() {
+  function test() {
     return testDone(import.meta.url);
   };
+var test = test;
   Object.defineProperty(module.exports,"test",{get: () => test, enumerable: true, configurable: true});
   var foo, bar;
   Object.defineProperties(module.exports,{'foo': {get: () => foo, set: ($_newValue) => {foo = $_newValue;}, enumerable: true, configurable: true},

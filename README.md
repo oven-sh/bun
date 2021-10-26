@@ -218,6 +218,9 @@ Currently, Bun implements the following loaders:
 | .ts   | TypeScript + JavaScript       | .js    |
 | .tsx  | TypeScript + JSX + JavaScript | .js    |
 | .mjs  | JavaScript                    | .js    |
+| .cjs  | JavaScript                    | .js    |
+| .mts  | TypeScript                    | .js    |
+| .cts  | TypeScript                    | .js    |
 | .css  | CSS                           | .css   |
 | .env  | Env                           | N/A    |
 | .\*   | file                          | string |
@@ -539,7 +542,7 @@ bun run relay-compiler -- -–help
 
 # Implicit: if you do not include "--", anything *after* the script name will be passed through
 # Bun flags are parsed first, which means e.g. `bun run relay-compiler --help` will print Bun's help instead of relay-compiler's help.
-bun run relay-compiler
+bun run relay-compiler --schema foo.graphql
 ```
 
 ### `bun create`

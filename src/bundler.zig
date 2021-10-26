@@ -2235,7 +2235,7 @@ pub const Bundler = struct {
 
                 return BuildResolveResultPair{
                     .written = switch (result.ast.exports_kind) {
-                        .esm => try bundler.print(
+                        .none, .esm => try bundler.print(
                             result,
                             Writer,
                             writer,

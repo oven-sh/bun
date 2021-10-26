@@ -298,13 +298,15 @@ pub const Arguments = struct {
         }
 
         const production = false; //args.flag("--production");
-
-        var write = entry_points.len > 1 or output_dir != null;
-        if (write and output_dir == null) {
-            var _paths = [_]string{ cwd, "out" };
-            output_dir = try std.fs.path.resolve(allocator, &_paths);
+        if (comptime cmd == .BuildCommand) {
+            var write = entry_points.len > 1 or output_dir != null;
+            if (write and output_dir == null) {
+                var _paths = [_]string{ cwd, "out" };
+                output_dir = try std.fs.path.resolve(allocator, &_paths);
+            }
+            opts.write = write;
         }
-        opts.write = write;
+
         opts.entry_points = entry_points;
 
         var jsx_factory = args.option("--jsx-factory");

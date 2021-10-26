@@ -790,8 +790,9 @@ pub const Map = struct {
         var iterator = self.map.iterator();
 
         _ = try writer.writeAll("{");
-
         while (iterator.next()) |entry| {
+            _ = try writer.writeAll("\n    ");
+
             std.json.stringify(entry.key_ptr.*, options, writer) catch unreachable;
 
             _ = try writer.writeAll(": ");
@@ -803,7 +804,7 @@ pub const Map = struct {
             }
         }
 
-        try writer.writeAll("}");
+        try writer.writeAll("\n}");
     }
 
     pub inline fn get(

@@ -402,8 +402,46 @@ pub const RunCommand = struct {
 
         var passthrough: []const string = &[_]string{};
 
-        if (positionals.len > 1) {
-            passthrough = positionals[1..];
+        var passthrough_list = std.ArrayList(string).init(ctx.allocator);
+        if (script_name_to_search.len > 0) {
+            get_passthrough: {
+
+                // If they explicitly pass "--", that means they want everything after that to be passed through.
+                for (std.os.argv) |argv, i| {
+                    if (strings.eqlComptime(std.mem.span(argv), "--")) {
+                        if (std.os.argv.len > i + 1) {
+                            var count: usize = 0;
+                            for (std.os.argv[i + 1 ..]) |arg| {
+                                count += 1;
+                            }
+                            try passthrough_list.ensureTotalCapacity(count);
+
+                            for (std.os.argv[i + 1 ..]) |arg| {
+                                passthrough_list.appendAssumeCapacity(std.mem.span(arg));
+                            }
+
+                            passthrough = passthrough_list.toOwnedSlice();
+                            break :get_passthrough;
+                        }
+                    }
+                }
+
+                // If they do not pass "--", assume they want everything after the script name to be passed through.
+                for (std.os.argv) |argv, i| {
+                    if (strings.eql(std.mem.span(argv), script_name_to_search)) {
+                        if (std.os.argv.len > i + 1) {
+                            try passthrough_list.ensureTotalCapacity(std.os.argv[i + 1 ..].len);
+
+                            for (std.os.argv[i + 1 ..]) |arg| {
+                                passthrough_list.appendAssumeCapacity(std.mem.span(arg));
+                            }
+
+                            passthrough = passthrough_list.toOwnedSlice();
+                            break :get_passthrough;
+                        }
+                    }
+                }
+            }
         }
 
         var did_print = false;

@@ -63,7 +63,7 @@ pub fn Param(comptime Id: type) type {
 /// Takes a string and parses it to a Param(Help).
 /// This is the reverse of 'help' but for at single parameter only.
 pub fn parseParam(line: []const u8) !Param(Help) {
-    @setEvalBranchQuota(9999);
+    @setEvalBranchQuota(999999);
 
     var found_comma = false;
     var it = mem.tokenize(u8, line, " \t");

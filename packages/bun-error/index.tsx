@@ -756,7 +756,7 @@ function renderWithFunc(func) {
       reactRoot.style.visibility = "visible";
     };
 
-    const shadowRoot = root.attachShadow({ mode: "open" });
+    const shadowRoot = root.attachShadow({ mode: "closed" });
     shadowRoot.appendChild(link);
     shadowRoot.appendChild(reactRoot);
 
@@ -768,6 +768,9 @@ function renderWithFunc(func) {
 }
 
 export function renderFallbackError(fallback: FallbackMessageContainer) {
+  // Not an error
+  if (fallback?.problems?.name === "JSDisabled") return;
+
   return renderWithFunc(() => (
     <ErrorGroupContext.Provider value={fallback}>
       <OverlayMessageContainer {...fallback} />

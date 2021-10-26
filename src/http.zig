@@ -2944,7 +2944,7 @@ pub const Server = struct {
     }
 
     pub var global_start_time: std.time.Timer = undefined;
-    pub fn start(allocator: *std.mem.Allocator, options: Api.TransformOptions) !void {
+    pub fn start(allocator: *std.mem.Allocator, options: Api.TransformOptions, comptime DebugType: type, debug: DebugType) !void {
         var log = logger.Log.init(allocator);
         var server = try allocator.create(Server);
         server.* = Server{
@@ -2960,6 +2960,15 @@ pub const Server = struct {
         server.bundler.* = try Bundler.init(allocator, &server.log, options, null, null);
         server.bundler.configureLinker();
         try server.bundler.configureRouter(true);
+
+        if (debug.dump_environment_variables) {
+            server.bundler.dumpEnvironmentVariables();
+            return;
+        }
+
+        if (debug.fallback_only) {
+            RequestContext.JavaScriptHandler.javascript_disabled = true;
+        }
 
         Analytics.Features.filesystem_router = server.bundler.router != null;
 

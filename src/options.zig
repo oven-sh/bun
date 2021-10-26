@@ -391,7 +391,7 @@ pub const Platform = enum {
 
     pub const Extensions = struct {
         pub const In = struct {
-            pub const JavaScript = [_]string{ ".js", ".ts", ".tsx", ".jsx", ".json" };
+            pub const JavaScript = [_]string{ ".js", ".cjs", ".mts", ".cts", ".ts", ".tsx", ".jsx", ".json" };
         };
         pub const Out = struct {
             pub const JavaScript = [_]string{
@@ -605,6 +605,9 @@ pub const defaultLoaders = std.ComptimeStringMap(Loader, .{
     .{ ".css", Loader.css },
     .{ ".ts", Loader.ts },
     .{ ".tsx", Loader.tsx },
+    .{ ".cjs", Loader.js },
+    .{ ".mts", Loader.ts },
+    .{ ".cts", Loader.ts },
 });
 
 // https://webpack.js.org/guides/package-exports/#reference-syntax
@@ -891,7 +894,15 @@ pub fn loadersFromTransformOptions(allocator: *std.mem.Allocator, _loaders: ?Api
         input_loaders.extensions,
         loader_values,
     );
-    const default_loader_ext = comptime [_]string{ ".jsx", ".json", ".js", ".mjs", ".css", ".ts", ".tsx" };
+    const default_loader_ext = comptime [_]string{
+        ".jsx", ".json",
+        ".js",  ".mjs",
+        ".cjs", ".css",
+
+        // https://devblogs.microsoft.com/typescript/announcing-typescript-4-5-beta/#new-file-extensions
+        ".ts",  ".tsx",
+        ".mts", ".cts",
+    };
 
     inline for (default_loader_ext) |ext| {
         if (!loaders.contains(ext)) {

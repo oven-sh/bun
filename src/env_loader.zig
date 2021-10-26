@@ -33,6 +33,8 @@ pub const Lexer = struct {
     has_newline_before: bool = true,
     was_quoted: bool = false,
 
+    is_process_env: bool = false,
+
     pub inline fn codepoint(this: *const Lexer) CodePoint {
         return this.cursor.c;
     }
@@ -189,9 +191,11 @@ pub const Lexer = struct {
                     )];
                 },
                 ' ' => {
-                    any_spaces = true;
-                    while (lexer.codepoint() == ' ') lexer.step();
-                    continue;
+                    if (!lexer.is_process_env) {
+                        any_spaces = true;
+                        while (lexer.codepoint() == ' ') lexer.step();
+                        continue;
+                    }
                 },
                 else => {},
             }
@@ -441,7 +445,7 @@ pub const Loader = struct {
 
                 const EString = js_ast.E.String;
 
-                var e_strings = try allocator.alloc(js_ast.E.String, e_strings_to_allocate);
+                var e_strings = try allocator.alloc(js_ast.E.String, e_strings_to_allocate * 2);
                 errdefer allocator.free(e_strings);
                 errdefer allocator.free(key_buf);
                 var key_fixed_allocator = std.heap.FixedBufferAllocator.init(key_buf);
@@ -558,7 +562,7 @@ pub const Loader = struct {
         var source = logger.Source.initPathString("process.env", "");
         for (std.os.environ) |env| {
             source.contents = std.mem.span(env);
-            Parser.parse(&source, this.allocator, this.map, true);
+            Parser.parse(&source, this.allocator, this.map, true, true);
         }
         this.did_load_process = true;
 
@@ -572,7 +576,7 @@ pub const Loader = struct {
     // mostly for tests
     pub fn loadFromString(this: *Loader, str: string, comptime overwrite: bool) void {
         var source = logger.Source.initPathString("test", str);
-        Parser.parse(&source, this.allocator, this.map, overwrite);
+        Parser.parse(&source, this.allocator, this.map, overwrite, true);
         std.mem.doNotOptimizeAway(&source);
     }
 
@@ -699,6 +703,7 @@ pub const Loader = struct {
             this.allocator,
             this.map,
             override,
+            false,
         );
 
         @field(this, base) = source;
@@ -711,8 +716,10 @@ pub const Parser = struct {
         allocator: *std.mem.Allocator,
         map: *Map,
         comptime override: bool,
+        is_process: bool,
     ) void {
         var lexer = Lexer.init(source);
+        lexer.is_process_env = is_process;
         var fbs = std.io.fixedBufferStream(&temporary_nested_value_buffer);
         var writer = fbs.writer();
         var temp_variable_i: u16 = 0;
@@ -871,6 +878,7 @@ test "DotEnv Loader - basic" {
         default_allocator,
         &map,
         true,
+        false,
     );
     try expectString(map.get("NESTED_VALUES_RESPECT_ESCAPING").?, "\\$API_KEY");
 
@@ -954,8 +962,8 @@ test "DotEnv Loader - copyForDefine" {
     );
 
     try expect(env_defines.get("process.env.BACON") != null);
-    try expectString(env_defines.get("process.env.BACON").?.value.e_string.slice8(), "false");
-    try expectString(env_defines.get("process.env.HOSTNAME").?.value.e_string.slice8(), "example.com");
+    try expectString(env_defines.get("process.env.BACON").?.value.e_string.utf8, "false");
+    try expectString(env_defines.get("process.env.HOSTNAME").?.value.e_string.utf8, "example.com");
     try expect(env_defines.get("process.env.THIS_SHOULDNT_BE_IN_DEFINES_MAP") != null);
 
     user_defines = UserDefine.init(default_allocator);
@@ -963,6 +971,6 @@ test "DotEnv Loader - copyForDefine" {
 
     buf = try loader.copyForDefine(UserDefine, &user_defines, UserDefinesArray, &env_defines, framework, .prefix, "HO", default_allocator);
 
-    try expectString(env_defines.get("process.env.HOSTNAME").?.value.e_string.slice8(), "example.com");
+    try expectString(env_defines.get("process.env.HOSTNAME").?.value.e_string.utf8, "example.com");
     try expect(env_defines.get("process.env.THIS_SHOULDNT_BE_IN_DEFINES_MAP") == null);
 }

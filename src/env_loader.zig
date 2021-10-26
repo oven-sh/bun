@@ -772,7 +772,7 @@ pub const Map = struct {
 
             std.json.stringify(entry.value_ptr.*, options, writer) catch unreachable;
 
-            if (iterator.index < self.map.count() - 1) {
+            if (iterator.index <= self.map.count() - 1) {
                 _ = try writer.writeAll(", ");
             }
         }

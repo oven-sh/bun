@@ -120,46 +120,47 @@ pub const Arguments = struct {
 
     pub const ParamType = clap.Param(clap.Help);
 
-    const total_env_count = 27;
-    const public_env_count = 26;
+    const public_params = [_]ParamType{
+        clap.parseParam("--use <STR>                       Choose a framework, e.g. \"--use next\". It checks first for a package named \"bun-framework-packagename\" and then \"packagename\".") catch unreachable,
+        clap.parseParam("--bunfile <STR>                   Use a .bun file (default: node_modules.bun)") catch unreachable,
+        clap.parseParam("--server-bunfile <STR>            Use a .server.bun file (default: node_modules.server.bun)") catch unreachable,
+        clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
+        clap.parseParam("--disable-react-fast-refresh      Disable React Fast Refresh") catch unreachable,
+        clap.parseParam("--disable-hmr                     Disable Hot Module Reloading (disables fast refresh too)") catch unreachable,
+        clap.parseParam("--extension-order <STR>...        defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
+        clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
+        clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments using the classic JSX runtime") catch unreachable,
+        clap.parseParam("--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\"") catch unreachable,
+        clap.parseParam("--jsx-production                  Use jsx instead of jsxDEV (default) for the automatic runtime") catch unreachable,
+        clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\"") catch unreachable,
+        clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --platform dependent") catch unreachable,
+        clap.parseParam("--no-summary                      Don't print a summary (when generating .bun") catch unreachable,
+        clap.parseParam("--version                         Print version and exit") catch unreachable,
+        clap.parseParam("--platform <STR>                  \"browser\" or \"node\". Defaults to \"browser\"") catch unreachable,
+        // clap.parseParam("--production                      [not implemented] generate production code") catch unreachable,
+        clap.parseParam("--public-dir <STR>                Top-level directory for .html files, fonts or anything external. Defaults to \"<cwd>/public\", to match create-react-app and Next.js") catch unreachable,
+        clap.parseParam("--tsconfig-override <STR>         Load tsconfig from path instead of cwd/tsconfig.json") catch unreachable,
+        clap.parseParam("-d, --define <STR>...             Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
+        clap.parseParam("-e, --external <STR>...           Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
+        clap.parseParam("-h, --help                        Display this help and exit.              ") catch unreachable,
+        clap.parseParam("-i, --inject <STR>...             Inject module at the top of every file") catch unreachable,
+        clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: jsx, js, json, tsx, ts, css") catch unreachable,
+        clap.parseParam("--origin <STR>                    Rewrite import paths to start with --origin. Default: \"\"") catch unreachable,
+        clap.parseParam("--port <STR>                      Port to serve Bun's dev server on. Default: \"/3000\"") catch unreachable,
 
-    const params: [total_env_count]ParamType = brk: {
-        @setEvalBranchQuota(9999);
-        break :brk [_]ParamType{
-            clap.parseParam("--use <STR>                       Choose a framework, e.g. \"--use next\". It checks first for a package named \"bun-framework-packagename\" and then \"packagename\".") catch unreachable,
-            clap.parseParam("--bunfile <STR>                   Use a .bun file (default: node_modules.bun)") catch unreachable,
-            clap.parseParam("--server-bunfile <STR>            Use a .server.bun file (default: node_modules.server.bun)") catch unreachable,
-            clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
-            clap.parseParam("--disable-react-fast-refresh      Disable React Fast Refresh") catch unreachable,
-            clap.parseParam("--disable-hmr                     Disable Hot Module Reloading (disables fast refresh too)") catch unreachable,
-            clap.parseParam("--extension-order <STR>...        defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
-            clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
-            clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments using the classic JSX runtime") catch unreachable,
-            clap.parseParam("--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\"") catch unreachable,
-            clap.parseParam("--jsx-production                  Use jsx instead of jsxDEV (default) for the automatic runtime") catch unreachable,
-            clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\"") catch unreachable,
-            clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --platform dependent") catch unreachable,
-            clap.parseParam("--no-summary                      Don't print a summary (when generating .bun") catch unreachable,
-            clap.parseParam("--version                         Print version and exit") catch unreachable,
-            clap.parseParam("--origin <STR>                    Rewrite import paths to start with --origin. Default: \"/\"") catch unreachable,
-            clap.parseParam("--port <STR>                      Port to serve Bun's dev server on. Default: \"/3000\"") catch unreachable,
-            clap.parseParam("--platform <STR>                  \"browser\" or \"node\". Defaults to \"browser\"") catch unreachable,
-            // clap.parseParam("--production                      [not implemented] generate production code") catch unreachable,
-            clap.parseParam("--public-dir <STR>                Top-level directory for .html files, fonts or anything external. Defaults to \"<cwd>/public\", to match create-react-app and Next.js") catch unreachable,
-            clap.parseParam("--tsconfig-override <STR>         Load tsconfig from path instead of cwd/tsconfig.json") catch unreachable,
-            clap.parseParam("-d, --define <STR>...             Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
-            clap.parseParam("-e, --external <STR>...           Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
-            clap.parseParam("-h, --help                        Display this help and exit.              ") catch unreachable,
-            clap.parseParam("-i, --inject <STR>...             Inject module at the top of every file") catch unreachable,
-            clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: jsx, js, json, tsx, ts, css") catch unreachable,
-            clap.parseParam("--dump-environment-variables") catch unreachable,
-            // clap.parseParam("-o, --outdir <STR>                Save output to directory (default: \"out\" if none provided and multiple entry points passed)") catch unreachable,
-            // clap.parseParam("-r, --resolve <STR>               Determine import/require behavior. \"disable\" ignores. \"dev\" bundles node_modules and builds everything else as independent entry points") catch unreachable,
-            // clap.parseParam("-r, --resolve <STR>               Determine import/require behavior. \"disable\" ignores. \"dev\" bundles node_modules and builds everything else as independent entry points") catch unreachable,
+        // clap.parseParam("-o, --outdir <STR>                Save output to directory (default: \"out\" if none provided and multiple entry points passed)") catch unreachable,
+        // clap.parseParam("-r, --resolve <STR>               Determine import/require behavior. \"disable\" ignores. \"dev\" bundles node_modules and builds everything else as independent entry points") catch unreachable,
+        // clap.parseParam("-r, --resolve <STR>               Determine import/require behavior. \"disable\" ignores. \"dev\" bundles node_modules and builds everything else as independent entry points") catch unreachable,
 
-            clap.parseParam("<POS>...                          ") catch unreachable,
-        };
+        clap.parseParam("<POS>...                          ") catch unreachable,
     };
+
+    const debug_params = [_]ParamType{
+        clap.parseParam("--dump-environment-variables    Dump environment variables from .env and process as JSON and quit. Useful for debugging") catch unreachable,
+        clap.parseParam("--disable-bun.js                Disable Bun.js from loading in the dev server") catch unreachable,
+    };
+
+    const params = public_params ++ debug_params;
 
     fn printVersionAndExit() noreturn {
         @setCold(true);
@@ -228,7 +229,7 @@ pub const Arguments = struct {
 
         const print_help = args.flag("--help");
         if (print_help) {
-            clap.help(Output.writer(), std.mem.span(params[0..public_env_count])) catch {};
+            clap.help(Output.writer(), std.mem.span(params[0..public_params.len])) catch {};
             Output.prettyln("\n-------\n\n", .{});
             Output.flush();
             HelpCommand.printWithReason(.explicit);
@@ -236,7 +237,8 @@ pub const Arguments = struct {
             std.os.exit(0);
         }
 
-        ctx.dump_environment_variables = args.flag("--dump-environment-variables");
+        ctx.debug.dump_environment_variables = args.flag("--dump-environment-variables");
+        ctx.debug.fallback_only = args.flag("--disable-bun.js");
 
         // var output_dir = args.option("--outdir");
         var output_dir: ?string = null;
@@ -517,13 +519,18 @@ pub const PrintBundleCommand = struct {
 };
 
 pub const Command = struct {
+    pub const DebugOptions = struct {
+        dump_environment_variables: bool = false,
+        fallback_only: bool = false,
+    };
+
     pub const Context = struct {
         start_time: i128,
         args: Api.TransformOptions = std.mem.zeroes(Api.TransformOptions),
         log: *logger.Log,
         allocator: *std.mem.Allocator,
 
-        dump_environment_variables: bool = false,
+        debug: DebugOptions = DebugOptions{},
 
         pub fn create(allocator: *std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
             var ctx = Command.Context{

@@ -108,15 +108,8 @@ pub const BunCommand = struct {
         };
         var env_loader = this_bundler.env;
 
-        if (ctx.dump_environment_variables) {
-            const opts = std.json.StringifyOptions{
-                .whitespace = std.json.StringifyOptions.Whitespace{
-                    .separator = true,
-                },
-            };
-            Output.flush();
-            try std.json.stringify(env_loader.map.*, opts, Output.writer());
-            Output.flush();
+        if (ctx.debug.dump_environment_variables) {
+            this_bundler.dumpEnvironmentVariables();
             return;
         }
 

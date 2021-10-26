@@ -419,6 +419,18 @@ pub const Bundler = struct {
         js_ast.Stmt.Data.Store.reset();
     }
 
+    pub noinline fn dumpEnvironmentVariables(bundler: *ThisBundler) void {
+        @setCold(true);
+        const opts = std.json.StringifyOptions{
+            .whitespace = std.json.StringifyOptions.Whitespace{
+                .separator = true,
+            },
+        };
+        Output.flush();
+        std.json.stringify(bundler.env.map.*, opts, Output.writer()) catch unreachable;
+        Output.flush();
+    }
+
     pub const GenerateNodeModuleBundle = struct {
         const BunQueue = NewBunQueue(_resolver.Result);
 

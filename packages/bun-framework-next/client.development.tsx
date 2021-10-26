@@ -89,7 +89,7 @@ function nextDataFromBunData() {
   }, {});
 
   return {
-    page: routes[route],
+    page: routes.keys[route],
     buildId: "1234",
     assetPrefix: "",
     isPreview: false,

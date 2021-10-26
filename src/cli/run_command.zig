@@ -197,11 +197,17 @@ pub const RunCommand = struct {
         child_process.stdin_behavior = .Inherit;
         child_process.stdout_behavior = .Inherit;
 
-        _ = child_process.spawnAndWait() catch |err| {
+        const result = child_process.spawnAndWait() catch |err| {
             Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
             Output.flush();
-            return false;
+            return true;
         };
+
+        if (result.Exited > 0) {
+            Output.prettyErrorln("<r><red>Script error<r> <b>\"{s}\"<r> exited with {d} status<r>", .{ name, result.Exited });
+            Output.flush();
+            std.os.exit(@truncate(u8, result.Signal));
+        }
 
         return true;
     }
@@ -231,11 +237,17 @@ pub const RunCommand = struct {
         child_process.stdin_behavior = .Inherit;
         child_process.stdout_behavior = .Inherit;
 
-        _ = child_process.spawnAndWait() catch |err| {
+        const result = child_process.spawnAndWait() catch |err| {
             Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{ std.fs.path.basename(executable), @errorName(err) });
             Output.flush();
             return false;
         };
+
+        if (result.Exited > 0) {
+            Output.prettyErrorln("<r><red>error<r> <b>\"{s}\"<r> exited with {d} status<r>", .{ std.fs.path.basename(executable), result.Exited });
+            Output.flush();
+            std.os.exit(@truncate(u8, result.Signal));
+        }
 
         return true;
     }
@@ -360,12 +372,16 @@ pub const RunCommand = struct {
                     try new_path.appendSlice(package_json_dir);
                 }
 
-                for (bin_dirs) |bin, i| {
+                var bin_dir_i: i32 = @intCast(i32, bin_dirs.len) - 1;
+                // Iterate in reverse order
+                // Directories are added to bin_dirs in top-down order
+                // That means the parent-most node_modules/.bin will be first
+                while (bin_dir_i >= 0) : (bin_dir_i -= 1) {
                     defer needs_colon = true;
                     if (needs_colon) {
                         try new_path.append(':');
                     }
-                    try new_path.appendSlice(bin);
+                    try new_path.appendSlice(bin_dirs[@intCast(usize, bin_dir_i)]);
                 }
 
                 if (needs_colon) {
@@ -418,7 +434,8 @@ pub const RunCommand = struct {
                         if (scripts.count() > 0) {
                             did_print = true;
 
-                            Output.prettyln("<r><blue><b>{s}<r> scripts:<r>\n\n", .{display_name});
+                            Output.prettyln("<r><blue><b>{s}<r> scripts:<r>\n", .{display_name});
+                            var is_first = true;
                             while (iterator.next()) |entry| {
                                 Output.prettyln("\n", .{});
                                 Output.prettyln(" bun run <blue>{s}<r>\n", .{entry.key_ptr.*});
@@ -486,6 +503,16 @@ pub const RunCommand = struct {
                     },
                 }
             }
+        }
+
+        if (script_name_to_search.len == 0) {
+            if (comptime log_errors) {
+                Output.prettyError("<r>No \"scripts\" in package.json found.", .{});
+                Output.flush();
+                std.os.exit(0);
+            }
+
+            return false;
         }
 
         var path_for_which = PATH;

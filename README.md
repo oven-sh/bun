@@ -26,6 +26,36 @@ npm install -g bun-cli
 
 ### Getting started
 
+## Using Bun as a task runner
+
+Instead of waiting 170ms for your npm client to start for each task, you wait 6ms for Bun.
+
+To use bun as a task runner, run `bun run` instead of `npm run`.
+
+A package.json that looks like this:
+
+```json
+{
+  "name": "myapp",
+  "scripts": {
+    "clean": "rm -rf dist out node_modules"
+  }
+}
+```
+
+Can run:
+
+```bash
+bun run clean
+
+# This also works
+bun clean
+```
+
+For maximum performance, any scripts that invoke `npm run`, `yarn run`, or `pnpm run` will automatically be replaced in-memory with `bun run`. This means you can try `bun run` in existing codebases that aren't using Bun and get an immediate performance boost.
+
+`bun run` supports lifecycle hooks like `post${task}` and `pre{task}`, adds `node_modules/.bin` to `$PATH` (for all parent `node_modules` folders), and automatically loads `.env` files if they exist. Like with yarn, you can use `bun run` without typing `run` (but any new subcommands will override it, so be warned!)
+
 ## Using Bun with Next.js
 
 To create a new Next.js app with Bun:
@@ -437,6 +467,80 @@ It most likely means you're running bun's x64 version on Apple Silicon. This hap
 The fix is to ensure you installed a version of Node built for Apple Silicon and then reinstall `bun-cli`. You can also try to directly install `npm install -g bun-cli-darwin-aarch64`.
 
 # Reference
+
+### `bun run`
+
+`bun run` is a fast `package.json` scripts runner. Instead of waiting 170ms for your npm client to start every time, you wait 6ms for Bun.
+
+By default, `bun run` prints the script that will be invoked:
+
+```bash
+bun run clean
+$ rm -rf node_modules/.cache dist
+```
+
+You can disable that with `--silent`
+
+```bash
+bun run --silent clean
+```
+
+To print a list of `scripts`, `bun run` without additional args:
+
+```bash
+# This command
+bun run
+
+# Prints this
+hello-create-react-app scripts:
+
+bun run start
+react-scripts start
+
+bun run build
+react-scripts build
+
+bun run test
+react-scripts test
+
+bun run eject
+react-scripts eject
+
+4 scripts
+```
+
+`bun run` automatically loads environment variables from `.env` into the shell/task. `.env` files are loaded with the same priority as the rest of Bun, so that means:
+
+1. `.env.local` is first
+2. if (`$NODE_ENV` === `"production"`) `.env.production` else `.env.development`
+3. `.env`
+
+If something is unexpected there, you can run `bun run env` to get a list of environment variables.
+
+The default shell it uses is `bash`, but if that's not found, it tries `sh` and if still not found, it tries `zsh`. This is not configurable right now, but if you care file an issue.
+
+`bun run` automatically adds any parent `node_modules/.bin` to `$PATH` and if no scripts match, it will load that binary instead. That means you can run executables from packages too.
+
+```bash
+# If you use Relay
+bun run relay-compiler
+
+# You can also do this, but:
+# - It will only lookup packages in `node_modules/.bin` instead of `$PATH`
+# - It will start Bun's dev server if the script name doesn't exist (`bun` starts the dev server by default)
+bun relay-compiler
+```
+
+To pass additional flags through to the task or executable, there are two ways:
+
+```bash
+# Explicit: include "--" and anything after will be added. This is the recommended way because it is more reliable.
+bun run relay-compiler -- -–help
+
+# Implicit: if you do not include "--", anything *after* the script name will be passed through
+# Bun flags are parsed first, which means e.g. `bun run relay-compiler --help` will print Bun's help instead of relay-compiler's help.
+bun run relay-compiler
+```
 
 ### `bun create`
 

@@ -322,7 +322,6 @@ const RouteLoader = struct {
                 .route = route,
                 .hash = route.full_hash,
             });
-            Output.prettyErrorln("Route: {s}", .{route.name});
         }
 
         var dynamic: []*Route = &[_]*Route{};

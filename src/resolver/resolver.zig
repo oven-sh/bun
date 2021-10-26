@@ -207,6 +207,7 @@ threadlocal var _open_dirs: [256]std.fs.Dir = undefined;
 threadlocal var resolve_without_remapping_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var index_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var dir_info_uncached_filename_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var node_bin_path: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var dir_info_uncached_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var tsconfig_base_url_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var relative_abs_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
@@ -324,6 +325,12 @@ pub const LoadResult = struct {
 // This is a global so even if multiple resolvers are created, the mutex will still work
 var resolver_Mutex: Mutex = undefined;
 var resolver_Mutex_loaded: bool = false;
+
+const BinFolderArray = std.BoundedArray(string, 128);
+var bin_folders: BinFolderArray = undefined;
+var bin_folders_lock: Mutex = Mutex.init();
+var bin_folders_loaded: bool = false;
+
 // TODO:
 // - Fix "browser" field mapping
 // - Consider removing the string list abstraction?
@@ -335,6 +342,9 @@ pub const Resolver = struct {
     allocator: *std.mem.Allocator,
     node_module_bundle: ?*NodeModuleBundle,
     extension_order: []const string = undefined,
+
+    care_about_bin_folder: bool = false,
+    care_about_scripts: bool = false,
 
     debug_logs: ?DebugLogs = null,
     elapsed: i128 = 0, // tracing
@@ -1361,8 +1371,19 @@ pub const Resolver = struct {
         return path.text;
     }
 
+    pub fn binDirs(r: *const ThisResolver) []const string {
+        if (!bin_folders_loaded) return &[_]string{};
+        return bin_folders.constSlice();
+    }
+
     pub fn parsePackageJSON(r: *ThisResolver, file: string, dirname_fd: StoredFileDescriptorType) !?*PackageJSON {
-        const pkg = PackageJSON.parse(ThisResolver, r, file, dirname_fd, true) orelse return null;
+        var pkg: PackageJSON = undefined;
+        if (!r.care_about_scripts) {
+            pkg = PackageJSON.parse(ThisResolver, r, file, dirname_fd, true, false) orelse return null;
+        } else {
+            pkg = PackageJSON.parse(ThisResolver, r, file, dirname_fd, true, true) orelse return null;
+        }
+
         var _pkg = try r.allocator.create(PackageJSON);
         _pkg.* = pkg;
         return _pkg;
@@ -2475,6 +2496,60 @@ pub const Resolver = struct {
         if (!info.is_node_modules) {
             if (entries.getComptimeQuery("node_modules")) |entry| {
                 info.has_node_modules = (entry.entry.kind(rfs)) == .dir;
+            }
+        }
+
+        if (r.care_about_bin_folder) {
+            append_bin_dir: {
+                if (info.has_node_modules) {
+                    if (entries.getComptimeQuery("node_modules")) |q| {
+                        if (!bin_folders_loaded) {
+                            bin_folders_loaded = true;
+                            bin_folders = BinFolderArray.init(0) catch unreachable;
+                        }
+
+                        const this_dir = std.fs.Dir{ .fd = fd };
+                        var file = this_dir.openDirZ("node_modules/.bin", .{}) catch break :append_bin_dir;
+                        defer file.close();
+                        var bin_path = std.os.getFdPath(file.fd, &node_bin_path) catch break :append_bin_dir;
+                        bin_folders_lock.lock();
+                        defer bin_folders_lock.unlock();
+
+                        for (bin_folders.constSlice()) |existing_folder| {
+                            if (strings.eql(existing_folder, bin_path)) {
+                                break :append_bin_dir;
+                            }
+                        }
+
+                        bin_folders.append(r.fs.dirname_store.append([]u8, bin_path) catch break :append_bin_dir) catch {};
+                    }
+                }
+
+                if (info.is_node_modules) {
+                    if (entries.getComptimeQuery(".bin")) |q| {
+                        if (q.entry.kind(rfs) == .dir) {
+                            if (!bin_folders_loaded) {
+                                bin_folders_loaded = true;
+                                bin_folders = BinFolderArray.init(0) catch unreachable;
+                            }
+
+                            const this_dir = std.fs.Dir{ .fd = fd };
+                            var file = this_dir.openDirZ(".bin", .{}) catch break :append_bin_dir;
+                            defer file.close();
+                            var bin_path = std.os.getFdPath(file.fd, &node_bin_path) catch break :append_bin_dir;
+                            bin_folders_lock.lock();
+                            defer bin_folders_lock.unlock();
+
+                            for (bin_folders.constSlice()) |existing_folder| {
+                                if (strings.eql(existing_folder, bin_path)) {
+                                    break :append_bin_dir;
+                                }
+                            }
+
+                            bin_folders.append(r.fs.dirname_store.append([]u8, bin_path) catch break :append_bin_dir) catch {};
+                        }
+                    }
+                }
             }
         }
         // }

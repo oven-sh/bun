@@ -147,6 +147,7 @@ pub const Arguments = struct {
         clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: jsx, js, json, tsx, ts, css") catch unreachable,
         clap.parseParam("--origin <STR>                    Rewrite import paths to start with --origin. Default: \"\"") catch unreachable,
         clap.parseParam("--port <STR>                      Port to serve Bun's dev server on. Default: \"/3000\"") catch unreachable,
+        clap.parseParam("--silent                          Don't repeat the command for bun run") catch unreachable,
 
         // clap.parseParam("-o, --outdir <STR>                Save output to directory (default: \"out\" if none provided and multiple entry points passed)") catch unreachable,
         // clap.parseParam("-r, --resolve <STR>               Determine import/require behavior. \"disable\" ignores. \"dev\" bundles node_modules and builds everything else as independent entry points") catch unreachable,
@@ -223,6 +224,8 @@ pub const Arguments = struct {
             .disable_hmr = args.flag("--disable-hmr"),
         };
 
+        ctx.positionals = args.positionals();
+        ctx.debug.silent = args.flag("--silent");
         if (opts.port != null and opts.origin == null) {
             opts.origin = try std.fmt.allocPrint(allocator, "http://localhost:{d}/", .{opts.port.?});
         }
@@ -522,6 +525,7 @@ pub const Command = struct {
     pub const DebugOptions = struct {
         dump_environment_variables: bool = false,
         fallback_only: bool = false,
+        silent: bool = false,
     };
 
     pub const Context = struct {
@@ -529,6 +533,7 @@ pub const Command = struct {
         args: Api.TransformOptions = std.mem.zeroes(Api.TransformOptions),
         log: *logger.Log,
         allocator: *std.mem.Allocator,
+        positionals: []const string = &[_]string{},
 
         debug: DebugOptions = DebugOptions{},
 
@@ -644,8 +649,9 @@ pub const Command = struct {
             },
             .RunCommand => {
                 const ctx = try Command.Context.create(allocator, log, .RunCommand);
-
-                try RunCommand.exec(ctx);
+                if (ctx.positionals.len > 0) {
+                    _ = try RunCommand.exec(ctx, false, true);
+                }
             },
             .AutoCommand => {
                 var ctx = Command.Context.create(allocator, log, .AutoCommand) catch |e| {
@@ -665,6 +671,12 @@ pub const Command = struct {
                 {
                     try PrintBundleCommand.exec(ctx);
                     return;
+                }
+
+                if (ctx.positionals.len > 0 and (std.fs.path.extension(ctx.positionals[0]).len == 0)) {
+                    if (try RunCommand.exec(ctx, true, false)) {
+                        return;
+                    }
                 }
 
                 if (FeatureFlags.dev_only) {

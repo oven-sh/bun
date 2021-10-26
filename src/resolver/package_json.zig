@@ -18,6 +18,8 @@ threadlocal var hashy: [2048]u8 = undefined;
 pub const MacroImportReplacementMap = std.StringArrayHashMap(string);
 pub const MacroMap = std.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
 
+const ScriptsMap = std.StringArrayHashMap(string);
+
 pub const PackageJSON = struct {
     pub const LoadFramework = enum {
         none,
@@ -56,6 +58,8 @@ pub const PackageJSON = struct {
     module_type: options.ModuleType,
     version: string = "",
     hash: u32 = 0xDEADBEEF,
+
+    scripts: ?*ScriptsMap = null,
 
     always_bundle: []string = &.{},
     macros: MacroMap = MacroMap{},
@@ -440,6 +444,7 @@ pub const PackageJSON = struct {
         input_path: string,
         dirname_fd: StoredFileDescriptorType,
         comptime generate_hash: bool,
+        comptime include_scripts: bool,
     ) ?PackageJSON {
 
         // TODO: remove this extra copy
@@ -687,6 +692,40 @@ pub const PackageJSON = struct {
         if (json.asProperty("exports")) |exports_prop| {
             if (ExportsMap.parse(r.allocator, &json_source, r.log, exports_prop.expr)) |exports_map| {
                 package_json.exports = exports_map;
+            }
+        }
+
+        if (include_scripts) {
+            read_scripts: {
+                if (json.asProperty("scripts")) |scripts_prop| {
+                    if (scripts_prop.expr.data == .e_object) {
+                        const scripts_obj = scripts_prop.expr.data.e_object;
+
+                        var count: usize = 0;
+                        for (scripts_obj.properties) |prop| {
+                            const key = prop.key.?.asString(r.allocator) orelse continue;
+                            const value = prop.value.?.asString(r.allocator) orelse continue;
+
+                            count += @as(usize, @boolToInt(key.len > 0 and value.len > 0));
+                        }
+
+                        if (count == 0) break :read_scripts;
+                        var scripts = ScriptsMap.init(r.allocator);
+                        scripts.ensureUnusedCapacity(count) catch break :read_scripts;
+
+                        for (scripts_obj.properties) |prop| {
+                            const key = prop.key.?.asString(r.allocator) orelse continue;
+                            const value = prop.value.?.asString(r.allocator) orelse continue;
+
+                            if (!(key.len > 0 and value.len > 0)) continue;
+
+                            scripts.putAssumeCapacity(key, value);
+                        }
+
+                        package_json.scripts = r.allocator.create(ScriptsMap) catch unreachable;
+                        package_json.scripts.?.* = scripts;
+                    }
+                }
             }
         }
 

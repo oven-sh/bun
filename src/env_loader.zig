@@ -364,6 +364,8 @@ pub const Loader = struct {
     @".env.production": ?logger.Source = null,
     @".env": ?logger.Source = null,
 
+    quiet: bool = false,
+
     did_load_process: bool = false,
 
     const empty_string_value: string = "\"\"";
@@ -610,7 +612,7 @@ pub const Loader = struct {
             Analytics.Features.dotenv = true;
         }
 
-        this.printLoaded(start);
+        if (!this.quiet) this.printLoaded(start);
     }
 
     pub fn printLoaded(this: *Loader, start: i128) void {
@@ -747,6 +749,23 @@ pub const Map = struct {
     const HashTable = std.StringArrayHashMap(string);
 
     map: HashTable,
+
+    pub fn cloneToBufMap(this: *Map, allocator: *std.mem.Allocator) !std.BufMap {
+        var buf_map = std.BufMap.init(allocator);
+
+        const Convert = struct {
+            pub fn constStrToU8(s: string) []u8 {
+                return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
+            }
+        };
+
+        var iter_ = this.map.iterator();
+        while (iter_.next()) |entry| {
+            try buf_map.putMove(Convert.constStrToU8(entry.key_ptr.*), Convert.constStrToU8(entry.value_ptr.*));
+        }
+
+        return buf_map;
+    }
 
     pub inline fn init(allocator: *std.mem.Allocator) Map {
         return Map{ .map = HashTable.init(allocator) };

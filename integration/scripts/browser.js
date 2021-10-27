@@ -15,6 +15,7 @@ const bunFlags = [
 const bunExec = process.env.BUN_BIN || "bun";
 
 var bunProcess;
+var waitSpawn;
 if (!USE_EXISTING_PROCESS) {
   bunProcess = child_process.spawn(bunExec, bunFlags, {
     cwd: snippetsDir,
@@ -29,9 +30,16 @@ if (!USE_EXISTING_PROCESS) {
   console.log("$", bunExec, bunFlags.join(" "));
   bunProcess.stderr.pipe(process.stderr);
   bunProcess.stdout.pipe(process.stdout);
+  var rejecter;
   bunProcess.once("error", (err) => {
     console.error("❌ bun error", err);
     process.exit(1);
+  });
+  waitSpawn = new Promise((resolve, reject) => {
+    bunProcess.once("spawn", (code) => {
+      console.log("Spawned");
+      resolve();
+    });
   });
   process.on("beforeExit", () => {
     bunProcess?.kill(0);
@@ -69,6 +77,9 @@ async function main() {
   const promises = [];
   let allTestsPassed = true;
 
+  if (waitSpawn) await waitSpawn;
+  var canRetry = true;
+
   async function runPage(key) {
     var page;
     try {
@@ -90,13 +101,25 @@ async function main() {
       let testDone = new Promise((resolve) => {
         page.exposeFunction("testDone", resolve);
       });
-      await page.goto(`${serverURL}/`, {
-        waitUntil: "domcontentloaded",
-      });
-      await page.evaluate(`
+      try {
+        await page.goto(`${serverURL}/`, {
+          waitUntil: "domcontentloaded",
+        });
+
+        await page.evaluate(`
         globalThis.runTest("${key}");
       `);
-      await testDone;
+        await testDone;
+      } catch (err) {
+        if (canRetry) {
+          console.log(
+            `❌ ${key} failed once (incase it's still booting on universal binary for the first time). Retrying...`
+          );
+          canRetry = false;
+          return await runPage(key);
+        }
+        throw err;
+      }
 
       console.log(`✅ ${key}`);
     } catch (e) {
@@ -113,7 +136,7 @@ async function main() {
         console.warn(`Failed to update snapshot: ${key}`, exception);
       }
     }
-
+    canRetry = false;
     if (shouldClose) await page.close();
   }
 

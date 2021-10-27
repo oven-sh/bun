@@ -24,6 +24,9 @@ DEBUG_BUN = $(DEBUG_BIN)/bun-debug
 BUILD_ID = $(shell cat ./build-id)
 PACKAGE_JSON_VERSION = 0.0.$(BUILD_ID)
 BUN_BUILD_TAG = bun-v$(PACKAGE_JSON_VERSION)
+PACKAGE_MAC = $(PACKAGES_REALPATH)/bun-cli-mac
+MAC_BIN = $(PACKAGE_MAC)/bin
+MAC_BUN = $(MAC_BIN)/bun
 
 # We must use the same compiler version for the JavaScriptCore bindings and JavaScriptCore
 # If we don't do this, strange memory allocation failures occur.
@@ -473,20 +476,21 @@ write-package-json-version-cli:
 	mv packages/bun-cli/package.json.new packages/bun-cli/package.json
 	jq -S --raw-output '.optionalDependencies."bun-cli-linux-x64" = "${PACKAGE_JSON_VERSION}"' packages/bun-cli/package.json  > packages/bun-cli/package.json.new
 	mv packages/bun-cli/package.json.new packages/bun-cli/package.json
-	jq -S --raw-output '.optionalDependencies."bun-cli-darwin-x64" = "${PACKAGE_JSON_VERSION}"' packages/bun-cli/package.json  > packages/bun-cli/package.json.new
-	mv packages/bun-cli/package.json.new packages/bun-cli/package.json
-	jq -S --raw-output '.optionalDependencies."bun-cli-darwin-aarch64" = "${PACKAGE_JSON_VERSION}"' packages/bun-cli/package.json  > packages/bun-cli/package.json.new
-	mv packages/bun-cli/package.json.new packages/bun-cli/package.json
+	jq -S --raw-output '.optionalDependencies."bun-cli-mac" = "${PACKAGE_JSON_VERSION}"' packages/bun-cli/package.json  > packages/bun-cli/package.json.new
 
 write-package-json-version: 
 	jq -S --raw-output '.version = "${PACKAGE_JSON_VERSION}"' $(PACKAGE_DIR)/package.json  > $(PACKAGE_DIR)/package.json.new
 	mv $(PACKAGE_DIR)/package.json.new $(PACKAGE_DIR)/package.json
 
+write-package-json-version-mac: 
+	jq -S --raw-output '.version = "${PACKAGE_JSON_VERSION}"' $(PACKAGE_MAC)/package.json  > $(PACKAGE_MAC)/package.json.new
+	mv $(PACKAGE_MAC)/package.json.new $(PACKAGE_MAC)/package.json
+
 tag: 
 	git tag $(BUN_BUILD_TAG)
 	git push --tags
 
-prepare-release: tag release-create write-package-json-version-cli write-package-json-version
+prepare-release: tag release-create write-package-json-version-cli write-package-json-version write-package-json-version-mac
 
 release-create:
 	gh release create --title "Bun v$(PACKAGE_JSON_VERSION)" "$(BUN_BUILD_TAG)"
@@ -495,8 +499,9 @@ BUN_DEPLOY_DIR = $(BUN_TMP_DIR)/bun-deploy
 BUN_DEPLOY_CLI = $(BUN_TMP_DIR)/bun-cli
 BUN_DEPLOY_PKG = $(BUN_DEPLOY_DIR)/$(PACKAGE_NAME)
 BUN_DEPLOY_TGZ = $(BUN_DEPLOY_PKG)/$(PACKAGE_NAME)-$(PACKAGE_JSON_VERSION).tgz
-BUN_DEPLOY_TGZ_FOLDER = $(BUN_DEPLOY_PKG)/$(PACKAGE_NAME)-$(PACKAGE_JSON_VERSION).folder
-BUN_DEPLOY_ZIP = $(BUN_DEPLOY_PKG)/$(PACKAGE_NAME)-$(PACKAGE_JSON_VERSION).zip
+
+BUN_DEPLOY_PKG_MAC = $(BUN_DEPLOY_DIR)/bun-cli-mac
+BUN_DEPLOY_TGZ_MAC = $(BUN_DEPLOY_PKG_MAC)/bun-cli-mac-$(PACKAGE_JSON_VERSION).tgz
 
 release-cli-push:
 	rm -rf $(BUN_DEPLOY_CLI)
@@ -512,8 +517,14 @@ release-bin-generate: write-package-json-version
 	cp -r $(PACKAGE_DIR) $(BUN_DEPLOY_DIR)
 	cd $(BUN_DEPLOY_PKG); npm pack;
 
+release-mac-generate: write-package-json-version-mac
+	rm -rf $(BUN_DEPLOY_DIR)
+	mkdir -p $(BUN_DEPLOY_DIR)
+	cp -r $(PACKAGE_MAC) $(BUN_DEPLOY_DIR)
+	cd $(BUN_DEPLOY_PKG_MAC); npm pack;
 
 release-bin-entitlements:
+release-bin-entitlements-mac:
 
 ifeq ($(OS_NAME),darwin)
 # Without this, JIT will fail on aarch64
@@ -521,7 +532,12 @@ ifeq ($(OS_NAME),darwin)
 # which, in turn, will break JIT
 release-bin-entitlements:
 	codesign --entitlements $(realpath entitlements.plist) --options runtime --force --timestamp --sign "$(CODESIGN_IDENTITY)" -vvv --deep --strict $(BIN_DIR)/bun
+
+release-bin-entitlements-mac:
+	codesign --entitlements $(realpath entitlements.plist) --options runtime --force --timestamp --sign "$(CODESIGN_IDENTITY)" -vvv --deep --strict $(MAC_BUN)
+
 endif
+
 
 release-bin-codesign:
 	mkdir -p $(BUN_DEPLOY_ZIP)-input/package
@@ -533,6 +549,8 @@ release-bin-notarize:
 	xcrun notarytool submit $(BIN_DIR)/bun
 
 release-bin: test-all release-bin-generate release-bin-check release-bin-push
+release-mac-without-push: release-mac-generate-bin release-bin-entitlements-mac test-all-mac release-mac-generate release-mac-check
+release-mac: release-mac-without-push release-mac-push
 
 release-bin-check:
 	rm -rf /tmp/bun-$(PACKAGE_JSON_VERSION)-check;
@@ -540,9 +558,31 @@ release-bin-check:
 	cd /tmp/bun-$(PACKAGE_JSON_VERSION)-check && npm install $(BUN_DEPLOY_TGZ)
 	test $(PACKAGE_JSON_VERSION) == $(shell eval "/tmp/bun-$(PACKAGE_JSON_VERSION)-check/node_modules/.bin/bun --version")
 
+release-mac-check:
+	rm -rf /tmp/bun-$(PACKAGE_JSON_VERSION)-check;
+	mkdir -p /tmp/bun-$(PACKAGE_JSON_VERSION)-check;
+	cd /tmp/bun-$(PACKAGE_JSON_VERSION)-check && npm install $(BUN_DEPLOY_TGZ_MAC)
+	test $(PACKAGE_JSON_VERSION) == $(shell eval "/tmp/bun-$(PACKAGE_JSON_VERSION)-check/node_modules/.bin/bun --version")
+
 release-bin-push: 
 	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_TGZ)
 	npm publish $(BUN_DEPLOY_TGZ) --access=public
+
+release-mac-push:
+	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_TGZ_MAC)
+	npm publish $(BUN_DEPLOY_TGZ_MAC) --access=public
+
+release-mac-generate-bin:
+	rm -rf /tmp/bun-fat-$(PACKAGE_JSON_VERSION)
+	mkdir -p /tmp/bun-fat-$(PACKAGE_JSON_VERSION)
+	curl "https://registry.npmjs.org/bun-cli-darwin-aarch64/-/bun-cli-darwin-aarch64-0.0.37.tgz" > /tmp/bun-fat-$(PACKAGE_JSON_VERSION)/aarch64.tgz
+	curl "https://registry.npmjs.org/bun-cli-darwin-x64/-/bun-cli-darwin-x64-0.0.37.tgz" > /tmp/bun-fat-$(PACKAGE_JSON_VERSION)/x64.tgz
+	mkdir /tmp/bun-fat-$(PACKAGE_JSON_VERSION)/x64
+	mkdir /tmp/bun-fat-$(PACKAGE_JSON_VERSION)/aarch64
+	cd /tmp/bun-fat-$(PACKAGE_JSON_VERSION) && tar -xvf x64.tgz -C x64
+	cd /tmp/bun-fat-$(PACKAGE_JSON_VERSION) && tar -xvf aarch64.tgz -C aarch64
+	rm $(MAC_BUN)
+	lipo -create -output $(MAC_BUN) /tmp/bun-fat-$(PACKAGE_JSON_VERSION)/x64/package/bin/bun /tmp/bun-fat-$(PACKAGE_JSON_VERSION)/aarch64/package/bin/bun
 
 dev-obj:
 	zig build obj
@@ -559,6 +599,7 @@ test-install:
 	cd integration/scripts && pnpm install
 
 test-all: test-install test-with-hmr test-no-hmr test-create-next test-create-react test-bun-run
+test-all-mac: test-install test-with-hmr-mac test-no-hmr-mac test-create-next-mac test-create-react-mac test-bun-run-mac
 
 copy-test-node-modules:
 	rm -rf integration/snippets/package-json-exports/node_modules || echo "";
@@ -587,6 +628,22 @@ test-with-hmr: kill-bun copy-test-node-modules
 test-no-hmr: kill-bun copy-test-node-modules
 	-killall bun -9;
 	DISABLE_HMR="DISABLE_HMR" BUN_BIN=$(RELEASE_BUN) node integration/scripts/browser.js
+
+test-create-next-mac: 
+	BUN_BIN=$(MAC_BUN) bash integration/apps/bun-create-next.sh
+
+test-bun-run-mac: 
+	cd integration/apps && BUN_BIN=$(MAC_BUN) bash ./bun-run-check.sh
+
+test-create-react-mac: 
+	BUN_BIN=$(MAC_BUN) bash integration/apps/bun-create-react.sh
+	
+test-with-hmr-mac: kill-bun copy-test-node-modules
+	BUN_BIN=$(MAC_BUN) node integration/scripts/browser.js
+
+test-no-hmr-mac: kill-bun copy-test-node-modules
+	-killall bun -9;
+	DISABLE_HMR="DISABLE_HMR" BUN_BIN=$(MAC_BUN) node integration/scripts/browser.js
 
 test-dev-with-hmr: copy-test-node-modules
 	-killall bun-debug -9;

@@ -1,0 +1,17 @@
+{
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "description": "macOS build of Bun",
+  "directories": {
+    "bin": "bin"
+  },
+  "name": "bun-cli-mac",
+  "os": [
+    "darwin"
+  ],
+  "private": "false",
+  "repository": "https://github.com/jarred-sumner/bun",
+  "version": "0.0.37"
+}

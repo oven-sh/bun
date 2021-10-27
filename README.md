@@ -24,15 +24,21 @@ npm install -g bun-cli
 
 **JavaScript**: TODO
 
-### Getting started
-
 ## Using Bun as a task runner
 
 Instead of waiting 170ms for your npm client to start for each task, you wait 6ms for Bun.
 
 To use bun as a task runner, run `bun run` instead of `npm run`.
 
-A package.json that looks like this:
+```bash
+# Instead of "npm run clean"
+bun run clean
+
+# This also works
+bun clean
+```
+
+Assuming a package.json with a `clean` command in `scripts`:
 
 ```json
 {
@@ -41,15 +47,6 @@ A package.json that looks like this:
     "clean": "rm -rf dist out node_modules"
   }
 }
-```
-
-Can run:
-
-```bash
-bun run clean
-
-# This also works
-bun clean
 ```
 
 ## Using Bun with Next.js

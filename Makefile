@@ -384,6 +384,10 @@ runtime_js:
 bun_error:
 	@cd packages/bun-error; pnpm install; npm run --silent build
 
+generate-install-script:
+	@rm -f $(PACKAGES_REALPATH)/bun-cli/install.js
+	# NODE_ENV=production esbuild --log-level=error --define:BUN_VERSION="\"$(PACKAGE_JSON_VERSION)\"" --define:process.env.NODE_ENV="\"production\"" --platform=node --target=node14 --bundle  --format=cjs $(PACKAGES_REALPATH)/bun-cli/node-install.ts > $(PACKAGES_REALPATH)/bun-cli/install.js
+
 fetch:
 	cd misctools; zig build-obj -Drelease-fast ./fetch.zig -fcompiler-rt -lc --main-pkg-path ../
 	$(CXX) ./misctools/fetch.o -g -O3 -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc \
@@ -471,16 +475,19 @@ bump:
 
 
 # When adding a new architecture, don't forget to update this!
-write-package-json-version-cli:
+write-package-json-version-cli-json:
 	jq -S --raw-output '.version = "${PACKAGE_JSON_VERSION}"' packages/bun-cli/package.json  > packages/bun-cli/package.json.new
 	mv packages/bun-cli/package.json.new packages/bun-cli/package.json
 	jq -S --raw-output '.optionalDependencies."bun-cli-linux-x64" = "${PACKAGE_JSON_VERSION}"' packages/bun-cli/package.json  > packages/bun-cli/package.json.new
 	mv packages/bun-cli/package.json.new packages/bun-cli/package.json
 	jq -S --raw-output '.optionalDependencies."bun-cli-mac" = "${PACKAGE_JSON_VERSION}"' packages/bun-cli/package.json  > packages/bun-cli/package.json.new
+	mv packages/bun-cli/package.json.new packages/bun-cli/package.json
 
 write-package-json-version: 
 	jq -S --raw-output '.version = "${PACKAGE_JSON_VERSION}"' $(PACKAGE_DIR)/package.json  > $(PACKAGE_DIR)/package.json.new
 	mv $(PACKAGE_DIR)/package.json.new $(PACKAGE_DIR)/package.json
+
+write-package-json-version-cli: write-package-json-version-cli-json generate-install-script
 
 write-package-json-version-mac: 
 	jq -S --raw-output '.version = "${PACKAGE_JSON_VERSION}"' $(PACKAGE_MAC)/package.json  > $(PACKAGE_MAC)/package.json.new
@@ -503,12 +510,29 @@ BUN_DEPLOY_TGZ = $(BUN_DEPLOY_PKG)/$(PACKAGE_NAME)-$(PACKAGE_JSON_VERSION).tgz
 BUN_DEPLOY_PKG_MAC = $(BUN_DEPLOY_DIR)/bun-cli-mac
 BUN_DEPLOY_TGZ_MAC = $(BUN_DEPLOY_PKG_MAC)/bun-cli-mac-$(PACKAGE_JSON_VERSION).tgz
 
-release-cli-push:
+release-cli-generate: write-package-json-version-cli release-cli-generate-build
+
+release-cli-generate-build: 
 	rm -rf $(BUN_DEPLOY_CLI)
 	mkdir -p $(BUN_DEPLOY_CLI)
 	cp -r packages/bun-cli $(BUN_DEPLOY_CLI)
 	cd $(BUN_DEPLOY_CLI)/bun-cli; npm pack;
-	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_CLI)//bun-cli/bun-cli-$(PACKAGE_JSON_VERSION).tgz
+
+release-cli-check-npm:
+	rm -rf /tmp/bun-cli-check-release;
+	mkdir -p /tmp/bun-cli-check-release;
+	cd /tmp/bun-cli-check-release && npm install $(BUN_DEPLOY_CLI)/bun-cli/bun-cli-$(PACKAGE_JSON_VERSION).tgz
+	test $(PACKAGE_JSON_VERSION) == $(shell eval "cd /tmp/bun-cli-check-release; ./node_modules/.bin/bun --version || echo \"FAIL\"" )
+
+release-cli-check-yarn:
+	rm -rf /tmp/bun-cli-check-release;
+	mkdir -p /tmp/bun-cli-check-release;
+	cd /tmp/bun-cli-check-release && yarn add $(BUN_DEPLOY_CLI)/bun-cli/bun-cli-$(PACKAGE_JSON_VERSION).tgz
+	test $(PACKAGE_JSON_VERSION) == $(shell eval "cd /tmp/bun-cli-check-release; ./node_modules/.bin/bun --version || echo \"FAIL\"" )
+
+release-cli-push:
+	
+	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_CLI)/bun-cli/bun-cli-$(PACKAGE_JSON_VERSION).tgz
 	npm publish $(BUN_DEPLOY_CLI)/bun-cli/bun-cli-$(PACKAGE_JSON_VERSION).tgz --access=public
 
 release-bin-generate: write-package-json-version
@@ -548,7 +572,8 @@ release-bin-codesign:
 release-bin-notarize:
 	xcrun notarytool submit $(BIN_DIR)/bun
 
-release-bin: test-all release-bin-generate release-bin-check release-bin-push
+release-bin-without-push: test-all release-bin-check 
+release-bin: release-bin-without-push release-bin-push
 release-mac-without-push: release-mac-generate-bin release-bin-entitlements-mac test-all-mac release-mac-generate release-mac-check
 release-mac: release-mac-without-push release-mac-push
 
@@ -581,7 +606,7 @@ release-mac-generate-bin:
 	mkdir /tmp/bun-fat-$(PACKAGE_JSON_VERSION)/aarch64
 	cd /tmp/bun-fat-$(PACKAGE_JSON_VERSION) && tar -xvf x64.tgz -C x64
 	cd /tmp/bun-fat-$(PACKAGE_JSON_VERSION) && tar -xvf aarch64.tgz -C aarch64
-	rm $(MAC_BUN)
+	rm -f $(MAC_BUN)
 	lipo -create -output $(MAC_BUN) /tmp/bun-fat-$(PACKAGE_JSON_VERSION)/x64/package/bin/bun /tmp/bun-fat-$(PACKAGE_JSON_VERSION)/aarch64/package/bin/bun
 
 dev-obj:

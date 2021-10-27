@@ -1,19 +1,17 @@
 {
-  "bin": {
-    "bun": "bin/bun"
+  "bugs": {
+    "url": "https://github.com/jarred-sumner/bun/issues"
   },
   "description": "Bun: a fast bundler, transpiler and task runner for web software. To get early access, join the Discord https://bun.sh/discord",
   "homepage": "https://bun.sh",
   "license": "MIT",
+  "main": "package.json",
   "name": "bun-cli",
   "optionalDependencies": {
-    "bun-cli-darwin-aarch64": "0.0.37",
-    "bun-cli-darwin-x64": "0.0.37",
-    "bun-cli-linux-x64": "0.0.37"
+    "bun-cli-linux-x64": "0.0.37",
+    "bun-cli-mac": "0.0.37"
   },
   "repository": "https://github.com/jarred-sumner/bun",
-  "scripts": {
-    "prepublishOnly": "rm -rf ./bin/bun; chmod +x ./reset-bin.js; cp ./reset-bin.js ./bin/bun"
-  },
+  "scripts": {},
   "version": "0.0.37"
 }

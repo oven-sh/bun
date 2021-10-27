@@ -202,21 +202,17 @@ pub fn build(b: *std.build.Builder) !void {
         //     if (target.getOsTag() == .macos) "-DUSE_FOUNDATION=1" else "",
         //     if (target.getOsTag() == .macos) "-DUSE_CF_RETAIN_PTR=1" else "",
         // };
-        const headers_step = b.step("headers", "JSC headers");
-        var headers_exec: *std.build.LibExeObjStep = b.addExecutable("headers", "src/javascript/jsc/bindings/bindings-generator.zig");
-        var headers_runner = headers_exec.run();
-        headers_exec.setMainPkgPath(javascript.main_pkg_path.?);
-        headers_step.dependOn(&headers_runner.step);
-        var translate_c: *std.build.TranslateCStep = b.addTranslateC(.{ .path = b.pathFromRoot("src/javascript/jsc/bindings/headers.h") });
-        translate_c.out_basename = "headers";
-        translate_c.output_dir = b.pathFromRoot("src/javascript/jsc/bindings/");
-        headers_step.dependOn(&translate_c.step);
-        headers_zig_file = b.pathFromRoot("src/javascript/jsc/bindings/headers.zig");
+        const headers_step = b.step("headers-obj", "JSC headers Step #1");
+        var headers_obj: *std.build.LibExeObjStep = b.addObject("headers", "src/javascript/jsc/bindings/bindings-generator.zig");
+        headers_obj.setMainPkgPath(javascript.main_pkg_path.?);
+        headers_step.dependOn(&headers_obj.step);
 
-        original_make_fn = headers_step.makeFn;
-        headers_step.makeFn = HeadersMaker.make;
+       
         b.default_step.dependOn(&exe.step);
-        var steps = [_]*std.build.LibExeObjStep{ exe, javascript, typings_exe, headers_exec };
+        {
+
+    
+        var steps = [_]*std.build.LibExeObjStep{ exe, javascript, typings_exe };
 
         // const single_threaded = b.option(bool, "single-threaded", "Build single-threaded") orelse false;
 
@@ -262,7 +258,7 @@ pub fn build(b: *std.build.Builder) !void {
                 step.linkSystemLibrary("icuuc");
                 step.linkSystemLibrary("icudata");
                 step.linkSystemLibrary("icui18n");
-                step.linkSystemLibrary("iconv");
+                step.addObjectFile("src/deps/libiconv.a");
             }
 
             for (bindings_files.items) |binding| {
@@ -271,28 +267,52 @@ pub fn build(b: *std.build.Builder) !void {
                 );
             }
         }
+        }
 
-        var obj_step = b.step("obj", "Build Bun as a .o file");
-        var obj = b.addObject(bun_executable_name, exe.root_src.?.path);
-        obj.setTarget(target);
-        addPicoHTTP(obj, false);
-        obj.addPackage(.{
-            .name = "clap",
-            .path = .{ .path = "src/deps/zig-clap/clap.zig" },
-        });
+        {
+            var obj_step = b.step("obj", "Build Bun as a .o file");
+            var obj = b.addObject(bun_executable_name, exe.root_src.?.path);
+            obj.setTarget(target);
+            addPicoHTTP(obj, false);
+            obj.addPackage(.{
+                .name = "clap",
+                .path = .{ .path = "src/deps/zig-clap/clap.zig" },
+            });
 
-        obj_step.dependOn(&obj.step);
-        obj.setOutputDir(output_dir);
-        obj.setBuildMode(mode);
-        obj.linkLibC();
-        obj.linkLibCpp();
-        obj.strip = false;
-        obj.bundle_compiler_rt = true;
+            obj_step.dependOn(&obj.step);
+            obj.setOutputDir(output_dir);
+            obj.setBuildMode(mode);
+            obj.linkLibC();
+            obj.linkLibCpp();
 
-        if (target.getOsTag() == .linux) {
-            // obj.want_lto = tar;
-            obj.link_emit_relocs = true;
-            obj.link_function_sections = true;
+            obj.strip = false;
+            obj.bundle_compiler_rt = true;
+
+            if (target.getOsTag() == .linux) {
+                // obj.want_lto = tar;
+                obj.link_emit_relocs = true;
+                obj.link_function_sections = true;
+            }
+        }
+
+        {
+            headers_obj.setTarget(target);
+            headers_obj.addPackage(.{
+                .name = "clap",
+                .path = .{ .path = "src/deps/zig-clap/clap.zig" },
+            });
+
+            headers_obj.setOutputDir(output_dir);
+            headers_obj.setBuildMode(mode);
+            headers_obj.linkLibC();
+            headers_obj.linkLibCpp();
+            headers_obj.bundle_compiler_rt = true;
+
+            if (target.getOsTag() == .linux) {
+                // obj.want_lto = tar;
+                headers_obj.link_emit_relocs = true;
+                headers_obj.link_function_sections = true;
+            }
         }
     } else {
         b.default_step.dependOn(&exe.step);
@@ -334,59 +354,3 @@ pub fn build(b: *std.build.Builder) !void {
 }
 
 pub var original_make_fn: ?fn (step: *std.build.Step) anyerror!void = null;
-pub var headers_zig_file: ?[]const u8 = null;
-const HeadersMaker = struct {
-    pub fn make(self: *std.build.Step) anyerror!void {
-        try original_make_fn.?(self);
-        var headers_zig: std.fs.File = try std.fs.openFileAbsolute(headers_zig_file.?, .{ .write = true });
-        var contents = try headers_zig.readToEndAlloc(std.heap.page_allocator, headers_zig.getEndPos() catch unreachable);
-        const last_extern_i = std.mem.lastIndexOf(u8, contents, "pub extern fn") orelse @panic("Expected contents");
-        const last_newline = std.mem.indexOf(u8, contents[last_extern_i..], "\n") orelse @panic("Expected newline");
-        const to_splice = "usingnamespace @import(\"./headers-replacements.zig\");\n";
-        var new_contents = try std.heap.page_allocator.alloc(u8, contents.len + to_splice.len);
-        std.mem.copy(u8, new_contents, to_splice);
-        std.mem.copy(u8, new_contents[to_splice.len..], contents);
-        var i: usize = to_splice.len;
-        var remainder = new_contents[i..];
-        while (remainder.len > 0) {
-            i = std.mem.indexOf(u8, remainder, "\npub const struct_b") orelse break + "\npub const struct_b".len;
-            var begin = remainder[i..];
-            const end_line = std.mem.indexOf(u8, begin, "extern struct {") orelse break;
-            const end_struct = std.mem.indexOf(u8, begin, "\n};\n") orelse break + "\n};\n".len;
-
-            std.mem.set(u8, begin[1 .. end_struct + 3], ' ');
-            remainder = begin[end_struct..];
-        }
-        i = to_splice.len;
-        remainder = new_contents[i..];
-        while (remainder.len > 0) {
-            i = std.mem.indexOf(u8, remainder, "\npub const struct_") orelse break + "\npub const struct_".len;
-            var begin = remainder[i..];
-            var end_struct = std.mem.indexOf(u8, begin, "opaque {};") orelse break;
-            end_struct += std.mem.indexOf(u8, begin[end_struct..], "\n") orelse break;
-            i = 0;
-
-            std.mem.set(u8, begin[1..end_struct], ' ');
-            remainder = begin[end_struct..];
-        }
-
-        const HARDCODE = [_][]const u8{
-            "[*c][*c]JSC__Exception",
-            "*?*JSC__Exception     ",
-            "[*c]?*c_void",
-            "[*c]*c_void",
-        };
-        i = 0;
-        while (i < HARDCODE.len) : (i += 2) {
-            _ = std.mem.replace(u8, new_contents, HARDCODE[i], HARDCODE[i + 1], new_contents);
-        }
-
-        const js_value_start = std.mem.indexOf(u8, new_contents, "pub const JSC__JSValue") orelse unreachable;
-        const js_value_end = std.mem.indexOf(u8, new_contents[js_value_start..], "\n") orelse unreachable;
-        std.mem.set(u8, new_contents[js_value_start..][0..js_value_end], ' ');
-
-        try headers_zig.seekTo(0);
-        try headers_zig.writeAll(new_contents);
-        try headers_zig.setEndPos(last_newline + last_extern_i + to_splice.len);
-    }
-};

@@ -24,8 +24,13 @@ DEBUG_BUN = $(DEBUG_BIN)/bun-debug
 BUILD_ID = $(shell cat ./build-id)
 PACKAGE_JSON_VERSION = 0.0.$(BUILD_ID)
 BUN_BUILD_TAG = bun-v$(PACKAGE_JSON_VERSION)
-CC ?= $(realpath clang)
-CXX ?= $(realpath clang++)
+
+# We must use the same compiler version for the JavaScriptCore bindings and JavaScriptCore
+# If we don't do this, strange memory allocation failures occur.
+# This is easier to happen than you'd expect.
+CC = clang-12
+CXX = clang++-12
+
 DEPS_DIR = $(shell pwd)/src/deps
 CPUS ?= $(shell nproc)
 USER ?= $(echo $USER)
@@ -266,20 +271,14 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = src/deps/mimalloc/libmimalloc.a \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
 		src/deps/libs2n.a \
-		src/deps/picohttpparser.o
+		src/deps/picohttpparser.o \
 
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) src/deps/libcrypto.a
 
-BUN_LLD_FLAGS = $(OBJ_FILES) \
-		${ICU_FLAGS} \
-		${JSC_FILES} \
-		$(ARCHIVE_FILES) \
-		$(LIBICONV_PATH) \
-		$(CLANG_FLAGS)
+PLATFORM_LINKER_FLAGS =
 
 ifeq ($(OS_NAME), linux)
-BUN_LLD_FLAGS += -lstdc++fs \
-		$(DEFAULT_LINKER_FLAGS) \
+PLATFORM_LINKER_FLAGS = -lstdc++fs \
 		-lc \
 		-Wl,-z,now \
 		-Wl,--as-needed \
@@ -287,9 +286,19 @@ BUN_LLD_FLAGS += -lstdc++fs \
 		-Wl,-z,notext \
 		-ffunction-sections \
 		-fdata-sections \
-		-Wl,--gc-sections \
-		-fuse-ld=lld
+		-Wl,--gc-sections
 endif
+
+
+BUN_LLD_FLAGS = $(OBJ_FILES) \
+		${ICU_FLAGS} \
+		${JSC_FILES} \
+		$(ARCHIVE_FILES) \
+		$(LIBICONV_PATH) \
+		$(CLANG_FLAGS) \
+		$(DEFAULT_LINKER_FLAGS) \
+		$(PLATFORM_LINKER_FLAGS)
+
 
 bun: vendor build-obj bun-link-lld-release
 
@@ -435,9 +444,23 @@ jsc-build: $(JSC_BUILD_STEPS)
 jsc-bindings: jsc-bindings-headers jsc-bindings-mac
 	
 jsc-bindings-headers:
+	rm -f /tmp/build-jsc-headers src/javascript/jsc/bindings/headers.zig
+	touch src/javascript/jsc/bindings/headers.zig
 	mkdir -p src/javascript/jsc/bindings-obj/
-	zig build headers
+	zig build headers-obj
+	$(CXX) $(PLATFORM_LINKER_FLAGS) -g $(DEBUG_BIN)/headers.o -W -o /tmp/build-jsc-headers $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES);
+	/tmp/build-jsc-headers
+	zig translate-c src/javascript/jsc/bindings/headers.h > src/javascript/jsc/bindings/headers.zig
+	zig run misctools/headers-cleaner.zig -lc
+	sed -i '/pub const int/d' src/javascript/jsc/bindings/headers.zig || echo "";
+	sed -i '/pub const uint/d' src/javascript/jsc/bindings/headers.zig || echo "";
+	sed -i '/pub const intmax/d' src/javascript/jsc/bindings/headers.zig || echo "";
+	sed -i '/pub const uintmax/d' src/javascript/jsc/bindings/headers.zig || echo "";
+	sed -i '/pub const max_align_t/{N;N;N;d;}' src/javascript/jsc/bindings/headers.zig
+	sed -i '/pub const ZigErrorCode/d' src/javascript/jsc/bindings/headers.zig
+	sed -i '/pub const JSClassRef/d' src/javascript/jsc/bindings/headers.zig
 	zig fmt src/javascript/jsc/bindings/headers.zig
+	
 
 bump: 
 	expr $(BUILD_ID) + 1 > build-id
@@ -598,7 +621,7 @@ bun-link-lld-release:
 		-O3
 	cp $(BIN_DIR)/bun $(BIN_DIR)/bun-profile
 	$(STRIP) $(BIN_DIR)/bun
-	rm $(BIN_DIR)/bun.o
+	mv $(BIN_DIR)/bun.o /tmp/bun-$(PACKAGE_JSON_VERSION).o
 
 bun-link-lld-release-aarch64:
 	$(CXX) $(BUN_LLD_FLAGS) \

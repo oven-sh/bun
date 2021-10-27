@@ -501,13 +501,25 @@ mkdir-dev:
 test-install:
 	cd integration/scripts && pnpm install
 
-test-all: test-install test-with-hmr test-no-hmr
+test-all: test-install test-with-hmr test-no-hmr test-dev-create-next test-dev-create-react
 
 copy-test-node-modules:
 	rm -rf integration/snippets/package-json-exports/node_modules || echo "";
 	cp -r integration/snippets/package-json-exports/_node_modules_copy integration/snippets/package-json-exports/node_modules || echo "";
 kill-bun:
 	-killall -9 bun bun-debug
+
+test-dev-create-next: 
+	BUN_BIN=$(DEBUG_BUN) bash integration/apps/bun-create-next.sh
+
+test-dev-create-react: 
+	BUN_BIN=$(DEBUG_BUN) bash integration/apps/bun-create-react.sh
+
+test-create-next: 
+	BUN_BIN=$(RELEASE_BUN) bash integration/apps/bun-create-next.sh
+
+test-create-react: 
+	BUN_BIN=$(RELEASE_BUN) bash integration/apps/bun-create-react.sh
 	
 test-with-hmr: kill-bun copy-test-node-modules
 	BUN_BIN=$(RELEASE_BUN) node integration/scripts/browser.js
@@ -524,7 +536,7 @@ test-dev-no-hmr: copy-test-node-modules
 	-killall bun-debug -9;
 	DISABLE_HMR="DISABLE_HMR" BUN_BIN=$(DEBUG_BUN) node integration/scripts/browser.js
 
-test-dev-all: test-dev-with-hmr test-dev-no-hmr
+test-dev-all: test-dev-with-hmr test-dev-no-hmr test-dev-create-next text-dev-create-react
 
 test-dev: test-dev-with-hmr
 

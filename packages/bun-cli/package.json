@@ -3,9 +3,9 @@
     "bun": "bin/bun"
   },
   "description": "Bun: a fast bundler, transpiler and task runner for web software. To get early access, join the Discord https://bun.sh/discord",
+  "homepage": "https://bun.sh",
   "license": "MIT",
   "name": "bun-cli",
-  "homepage": "https://bun.sh",
   "optionalDependencies": {
     "bun-cli-darwin-aarch64": "0.0.37",
     "bun-cli-darwin-x64": "0.0.37",

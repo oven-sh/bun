@@ -1,7 +1,7 @@
 {
   "name": "bun-framework-next",
-  "version": "0.0.0-22",
-  "description": "",
+  "version": "0.0.0-23",
+  "description": "Bun compatibility layer for Next.js v11.1.2",
   "framework": {
     "displayName": "Next.js",
     "static": "public",

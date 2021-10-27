@@ -1,14 +1,14 @@
 {
-  "directories": {
-    "bin": "bin"
-  },
-  "os": [
-    "darwin"
-  ],
   "cpu": [
     "x64"
   ],
+  "directories": {
+    "bin": "bin"
+  },
   "name": "bun-cli-darwin-x64",
+  "os": [
+    "darwin"
+  ],
   "repository": "https://github.com/jarred-sumner/bun",
-  "version": "0.0.36"
+  "version": "0.0.37"
 }

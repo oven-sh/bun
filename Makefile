@@ -28,8 +28,9 @@ BUN_BUILD_TAG = bun-v$(PACKAGE_JSON_VERSION)
 # We must use the same compiler version for the JavaScriptCore bindings and JavaScriptCore
 # If we don't do this, strange memory allocation failures occur.
 # This is easier to happen than you'd expect.
-CC = clang-12
-CXX = clang++-12
+
+CC = $(shell which clang-12 || which clang)
+CXX = $(shell which clang++-12 || which clang++)
 
 DEPS_DIR = $(shell pwd)/src/deps
 CPUS ?= $(shell nproc)
@@ -622,15 +623,6 @@ bun-link-lld-release:
 	cp $(BIN_DIR)/bun $(BIN_DIR)/bun-profile
 	$(STRIP) $(BIN_DIR)/bun
 	mv $(BIN_DIR)/bun.o /tmp/bun-$(PACKAGE_JSON_VERSION).o
-
-bun-link-lld-release-aarch64:
-	$(CXX) $(BUN_LLD_FLAGS) \
-		build/macos-aarch64/bun.o \
-		-o build/macos-aarch64/bun \
-		-Wl,-dead_strip \
-		-ftls-model=initial-exec \
-		-flto \
-		-O3
 
 # We do this outside of build.zig for performance reasons
 # The C compilation stuff with build.zig is really slow and we don't need to run this as often as the rest

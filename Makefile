@@ -301,7 +301,7 @@ BUN_LLD_FLAGS = $(OBJ_FILES) \
 		$(PLATFORM_LINKER_FLAGS)
 
 
-bun: vendor build-obj bun-link-lld-release release-bin-entitlements
+bun: vendor build-obj bun-link-lld-release
 
 
 vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib openssl s2n libarchive
@@ -520,7 +520,7 @@ ifeq ($(OS_NAME),darwin)
 # strip will remove the entitlements.plist 
 # which, in turn, will break JIT
 release-bin-entitlements:
-	codesign --entitlements $(realpath entitlements.plist) --options runtime --force --timestamp --sign $(CODESIGN_IDENTITY) -vvv --deep --strict $(BIN_DIR)/bun
+	codesign --entitlements $(realpath entitlements.plist) --options runtime --force --timestamp --sign "$(CODESIGN_IDENTITY)" -vvv --deep --strict $(BIN_DIR)/bun
 endif
 
 release-bin-codesign:
@@ -532,11 +532,13 @@ release-bin-codesign:
 release-bin-notarize:
 	xcrun notarytool submit $(BIN_DIR)/bun
 
-release-bin: release-bin-generate release-bin-check release-bin-push
+release-bin: test-all release-bin-generate release-bin-check release-bin-push
 
 release-bin-check:
+	rm -rf /tmp/bun-$(PACKAGE_JSON_VERSION)-check;
 	mkdir -p /tmp/bun-$(PACKAGE_JSON_VERSION)-check;
-	cd /tmp/bun-$(PACKAGE_JSON_VERSION)-check && npm install $(BUN_DEPLOY_TGZ) && ./node_modules/.bin/bun --version
+	cd /tmp/bun-$(PACKAGE_JSON_VERSION)-check && npm install $(BUN_DEPLOY_TGZ)
+	test $(PACKAGE_JSON_VERSION) == $(shell eval "/tmp/bun-$(PACKAGE_JSON_VERSION)-check/node_modules/.bin/bun --version")
 
 release-bin-push: 
 	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_TGZ)

@@ -443,11 +443,14 @@ bump:
 	expr $(BUILD_ID) + 1 > build-id
 
 
-build_postinstall: 
-	@esbuild --bundle --format=cjs --platform=node --define:BUN_VERSION="\"$(PACKAGE_JSON_VERSION)\"" packages/bun-cli/scripts/postinstall.ts > packages/bun-cli/postinstall.js
-
-write-package-json-version-cli: build_postinstall
+write-package-json-version-cli:
 	jq -S --raw-output '.version = "${PACKAGE_JSON_VERSION}"' packages/bun-cli/package.json  > packages/bun-cli/package.json.new
+	mv packages/bun-cli/package.json.new packages/bun-cli/package.json
+	jq -S --raw-output '.optionalDependencies."bun-cli-linux-x64" = "${PACKAGE_JSON_VERSION}"' packages/bun-cli/package.json  > packages/bun-cli/package.json.new
+	mv packages/bun-cli/package.json.new packages/bun-cli/package.json
+	jq -S --raw-output '.optionalDependencies."bun-cli-darwin-x64" = "${PACKAGE_JSON_VERSION}"' packages/bun-cli/package.json  > packages/bun-cli/package.json.new
+	mv packages/bun-cli/package.json.new packages/bun-cli/package.json
+	jq -S --raw-output '.optionalDependencies."bun-cli-darwin-aarch64" = "${PACKAGE_JSON_VERSION}"' packages/bun-cli/package.json  > packages/bun-cli/package.json.new
 	mv packages/bun-cli/package.json.new packages/bun-cli/package.json
 
 write-package-json-version: 

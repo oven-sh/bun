@@ -501,7 +501,7 @@ mkdir-dev:
 test-install:
 	cd integration/scripts && pnpm install
 
-test-all: test-install test-with-hmr test-no-hmr test-dev-create-next test-dev-create-react
+test-all: test-install test-with-hmr test-no-hmr test-create-next test-create-react
 
 copy-test-node-modules:
 	rm -rf integration/snippets/package-json-exports/node_modules || echo "";

@@ -1205,6 +1205,9 @@ pub const RequestContext = struct {
             var module_map = ZigGlobalObject.getModuleRegistryMap(vm.global);
             if (!VM.isJITEnabled()) {
                 Output.prettyErrorln("<red><r>warn:<r> JIT is disabled,,,this is a bug in Bun and/or a permissions problem. JS will run slower.", .{});
+                if (vm.bundler.env.map.get("BUN_CRASH_WITHOUT_JIT") != null) {
+                    Global.crash();
+                }
             }
 
             while (true) {

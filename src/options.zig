@@ -601,11 +601,14 @@ pub const defaultLoaders = std.ComptimeStringMap(Loader, .{
     .{ ".jsx", Loader.jsx },
     .{ ".json", Loader.json },
     .{ ".js", Loader.jsx },
+
     .{ ".mjs", Loader.js },
+    .{ ".cjs", Loader.js },
+
     .{ ".css", Loader.css },
     .{ ".ts", Loader.ts },
     .{ ".tsx", Loader.tsx },
-    .{ ".cjs", Loader.js },
+
     .{ ".mts", Loader.ts },
     .{ ".cts", Loader.ts },
 });

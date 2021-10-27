@@ -52,10 +52,6 @@ bun run clean
 bun clean
 ```
 
-For maximum performance, any scripts that invoke `npm run`, `yarn run`, or `pnpm run` will automatically be replaced in-memory with `bun run`. This means you can try `bun run` in existing codebases that aren't using Bun and get an immediate performance boost.
-
-`bun run` supports lifecycle hooks like `post${task}` and `pre{task}`, adds `node_modules/.bin` to `$PATH` (for all parent `node_modules` folders), and automatically loads `.env` files if they exist. Like with yarn, you can use `bun run` without typing `run` (but any new subcommands will override it, so be warned!)
-
 ## Using Bun with Next.js
 
 To create a new Next.js app with Bun:
@@ -184,7 +180,6 @@ Bun is a project with incredibly large scope, and it's early days.
 | Sharing `.bun` files                                                                                                   | Bun            |
 | [Finish fetch](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API)                                             | Bun.js         |
 | [setTimeout](https://developer.mozilla.org/en-US/docs/Web/API/setTimeout)                                              | Bun.js         |
-| `bun run` command                                                                                                      | Bun.js         |
 
 <sup>JS Transpiler == JavaScript Transpiler</sup><br/>
 <sup>TS Transpiler == TypeScript Transpiler</sup><br/>
@@ -523,6 +518,8 @@ If something is unexpected there, you can run `bun run env` to get a list of env
 The default shell it uses is `bash`, but if that's not found, it tries `sh` and if still not found, it tries `zsh`. This is not configurable right now, but if you care file an issue.
 
 `bun run` automatically adds any parent `node_modules/.bin` to `$PATH` and if no scripts match, it will load that binary instead. That means you can run executables from packages too.
+
+`bun run` supports lifecycle hooks like `post${task}` and `pre{task}`. If they exist, they will run matching the behavior of npm clients. If the `pre${task}` fails, the next task will not be run. There is currently no flag to skip these lifecycle tasks if they exist, if you want that file an issue.
 
 ```bash
 # If you use Relay

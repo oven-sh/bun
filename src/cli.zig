@@ -458,6 +458,7 @@ const HelpCommand = struct {
                 \\> <r> <b><green>dev     <r><d>  ./a.ts ./b.jsx<r>        Start a Bun Dev Server
                 \\> <r> <b><magenta>bun     <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
                 \\> <r> <b><cyan>create     <r><d>  next ./app<r>          Start a new project from a template <d>(shorthand: c)<r>
+                \\> <r> <b><green>run     <r><d>  test        <r>          Run a package.json script or executable<r>
                 \\> <r> <b><blue>discord <r>                        Open Bun's Discord server
                 \\> <r> <b><d>help      <r>                      Print this help menu
                 \\

@@ -443,6 +443,7 @@ bump:
 	expr $(BUILD_ID) + 1 > build-id
 
 
+# When adding a new architecture, don't forget to update this!
 write-package-json-version-cli:
 	jq -S --raw-output '.version = "${PACKAGE_JSON_VERSION}"' packages/bun-cli/package.json  > packages/bun-cli/package.json.new
 	mv packages/bun-cli/package.json.new packages/bun-cli/package.json

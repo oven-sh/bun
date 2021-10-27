@@ -916,7 +916,13 @@ In `bun`:
 
 ```bash
 git submodule update --init --recursive --progress --depth=1
-make vendor
+make vendor dev
+```
+
+Verify it worked:
+
+```bash
+make test-dev-all
 ```
 
 Note that `brew install zig` won't work. Bun uses a build of Zig with a couple patches.
@@ -956,6 +962,12 @@ Compile Bun:
 
 ```bash
 make vendor dev
+```
+
+Verify it worked:
+
+```bash
+make test-dev-all
 ```
 
 Run bun:

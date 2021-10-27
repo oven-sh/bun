@@ -6,6 +6,7 @@ Bun is a new:
 - JavaScript & CSS bundler
 - Development server with 60fps Hot Module Reloading (& WIP support for React Fast Refresh)
 - JavaScript Runtime Environment (powered by JavaScriptCore, what WebKit/Safari uses)
+- Task runner for `package.json` scripts
 
 All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for development, you only need Bun.
 

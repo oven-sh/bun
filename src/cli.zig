@@ -465,7 +465,7 @@ const HelpCommand = struct {
             ;
 
             switch (reason) {
-                .explicit => Output.pretty("<r><b><magenta>Bun<r>: a fast bundler & transpiler for web software.\n\n" ++ fmt, .{}),
+                .explicit => Output.pretty("<r><b><magenta>Bun<r>: a fast bundler, transpiler and task runner for web software.\n\n" ++ fmt, .{}),
                 .invalid_command => Output.prettyError("<r><red>Uh-oh<r> not sure what to do with that command.\n\n" ++ fmt, .{}),
             }
         } else {
@@ -482,7 +482,7 @@ const HelpCommand = struct {
             ;
 
             switch (reason) {
-                .explicit => Output.pretty("<r><b><magenta>Bun<r>: a fast bundler & transpiler for web software.\n\n" ++ fmt, .{dirname}),
+                .explicit => Output.pretty("<r><b><magenta>Bun<r>: a fast bundler, transpiler and task runner for web software.\n\n" ++ fmt, .{dirname}),
                 .invalid_command => Output.prettyError("<r><red>Uh-oh<r> not sure what to do with that command.\n\n" ++ fmt, .{dirname}),
             }
         }

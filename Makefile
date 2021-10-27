@@ -1,3 +1,5 @@
+SHELL := /bin/bash # Use bash syntax to be consistent
+
 OS_NAME := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 ARCH_NAME_RAW := $(shell uname -m)
 
@@ -531,7 +533,6 @@ release-cli-check-yarn:
 	test $(PACKAGE_JSON_VERSION) == $(shell eval "cd /tmp/bun-cli-check-release; ./node_modules/.bin/bun --version || echo \"FAIL\"" )
 
 release-cli-push:
-	
 	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_CLI)/bun-cli/bun-cli-$(PACKAGE_JSON_VERSION).tgz
 	npm publish $(BUN_DEPLOY_CLI)/bun-cli/bun-cli-$(PACKAGE_JSON_VERSION).tgz --access=public
 
@@ -580,14 +581,23 @@ release-mac: release-mac-without-push release-mac-push
 release-bin-check:
 	rm -rf /tmp/bun-$(PACKAGE_JSON_VERSION)-check;
 	mkdir -p /tmp/bun-$(PACKAGE_JSON_VERSION)-check;
+	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" > /tmp/bun-$(PACKAGE_JSON_VERSION)-check/package.json
 	cd /tmp/bun-$(PACKAGE_JSON_VERSION)-check && npm install $(BUN_DEPLOY_TGZ)
-	test $(PACKAGE_JSON_VERSION) == $(shell eval "/tmp/bun-$(PACKAGE_JSON_VERSION)-check/node_modules/.bin/bun --version")
+	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval /tmp/bun-$(PACKAGE_JSON_VERSION)-check/node_modules/.bin/bun --version)"
+
+release-bin-check-yarn:
+	rm -rf /tmp/bun-$(PACKAGE_JSON_VERSION)-check;
+	mkdir -p /tmp/bun-$(PACKAGE_JSON_VERSION)-check;
+	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" > /tmp/bun-$(PACKAGE_JSON_VERSION)-check/package.json
+	cd /tmp/bun-$(PACKAGE_JSON_VERSION)-check && yarn add $(BUN_DEPLOY_TGZ)
+	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval /tmp/bun-$(PACKAGE_JSON_VERSION)-check/node_modules/.bin/bun --version)"
 
 release-mac-check:
 	rm -rf /tmp/bun-$(PACKAGE_JSON_VERSION)-check;
 	mkdir -p /tmp/bun-$(PACKAGE_JSON_VERSION)-check;
+	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" > /tmp/bun-$(PACKAGE_JSON_VERSION)-check/package.json
 	cd /tmp/bun-$(PACKAGE_JSON_VERSION)-check && npm install $(BUN_DEPLOY_TGZ_MAC)
-	test $(PACKAGE_JSON_VERSION) == $(shell eval "/tmp/bun-$(PACKAGE_JSON_VERSION)-check/node_modules/.bin/bun --version")
+	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval /tmp/bun-$(PACKAGE_JSON_VERSION)-check/node_modules/.bin/bun --version)"
 
 release-bin-push: 
 	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_TGZ)

@@ -501,7 +501,7 @@ mkdir-dev:
 test-install:
 	cd integration/scripts && pnpm install
 
-test-all: test-install test-with-hmr test-no-hmr test-create-next test-create-react
+test-all: test-install test-with-hmr test-no-hmr test-create-next test-create-react test-bun-run
 
 copy-test-node-modules:
 	rm -rf integration/snippets/package-json-exports/node_modules || echo "";
@@ -517,6 +517,9 @@ test-dev-create-react:
 
 test-create-next: 
 	BUN_BIN=$(RELEASE_BUN) bash integration/apps/bun-create-next.sh
+
+test-bun-run: 
+	cd integration/apps && BUN_BIN=$(RELEASE_BUN) bash ./bun-run-check.sh
 
 test-create-react: 
 	BUN_BIN=$(RELEASE_BUN) bash integration/apps/bun-create-react.sh
@@ -536,7 +539,10 @@ test-dev-no-hmr: copy-test-node-modules
 	-killall bun-debug -9;
 	DISABLE_HMR="DISABLE_HMR" BUN_BIN=$(DEBUG_BUN) node integration/scripts/browser.js
 
-test-dev-all: test-dev-with-hmr test-dev-no-hmr test-dev-create-next text-dev-create-react
+test-dev-bun-run: 
+	cd integration/apps && BUN_BIN=$(DEBUG_BUN) bash bun-run-check.sh
+
+test-dev-all: test-dev-with-hmr test-dev-no-hmr test-dev-create-next text-dev-create-react test-dev-bun-run
 
 test-dev: test-dev-with-hmr
 
@@ -568,8 +574,6 @@ clean: clean-bindings
 	(cd src/deps/s2n-tls && make clean) || echo "";
 	(cd src/deps/picohttp && make clean) || echo "";
 	(cd src/deps/zlib && make clean) || echo "";
-
-
 
 jsc-bindings-mac: $(OBJ_FILES)
 

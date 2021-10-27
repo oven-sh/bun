@@ -1,0 +1,6 @@
+{
+  "name": "check",
+  "scripts": {
+    "this-should-work": "echo \"✅ bun run test passed!\""
+  }
+}

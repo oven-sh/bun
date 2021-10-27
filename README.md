@@ -516,8 +516,6 @@ The default shell it uses is `bash`, but if that's not found, it tries `sh` and 
 
 `bun run` automatically adds any parent `node_modules/.bin` to `$PATH` and if no scripts match, it will load that binary instead. That means you can run executables from packages too.
 
-`bun run` supports lifecycle hooks like `post${task}` and `pre{task}`. If they exist, they will run matching the behavior of npm clients. If the `pre${task}` fails, the next task will not be run. There is currently no flag to skip these lifecycle tasks if they exist, if you want that file an issue.
-
 ```bash
 # If you use Relay
 bun run relay-compiler
@@ -538,6 +536,8 @@ bun run relay-compiler -- -–help
 # Bun flags are parsed first, which means e.g. `bun run relay-compiler --help` will print Bun's help instead of relay-compiler's help.
 bun run relay-compiler --schema foo.graphql
 ```
+
+`bun run` supports lifecycle hooks like `post${task}` and `pre{task}`. If they exist, they will run matching the behavior of npm clients. If the `pre${task}` fails, the next task will not be run. There is currently no flag to skip these lifecycle tasks if they exist, if you want that file an issue.
 
 ### `bun create`
 

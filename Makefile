@@ -301,7 +301,7 @@ BUN_LLD_FLAGS = $(OBJ_FILES) \
 		$(PLATFORM_LINKER_FLAGS)
 
 
-bun: vendor build-obj bun-link-lld-release
+bun: vendor build-obj bun-link-lld-release release-bin-entitlements
 
 
 vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib openssl s2n libarchive
@@ -351,7 +351,7 @@ sign-macos-aarch64:
 cls: 
 	@echo "\n\n---\n\n"
 
-release: all-js build-obj jsc-bindings-mac cls bun-link-lld-release
+release: all-js build-obj jsc-bindings-mac cls bun-link-lld-release release-bin-entitlements
 
 jsc-check:
 	@ls $(JSC_BASE_DIR)  >/dev/null 2>&1 || (echo "Failed to access WebKit build. Please compile the WebKit submodule using the Dockerfile at $(shell pwd)/src/javascript/WebKit/Dockerfile and then copy from /output in the Docker container to $(JSC_BASE_DIR). You can override the directory via JSC_BASE_DIR. \n\n 	DOCKER_BUILDKIT=1 docker build -t bun-webkit $(shell pwd)/src/javascript/jsc/WebKit -f $(shell pwd)/src/javascript/jsc/WebKit/Dockerfile --progress=plain\n\n 	docker container create bun-webkit\n\n 	# Get the container ID\n	docker container ls\n\n 	docker cp DOCKER_CONTAINER_ID_YOU_JUST_FOUND:/output $(JSC_BASE_DIR)" && exit 1)	
@@ -491,9 +491,12 @@ prepare-release: tag release-create write-package-json-version-cli write-package
 release-create:
 	gh release create --title "Bun v$(PACKAGE_JSON_VERSION)" "$(BUN_BUILD_TAG)"
 
-BUN_DEPLOY_DIR := $(BUN_TMP_DIR)/bun-deploy
-BUN_DEPLOY_CLI := $(BUN_TMP_DIR)/bun-cli
-BUN_DEPLOY_PKG := $(BUN_DEPLOY_DIR)/$(PACKAGE_NAME)
+BUN_DEPLOY_DIR = $(BUN_TMP_DIR)/bun-deploy
+BUN_DEPLOY_CLI = $(BUN_TMP_DIR)/bun-cli
+BUN_DEPLOY_PKG = $(BUN_DEPLOY_DIR)/$(PACKAGE_NAME)
+BUN_DEPLOY_TGZ = $(BUN_DEPLOY_PKG)/$(PACKAGE_NAME)-$(PACKAGE_JSON_VERSION).tgz
+BUN_DEPLOY_TGZ_FOLDER = $(BUN_DEPLOY_PKG)/$(PACKAGE_NAME)-$(PACKAGE_JSON_VERSION).folder
+BUN_DEPLOY_ZIP = $(BUN_DEPLOY_PKG)/$(PACKAGE_NAME)-$(PACKAGE_JSON_VERSION).zip
 
 release-cli-push:
 	rm -rf $(BUN_DEPLOY_CLI)
@@ -503,13 +506,41 @@ release-cli-push:
 	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_CLI)//bun-cli/bun-cli-$(PACKAGE_JSON_VERSION).tgz
 	npm publish $(BUN_DEPLOY_CLI)/bun-cli/bun-cli-$(PACKAGE_JSON_VERSION).tgz --access=public
 
-release-bin-push: write-package-json-version
+release-bin-generate: write-package-json-version
 	rm -rf $(BUN_DEPLOY_DIR)
 	mkdir -p $(BUN_DEPLOY_DIR)
 	cp -r $(PACKAGE_DIR) $(BUN_DEPLOY_DIR)
 	cd $(BUN_DEPLOY_PKG); npm pack;
-	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_PKG)/$(PACKAGE_NAME)-$(PACKAGE_JSON_VERSION).tgz
-	npm publish $(BUN_DEPLOY_PKG)/$(PACKAGE_NAME)-$(PACKAGE_JSON_VERSION).tgz --access=public
+
+
+release-bin-entitlements:
+
+ifeq ($(OS_NAME),darwin)
+# Without this, JIT will fail on aarch64
+# strip will remove the entitlements.plist 
+# which, in turn, will break JIT
+release-bin-entitlements:
+	codesign --entitlements $(realpath entitlements.plist) --options runtime --force --timestamp --sign $(CODESIGN_IDENTITY) -vvv --deep --strict $(BIN_DIR)/bun
+endif
+
+release-bin-codesign:
+	mkdir -p $(BUN_DEPLOY_ZIP)-input/package
+	tar -xzvf $(BUN_DEPLOY_TGZ) package
+	zip -r $(BUN_DEPLOY_ZIP) package
+	xcrun notarytool submit --wait $(BUN_DEPLOY_ZIP)
+
+release-bin-notarize:
+	xcrun notarytool submit $(BIN_DIR)/bun
+
+release-bin: release-bin-generate release-bin-check release-bin-push
+
+release-bin-check:
+	mkdir -p /tmp/bun-$(PACKAGE_JSON_VERSION)-check;
+	cd /tmp/bun-$(PACKAGE_JSON_VERSION)-check && npm install $(BUN_DEPLOY_TGZ) && ./node_modules/.bin/bun --version
+
+release-bin-push: 
+	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_TGZ)
+	npm publish $(BUN_DEPLOY_TGZ) --access=public
 
 dev-obj:
 	zig build obj
@@ -574,7 +605,7 @@ jsc-copy-headers:
 	find src/javascript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} src/javascript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/JavaScriptCore/ \;
 
 jsc-build-mac-compile:
-	cd src/javascript/jsc/WebKit && ICU_INCLUDE_DIRS="$(HOMEBREW_PREFIX)opt/icu4c/include" ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo"
+	cd src/javascript/jsc/WebKit && ICU_INCLUDE_DIRS="$(HOMEBREW_PREFIX)opt/icu4c/include" ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo -DPTHREAD_JIT_PERMISSIONS_API=1"
 
 jsc-build-linux-compile:
 	cd src/javascript/jsc/WebKit && ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo -DUSE_THIN_ARCHIVES=OFF"
@@ -611,6 +642,12 @@ bun-link-lld-debug:
 		$(DEBUG_BIN)/bun-debug.o \
 		-W \
 		-o $(DEBUG_BIN)/bun-debug \
+
+
+bun-relink-copy:
+	cp /tmp/bun-$(PACKAGE_JSON_VERSION).o $(BIN_DIR)/bun.o
+
+bun-relink: bun-relink-copy bun-link-lld-release
 
 bun-link-lld-release:
 	$(CXX) $(BUN_LLD_FLAGS) \

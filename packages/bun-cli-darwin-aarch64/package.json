@@ -1,14 +1,14 @@
 {
+  "cpu": [
+    "arm64"
+  ],
   "directories": {
     "bin": "bin"
   },
   "name": "bun-cli-darwin-aarch64",
-  "repository": "https://github.com/jarred-sumner/bun",
-  "version": "0.0.0-11",
   "os": [
     "darwin"
   ],
-  "cpu": [
-    "arm"
-  ]
+  "repository": "https://github.com/jarred-sumner/bun",
+  "version": "0.0.37"
 }

@@ -512,25 +512,86 @@ BUN_DEPLOY_TGZ = $(BUN_DEPLOY_PKG)/$(PACKAGE_NAME)-$(PACKAGE_JSON_VERSION).tgz
 BUN_DEPLOY_PKG_MAC = $(BUN_DEPLOY_DIR)/bun-cli-mac
 BUN_DEPLOY_TGZ_MAC = $(BUN_DEPLOY_PKG_MAC)/bun-cli-mac-$(PACKAGE_JSON_VERSION).tgz
 
+RELEASE_CLI_CHECK_DIR = /tmp/bun-$(PACKAGE_JSON_VERSION)-cli-check
+RELEASE_BIN_CHECK_DIR = /tmp/bun-$(PACKAGE_JSON_VERSION)-bin-check
+
 release-cli-generate: write-package-json-version-cli release-cli-generate-build
 
 release-cli-generate-build: 
 	rm -rf $(BUN_DEPLOY_CLI)
 	mkdir -p $(BUN_DEPLOY_CLI)
+	chmod +x packages/bun-cli/bin/bun
 	cp -r packages/bun-cli $(BUN_DEPLOY_CLI)
 	cd $(BUN_DEPLOY_CLI)/bun-cli; npm pack;
 
 release-cli-check-npm:
-	rm -rf /tmp/bun-cli-check-release;
-	mkdir -p /tmp/bun-cli-check-release;
-	cd /tmp/bun-cli-check-release && npm install $(BUN_DEPLOY_CLI)/bun-cli/bun-cli-$(PACKAGE_JSON_VERSION).tgz
-	test $(PACKAGE_JSON_VERSION) == $(shell eval "cd /tmp/bun-cli-check-release; ./node_modules/.bin/bun --version || echo \"FAIL\"" )
+	rm -rf $(RELEASE_CLI_CHECK_DIR);
+	mkdir -p $(RELEASE_CLI_CHECK_DIR);
+	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" >  $(RELEASE_CLI_CHECK_DIR)/package.json
+	cd $(RELEASE_CLI_CHECK_DIR) && npm install --save $(BUN_DEPLOY_CLI)/bun-cli/bun-cli-$(PACKAGE_JSON_VERSION).tgz
+	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval $(RELEASE_CLI_CHECK_DIR)/node_modules/.bin/bun --version || echo "FAIL" )"
 
 release-cli-check-yarn:
-	rm -rf /tmp/bun-cli-check-release;
-	mkdir -p /tmp/bun-cli-check-release;
-	cd /tmp/bun-cli-check-release && yarn add $(BUN_DEPLOY_CLI)/bun-cli/bun-cli-$(PACKAGE_JSON_VERSION).tgz
-	test $(PACKAGE_JSON_VERSION) == $(shell eval "cd /tmp/bun-cli-check-release; ./node_modules/.bin/bun --version || echo \"FAIL\"" )
+	rm -rf $(RELEASE_CLI_CHECK_DIR);
+	mkdir -p $(RELEASE_CLI_CHECK_DIR);
+	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" >  $(RELEASE_CLI_CHECK_DIR)/package.json
+	cd $(RELEASE_CLI_CHECK_DIR) && yarn add $(BUN_DEPLOY_CLI)/bun-cli/bun-cli-$(PACKAGE_JSON_VERSION).tgz
+	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval $(RELEASE_CLI_CHECK_DIR)/node_modules/.bin/bun --version || echo "FAIL" )"
+
+release-cli-check-pnpm:
+	rm -rf $(RELEASE_CLI_CHECK_DIR);
+	mkdir -p $(RELEASE_CLI_CHECK_DIR);
+	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" >  $(RELEASE_CLI_CHECK_DIR)/package.json
+	cd $(RELEASE_CLI_CHECK_DIR) && pnpm add $(BUN_DEPLOY_CLI)/bun-cli/bun-cli-$(PACKAGE_JSON_VERSION).tgz
+	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval $(RELEASE_CLI_CHECK_DIR)/node_modules/.bin/bun --version || echo "FAIL" )"
+
+release-cli-check: release-cli-check-npm release-cli-check-yarn release-cli-check-pnpm
+
+release-bin-check-npm:
+	rm -rf $(RELEASE_BIN_CHECK_DIR);
+	mkdir -p $(RELEASE_BIN_CHECK_DIR);
+	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" > $(RELEASE_BIN_CHECK_DIR)/package.json
+	cd $(RELEASE_BIN_CHECK_DIR) && npm install --save $(BUN_DEPLOY_TGZ)
+	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval $(RELEASE_BIN_CHECK_DIR)/node_modules/.bin/bun --version || echo "FAIL" )"
+
+release-bin-check-yarn:
+	rm -rf $(RELEASE_BIN_CHECK_DIR);
+	mkdir -p $(RELEASE_BIN_CHECK_DIR);
+	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" > $(RELEASE_BIN_CHECK_DIR)/package.json
+	cd $(RELEASE_BIN_CHECK_DIR) && yarn add $(BUN_DEPLOY_TGZ)
+	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval $(RELEASE_BIN_CHECK_DIR)/node_modules/.bin/bun --version || echo "FAIL" )"
+
+release-bin-check-pnpm:
+	rm -rf $(RELEASE_BIN_CHECK_DIR);
+	mkdir -p $(RELEASE_BIN_CHECK_DIR);
+	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" > $(RELEASE_BIN_CHECK_DIR)/package.json
+	cd $(RELEASE_BIN_CHECK_DIR) && pnpm add $(BUN_DEPLOY_TGZ)
+	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval $(RELEASE_BIN_CHECK_DIR)/node_modules/.bin/bun --version || echo "FAIL" )"
+
+release-bin-check: release-bin-check-npm release-bin-check-yarn release-bin-check-pnpm
+
+release-mac-check-npm:
+	rm -rf $(RELEASE_BIN_CHECK_DIR);
+	mkdir -p $(RELEASE_BIN_CHECK_DIR);
+	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" > $(RELEASE_BIN_CHECK_DIR)/package.json
+	cd $(RELEASE_BIN_CHECK_DIR) && npm install --save $(BUN_DEPLOY_TGZ_MAC)
+	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval $(RELEASE_BIN_CHECK_DIR)/node_modules/.bin/bun --version || echo "FAIL" )"
+
+release-mac-check-yarn:
+	rm -rf $(RELEASE_BIN_CHECK_DIR);
+	mkdir -p $(RELEASE_BIN_CHECK_DIR);
+	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" > $(RELEASE_BIN_CHECK_DIR)/package.json
+	cd $(RELEASE_BIN_CHECK_DIR) && yarn add $(BUN_DEPLOY_TGZ_MAC)
+	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval $(RELEASE_BIN_CHECK_DIR)/node_modules/.bin/bun --version || echo "FAIL" )"
+
+release-mac-check-pnpm:
+	rm -rf $(RELEASE_BIN_CHECK_DIR);
+	mkdir -p $(RELEASE_BIN_CHECK_DIR);
+	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" > $(RELEASE_BIN_CHECK_DIR)/package.json
+	cd $(RELEASE_BIN_CHECK_DIR) && pnpm add $(BUN_DEPLOY_TGZ_MAC)
+	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval $(RELEASE_BIN_CHECK_DIR)/node_modules/.bin/bun --version || echo "FAIL" )"
+
+release-mac-check: release-mac-check-npm release-mac-check-yarn release-mac-check-pnpm
 
 release-cli-push:
 	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_CLI)/bun-cli/bun-cli-$(PACKAGE_JSON_VERSION).tgz
@@ -578,19 +639,7 @@ release-bin: release-bin-without-push release-bin-push
 release-mac-without-push: release-mac-generate-bin release-bin-entitlements-mac test-all-mac release-mac-generate release-mac-check
 release-mac: release-mac-without-push release-mac-push
 
-release-bin-check:
-	rm -rf /tmp/bun-$(PACKAGE_JSON_VERSION)-check;
-	mkdir -p /tmp/bun-$(PACKAGE_JSON_VERSION)-check;
-	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" > /tmp/bun-$(PACKAGE_JSON_VERSION)-check/package.json
-	cd /tmp/bun-$(PACKAGE_JSON_VERSION)-check && npm install $(BUN_DEPLOY_TGZ)
-	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval /tmp/bun-$(PACKAGE_JSON_VERSION)-check/node_modules/.bin/bun --version)"
 
-release-bin-check-yarn:
-	rm -rf /tmp/bun-$(PACKAGE_JSON_VERSION)-check;
-	mkdir -p /tmp/bun-$(PACKAGE_JSON_VERSION)-check;
-	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" > /tmp/bun-$(PACKAGE_JSON_VERSION)-check/package.json
-	cd /tmp/bun-$(PACKAGE_JSON_VERSION)-check && yarn add $(BUN_DEPLOY_TGZ)
-	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval /tmp/bun-$(PACKAGE_JSON_VERSION)-check/node_modules/.bin/bun --version)"
 
 release-mac-check:
 	rm -rf /tmp/bun-$(PACKAGE_JSON_VERSION)-check;

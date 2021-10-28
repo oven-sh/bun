@@ -34,7 +34,7 @@ pub fn build(b: *std.build.Builder) !void {
     const cwd: []const u8 = b.pathFromRoot(".");
     var exe: *std.build.LibExeObjStep = undefined;
     var output_dir_buf = std.mem.zeroes([4096]u8);
-    var bin_label = if (mode == std.builtin.Mode.Debug) "packages/debug-bun-cli-" else "packages/bun-cli-";
+    var bin_label = if (mode == std.builtin.Mode.Debug) "packages/debug-bun-" else "packages/bun-";
 
     var triplet_buf: [64]u8 = undefined;
     var os_tagname = @tagName(target.getOs().tag);
@@ -60,7 +60,7 @@ pub fn build(b: *std.build.Builder) !void {
 
     var triplet = triplet_buf[0 .. osname.len + cpuArchName.len + 1];
 
-    const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{s}{s}/bin", .{ bin_label, triplet });
+    const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{s}{s}", .{ bin_label, triplet });
     const output_dir = b.pathFromRoot(output_dir_base);
     const bun_executable_name = if (mode == std.builtin.Mode.Debug) "bun-debug" else "bun";
 
@@ -207,66 +207,63 @@ pub fn build(b: *std.build.Builder) !void {
         headers_obj.setMainPkgPath(javascript.main_pkg_path.?);
         headers_step.dependOn(&headers_obj.step);
 
-       
         b.default_step.dependOn(&exe.step);
         {
+            var steps = [_]*std.build.LibExeObjStep{ exe, javascript, typings_exe };
 
-    
-        var steps = [_]*std.build.LibExeObjStep{ exe, javascript, typings_exe };
+            // const single_threaded = b.option(bool, "single-threaded", "Build single-threaded") orelse false;
 
-        // const single_threaded = b.option(bool, "single-threaded", "Build single-threaded") orelse false;
-
-        for (steps) |step, i| {
-            step.linkLibC();
-            step.linkLibCpp();
-            addPicoHTTP(
-                step,
-                true,
-            );
-
-            step.addObjectFile("src/deps/libJavaScriptCore.a");
-            step.addObjectFile("src/deps/libWTF.a");
-            step.addObjectFile("src/deps/libcrypto.a");
-            step.addObjectFile("src/deps/libbmalloc.a");
-            step.addObjectFile("src/deps/libarchive.a");
-            step.addObjectFile("src/deps/libs2n.a");
-
-            step.addObjectFile("src/deps/zlib/libz.a");
-
-            step.addObjectFile("src/deps/mimalloc/libmimalloc.a");
-            step.addLibPath("src/deps/mimalloc");
-            step.addIncludeDir("src/deps/mimalloc");
-
-            // step.single_threaded = single_threaded;
-
-            if (target.getOsTag() == .macos) {
-                const homebrew_prefix = comptime if (std.Target.current.cpu.arch == .aarch64)
-                    "/opt/homebrew/"
-                else
-                    "/usr/local/";
-
-                // We must link ICU statically
-                step.addObjectFile(homebrew_prefix ++ "opt/icu4c/lib/libicudata.a");
-                step.addObjectFile(homebrew_prefix ++ "opt/icu4c/lib/libicui18n.a");
-                step.addObjectFile(homebrew_prefix ++ "opt/icu4c/lib/libicuuc.a");
-                step.addObjectFile(homebrew_prefix ++ "opt/libiconv/lib/libiconv.a");
-                // icucore is a weird macOS only library
-                step.linkSystemLibrary("icucore");
-                step.addLibPath(homebrew_prefix ++ "opt/icu4c/lib");
-                step.addIncludeDir(homebrew_prefix ++ "opt/icu4c/include");
-            } else {
-                step.linkSystemLibrary("icuuc");
-                step.linkSystemLibrary("icudata");
-                step.linkSystemLibrary("icui18n");
-                step.addObjectFile("src/deps/libiconv.a");
-            }
-
-            for (bindings_files.items) |binding| {
-                step.addObjectFile(
-                    binding,
+            for (steps) |step, i| {
+                step.linkLibC();
+                step.linkLibCpp();
+                addPicoHTTP(
+                    step,
+                    true,
                 );
+
+                step.addObjectFile("src/deps/libJavaScriptCore.a");
+                step.addObjectFile("src/deps/libWTF.a");
+                step.addObjectFile("src/deps/libcrypto.a");
+                step.addObjectFile("src/deps/libbmalloc.a");
+                step.addObjectFile("src/deps/libarchive.a");
+                step.addObjectFile("src/deps/libs2n.a");
+
+                step.addObjectFile("src/deps/zlib/libz.a");
+
+                step.addObjectFile("src/deps/mimalloc/libmimalloc.a");
+                step.addLibPath("src/deps/mimalloc");
+                step.addIncludeDir("src/deps/mimalloc");
+
+                // step.single_threaded = single_threaded;
+
+                if (target.getOsTag() == .macos) {
+                    const homebrew_prefix = comptime if (std.Target.current.cpu.arch == .aarch64)
+                        "/opt/homebrew/"
+                    else
+                        "/usr/local/";
+
+                    // We must link ICU statically
+                    step.addObjectFile(homebrew_prefix ++ "opt/icu4c/lib/libicudata.a");
+                    step.addObjectFile(homebrew_prefix ++ "opt/icu4c/lib/libicui18n.a");
+                    step.addObjectFile(homebrew_prefix ++ "opt/icu4c/lib/libicuuc.a");
+                    step.addObjectFile(homebrew_prefix ++ "opt/libiconv/lib/libiconv.a");
+                    // icucore is a weird macOS only library
+                    step.linkSystemLibrary("icucore");
+                    step.addLibPath(homebrew_prefix ++ "opt/icu4c/lib");
+                    step.addIncludeDir(homebrew_prefix ++ "opt/icu4c/include");
+                } else {
+                    step.linkSystemLibrary("icuuc");
+                    step.linkSystemLibrary("icudata");
+                    step.linkSystemLibrary("icui18n");
+                    step.addObjectFile("src/deps/libiconv.a");
+                }
+
+                for (bindings_files.items) |binding| {
+                    step.addObjectFile(
+                        binding,
+                    );
+                }
             }
-        }
         }
 
         {

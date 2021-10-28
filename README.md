@@ -15,8 +15,7 @@ All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for develo
 ## Install:
 
 ```
-# Global install is recommended so bun appears in your $PATH
-npm install -g bun-cli
+curl -fsSL bun.sh/install | bash
 ```
 
 ## Benchmarks
@@ -458,9 +457,9 @@ When running bun on an M1 (or Apple Silicon), if you see a message like this:
 
 > [1] 28447 killed bun create next ./test
 
-It most likely means you're running bun's x64 version on Apple Silicon. This happens if `node` (or, rather, `npm`) is running via Rosetta. Rosetta is unable to emulate AVX2 instructions, which Bun indirectly uses.
+It most likely means you're running bun's x64 version on Apple Silicon. This happens if bun is running via Rosetta. Rosetta is unable to emulate AVX2 instructions, which Bun indirectly uses.
 
-The fix is to ensure you installed a version of Node built for Apple Silicon and then reinstall `bun-cli`. You can also try to directly install `npm install -g bun-cli-darwin-aarch64`.
+The fix is to ensure you installed a version of Bun built for Apple Silicon.
 
 # Reference
 

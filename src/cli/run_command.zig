@@ -464,7 +464,7 @@ pub const RunCommand = struct {
                         var display_name = package_json.name;
 
                         if (display_name.len == 0) {
-                            display_name = std.fs.path.basename(root_dir_info.getEntries().?.dir);
+                            display_name = std.fs.path.basename(package_json.source.path.name.dir);
                         }
 
                         var iterator = scripts.iterator();

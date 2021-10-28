@@ -35,7 +35,7 @@ const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
 const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
 const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
 const RunCommand = @import("./cli/run_command.zig").RunCommand;
-
+const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
 var start_time: i128 = undefined;
 
 pub const Cli = struct {
@@ -459,7 +459,8 @@ const HelpCommand = struct {
                 \\> <r> <b><magenta>bun     <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
                 \\> <r> <b><green>run     <r><d>  test        <r>          Run a package.json script or executable<r>
                 \\> <r> <b><cyan>create    <r><d>next ./app<r>            Start a new project from a template <d>(shorthand: c)<r>
-                \\> <r> <b><blue>discord <r>                        Open Bun's Discord server
+                \\> <r> <b><blue>upgrade <r>                        Get the latest version of Bun
+                \\> <r> <b><d>discord <r>                     Open Bun's Discord server
                 \\> <r> <b><d>help      <r>                      Print this help menu
                 \\
             ;
@@ -477,6 +478,7 @@ const HelpCommand = struct {
                 \\> <r> <b><magenta>bun    <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
                 \\> <r> <green>run    <r><d>  ./a.ts        <r>        Run a JavaScript-like file with Bun.js
                 \\> <r> <b><blue>discord<r>                        Open Bun's Discord server
+                \\> <r> <b><blue>upgrade <r>                        Get the latest version of Bun
                 \\> <r> <b><d>help      <r>                     Print this help menu
                 \\
             ;
@@ -578,6 +580,7 @@ pub const Command = struct {
                 RootCommandMatcher.case("init") => .InitCommand,
                 RootCommandMatcher.case("bun") => .BunCommand,
                 RootCommandMatcher.case("discord") => .DiscordCommand,
+                RootCommandMatcher.case("upgrade") => .UpgradeCommand,
                 RootCommandMatcher.case("c"), RootCommandMatcher.case("create") => .CreateCommand,
 
                 RootCommandMatcher.case("b"), RootCommandMatcher.case("build") => .BuildCommand,
@@ -594,6 +597,7 @@ pub const Command = struct {
                 RootCommandMatcher.case("discord") => .DiscordCommand,
                 RootCommandMatcher.case("d"), RootCommandMatcher.case("dev") => .DevCommand,
                 RootCommandMatcher.case("c"), RootCommandMatcher.case("create") => .CreateCommand,
+                RootCommandMatcher.case("upgrade") => .UpgradeCommand,
 
                 RootCommandMatcher.case("help") => .HelpCommand,
                 else => .AutoCommand,
@@ -656,6 +660,11 @@ pub const Command = struct {
                     _ = try RunCommand.exec(ctx, false, true);
                 }
             },
+            .UpgradeCommand => {
+                const ctx = try Command.Context.create(allocator, log, .UpgradeCommand);
+                try UpgradeCommand.exec(ctx);
+                return;
+            },
             .AutoCommand => {
                 var ctx = Command.Context.create(allocator, log, .AutoCommand) catch |e| {
                     switch (e) {
@@ -702,5 +711,6 @@ pub const Command = struct {
         AutoCommand,
         HelpCommand,
         CreateCommand,
+        UpgradeCommand,
     };
 };

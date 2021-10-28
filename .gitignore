@@ -64,7 +64,11 @@ release/
 sign.*.json
 packages/debug-*
 packages/bun-cli/postinstall.js
-packages/bun-*/bin/*
+packages/bun-*/bun
+packages/bun-*/bun-profile
+packages/bun-*/debug-bun
+packages/bun-*/*.o
+packages/bun-cli/postinstall.js
 
 packages/bun-cli/bin/*
 bun-test-scratch

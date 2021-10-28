@@ -2,6 +2,7 @@ SHELL := /bin/bash # Use bash syntax to be consistent
 
 OS_NAME := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 ARCH_NAME_RAW := $(shell uname -m)
+BUN_AUTO_UPDATER_REPO = Jarred-Sumner/bun-releases-for-updater
 
 make-lazy = $(eval $1 = $​$(eval $1 := $(value $(1)))$​$($1))
 
@@ -15,20 +16,17 @@ else
 endif
 
 TRIPLET = $(OS_NAME)-$(ARCH_NAME)
-PACKAGE_NAME = bun-cli-$(TRIPLET)
+PACKAGE_NAME = bun-$(TRIPLET)
 PACKAGES_REALPATH = $(realpath packages)
 PACKAGE_DIR = $(PACKAGES_REALPATH)/$(PACKAGE_NAME)
 DEBUG_PACKAGE_DIR = $(PACKAGES_REALPATH)/debug-$(PACKAGE_NAME)
-BIN_DIR = $(PACKAGE_DIR)/bin
 RELEASE_BUN = $(PACKAGE_DIR)/bin/bun
-DEBUG_BIN = $(DEBUG_PACKAGE_DIR)/bin
+DEBUG_BIN = $(DEBUG_PACKAGE_DIR)/
 DEBUG_BUN = $(DEBUG_BIN)/bun-debug
 BUILD_ID = $(shell cat ./build-id)
 PACKAGE_JSON_VERSION = 0.0.$(BUILD_ID)
 BUN_BUILD_TAG = bun-v$(PACKAGE_JSON_VERSION)
-PACKAGE_MAC = $(PACKAGES_REALPATH)/bun-cli-mac
-MAC_BIN = $(PACKAGE_MAC)/bin
-MAC_BUN = $(MAC_BIN)/bun
+BUN_RELEASE_BIN = $(PACKAGE_DIR)/bun
 
 # We must use the same compiler version for the JavaScriptCore bindings and JavaScriptCore
 # If we don't do this, strange memory allocation failures occur.
@@ -78,6 +76,7 @@ build-iconv-linux:
 	cd src/deps/libiconv/libiconv-1.16; ./configure --enable-static; make -j 12; cp ./lib/.libs/libiconv.a $(DEPS_DIR)/libiconv.a
 
 BUN_TMP_DIR := /tmp/make-bun
+BUN_DEPLOY_DIR = /tmp/bun-v$(PACKAGE_JSON_VERSION)/$(PACKAGE_NAME)
 
 DEFAULT_USE_BMALLOC := 1
 # ifeq ($(OS_NAME),linux)
@@ -309,7 +308,8 @@ BUN_LLD_FLAGS = $(OBJ_FILES) \
 bun: vendor build-obj bun-link-lld-release
 
 
-vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib openssl s2n libarchive
+vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib openssl s2n bzip2 libarchive 
+
 
 libarchive:
 	cd src/deps/libarchive; \
@@ -321,10 +321,10 @@ libarchive:
 	cp ./.libs/libarchive.a $(DEPS_DIR)/libarchive.a;
 
 tgz:
-	zig build-exe -Drelease-fast --main-pkg-path $(shell pwd) ./misctools/tgz.zig $(DEPS_DIR)/zlib/libz.a $(DEPS_DIR)/libarchive.a $(LIBICONV_PATH) -lc 
+	zig build-exe -Drelease-fast --main-pkg-path $(shell pwd) ./misctools/tgz.zig $(DEPS_DIR)/zlib/libz.a $(DEPS_DIR)/libarchive.a  $(LIBICONV_PATH) -lc 
 
 tgz-debug:
-	zig build-exe --main-pkg-path $(shell pwd) ./misctools/tgz.zig $(DEPS_DIR)/zlib/libz.a $(DEPS_DIR)/libarchive.a $(LIBICONV_PATH) -lc 
+	zig build-exe --main-pkg-path $(shell pwd) ./misctools/tgz.zig $(DEPS_DIR)/zlib/libz.a $(DEPS_DIR)/libarchive.a  $(LIBICONV_PATH) -lc 
 
 vendor: require init-submodules vendor-without-check
 
@@ -365,8 +365,6 @@ jsc-check:
 
 all-js: runtime_js fallback_decoder bun_error node-fallbacks
 
-bin-dir:
-	@echo $(BIN_DIR)
 
 api: 
 	pnpm install; ./node_modules/.bin/peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
@@ -387,8 +385,8 @@ bun_error:
 	@cd packages/bun-error; pnpm install; npm run --silent build
 
 generate-install-script:
-	@rm -f $(PACKAGES_REALPATH)/bun-cli/install.js
-	# NODE_ENV=production esbuild --log-level=error --define:BUN_VERSION="\"$(PACKAGE_JSON_VERSION)\"" --define:process.env.NODE_ENV="\"production\"" --platform=node --target=node14 --bundle  --format=cjs $(PACKAGES_REALPATH)/bun-cli/node-install.ts > $(PACKAGES_REALPATH)/bun-cli/install.js
+	@rm -f $(PACKAGES_REALPATH)/bun/install.js 	
+	@esbuild --log-level=error --define:BUN_VERSION="\"$(PACKAGE_JSON_VERSION)\"" --define:process.env.NODE_ENV="\"production\"" --platform=node  --format=cjs $(PACKAGES_REALPATH)/bun/install.ts > $(PACKAGES_REALPATH)/bun/install.js
 
 fetch:
 	cd misctools; zig build-obj -Drelease-fast ./fetch.zig -fcompiler-rt -lc --main-pkg-path ../
@@ -476,197 +474,65 @@ bump:
 	expr $(BUILD_ID) + 1 > build-id
 
 
-# When adding a new architecture, don't forget to update this!
-write-package-json-version-cli-json:
-	jq -S --raw-output '.version = "${PACKAGE_JSON_VERSION}"' packages/bun-cli/package.json  > packages/bun-cli/package.json.new
-	mv packages/bun-cli/package.json.new packages/bun-cli/package.json
-	jq -S --raw-output '.optionalDependencies."bun-cli-linux-x64" = "${PACKAGE_JSON_VERSION}"' packages/bun-cli/package.json  > packages/bun-cli/package.json.new
-	mv packages/bun-cli/package.json.new packages/bun-cli/package.json
-	jq -S --raw-output '.optionalDependencies."bun-cli-mac" = "${PACKAGE_JSON_VERSION}"' packages/bun-cli/package.json  > packages/bun-cli/package.json.new
-	mv packages/bun-cli/package.json.new packages/bun-cli/package.json
-
-write-package-json-version: 
-	jq -S --raw-output '.version = "${PACKAGE_JSON_VERSION}"' $(PACKAGE_DIR)/package.json  > $(PACKAGE_DIR)/package.json.new
-	mv $(PACKAGE_DIR)/package.json.new $(PACKAGE_DIR)/package.json
-
-write-package-json-version-cli: write-package-json-version-cli-json generate-install-script
-
-write-package-json-version-mac: 
-	jq -S --raw-output '.version = "${PACKAGE_JSON_VERSION}"' $(PACKAGE_MAC)/package.json  > $(PACKAGE_MAC)/package.json.new
-	mv $(PACKAGE_MAC)/package.json.new $(PACKAGE_MAC)/package.json
-
 tag: 
 	git tag $(BUN_BUILD_TAG)
 	git push --tags
 
-prepare-release: tag release-create write-package-json-version-cli write-package-json-version write-package-json-version-mac
+prepare-release: tag release-create
+
+release-create-auto-updater:
 
 release-create:
 	gh release create --title "Bun v$(PACKAGE_JSON_VERSION)" "$(BUN_BUILD_TAG)"
-
-BUN_DEPLOY_DIR = $(BUN_TMP_DIR)/bun-deploy
-BUN_DEPLOY_CLI = $(BUN_TMP_DIR)/bun-cli
-BUN_DEPLOY_PKG = $(BUN_DEPLOY_DIR)/$(PACKAGE_NAME)
-BUN_DEPLOY_TGZ = $(BUN_DEPLOY_PKG)/$(PACKAGE_NAME)-$(PACKAGE_JSON_VERSION).tgz
-
-BUN_DEPLOY_PKG_MAC = $(BUN_DEPLOY_DIR)/bun-cli-mac
-BUN_DEPLOY_TGZ_MAC = $(BUN_DEPLOY_PKG_MAC)/bun-cli-mac-$(PACKAGE_JSON_VERSION).tgz
-
-RELEASE_CLI_CHECK_DIR = /tmp/bun-$(PACKAGE_JSON_VERSION)-cli-check
-RELEASE_BIN_CHECK_DIR = /tmp/bun-$(PACKAGE_JSON_VERSION)-bin-check
-
-release-cli-generate: write-package-json-version-cli release-cli-generate-build
-
-release-cli-generate-build: 
-	rm -rf $(BUN_DEPLOY_CLI)
-	mkdir -p $(BUN_DEPLOY_CLI)
-	chmod +x packages/bun-cli/bin/bun
-	cp -r packages/bun-cli $(BUN_DEPLOY_CLI)
-	cd $(BUN_DEPLOY_CLI)/bun-cli; npm pack;
-
-release-cli-check-npm:
-	rm -rf $(RELEASE_CLI_CHECK_DIR);
-	mkdir -p $(RELEASE_CLI_CHECK_DIR);
-	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" >  $(RELEASE_CLI_CHECK_DIR)/package.json
-	cd $(RELEASE_CLI_CHECK_DIR) && npm install --save $(BUN_DEPLOY_CLI)/bun-cli/bun-cli-$(PACKAGE_JSON_VERSION).tgz
-	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval $(RELEASE_CLI_CHECK_DIR)/node_modules/.bin/bun --version || echo "FAIL" )"
-
-release-cli-check-yarn:
-	rm -rf $(RELEASE_CLI_CHECK_DIR);
-	mkdir -p $(RELEASE_CLI_CHECK_DIR);
-	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" >  $(RELEASE_CLI_CHECK_DIR)/package.json
-	cd $(RELEASE_CLI_CHECK_DIR) && yarn add $(BUN_DEPLOY_CLI)/bun-cli/bun-cli-$(PACKAGE_JSON_VERSION).tgz
-	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval $(RELEASE_CLI_CHECK_DIR)/node_modules/.bin/bun --version || echo "FAIL" )"
-
-release-cli-check-pnpm:
-	rm -rf $(RELEASE_CLI_CHECK_DIR);
-	mkdir -p $(RELEASE_CLI_CHECK_DIR);
-	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" >  $(RELEASE_CLI_CHECK_DIR)/package.json
-	cd $(RELEASE_CLI_CHECK_DIR) && pnpm add $(BUN_DEPLOY_CLI)/bun-cli/bun-cli-$(PACKAGE_JSON_VERSION).tgz
-	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval $(RELEASE_CLI_CHECK_DIR)/node_modules/.bin/bun --version || echo "FAIL" )"
-
-release-cli-check: release-cli-check-npm release-cli-check-yarn release-cli-check-pnpm
-
-release-bin-check-npm:
-	rm -rf $(RELEASE_BIN_CHECK_DIR);
-	mkdir -p $(RELEASE_BIN_CHECK_DIR);
-	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" > $(RELEASE_BIN_CHECK_DIR)/package.json
-	cd $(RELEASE_BIN_CHECK_DIR) && npm install --save $(BUN_DEPLOY_TGZ)
-	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval $(RELEASE_BIN_CHECK_DIR)/node_modules/$(PACKAGE_NAME)/bin/bun --version || echo "FAIL" )"
-
-release-bin-check-yarn:
-	rm -rf $(RELEASE_BIN_CHECK_DIR);
-	mkdir -p $(RELEASE_BIN_CHECK_DIR);
-	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" > $(RELEASE_BIN_CHECK_DIR)/package.json
-	cd $(RELEASE_BIN_CHECK_DIR) && yarn add $(BUN_DEPLOY_TGZ)
-	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval $(RELEASE_BIN_CHECK_DIR)/node_modules/$(PACKAGE_NAME)/bin/bun --version || echo "FAIL" )"
-
-release-bin-check-pnpm:
-	rm -rf $(RELEASE_BIN_CHECK_DIR);
-	mkdir -p $(RELEASE_BIN_CHECK_DIR);
-	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" > $(RELEASE_BIN_CHECK_DIR)/package.json
-	cd $(RELEASE_BIN_CHECK_DIR) && pnpm add $(BUN_DEPLOY_TGZ)
-	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval $(RELEASE_BIN_CHECK_DIR)/node_modules/$(PACKAGE_NAME)/bin/bun --version || echo "FAIL" )"
-
-release-bin-check: release-bin-check-npm release-bin-check-yarn release-bin-check-pnpm
-
-release-mac-check-npm:
-	rm -rf $(RELEASE_BIN_CHECK_DIR);
-	mkdir -p $(RELEASE_BIN_CHECK_DIR);
-	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" > $(RELEASE_BIN_CHECK_DIR)/package.json
-	cd $(RELEASE_BIN_CHECK_DIR) && npm install --save $(BUN_DEPLOY_TGZ_MAC)
-	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval $(RELEASE_BIN_CHECK_DIR)/node_modules/.bin/bun --version || echo "FAIL" )"
-
-release-mac-check-yarn:
-	rm -rf $(RELEASE_BIN_CHECK_DIR);
-	mkdir -p $(RELEASE_BIN_CHECK_DIR);
-	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" > $(RELEASE_BIN_CHECK_DIR)/package.json
-	cd $(RELEASE_BIN_CHECK_DIR) && yarn add $(BUN_DEPLOY_TGZ_MAC)
-	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval $(RELEASE_BIN_CHECK_DIR)/node_modules/.bin/bun --version || echo "FAIL" )"
-
-release-mac-check-pnpm:
-	rm -rf $(RELEASE_BIN_CHECK_DIR);
-	mkdir -p $(RELEASE_BIN_CHECK_DIR);
-	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" > $(RELEASE_BIN_CHECK_DIR)/package.json
-	cd $(RELEASE_BIN_CHECK_DIR) && pnpm add $(BUN_DEPLOY_TGZ_MAC)
-	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval $(RELEASE_BIN_CHECK_DIR)/node_modules/.bin/bun --version || echo "FAIL" )"
-
-release-mac-check: release-mac-check-npm release-mac-check-yarn release-mac-check-pnpm
-
-release-cli-push:
-	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_CLI)/bun-cli/bun-cli-$(PACKAGE_JSON_VERSION).tgz
-	npm publish $(BUN_DEPLOY_CLI)/bun-cli/bun-cli-$(PACKAGE_JSON_VERSION).tgz --access=public
-
-release-bin-generate: write-package-json-version
-	rm -rf $(BUN_DEPLOY_DIR)
-	mkdir -p $(BUN_DEPLOY_DIR)
-	cp -r $(PACKAGE_DIR) $(BUN_DEPLOY_DIR)
-	cd $(BUN_DEPLOY_PKG); npm pack;
-
-release-mac-generate: write-package-json-version-mac
-	rm -rf $(BUN_DEPLOY_DIR)
-	mkdir -p $(BUN_DEPLOY_DIR)
-	cp -r $(PACKAGE_MAC) $(BUN_DEPLOY_DIR)
-	cd $(BUN_DEPLOY_PKG_MAC); npm pack;
+	gh release create --repo=$(BUN_AUTO_UPDATER_REPO) --title "Bun v$(PACKAGE_JSON_VERSION)" "$(BUN_BUILD_TAG)" -n "See https://github.com/Jarred-Sumner/bun/releases/tag/$(BUN_BUILD_TAG) for release notes. Using the install script or `bun upgrade` is the recommended way to install Bun. Join Bun's Discord to get access https://bun.sh/discord"
 
 release-bin-entitlements:
-release-bin-entitlements-mac:
+
+release-bin-generate-zip:
 
 ifeq ($(OS_NAME),darwin)
 # Without this, JIT will fail on aarch64
 # strip will remove the entitlements.plist 
 # which, in turn, will break JIT
 release-bin-entitlements:
-	codesign --entitlements $(realpath entitlements.plist) --options runtime --force --timestamp --sign "$(CODESIGN_IDENTITY)" -vvv --deep --strict $(BIN_DIR)/bun
+	codesign --entitlements $(realpath entitlements.plist) --options runtime --force --timestamp --sign "$(CODESIGN_IDENTITY)" -vvvv --deep --strict $(BUN_RELEASE_BIN)
 
-release-bin-entitlements-mac:
-	codesign --entitlements $(realpath entitlements.plist) --options runtime --force --timestamp --sign "$(CODESIGN_IDENTITY)" -vvv --deep --strict $(MAC_BUN)
+
+# macOS expects a specific directory structure for the zip file
+# ditto lets us generate it similarly to right clicking "Compress" in Finder
+release-bin-generate-zip:
+	dot_clean -vnm  /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET)
+	cd /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET) && \
+		codesign --entitlements $(realpath entitlements.plist) --options runtime --force --timestamp --sign "$(CODESIGN_IDENTITY)" -vvvv --deep --strict bun
+	ditto -ck --rsrc --sequesterRsrc --keepParent /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET) $(BUN_DEPLOY_ZIP)
+
+else
+
+release-bin-generate-zip:
+	cd /tmp/bun-$(PACKAGE_JSON_VERSION)/ && zip -r bun-$(TRIPLET)
 
 endif
 
 
+BUN_DEPLOY_ZIP = /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET).zip
+
+
+release-bin-generate-copy:
+	rm -rf /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET) $(BUN_DEPLOY_ZIP)
+	mkdir -p /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET)
+	cp $(BUN_RELEASE_BIN) /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET)/bun
+
+release-bin-generate: release-bin-generate-copy release-bin-generate-zip
+
 release-bin-codesign:
-	mkdir -p $(BUN_DEPLOY_ZIP)-input/package
-	tar -xzvf $(BUN_DEPLOY_TGZ) package
-	zip -r $(BUN_DEPLOY_ZIP) package
-	xcrun notarytool submit --wait $(BUN_DEPLOY_ZIP)
+	xcrun notarytool submit --wait $(BUN_DEPLOY_ZIP) --keychain-profile "bun"
 
-release-bin-notarize:
-	xcrun notarytool submit $(BIN_DIR)/bun
-
-release-bin-without-push: test-all release-bin-check 
+release-bin-without-push: test-all release-bin-generate release-bin-codesign
 release-bin: release-bin-without-push release-bin-push
-release-mac-without-push: release-mac-generate-bin release-bin-entitlements-mac test-all-mac release-mac-generate release-mac-check
-release-mac: release-mac-without-push release-mac-push
-
-
-
-release-mac-check:
-	rm -rf /tmp/bun-$(PACKAGE_JSON_VERSION)-check;
-	mkdir -p /tmp/bun-$(PACKAGE_JSON_VERSION)-check;
-	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" > /tmp/bun-$(PACKAGE_JSON_VERSION)-check/package.json
-	cd /tmp/bun-$(PACKAGE_JSON_VERSION)-check && npm install $(BUN_DEPLOY_TGZ_MAC)
-	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval /tmp/bun-$(PACKAGE_JSON_VERSION)-check/node_modules/.bin/bun --version)"
 
 release-bin-push: 
-	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_TGZ)
-	npm publish $(BUN_DEPLOY_TGZ) --access=public
-
-release-mac-push:
-	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_TGZ_MAC)
-	npm publish $(BUN_DEPLOY_TGZ_MAC) --access=public
-
-release-mac-generate-bin:
-	rm -rf /tmp/bun-fat-$(PACKAGE_JSON_VERSION)
-	mkdir -p /tmp/bun-fat-$(PACKAGE_JSON_VERSION)
-	curl "https://registry.npmjs.org/bun-cli-darwin-aarch64/-/bun-cli-darwin-aarch64-0.0.37.tgz" > /tmp/bun-fat-$(PACKAGE_JSON_VERSION)/aarch64.tgz
-	curl "https://registry.npmjs.org/bun-cli-darwin-x64/-/bun-cli-darwin-x64-0.0.37.tgz" > /tmp/bun-fat-$(PACKAGE_JSON_VERSION)/x64.tgz
-	mkdir /tmp/bun-fat-$(PACKAGE_JSON_VERSION)/x64
-	mkdir /tmp/bun-fat-$(PACKAGE_JSON_VERSION)/aarch64
-	cd /tmp/bun-fat-$(PACKAGE_JSON_VERSION) && tar -xvf x64.tgz -C x64
-	cd /tmp/bun-fat-$(PACKAGE_JSON_VERSION) && tar -xvf aarch64.tgz -C aarch64
-	rm -f $(MAC_BUN)
-	lipo -create -output $(MAC_BUN) /tmp/bun-fat-$(PACKAGE_JSON_VERSION)/x64/package/bin/bun /tmp/bun-fat-$(PACKAGE_JSON_VERSION)/aarch64/package/bin/bun
+	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_ZIP)
+	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_ZIP) --repo $(BUN_AUTO_UPDATER_REPO)
 
 dev-obj:
 	zig build obj
@@ -788,21 +654,21 @@ bun-link-lld-debug:
 
 
 bun-relink-copy:
-	cp /tmp/bun-$(PACKAGE_JSON_VERSION).o $(BIN_DIR)/bun.o
+	cp /tmp/bun-$(PACKAGE_JSON_VERSION).o $(BUN_RELEASE_BIN).o
 
 bun-relink: bun-relink-copy bun-link-lld-release
 
 bun-link-lld-release:
 	$(CXX) $(BUN_LLD_FLAGS) \
-		$(BIN_DIR)/bun.o \
-		-o $(BIN_DIR)/bun \
+		$(BUN_RELEASE_BIN).o \
+		-o $(BUN_RELEASE_BIN) \
 		-W \
 		-flto \
 		-ftls-model=initial-exec \
 		-O3
-	cp $(BIN_DIR)/bun $(BIN_DIR)/bun-profile
-	$(STRIP) $(BIN_DIR)/bun
-	mv $(BIN_DIR)/bun.o /tmp/bun-$(PACKAGE_JSON_VERSION).o
+	cp $(BUN_RELEASE_BIN) $(BUN_RELEASE_BIN)-profile
+	$(STRIP) $(BUN_RELEASE_BIN)
+	mv $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
 
 # We do this outside of build.zig for performance reasons
 # The C compilation stuff with build.zig is really slow and we don't need to run this as often as the rest

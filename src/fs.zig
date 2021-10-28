@@ -493,7 +493,7 @@ pub const FileSystem = struct {
         pub var tmpdir_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
         const PLATFORM_TMP_DIR: string = switch (std.Target.current.os.tag) {
-            .windows => "%TMPDIR%",
+            .windows => "TMPDIR",
             .macos => "/private/tmp",
             else => "/tmp",
         };

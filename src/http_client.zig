@@ -44,7 +44,7 @@ body_size: u32 = 0,
 read_count: u32 = 0,
 remaining_redirect_count: i8 = 127,
 redirect_buf: [2048]u8 = undefined,
-disable_shutdown: bool = false,
+disable_shutdown: bool = true,
 timeout: u32 = 0,
 progress_node: ?*std.Progress.Node = null,
 

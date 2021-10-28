@@ -69,13 +69,46 @@ pub const Version = struct {
     }
 };
 
+pub const UpgradeCheckerThread = struct {
+    pub fn spawn(env_loader: *DotEnv.Loader) void {
+        if (env_loader.map.get("BUN_DISABLE_UPGRADE_CHECK") != null or env_loader.map.get("CI") != null) return;
+        var thread = std.Thread.spawn(.{}, run, .{env_loader}) catch return;
+        thread.setName("Update Checker") catch {};
+        thread.detach();
+    }
+
+    fn _run(env_loader: *DotEnv.Loader) anyerror!void {
+        var rand = std.rand.DefaultPrng.init(@intCast(u64, @maximum(std.time.milliTimestamp(), 0)));
+        const delay = rand.random.intRangeAtMost(u64, 100, 10000);
+        std.time.sleep(std.time.ns_per_ms * delay);
+
+        const version = (try UpgradeCommand.getLatestVersion(default_allocator, env_loader, undefined, undefined, true)) orelse return;
+
+        if (!version.isCurrent()) {
+            if (version.name()) |name| {
+                Output.Source.configureThread();
+                Output.prettyErrorln("\n<r><d>Bun v{s} is out. Run <b><cyan>bun upgrade<r> to upgrade.\n", .{name});
+                Output.flush();
+            }
+        }
+    }
+
+    fn run(env_loader: *DotEnv.Loader) void {
+        _run(env_loader) catch |err| {
+            if (Environment.isDebug) {
+                std.debug.print("\n[UpgradeChecker] ERROR: {s}\n", .{@errorName(err)});
+            }
+        };
+    }
+};
+
 pub const UpgradeCommand = struct {
     pub const timeout: u32 = 30000;
     const default_github_headers = "Acceptapplication/vnd.github.v3+json";
     var github_repository_url_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-
     var current_executable_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     var unzip_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    var tmpdir_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
     pub fn getLatestVersion(
         allocator: *std.mem.Allocator,
@@ -271,7 +304,7 @@ pub const UpgradeCommand = struct {
 
         return null;
     }
-    const exe_subpath = Version.folder_name;
+    const exe_subpath = Version.folder_name ++ std.fs.path.sep_str ++ "bun";
 
     pub fn exec(ctx: Command.Context) !void {
         var filesystem = try fs.FileSystem.init1(ctx.allocator, null);
@@ -338,9 +371,6 @@ pub const UpgradeCommand = struct {
                 &zip_file_buffer,
             );
 
-            progress.end();
-            refresher.refresh();
-
             switch (response.status_code) {
                 404 => return error.HTTP404,
                 403 => return error.HTTPForbidden,
@@ -351,6 +381,10 @@ pub const UpgradeCommand = struct {
             }
 
             var bytes = zip_file_buffer.toOwnedSliceLeaky();
+
+            progress.end();
+            refresher.refresh();
+
             if (bytes.len == 0) {
                 Output.prettyErrorln("<r><red>error:<r> Failed to download the latest version of Bun. Received empty content", .{});
                 Output.flush();
@@ -365,6 +399,15 @@ pub const UpgradeCommand = struct {
                 Output.flush();
                 std.os.exit(1);
             };
+            var tmpdir_path = std.os.getFdPath(save_dir.fd, &tmpdir_path_buf) catch |err| {
+                Output.prettyErrorln("<r><red>error:<r> Failed to read temporary directory", .{});
+                Output.flush();
+                std.os.exit(1);
+            };
+
+            tmpdir_path_buf[tmpdir_path.len] = 0;
+            var tmpdir_z = tmpdir_path_buf[0..tmpdir_path.len :0];
+            std.os.chdirZ(tmpdir_z) catch {};
 
             const tmpname = "bun.zip";
 
@@ -395,17 +438,21 @@ pub const UpgradeCommand = struct {
                     Output.flush();
                     std.os.exit(1);
                 };
-                Output.prettyErrorln("<r><b>Unzipping...<r>", .{});
-                Output.flush();
 
+                // We could just embed libz2
+                // however, we want to be sure that xattrs are preserved
+                // xattrs are used for codesigning
+                // it'd be easy to mess that up
                 var unzip_argv = [_]string{
                     std.mem.span(unzip_exe),
+                    "-q",
+                    "-o",
                     std.mem.span(tmpname),
                 };
 
                 var unzip_process = try std.ChildProcess.init(&unzip_argv, ctx.allocator);
                 defer unzip_process.deinit();
-                unzip_process.cwd_dir = save_dir;
+                unzip_process.cwd = tmpdir_path;
                 unzip_process.stdin_behavior = .Inherit;
                 unzip_process.stdout_behavior = .Inherit;
                 unzip_process.stderr_behavior = .Inherit;
@@ -434,7 +481,7 @@ pub const UpgradeCommand = struct {
                 const result = std.ChildProcess.exec(.{
                     .allocator = ctx.allocator,
                     .argv = &verify_argv,
-                    .cwd_dir = save_dir,
+                    .cwd = tmpdir_path,
                     .max_output_bytes = 128,
                 }) catch |err| {
                     save_dir_.deleteTree(version_name) catch {};
@@ -444,12 +491,15 @@ pub const UpgradeCommand = struct {
                 };
 
                 if (result.term.Exited != 0) {
+                    save_dir_.deleteTree(version_name) catch {};
                     Output.prettyErrorln("<r><red>error<r> failed to verify Bun<r> (exit code: {d})", .{result.term.Exited});
                     Output.flush();
                     std.os.exit(1);
                 }
 
                 if (!strings.eql(std.mem.trim(u8, result.stdout, " \n\r\t"), version_name)) {
+                    save_dir_.deleteTree(version_name) catch {};
+
                     Output.prettyErrorln(
                         "<r><red>error<r>: The downloaded version of Bun (<red>{s}<r>) doesn't match the expected version (<b>{s}<r>)<r>. Cancelled upgrade",
                         .{
@@ -472,6 +522,7 @@ pub const UpgradeCommand = struct {
             current_executable_buf[target_dir_.len] = 0;
             var target_dirname = current_executable_buf[0..target_dir_.len :0];
             var target_dir = std.fs.openDirAbsoluteZ(target_dirname, .{ .iterate = true }) catch |err| {
+                save_dir_.deleteTree(version_name) catch {};
                 Output.prettyErrorln("<r><red>error:<r> Failed to open Bun's install directory {s}", .{@errorName(err)});
                 Output.flush();
                 std.os.exit(1);
@@ -479,15 +530,16 @@ pub const UpgradeCommand = struct {
 
             if (env_loader.map.get("BUN_DRY_RUN") == null) {
                 C.moveFileZ(save_dir.fd, exe_subpath, target_dir.fd, target_filename) catch |err| {
-                    Output.prettyErrorln("<r><red>error:<r> Failed to move new version of Bun due to {s}. You could try the install script instead:\n   curl  https://bun.sh/install | bash", .{@errorName(err)});
+                    save_dir_.deleteTree(version_name) catch {};
+                    Output.prettyErrorln("<r><red>error:<r> Failed to move new version of Bun due to {s}. You could try the install script instead:\n   curl -L https://bun.sh/install | bash", .{@errorName(err)});
                     Output.flush();
                     std.os.exit(1);
                 };
             }
 
-            Output.prettyErrorln("\n", .{});
-            Output.flush();
-            Output.prettyln("<r><b><green>Upgraded successfully<r>. Welcome to Bun v{s}!\nFind out what's new:    https://github.com/Jarred-Sumner/bun/releases<r>", .{version_name});
+            Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
+
+            Output.prettyErrorln("<r> Upgraded.\n\n<b><green>Welcome to Bun v{s}!<r>\n\n  Report any bugs:\n    https://github.com/Jarred-Sumner/bun/issues\n\n  What's new:\n    https://github.com/Jarred-Sumner/bun/releases/tag/{s}<r>", .{ version_name, version.tag });
             Output.flush();
             return;
         }

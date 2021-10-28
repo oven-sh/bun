@@ -659,9 +659,9 @@ pub const Connection = struct {
     pub fn close(this: *Connection) !void {
         if (!this.disable_shutdown) {
             _ = s2n_shutdown(this.conn, &blocked_status);
-            Pool.put(this.node);
         }
         std.os.closeSocket(this.fd);
+        Pool.put(this.node);
     }
 
     pub const Writer = std.io.Writer(*Connection, WriteError, write);

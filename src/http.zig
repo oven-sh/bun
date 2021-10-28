@@ -2634,6 +2634,10 @@ pub const Server = struct {
         Analytics.Features.filesystem_router = server.bundler.router != null;
         Analytics.Features.bunjs = server.transform_options.node_modules_bundle_path_server != null;
 
+        const UpgradeCheckerThread = @import("./cli/upgrade_command.zig").UpgradeCheckerThread;
+
+        UpgradeCheckerThread.spawn(server.bundler.env);
+
         var did_init = false;
         while (!did_init) {
             defer Output.flush();

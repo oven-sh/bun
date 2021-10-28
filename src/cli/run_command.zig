@@ -555,33 +555,39 @@ pub const RunCommand = struct {
 
         var path_for_which = PATH;
         if (comptime bin_dirs_only) {
-            path_for_which = PATH[0 .. PATH.len - (ORIGINAL_PATH.len + 1)];
+            path_for_which = "";
+
+            if (ORIGINAL_PATH.len < PATH.len) {
+                path_for_which = PATH[0 .. PATH.len - (ORIGINAL_PATH.len + 1)];
+            }
         }
 
-        if (which(&path_buf, path_for_which, this_bundler.fs.top_level_dir, script_name_to_search)) |destination| {
-            var file = std.fs.openFileAbsoluteZ(destination, .{ .read = true }) catch |err| {
-                if (!log_errors) return false;
+        if (path_for_which.len > 0) {
+            if (which(&path_buf, path_for_which, this_bundler.fs.top_level_dir, script_name_to_search)) |destination| {
+                var file = std.fs.openFileAbsoluteZ(destination, .{ .read = true }) catch |err| {
+                    if (!log_errors) return false;
 
-                Output.prettyErrorln("<r>error: <red>{s}<r> opening file: \"{s}\"", .{ err, std.mem.span(destination) });
-                Output.flush();
-                return err;
-            };
-            var outbuf = std.os.getFdPath(file.handle, &path_buf2) catch |err| {
-                if (!log_errors) return false;
-                Output.prettyErrorln("<r>error: <red>{s}<r> resolving file: \"{s}\"", .{ err, std.mem.span(destination) });
-                Output.flush();
-                return err;
-            };
+                    Output.prettyErrorln("<r>error: <red>{s}<r> opening file: \"{s}\"", .{ err, std.mem.span(destination) });
+                    Output.flush();
+                    return err;
+                };
+                var outbuf = std.os.getFdPath(file.handle, &path_buf2) catch |err| {
+                    if (!log_errors) return false;
+                    Output.prettyErrorln("<r>error: <red>{s}<r> resolving file: \"{s}\"", .{ err, std.mem.span(destination) });
+                    Output.flush();
+                    return err;
+                };
 
-            file.close();
+                file.close();
 
-            return try runBinary(
-                ctx,
-                try this_bundler.fs.dirname_store.append([]u8, outbuf),
-                this_bundler.fs.top_level_dir,
-                this_bundler.env,
-                passthrough,
-            );
+                return try runBinary(
+                    ctx,
+                    try this_bundler.fs.dirname_store.append([]u8, outbuf),
+                    this_bundler.fs.top_level_dir,
+                    this_bundler.env,
+                    passthrough,
+                );
+            }
         }
 
         if (comptime log_errors) {

@@ -4,14 +4,15 @@
     "arm64"
   ],
   "description": "macOS build of Bun",
-  "directories": {
-    "bin": "bin"
+  "bugs": {
+    "url": "https://github.com/jarred-sumner/bun/issues"
   },
+  "homepage": "https://bun.sh",
   "name": "bun-cli-mac",
   "os": [
     "darwin"
   ],
-  "private": "false",
+  "private": false,
   "repository": "https://github.com/jarred-sumner/bun",
   "version": "0.0.37"
 }

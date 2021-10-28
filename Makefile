@@ -552,21 +552,21 @@ release-bin-check-npm:
 	mkdir -p $(RELEASE_BIN_CHECK_DIR);
 	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" > $(RELEASE_BIN_CHECK_DIR)/package.json
 	cd $(RELEASE_BIN_CHECK_DIR) && npm install --save $(BUN_DEPLOY_TGZ)
-	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval $(RELEASE_BIN_CHECK_DIR)/node_modules/.bin/bun --version || echo "FAIL" )"
+	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval $(RELEASE_BIN_CHECK_DIR)/node_modules/$(PACKAGE_NAME)/bin/bun --version || echo "FAIL" )"
 
 release-bin-check-yarn:
 	rm -rf $(RELEASE_BIN_CHECK_DIR);
 	mkdir -p $(RELEASE_BIN_CHECK_DIR);
 	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" > $(RELEASE_BIN_CHECK_DIR)/package.json
 	cd $(RELEASE_BIN_CHECK_DIR) && yarn add $(BUN_DEPLOY_TGZ)
-	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval $(RELEASE_BIN_CHECK_DIR)/node_modules/.bin/bun --version || echo "FAIL" )"
+	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval $(RELEASE_BIN_CHECK_DIR)/node_modules/$(PACKAGE_NAME)/bin/bun --version || echo "FAIL" )"
 
 release-bin-check-pnpm:
 	rm -rf $(RELEASE_BIN_CHECK_DIR);
 	mkdir -p $(RELEASE_BIN_CHECK_DIR);
 	echo "{\"name\": \"bun-test-$(PACKAGE_JSON_VERSION)\"}" > $(RELEASE_BIN_CHECK_DIR)/package.json
 	cd $(RELEASE_BIN_CHECK_DIR) && pnpm add $(BUN_DEPLOY_TGZ)
-	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval $(RELEASE_BIN_CHECK_DIR)/node_modules/.bin/bun --version || echo "FAIL" )"
+	test "$(PACKAGE_JSON_VERSION)" == "$(shell eval $(RELEASE_BIN_CHECK_DIR)/node_modules/$(PACKAGE_NAME)/bin/bun --version || echo "FAIL" )"
 
 release-bin-check: release-bin-check-npm release-bin-check-yarn release-bin-check-pnpm
 

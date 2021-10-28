@@ -1,14 +1,17 @@
 {
-  "directories": {
-    "bin": "bin"
+  "cpu": [
+    "x64"
+  ],
+  "bugs": {
+    "url": "https://github.com/jarred-sumner/bun/issues"
   },
+  "homepage": "https://bun.sh",
+  "description": "Linux build of Bun",
   "name": "bun-cli-linux-x64",
-  "repository": "https://github.com/jarred-sumner/bun",
-  "version": "0.0.28",
+  "private": false,
   "os": [
     "linux"
   ],
-  "cpu": [
-    "x64"
-  ]
+  "repository": "https://github.com/jarred-sumner/bun",
+  "version": "0.0.37"
 }

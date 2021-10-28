@@ -1,14 +1,16 @@
 {
+  "bugs": {
+    "url": "https://github.com/jarred-sumner/bun/issues"
+  },
   "cpu": [
     "x64"
   ],
-  "directories": {
-    "bin": "bin"
-  },
+  "homepage": "https://bun.sh",
   "name": "bun-cli-darwin-x64",
   "os": [
     "darwin"
   ],
+  "private": false,
   "repository": "https://github.com/jarred-sumner/bun",
-  "version": "0.0.37"
+  "version": "0.0.38"
 }

@@ -355,6 +355,7 @@ pub const UpgradeCommand = struct {
 
             var refresher = std.Progress{};
             var progress = try refresher.start("Downloading", version.size);
+            refresher.refresh();
 
             var client = HTTPClient.init(
                 ctx.allocator,

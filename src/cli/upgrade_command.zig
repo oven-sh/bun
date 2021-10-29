@@ -270,6 +270,11 @@ pub const UpgradeCommand = struct {
             var assets = assets_.expr.asArray() orelse break :get_asset;
 
             while (assets.next()) |asset| {
+                if (asset.asProperty("content_type")) |content_type| {
+                    const content_type_ = (content_type.expr.asString(allocator)) orelse continue;
+                    if (!strings.eqlComptime(content_type, "application/zip")) continue;
+                }
+
                 if (asset.asProperty("name")) |name_| {
                     if (name_.expr.asString(allocator)) |name| {
                         if (strings.eqlComptime(name, Version.zip_filename)) {

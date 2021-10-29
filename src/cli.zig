@@ -146,7 +146,7 @@ pub const Arguments = struct {
         clap.parseParam("-i, --inject <STR>...             Inject module at the top of every file") catch unreachable,
         clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: jsx, js, json, tsx, ts, css") catch unreachable,
         clap.parseParam("--origin <STR>                    Rewrite import paths to start with --origin. Default: \"\"") catch unreachable,
-        clap.parseParam("--port <STR>                      Port to serve Bun's dev server on. Default: \"/3000\"") catch unreachable,
+        clap.parseParam("--port <STR>                      Port to serve Bun's dev server on. Default: \"3000\"") catch unreachable,
         clap.parseParam("--silent                          Don't repeat the command for bun run") catch unreachable,
 
         // clap.parseParam("-o, --outdir <STR>                Save output to directory (default: \"out\" if none provided and multiple entry points passed)") catch unreachable,
@@ -477,7 +477,7 @@ const HelpCommand = struct {
                 \\> <r> <b><cyan>create<r><d> next  ./app<r>        Start a new project from a template<r>
                 \\> <r> <b><magenta>bun    <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
                 \\> <r> <green>run    <r><d>  ./a.ts        <r>        Run a JavaScript-like file with Bun.js
-                \\> <r> <b><blue>discord<r>                        Open Bun's Discord server
+                \\> <r> <b><blue>discord<r>                           Open Bun's Discord server
                 \\> <r> <b><blue>upgrade <r>                        Get the latest version of Bun
                 \\> <r> <b><d>help      <r>                     Print this help menu
                 \\

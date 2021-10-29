@@ -330,7 +330,7 @@ pub const UpgradeCommand = struct {
 
             if (version.name() != null and version.isCurrent()) {
                 Output.prettyErrorln(
-                    "<r><green>Congrats!<r> You're already on the latest version of Bun <d>(which is v {s})<r>",
+                    "<r><green>Congrats!<r> You're already on the latest version of Bun <d>(which is v{s})<r>",
                     .{
                         version.name().?,
                     },

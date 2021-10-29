@@ -527,7 +527,10 @@ release-bin-generate: release-bin-generate-copy release-bin-generate-zip
 release-bin-codesign:
 	xcrun notarytool submit --wait $(BUN_DEPLOY_ZIP) --keychain-profile "bun"
 
-release-bin-without-push: test-all release-bin-generate release-bin-codesign
+release-bin-check:
+	test $(shell eval $(BUN_RELEASE_BIN) --version) = $(PACKAGE_JSON_VERSION)
+
+release-bin-without-push: test-all release-bin-check release-bin-generate release-bin-codesign
 release-bin: release-bin-without-push release-bin-push
 
 release-bin-push: 

@@ -76,7 +76,7 @@ Here's what doesn't work yet:
 - locales, zones, `assetPrefix` (workaround: change `--origin \"http://localhsot:3000/assetPrefixInhere\"`)
 - `next/image` is polyfilled to a regular `<img src>` tag.
 - `proxy` and anything else in `next.config.js`
-- API, catch-all &amp; catch-all fallback routes. Dynamic routes _are_ supported.
+- API routes
 
 When using Next.js, Bun automatically reads configuration from `.env.local`, `.env.development` and `.env` (in that order). `process.env.NEXT_PUBLIC_` and `process.env.NEXT_` automatically are replaced via `--define`.
 

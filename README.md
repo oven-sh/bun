@@ -15,7 +15,7 @@ All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for develo
 ## Install:
 
 ```
-curl -fsSL bun.sh/install | bash
+curl -fsSL https://bun.sh/install | bash
 ```
 
 ## Benchmarks

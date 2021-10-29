@@ -609,7 +609,7 @@ test-dev-no-hmr: copy-test-node-modules
 test-dev-bun-run: 
 	cd integration/apps && BUN_BIN=$(DEBUG_BUN) bash bun-run-check.sh
 
-test-dev-all: test-dev-with-hmr test-dev-no-hmr test-dev-create-next text-dev-create-react test-dev-bun-run
+test-dev-all: test-dev-with-hmr test-dev-no-hmr test-dev-create-next test-dev-create-react test-dev-bun-run
 
 test-dev: test-dev-with-hmr
 
@@ -806,4 +806,4 @@ run-unit:
 test: build-unit run-unit
 
 integration-test-dev: 
-	USE_EXISTING_PROCESS=true node integration/scripts/browser.js
+	USE_EXISTING_PROCESS=true TEST_SERVER_URL=http://localhost:3000 node integration/scripts/browser.js

@@ -70,23 +70,25 @@ pub const Version = struct {
 };
 
 pub const UpgradeCheckerThread = struct {
+    var update_checker_thread: std.Thread = undefined;
     pub fn spawn(env_loader: *DotEnv.Loader) void {
         if (env_loader.map.get("BUN_DISABLE_UPGRADE_CHECK") != null or env_loader.map.get("CI") != null) return;
-        var thread = std.Thread.spawn(.{}, run, .{env_loader}) catch return;
-        thread.setName("Update Checker") catch {};
-        thread.detach();
+        update_checker_thread = std.Thread.spawn(.{}, run, .{env_loader}) catch return;
+        update_checker_thread.detach();
     }
 
     fn _run(env_loader: *DotEnv.Loader) anyerror!void {
+        
         var rand = std.rand.DefaultPrng.init(@intCast(u64, @maximum(std.time.milliTimestamp(), 0)));
         const delay = rand.random.intRangeAtMost(u64, 100, 10000);
         std.time.sleep(std.time.ns_per_ms * delay);
+
+        Output.Source.configureThread();
 
         const version = (try UpgradeCommand.getLatestVersion(default_allocator, env_loader, undefined, undefined, true)) orelse return;
 
         if (!version.isCurrent()) {
             if (version.name()) |name| {
-                Output.Source.configureThread();
                 Output.prettyErrorln("\n<r><d>Bun v{s} is out. Run <b><cyan>bun upgrade<r> to upgrade.\n", .{name});
                 Output.flush();
             }
@@ -272,14 +274,27 @@ pub const UpgradeCommand = struct {
             while (assets.next()) |asset| {
                 if (asset.asProperty("content_type")) |content_type| {
                     const content_type_ = (content_type.expr.asString(allocator)) orelse continue;
-                    if (!strings.eqlComptime(content_type, "application/zip")) continue;
+                    if (comptime isDebug) {
+                        Output.prettyln("Content-type: {s}", .{content_type_});
+                        Output.flush();
+                    }
+
+                    if (!strings.eqlComptime(content_type_, "application/zip")) continue;
                 }
 
                 if (asset.asProperty("name")) |name_| {
                     if (name_.expr.asString(allocator)) |name| {
+                        if (comptime isDebug) {
+                            Output.prettyln("Comparing {s} vs {s}", .{name, Version.zip_filename});
+                            Output.flush();
+                        }
                         if (strings.eqlComptime(name, Version.zip_filename)) {
                             version.zip_url = (asset.asProperty("browser_download_url") orelse break :get_asset).expr.asString(allocator) orelse break :get_asset;
-
+                            if (comptime isDebug) {
+                                Output.prettyln("Found Zip {s}", .{version.zip_url});
+                                Output.flush();
+                            }
+                            
                             if (asset.asProperty("size")) |size_| {
                                 if (size_.expr.data == .e_number) {
                                     version.size = @intCast(u32, @maximum(@floatToInt(i32, std.math.ceil(size_.expr.data.e_number.value)), 0));

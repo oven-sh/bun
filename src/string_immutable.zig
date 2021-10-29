@@ -175,6 +175,31 @@ pub fn copyLowercase(in: string, out: []u8) string {
     return out[0..in.len];
 }
 
+test "eqlComptimeCheckLen" {
+    try std.testing.expectEqual(eqlComptime("bun-darwin-aarch64.zip", "bun-darwin-aarch64.zip"), true);
+    const sizes = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 23, 22, 24 };
+    inline for (sizes) |size| {
+        var buf: [size]u8 = undefined;
+        std.mem.set(u8, &buf, 'a');
+        var buf_copy: [size]u8 = undefined;
+        std.mem.set(u8, &buf_copy, 'a');
+
+        var bad: [size]u8 = undefined;
+        std.mem.set(u8, &bad, 'b');
+        try std.testing.expectEqual(std.mem.eql(u8, &buf, &buf_copy), eqlComptime(&buf, comptime brk: {
+            var buf_copy_: [size]u8 = undefined;
+            std.mem.set(u8, &buf_copy_, 'a');
+            break :brk buf_copy_;
+        }));
+
+        try std.testing.expectEqual(std.mem.eql(u8, &buf, &bad), eqlComptime(&bad, comptime brk: {
+            var buf_copy_: [size]u8 = undefined;
+            std.mem.set(u8, &buf_copy_, 'a');
+            break :brk buf_copy_;
+        }));
+    }
+}
+
 test "copyLowercase" {
     {
         var in = "Hello, World!";
@@ -324,137 +349,55 @@ pub fn eqlComptimeIgnoreLen(self: string, comptime alt: anytype) bool {
     return eqlComptimeCheckLen(self, alt, false);
 }
 
-inline fn eqlComptimeCheckLen(self: string, comptime alt: anytype, comptime check_len: bool) bool {
-    switch (comptime alt.len) {
-        0 => {
-            @compileError("Invalid size passed to eqlComptime");
-        },
-        2 => {
-            const check = comptime std.mem.readIntNative(u16, alt[0..alt.len]);
-            return ((comptime !check_len) or self.len == alt.len) and std.mem.readIntNative(u16, self[0..2]) == check;
-        },
-        1, 3 => {
-            if ((comptime check_len) and alt.len != self.len) {
-                return false;
-            }
+inline fn eqlComptimeCheckLen(a: string, comptime b: anytype, comptime check_len: bool) bool {
+    if (comptime check_len) {
+        if (comptime b.len == 0) {
+            return a.len == 0;
+        }
 
-            inline for (alt) |c, i| {
-                if (self[i] != c) return false;
-            }
-            return true;
-        },
-        4 => {
-            const check = comptime std.mem.readIntNative(u32, alt[0..alt.len]);
-            return ((comptime !check_len) or self.len == alt.len) and std.mem.readIntNative(u32, self[0..4]) == check;
-        },
-        6 => {
-            const first = std.mem.readIntNative(u32, alt[0..4]);
-            const second = std.mem.readIntNative(u16, alt[4..6]);
-
-            return self.len == alt.len and first == std.mem.readIntNative(u32, self[0..4]) and
-                second == std.mem.readIntNative(u16, self[4..6]);
-        },
-        5, 7 => {
-            const check = comptime std.mem.readIntNative(u32, alt[0..4]);
-            if (((comptime check_len) and
-                self.len != alt.len) or
-                std.mem.readIntNative(u32, self[0..4]) != check)
-            {
-                return false;
-            }
-            const remainder = self[4..];
-            inline for (alt[4..]) |c, i| {
-                if (remainder[i] != c) return false;
-            }
-            return true;
-        },
-        8 => {
-            const check = comptime std.mem.readIntNative(u64, alt[0..alt.len]);
-            return ((comptime !check_len) or self.len == alt.len) and std.mem.readIntNative(u64, self[0..8]) == check;
-        },
-        9...11 => {
-            const first = std.mem.readIntNative(u64, alt[0..8]);
-
-            if (((comptime check_len) and self.len != alt.len) or first != std.mem.readIntNative(u64, self[0..8])) {
-                return false;
-            }
-
-            inline for (alt[8..]) |c, i| {
-                if (self[i + 8] != c) return false;
-            }
-            return true;
-        },
-        12 => {
-            const first = comptime std.mem.readIntNative(u64, alt[0..8]);
-            const second = comptime std.mem.readIntNative(u32, alt[8..12]);
-            return ((comptime !check_len) or self.len == alt.len) and first == std.mem.readIntNative(u64, self[0..8]) and second == std.mem.readIntNative(u32, self[8..12]);
-        },
-        13...15 => {
-            const first = comptime std.mem.readIntNative(u64, alt[0..8]);
-            const second = comptime std.mem.readIntNative(u32, alt[8..12]);
-
-            if (((comptime !check_len) or self.len != alt.len) or first != std.mem.readIntNative(u64, self[0..8]) or second != std.mem.readIntNative(u32, self[8..12])) {
-                return false;
-            }
-
-            inline for (alt[13..]) |c, i| {
-                if (self[i + 13] != c) return false;
-            }
-
-            return true;
-        },
-        16 => {
-            const first = comptime std.mem.readIntNative(u64, alt[0..8]);
-            const second = comptime std.mem.readIntNative(u64, alt[8..16]);
-            return ((comptime !check_len) or self.len == alt.len) and first == std.mem.readIntNative(u64, self[0..8]) and second == std.mem.readIntNative(u64, self[8..16]);
-        },
-        17 => {
-            const first = comptime std.mem.readIntNative(u64, alt[0..8]);
-            const second = comptime std.mem.readIntNative(u64, alt[8..16]);
-            return ((comptime !check_len) or self.len == alt.len) and
-                first == std.mem.readIntNative(u64, self[0..8]) and second ==
-                std.mem.readIntNative(u64, self[8..16]) and
-                alt[16] == self[16];
-        },
-        18 => {
-            const first = comptime std.mem.readIntNative(u64, alt[0..8]);
-            const second = comptime std.mem.readIntNative(u64, alt[8..16]);
-            const third = comptime std.mem.readIntNative(u16, alt[16..18]);
-            return ((comptime !check_len) or self.len == alt.len) and
-                first == std.mem.readIntNative(u64, self[0..8]) and second ==
-                std.mem.readIntNative(u64, self[8..16]) and
-                std.mem.readIntNative(u16, self[16..18]) == third;
-        },
-        23 => {
-            const first = comptime std.mem.readIntNative(u64, alt[0..8]);
-            const second = comptime std.mem.readIntNative(u64, alt[8..16]);
-            return ((comptime !check_len) or self.len == alt.len) and
-                first == std.mem.readIntNative(u64, self[0..8]) and
-                second == std.mem.readIntNative(u64, self[8..16]) and
-                eqlComptimeIgnoreLen(self[16..23], comptime alt[16..23]);
-        },
-        22 => {
-            const first = comptime std.mem.readIntNative(u64, alt[0..8]);
-            const second = comptime std.mem.readIntNative(u64, alt[8..16]);
-
-            return ((comptime !check_len) or self.len == alt.len) and
-                first == std.mem.readIntNative(u64, self[0..8]) and
-                second == std.mem.readIntNative(u64, self[8..16]) and
-                eqlComptimeIgnoreLen(self[16..22], comptime alt[16..22]);
-        },
-        24 => {
-            const first = comptime std.mem.readIntNative(u64, alt[0..8]);
-            const second = comptime std.mem.readIntNative(u64, alt[8..16]);
-            const third = comptime std.mem.readIntNative(u64, alt[16..24]);
-            return ((comptime !check_len) or self.len == alt.len) and
-                first == std.mem.readIntNative(u64, self[0..8]) and
-                second == std.mem.readIntNative(u64, self[8..16]) and
-                third == std.mem.readIntNative(u64, self[16..24]);
-        },
-        else => {
-            @compileError(alt ++ " is too long.");
-        },
+        switch (a.len) {
+            b.len => {},
+            else => return false,
+        }
     }
+
+    const len = comptime b.len;
+    comptime var dword_length = b.len >> 3;
+    comptime var b_ptr: usize = 0;
+
+    inline while (dword_length > 0) : (dword_length -= 1) {
+        const slice = comptime if (@typeInfo(@TypeOf(b)) != .Pointer) b else std.mem.span(b);
+        if (@bitCast(usize, a[b_ptr..][0..@sizeOf(usize)].*) != comptime @bitCast(usize, (slice[b_ptr..])[0..@sizeOf(usize)].*))
+            return false;
+        comptime b_ptr += @sizeOf(usize);
+        if (comptime b_ptr == b.len) return true;
+    }
+
+    if (comptime @sizeOf(usize) == 8) {
+        if (comptime (len & 4) != 0) {
+            const slice = comptime if (@typeInfo(@TypeOf(b)) != .Pointer) b else std.mem.span(b);
+            if (@bitCast(u32, a[b_ptr..][0..@sizeOf(u32)].*) != comptime @bitCast(u32, (slice[b_ptr..])[0..@sizeOf(u32)].*))
+                return false;
+
+            comptime b_ptr += @sizeOf(u32);
+
+            if (comptime b_ptr == b.len) return true;
+        }
+    }
+
+    if (comptime (len & 2) != 0) {
+        const slice = comptime if (@typeInfo(@TypeOf(b)) != .Pointer) b else std.mem.span(b);
+        if (@bitCast(u16, a[b_ptr..][0..@sizeOf(u16)].*) != comptime @bitCast(u16, slice[b_ptr .. b_ptr + @sizeOf(u16)].*))
+            return false;
+
+        comptime b_ptr += @sizeOf(u16);
+
+        if (comptime b_ptr == b.len) return true;
+    }
+
+    if ((comptime ( len & 1) != 0) and a[b_ptr] != comptime b[b_ptr]) return false;
+
+    return true;
 }
 
 pub inline fn append(allocator: *std.mem.Allocator, self: string, other: string) !string {

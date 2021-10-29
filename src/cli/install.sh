@@ -99,7 +99,7 @@ elif test $(basename $SHELL) == "zsh"; then
     echo ""
     echo "Manually add the directory to your \$HOME/.zshrc (or similar)"
     echo ""
-    echo -e "  $BWhite export BUN_INSTALL=\"$bun_install$Color_Off"
+    echo -e "  $BWhite export BUN_INSTALL=\"$bun_install\"$Color_Off"
     echo -e "  $BWhite export PATH=\"\$BUN_INSTALL/bin:\$PATH\"$Color_Off"
 else
     echo ""

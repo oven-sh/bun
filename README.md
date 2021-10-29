@@ -626,6 +626,12 @@ Warning: unlike with remote templates, **bun will delete the entire destination 
 | --force      | Overwrite existing files               |
 | --no-install | Skip installing `node_modules` & tasks |
 | --no-git     | Don't initialize a git repository      |
+| --open       | Start & open in-browser after finish   |
+
+| Environment Variables | Description                                                                                            |
+| --------------------- | ------------------------------------------------------------------------------------------------------ |
+| GITHUB_API_DOMAIN     | If you're using a GitHub enterprise or a proxy, you can change what the endpoint requests to GitHub go |
+| GITHUB_API_TOKEN      | This lets `bun create` work with private repositories or if you get rate-limited                       |
 
 By default, `bun create` will cancel if there are existing files it would overwrite and its a remote template. You can pass `--force` to disable this behavior.
 

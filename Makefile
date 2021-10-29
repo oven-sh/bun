@@ -484,7 +484,7 @@ release-create-auto-updater:
 
 release-create:
 	gh release create --title "Bun v$(PACKAGE_JSON_VERSION)" "$(BUN_BUILD_TAG)"
-	gh release create --repo=$(BUN_AUTO_UPDATER_REPO) --title "Bun v$(PACKAGE_JSON_VERSION)" "$(BUN_BUILD_TAG)" -n "See https://github.com/Jarred-Sumner/bun/releases/tag/$(BUN_BUILD_TAG) for release notes. Using the install script or `bun upgrade` is the recommended way to install Bun. Join Bun's Discord to get access https://bun.sh/discord"
+	gh release create --repo=$(BUN_AUTO_UPDATER_REPO) --title "Bun v$(PACKAGE_JSON_VERSION)" "$(BUN_BUILD_TAG)" -n "See https://github.com/Jarred-Sumner/bun/releases/tag/$(BUN_BUILD_TAG) for release notes. Using the install script or bun upgrade is the recommended way to install Bun. Join Bun's Discord to get access https://bun.sh/discord"
 
 release-bin-entitlements:
 

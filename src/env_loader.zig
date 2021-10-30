@@ -33,8 +33,6 @@ pub const Lexer = struct {
     has_newline_before: bool = true,
     was_quoted: bool = false,
 
-    is_process_env: bool = false,
-
     pub inline fn codepoint(this: *const Lexer) CodePoint {
         return this.cursor.c;
     }
@@ -121,6 +119,7 @@ pub const Lexer = struct {
         var start = lexer.current;
         var last_non_space: usize = start;
         var any_spaces = false;
+
         while (true) {
             switch (lexer.codepoint()) {
                 '\\' => {
@@ -191,11 +190,9 @@ pub const Lexer = struct {
                     )];
                 },
                 ' ' => {
-                    if (!lexer.is_process_env) {
-                        any_spaces = true;
-                        while (lexer.codepoint() == ' ') lexer.step();
-                        continue;
-                    }
+                    any_spaces = true;
+                    while (lexer.codepoint() == ' ') lexer.step();
+                    continue;
                 },
                 else => {},
             }
@@ -232,7 +229,7 @@ pub const Lexer = struct {
     // const RE_INI_KEY_VAL = /^\s*([\w.-]+)\s*=\s*(.*)?\s*$/
     // const RE_NEWLINES = /\\n/g
     // const NEWLINES_MATCH = /\r\n|\n|\r/
-    pub fn next(this: *Lexer) ?Variable {
+    pub fn next(this: *Lexer, comptime is_process_env: bool) ?Variable {
         if (this.end == 0) this.step();
 
         const start = this.start;
@@ -288,6 +285,22 @@ pub const Lexer = struct {
                                 const key = this.source.contents[this.start..this.end];
                                 if (key.len == 0) return null;
                                 this.step();
+
+                                // we don't need to do special parsing on process-level environment variable values
+                                // if they're quoted, we should keep them quoted.
+                                // https://github.com/Jarred-Sumner/bun/issues/40
+                                if (comptime is_process_env) {
+                                    const current = this.current;
+                                    // TODO: remove this loop
+                                    // it's not as simple as just setting to the end of the string
+                                    while (this.codepoint() != -1) : (this.step()) {}
+                                    return Variable{
+                                        .key = key,
+                                        .value = this.source.contents[current..],
+                                        // nested values are unsupported in process environment variables
+                                        .has_nested_value = false,
+                                    };
+                                }
 
                                 this.has_nested_value = false;
                                 inner: while (true) {
@@ -576,7 +589,7 @@ pub const Loader = struct {
     // mostly for tests
     pub fn loadFromString(this: *Loader, str: string, comptime overwrite: bool) void {
         var source = logger.Source.initPathString("test", str);
-        Parser.parse(&source, this.allocator, this.map, overwrite, true);
+        Parser.parse(&source, this.allocator, this.map, overwrite, false);
         std.mem.doNotOptimizeAway(&source);
     }
 
@@ -716,16 +729,15 @@ pub const Parser = struct {
         allocator: *std.mem.Allocator,
         map: *Map,
         comptime override: bool,
-        is_process: bool,
+        comptime is_process: bool,
     ) void {
         var lexer = Lexer.init(source);
-        lexer.is_process_env = is_process;
         var fbs = std.io.fixedBufferStream(&temporary_nested_value_buffer);
         var writer = fbs.writer();
         var temp_variable_i: u16 = 0;
         var total_alloc_len: usize = 0;
 
-        while (lexer.next()) |variable| {
+        while (lexer.next(is_process)) |variable| {
             if (variable.has_nested_value) {
                 writer.context.reset();
 
@@ -912,6 +924,8 @@ test "DotEnv Process" {
 
     try expectString(loader.map.get("USER").?, process.get("USER").?);
     try expect(loader.map.get("USER").?.len > 0);
+    try expectString(loader.map.get("HOME").?, process.get("HOME").?);
+    try expect(loader.map.get("HOME").?.len > 0);
 }
 
 test "DotEnv Loader - copyForDefine" {

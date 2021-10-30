@@ -307,7 +307,7 @@ BUN_LLD_FLAGS = $(OBJ_FILES) \
 		$(PLATFORM_LINKER_FLAGS)
 
 
-bun: vendor build-obj bun-link-lld-release
+bun: vendor identifier-cache build-obj bun-link-lld-release
 
 
 vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib openssl s2n bzip2 libarchive 
@@ -328,7 +328,7 @@ tgz:
 tgz-debug:
 	zig build-exe --main-pkg-path $(shell pwd) ./misctools/tgz.zig $(DEPS_DIR)/zlib/libz.a $(DEPS_DIR)/libarchive.a  $(LIBICONV_PATH) -lc 
 
-vendor: require init-submodules vendor-without-check
+vendor: require init-submodules vendor-without-check 
 
 zlib: 
 	cd src/deps/zlib; cmake .; make;

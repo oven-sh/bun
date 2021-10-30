@@ -689,6 +689,10 @@ pub const ZigConsoleClient = struct {
         vals: [*]JSValue,
         len: usize,
     ) callconv(.C) void {
+        if (comptime @hasDecl(@import("root"), "bindgen")) {
+            return;
+        }
+
         var console = JS.VirtualMachine.vm.console;
         var i: usize = 0;
         var buffered_writer = console.writer;
@@ -751,6 +755,10 @@ pub const ZigConsoleClient = struct {
         const CellType = CAPI.CellType;
         threadlocal var name_buf: [512]u8 = undefined;
         pub fn format(comptime Writer: type, writer: Writer, value: JSValue, globalThis: *JSGlobalObject, comptime enable_ansi_colors: bool) anyerror!void {
+            if (comptime @hasDecl(@import("root"), "bindgen")) {
+                return;
+            }
+
             if (value.isCell()) {
                 if (CAPI.JSObjectGetPrivate(value.asRef())) |private_data_ptr| {
                     const priv_data = JS.JSPrivateDataPtr.from(private_data_ptr);

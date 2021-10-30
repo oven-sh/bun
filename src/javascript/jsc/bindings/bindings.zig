@@ -127,6 +127,10 @@ pub const ZigString = extern struct {
     }
 
     pub fn toJSStringRef(this: *const ZigString) C_API.JSStringRef {
+        if (comptime @hasDecl(@import("root"), "bindgen")) {
+            return undefined;
+        }
+
         return C_API.JSStringCreateStatic(this.ptr, this.len);
     }
 

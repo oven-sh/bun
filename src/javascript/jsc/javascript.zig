@@ -700,7 +700,7 @@ pub const VirtualMachine = struct {
         _args: Api.TransformOptions,
         existing_bundle: ?*NodeModuleBundle,
         _log: ?*logger.Log,
-        env_loader: *DotEnv.Loader,
+        env_loader: ?*DotEnv.Loader,
     ) !*VirtualMachine {
         var log: *logger.Log = undefined;
         if (_log) |__log| {
@@ -1383,6 +1383,10 @@ pub const VirtualMachine = struct {
     // In all other cases, we will convert it to a ZigException.
     const errors_property = ZigString.init("errors");
     pub fn printErrorlikeObject(this: *VirtualMachine, value: JSValue, exception: ?*Exception, exception_list: ?*ExceptionList, comptime allow_ansi_color: bool) void {
+        if (comptime @hasDecl(@import("root"), "bindgen")) {
+            return;
+        }
+
         var was_internal = false;
 
         defer {
@@ -1496,6 +1500,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTrace, comptime allow_ansi_colors: bool) !void {
+
         // We are going to print the stack trace backwards
         const stack = trace.frames();
         if (stack.len > 0) {

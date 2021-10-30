@@ -430,18 +430,21 @@ pub const Fetch = struct {
         }
 
         var url_zig_str = ZigString.init("");
+        JSValue.fromRef(arguments[0]).toZigString(&url_zig_str, VirtualMachine.vm.global);
         var url_str = url_zig_str.slice();
+
         if (url_str.len == 0) {
             const fetch_error = fetch_error_blank_url;
             return JSPromise.rejectedPromiseValue(VirtualMachine.vm.global, ZigString.init(fetch_error).toErrorInstance(VirtualMachine.vm.global)).asRef();
         }
 
-        var dealloc_url_str = false;
         if (url_str[0] == '/') {
             url_str = strings.append(getAllocator(ctx), VirtualMachine.vm.bundler.options.origin.origin, url_str) catch unreachable;
-            dealloc_url_str = true;
+        } else {
+            url_str = getAllocator(ctx).dupe(u8, url_str) catch unreachable;
         }
-        defer if (dealloc_url_str) getAllocator(ctx).free(url_str);
+
+        defer getAllocator(ctx).free(url_str);
 
         var http_client = HTTPClient.init(getAllocator(ctx), .GET, ZigURL.parse(url_str), .{}, "");
 

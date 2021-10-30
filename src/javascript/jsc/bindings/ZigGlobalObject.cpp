@@ -89,6 +89,9 @@ extern "C" void JSCInitialize() {
   JSC::Options::useSourceProviderCache() = true;
   JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
   JSC::Options::exposeInternalModuleLoader() = true;
+  JSC::Options::useSharedArrayBuffer() = true;
+  // JSC::Options::useAtMethod() = true;
+
   // std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
   WTF::initializeMainThread();
   JSC::initialize();

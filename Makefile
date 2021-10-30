@@ -514,7 +514,7 @@ release-bin-generate-zip:
 else
 
 release-bin-generate-zip:
-	cd /tmp/bun-$(PACKAGE_JSON_VERSION)/ && zip -r bun-$(TRIPLET)
+	cd /tmp/bun-$(PACKAGE_JSON_VERSION)/ && zip -r bun-$(TRIPLET).zip bun-$(TRIPLET)
 
 endif
 

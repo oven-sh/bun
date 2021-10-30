@@ -119,7 +119,13 @@ bun
 To use an existing React app:
 
 ```bash
-bun create /absolute-path-to-react-app app
+# To enable React Fast Refresh, ensure "react-refresh" is installed
+npm install -D react-refresh
+
+# Generate a bundle for your entry point(s)
+bun bun ./src/index.js # jsx, tsx, ts also work. can be multiple files
+
+# Start the dev server
 bun
 ```
 

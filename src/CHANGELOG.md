@@ -1,6 +1,6 @@
 # Upcoming release
 
-- [bun run] `bun run ./file.js` now supports running JavaScript, TS, TSX, and JSX files. Before, it would just say `"error: Missing script"`. If there is no `#!` shebang in the file, You can still use Node & Deno with `bun run`, that works the same as before.
+- [bun run] `bun run ./file.js` now supports running JavaScript, TS, TSX, and JSX files. Before, it would say `"error: Missing script"`. If there is a `#!` shebang at the start of the file, the file will not be run with Bun.js. You can still use Node & Deno with `bun run`, that works the same as before.
 - [Bun.js] Top-level await
 - [Bun.js] `performance.now()` is implemented
 - [Bun.js] `fetch()` is fixed

@@ -40,6 +40,7 @@ pub const GlobalClasses = [_]type{
     Bun.Class,
     Fetch.Class,
     js_ast.Macro.JSNode.BunJSXCallbackFunction,
+    Performance.Class,
 
     // The last item in this array becomes "process.env"
     Bun.EnvironmentVariables.Class,
@@ -639,6 +640,42 @@ pub const Bun = struct {
     };
 };
 
+pub const Performance = struct {
+    pub const Class = NewClass(
+        void,
+        .{
+            .name = "performance",
+            .read_only = true,
+        },
+        .{
+            .now = .{
+                .rfn = Performance.now,
+            },
+        },
+        .{},
+    );
+
+    pub fn now(
+        this: void,
+        ctx: js.JSContextRef,
+        function: js.JSObjectRef,
+        thisObject: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        return js.JSValueMakeNumber(
+            ctx,
+            @floatCast(
+                f64,
+                @intToFloat(
+                    f128,
+                    VirtualMachine.vm.origin_timer.read(),
+                ) / std.time.ns_per_ms,
+            ),
+        );
+    }
+};
+
 const bun_file_import_path = "/node_modules.server.bun";
 pub const LazyClasses = [_]type{};
 
@@ -678,6 +715,8 @@ pub const VirtualMachine = struct {
     macro_mode: bool = false,
 
     has_any_macro_remappings: bool = false,
+
+    origin_timer: std.time.Timer = undefined,
 
     pub const MacroMap = std.AutoArrayHashMap(i32, js.JSObjectRef);
 
@@ -735,6 +774,7 @@ pub const VirtualMachine = struct {
 
             .macros = MacroMap.init(allocator),
             .macro_entry_points = @TypeOf(VirtualMachine.vm.macro_entry_points).init(allocator),
+            .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
         };
         vm.bundler.macro_context = null;
 

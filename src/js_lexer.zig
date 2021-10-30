@@ -286,7 +286,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
 
                             // legacy octal literals
                             '0'...'7' => {
-                                const octal_start = iter.i - 2;
+                                const octal_start = (iter.i + width2) - 2;
                                 if (comptime is_json) {
                                     lexer.end = start + iter.i - width2;
                                     try lexer.syntaxError();

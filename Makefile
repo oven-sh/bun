@@ -31,9 +31,11 @@ BUN_RELEASE_BIN = $(PACKAGE_DIR)/bun
 # We must use the same compiler version for the JavaScriptCore bindings and JavaScriptCore
 # If we don't do this, strange memory allocation failures occur.
 # This is easier to happen than you'd expect.
-
 CC = $(shell which clang-12 || which clang)
 CXX = $(shell which clang++-12 || which clang++)
+
+# macOS sed is different
+SED = $(shell which gsed || which sed)
 
 DEPS_DIR = $(shell pwd)/src/deps
 CPUS ?= $(shell nproc)
@@ -460,19 +462,22 @@ jsc-bindings-headers:
 	/tmp/build-jsc-headers
 	zig translate-c src/javascript/jsc/bindings/headers.h > src/javascript/jsc/bindings/headers.zig
 	zig run misctools/headers-cleaner.zig -lc
-	sed -i '/pub const int/d' src/javascript/jsc/bindings/headers.zig || echo "";
-	sed -i '/pub const uint/d' src/javascript/jsc/bindings/headers.zig || echo "";
-	sed -i '/pub const intmax/d' src/javascript/jsc/bindings/headers.zig || echo "";
-	sed -i '/pub const uintmax/d' src/javascript/jsc/bindings/headers.zig || echo "";
-	sed -i '/pub const max_align_t/{N;N;N;d;}' src/javascript/jsc/bindings/headers.zig
-	sed -i '/pub const ZigErrorCode/d' src/javascript/jsc/bindings/headers.zig
-	sed -i '/pub const JSClassRef/d' src/javascript/jsc/bindings/headers.zig
+	$(SED) -i '/pub const int/d' src/javascript/jsc/bindings/headers.zig || echo "";
+	$(SED) -i '/pub const uint/d' src/javascript/jsc/bindings/headers.zig || echo "";
+	$(SED) -i '/pub const intmax/d' src/javascript/jsc/bindings/headers.zig || echo "";
+	$(SED) -i '/pub const uintmax/d' src/javascript/jsc/bindings/headers.zig || echo "";
+	$(SED) -i '/pub const max_align_t/{N;N;N;d;}' src/javascript/jsc/bindings/headers.zig
+	$(SED) -i '/pub const ZigErrorCode/d' src/javascript/jsc/bindings/headers.zig
+	$(SED) -i '/pub const JSClassRef/d' src/javascript/jsc/bindings/headers.zig
 	zig fmt src/javascript/jsc/bindings/headers.zig
 	
 
 bump: 
 	expr $(BUILD_ID) + 1 > build-id
 
+
+identifier-cache:
+	zig run src/js_lexer/identifier_data.zig
 
 tag: 
 	git tag $(BUN_BUILD_TAG)

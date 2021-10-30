@@ -136,6 +136,11 @@ export var __commonJS = (cb, name) => {
 
 export var __cJS2eSM = __commonJS;
 
+export var __internalIsCommonJSNamespace = (namespace) =>
+  typeof namespace === "object" &&
+  "default" in namespace &&
+  namespace.default[cjsRequireSymbol];
+
 export var __require = (namespace) => {
   const namespaceType = typeof namespace;
   if (namespaceType === "function" && namespace[cjsRequireSymbol])

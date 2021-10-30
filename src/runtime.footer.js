@@ -19,6 +19,9 @@ export var regeneratorRuntime = BUN_RUNTIME.regeneratorRuntime;
 export var __exportValue = BUN_RUNTIME.__exportValue;
 export var __exportDefault = BUN_RUNTIME.__exportDefault;
 export var $$bun_runtime_json_parse = JSON.parse;
+export var __internalIsCommonJSNamespace =
+  BUN_RUNTIME.__internalIsCommonJSNamespace;
 
+globalThis.__internalIsCommonJSNamespace ||= __internalIsCommonJSNamespace;
 globalThis.require ||= BUN_RUNTIME.__require;
 globalThis.self ||= globalThis;

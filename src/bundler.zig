@@ -3482,7 +3482,7 @@ pub const ServerEntryPoint = struct {
             \\//Auto-generated file
             \\import * as start from '{s}{s}';
             \\export * from '{s}{s}';
-            \\if ('default' in start && typeof start.default == 'function') {{
+            \\if ('default' in start && "__internalIsCommonJSNamespace" in globalThis && __internalIsCommonJSNamespace(start)) {{
             \\  start.default();
             \\}}
         ,

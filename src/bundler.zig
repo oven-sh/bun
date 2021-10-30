@@ -2597,6 +2597,8 @@ pub const Bundler = struct {
                     bundler.macro_context = js_ast.Macro.MacroContext.init(bundler);
                 }
 
+                opts.features.top_level_await = bundler.options.platform.isBun();
+
                 opts.macro_context = &bundler.macro_context.?;
                 opts.macro_context.remap = this_parse.macro_remappings;
                 opts.features.is_macro_runtime = bundler.options.platform == .bun_macro;

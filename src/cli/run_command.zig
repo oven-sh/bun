@@ -22,7 +22,7 @@ const bundler = @import("../bundler.zig");
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
-
+const Run = @import("../bun_js.zig").Run;
 var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 var path_buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 const NpmArgs = struct {
@@ -268,6 +268,121 @@ pub const RunCommand = struct {
     }
 
     pub fn exec(ctx: Command.Context, comptime bin_dirs_only: bool, comptime log_errors: bool) !bool {
+        // Step 1. Figure out what we're trying to run
+        var positionals = ctx.positionals;
+        if (positionals.len > 0 and strings.eqlComptime(positionals[0], "run") or strings.eqlComptime(positionals[0], "r")) {
+            positionals = positionals[1..];
+        }
+
+        var script_name_to_search: string = "";
+
+        if (positionals.len > 0) {
+            script_name_to_search = positionals[0];
+        }
+
+        var passthrough: []const string = &[_]string{};
+
+        var passthrough_list = std.ArrayList(string).init(ctx.allocator);
+        if (script_name_to_search.len > 0) {
+            get_passthrough: {
+
+                // If they explicitly pass "--", that means they want everything after that to be passed through.
+                for (std.os.argv) |argv, i| {
+                    if (strings.eqlComptime(std.mem.span(argv), "--")) {
+                        if (std.os.argv.len > i + 1) {
+                            var count: usize = 0;
+                            for (std.os.argv[i + 1 ..]) |arg| {
+                                count += 1;
+                            }
+                            try passthrough_list.ensureTotalCapacity(count);
+
+                            for (std.os.argv[i + 1 ..]) |arg| {
+                                passthrough_list.appendAssumeCapacity(std.mem.span(arg));
+                            }
+
+                            passthrough = passthrough_list.toOwnedSlice();
+                            break :get_passthrough;
+                        }
+                    }
+                }
+
+                // If they do not pass "--", assume they want everything after the script name to be passed through.
+                for (std.os.argv) |argv, i| {
+                    if (strings.eql(std.mem.span(argv), script_name_to_search)) {
+                        if (std.os.argv.len > i + 1) {
+                            try passthrough_list.ensureTotalCapacity(std.os.argv[i + 1 ..].len);
+
+                            for (std.os.argv[i + 1 ..]) |arg| {
+                                passthrough_list.appendAssumeCapacity(std.mem.span(arg));
+                            }
+
+                            passthrough = passthrough_list.toOwnedSlice();
+                            break :get_passthrough;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (comptime log_errors) {
+            if (script_name_to_search.len > 0) {
+                possibly_open_with_bun_js: {
+                    if (options.defaultLoaders.get(std.fs.path.extension(script_name_to_search))) |loader| {
+                        if (loader.isJavaScriptLike()) {
+                            const cwd = std.os.getcwd(&path_buf) catch break :possibly_open_with_bun_js;
+                            path_buf[cwd.len] = std.fs.path.sep;
+                            var parts = [_]string{script_name_to_search};
+                            var file_path = resolve_path.joinAbsStringBuf(
+                                path_buf[0 .. cwd.len + 1],
+                                &path_buf2,
+                                &parts,
+                                .auto,
+                            );
+                            if (file_path.len == 0) break :possibly_open_with_bun_js;
+                            path_buf2[file_path.len] = 0;
+                            var file_pathZ = path_buf2[0..file_path.len :0];
+
+                            var file = std.fs.openFileAbsoluteZ(file_pathZ, .{ .read = true }) catch break :possibly_open_with_bun_js;
+                            // "White space after #! is optional."
+                            var shebang_buf: [64]u8 = undefined;
+                            const shebang_size = file.pread(&shebang_buf, 0) catch |err| {
+                                Output.prettyErrorln("<r><red>error<r>: Failed to read file <b>{s}<r> due to error <b>{s}<r>", .{ file_path, @errorName(err) });
+                                Output.flush();
+                                std.os.exit(1);
+                            };
+
+                            var shebang: string = shebang_buf[0..shebang_size];
+                            shebang = std.mem.trim(u8, shebang, " \r\n\t");
+                            if (shebang.len == 0) break :possibly_open_with_bun_js;
+
+                            if (shebang.len > 2 and strings.eqlComptimeIgnoreLen(shebang[0..2], "#!")) {
+                                break :possibly_open_with_bun_js;
+                            }
+
+                            Run.boot(ctx, file, ctx.allocator.dupe(u8, file_path) catch unreachable) catch |err| {
+                                if (Output.enable_ansi_colors) {
+                                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                                } else {
+                                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                                }
+
+                                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
+                                    std.fs.path.basename(file_path),
+                                    @errorName(err),
+                                });
+                                Output.flush();
+                                std.os.exit(1);
+                            };
+
+                            return true;
+
+                            // If we get here, then we run it with Bun.js
+
+                        }
+                    }
+                }
+            }
+        }
         var args = ctx.args;
         args.node_modules_bundle_path = null;
         args.node_modules_bundle_path_server = null;
@@ -285,11 +400,6 @@ pub const RunCommand = struct {
             this_bundler.resolver.care_about_scripts = false;
         }
         this_bundler.configureLinker();
-
-        var positionals = ctx.positionals;
-        if (positionals.len > 0 and strings.eqlComptime(positionals[0], "run") or strings.eqlComptime(positionals[0], "r")) {
-            positionals = positionals[1..];
-        }
 
         var root_dir_info = this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch |err| {
             if (!log_errors) return false;
@@ -392,56 +502,6 @@ pub const RunCommand = struct {
 
             this_bundler.env.map.put("PATH", new_path.items) catch unreachable;
             PATH = new_path.items;
-        }
-
-        var script_name_to_search: string = "";
-
-        if (positionals.len > 0) {
-            script_name_to_search = positionals[0];
-        }
-
-        var passthrough: []const string = &[_]string{};
-
-        var passthrough_list = std.ArrayList(string).init(ctx.allocator);
-        if (script_name_to_search.len > 0) {
-            get_passthrough: {
-
-                // If they explicitly pass "--", that means they want everything after that to be passed through.
-                for (std.os.argv) |argv, i| {
-                    if (strings.eqlComptime(std.mem.span(argv), "--")) {
-                        if (std.os.argv.len > i + 1) {
-                            var count: usize = 0;
-                            for (std.os.argv[i + 1 ..]) |arg| {
-                                count += 1;
-                            }
-                            try passthrough_list.ensureTotalCapacity(count);
-
-                            for (std.os.argv[i + 1 ..]) |arg| {
-                                passthrough_list.appendAssumeCapacity(std.mem.span(arg));
-                            }
-
-                            passthrough = passthrough_list.toOwnedSlice();
-                            break :get_passthrough;
-                        }
-                    }
-                }
-
-                // If they do not pass "--", assume they want everything after the script name to be passed through.
-                for (std.os.argv) |argv, i| {
-                    if (strings.eql(std.mem.span(argv), script_name_to_search)) {
-                        if (std.os.argv.len > i + 1) {
-                            try passthrough_list.ensureTotalCapacity(std.os.argv[i + 1 ..].len);
-
-                            for (std.os.argv[i + 1 ..]) |arg| {
-                                passthrough_list.appendAssumeCapacity(std.mem.span(arg));
-                            }
-
-                            passthrough = passthrough_list.toOwnedSlice();
-                            break :get_passthrough;
-                        }
-                    }
-                }
-            }
         }
 
         var did_print = false;

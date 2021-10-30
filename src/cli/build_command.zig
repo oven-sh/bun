@@ -12,7 +12,7 @@ usingnamespace @import("../ast/base.zig");
 usingnamespace @import("../defines.zig");
 const panicky = @import("../panic_handler.zig");
 const allocators = @import("../allocators.zig");
-const sync = @import(".././sync.zig");
+const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../javascript/jsc/config.zig").configureTransformOptionsForBun;

@@ -349,6 +349,7 @@ require:
 	@npm --version >/dev/null 2>&1 || (echo -e "ERROR: npm is required."; exit 1)
 	@which aclocal > /dev/null || (echo -e  "ERROR: automake is required. Install on mac with:\n\n    brew install automake"; exit 1)
 	@which glibtoolize > /dev/null || (echo -e "ERROR: libtool is required. Install on mac with:\n\n    brew install libtool"; exit 1)
+	@which ninja > /dev/null || (echo -e "ERROR: Ninja is required. Install on mac with:\n\n    brew install ninja"; exit 1)
 	@stat $(LIBICONV_PATH) >/dev/null 2>&1 || (echo -e "ERROR: libiconv is required. Please run:\n\n    brew install libiconv"; exit 1)
 	@stat $(LIBCRYPTO_STATIC_LIB) >/dev/null 2>&1 || (echo -e "ERROR: OpenSSL 1.1 is required. Please run:\n\n    brew install openssl@1.1"; exit 1)
 	@echo "You have the dependencies installed! Woo"

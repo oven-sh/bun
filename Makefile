@@ -28,6 +28,9 @@ PACKAGE_JSON_VERSION = 0.0.$(BUILD_ID)
 BUN_BUILD_TAG = bun-v$(PACKAGE_JSON_VERSION)
 BUN_RELEASE_BIN = $(PACKAGE_DIR)/bun
 
+NPM_CLIENT = $(shell which pnpm || which npm)
+ZIG ?= $(shell which zig || echo -e "error: Missing zig. Please make sure zig is in PATH. Or set ZIG=/path/to-zig-executable")
+
 # We must use the same compiler version for the JavaScriptCore bindings and JavaScriptCore
 # If we don't do this, strange memory allocation failures occur.
 # This is easier to happen than you'd expect.
@@ -323,10 +326,10 @@ libarchive:
 	cp ./.libs/libarchive.a $(DEPS_DIR)/libarchive.a;
 
 tgz:
-	zig build-exe -Drelease-fast --main-pkg-path $(shell pwd) ./misctools/tgz.zig $(DEPS_DIR)/zlib/libz.a $(DEPS_DIR)/libarchive.a  $(LIBICONV_PATH) -lc 
+	$(ZIG) build-exe -Drelease-fast --main-pkg-path $(shell pwd) ./misctools/tgz.zig $(DEPS_DIR)/zlib/libz.a $(DEPS_DIR)/libarchive.a  $(LIBICONV_PATH) -lc 
 
 tgz-debug:
-	zig build-exe --main-pkg-path $(shell pwd) ./misctools/tgz.zig $(DEPS_DIR)/zlib/libz.a $(DEPS_DIR)/libarchive.a  $(LIBICONV_PATH) -lc 
+	$(ZIG) build-exe --main-pkg-path $(shell pwd) ./misctools/tgz.zig $(DEPS_DIR)/zlib/libz.a $(DEPS_DIR)/libarchive.a  $(LIBICONV_PATH) -lc 
 
 vendor: require init-submodules vendor-without-check 
 
@@ -338,17 +341,17 @@ require:
 	@cmake --version >/dev/null 2>&1 || (echo -e "ERROR: cmake is required."; exit 1)
 	@esbuild --version >/dev/null 2>&1 || (echo -e "ERROR: esbuild is required."; exit 1)
 	@npm --version >/dev/null 2>&1 || (echo -e "ERROR: npm is required."; exit 1)
-	@which aclocal > /dev/null || (echo -e  "ERROR: automake is required. Install on mac with:\nbrew install automake"; exit 1)
-	@which glibtoolize > /dev/null || (echo -e "ERROR: libtool is required. Install on mac with:\nbrew install libtool"; exit 1)
-	@stat $(LIBICONV_PATH) >/dev/null 2>&1 || (echo -e "ERROR: libiconv is required. Please:\nbrew install libiconv"; exit 1)
-	@stat $(LIBCRYPTO_STATIC_LIB) >/dev/null 2>&1 || (echo -e "ERROR: OpenSSL 1.1 is required. Please:\nbrew install openssl@1.1"; exit 1)
+	@which aclocal > /dev/null || (echo -e  "ERROR: automake is required. Install on mac with:\n\n    brew install automake"; exit 1)
+	@which glibtoolize > /dev/null || (echo -e "ERROR: libtool is required. Install on mac with:\n\n    brew install libtool"; exit 1)
+	@stat $(LIBICONV_PATH) >/dev/null 2>&1 || (echo -e "ERROR: libiconv is required. Please run:\n\n    brew install libiconv"; exit 1)
+	@stat $(LIBCRYPTO_STATIC_LIB) >/dev/null 2>&1 || (echo -e "ERROR: OpenSSL 1.1 is required. Please run:\n\n    brew install openssl@1.1"; exit 1)
 	@echo "You have the dependencies installed! Woo"
 
 init-submodules:
 	git submodule update --init --recursive --progress --depth=1
 
 build-obj: 
-	zig build obj -Drelease-fast
+	$(ZIG) build obj -Drelease-fast
 
 sign-macos-x64: 
 	gon sign.macos-x64.json
@@ -370,13 +373,13 @@ all-js: runtime_js fallback_decoder bun_error node-fallbacks
 
 
 api: 
-	pnpm install; ./node_modules/.bin/peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
-	zig fmt src/api/schema.zig
+	$(NPM_CLIENT) install; ./node_modules/.bin/peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
+	$(ZIG) fmt src/api/schema.zig
 	prettier --write src/api/schema.js
 	prettier --write src/api/schema.d.ts
 
 node-fallbacks: 
-	@cd src/node-fallbacks; pnpm install; npm run --silent build
+	@cd src/node-fallbacks; $(NPM_CLIENT) install; npm run --silent build
 
 fallback_decoder:
 	@esbuild --target=esnext  --bundle src/fallback.ts --format=iife --platform=browser --minify > src/fallback.out.js
@@ -385,14 +388,14 @@ runtime_js:
 	@NODE_ENV=production esbuild --define:process.env.NODE_ENV="production" --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.out.js; cat src/runtime.footer.js >> src/runtime.out.js
 
 bun_error:
-	@cd packages/bun-error; pnpm install; npm run --silent build
+	@cd packages/bun-error; $(NPM_CLIENT) install; npm run --silent build
 
 generate-install-script:
 	@rm -f $(PACKAGES_REALPATH)/bun/install.js 	
 	@esbuild --log-level=error --define:BUN_VERSION="\"$(PACKAGE_JSON_VERSION)\"" --define:process.env.NODE_ENV="\"production\"" --platform=node  --format=cjs $(PACKAGES_REALPATH)/bun/install.ts > $(PACKAGES_REALPATH)/bun/install.js
 
 fetch:
-	cd misctools; zig build-obj -Drelease-fast ./fetch.zig -fcompiler-rt -lc --main-pkg-path ../
+	cd misctools; $(ZIG) build-obj -Drelease-fast ./fetch.zig -fcompiler-rt -lc --main-pkg-path ../
 	$(CXX) ./misctools/fetch.o -g -O3 -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc \
 		src/deps/mimalloc/libmimalloc.a \
 		src/deps/zlib/libz.a \
@@ -402,7 +405,7 @@ fetch:
 		$(LIBCRYPTO_STATIC_LIB)
 
 fetch-debug:
-	cd misctools; zig build-obj ./fetch.zig -fcompiler-rt -lc --main-pkg-path ../
+	cd misctools; $(ZIG) build-obj ./fetch.zig -fcompiler-rt -lc --main-pkg-path ../
 	$(CXX) ./misctools/fetch.o -g -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc  \
 		src/deps/mimalloc/libmimalloc.a \
 		src/deps/zlib/libz.a \
@@ -458,11 +461,11 @@ jsc-bindings-headers:
 	rm -f /tmp/build-jsc-headers src/javascript/jsc/bindings/headers.zig
 	touch src/javascript/jsc/bindings/headers.zig
 	mkdir -p src/javascript/jsc/bindings-obj/
-	zig build headers-obj
+	$(ZIG) build headers-obj
 	$(CXX) $(PLATFORM_LINKER_FLAGS) -g $(DEBUG_BIN)/headers.o -W -o /tmp/build-jsc-headers $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES);
 	/tmp/build-jsc-headers
-	zig translate-c src/javascript/jsc/bindings/headers.h > src/javascript/jsc/bindings/headers.zig
-	zig run misctools/headers-cleaner.zig -lc
+	$(ZIG) translate-c src/javascript/jsc/bindings/headers.h > src/javascript/jsc/bindings/headers.zig
+	$(ZIG) run misctools/headers-cleaner.zig -lc
 	$(SED) -i '/pub const int/d' src/javascript/jsc/bindings/headers.zig || echo "";
 	$(SED) -i '/pub const uint/d' src/javascript/jsc/bindings/headers.zig || echo "";
 	$(SED) -i '/pub const intmax/d' src/javascript/jsc/bindings/headers.zig || echo "";
@@ -470,7 +473,7 @@ jsc-bindings-headers:
 	$(SED) -i '/pub const max_align_t/{N;N;N;d;}' src/javascript/jsc/bindings/headers.zig
 	$(SED) -i '/pub const ZigErrorCode/d' src/javascript/jsc/bindings/headers.zig
 	$(SED) -i '/pub const JSClassRef/d' src/javascript/jsc/bindings/headers.zig
-	zig fmt src/javascript/jsc/bindings/headers.zig
+	$(ZIG) fmt src/javascript/jsc/bindings/headers.zig
 	
 
 bump: 
@@ -478,7 +481,7 @@ bump:
 
 
 identifier-cache:
-	zig run src/js_lexer/identifier_data.zig
+	$(ZIG) run src/js_lexer/identifier_data.zig
 
 tag: 
 	git tag $(BUN_BUILD_TAG)
@@ -544,10 +547,10 @@ release-bin-push:
 	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_ZIP) --repo $(BUN_AUTO_UPDATER_REPO)
 
 dev-obj:
-	zig build obj
+	$(ZIG) build obj
 
 dev-obj-linux:
-	zig build obj -Dtarget=x86_64-linux-gnu
+	$(ZIG) build obj -Dtarget=x86_64-linux-gnu
 
 dev: mkdir-dev dev-obj bun-link-lld-debug
 
@@ -555,7 +558,7 @@ mkdir-dev:
 	mkdir -p $(DEBUG_PACKAGE_DIR)/bin
 
 test-install:
-	cd integration/scripts && pnpm install
+	cd integration/scripts && $(NPM_CLIENT) install
 
 test-all: test-install test-with-hmr test-no-hmr test-create-next test-create-react test-bun-run
 test-all-mac: test-install test-with-hmr-mac test-no-hmr-mac test-create-next-mac test-create-react-mac test-bun-run-mac
@@ -696,10 +699,10 @@ picohttp:
 
 analytics:
 	./node_modules/.bin/peechy --schema src/analytics/schema.peechy --zig src/analytics/analytics_schema.zig
-	zig fmt src/analytics/analytics_schema.zig
+	$(ZIG) fmt src/analytics/analytics_schema.zig
 
 analytics-features:
-	@cd misctools; zig run --main-pkg-path ../ ./features.zig
+	@cd misctools; $(ZIG) run --main-pkg-path ../ ./features.zig
 
 find-unused-zig-files: 
 	@bash ./misctools/find-unused-zig.sh
@@ -708,7 +711,7 @@ generate-unit-tests:
 	@bash ./misctools/generate-test-file.sh
 
 fmt-all:
-	find src -name "*.zig" -exec zig fmt {} \;
+	find src -name "*.zig" -exec $(ZIG) fmt {} \;
 
 unit-tests: generate-unit-tests run-unit-tests
 

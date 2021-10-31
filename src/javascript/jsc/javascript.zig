@@ -455,6 +455,22 @@ pub const Bun = struct {
         }
     }
 
+    pub fn sleep(
+        this: void,
+        ctx: js.JSContextRef,
+        function: js.JSObjectRef,
+        thisObject: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        if (js.JSValueIsNumber(ctx, arguments[0])) {
+            const ms = JSValue.fromRef(arguments[0]).asNumber();
+            if (ms > 0 and std.math.isFinite(ms)) std.time.sleep(@floatToInt(u64, @floor(@floatCast(f128, ms) * std.time.ns_per_ms)));
+        }
+
+        return js.JSValueMakeUndefined(ctx);
+    }
+
     var public_path_temp_str: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
     pub fn getPublicPathJS(
@@ -492,6 +508,9 @@ pub const Bun = struct {
             .match = .{
                 .rfn = Router.match,
                 .ts = Router.match_type_definition,
+            },
+            .sleep = .{
+                .rfn = sleep,
             },
             .fetch = .{
                 .rfn = Fetch.call,

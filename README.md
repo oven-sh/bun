@@ -912,13 +912,25 @@ Estimated: 30-90 minutes :(
 
 ## macOS
 
+Install LLVM 12 and homebrew dependencies:
+
+```bash
+brew install llvm@12 coreutils libtool cmake libiconv automake openssl@1.1
+```
+
+You will also need esbuild (used for bundling internal library code until Bun has better support for bundling libraries):
+
+```bash
+npm install -g esbuild
+```
+
 Compile Zig:
 
 ```bash
 git clone https://github.com/jarred-sumner/zig
 cd zig
 git checkout jarred/zig-sloppy-with-small-structs
-cmake . -DCMAKE_PREFIX_PATH=$(brew --prefix llvm) -DZIG_STATIC_LLVM=ON -DCMAKE_BUILD_TYPE=Release && make -j 16
+cmake . -DCMAKE_PREFIX_PATH=$(brew --prefix llvm@12) -DZIG_STATIC_LLVM=ON -DCMAKE_BUILD_TYPE=Release && make -j 16
 ```
 
 You'll want to make sure `zig` is in `$PATH`. The `zig` binary wil be in the same folder as the newly-cloned `zig` repo. If you use fish, you can run `fish_add_path (pwd)`.

@@ -926,10 +926,12 @@ Make sure LLVM 12 is in your `$PATH`:
 which clang-12
 ```
 
-If it is not, you will have to run this to add it:
+If it is not, you will have to run this to link it:
 
 ```bash
 export PATH=$(brew --prefix llvm@12)/bin:$PATH
+export LDFLAGS="$LDFLAGS -L$(brew --prefix llvm@12)/lib"
+export CPPFLAGS="$CPPFLAGS -I$(brew --prefix llvm@12)/include"
 ```
 
 On fish that looks like `fish_add_path (brew --prefix llvm@12)/bin`

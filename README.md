@@ -920,6 +920,20 @@ brew install llvm@12 coreutils libtool cmake libiconv automake openssl@1.1
 
 Bun (& the version of Zig) need LLVM 12 and Clang 12 (clang is part of LLVM). Weird build & runtime errors will happen otherwise.
 
+Make sure LLVM 12 is in your `$PATH`:
+
+```bash
+which clang-12
+```
+
+If it is not, you will have to run this to add it:
+
+```bash
+export PATH=$(brew --prefix llvm@12)/bin:$PATH
+```
+
+On fish that looks like `fish_add_path (brew --prefix llvm@12)/bin`
+
 Compile Zig:
 
 ```bash

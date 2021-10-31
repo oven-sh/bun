@@ -26,13 +26,11 @@ const _tty_code: string = @embedFile("./node-fallbacks/out/tty.js");
 const _url_code: string = @embedFile("./node-fallbacks/out/url.js");
 const _util_code: string = @embedFile("./node-fallbacks/out/util.js");
 const _zlib_code: string = @embedFile("./node-fallbacks/out/zlib.js");
+const _supports_color_code: string = @embedFile("./node-fallbacks/out/supports-color.js");
 
 const _node_fetch_code: string = @embedFile("./node-fallbacks/out/node-fetch.js");
 const _isomorphic_fetch_code: string = @embedFile("./node-fallbacks/out/isomorphic-fetch.js");
 const _vercel_fetch_code: string = @embedFile("./node-fallbacks/out/@vercel_fetch.js");
-const node_fetch_code: *const string = &_node_fetch_code;
-const isomorphic_fetch_code: *const string = &_isomorphic_fetch_code;
-const vercel_fetch_code: *const string = &_vercel_fetch_code;
 
 const assert_code: *const string = &_assert_code;
 const buffer_code: *const string = &_buffer_code;
@@ -43,6 +41,8 @@ const domain_code: *const string = &_domain_code;
 const events_code: *const string = &_events_code;
 const http_code: *const string = &_http_code;
 const https_code: *const string = &_https_code;
+const isomorphic_fetch_code: *const string = &_isomorphic_fetch_code;
+const node_fetch_code: *const string = &_node_fetch_code;
 const os_code: *const string = &_os_code;
 const path_code: *const string = &_path_code;
 const process_code: *const string = &_process_code;
@@ -50,11 +50,13 @@ const punycode_code: *const string = &_punycode_code;
 const querystring_code: *const string = &_querystring_code;
 const stream_code: *const string = &_stream_code;
 const string_decoder_code: *const string = &_string_decoder_code;
+const supports_color_code: *const string = &_supports_color_code;
 const sys_code: *const string = &_sys_code;
 const timers_code: *const string = &_timers_code;
 const tty_code: *const string = &_tty_code;
 const url_code: *const string = &_url_code;
 const util_code: *const string = &_util_code;
+const vercel_fetch_code: *const string = &_vercel_fetch_code;
 const zlib_code: *const string = &_zlib_code;
 
 const assert_import_path = "/bun-vfs/node_modules/assert/index.js";
@@ -79,6 +81,7 @@ const tty_import_path = "/bun-vfs/node_modules/tty/index.js";
 const url_import_path = "/bun-vfs/node_modules/url/index.js";
 const util_import_path = "/bun-vfs/node_modules/util/index.js";
 const zlib_import_path = "/bun-vfs/node_modules/zlib/index.js";
+const supports_color_import_path = "/bun-vfs/node_modules/supports-color/index.js";
 
 const node_fetch_import_path = "/bun-vfs/node_modules/node-fetch/index.js";
 const isomorphic_fetch_import_path = "/bun-vfs/node_modules/isomorphic-fetch/index.js";
@@ -306,6 +309,16 @@ const isomorphic_fetch_package_json = PackageJSON{
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/isomorphic-fetch/package.json", ""),
 };
+const supports_color_package_json = PackageJSON{
+    .name = "supports-color",
+    .version = "0.0.0-polyfill",
+    .module_type = .cjs,
+    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "supports-color@0.0.0-polyfill")),
+    .main_fields = undefined,
+    .browser_map = undefined,
+    .source = logger.Source.initPathString("/bun-vfs/node_modules/supports-color/package.json", ""),
+};
+
 const vercel_fetch_package_json = PackageJSON{
     .name = "@vercel/fetch",
     .version = "0.0.0-polyfill",
@@ -449,6 +462,12 @@ pub const FallbackModule = struct {
         .code = vercel_fetch_code,
         .package_json = &vercel_fetch_package_json,
     };
+
+    pub const @"supports-color" = FallbackModule{
+        .path = Fs.Path.initWithNamespaceVirtual(supports_color_import_path, "node", "supports-color"),
+        .code = supports_color_code,
+        .package_json = &supports_color_package_json,
+    };
 };
 
 pub const Map = std.ComptimeStringMap(FallbackModule, .{
@@ -474,6 +493,8 @@ pub const Map = std.ComptimeStringMap(FallbackModule, .{
     &.{ "url", FallbackModule.url },
     &.{ "util", FallbackModule.util },
     &.{ "zlib", FallbackModule.zlib },
+
+    &.{ "supports-color", FallbackModule.@"supports-color" },
 
     &.{ "node-fetch", FallbackModule.@"node-fetch" },
     &.{ "isomorphic-fetch", FallbackModule.@"isomorphic-fetch" },

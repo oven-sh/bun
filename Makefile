@@ -335,13 +335,14 @@ zlib:
 
 require:
 	@echo "Checking if the required utilities are available..."
-	@cmake --version >/dev/null 2>&1 || (echo "ERROR: cmake is required."; exit 1)
-	@esbuild --version >/dev/null 2>&1 || (echo "ERROR: esbuild is required."; exit 1)
-	@npm --version >/dev/null 2>&1 || (echo "ERROR: npm is required."; exit 1)
-	@aclocal 2>&1 || (echo "ERROR: automake is required. Install on mac with:\nbrew install automake"; exit 1)
-	@glibtoolize 2>&1 || (echo "ERROR: libtool is required. Install on mac with:\nbrew install libtool"; exit 1)
-	@stat $(LIBICONV_PATH) >/dev/null 2>&1 || (echo "ERROR: libiconv is required. Please:\nbrew install libiconv"; exit 1)
-	@stat $(LIBCRYPTO_STATIC_LIB) >/dev/null 2>&1 || (echo "ERROR: OpenSSL 1.1 is required. Please:\nbrew install openssl@1.1"; exit 1)
+	@cmake --version >/dev/null 2>&1 || (echo -e "ERROR: cmake is required."; exit 1)
+	@esbuild --version >/dev/null 2>&1 || (echo -e "ERROR: esbuild is required."; exit 1)
+	@npm --version >/dev/null 2>&1 || (echo -e "ERROR: npm is required."; exit 1)
+	@which aclocal > /dev/null || (echo -e  "ERROR: automake is required. Install on mac with:\nbrew install automake"; exit 1)
+	@which glibtoolize > /dev/null || (echo -e "ERROR: libtool is required. Install on mac with:\nbrew install libtool"; exit 1)
+	@stat $(LIBICONV_PATH) >/dev/null 2>&1 || (echo -e "ERROR: libiconv is required. Please:\nbrew install libiconv"; exit 1)
+	@stat $(LIBCRYPTO_STATIC_LIB) >/dev/null 2>&1 || (echo -e "ERROR: OpenSSL 1.1 is required. Please:\nbrew install openssl@1.1"; exit 1)
+	@echo "You have the dependencies installed! Woo"
 
 init-submodules:
 	git submodule update --init --recursive --progress --depth=1

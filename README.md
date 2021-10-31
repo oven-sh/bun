@@ -918,12 +918,6 @@ Install LLVM 12 and homebrew dependencies:
 brew install llvm@12 coreutils libtool cmake libiconv automake openssl@1.1
 ```
 
-You will also need esbuild (used for bundling internal library code until Bun has better support for bundling libraries):
-
-```bash
-npm install -g esbuild
-```
-
 Compile Zig:
 
 ```bash

@@ -988,7 +988,10 @@ pub const VirtualMachine = struct {
                     vm.bundler.resolver.log = old;
                 }
 
-                const macro_remappings = if (vm.macro_mode or !vm.has_any_macro_remappings)
+                // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
+                const is_node_override = specifier.len > "/bun-vfs/node_modules/".len and strings.eqlComptimeIgnoreLen(specifier[0.."/bun-vfs/node_modules/".len], "/bun-vfs/node_modules/");
+
+                const macro_remappings = if (vm.macro_mode or !vm.has_any_macro_remappings or is_node_override)
                     MacroRemap{}
                 else brk: {
                     if (package_json) |pkg| {
@@ -1001,6 +1004,8 @@ pub const VirtualMachine = struct {
                     break :brk resolve_result.getMacroRemappings();
                 };
 
+                var fallback_source: logger.Source = undefined;
+
                 var parse_options = Bundler.ParseOptions{
                     .allocator = allocator,
                     .path = path,
@@ -1011,6 +1016,14 @@ pub const VirtualMachine = struct {
                     .macro_remappings = macro_remappings,
                     .jsx = vm.bundler.options.jsx,
                 };
+
+                if (is_node_override) {
+                    if (NodeFallbackModules.contentsFromPath(specifier)) |code| {
+                        const fallback_path = Fs.Path.initWithNamespace(specifier, "node");
+                        fallback_source = logger.Source{ .path = fallback_path, .contents = code, .key_path = fallback_path };
+                        parse_options.virtual_source = &fallback_source;
+                    }
+                }
 
                 var parse_result = vm.bundler.parse(
                     parse_options,
@@ -1090,6 +1103,10 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = specifier;
             return;
+        } else if (specifier.len > "/bun-vfs/node_modules/".len and strings.eqlComptimeIgnoreLen(specifier[0.."/bun-vfs/node_modules/".len], "/bun-vfs/node_modules/")) {
+            ret.result = null;
+            ret.path = specifier;
+            return;
         }
 
         const is_special_source = strings.eqlComptime(source, main_file_name) or js_ast.Macro.isMacroPath(source);
@@ -1111,7 +1128,7 @@ pub const VirtualMachine = struct {
         const result_path = result.pathConst() orelse return error.ModuleNotFound;
         vm.resolved_count += 1;
 
-        if (vm.node_modules != null and result.isLikelyNodeModule()) {
+        if (vm.node_modules != null and !strings.eqlComptime(result_path.namespace, "node") and result.isLikelyNodeModule()) {
             const node_modules_bundle = vm.node_modules.?;
 
             node_module_checker: {

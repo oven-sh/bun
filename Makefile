@@ -325,7 +325,7 @@ vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder b
 libarchive:
 	cd src/deps/libarchive; \
 	(make clean || echo ""); \
-	./build/clean.sh; \
+	(./build/clean.sh || echo ""); \
 	./build/autogen.sh; \
 	./configure --disable-shared --enable-static  --with-pic  --disable-bsdtar   --disable-bsdcat --disable-rpath --enable-posix-regex-lib  --without-xml2  --without-expat --without-openssl  --without-iconv --without-zlib; \
 	make -j${CPUS}; \

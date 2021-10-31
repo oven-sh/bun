@@ -915,7 +915,7 @@ Estimated: 30-90 minutes :(
 Install LLVM 12 and homebrew dependencies:
 
 ```bash
-brew install llvm@12 coreutils libtool cmake libiconv automake openssl@1.1 ninja
+brew install llvm@12 coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed
 ```
 
 Bun (& the version of Zig) need LLVM 12 and Clang 12 (clang is part of LLVM). Weird build & runtime errors will happen otherwise.
@@ -951,7 +951,7 @@ In `bun`:
 
 ```bash
 git submodule update --init --recursive --progress --depth=1
-make vendor dev
+make vendor jsc identifier-cache dev
 ```
 
 Verify it worked:

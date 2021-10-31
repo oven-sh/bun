@@ -6,6 +6,8 @@ BUN_AUTO_UPDATER_REPO = Jarred-Sumner/bun-releases-for-updater
 
 make-lazy = $(eval $1 = $​$(eval $1 := $(value $(1)))$​$($1))
 
+MARCH_NATIVE =
+
 ARCH_NAME :=
 ifeq ($(ARCH_NAME_RAW),arm64)
    ARCH_NAME = aarch64
@@ -13,6 +15,7 @@ ifeq ($(ARCH_NAME_RAW),arm64)
 else
    ARCH_NAME = x64
    BREW_PREFIX_PATH = /usr/local
+   MARCH_NATIVE = -march=native
 endif
 
 TRIPLET = $(OS_NAME)-$(ARCH_NAME)
@@ -696,7 +699,7 @@ sizegen:
 	$(BUN_TMP_DIR)/sizegen > src/javascript/jsc/bindings/sizes.zig
 
 picohttp:
-	 $(CC) -march=native -O3 -g -fPIE -c src/deps/picohttpparser/picohttpparser.c -Isrc/deps -o src/deps/picohttpparser.o; cd ../../	
+	 $(CC) $(MARCH_NATIVE) -O3 -g -fPIE -c src/deps/picohttpparser/picohttpparser.c -Isrc/deps -o src/deps/picohttpparser.o; cd ../../	
 
 analytics:
 	./node_modules/.bin/peechy --schema src/analytics/schema.peechy --zig src/analytics/analytics_schema.zig

@@ -450,7 +450,7 @@ pub fn NewPrinter(
             p.printIdentifier(name);
         }
         pub fn printClauseAlias(p: *Printer, alias: string) void {
-            if (js_lexer.isIdentifier(alias)) {
+            if (p.canPrintIdentifier(alias)) {
                 p.printSpaceBeforeIdentifier();
                 p.printIdentifier(alias);
             } else {
@@ -938,20 +938,18 @@ pub fn NewPrinter(
             if (comptime is_json) return false;
 
             if (comptime ascii_only) {
-                return js_lexer.isIdentifier(name) and !strings.containsNonBmpCodePoint(name);
+                return js_lexer.isLatin1Identifier(string, name);
             } else {
                 return js_lexer.isIdentifier(name);
             }
         }
 
         pub inline fn canPrintIdentifierUTF16(p: *Printer, name: []const u16) bool {
-            if (comptime is_json) return false;
-            return false;
-            // if (comptime ascii_only) {
-            //     return js_lexer.isIdentifierUTF16(name) and !strings.containsNonBmpCodePointUTF16(name);
-            // } else {
-            //     return js_lexer.isIdentifierUTF16(name);
-            // }
+            if (comptime ascii_only) {
+                return js_lexer.isLatin1Identifier([]const u16, name);
+            } else {
+                return js_lexer.isIdentifierUTF16(name);
+            }
         }
 
         pub fn printExpr(p: *Printer, expr: Expr, level: Level, _flags: ExprFlag) void {
@@ -1948,7 +1946,7 @@ pub fn NewPrinter(
                         // While each of those property keys are ASCII, a subset of ASCII is valid as the start of an identifier
                         // "=" and ":" are not valid
                         // So we need to check
-                        if ((comptime !is_json) and js_lexer.isIdentifier(key.utf8)) {
+                        if ((comptime !is_json) and p.canPrintIdentifier(key.utf8)) {
                             p.print(key.utf8);
                         } else {
                             allow_shorthand = false;
@@ -3831,6 +3829,7 @@ pub fn NewPrinter(
 
                 if (c & ~@as(CodeUnitType, 0x03ff) == 0xd800 and i < n) {
                     c = 0x10000 + (((c & 0x03ff) << 10) | (name[i] & 0x03ff));
+                    i += 1;
                 }
 
                 if ((comptime ascii_only) and c > last_ascii) {

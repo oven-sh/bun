@@ -295,17 +295,27 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                                 // 1-3 digit octal
                                 var is_bad = false;
                                 var value: i64 = c2 - '0';
+                                var restore = iter;
 
-                                _ = iterator.next(&iter) or return lexer.syntaxError();
+                                _ = iterator.next(&iter) or {
+                                    if (value == 0) {
+                                        try buf.append(0);
+                                        return;
+                                    }
+
+                                    try lexer.syntaxError();
+                                    return;
+                                };
+
                                 const c3: CodePoint = iter.c;
                                 const width3 = iter.width;
 
                                 switch (c3) {
                                     '0'...'7' => {
                                         value = value * 8 + c3 - '0';
-                                        iter.i += width3;
-
+                                        restore = iter;
                                         _ = iterator.next(&iter) or return lexer.syntaxError();
+
                                         const c4 = iter.c;
                                         const width4 = iter.width;
                                         switch (c4) {
@@ -313,20 +323,26 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                                                 const temp = value * 8 + c4 - '0';
                                                 if (temp < 256) {
                                                     value = temp;
-                                                    iter.i += width4;
+                                                } else {
+                                                    iter = restore;
                                                 }
                                             },
                                             '8', '9' => {
                                                 is_bad = true;
                                             },
-                                            else => {},
+                                            else => {
+                                                iter = restore;
+                                            },
                                         }
                                     },
                                     '8', '9' => {
                                         is_bad = true;
                                     },
-                                    else => {},
+                                    else => {
+                                        iter = restore;
+                                    },
                                 }
+
                                 iter.c = @intCast(i32, value);
                                 if (is_bad) {
                                     lexer.addRangeError(
@@ -2658,12 +2674,13 @@ pub fn isIdentifierUTF16(text: []const u16) bool {
     }
 
     var i: usize = 0;
-    while (i < n) : (i += 1) {
+    while (i < n) {
         const is_start = i == 0;
-
         var codepoint = @as(CodePoint, text[i]);
-        if (codepoint >= 0xD800 and codepoint <= 0xDBFF and i + 1 < n) {
-            const surrogate = @as(CodePoint, text[i + 1]);
+        i += 1;
+
+        if (codepoint >= 0xD800 and codepoint <= 0xDBFF and i < n) {
+            const surrogate = @as(CodePoint, text[i]);
             if (surrogate >= 0xDC00 and surrogate <= 0xDFFF) {
                 codepoint = (codepoint << 10) + surrogate + (0x10000 - (0xD800 << 10) - 0xDC00);
                 i += 1;
@@ -2753,6 +2770,35 @@ pub fn rangeOfIdentifier(source: *const Source, loc: logger.Loc) logger.Range {
 
 inline fn float64(num: anytype) f64 {
     return @intToFloat(f64, num);
+}
+
+pub fn isLatin1Identifier(comptime Buffer: type, name: Buffer) bool {
+    if (name.len == 0) return false;
+
+    switch (name[0]) {
+        'a'...'z',
+        'A'...'Z',
+        '$',
+        '_',
+        => {},
+        else => return false,
+    }
+
+    if (name.len > 0) {
+        for (name[1..]) |c| {
+            switch (c) {
+                '0'...'9',
+                'a'...'z',
+                'A'...'Z',
+                '$',
+                '_',
+                => {},
+                else => return false,
+            }
+        }
+    }
+
+    return true;
 }
 
 test "isIdentifier" {

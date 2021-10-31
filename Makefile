@@ -27,6 +27,7 @@ BUILD_ID = $(shell cat ./build-id)
 PACKAGE_JSON_VERSION = 0.0.$(BUILD_ID)
 BUN_BUILD_TAG = bun-v$(PACKAGE_JSON_VERSION)
 BUN_RELEASE_BIN = $(PACKAGE_DIR)/bun
+PRETTIER ?= $(shell which prettier || echo "./node_modules/.bin/prettier")
 
 NPM_CLIENT = $(shell which pnpm || which npm)
 ZIG ?= $(shell which zig || echo -e "error: Missing zig. Please make sure zig is in PATH. Or set ZIG=/path/to-zig-executable")
@@ -375,8 +376,8 @@ all-js: runtime_js fallback_decoder bun_error node-fallbacks
 api: 
 	$(NPM_CLIENT) install; ./node_modules/.bin/peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
 	$(ZIG) fmt src/api/schema.zig
-	prettier --write src/api/schema.js
-	prettier --write src/api/schema.d.ts
+	$(PRETTIER) --write src/api/schema.js
+	$(PRETTIER) --write src/api/schema.d.ts
 
 node-fallbacks: 
 	@cd src/node-fallbacks; $(NPM_CLIENT) install; npm run --silent build

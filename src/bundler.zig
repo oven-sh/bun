@@ -2233,6 +2233,27 @@ pub const Bundler = struct {
 
                 try bundler.linker.link(file_path, &result, import_path_format, false);
 
+                if (bundler.options.platform.isBun()) {
+                    return BuildResolveResultPair{
+                        .written = switch (result.ast.exports_kind) {
+                            .esm => try bundler.print(
+                                result,
+                                Writer,
+                                writer,
+                                .esm_ascii,
+                            ),
+                            .cjs => try bundler.print(
+                                result,
+                                Writer,
+                                writer,
+                                .cjs_ascii,
+                            ),
+                            else => unreachable,
+                        },
+                        .input_fd = result.input_fd,
+                    };
+                }
+
                 return BuildResolveResultPair{
                     .written = switch (result.ast.exports_kind) {
                         .none, .esm => try bundler.print(
@@ -2507,6 +2528,7 @@ pub const Bundler = struct {
         loader: options.Loader,
         jsx: options.JSX.Pragma,
         macro_remappings: MacroRemap,
+        virtual_source: ?*const logger.Source = null,
     };
 
     pub fn parse(
@@ -2534,6 +2556,10 @@ pub const Bundler = struct {
         var input_fd: ?StoredFileDescriptorType = null;
 
         const source: logger.Source = brk: {
+            if (this_parse.virtual_source) |virtual_source| {
+                break :brk virtual_source.*;
+            }
+
             if (client_entry_point_) |client_entry_point| {
                 if (@hasField(std.meta.Child(@TypeOf(client_entry_point)), "source")) {
                     break :brk client_entry_point.source;

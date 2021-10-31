@@ -165,7 +165,7 @@ pub const Arguments = struct {
 
     fn printVersionAndExit() noreturn {
         @setCold(true);
-        Output.writer().writeAll(Global.package_json_version) catch {};
+        Output.writer().writeAll(Global.package_json_version ++ "\n") catch {};
         Output.flush();
         std.os.exit(0);
     }

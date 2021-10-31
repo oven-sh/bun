@@ -62,6 +62,8 @@ LIBCRYPTO_STATIC_LIB =
 LIBICONV_PATH = $(DEPS_DIR)/libiconv.a
 endif
 
+
+
 # Linux needs to have libcrypto 1.1.1 installed
 # download-openssl-linux:
 # 	mkdir -p $(DEPS_DIR)/openssl
@@ -317,7 +319,7 @@ BUN_LLD_FLAGS = $(OBJ_FILES) \
 bun: vendor identifier-cache build-obj bun-link-lld-release
 
 
-vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib openssl s2n libarchive 
+vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib s2n libarchive 
 
 
 libarchive:

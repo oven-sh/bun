@@ -602,6 +602,11 @@ pub const Bun = struct {
             return js.JSObjectMake(ctx, EnvironmentVariables.Class.get().*, null);
         }
 
+        pub const BooleanString = struct {
+            pub const @"true": string = "true";
+            pub const @"false": string = "false";
+        };
+
         pub fn getProperty(
             ctx: js.JSContextRef,
             thisObject: js.JSObjectRef,
@@ -615,6 +620,13 @@ pub const Bun = struct {
                 return ZigString.toRef(value, VirtualMachine.vm.global);
             }
 
+            if (Output.enable_ansi_colors) {
+                // https://github.com/chalk/supports-color/blob/main/index.js
+                if (strings.eqlComptime(name, "FORCE_COLOR")) {
+                    return ZigString.toRef(BooleanString.@"true", VirtualMachine.vm.global);
+                }
+            }
+
             return js.JSValueMakeUndefined(ctx);
         }
 
@@ -626,7 +638,7 @@ pub const Bun = struct {
             const len = js.JSStringGetLength(propertyName);
             const ptr = js.JSStringGetCharacters8Ptr(propertyName);
             const name = ptr[0..len];
-            return VirtualMachine.vm.bundler.env.map.get(name) != null;
+            return VirtualMachine.vm.bundler.env.map.get(name) != null or (Output.enable_ansi_colors and strings.eqlComptime(name, "FORCE_COLOR"));
         }
 
         pub fn getPropertyNames(

@@ -15,6 +15,7 @@ const js_parser = @import("../../js_parser.zig");
 const js_ast = @import("../../js_ast.zig");
 const hash_map = @import("../../hash_map.zig");
 const http = @import("../../http.zig");
+const NodeFallbackModules = @import("../../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../../analytics/analytics_thread.zig");
 usingnamespace @import("./base.zig");

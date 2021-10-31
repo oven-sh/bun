@@ -152,6 +152,15 @@ pub const Bun = struct {
         return ZigString.init(VirtualMachine.vm.bundler.options.origin.origin).toValue(VirtualMachine.vm.global).asRef();
     }
 
+    pub fn enableANSIColors(
+        this: void,
+        ctx: js.JSContextRef,
+        thisObject: js.JSValueRef,
+        prop: js.JSStringRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        return js.JSValueMakeBoolean(ctx, Output.enable_ansi_colors);
+    }
     pub fn getMain(
         this: void,
         ctx: js.JSContextRef,
@@ -537,31 +546,26 @@ pub const Bun = struct {
                 },
             },
         },
-        .{
-            .main = .{
-                .get = getMain,
-                .ts = d.ts{ .name = "main", .@"return" = "string" },
-            },
-            .cwd = .{
-                .get = getCWD,
-                .ts = d.ts{ .name = "cwd", .@"return" = "string" },
-            },
-            .origin = .{
-                .get = getOrigin,
-                .ts = d.ts{ .name = "origin", .@"return" = "string" },
-            },
-            .routesDir = .{
-                .get = getRoutesDir,
-                .ts = d.ts{ .name = "routesDir", .@"return" = "string" },
-            },
-            .assetPrefix = .{
-                .get = getAssetPrefix,
-                .ts = d.ts{ .name = "assetPrefix", .@"return" = "string" },
-            },
-            .env = .{
-                .get = EnvironmentVariables.getter,
-            },
-        },
+        .{ .main = .{
+            .get = getMain,
+            .ts = d.ts{ .name = "main", .@"return" = "string" },
+        }, .cwd = .{
+            .get = getCWD,
+            .ts = d.ts{ .name = "cwd", .@"return" = "string" },
+        }, .origin = .{
+            .get = getOrigin,
+            .ts = d.ts{ .name = "origin", .@"return" = "string" },
+        }, .routesDir = .{
+            .get = getRoutesDir,
+            .ts = d.ts{ .name = "routesDir", .@"return" = "string" },
+        }, .assetPrefix = .{
+            .get = getAssetPrefix,
+            .ts = d.ts{ .name = "assetPrefix", .@"return" = "string" },
+        }, .env = .{
+            .get = EnvironmentVariables.getter,
+        }, .enableANSIColors = .{
+            .get = enableANSIColors,
+        } },
     );
 
     /// EnvironmentVariables is runtime defined.

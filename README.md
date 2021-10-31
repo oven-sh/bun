@@ -918,6 +918,8 @@ Install LLVM 12 and homebrew dependencies:
 brew install llvm@12 coreutils libtool cmake libiconv automake openssl@1.1
 ```
 
+Bun (& the version of Zig) need LLVM 12 and Clang 12 (clang is part of LLVM). Weird build & runtime errors will happen otherwise.
+
 Compile Zig:
 
 ```bash

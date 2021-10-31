@@ -6,8 +6,8 @@ const resolve_path = @import("./resolver/resolve_path.zig");
 const Fs = @import("./fs.zig");
 const Schema = @import("./api/schema.zig");
 
-// packages/bun-cli-*/bin/bun
-const BUN_ROOT = "../../../";
+// packages/bun-cli-*/bun
+const BUN_ROOT = "../../";
 
 const Api = Schema.Api;
 
@@ -17,7 +17,7 @@ pub const ErrorCSS = struct {
 
     pub const ProdSourceContent = @embedFile("../" ++ ErrorCSSPath);
 
-    pub fn sourceContent() string {
+    pub inline fn sourceContent() string {
         if (comptime isDebug) {
             var env = std.process.getEnvMap(default_allocator) catch unreachable;
             var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
@@ -42,7 +42,7 @@ pub const ErrorJS = struct {
 
     pub const ProdSourceContent = @embedFile("../" ++ ErrorJSPath);
 
-    pub fn sourceContent() string {
+    pub inline fn sourceContent() string {
         if (comptime isDebug) {
             var env = std.process.getEnvMap(default_allocator) catch unreachable;
             var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
@@ -160,7 +160,7 @@ pub const Fallback = struct {
 pub const Runtime = struct {
     pub const ProdSourceContent = @embedFile("./runtime.out.js");
 
-    pub fn sourceContent() string {
+    pub inline fn sourceContent() string {
         if (comptime isDebug) {
             var dirpath = std.fs.path.dirname(@src().file).?;
             var env = std.process.getEnvMap(default_allocator) catch unreachable;
@@ -189,7 +189,7 @@ pub const Runtime = struct {
         return version_hash_int;
     }
 
-    pub fn version() string {
+    pub inline fn version() string {
         return version_hash;
     }
 

@@ -314,7 +314,7 @@ BUN_LLD_FLAGS = $(OBJ_FILES) \
 bun: vendor identifier-cache build-obj bun-link-lld-release
 
 
-vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib openssl s2n bzip2 libarchive 
+vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib openssl s2n libarchive 
 
 
 libarchive:

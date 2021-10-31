@@ -384,6 +384,9 @@ pub const Arguments = struct {
                 PlatformMatcher.case("node") => {
                     opts.platform = Api.Platform.node;
                 },
+                PlatformMatcher.case("macro"), PlatformMatcher.case("bun") => {
+                    opts.platform = Api.Platform.bun;
+                },
                 else => {
                     diag.name.long = "--platform";
                     diag.arg = _platform;

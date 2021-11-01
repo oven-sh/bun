@@ -33,6 +33,8 @@ const NpmArgs = struct {
 
 const yarn_commands: []u64 = @import("./list-of-yarn-commands.zig").all_yarn_commands;
 
+const ShellCompletions = @import("./shell_completions.zig");
+
 pub const RunCommand = struct {
     const shells_to_search = &[_]string{
         "bash",
@@ -265,6 +267,116 @@ pub const RunCommand = struct {
         this_bundler.resolver.care_about_bin_folder = true;
         this_bundler.resolver.care_about_scripts = true;
         this_bundler.configureLinker();
+    }
+
+    pub const Filter = enum {
+        script,
+        bin,
+        all,
+    };
+
+    pub fn completions(ctx: Command.Context, default_completions: ?[]const string, comptime filter: Filter) !ShellCompletions {
+        var shell_out = ShellCompletions{};
+
+        if (default_completions) |defaults| {
+            shell_out.commands = defaults;
+        }
+
+        var args = ctx.args;
+        args.node_modules_bundle_path = null;
+        args.node_modules_bundle_path_server = null;
+        args.generate_node_module_bundle = false;
+
+        var this_bundler = bundler.Bundler.init(ctx.allocator, ctx.log, args, null, null) catch return shell_out;
+        this_bundler.options.env.behavior = Api.DotEnvBehavior.load_all;
+        this_bundler.options.env.prefix = "";
+        this_bundler.env.quiet = true;
+
+        this_bundler.resolver.care_about_bin_folder = true;
+        this_bundler.resolver.care_about_scripts = true;
+        defer {
+            this_bundler.resolver.care_about_bin_folder = false;
+            this_bundler.resolver.care_about_scripts = false;
+        }
+        this_bundler.configureLinker();
+
+        var root_dir_info = (this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch null) orelse return shell_out;
+
+        {
+            this_bundler.env.loadProcess();
+
+            if (this_bundler.env.map.get("NODE_ENV")) |node_env| {
+                if (strings.eqlComptime(node_env, "production")) {
+                    this_bundler.options.production = true;
+                }
+            }
+        }
+
+        const ResultList = std.StringArrayHashMap(void);
+
+        if (this_bundler.env.map.get("SHELL")) |shell| {
+            shell_out.shell = ShellCompletions.Shell.fromEnv(@TypeOf(shell), shell);
+        }
+
+        var results = ResultList.init(ctx.allocator);
+
+        if (default_completions) |defaults| {
+            try results.ensureUnusedCapacity(defaults.len);
+            for (defaults) |item| {
+                _ = results.getOrPutAssumeCapacity(item);
+            }
+        }
+
+        if (filter == Filter.bin or filter == Filter.all) {
+            for (this_bundler.resolver.binDirs()) |bin_path| {
+                if (this_bundler.resolver.readDirInfo(bin_path) catch null) |bin_dir| {
+                    if (bin_dir.getEntriesConst()) |entries| {
+                        var iter = entries.data.iterator();
+                        var has_copied = false;
+                        var path_slice: string = "";
+                        var dir_slice: string = "";
+                        while (iter.next()) |entry| {
+                            if (entry.value.kind(&this_bundler.fs.fs) == .file) {
+                                if (!has_copied) {
+                                    std.mem.copy(u8, &path_buf, entry.value.dir);
+                                    dir_slice = path_buf[0..entry.value.dir.len];
+                                    if (!strings.endsWithChar(entry.value.dir, std.fs.path.sep)) {
+                                        dir_slice = path_buf[0 .. entry.value.dir.len + 1];
+                                    }
+                                    has_copied = true;
+                                }
+
+                                const base = entry.value.base();
+                                std.mem.copy(u8, path_buf[dir_slice.len..], base);
+                                path_buf[dir_slice.len + base.len] = 0;
+                                var slice = path_buf[0 .. dir_slice.len + base.len :0];
+                                std.os.accessZ(slice, std.os.X_OK) catch continue;
+                                // we need to dupe because the string pay point to a pointer that only exists in the current scope
+                                _ = try results.getOrPut(this_bundler.fs.filename_store.append(@TypeOf(base), base) catch continue);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (filter == Filter.script or filter == Filter.all) {
+            if (root_dir_info.enclosing_package_json) |package_json| {
+                if (package_json.scripts) |scripts| {
+                    try results.ensureUnusedCapacity(scripts.count());
+                    for (scripts.keys()) |key| {
+                        _ = results.getOrPutAssumeCapacity(key);
+                    }
+                }
+            }
+        }
+
+        var all_keys = results.keys();
+
+        strings.sortAsc(all_keys);
+        shell_out.commands = all_keys;
+
+        return shell_out;
     }
 
     pub fn exec(ctx: Command.Context, comptime bin_dirs_only: bool, comptime log_errors: bool) !bool {

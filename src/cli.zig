@@ -36,6 +36,7 @@ const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
 const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
 const RunCommand = @import("./cli/run_command.zig").RunCommand;
 const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
+const ShellCompletions = @import("./cli/shell_completions.zig");
 var start_time: i128 = undefined;
 
 pub const Cli = struct {
@@ -145,8 +146,8 @@ pub const Arguments = struct {
         clap.parseParam("-h, --help                        Display this help and exit.              ") catch unreachable,
         clap.parseParam("-i, --inject <STR>...             Inject module at the top of every file") catch unreachable,
         clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: jsx, js, json, tsx, ts, css") catch unreachable,
-        clap.parseParam("--origin <STR>                    Rewrite import paths to start with --origin. Default: \"\"") catch unreachable,
-        clap.parseParam("--port <STR>                      Port to serve Bun's dev server on. Default: \"3000\"") catch unreachable,
+        clap.parseParam("-u, --origin <STR>                Rewrite import URLs to start with --origin. Default: \"\"") catch unreachable,
+        clap.parseParam("-p, --port <STR>                      Port to serve Bun's dev server on. Default: \"3000\"") catch unreachable,
         clap.parseParam("--silent                          Don't repeat the command for bun run") catch unreachable,
 
         // clap.parseParam("-o, --outdir <STR>                Save output to directory (default: \"out\" if none provided and multiple entry points passed)") catch unreachable,
@@ -463,6 +464,7 @@ const HelpCommand = struct {
                 \\> <r> <b><green>run     <r><d>  test        <r>          Run a package.json script or executable<r>
                 \\> <r> <b><cyan>create    <r><d>next ./app<r>            Start a new project from a template <d>(shorthand: c)<r>
                 \\> <r> <b><blue>upgrade <r>                        Get the latest version of Bun
+                \\> <r> <b><d>completions<r>                        Install shell completions for tab-completion
                 \\> <r> <b><d>discord <r>                        Open Bun's Discord server
                 \\> <r> <b><d>help      <r>                      Print this help menu
                 \\
@@ -576,7 +578,7 @@ pub const Command = struct {
         }
 
         const first_arg_name = std.mem.span(next_arg);
-        const RootCommandMatcher = strings.ExactSizeMatcher(8);
+        const RootCommandMatcher = strings.ExactSizeMatcher(16);
 
         if (comptime FeatureFlags.dev_only) {
             return switch (RootCommandMatcher.match(first_arg_name)) {
@@ -584,6 +586,8 @@ pub const Command = struct {
                 RootCommandMatcher.case("bun") => .BunCommand,
                 RootCommandMatcher.case("discord") => .DiscordCommand,
                 RootCommandMatcher.case("upgrade") => .UpgradeCommand,
+                RootCommandMatcher.case("completions") => .InstallCompletionsCommand,
+                RootCommandMatcher.case("getcompletes") => .GetCompletionsCommand,
                 RootCommandMatcher.case("c"), RootCommandMatcher.case("create") => .CreateCommand,
 
                 RootCommandMatcher.case("b"), RootCommandMatcher.case("build") => .BuildCommand,
@@ -607,6 +611,20 @@ pub const Command = struct {
             };
         }
     }
+
+    pub const InstallCompletionsCommand = struct {
+        pub fn exec(ctx: *std.mem.Allocator) !void {}
+    };
+
+    const default_completions_list = [_]string{
+        // "build",
+        "run",
+        "dev",
+        "create",
+        "bun",
+        "upgrade",
+        "discord",
+    };
 
     pub fn start(allocator: *std.mem.Allocator, log: *logger.Log) !void {
         const tag = which(allocator);
@@ -632,6 +650,38 @@ pub const Command = struct {
                 const ctx = try Command.Context.create(allocator, log, .BuildCommand);
 
                 try BuildCommand.exec(ctx);
+            },
+            .GetCompletionsCommand => {
+                const ctx = try Command.Context.create(allocator, log, .GetCompletionsCommand);
+                var filter = ctx.positionals;
+
+                for (filter) |item, i| {
+                    if (strings.eqlComptime(item, "getcompletes")) {
+                        if (i + 1 < filter.len) {
+                            filter = filter[i + 1 ..];
+                        } else {
+                            filter = &[_]string{};
+                        }
+
+                        break;
+                    }
+                }
+
+                var completions = ShellCompletions{};
+
+                if (filter.len == 0) {
+                    completions = try RunCommand.completions(ctx, &default_completions_list, .all);
+                } else if (strings.eqlComptime(filter[0], "s")) {
+                    completions = try RunCommand.completions(ctx, null, .script);
+                } else if (strings.eqlComptime(filter[0], "b")) {
+                    completions = try RunCommand.completions(ctx, null, .bin);
+                } else if (strings.eqlComptime(filter[0], "r")) {
+                    completions = try RunCommand.completions(ctx, null, .all);
+                }
+
+                completions.print();
+
+                return;
             },
             .CreateCommand => {
                 const ctx = try Command.Context.create(allocator, log, .CreateCommand);
@@ -715,5 +765,7 @@ pub const Command = struct {
         HelpCommand,
         CreateCommand,
         UpgradeCommand,
+        InstallCompletionsCommand,
+        GetCompletionsCommand,
     };
 };

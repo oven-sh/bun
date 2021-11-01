@@ -37,12 +37,14 @@ _bun() {
     # Load custom completion commands
     case "$(__bun_first_cmd)" in
     create)
+        _files
         return;
         ;;
     dev)
         return;
         ;;
     bun)
+        _files
         return;
         ;;
     upgrade)
@@ -53,6 +55,7 @@ _bun() {
         ;;
     run)
         _bun_run
+        return;
         ;;
     esac
 

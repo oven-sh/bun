@@ -32,7 +32,7 @@ BUN_BUILD_TAG = bun-v$(PACKAGE_JSON_VERSION)
 BUN_RELEASE_BIN = $(PACKAGE_DIR)/bun
 PRETTIER ?= $(shell which prettier || echo "./node_modules/.bin/prettier")
 
-NPM_CLIENT = $(shell which pnpm || which npm)
+NPM_CLIENT = $(shell which npm)
 ZIG ?= $(shell which zig || echo -e "error: Missing zig. Please make sure zig is in PATH. Or set ZIG=/path/to-zig-executable")
 
 # We must use the same compiler version for the JavaScriptCore bindings and JavaScriptCore
@@ -505,6 +505,7 @@ release-create:
 release-bin-entitlements:
 
 release-bin-generate-zip:
+release-bin-codesign:
 
 ifeq ($(OS_NAME),darwin)
 # Without this, JIT will fail on aarch64
@@ -527,6 +528,9 @@ else
 release-bin-generate-zip:
 	cd /tmp/bun-$(PACKAGE_JSON_VERSION)/ && zip -r bun-$(TRIPLET).zip bun-$(TRIPLET)
 
+release-bin-codesign:
+	xcrun notarytool submit --wait $(BUN_DEPLOY_ZIP) --keychain-profile "bun"
+
 endif
 
 
@@ -540,8 +544,6 @@ release-bin-generate-copy:
 
 release-bin-generate: release-bin-generate-copy release-bin-generate-zip
 
-release-bin-codesign:
-	xcrun notarytool submit --wait $(BUN_DEPLOY_ZIP) --keychain-profile "bun"
 
 release-bin-check:
 	test $(shell eval $(BUN_RELEASE_BIN) --version) = $(PACKAGE_JSON_VERSION)
@@ -824,3 +826,6 @@ test: build-unit run-unit
 
 integration-test-dev: 
 	USE_EXISTING_PROCESS=true TEST_SERVER_URL=http://localhost:3000 node integration/scripts/browser.js
+
+copy-install:
+	cp src/cli/install.sh ../bun.sh/docs/install.html

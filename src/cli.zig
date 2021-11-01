@@ -661,6 +661,8 @@ pub const Command = struct {
                                     .auto,
                                     input,
                                 );
+                            } else {
+                                completions_dir = input;
                             }
 
                             if (!std.fs.path.isAbsolute(completions_dir)) {
@@ -747,6 +749,63 @@ pub const Command = struct {
                                 break :found std.fs.openDirAbsolute(dir, .{ .iterate = true }) catch continue;
                             }
                         }
+
+                        if (std.os.getenvZ("XDG_DATA_HOME")) |data_dir| {
+                            outer: {
+                                var paths = [_]string{ std.mem.span(data_dir), "./zsh-completions" };
+                                completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
+
+                                break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch |err| {
+                                    break :outer;
+                                };
+                            }
+                        }
+
+                        outer: {
+                            completions_dir = "/usr/local/share/zsh-completions";
+                            break :found std.fs.openDirAbsolute("/usr/local/share/zsh-completions", .{ .iterate = true }) catch |err| {
+                                break :outer;
+                            };
+                        }
+
+                        if (std.os.getenvZ("HOME")) |home_dir| {
+                            {
+                                outer: {
+                                    var paths = [_]string{ std.mem.span(home_dir), "./.oh-my-zsh/completions" };
+                                    completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
+                                    break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch |err| {
+                                        break :outer;
+                                    };
+                                }
+                            }
+                        }
+
+                        {
+                            outer: {
+                                completions_dir = "/usr/local/share/zsh/site-functions";
+                                break :found std.fs.openDirAbsolute("/usr/local/share/zsh/site-functions", .{ .iterate = true }) catch |err| {
+                                    break :outer;
+                                };
+                            }
+                        }
+
+                        outer: {
+                            if (Environment.isMac) {
+                                if (!Environment.isAarch64) {
+                                    // homebrew zsh
+                                    completions_dir = "/usr/local/share/zsh/completions";
+                                    break :found std.fs.openDirAbsoluteZ("/usr/local/share/zsh/completions", .{ .iterate = true }) catch |err| {
+                                        break :outer;
+                                    };
+                                } else {
+                                    // homebrew zsh
+                                    completions_dir = "/opt/homebrew/share/zsh/completions";
+                                    break :found std.fs.openDirAbsoluteZ("/opt/homebrew/share/zsh/completions", .{ .iterate = true }) catch |err| {
+                                        break :outer;
+                                    };
+                                }
+                            }
+                        }
                     },
                     .bash => {},
                     else => unreachable,
@@ -756,6 +815,14 @@ pub const Command = struct {
                     "<r><red>error:<r> Could not find a directory to install completions in.\n",
                     .{},
                 );
+
+                if (shell == .zsh) {
+                    Output.prettyErrorln(
+                        "\nzsh tip: One of the directories in $fpath might work. If you use oh-my-zsh, try mkdir $HOME/.oh-my-zsh/completions; and bun completions again\n.",
+                        .{},
+                    );
+                }
+
                 Output.errorLn(
                     "Please either pipe it:\n   bun completions > /to/a/file\n\n Or pass a directory:\n\n   bun completions /my/completions/dir\n",
                     .{},

@@ -101,10 +101,10 @@ extern "C" void JSCInitialize() {
 
 extern "C" JSC__JSGlobalObject *Zig__GlobalObject__create(JSClassRef *globalObjectClass, int count,
                                                           void *console_client) {
-  auto heapSize = JSC::LargeHeap;
 
   JSC::VM &vm = JSC::VM::create(heapSize).leakRef();
   vm.heap.acquireAccess();
+
 #if ENABLE(WEBASSEMBLY)
   JSC::Wasm::enableFastMemory();
 #endif

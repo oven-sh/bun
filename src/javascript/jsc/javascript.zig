@@ -42,6 +42,7 @@ pub const GlobalClasses = [_]type{
     Fetch.Class,
     js_ast.Macro.JSNode.BunJSXCallbackFunction,
     Performance.Class,
+    TextEncoder.Class,
 
     // The last item in this array becomes "process.env"
     Bun.EnvironmentVariables.Class,
@@ -566,26 +567,34 @@ pub const Bun = struct {
                 },
             },
         },
-        .{ .main = .{
-            .get = getMain,
-            .ts = d.ts{ .name = "main", .@"return" = "string" },
-        }, .cwd = .{
-            .get = getCWD,
-            .ts = d.ts{ .name = "cwd", .@"return" = "string" },
-        }, .origin = .{
-            .get = getOrigin,
-            .ts = d.ts{ .name = "origin", .@"return" = "string" },
-        }, .routesDir = .{
-            .get = getRoutesDir,
-            .ts = d.ts{ .name = "routesDir", .@"return" = "string" },
-        }, .assetPrefix = .{
-            .get = getAssetPrefix,
-            .ts = d.ts{ .name = "assetPrefix", .@"return" = "string" },
-        }, .env = .{
-            .get = EnvironmentVariables.getter,
-        }, .enableANSIColors = .{
-            .get = enableANSIColors,
-        } },
+        .{
+            .main = .{
+                .get = getMain,
+                .ts = d.ts{ .name = "main", .@"return" = "string" },
+            },
+            .cwd = .{
+                .get = getCWD,
+                .ts = d.ts{ .name = "cwd", .@"return" = "string" },
+            },
+            .origin = .{
+                .get = getOrigin,
+                .ts = d.ts{ .name = "origin", .@"return" = "string" },
+            },
+            .routesDir = .{
+                .get = getRoutesDir,
+                .ts = d.ts{ .name = "routesDir", .@"return" = "string" },
+            },
+            .assetPrefix = .{
+                .get = getAssetPrefix,
+                .ts = d.ts{ .name = "assetPrefix", .@"return" = "string" },
+            },
+            .env = .{
+                .get = EnvironmentVariables.getter,
+            },
+            .enableANSIColors = .{
+                .get = enableANSIColors,
+            },
+        },
     );
 
     /// EnvironmentVariables is runtime defined.
@@ -1977,6 +1986,61 @@ pub const EventListenerMixin = struct {
             .{},
         );
     }
+};
+
+pub const TextEncoder = struct {
+    not_a_zero_bit_type: bool = true,
+
+    pub const Class = NewClass(
+        TextEncoder,
+        .{
+            .name = "TextEncoder",
+            .read_only = true,
+        },
+        .{
+            .constructor = .{
+                .rfn = TextEncoder.constructor,
+                .ts = d.ts{},
+            },
+            // .encode = .{
+            //     .rfn = TextEncoder.encode,
+            //     .ts = d.ts{},
+            // },
+            // .encodeInto = .{
+            //     .rfn = TextEncoder.encodeInto,
+            //     .ts = d.ts{},
+            // },
+        },
+        .{},
+    );
+
+    pub fn constructor(
+        ctx: js.JSContextRef,
+        function: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSObjectRef {
+        var text_encoder = getAllocator(ctx).create(TextEncoder) catch unreachable;
+        text_encoder.* = TextEncoder{};
+
+        return Class.make(ctx, text_encoder);
+    }
+
+    // pub fn encode(
+    //     this: *TextEncoder,
+    //     ctx: js.JSContextRef,
+    //     function: js.JSObjectRef,
+    //     arguments: []const js.JSValueRef,
+    //     exception: js.ExceptionRef,
+    // ) js.JSObjectRef {}
+
+    // pub fn encodeInto(
+    //     this: *TextEncoder,
+    //     ctx: js.JSContextRef,
+    //     function: js.JSObjectRef,
+    //     arguments: []const js.JSValueRef,
+    //     exception: js.ExceptionRef,
+    // ) js.JSObjectRef {}
 };
 
 pub const ResolveError = struct {

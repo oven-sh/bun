@@ -1564,6 +1564,7 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     JSNode,
     LazyPropertiesObject,
     ModuleNamespace,
+    TextEncoder,
 });
 
 pub inline fn GetJSPrivateData(comptime Type: type, ref: js.JSObjectRef) ?*Type {

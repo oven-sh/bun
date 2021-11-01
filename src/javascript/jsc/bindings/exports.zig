@@ -754,6 +754,7 @@ pub const ZigConsoleClient = struct {
         Boolean,
         const CellType = CAPI.CellType;
         threadlocal var name_buf: [512]u8 = undefined;
+
         pub fn format(comptime Writer: type, writer: Writer, value: JSValue, globalThis: *JSGlobalObject, comptime enable_ansi_colors: bool) anyerror!void {
             if (comptime @hasDecl(@import("root"), "bindgen")) {
                 return;
@@ -816,7 +817,6 @@ pub const ZigConsoleClient = struct {
                 value.getNameProperty(globalThis, &printable);
                 try writer.print("[Function {s}]", .{printable.slice()});
             } else {
-                var str = value.toWTFString(JS.VirtualMachine.vm.global);
                 _ = try writer.write(str.slice());
             }
         }

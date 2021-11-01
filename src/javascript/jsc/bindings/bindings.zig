@@ -81,9 +81,15 @@ pub const JSObject = extern struct {
     };
 };
 
+pub const Encoding = enum(u8) {
+    latin1 = 0,
+    utf16 = 1,
+};
+
 pub const ZigString = extern struct {
-    ptr: [*]const u8,
-    len: usize,
+    ptr: ?*const c_void,
+    len: u32,
+    encoding: Encoding,
     pub const shim = Shimmer("", "ZigString", @This());
 
     pub const name = "ZigString";
@@ -97,7 +103,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn init(slice_: []const u8) ZigString {
-        return ZigString{ .ptr = slice_.ptr, .len = slice_.len };
+        return ZigString{ .ptr = slice_.ptr, .len = @truncate(u32, slice_.len), .encoding = Encoding.latin1 };
     }
 
     pub inline fn toRef(slice_: []const u8, global: *JSGlobalObject) C_API.JSValueRef {
@@ -115,7 +121,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn trimmedSlice(this: *const ZigString) []const u8 {
-        return std.mem.trim(u8, this.ptr[0..std.math.min(this.len, 4096)], " \r\n");
+        return std.mem.trim(u8, @as([*]const u8, this.ptr)[0..std.math.min(this.len, 4096)], " \r\n");
     }
 
     pub fn toValue(this: ZigString, global: *JSGlobalObject) JSValue {

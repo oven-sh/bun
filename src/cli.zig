@@ -613,7 +613,244 @@ pub const Command = struct {
     }
 
     pub const InstallCompletionsCommand = struct {
-        pub fn exec(ctx: *std.mem.Allocator) !void {}
+        pub fn testPath(completions_dir: string) !std.fs.Dir {}
+        pub fn exec(allocator: *std.mem.Allocator) !void {
+            var shell = ShellCompletions.Shell.unknown;
+            if (std.os.getenv("SHELL")) |shell_name| {
+                shell = ShellCompletions.Shell.fromEnv(@TypeOf(shell_name), shell_name);
+            }
+
+            switch (shell) {
+                .bash => {
+                    Output.prettyErrorln("<r><red>error:<r> Bash completions aren't implemented yet, just zsh & fish. A PR is welcome!", .{});
+                    std.os.exit(1);
+                },
+                .unknown => {
+                    Output.prettyErrorln("<r><red>error:<r> Unknown or unsupported shell. Please set $SHELL to one of zsh, fish, or bash. To manually output completions, run this:\n      bun getcompletes", .{});
+                    std.os.exit(1);
+                },
+                else => {},
+            }
+
+            var stdout = std.io.getStdOut();
+
+            if (std.os.getenvZ("IS_BUN_AUTO_UPDATE") == null) {
+                if (!stdout.isTty()) {
+                    try stdout.writeAll(shell.completions());
+                    std.os.exit(0);
+                }
+            }
+
+            var completions_dir: string = "";
+            found: {
+                var cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                var cwd = std.os.getcwd(&cwd_buf) catch {
+                    Output.prettyErrorln("<r><red>error<r>: Could not get current working directory", .{});
+                    Output.flush();
+                    std.os.exit(1);
+                };
+
+                for (std.os.argv) |arg, i| {
+                    if (strings.eqlComptime(std.mem.span(arg), "completions")) {
+                        if (std.os.argv.len > i + 1) {
+                            const input = std.mem.span(std.os.argv[i + 1]);
+
+                            if (!std.fs.path.isAbsolute(input)) {
+                                completions_dir = resolve_path.joinAbs(
+                                    cwd,
+                                    .auto,
+                                    input,
+                                );
+                            }
+
+                            if (!std.fs.path.isAbsolute(completions_dir)) {
+                                Output.prettyErrorln("<r><red>error:<r> Please pass an absolute path. {s} is invalid", .{completions_dir});
+                                Output.flush();
+                                std.os.exit(1);
+                            }
+
+                            std.os.access(completions_dir, std.os.O_DIRECTORY | std.os.O_WRONLY) catch |err| {
+                                Output.prettyErrorln("<r><red>error:<r> accessing {s} errored {s}", .{ completions_dir, @errorName(err) });
+                                Output.flush();
+                                std.os.exit(1);
+                            };
+
+                            break :found;
+                        }
+
+                        break;
+                    }
+                }
+
+                switch (shell) {
+                    .fish => {
+                        if (std.os.getenvZ("XDG_CONFIG_HOME")) |config_dir| {
+                            outer: {
+                                var paths = [_]string{ std.mem.span(config_dir), "./fish/completions" };
+                                completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
+                                std.os.access(completions_dir, std.os.O_DIRECTORY | std.os.O_WRONLY) catch |err| {
+                                    Output.prettyErrorln("<r><red>{s}:<r> accessing {s}, trying next one.", .{
+                                        @errorName(err),
+                                        completions_dir,
+                                    });
+                                    Output.flush();
+                                    break :outer;
+                                };
+                                break :found;
+                            }
+                        }
+
+                        if (std.os.getenvZ("XDG_DATA_HOME")) |data_dir| {
+                            outer: {
+                                var paths = [_]string{ std.mem.span(data_dir), "./fish/completions" };
+                                completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
+
+                                std.os.access(completions_dir, std.os.O_DIRECTORY | std.os.O_WRONLY) catch |err| {
+                                    Output.prettyErrorln("<r><red>{s}:<r> accessing {s}, trying next one.", .{
+                                        @errorName(err),
+                                        completions_dir,
+                                    });
+                                    Output.flush();
+                                    break :outer;
+                                };
+
+                                break :found;
+                            }
+                        }
+
+                        if (std.os.getenvZ("HOME")) |home_dir| {
+                            outer: {
+                                var paths = [_]string{ std.mem.span(home_dir), "./.config/fish/completions" };
+                                completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
+                                std.os.access(completions_dir, std.os.O_DIRECTORY | std.os.O_WRONLY) catch |err| {
+                                    Output.prettyErrorln("<r><red>{s}:<r> accessing {s}, trying next one.", .{
+                                        @errorName(err),
+                                        completions_dir,
+                                    });
+                                    Output.flush();
+                                    break :outer;
+                                };
+                                break :found;
+                            }
+                        }
+
+                        outer: {
+                            if (Environment.isMac) {
+                                if (!Environment.isAarch64) {
+                                    // homebrew fish
+                                    completions_dir = "/usr/local/share/fish/completions";
+                                    std.os.access(completions_dir, std.os.O_WRONLY | std.os.O_DIRECTORY) catch |err| {
+                                        Output.prettyErrorln("<r><red>{s}:<r> accessing {s}, trying next one.", .{
+                                            @errorName(err),
+                                            completions_dir,
+                                        });
+                                        Output.flush();
+                                        break :outer;
+                                    };
+                                    break :found;
+                                } else {
+                                    // homebrew fish
+                                    completions_dir = "/opt/homebrew/share/fish/completions";
+                                    std.os.access(completions_dir, std.os.O_WRONLY | std.os.O_DIRECTORY) catch |err| {
+                                        Output.prettyErrorln("<r><red>{s}:<r> accessing {s}, trying next one.", .{
+                                            @errorName(err),
+                                            completions_dir,
+                                        });
+                                        Output.flush();
+                                        break :outer;
+                                    };
+                                    break :found;
+                                }
+                            }
+                        }
+
+                        {
+                            completions_dir = "/etc/fish/completions";
+                            std.os.access(completions_dir, std.os.O_WRONLY | std.os.O_DIRECTORY) catch |err| {
+                                Output.prettyErrorln(
+                                    "<r><red>error:<r> Could not find a directory to install completions in. Please either pipe \"bun completions > /to/a/file\" or pass a directory in like this:\n bun completions /my/completions/dir",
+                                    .{},
+                                );
+                                Output.flush();
+                                std.os.exit(1);
+                            };
+                            break :found;
+                        }
+                    },
+                    .zsh => {
+                        if (std.os.getenvZ("fpath")) |fpath| {
+                            var splitter = std.mem.split(u8, std.mem.span(fpath), " ");
+
+                            while (splitter.next()) |dir| {
+                                std.os.access(dir, std.os.O_DIRECTORY | std.os.O_WRONLY) catch continue;
+                                completions_dir = dir;
+                                break :found;
+                            }
+                        }
+                    },
+                    .bash => {
+                        Output.prettyErrorln("<r><red>error:<r> Please pass a directory or pipe to a file. Not sure where bash completions go.", .{});
+                        Output.flush();
+                        std.os.exit(1);
+                    },
+                    else => unreachable,
+                }
+
+                Output.prettyErrorln(
+                    "<r><red>error:<r> Could not find a directory to install completions in. Please either pipe \"bun completions > /to/a/file\" or pass a directory in like this:\n bun completions /my/completions/dir",
+                    .{},
+                );
+                Output.flush();
+                std.os.exit(1);
+            }
+
+            const filename = switch (shell) {
+                .fish => "bun.fish",
+                .zsh => "_bun",
+                .bash => "_bun.bash",
+                else => unreachable,
+            };
+
+            std.debug.assert(completions_dir.len > 0);
+
+            var output_dir = std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch |err| {
+                Output.prettyErrorln("<r><red>error:<r> Could not open {s} for writing: {s}", .{
+                    completions_dir,
+                    @errorName(err),
+                });
+                Output.flush();
+                std.os.exit(1);
+            };
+
+            var output_file = output_dir.createFileZ(filename, .{
+                .truncate = true,
+            }) catch |err| {
+                Output.prettyErrorln("<r><red>error:<r> Could not open {s} for writing: {s}", .{
+                    filename,
+                    @errorName(err),
+                });
+                Output.flush();
+                std.os.exit(1);
+            };
+
+            output_file.writeAll(shell.completions()) catch |err| {
+                Output.prettyErrorln("<r><red>error:<r> Could not write to {s}: {s}", .{
+                    filename,
+                    @errorName(err),
+                });
+                Output.flush();
+                std.os.exit(1);
+            };
+
+            output_file.close();
+            output_dir.close();
+
+            Output.prettyErrorln("<r><d>Installed completions to {s}/{s}<r>", .{
+                completions_dir,
+                filename,
+            });
+            Output.flush();
+        }
     };
 
     const default_completions_list = [_]string{
@@ -651,6 +888,10 @@ pub const Command = struct {
 
                 try BuildCommand.exec(ctx);
             },
+            .InstallCompletionsCommand => {
+                try InstallCompletionsCommand.exec(allocator);
+                return;
+            },
             .GetCompletionsCommand => {
                 const ctx = try Command.Context.create(allocator, log, .GetCompletionsCommand);
                 var filter = ctx.positionals;
@@ -677,6 +918,10 @@ pub const Command = struct {
                     completions = try RunCommand.completions(ctx, null, .bin);
                 } else if (strings.eqlComptime(filter[0], "r")) {
                     completions = try RunCommand.completions(ctx, null, .all);
+                } else if (strings.eqlComptime(filter[0], "g")) {
+                    completions = try RunCommand.completions(ctx, null, .all_plus_bun_js);
+                } else if (strings.eqlComptime(filter[0], "j")) {
+                    completions = try RunCommand.completions(ctx, null, .bun_js);
                 }
 
                 completions.print();

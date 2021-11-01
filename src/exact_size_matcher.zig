@@ -4,7 +4,7 @@ pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
     const a: u32 = 1000;
 
     switch (max_bytes) {
-        1, 2, 4, 8, 12 => {},
+        1, 2, 4, 8, 12, 16 => {},
         else => {
             @compileError("max_bytes must be 1, 2, 4, 8, or 12.");
         },
@@ -60,6 +60,13 @@ test "ExactSizeMatcher 5 letter" {
 
 test "ExactSizeMatcher 4 letter" {
     const Four = ExactSizeMatcher(4);
+    const word = "from";
+    try expect(Four.match(word) == Four.case("from"));
+    try expect(Four.match(word) != Four.case("fro"));
+}
+
+test "ExactSizeMatcher 12 letter" {
+    const Four = ExactSizeMatcher(12);
     const word = "from";
     try expect(Four.match(word) == Four.case("from"));
     try expect(Four.match(word) != Four.case("fro"));

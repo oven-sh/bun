@@ -153,7 +153,7 @@ s2n-ubuntu-deps:
 		unzip \
 		valgrind \
 		zlib1g-dev \
-		zlibc \
+		zlib \
 		cmake \
 		tox \
 		libtool \
@@ -626,6 +626,7 @@ test-dev-bun-run:
 	cd integration/apps && BUN_BIN=$(DEBUG_BUN) bash bun-run-check.sh
 
 test-dev-all: test-dev-with-hmr test-dev-no-hmr test-dev-create-next test-dev-create-react test-dev-bun-run
+test-dev-bunjs: 
 
 test-dev: test-dev-with-hmr
 

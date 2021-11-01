@@ -273,6 +273,8 @@ pub const RunCommand = struct {
         script,
         bin,
         all,
+        bun_js,
+        all_plus_bun_js,
     };
 
     pub fn completions(ctx: Command.Context, default_completions: ?[]const string, comptime filter: Filter) !ShellCompletions {
@@ -327,7 +329,7 @@ pub const RunCommand = struct {
             }
         }
 
-        if (filter == Filter.bin or filter == Filter.all) {
+        if (filter == Filter.bin or filter == Filter.all or filter == Filter.all_plus_bun_js) {
             for (this_bundler.resolver.binDirs()) |bin_path| {
                 if (this_bundler.resolver.readDirInfo(bin_path) catch null) |bin_dir| {
                     if (bin_dir.getEntriesConst()) |entries| {
@@ -360,7 +362,22 @@ pub const RunCommand = struct {
             }
         }
 
-        if (filter == Filter.script or filter == Filter.all) {
+        if (filter == Filter.all_plus_bun_js or filter == Filter.bun_js) {
+            if (this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch null) |dir_info| {
+                if (dir_info.getEntriesConst()) |entries| {
+                    var iter = entries.data.iterator();
+
+                    while (iter.next()) |entry| {
+                        const name = entry.value.base();
+                        if (this_bundler.options.loader(std.fs.path.extension(name)).isJavaScriptLike() and !strings.contains(name, ".d.ts") and entry.value.kind(&this_bundler.fs.fs) == .file) {
+                            _ = try results.getOrPut(this_bundler.fs.filename_store.append(@TypeOf(name), name) catch continue);
+                        }
+                    }
+                }
+            }
+        }
+
+        if (filter == Filter.script or filter == Filter.all or filter == Filter.all_plus_bun_js) {
             if (root_dir_info.enclosing_package_json) |package_json| {
                 if (package_json.scripts) |scripts| {
                     try results.ensureUnusedCapacity(scripts.count());

@@ -48,7 +48,8 @@ pub const Run = struct {
             } else {
                 run.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
             }
-
+            Output.prettyErrorln("\n", .{});
+            Output.flush();
             std.os.exit(1);
         };
         run.vm.bundler.configureDefines() catch |err| {
@@ -57,7 +58,8 @@ pub const Run = struct {
             } else {
                 run.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
             }
-
+            Output.prettyErrorln("\n", .{});
+            Output.flush();
             std.os.exit(1);
         };
 

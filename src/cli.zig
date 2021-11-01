@@ -464,7 +464,7 @@ const HelpCommand = struct {
                 \\> <r> <b><green>run     <r><d>  test        <r>          Run a package.json script or executable<r>
                 \\> <r> <b><cyan>create    <r><d>next ./app<r>            Start a new project from a template <d>(shorthand: c)<r>
                 \\> <r> <b><blue>upgrade <r>                        Get the latest version of Bun
-                \\> <r> <b><d>completions<r>                        Install shell completions for tab-completion
+                \\> <r> <b><d>completions<r>                     Install shell completions for tab-completion
                 \\> <r> <b><d>discord <r>                        Open Bun's Discord server
                 \\> <r> <b><d>help      <r>                      Print this help menu
                 \\

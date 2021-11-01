@@ -37,9 +37,11 @@ const Op = js_ast.Op;
 const Scope = js_ast.Scope;
 const locModuleScope = logger.Loc.Empty;
 
+const LEXER_DEBUGGER_WORKAROUND = isDebug;
+
 fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
     return struct {
-        const Lexer = js_lexer.NewLexer(opts);
+        const Lexer = js_lexer.NewLexer(if (LEXER_DEBUGGER_WORKAROUND) js_lexer.JSONOptions{} else opts);
 
         lexer: Lexer,
         source: *const logger.Source,
@@ -282,7 +284,7 @@ pub fn ParseJSONForBundling(source: *const logger.Source, log: *logger.Log, allo
 
     const result = try parser.parseExpr(false);
     return JSONParseResult{
-        .tag = if (parser.lexer.is_ascii_only) JSONParseResult.Tag.ascii else JSONParseResult.Tag.expr,
+        .tag = if (!LEXER_DEBUGGER_WORKAROUND and parser.lexer.is_ascii_only) JSONParseResult.Tag.ascii else JSONParseResult.Tag.expr,
         .expr = result,
     };
 }

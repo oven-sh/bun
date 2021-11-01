@@ -6802,7 +6802,7 @@ pub fn NewParser(
             if (strings.eqlComptime(name, "require") and p.lexer.token == .t_open_paren) {
                 // "import ns = require('x')"
                 try p.lexer.next();
-                var path = p.e(p.lexer.toEString(), p.lexer.loc());
+                const path = p.e(p.lexer.toEString(), p.lexer.loc());
                 try p.lexer.expect(.t_string_literal);
                 try p.lexer.expect(.t_close_paren);
                 const args = p.allocator.alloc(ExprNodeIndex, 1) catch unreachable;
@@ -13013,20 +13013,21 @@ pub fn NewParser(
                     p.popScope();
                 },
                 .s_local => |data| {
-                    for (data.decls) |*d| {
-                        p.visitBinding(d.binding, null);
+                    var i: usize = 0;
+                    while (i < data.decls.len) : (i += 1) {
+                        p.visitBinding(data.decls[i].binding, null);
 
-                        if (d.value != null) {
-                            var val = d.value orelse unreachable;
+                        if (data.decls[i].value != null) {
+                            var val = data.decls[i].value.?;
                             const was_anonymous_named_expr = p.isAnonymousNamedExpr(val);
 
-                            d.value = p.visitExpr(val);
+                            data.decls[i].value = p.visitExpr(val);
 
                             // Optionally preserve the name
-                            switch (d.binding.data) {
+                            switch (data.decls[i].binding.data) {
                                 .b_identifier => |id| {
-                                    d.value = p.maybeKeepExprSymbolName(
-                                        d.value.?,
+                                    data.decls[i].value = p.maybeKeepExprSymbolName(
+                                        data.decls[i].value.?,
                                         p.symbols.items[id.ref.inner_index].original_name,
                                         was_anonymous_named_expr,
                                     );

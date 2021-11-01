@@ -374,7 +374,7 @@ pub const RequestContext = struct {
         comptime chunked: bool,
     ) !void {
         defer {
-            if (isDebug or isTest) {
+            if (Environment.isDebug or isTest) {
                 std.debug.assert(!ctx.has_written_last_header);
                 ctx.has_written_last_header = true;
             }
@@ -500,7 +500,7 @@ pub const RequestContext = struct {
         defer ctx.done();
         try ctx.writeStatus(500);
         const printed = std.fmt.bufPrint(&error_buf, "Error: {s}", .{@errorName(err)}) catch |err2| brk: {
-            if (isDebug or isTest) {
+            if (Environment.isDebug or isTest) {
                 Global.panic("error while printing error: {s}", .{@errorName(err2)});
             }
 
@@ -2494,7 +2494,6 @@ pub const Server = struct {
                         RequestContext.WebsocketHandler.broadcast(written_buf) catch |err| {
                             Output.prettyln("Error writing change notification: {s}<r>", .{@errorName(err)});
                         };
-
                         if (comptime is_emoji_enabled) {
                             Output.prettyln("<r>📜  <d>File change: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
                         } else {

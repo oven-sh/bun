@@ -395,7 +395,7 @@ inline fn eqlComptimeCheckLen(a: string, comptime b: anytype, comptime check_len
         if (comptime b_ptr == b.len) return true;
     }
 
-    if ((comptime ( len & 1) != 0) and a[b_ptr] != comptime b[b_ptr]) return false;
+    if ((comptime (len & 1) != 0) and a[b_ptr] != comptime b[b_ptr]) return false;
 
     return true;
 }

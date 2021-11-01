@@ -642,7 +642,7 @@ pub const Command = struct {
             }
 
             var completions_dir: string = "";
-            found: {
+            var output_dir: std.fs.Dir = found: {
                 var cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
                 var cwd = std.os.getcwd(&cwd_buf) catch {
                     Output.prettyErrorln("<r><red>error<r>: Could not get current working directory", .{});
@@ -669,13 +669,13 @@ pub const Command = struct {
                                 std.os.exit(1);
                             }
 
-                            std.os.access(completions_dir, std.os.O_DIRECTORY | std.os.O_WRONLY) catch |err| {
+                            break :found std.fs.openDirAbsolute(completions_dir, .{
+                                .iterate = true,
+                            }) catch |err| {
                                 Output.prettyErrorln("<r><red>error:<r> accessing {s} errored {s}", .{ completions_dir, @errorName(err) });
                                 Output.flush();
                                 std.os.exit(1);
                             };
-
-                            break :found;
                         }
 
                         break;
@@ -688,15 +688,9 @@ pub const Command = struct {
                             outer: {
                                 var paths = [_]string{ std.mem.span(config_dir), "./fish/completions" };
                                 completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
-                                std.os.access(completions_dir, std.os.O_DIRECTORY | std.os.O_WRONLY) catch |err| {
-                                    Output.prettyErrorln("<r><red>{s}:<r> accessing {s}, trying next one.", .{
-                                        @errorName(err),
-                                        completions_dir,
-                                    });
-                                    Output.flush();
+                                break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch |err| {
                                     break :outer;
                                 };
-                                break :found;
                             }
                         }
 
@@ -705,16 +699,9 @@ pub const Command = struct {
                                 var paths = [_]string{ std.mem.span(data_dir), "./fish/completions" };
                                 completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
 
-                                std.os.access(completions_dir, std.os.O_DIRECTORY | std.os.O_WRONLY) catch |err| {
-                                    Output.prettyErrorln("<r><red>{s}:<r> accessing {s}, trying next one.", .{
-                                        @errorName(err),
-                                        completions_dir,
-                                    });
-                                    Output.flush();
+                                break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch |err| {
                                     break :outer;
                                 };
-
-                                break :found;
                             }
                         }
 
@@ -722,15 +709,9 @@ pub const Command = struct {
                             outer: {
                                 var paths = [_]string{ std.mem.span(home_dir), "./.config/fish/completions" };
                                 completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
-                                std.os.access(completions_dir, std.os.O_DIRECTORY | std.os.O_WRONLY) catch |err| {
-                                    Output.prettyErrorln("<r><red>{s}:<r> accessing {s}, trying next one.", .{
-                                        @errorName(err),
-                                        completions_dir,
-                                    });
-                                    Output.flush();
+                                break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch |err| {
                                     break :outer;
                                 };
-                                break :found;
                             }
                         }
 
@@ -739,42 +720,22 @@ pub const Command = struct {
                                 if (!Environment.isAarch64) {
                                     // homebrew fish
                                     completions_dir = "/usr/local/share/fish/completions";
-                                    std.os.access(completions_dir, std.os.O_WRONLY | std.os.O_DIRECTORY) catch |err| {
-                                        Output.prettyErrorln("<r><red>{s}:<r> accessing {s}, trying next one.", .{
-                                            @errorName(err),
-                                            completions_dir,
-                                        });
-                                        Output.flush();
+                                    break :found std.fs.openDirAbsoluteZ("/usr/local/share/fish/completions", .{ .iterate = true }) catch |err| {
                                         break :outer;
                                     };
-                                    break :found;
                                 } else {
                                     // homebrew fish
                                     completions_dir = "/opt/homebrew/share/fish/completions";
-                                    std.os.access(completions_dir, std.os.O_WRONLY | std.os.O_DIRECTORY) catch |err| {
-                                        Output.prettyErrorln("<r><red>{s}:<r> accessing {s}, trying next one.", .{
-                                            @errorName(err),
-                                            completions_dir,
-                                        });
-                                        Output.flush();
+                                    break :found std.fs.openDirAbsoluteZ("/opt/homebrew/share/fish/completions", .{ .iterate = true }) catch |err| {
                                         break :outer;
                                     };
-                                    break :found;
                                 }
                             }
                         }
 
-                        {
+                        outer: {
                             completions_dir = "/etc/fish/completions";
-                            std.os.access(completions_dir, std.os.O_WRONLY | std.os.O_DIRECTORY) catch |err| {
-                                Output.prettyErrorln(
-                                    "<r><red>error:<r> Could not find a directory to install completions in. Please either pipe \"bun completions > /to/a/file\" or pass a directory in like this:\n bun completions /my/completions/dir",
-                                    .{},
-                                );
-                                Output.flush();
-                                std.os.exit(1);
-                            };
-                            break :found;
+                            break :found std.fs.openDirAbsoluteZ("/etc/fish/completions", .{ .iterate = true }) catch break :outer;
                         }
                     },
                     .zsh => {
@@ -782,27 +743,26 @@ pub const Command = struct {
                             var splitter = std.mem.split(u8, std.mem.span(fpath), " ");
 
                             while (splitter.next()) |dir| {
-                                std.os.access(dir, std.os.O_DIRECTORY | std.os.O_WRONLY) catch continue;
                                 completions_dir = dir;
-                                break :found;
+                                break :found std.fs.openDirAbsolute(dir, .{ .iterate = true }) catch continue;
                             }
                         }
                     },
-                    .bash => {
-                        Output.prettyErrorln("<r><red>error:<r> Please pass a directory or pipe to a file. Not sure where bash completions go.", .{});
-                        Output.flush();
-                        std.os.exit(1);
-                    },
+                    .bash => {},
                     else => unreachable,
                 }
 
                 Output.prettyErrorln(
-                    "<r><red>error:<r> Could not find a directory to install completions in. Please either pipe \"bun completions > /to/a/file\" or pass a directory in like this:\n bun completions /my/completions/dir",
+                    "<r><red>error:<r> Could not find a directory to install completions in.\n",
+                    .{},
+                );
+                Output.errorLn(
+                    "Please either pipe it:\n   bun completions > /to/a/file\n\n Or pass a directory:\n\n   bun completions /my/completions/dir\n",
                     .{},
                 );
                 Output.flush();
                 std.os.exit(1);
-            }
+            };
 
             const filename = switch (shell) {
                 .fish => "bun.fish",
@@ -812,15 +772,6 @@ pub const Command = struct {
             };
 
             std.debug.assert(completions_dir.len > 0);
-
-            var output_dir = std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch |err| {
-                Output.prettyErrorln("<r><red>error:<r> Could not open {s} for writing: {s}", .{
-                    completions_dir,
-                    @errorName(err),
-                });
-                Output.flush();
-                std.os.exit(1);
-            };
 
             var output_file = output_dir.createFileZ(filename, .{
                 .truncate = true,

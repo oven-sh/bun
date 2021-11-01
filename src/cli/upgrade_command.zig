@@ -78,7 +78,6 @@ pub const UpgradeCheckerThread = struct {
     }
 
     fn _run(env_loader: *DotEnv.Loader) anyerror!void {
-        
         var rand = std.rand.DefaultPrng.init(@intCast(u64, @maximum(std.time.milliTimestamp(), 0)));
         const delay = rand.random.intRangeAtMost(u64, 100, 10000);
         std.time.sleep(std.time.ns_per_ms * delay);
@@ -285,7 +284,7 @@ pub const UpgradeCommand = struct {
                 if (asset.asProperty("name")) |name_| {
                     if (name_.expr.asString(allocator)) |name| {
                         if (comptime isDebug) {
-                            Output.prettyln("Comparing {s} vs {s}", .{name, Version.zip_filename});
+                            Output.prettyln("Comparing {s} vs {s}", .{ name, Version.zip_filename });
                             Output.flush();
                         }
                         if (strings.eqlComptime(name, Version.zip_filename)) {
@@ -294,7 +293,7 @@ pub const UpgradeCommand = struct {
                                 Output.prettyln("Found Zip {s}", .{version.zip_url});
                                 Output.flush();
                             }
-                            
+
                             if (asset.asProperty("size")) |size_| {
                                 if (size_.expr.data == .e_number) {
                                     version.size = @intCast(u32, @maximum(@floatToInt(i32, std.math.ceil(size_.expr.data.e_number.value)), 0));
@@ -556,6 +555,24 @@ pub const UpgradeCommand = struct {
                     Output.flush();
                     std.os.exit(1);
                 };
+            }
+
+            // Ensure completions are up to date.
+            {
+                var completions_argv = [_]string{
+                    target_filename,
+                    "completions",
+                };
+
+                env_loader.map.put("IS_BUN_AUTO_UPDATE", "true") catch unreachable;
+                var buf_map = try env_loader.map.cloneToBufMap(ctx.allocator);
+                _ = std.ChildProcess.exec(.{
+                    .allocator = ctx.allocator,
+                    .argv = &completions_argv,
+                    .cwd = target_dirname,
+                    .max_output_bytes = 4096,
+                    .env_map = &buf_map,
+                }) catch undefined;
             }
 
             Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());

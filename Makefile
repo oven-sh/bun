@@ -523,13 +523,14 @@ release-bin-generate-zip:
 		codesign --entitlements $(realpath entitlements.plist) --options runtime --force --timestamp --sign "$(CODESIGN_IDENTITY)" -vvvv --deep --strict bun
 	ditto -ck --rsrc --sequesterRsrc --keepParent /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET) $(BUN_DEPLOY_ZIP)
 
+release-bin-codesign:
+	xcrun notarytool submit --wait $(BUN_DEPLOY_ZIP) --keychain-profile "bun"
+
 else
 
 release-bin-generate-zip:
 	cd /tmp/bun-$(PACKAGE_JSON_VERSION)/ && zip -r bun-$(TRIPLET).zip bun-$(TRIPLET)
 
-release-bin-codesign:
-	xcrun notarytool submit --wait $(BUN_DEPLOY_ZIP) --keychain-profile "bun"
 
 endif
 

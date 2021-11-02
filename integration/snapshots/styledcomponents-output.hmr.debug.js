@@ -49,20 +49,23 @@ var hmr = new HMR(1290604342, "styledcomponents-output.js"), exports = hmr.expor
   }
 `;
   function test() {
-    const reactEl = document.createElement("div");
-    document.body.appendChild(reactEl);
-    ReactDOM.render(jsx(ErrorScreenRoot, {
-      id: "error-el",
-      children: "The react child should have this text"
-    }, undefined, false, undefined, this), reactEl);
-    const style = document.querySelector("style[data-styled]");
-    console.assert(style, "style tag should exist");
-    console.assert(style.textContent.split("").every((a) => a.codePointAt(0) < 128), "style tag should not contain invalid unicode codepoints");
-    console.assert(document.querySelector("#error-el").textContent === "The react child should have this text");
-    ReactDOM.unmountComponentAtNode(reactEl);
-    reactEl.remove();
-    style.remove();
-    testDone(import.meta.url);
+    if (typeof window !== "undefined") {
+      const reactEl = document.createElement("div");
+      document.body.appendChild(reactEl);
+      ReactDOM.render(jsx(ErrorScreenRoot, {
+        id: "error-el",
+        children: "The react child should have this text"
+      }, undefined, false, undefined, this), reactEl);
+      const style = document.querySelector("style[data-styled]");
+      console.assert(style, "style tag should exist");
+      console.assert(style.textContent.split("").every((a) => a.codePointAt(0) < 128), "style tag should not contain invalid unicode codepoints");
+      console.assert(document.querySelector("#error-el").textContent === "The react child should have this text");
+      ReactDOM.unmountComponentAtNode(reactEl);
+      reactEl.remove();
+      style.remove();
+      return testDone(import.meta.url);
+    }
+    return testDone(import.meta.url);
   }
   hmr.exportAll({
     test: () => test

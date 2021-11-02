@@ -1,38 +1,40 @@
 import {
-__require as require
+__HMRModule as HMR
 } from "http://localhost:8080/__runtime.js";
 import {
-__cJS2eSM
+__HMRClient as Bun
 } from "http://localhost:8080/__runtime.js";
-import * as _login_b977_0 from "http://localhost:8080/_login.js";
-import * as _login_b977_1 from "http://localhost:8080/_login.js";
 import _login from "http://localhost:8080/_login.js";
 import _auth from "http://localhost:8080/_auth.js";
 import * as _loginReally from "http://localhost:8080/_login.js";
 import * as _loginReally2 from "http://localhost:8080/_login.js";
 import * as _authReally from "http://localhost:8080/_auth.js";
+Bun.activate(true);
 
-export default __cJS2eSM(function(module, exports) {
-  ;
-
-  ;
-  ;
-  ;
-  ;
-  module.exports.iAmCommonJs = true;
-  exports.YouAreCommonJS = true;
-  require(_login_b977_0);
-  require(_login_b977_1);
-  Object.defineProperty(module.exports,"login",{get: () => _login, enumerable: true, configurable: true});
+var hmr = new HMR(3878252498, "cjs-transform-shouldnt-have-static-imports-in-cjs-function.js"), exports = hmr.exports;
+(hmr._load = function() {
   function test() {
     return testDone(import.meta.url);
-  };
-var test = test;
-  Object.defineProperty(module.exports,"test",{get: () => test, enumerable: true, configurable: true});
+  }
   var foo, bar;
-  Object.defineProperties(module.exports,{'foo': {get: () => foo, set: ($_newValue) => {foo = $_newValue;}, enumerable: true, configurable: true},
-'bar': {get: () => bar, set: ($_newValue) => {bar = $_newValue;}, enumerable: true, configurable: true}});
-}, "cjs-transform-shouldnt-have-static-imports-in-cjs-function.js");
+  hmr.exportAll({
+    login: () => _login,
+    test: () => test,
+    foo: () => foo,
+    bar: () => bar
+  });
+})();
+var $$hmr_login = hmr.exports.login, $$hmr_test = hmr.exports.test, $$hmr_foo = hmr.exports.foo, $$hmr_bar = hmr.exports.bar;
+hmr._update = function(exports) {
+  $$hmr_login = exports.login;
+  $$hmr_test = exports.test;
+  $$hmr_foo = exports.foo;
+  $$hmr_bar = exports.bar;
+};
 
-
-
+export {
+  $$hmr_login as login,
+  $$hmr_test as test,
+  $$hmr_foo as foo,
+  $$hmr_bar as bar
+};

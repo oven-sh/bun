@@ -45,6 +45,14 @@ else
     esac
 fi
 
+if [ "$target" = "darwin-x64" ]; then
+    # Is it rosetta
+    sysctl sysctl.proc_translated >/dev/null 2>&1
+    if [ $? -eq 0 ]; then
+        target="darwin-aarch64"
+    fi
+fi
+
 github_repo="https://github.com/Jarred-Sumner/bun-releases-for-updater"
 
 if [ $# -eq 0 ]; then

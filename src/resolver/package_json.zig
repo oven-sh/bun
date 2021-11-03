@@ -19,7 +19,6 @@ pub const MacroImportReplacementMap = std.StringArrayHashMap(string);
 pub const MacroMap = std.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
 
 const ScriptsMap = std.StringArrayHashMap(string);
-const Workspace = @import("./workspace.zig").Workspace;
 
 pub const PackageJSON = struct {
     pub const LoadFramework = enum {
@@ -64,8 +63,6 @@ pub const PackageJSON = struct {
 
     always_bundle: []string = &.{},
     macros: MacroMap = MacroMap{},
-
-    workspace_root: bool = false,
 
     // Present if the "browser" field is present. This field is intended to be
     // used by bundlers and lets you redirect the paths of certain 3rd-party
@@ -698,9 +695,6 @@ pub const PackageJSON = struct {
             }
         }
 
-        package_json.workspace_root = json.asProperty("workspaces") != null;
-
-        // used by `bun run`
         if (include_scripts) {
             read_scripts: {
                 if (json.asProperty("scripts")) |scripts_prop| {
@@ -736,6 +730,7 @@ pub const PackageJSON = struct {
         }
 
         // TODO: side effects
+        // TODO: exports map
 
         if (generate_hash) {
             if (package_json.name.len > 0 and package_json.version.len > 0) {
@@ -1034,23 +1029,21 @@ pub const ESModule = struct {
         name: string,
         subpath: string,
 
-        pub fn parseName(specifier: string) ?string {
+        pub fn parse(specifier: string, subpath_buf: []u8) ?Package {
+            if (specifier.len == 0) return null;
+            var package = Package{ .name = "", .subpath = "" };
+
             var slash = strings.indexOfCharNeg(specifier, '/');
             if (!strings.startsWithChar(specifier, '@')) {
                 slash = if (slash == -1) @intCast(i32, specifier.len) else slash;
-                return specifier[0..@intCast(usize, slash)];
+                package.name = specifier[0..@intCast(usize, slash)];
             } else {
                 if (slash == -1) return null;
 
                 const slash2 = strings.indexOfChar(specifier[@intCast(usize, slash) + 1 ..], '/') orelse
                     specifier[@intCast(u32, slash + 1)..].len;
-                return specifier[0 .. @intCast(usize, slash + 1) + slash2];
+                package.name = specifier[0 .. @intCast(usize, slash + 1) + slash2];
             }
-        }
-
-        pub fn parse(specifier: string, subpath_buf: []u8) ?Package {
-            if (specifier.len == 0) return null;
-            var package = Package{ .name = parseName(specifier) orelse return null, .subpath = "" };
 
             if (strings.startsWith(package.name, ".") or strings.indexAnyComptime(package.name, "\\%") != null)
                 return null;

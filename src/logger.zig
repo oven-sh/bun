@@ -990,25 +990,26 @@ pub const Source = struct {
     }
 
     pub fn initErrorPosition(self: *const Source, _offset: Loc) ErrorPosition {
-        var prev_code_point: u21 = 0;
+        var prev_code_point: i32 = 0;
         var offset: usize = std.math.min(if (_offset.start < 0) 0 else @intCast(usize, _offset.start), @maximum(self.contents.len, 1) - 1);
 
         const contents = self.contents;
 
-        var iter = unicode.Utf8Iterator{
+        var iter_ = strings.CodepointIterator{
             .bytes = self.contents[0..offset],
             .i = 0,
         };
+        var iter = strings.CodepointIterator.Cursor{};
 
         var line_start: usize = 0;
         var line_count: usize = 1;
         var column_number: usize = 1;
 
-        while (iter.nextCodepoint()) |code_point| {
-            switch (code_point) {
+        while (iter_.next(&iter)) {
+            switch (iter.c) {
                 '\n' => {
                     column_number = 1;
-                    line_start = iter.i + 1;
+                    line_start = iter.width + iter.i;
                     if (prev_code_point != '\r') {
                         line_count += 1;
                     }
@@ -1016,12 +1017,12 @@ pub const Source = struct {
 
                 '\r' => {
                     column_number = 0;
-                    line_start = iter.i + 1;
+                    line_start = iter.width + iter.i;
                     line_count += 1;
                 },
 
                 0x2028, 0x2029 => {
-                    line_start = iter.i + 3; // These take three bytes to encode in UTF-8
+                    line_start = iter.width + iter.i; // These take three bytes to encode in UTF-8
                     line_count += 1;
                     column_number = 1;
                 },
@@ -1030,19 +1031,20 @@ pub const Source = struct {
                 },
             }
 
-            prev_code_point = code_point;
+            prev_code_point = iter.c;
         }
 
-        iter = unicode.Utf8Iterator{
+        iter_ = strings.CodepointIterator{
             .bytes = self.contents[offset..],
             .i = 0,
         };
 
+        iter = strings.CodepointIterator.Cursor{};
         // Scan to the end of the line (or end of file if this is the last line)
         var line_end: usize = contents.len;
 
-        loop: while (iter.nextCodepoint()) |code_point| {
-            switch (code_point) {
+        loop: while (iter_.next(&iter)) {
+            switch (iter.c) {
                 '\r', '\n', 0x2028, 0x2029 => {
                     line_end = offset + iter.i;
                     break :loop;

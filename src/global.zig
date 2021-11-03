@@ -418,7 +418,7 @@ pub const Global = struct {
     // Keeping this code for:
     // 1. documentation that an attempt was made
     // 2. if I want to configure allocator later
-    pub fn configureAllocator(config: AllocatorConfiguration) void {
+    pub inline fn configureAllocator(config: AllocatorConfiguration) void {
         // if (comptime !use_mimalloc) return;
         // const Mimalloc = @import("./allocators/mimalloc.zig");
         // Mimalloc.mi_option_set_enabled(Mimalloc.mi_option_verbose, config.verbose);

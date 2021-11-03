@@ -35,7 +35,7 @@ const Headers = @import("../javascript/jsc/webcore/response.zig").Headers;
 const CopyFile = @import("../copy_file.zig");
 var bun_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
-const target_nextjs_version = "11.1.2";
+const target_nextjs_version = "12.0.2";
 pub var initialized_store = false;
 pub fn initializeStore() void {
     if (initialized_store) return;

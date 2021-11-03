@@ -50,6 +50,7 @@ if [ "$target" = "darwin-x64" ]; then
     sysctl sysctl.proc_translated >/dev/null 2>&1
     if [ $? -eq 0 ]; then
         target="darwin-aarch64"
+        echo -e "$Dim Your shell is running in Rosetta 2. Downloading Bun for $target instead. $Color_Off"
     fi
 fi
 

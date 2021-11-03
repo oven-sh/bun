@@ -62,6 +62,10 @@ export default class PageLoader extends NextPageLoader {
     return this.pageList;
   }
 
+  async getMiddlewareList() {
+    return [];
+  }
+
   cssQueue = [];
 
   onImportCSS = (event) => {

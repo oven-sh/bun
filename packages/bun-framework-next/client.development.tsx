@@ -279,6 +279,10 @@ function AppContainer({
   );
 }
 
+let reactRoot: any = null;
+
+const USE_REACT_18 = "hydrateRoot" in ReactDOM;
+
 export async function _boot(EntryPointNamespace, isError) {
   NextRouteLoader.default.getClientBuildManifest = () => Promise.resolve({});
 
@@ -338,25 +342,31 @@ export async function _boot(EntryPointNamespace, isError) {
   });
 
   globalThis.next.router = router;
+  const domEl = document.querySelector("#__next");
+  const reactEl = (
+    <TopLevelRender
+      App={CachedApp}
+      Component={PageComponent}
+      props={hydrateProps}
+    />
+  );
 
-  if (isError) {
-    ReactDOM.render(
-      <TopLevelRender
-        App={CachedApp}
-        Component={PageComponent}
-        props={hydrateProps}
-      />,
-      document.querySelector("#__next")
-    );
+  if (USE_REACT_18) {
+    if (!reactRoot) {
+      // Unlike with createRoot, you don't need a separate root.render() call here
+      reactRoot = (isError ? ReactDOM.createRoot : ReactDOM.hydrateRoot)(
+        domEl,
+        reactEl
+      );
+    } else {
+      reactRoot.render(reactEl);
+    }
   } else {
-    ReactDOM.hydrate(
-      <TopLevelRender
-        App={CachedApp}
-        Component={PageComponent}
-        props={hydrateProps}
-      />,
-      document.querySelector("#__next")
-    );
+    if (isError) {
+      ReactDOM.render(reactEl, domEl);
+    } else {
+      ReactDOM.hydrate(reactEl, domEl);
+    }
   }
 }
 
@@ -369,23 +379,41 @@ function TopLevelRender({ App, Component, props, scroll }) {
 }
 
 export function render(props) {
-  ReactDOM.render(
-    <TopLevelRender {...props} />,
-    document.querySelector("#__next")
-  );
+  if (USE_REACT_18) {
+    reactRoot.render(<TopLevelRender {...props} />);
+  } else {
+    ReactDOM.render(
+      <TopLevelRender {...props} />,
+      document.getElementById("__next")
+    );
+  }
 }
 
 export function renderError(e) {
-  ReactDOM.render(
+  const reactEl = (
     <AppContainer>
       <App Component={<div>UH OH!!!!</div>} pageProps={data.props}></App>
-    </AppContainer>,
-    document.querySelector("#__next")
+    </AppContainer>
   );
+
+  if (USE_REACT_18) {
+    if (!reactRoot) {
+      const domEl = document.querySelector("#__next");
+
+      // Unlike with createRoot, you don't need a separate root.render() call here
+      reactRoot = ReactDOM.createRoot(domEl, reactEl);
+    } else {
+      reactRoot.render(reactEl);
+    }
+  } else {
+    const domEl = document.querySelector("#__next");
+
+    ReactDOM.render(reactEl, domEl);
+  }
 }
 
 globalThis.next = {
-  version: "11.1.2",
+  version: "12.0.2",
   emitter,
   render,
   renderError,

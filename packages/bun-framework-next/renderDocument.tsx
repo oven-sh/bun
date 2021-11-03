@@ -243,6 +243,7 @@ function renderDocument(
     scriptLoader,
     locale,
     disableOptimizedLoading,
+    useMaybeDeferContent,
     ...docProps,
   };
   return (
@@ -567,6 +568,17 @@ export async function render({
         </AppContainer>
       );
     },
+    defaultGetInitialProps: async (
+      docCtx: DocumentContext
+    ): Promise<DocumentInitialProps> => {
+      const enhanceApp = (AppComp: any) => {
+        return (props: any) => <AppComp {...props} />;
+      };
+
+      const { html, head } = await docCtx.renderPage({ enhanceApp });
+      // const styles = jsxStyleRegistry.styles();
+      return { html, head };
+    },
   };
 
   var props = await loadGetInitialProps(AppComponent, {
@@ -789,6 +801,7 @@ export async function render({
     isPreview: isPreview === true ? true : undefined,
     autoExport: isAutoExport === true ? true : undefined,
     nextExport: nextExport === true ? true : undefined,
+    useMaybeDeferContent,
   });
   const bodyRenderIdx = html.indexOf(BODY_RENDER_TARGET);
   html =
@@ -811,4 +824,11 @@ export async function render({
         .replaceAll("/_next/https://", "https://")
     );
   }
+}
+
+export function useMaybeDeferContent(
+  _name: string,
+  contentFn: () => JSX.Element
+): [boolean, JSX.Element] {
+  return [false, contentFn()];
 }

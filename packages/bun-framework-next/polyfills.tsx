@@ -21,3 +21,8 @@ React.Children.only = function (children) {
   return onlyChildPolyfill(children);
 };
 globalThis.URL = URL;
+
+import { TextEncoder, TextDecoder } from "./text-encoder-polyfill";
+
+globalThis.TextEncoder ||= TextEncoder;
+globalThis.TextDecoder ||= TextDecoder;

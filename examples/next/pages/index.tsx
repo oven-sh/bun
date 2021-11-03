@@ -2,7 +2,7 @@ import Head from "next/head";
 import Link from "next/link";
 import React from "react";
 import styles from "../styles/Home.module.css";
-
+import nextPackage from "next/package.json";
 export async function getStaticProps(ctx) {
   return {
     props: {},
@@ -20,7 +20,8 @@ export default function Home({}) {
 
       <main className={styles.main}>
         <h1 className={styles.title}>
-          Welcome to <a href="https://nextjs.org">Next.js!</a>
+          Welcome to <a href="https://nextjs.org">Next.js!</a> v
+          {nextPackage.version}
         </h1>
 
         <p className={styles.description}>

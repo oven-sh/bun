@@ -77,6 +77,7 @@ Here's what doesn't work yet:
 - `next/image` is polyfilled to a regular `<img src>` tag.
 - `proxy` and anything else in `next.config.js`
 - API routes, middleware (middleware is easier to support though! similar SSR API)
+- styled-jsx (technically not Next.js but often used with it)
 
 When using Next.js, Bun automatically reads configuration from `.env.local`, `.env.development` and `.env` (in that order). `process.env.NEXT_PUBLIC_` and `process.env.NEXT_` automatically are replaced via `--define`.
 

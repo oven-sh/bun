@@ -18,7 +18,6 @@ const HTTPWatcher = if (isTest) void else @import("../http.zig").Watcher;
 const Wyhash = std.hash.Wyhash;
 const ResolvePath = @import("./resolve_path.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
-const Workspace = @import("./workspace.zig").Workspace;
 const Mutex = @import("../lock.zig").Lock;
 const StringBoolMap = std.StringHashMap(bool);
 
@@ -2561,7 +2560,6 @@ pub const Resolver = struct {
             info.package_json_for_browser_field = parent.?.package_json_for_browser_field;
             info.enclosing_tsconfig_json = parent.?.enclosing_tsconfig_json;
             info.enclosing_package_json = parent.?.package_json orelse parent.?.enclosing_package_json;
-            info.enclosing_workspace = parent.enclosing_workspace;
 
             // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
             if (!r.opts.preserve_symlinks) {
@@ -2604,24 +2602,6 @@ pub const Resolver = struct {
                         info.package_json_for_browser_field = pkg;
                     }
                     info.enclosing_package_json = pkg;
-
-                    const is_root = pkg.workspace_root or entries.hasComptimeQuery(".pnpm-workspace.yaml");
-
-                    pkg.workspace_root = is_root;
-
-                    if (is_root) {
-                        var workspace = r.allocator.create(Workspace) catch unreachable;
-                        workspace.* = Workspace{
-                            .import_base_path = info.abs_path,
-                            .package_json = pkg,
-                        };
-
-                        if (info.abs_real_path.len > 0) {
-                            workspace.import_base_path = info.abs_real_path;
-                        }
-
-                        info.enclosing_workspace = workspace;
-                    }
 
                     if (r.debug_logs) |*logs| {
                         logs.addNoteFmt("Resolved package.json in \"{s}\"", .{

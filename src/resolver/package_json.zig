@@ -19,7 +19,6 @@ pub const MacroImportReplacementMap = std.StringArrayHashMap(string);
 pub const MacroMap = std.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
 
 const ScriptsMap = std.StringArrayHashMap(string);
-const Workspace = @import("./workspace.zig").Workspace;
 
 pub const PackageJSON = struct {
     pub const LoadFramework = enum {
@@ -65,7 +64,6 @@ pub const PackageJSON = struct {
     always_bundle: []string = &.{},
     macros: MacroMap = MacroMap{},
 
-    workspace_root: bool = false,
 
     // Present if the "browser" field is present. This field is intended to be
     // used by bundlers and lets you redirect the paths of certain 3rd-party
@@ -698,7 +696,6 @@ pub const PackageJSON = struct {
             }
         }
 
-        package_json.workspace_root = json.asProperty("workspaces") != null;
 
         // used by `bun run`
         if (include_scripts) {

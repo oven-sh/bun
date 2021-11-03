@@ -1,6 +1,6 @@
 {
   "name": "@bun-examples/next",
-  "version": "0.0.37",
+  "version": "0.0.39",
   "main": "index.js",
   "dependencies": {
     "next": "11.1.2",
@@ -11,7 +11,7 @@
   "devDependencies": {
     "@types/react": "^17.0.19",
     "bun-framework-next": "^12",
-    "typescript": "^4.4.5"
+    "typescript": "^4.4.0"
   },
   "bun-create": {
     "postinstall": [

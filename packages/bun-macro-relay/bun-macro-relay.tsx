@@ -1,4 +1,4 @@
-import { parse, print } from "graphql";
+import { parse, print } from "graphql/index.js";
 
 //
 // 1. Parse the GraphQL tag.

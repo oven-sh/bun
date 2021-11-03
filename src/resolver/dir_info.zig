@@ -5,6 +5,7 @@ const DirInfo = @This();
 const Fs = @import("../fs.zig");
 const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
 const PackageJSON = @import("./package_json.zig").PackageJSON;
+const Workspace = @import("./workspace.zig").Workspace;
 
 pub const Index = allocators.IndexType;
 
@@ -17,6 +18,7 @@ parent: Index = allocators.NotFound,
 enclosing_browser_scope: Index = allocators.NotFound,
 package_json_for_browser_field: ?*const PackageJSON = null,
 enclosing_tsconfig_json: ?*const TSConfigJSON = null,
+enclosing_workspace: ?*const Workspace = null,
 
 enclosing_package_json: ?*PackageJSON = null,
 

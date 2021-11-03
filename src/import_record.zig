@@ -97,6 +97,8 @@ pub const ImportRecord = struct {
     // If true, this was originally written as a bare "import 'file'" statement
     was_originally_bare_import: bool = false,
 
+    was_originally_require: bool = false,
+
     kind: ImportKind,
 
     pub const PrintMode = enum {

@@ -428,9 +428,9 @@ pub const ImportScanner = struct {
                         // This is a breaking change though. We can make it an option with some guardrail
                         // so maybe if it errors, it shows a suggestion "retry without trimming unused imports"
                         if (p.options.ts and found_imports and is_unused_in_typescript and !p.options.preserve_unused_imports_ts) {
-                            // Ignore import records with a pre-filled source index. These are
-                            // for injected files and we definitely do not want to trim these.
-                            if (!record.is_internal) {
+                            // internal imports are presumed to be always used
+                            // require statements cannot be stripped
+                            if (!record.is_internal and !record.was_originally_require) {
                                 record.is_unused = true;
                                 continue;
                             }
@@ -3211,6 +3211,10 @@ pub fn NewParser(
                     if (!p.options.transform_require_to_import) {
                         return p.e(E.Require{ .import_record_index = import_record_index }, arg.loc);
                     }
+
+                    p.import_records.items[import_record_index].was_originally_require = true;
+                    p.import_records.items[import_record_index].contains_import_star = true;
+
                     const symbol_name = p.import_records.items[import_record_index].path.name.nonUniqueNameString(p.allocator);
                     const cjs_import_name = std.fmt.allocPrint(
                         p.allocator,

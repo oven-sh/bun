@@ -84,6 +84,7 @@ pub const BunCommand = struct {
     pub fn exec(
         ctx: Command.Context,
     ) !void {
+        Global.configureAllocator(.{ .long_running = true });
         var allocator = ctx.allocator;
         var log = ctx.log;
         estimated_input_lines_of_code_ = 0;

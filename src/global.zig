@@ -1,7 +1,9 @@
 const std = @import("std");
 pub const Environment = @import("env.zig");
 
-pub const default_allocator: *std.mem.Allocator = if (isTest)
+const use_mimalloc = !Environment.isTest and Environment.isNative;
+
+pub const default_allocator: *std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
 else
     @import("./memory_allocator.zig").c_allocator;
@@ -77,6 +79,7 @@ pub const Output = struct {
             }
         }
     };
+
     pub var enable_ansi_colors = isNative;
     pub var enable_buffering = true;
     pub var is_stdout_piped = false;
@@ -405,6 +408,20 @@ pub const Global = struct {
         std.fmt.comptimePrint("0.0.{d}_debug", .{build_id})
     else
         std.fmt.comptimePrint("0.0.{d}", .{build_id});
+
+    pub const AllocatorConfiguration = struct {
+        verbose: bool = false,
+        long_running: bool = false,
+    };
+
+    // Enabling huge pages slows down Bun by 8x or so
+    pub fn configureAllocator(config: AllocatorConfiguration) void {
+        // if (comptime !use_mimalloc) return;
+        // const Mimalloc = @import("./allocators/mimalloc.zig");
+        // Mimalloc.mi_option_set_enabled(Mimalloc.mi_option_verbose, config.verbose);
+        // Mimalloc.mi_option_set_enabled(Mimalloc.mi_option_large_os_pages, config.long_running);
+        // if (!config.long_running) Mimalloc.mi_option_set(Mimalloc.mi_option_reset_delay, 0);
+    }
 
     pub fn panic(comptime fmt: string, args: anytype) noreturn {
         @setCold(true);

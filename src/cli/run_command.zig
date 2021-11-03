@@ -487,6 +487,7 @@ pub const RunCommand = struct {
                             if (shebang.len > 2 and strings.eqlComptimeIgnoreLen(shebang[0..2], "#!")) {
                                 break :possibly_open_with_bun_js;
                             }
+                            Global.configureAllocator(.{ .long_running = true });
 
                             Run.boot(ctx, file, ctx.allocator.dupe(u8, file_path) catch unreachable) catch |err| {
                                 if (Output.enable_ansi_colors) {
@@ -512,6 +513,9 @@ pub const RunCommand = struct {
                 }
             }
         }
+
+        Global.configureAllocator(.{ .long_running = false });
+
         var args = ctx.args;
         args.node_modules_bundle_path = null;
         args.node_modules_bundle_path_server = null;

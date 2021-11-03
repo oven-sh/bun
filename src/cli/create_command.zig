@@ -261,6 +261,8 @@ pub const CreateCommand = struct {
     var client: HTTPClient = undefined;
 
     pub fn exec(ctx: Command.Context, positionals_: []const []const u8) !void {
+        Global.configureAllocator(.{ .long_running = false });
+
         var create_options = try CreateOptions.parse(ctx, false);
         const positionals = create_options.positionals;
 

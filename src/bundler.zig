@@ -1254,10 +1254,13 @@ pub const Bundler = struct {
                 var package_path = path.text;
                 var file_path = path.text;
 
-                if (resolve_result.package_json) |pkg| {
-                    if (std.mem.indexOfScalar(u32, this.always_bundled_package_hashes, pkg.hash) != null) {
+                if (resolve_result.package_json) |pkg_| {
+                    var pkg: *const PackageJSON = pkg_;
+                    if (std.mem.indexOfScalar(u32, this.always_bundled_package_hashes, pkg.hash)) |pkg_i| {
+                        pkg = this.always_bundled_package_jsons[pkg_i];
                         const key_path_source_dir = pkg.source.key_path.sourceDir();
                         const default_source_dir = pkg.source.path.sourceDir();
+
                         if (strings.startsWith(path.text, key_path_source_dir)) {
                             import_path = path.text[key_path_source_dir.len..];
                         } else if (strings.startsWith(path.text, default_source_dir)) {

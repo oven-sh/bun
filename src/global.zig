@@ -415,6 +415,9 @@ pub const Global = struct {
     };
 
     // Enabling huge pages slows down Bun by 8x or so
+    // Keeping this code for:
+    // 1. documentation that an attempt was made
+    // 2. if I want to configure allocator later
     pub fn configureAllocator(config: AllocatorConfiguration) void {
         // if (comptime !use_mimalloc) return;
         // const Mimalloc = @import("./allocators/mimalloc.zig");

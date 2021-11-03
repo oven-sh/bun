@@ -455,7 +455,7 @@ pub const Bun = struct {
         }
     }
 
-    pub fn sleep(
+    pub fn sleepSync(
         this: void,
         ctx: js.JSContextRef,
         function: js.JSObjectRef,
@@ -509,8 +509,8 @@ pub const Bun = struct {
                 .rfn = Router.match,
                 .ts = Router.match_type_definition,
             },
-            .sleep = .{
-                .rfn = sleep,
+            .sleepSync = .{
+                .rfn = sleepSync,
             },
             .fetch = .{
                 .rfn = Fetch.call,

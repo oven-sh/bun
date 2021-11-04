@@ -337,10 +337,10 @@ const jsxVariants = jsx(JSXFrag, {
       data: "\v"
     }, undefined, false, undefined, this),
     jsx("div", {
-      data: "\u2028"
+      data: "\\u2028"
     }, undefined, false, undefined, this),
     jsx("div", {
-      data: "\u2029"
+      data: "\\u2029"
     }, undefined, false, undefined, this),
     jsx("div", {
       data: "😊"
@@ -392,11 +392,11 @@ const jsxVariants = jsx(JSXFrag, {
     jsx("div", {
       children: "\v"
     }, undefined, false, undefined, this),
-    jsx("div", {}, "\u2028", false, undefined, this),
+    jsx("div", {}, "\\u2028", false, undefined, this),
     jsx("div", {
       children: "\u2028"
     }, undefined, false, undefined, this),
-    jsx("div", {}, "\u2029", false, undefined, this),
+    jsx("div", {}, "\\u2029", false, undefined, this),
     jsx("div", {
       children: "\u2029"
     }, undefined, false, undefined, this),

@@ -556,6 +556,14 @@ pub fn NewPrinter(
                     '`' => {
                         backtick_cost += 1;
                     },
+                    '\r', '\n' => {
+                        if (allow_backtick) {
+                            return '`';
+                        }
+                    },
+                    '\\' => {
+                        i += 1;
+                    },
                     '$' => {
                         if (i + 1 < str.len and str[i + 1] == '{') {
                             backtick_cost += 1;
@@ -1835,6 +1843,18 @@ pub fn NewPrinter(
                 switch (utf8[i]) {
                     '\\' => {
                         i += 1;
+                    },
+                    // We must escape here for JSX string literals that contain unescaped newlines
+                    // Those will get transformed into a template string
+                    // which can potentially have unescaped $
+                    '$' => {
+                        if (comptime c == '`') {
+                            p.print(utf8[0..i]);
+                            p.print("\\$");
+
+                            utf8 = utf8[i + 1 ..];
+                            i = 0;
+                        }
                     },
                     c => {
                         p.print(utf8[0..i]);

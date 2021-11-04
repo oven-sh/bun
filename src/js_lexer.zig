@@ -1986,11 +1986,22 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                         needs_decode = true;
                         try lexer.step();
                     },
+
                     '\\' => {
                         backslash = logger.Range{ .loc = logger.Loc{
                             .start = @intCast(i32, lexer.end),
                         }, .len = 1 };
                         try lexer.step();
+
+                        // JSX string literals do not support escaping
+                        // They're "pre" escaped
+                        switch (lexer.code_point) {
+                            'u', 0x0C, 0, '\t', std.ascii.control_code.VT, 0x08 => {
+                                needs_decode = true;
+                            },
+                            else => {},
+                        }
+
                         continue;
                     },
                     quote => {
@@ -2001,6 +2012,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                         try lexer.step();
                         break :string_literal;
                     },
+
                     else => {
                         // Non-ASCII strings need the slow path
                         if (lexer.code_point >= 0x80) {
@@ -2158,43 +2170,46 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             return decoded.items;
         }
 
+        inline fn maybeDecodeJSXEntity(lexer: *LexerType, text: string, out: *std.ArrayList(u16), cursor: *strings.CodepointIterator.Cursor) void {
+            if (strings.indexOfChar(text[cursor.width + cursor.i ..], ';')) |length| {
+                const end = cursor.width + cursor.i;
+                const entity = text[end .. end + length];
+                if (entity[0] == '#') {
+                    var number = entity[1..entity.len];
+                    var base: u8 = 10;
+                    if (number.len > 1 and number[0] == 'x') {
+                        number = number[1..number.len];
+                        base = 16;
+                    }
+
+                    cursor.c = std.fmt.parseInt(i32, number, base) catch |err| brk: {
+                        switch (err) {
+                            error.InvalidCharacter => {
+                                lexer.addError(lexer.start, "Invalid JSX entity escape: {s}", .{entity}, false);
+                            },
+                            error.Overflow => {
+                                lexer.addError(lexer.start, "JSX entity escape is too big: {s}", .{entity}, false);
+                            },
+                        }
+
+                        break :brk strings.unicode_replacement;
+                    };
+
+                    cursor.i += @intCast(u32, length);
+                    cursor.width = 1;
+                } else if (tables.jsxEntity.get(entity)) |ent| {
+                    cursor.c = ent;
+                    cursor.i += @intCast(u32, length) + 1;
+                }
+            }
+        }
+
         pub fn decodeJSXEntities(lexer: *LexerType, text: string, out: *std.ArrayList(u16)) !void {
             const iterator = strings.CodepointIterator.init(text);
             var cursor = strings.CodepointIterator.Cursor{};
 
             while (iterator.next(&cursor)) {
-                if (cursor.c == '&') {
-                    if (strings.indexOfChar(text[cursor.width + cursor.i ..], ';')) |length| {
-                        const end = cursor.width + cursor.i;
-                        const entity = text[end .. end + length];
-                        if (entity[0] == '#') {
-                            var number = entity[1..entity.len];
-                            var base: u8 = 10;
-                            if (number.len > 1 and number[0] == 'x') {
-                                number = number[1..number.len];
-                                base = 16;
-                            }
-                            cursor.c = std.fmt.parseInt(i32, number, base) catch |err| brk: {
-                                switch (err) {
-                                    error.InvalidCharacter => {
-                                        lexer.addError(lexer.start, "Invalid JSX entity escape: {s}", .{entity}, false);
-                                    },
-                                    error.Overflow => {
-                                        lexer.addError(lexer.start, "JSX entity escape is too big: {s}", .{entity}, false);
-                                    },
-                                }
-
-                                break :brk strings.unicode_replacement;
-                            };
-
-                            cursor.i += @intCast(u32, length);
-                            cursor.width = 1;
-                        } else if (tables.jsxEntity.get(entity)) |ent| {
-                            cursor.c = ent;
-                            cursor.i += @intCast(u32, length) + 1;
-                        }
-                    }
-                }
+                if (cursor.c == '&') lexer.maybeDecodeJSXEntity(text, out, &cursor);
 
                 if (cursor.c <= 0xFFFF) {
                     try out.append(@intCast(u16, cursor.c));

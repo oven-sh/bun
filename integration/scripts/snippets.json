@@ -19,5 +19,7 @@
   "/void-shouldnt-delete-call-expressions.js",
   "/custom-emotion-jsx/file.jsx",
   "/react-context-value-func.tsx",
-  "/latin1-chars-in-regexp.js"
+  "/latin1-chars-in-regexp.js",
+  "/jsx-spacing.jsx",
+  "/jsx-entities.jsx"
 ]

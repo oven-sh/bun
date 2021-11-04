@@ -873,3 +873,5 @@ test "sortDesc" {
 }
 
 pub usingnamespace @import("exact_size_matcher.zig");
+
+pub const unicode_replacement = 0xFFFD;

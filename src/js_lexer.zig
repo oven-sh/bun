@@ -1999,7 +1999,6 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                             lexer.previous_backslash_quote_in_jsx = backslash;
                         }
                         try lexer.step();
-                        // not sure about this!
                         break :string_literal;
                     },
                     else => {
@@ -2165,8 +2164,9 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
 
             while (iterator.next(&cursor)) {
                 if (cursor.c == '&') {
-                    if (strings.indexOfChar(text[cursor.i..], ';')) |length| {
-                        const entity = text[cursor.i .. @as(usize, cursor.i) + length];
+                    if (strings.indexOfChar(text[cursor.width + cursor.i ..], ';')) |length| {
+                        const end = cursor.width + cursor.i;
+                        const entity = text[end .. end + length];
                         if (entity[0] == '#') {
                             var number = entity[1..entity.len];
                             var base: u8 = 10;
@@ -2174,9 +2174,21 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                                 number = number[1..number.len];
                                 base = 16;
                             }
-                            cursor.c = try std.fmt.parseInt(i32, number, base);
-                            cursor.i += @intCast(u32, length) + 1;
-                            cursor.width = 0;
+                            cursor.c = std.fmt.parseInt(i32, number, base) catch |err| brk: {
+                                switch (err) {
+                                    error.InvalidCharacter => {
+                                        lexer.addError(lexer.start, "Invalid JSX entity escape: {s}", .{entity}, false);
+                                    },
+                                    error.Overflow => {
+                                        lexer.addError(lexer.start, "JSX entity escape is too big: {s}", .{entity}, false);
+                                    },
+                                }
+
+                                break :brk strings.unicode_replacement;
+                            };
+
+                            cursor.i += @intCast(u32, length);
+                            cursor.width = 1;
                         } else if (tables.jsxEntity.get(entity)) |ent| {
                             cursor.c = ent;
                             cursor.i += @intCast(u32, length) + 1;

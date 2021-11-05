@@ -94,6 +94,14 @@ pub const RunCommand = struct {
                                         continue;
                                     }
 
+                                    if (strings.startsWith(yarn_cmd, "-")) {
+                                        // Skip the rest of the command
+                                        entry_i += "yarn ".len + yarn_cmd.len;
+                                        try copy_script.appendSlice("yarn ");
+                                        try copy_script.appendSlice(yarn_cmd);
+                                        continue;
+                                    }
+
                                     // implicit yarn commands
                                     if (std.mem.indexOfScalar(u64, yarn_commands, std.hash.Wyhash.hash(0, yarn_cmd)) == null) {
                                         try copy_script.appendSlice("bun run");
@@ -885,6 +893,18 @@ test "replacePackageManagerRun" {
         copy_script.clearRetainingCapacity();
         try RunCommand.replacePackageManagerRun(&copy_script, "yarn install foo");
         try std.testing.expectEqualStrings(copy_script.items, "yarn install foo");
+    }
+
+    {
+        copy_script.clearRetainingCapacity();
+        try RunCommand.replacePackageManagerRun(&copy_script, "yarn --prod");
+        try std.testing.expectEqualStrings(copy_script.items, "yarn --prod");
+    }
+
+    {
+        copy_script.clearRetainingCapacity();
+        try RunCommand.replacePackageManagerRun(&copy_script, "yarn -prod");
+        try std.testing.expectEqualStrings(copy_script.items, "yarn -prod");
     }
 
     {

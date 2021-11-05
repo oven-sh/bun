@@ -49,6 +49,8 @@ Assuming a package.json with a `"clean"` command in `"scripts"`:
 }
 ```
 
+Note: `bun run` is not an npm client, it won't install packages.
+
 ## Using Bun with Next.js
 
 To create a new Next.js app with Bun:
@@ -842,6 +844,12 @@ Is generated like this:
 3. Truncate the hash generated above to a `u32`
 
 The implementation details of this module ID hash will vary between versions of Bun. The important part is the metadata contains the module IDs, the package paths, and the package hashes so it shouldn't really matter in practice if other tooling wants to make use of any of this.
+
+### `bun completions`
+
+This command installs completions for `zsh` and/or `fish`. It's run automatically on every `bun upgrade` and on install. It reads from `$SHELL` to determine which shell to install for. It tries several common shell completion directories for your shell and OS.
+
+If you want to copy the completions manually, run `bun completions > path-to-file`. If you know the completions directory to install them to, run `bun completions /path/to/directory`.
 
 ### Environment variables
 

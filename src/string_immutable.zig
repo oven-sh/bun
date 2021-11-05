@@ -547,6 +547,10 @@ pub inline fn wtf8ByteSequenceLength(first_byte: u8) u3 {
     };
 }
 
+/// Convert potentially ill-formed UTF-8 or UTF-16 bytes to a Unicode Codepoint.
+/// Invalid codepoints are replaced with `zero` parameter
+/// This is a clone of esbuild's decodeWTF8Rune
+/// which was a clone of golang's "utf8.DecodeRune" that was modified to decode using WTF-8 instead.
 /// Asserts a multi-byte codepoint
 pub inline fn decodeWTF8RuneTMultibyte(p: *const [4]u8, len: u3, comptime T: type, comptime zero: T) T {
     std.debug.assert(len > 1);
@@ -580,6 +584,9 @@ pub inline fn decodeWTF8RuneTMultibyte(p: *const [4]u8, len: u3, comptime T: typ
     unreachable;
 }
 
+/// Convert potentially ill-formed UTF-8 or UTF-16 bytes to a Unicode Codepoint.
+/// - Invalid codepoints are replaced with `zero` parameter
+/// - Null bytes return 0
 pub fn decodeWTF8RuneT(p: *const [4]u8, len: u3, comptime T: type, comptime zero: T) T {
     if (len == 0) return zero;
     if (len == 1) return p[0];

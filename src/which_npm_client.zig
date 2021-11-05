@@ -69,9 +69,10 @@ pub const NPMClient = struct {
                     "npm",
                 ) orelse "";
 
-            var file = std.fs.openFileAbsoluteZ(path, .{ .read = true }) catch return null;
-            defer file.close();
-            break :brk std.os.getFdPath(file.handle, realpath_buf) catch return null;
+            std.mem.copy(u8, realpath_buf, std.mem.span(path));
+            // It's important we don't resolve the symlink
+            // That breaks volta.
+            break :brk realpath_buf[0..path.len];   
         };
 
         const basename = std.fs.path.basename(std.mem.span(out_path));

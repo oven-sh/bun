@@ -777,25 +777,26 @@ pub const RunCommand = struct {
 
         if (path_for_which.len > 0) {
             if (which(&path_buf, path_for_which, this_bundler.fs.top_level_dir, script_name_to_search)) |destination| {
-                var file = std.fs.openFileAbsoluteZ(destination, .{ .read = true }) catch |err| {
-                    if (!log_errors) return false;
+                // var file = std.fs.openFileAbsoluteZ(destination, .{ .read = true }) catch |err| {
+                //     if (!log_errors) return false;
 
-                    Output.prettyErrorln("<r>error: <red>{s}<r> opening file: \"{s}\"", .{ err, std.mem.span(destination) });
-                    Output.flush();
-                    return err;
-                };
-                var outbuf = std.os.getFdPath(file.handle, &path_buf2) catch |err| {
-                    if (!log_errors) return false;
-                    Output.prettyErrorln("<r>error: <red>{s}<r> resolving file: \"{s}\"", .{ err, std.mem.span(destination) });
-                    Output.flush();
-                    return err;
-                };
+                //     Output.prettyErrorln("<r>error: <red>{s}<r> opening file: \"{s}\"", .{ err, std.mem.span(destination) });
+                //     Output.flush();
+                //     return err;
+                // };
+                // // var outbuf = std.os.getFdPath(file.handle, &path_buf2) catch |err| {
+                // //     if (!log_errors) return false;
+                // //     Output.prettyErrorln("<r>error: <red>{s}<r> resolving file: \"{s}\"", .{ err, std.mem.span(destination) });
+                // //     Output.flush();
+                // //     return err;
+                // // };
 
-                file.close();
+                // // file.close();
 
+                const out = std.mem.span(destination);
                 return try runBinary(
                     ctx,
-                    try this_bundler.fs.dirname_store.append([]u8, outbuf),
+                    try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
                     this_bundler.fs.top_level_dir,
                     this_bundler.env,
                     passthrough,

@@ -399,8 +399,8 @@ pub const RunCommand = struct {
 
                     while (iter.next()) |entry| {
                         const name = entry.value.base();
-                        if (!strings.contains(name, ".config") and
-                            this_bundler.options.loader(std.fs.path.extension(name)).isJavaScriptLike() and
+                        if (this_bundler.options.loader(std.fs.path.extension(name)).isJavaScriptLike() and
+                            !strings.contains(name, ".config") and
                             !strings.contains(name, ".d.ts") and
                             entry.value.kind(&this_bundler.fs.fs) == .file)
                         {

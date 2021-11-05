@@ -346,10 +346,10 @@ var hmr = new HMR(2482749838, "string-escapes.js"), exports = hmr.exports;
         data: "\v"
       }, undefined, false, undefined, this),
       jsx("div", {
-        data: "\u2028"
+        data: "\\u2028"
       }, undefined, false, undefined, this),
       jsx("div", {
-        data: "\u2029"
+        data: "\\u2029"
       }, undefined, false, undefined, this),
       jsx("div", {
         data: "😊"
@@ -401,11 +401,11 @@ var hmr = new HMR(2482749838, "string-escapes.js"), exports = hmr.exports;
       jsx("div", {
         children: "\v"
       }, undefined, false, undefined, this),
-      jsx("div", {}, "\u2028", false, undefined, this),
+      jsx("div", {}, "\\u2028", false, undefined, this),
       jsx("div", {
         children: "\u2028"
       }, undefined, false, undefined, this),
-      jsx("div", {}, "\u2029", false, undefined, this),
+      jsx("div", {}, "\\u2029", false, undefined, this),
       jsx("div", {
         children: "\u2029"
       }, undefined, false, undefined, this),

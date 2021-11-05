@@ -924,7 +924,7 @@ Estimated: 30-90 minutes :(
 Install LLVM 12 and homebrew dependencies:
 
 ```bash
-brew install llvm@12 coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed
+brew install llvm@12 coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config
 ```
 
 Bun (& the version of Zig) need LLVM 12 and Clang 12 (clang is part of LLVM). Weird build & runtime errors will happen otherwise.
@@ -959,6 +959,7 @@ You'll want to make sure `zig` is in `$PATH`. The `zig` binary wil be in the sam
 In `bun`:
 
 ```bash
+# If you omit --depth=1, `git submodule update` will take 17.5 minutes on 1gbps internet, mostly due to WebKit.
 git submodule update --init --recursive --progress --depth=1
 make vendor jsc identifier-cache dev
 ```
@@ -973,6 +974,16 @@ Note that `brew install zig` won't work. Bun uses a build of Zig with a couple p
 
 Additionally, you'll need `cmake`, `npm` and `esbuild` installed globally.
 
+### Troubleshooting
+
+If you see an error when compiling `libarchive`, run this:
+
+```bash
+brew install pkg-config
+```
+
+If you see an error about missing files on `zig build obj`, make sure you built the headers
+
 ## Linux
 
 A Dockerfile with the exact version of Zig used is availble at `Dockerfile.zig`. This installs all the system dependencies you'll need excluding JavaScriptCore, but doesn't currently compile Bun in one command. If you're having trouble compiling Zig, it might be helpful to look at.
@@ -980,7 +991,7 @@ A Dockerfile with the exact version of Zig used is availble at `Dockerfile.zig`.
 Compile Zig:
 
 ```bash
-git clone https://github.com/jarred-sumner/zig --depth=1
+git clone https://github.com/jarred-sumner/zig
 cd zig
 git checkout jarred/zig-sloppy-with-small-structs
 cmake . -DCMAKE_BUILD_TYPE=Release && make -j $(nproc)

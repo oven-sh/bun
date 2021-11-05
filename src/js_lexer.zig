@@ -565,20 +565,20 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             stringLiteral: while (true) {
                 switch (lexer.code_point) {
                     '\\' => {
-                        try lexer.step();
+                        lexer.step();
 
                         // Handle Windows CRLF
                         if (lexer.code_point == 'r' and comptime !is_json) {
-                            try lexer.step();
+                            lexer.step();
                             if (lexer.code_point == '\n') {
-                                try lexer.step();
+                                lexer.step();
                             }
                             continue :stringLiteral;
                         }
 
                         if (comptime is_json and json_options.ignore_trailing_escape_sequences) {
                             if (lexer.code_point == quote and lexer.current >= lexer.source.contents.len) {
-                                try lexer.step();
+                                lexer.step();
 
                                 break;
                             }
@@ -587,7 +587,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                         switch (lexer.code_point) {
                             // 0 cannot be in this list because it may be a legacy octal literal
                             'v', 'f', 't', 'r', 'n', '`', '\'', '"', 0x2028, 0x2029 => {
-                                try lexer.step();
+                                lexer.step();
                                 continue :stringLiteral;
                             },
                             else => {
@@ -631,10 +631,10 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
 
                     '$' => {
                         if (comptime quote == '`') {
-                            try lexer.step();
+                            lexer.step();
                             if (lexer.code_point == '{') {
                                 suffix_len = 2;
-                                try lexer.step();
+                                lexer.step();
                                 if (lexer.rescan_close_brace_as_template_token) {
                                     lexer.token = T.t_template_middle;
                                 } else {
@@ -647,7 +647,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                     },
                     // exit condition
                     quote => {
-                        try lexer.step();
+                        lexer.step();
 
                         break;
                     },
@@ -662,7 +662,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                         }
                     },
                 }
-                try lexer.step();
+                lexer.step();
             }
 
             return InnerStringLiteral{ .needs_slow_path = needs_slow_path, .suffix_len = suffix_len };
@@ -678,7 +678,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             }
             // quote is 0 when parsing JSON from .env
             // .env values may not always be quoted.
-            try lexer.step();
+            lexer.step();
 
             var string_literal_details = try lexer.parseStringLiteralInnter(quote);
 
@@ -712,28 +712,32 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
         }
 
         inline fn nextCodepointSlice(it: *LexerType) []const u8 {
-            const cp_len = strings.utf8ByteSequenceLength(it.source.contents.ptr[it.current]);
-            it.end = it.current;
-            it.current += cp_len;
-
-            return if (!(it.current > it.source.contents.len)) it.source.contents[it.current - cp_len .. it.current] else "";
+            const cp_len = strings.wtf8ByteSequenceLength(it.source.contents.ptr[it.current]);
+            return if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
         }
 
-        inline fn nextCodepoint(it: *LexerType) !CodePoint {
-            const slice = it.nextCodepointSlice();
+        inline fn nextCodepoint(it: *LexerType) CodePoint {
+            const cp_len = strings.wtf8ByteSequenceLength(it.source.contents.ptr[it.current]);
+            const slice = if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
 
-            return switch (slice.len) {
+            const code_point = switch (slice.len) {
                 0 => -1,
                 1 => @as(CodePoint, slice[0]),
-                2 => @as(CodePoint, unicode.utf8Decode2(slice) catch unreachable),
-                3 => @as(CodePoint, unicode.utf8Decode3(slice) catch unreachable),
-                4 => @as(CodePoint, unicode.utf8Decode4(slice) catch unreachable),
-                else => unreachable,
+                else => strings.decodeWTF8RuneTMultibyte(slice.ptr[0..4], @intCast(u3, slice.len), CodePoint, strings.unicode_replacement),
             };
+
+            it.end = it.current;
+
+            it.current += if (code_point != strings.unicode_replacement)
+                cp_len
+            else
+                1;
+
+            return code_point;
         }
 
-        inline fn step(lexer: *LexerType) !void {
-            lexer.code_point = try lexer.nextCodepoint();
+        inline fn step(lexer: *LexerType) void {
+            lexer.code_point = lexer.nextCodepoint();
 
             // Track the approximate number of newlines in the file so we can preallocate
             // the line offset table in the printer for source maps. The line offset table
@@ -799,19 +803,19 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                 // Scan a unicode escape sequence. There is at least one because that's
                 // what caused us to get on this slow path in the first place.
                 if (lexer.code_point == '\\') {
-                    try lexer.step();
+                    lexer.step();
 
                     if (lexer.code_point != 'u') {
                         try lexer.syntaxError();
                     }
-                    try lexer.step();
+                    lexer.step();
                     if (lexer.code_point == '{') {
                         // Variable-length
-                        try lexer.step();
+                        lexer.step();
                         while (lexer.code_point != '}') {
                             switch (lexer.code_point) {
                                 '0'...'9', 'a'...'f', 'A'...'F' => {
-                                    try lexer.step();
+                                    lexer.step();
                                 },
                                 else => {
                                     try lexer.syntaxError();
@@ -819,14 +823,14 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                             }
                         }
 
-                        try lexer.step();
+                        lexer.step();
                     } else {
                         // Fixed-length
                         // comptime var j: usize = 0;
 
                         switch (lexer.code_point) {
                             '0'...'9', 'a'...'f', 'A'...'F' => {
-                                try lexer.step();
+                                lexer.step();
                             },
                             else => {
                                 try lexer.syntaxError();
@@ -834,7 +838,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                         }
                         switch (lexer.code_point) {
                             '0'...'9', 'a'...'f', 'A'...'F' => {
-                                try lexer.step();
+                                lexer.step();
                             },
                             else => {
                                 try lexer.syntaxError();
@@ -842,7 +846,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                         }
                         switch (lexer.code_point) {
                             '0'...'9', 'a'...'f', 'A'...'F' => {
-                                try lexer.step();
+                                lexer.step();
                             },
                             else => {
                                 try lexer.syntaxError();
@@ -850,7 +854,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                         }
                         switch (lexer.code_point) {
                             '0'...'9', 'a'...'f', 'A'...'F' => {
-                                try lexer.step();
+                                lexer.step();
                             },
                             else => {
                                 try lexer.syntaxError();
@@ -863,7 +867,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                 if (!isIdentifierContinue(lexer.code_point)) {
                     break;
                 }
-                try lexer.step();
+                lexer.step();
             }
 
             // Second pass: re-use our existing escape sequence parser
@@ -937,17 +941,17 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                 '>' => {
                     // "=" + ">" = "=>"
                     lexer.token = .t_equals_greater_than;
-                    try lexer.step();
+                    lexer.step();
                 },
                 '=' => {
                     // "=" + "=" = "=="
                     lexer.token = .t_equals_equals;
-                    try lexer.step();
+                    lexer.step();
 
                     if (lexer.code_point == '=') {
                         // "=" + "==" = "==="
                         lexer.token = .t_equals_equals_equals;
-                        try lexer.step();
+                        lexer.step();
                     }
                 },
                 else => {},
@@ -1038,7 +1042,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                             // "#!/usr/bin/env node"
                             lexer.token = .t_hashbang;
                             hashbang: while (true) {
-                                try lexer.step();
+                                lexer.step();
                                 switch (lexer.code_point) {
                                     '\r', '\n', 0x2028, 0x2029 => {
                                         break :hashbang;
@@ -1051,7 +1055,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                             }
                             lexer.identifier = lexer.raw();
                         } else {
-                            try lexer.step();
+                            lexer.step();
                             if (lexer.code_point == '\\') {
                                 lexer.identifier = (try lexer.scanIdentifierWithEscapes(.private)).contents;
                                 lexer.token = T.t_private_identifier;
@@ -1060,9 +1064,9 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                                     try lexer.syntaxError();
                                 }
 
-                                try lexer.step();
+                                lexer.step();
                                 while (isIdentifierContinue(lexer.code_point)) {
-                                    try lexer.step();
+                                    lexer.step();
                                 }
                                 if (lexer.code_point == '\\') {
                                     lexer.identifier = (try lexer.scanIdentifierWithEscapes(.private)).contents;
@@ -1076,67 +1080,67 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                         }
                     },
                     '\r', '\n', 0x2028, 0x2029 => {
-                        try lexer.step();
+                        lexer.step();
                         lexer.has_newline_before = true;
                         continue;
                     },
                     '\t', ' ' => {
-                        try lexer.step();
+                        lexer.step();
                         continue;
                     },
                     '(' => {
-                        try lexer.step();
+                        lexer.step();
                         lexer.token = T.t_open_paren;
                     },
                     ')' => {
-                        try lexer.step();
+                        lexer.step();
                         lexer.token = T.t_close_paren;
                     },
                     '[' => {
-                        try lexer.step();
+                        lexer.step();
                         lexer.token = T.t_open_bracket;
                     },
                     ']' => {
-                        try lexer.step();
+                        lexer.step();
                         lexer.token = T.t_close_bracket;
                     },
                     '{' => {
-                        try lexer.step();
+                        lexer.step();
                         lexer.token = T.t_open_brace;
                     },
                     '}' => {
-                        try lexer.step();
+                        lexer.step();
                         lexer.token = T.t_close_brace;
                     },
                     ',' => {
-                        try lexer.step();
+                        lexer.step();
                         lexer.token = T.t_comma;
                     },
                     ':' => {
-                        try lexer.step();
+                        lexer.step();
                         lexer.token = T.t_colon;
                     },
                     ';' => {
-                        try lexer.step();
+                        lexer.step();
                         lexer.token = T.t_semicolon;
                     },
                     '@' => {
-                        try lexer.step();
+                        lexer.step();
                         lexer.token = T.t_at;
                     },
                     '~' => {
-                        try lexer.step();
+                        lexer.step();
                         lexer.token = T.t_tilde;
                     },
                     '?' => {
                         // '?' or '?.' or '??' or '??='
-                        try lexer.step();
+                        lexer.step();
                         switch (lexer.code_point) {
                             '?' => {
-                                try lexer.step();
+                                lexer.step();
                                 switch (lexer.code_point) {
                                     '=' => {
-                                        try lexer.step();
+                                        lexer.step();
                                         lexer.token = T.t_question_question_equals;
                                     },
                                     else => {
@@ -1154,7 +1158,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                                 if (current < contents.len) {
                                     const c = contents[current];
                                     if (c < '0' or c > '9') {
-                                        try lexer.step();
+                                        lexer.step();
                                         lexer.token = T.t_question_dot;
                                     }
                                 }
@@ -1166,10 +1170,10 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                     },
                     '%' => {
                         // '%' or '%='
-                        try lexer.step();
+                        lexer.step();
                         switch (lexer.code_point) {
                             '=' => {
-                                try lexer.step();
+                                lexer.step();
                                 lexer.token = T.t_percent_equals;
                             },
 
@@ -1181,18 +1185,18 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
 
                     '&' => {
                         // '&' or '&=' or '&&' or '&&='
-                        try lexer.step();
+                        lexer.step();
                         switch (lexer.code_point) {
                             '=' => {
-                                try lexer.step();
+                                lexer.step();
                                 lexer.token = T.t_ampersand_equals;
                             },
 
                             '&' => {
-                                try lexer.step();
+                                lexer.step();
                                 switch (lexer.code_point) {
                                     '=' => {
-                                        try lexer.step();
+                                        lexer.step();
                                         lexer.token = T.t_ampersand_ampersand_equals;
                                     },
 
@@ -1210,17 +1214,17 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                     '|' => {
 
                         // '|' or '|=' or '||' or '||='
-                        try lexer.step();
+                        lexer.step();
                         switch (lexer.code_point) {
                             '=' => {
-                                try lexer.step();
+                                lexer.step();
                                 lexer.token = T.t_bar_equals;
                             },
                             '|' => {
-                                try lexer.step();
+                                lexer.step();
                                 switch (lexer.code_point) {
                                     '=' => {
-                                        try lexer.step();
+                                        lexer.step();
                                         lexer.token = T.t_bar_bar_equals;
                                     },
 
@@ -1237,10 +1241,10 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
 
                     '^' => {
                         // '^' or '^='
-                        try lexer.step();
+                        lexer.step();
                         switch (lexer.code_point) {
                             '=' => {
-                                try lexer.step();
+                                lexer.step();
                                 lexer.token = T.t_caret_equals;
                             },
 
@@ -1252,15 +1256,15 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
 
                     '+' => {
                         // '+' or '+=' or '++'
-                        try lexer.step();
+                        lexer.step();
                         switch (lexer.code_point) {
                             '=' => {
-                                try lexer.step();
+                                lexer.step();
                                 lexer.token = T.t_plus_equals;
                             },
 
                             '+' => {
-                                try lexer.step();
+                                lexer.step();
                                 lexer.token = T.t_plus_plus;
                             },
 
@@ -1272,18 +1276,18 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
 
                     '-' => {
                         // '+' or '+=' or '++'
-                        try lexer.step();
+                        lexer.step();
                         switch (lexer.code_point) {
                             '=' => {
-                                try lexer.step();
+                                lexer.step();
                                 lexer.token = T.t_minus_equals;
                             },
 
                             '-' => {
-                                try lexer.step();
+                                lexer.step();
 
                                 if (lexer.code_point == '>' and lexer.has_newline_before) {
-                                    try lexer.step();
+                                    lexer.step();
                                     lexer.log.addRangeWarning(lexer.source, lexer.range(), "Treating \"-->\" as the start of a legacy HTML single-line comment") catch unreachable;
 
                                     singleLineHTMLCloseComment: while (true) {
@@ -1296,7 +1300,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                                             },
                                             else => {},
                                         }
-                                        try lexer.step();
+                                        lexer.step();
                                     }
                                     continue;
                                 }
@@ -1313,17 +1317,17 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                     '*' => {
                         // '*' or '*=' or '**' or '**='
 
-                        try lexer.step();
+                        lexer.step();
                         switch (lexer.code_point) {
                             '=' => {
-                                try lexer.step();
+                                lexer.step();
                                 lexer.token = .t_asterisk_equals;
                             },
                             '*' => {
-                                try lexer.step();
+                                lexer.step();
                                 switch (lexer.code_point) {
                                     '=' => {
-                                        try lexer.step();
+                                        lexer.step();
                                         lexer.token = .t_asterisk_asterisk_equals;
                                     },
                                     else => {
@@ -1338,16 +1342,16 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                     },
                     '/' => {
                         // '/' or '/=' or '//' or '/* ... */'
-                        try lexer.step();
+                        lexer.step();
 
                         switch (lexer.code_point) {
                             '=' => {
-                                try lexer.step();
+                                lexer.step();
                                 lexer.token = .t_slash_equals;
                             },
                             '/' => {
                                 singleLineComment: while (true) {
-                                    try lexer.step();
+                                    lexer.step();
                                     switch (lexer.code_point) {
                                         '\r', '\n', 0x2028, 0x2029 => {
                                             break :singleLineComment;
@@ -1369,19 +1373,19 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                                 continue;
                             },
                             '*' => {
-                                try lexer.step();
+                                lexer.step();
 
                                 multiLineComment: while (true) {
                                     switch (lexer.code_point) {
                                         '*' => {
-                                            try lexer.step();
+                                            lexer.step();
                                             if (lexer.code_point == '/') {
-                                                try lexer.step();
+                                                lexer.step();
                                                 break :multiLineComment;
                                             }
                                         },
                                         '\r', '\n', 0x2028, 0x2029 => {
-                                            try lexer.step();
+                                            lexer.step();
                                             lexer.has_newline_before = true;
                                         },
                                         -1 => {
@@ -1393,7 +1397,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                                             );
                                         },
                                         else => {
-                                            try lexer.step();
+                                            lexer.step();
                                         },
                                     }
                                 }
@@ -1414,18 +1418,18 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
 
                     '=' => {
                         // '=' or '=>' or '==' or '==='
-                        try lexer.step();
+                        lexer.step();
                         switch (lexer.code_point) {
                             '>' => {
-                                try lexer.step();
+                                lexer.step();
                                 lexer.token = T.t_equals_greater_than;
                             },
 
                             '=' => {
-                                try lexer.step();
+                                lexer.step();
                                 switch (lexer.code_point) {
                                     '=' => {
-                                        try lexer.step();
+                                        lexer.step();
                                         lexer.token = T.t_equals_equals_equals;
                                     },
 
@@ -1443,18 +1447,18 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
 
                     '<' => {
                         // '<' or '<<' or '<=' or '<<=' or '<!--'
-                        try lexer.step();
+                        lexer.step();
                         switch (lexer.code_point) {
                             '=' => {
-                                try lexer.step();
+                                lexer.step();
                                 lexer.token = T.t_less_than_equals;
                             },
 
                             '<' => {
-                                try lexer.step();
+                                lexer.step();
                                 switch (lexer.code_point) {
                                     '=' => {
-                                        try lexer.step();
+                                        lexer.step();
                                         lexer.token = T.t_less_than_less_than_equals;
                                     },
 
@@ -1481,25 +1485,25 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
 
                     '>' => {
                         // '>' or '>>' or '>>>' or '>=' or '>>=' or '>>>='
-                        try lexer.step();
+                        lexer.step();
 
                         switch (lexer.code_point) {
                             '=' => {
-                                try lexer.step();
+                                lexer.step();
                                 lexer.token = T.t_greater_than_equals;
                             },
                             '>' => {
-                                try lexer.step();
+                                lexer.step();
                                 switch (lexer.code_point) {
                                     '=' => {
-                                        try lexer.step();
+                                        lexer.step();
                                         lexer.token = T.t_greater_than_greater_than_equals;
                                     },
                                     '>' => {
-                                        try lexer.step();
+                                        lexer.step();
                                         switch (lexer.code_point) {
                                             '=' => {
-                                                try lexer.step();
+                                                lexer.step();
                                                 lexer.token = T.t_greater_than_greater_than_greater_than_equals;
                                             },
                                             else => {
@@ -1520,13 +1524,13 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
 
                     '!' => {
                         // '!' or '!=' or '!=='
-                        try lexer.step();
+                        lexer.step();
                         switch (lexer.code_point) {
                             '=' => {
-                                try lexer.step();
+                                lexer.step();
                                 switch (lexer.code_point) {
                                     '=' => {
-                                        try lexer.step();
+                                        lexer.step();
                                         lexer.token = T.t_exclamation_equals_equals;
                                     },
 
@@ -1552,9 +1556,9 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                     },
 
                     '_', '$', 'a'...'z', 'A'...'Z' => {
-                        try lexer.step();
+                        lexer.step();
                         while (isIdentifierContinue(lexer.code_point)) {
-                            try lexer.step();
+                            lexer.step();
                         }
 
                         if (lexer.code_point != '\\') {
@@ -1572,7 +1576,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                     '\\' => {
                         if (comptime is_json and json_options.ignore_leading_escape_sequences) {
                             if (lexer.start == 0 or lexer.current == lexer.source.contents.len - 1) {
-                                try lexer.step();
+                                lexer.step();
                                 continue;
                             }
                         }
@@ -1589,14 +1593,14 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                     else => {
                         // Check for unusual whitespace characters
                         if (isWhitespace(lexer.code_point)) {
-                            try lexer.step();
+                            lexer.step();
                             continue;
                         }
 
                         if (isIdentifierStart(lexer.code_point)) {
-                            try lexer.step();
+                            lexer.step();
                             while (isIdentifierContinue(lexer.code_point)) {
-                                try lexer.step();
+                                lexer.step();
                             }
                             if (lexer.code_point == '\\') {
                                 const scan_result = try lexer.scanIdentifierWithEscapes(.normal);
@@ -1710,7 +1714,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                 .allocator = allocator,
                 .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
             };
-            try lex.step();
+            lex.step();
             try lex.next();
 
             return lex;
@@ -1727,7 +1731,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                 .allocator = allocator,
                 .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
             };
-            try lex.step();
+            lex.step();
             try lex.next();
 
             return lex;
@@ -1745,7 +1749,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                 .allocator = allocator,
                 .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
             };
-            try lex.step();
+            lex.step();
             try lex.next();
 
             return lex;
@@ -1764,7 +1768,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             while (true) {
                 switch (lexer.code_point) {
                     '/' => {
-                        try lexer.step();
+                        lexer.step();
 
                         var has_set_flags_start = false;
                         while (isIdentifierContinue(lexer.code_point)) {
@@ -1775,7 +1779,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                                         has_set_flags_start = true;
                                     }
 
-                                    try lexer.step();
+                                    lexer.step();
                                 },
                                 else => {
                                     try lexer.syntaxError();
@@ -1785,11 +1789,11 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                         return;
                     },
                     '[' => {
-                        try lexer.step();
+                        lexer.step();
                         while (lexer.code_point != ']') {
                             try lexer.scanRegExpValidateAndStep();
                         }
-                        try lexer.step();
+                        lexer.step();
                     },
                     else => {
                         try lexer.scanRegExpValidateAndStep();
@@ -1836,47 +1840,47 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                         lexer.token = .t_end_of_file;
                     },
                     '\r', '\n', 0x2028, 0x2029 => {
-                        try lexer.step();
+                        lexer.step();
                         lexer.has_newline_before = true;
                         continue;
                     },
                     '\t', ' ' => {
-                        try lexer.step();
+                        lexer.step();
                         continue;
                     },
                     '.' => {
-                        try lexer.step();
+                        lexer.step();
                         lexer.token = .t_dot;
                     },
                     '=' => {
-                        try lexer.step();
+                        lexer.step();
                         lexer.token = .t_equals;
                     },
                     '{' => {
-                        try lexer.step();
+                        lexer.step();
                         lexer.token = .t_open_brace;
                     },
                     '}' => {
-                        try lexer.step();
+                        lexer.step();
                         lexer.token = .t_close_brace;
                     },
                     '<' => {
-                        try lexer.step();
+                        lexer.step();
                         lexer.token = .t_less_than;
                     },
                     '>' => {
-                        try lexer.step();
+                        lexer.step();
                         lexer.token = .t_greater_than;
                     },
                     '/' => {
                         // '/' or '//' or '/* ... */'
 
-                        try lexer.step();
+                        lexer.step();
                         switch (lexer.code_point) {
                             '/' => {
                                 single_line_comment: {
                                     while (true) {
-                                        try lexer.step();
+                                        lexer.step();
                                         switch (lexer.code_point) {
                                             '\r', '\n', 0x2028, 0x2029 => {
                                                 break :single_line_comment;
@@ -1891,20 +1895,20 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                                 continue;
                             },
                             '*' => {
-                                try lexer.step();
+                                lexer.step();
                                 const start_range = lexer.range();
                                 multi_line_comment: {
                                     while (true) {
                                         switch (lexer.code_point) {
                                             '*' => {
-                                                try lexer.step();
+                                                lexer.step();
                                                 if (lexer.code_point == '/') {
-                                                    try lexer.step();
+                                                    lexer.step();
                                                     break :multi_line_comment;
                                                 }
                                             },
                                             '\r', '\n', 0x2028, 0x2029 => {
-                                                try lexer.step();
+                                                lexer.step();
                                                 lexer.has_newline_before = true;
                                             },
                                             -1 => {
@@ -1912,7 +1916,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                                                 try lexer.addSyntaxError(lexer.start, "Expected \"*/\" to terminate multi-line comment", .{});
                                             },
                                             else => {
-                                                try lexer.step();
+                                                lexer.step();
                                             },
                                         }
                                     }
@@ -1925,23 +1929,23 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                         }
                     },
                     '\'' => {
-                        try lexer.step();
+                        lexer.step();
                         try lexer.parseJSXStringLiteral('\'');
                     },
                     '"' => {
-                        try lexer.step();
+                        lexer.step();
                         try lexer.parseJSXStringLiteral('"');
                     },
                     else => {
                         if (isWhitespace(lexer.code_point)) {
-                            try lexer.step();
+                            lexer.step();
                             continue;
                         }
 
                         if (isIdentifierStart(lexer.code_point)) {
-                            try lexer.step();
+                            lexer.step();
                             while (isIdentifierContinue(lexer.code_point) or lexer.code_point == '-') {
-                                try lexer.step();
+                                lexer.step();
                             }
 
                             // Parse JSX namespaces. These are not supported by React or TypeScript
@@ -1949,11 +1953,11 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                             // them. A namespaced name is just always turned into a string so you
                             // can't use this feature to reference JavaScript identifiers.
                             if (lexer.code_point == ':') {
-                                try lexer.step();
+                                lexer.step();
 
                                 if (isIdentifierStart(lexer.code_point)) {
                                     while (isIdentifierStart(lexer.code_point) or lexer.code_point == '-') {
-                                        try lexer.step();
+                                        lexer.step();
                                     }
                                 } else {
                                     try lexer.addSyntaxError(lexer.range().endI(), "Expected identifier after \"{s}\" in namespaced JSX name", .{lexer.raw()});
@@ -1984,14 +1988,14 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                     },
                     '&' => {
                         needs_decode = true;
-                        try lexer.step();
+                        lexer.step();
                     },
 
                     '\\' => {
                         backslash = logger.Range{ .loc = logger.Loc{
                             .start = @intCast(i32, lexer.end),
                         }, .len = 1 };
-                        try lexer.step();
+                        lexer.step();
 
                         // JSX string literals do not support escaping
                         // They're "pre" escaped
@@ -2009,7 +2013,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                             backslash.len += 1;
                             lexer.previous_backslash_quote_in_jsx = backslash;
                         }
-                        try lexer.step();
+                        lexer.step();
                         break :string_literal;
                     },
 
@@ -2020,7 +2024,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                         } else if ((comptime is_json) and lexer.code_point < 0x20) {
                             try lexer.syntaxError();
                         }
-                        try lexer.step();
+                        lexer.step();
                     },
                 }
                 backslash = logger.Range.None;
@@ -2058,11 +2062,11 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                         lexer.token = .t_end_of_file;
                     },
                     '{' => {
-                        try lexer.step();
+                        lexer.step();
                         lexer.token = .t_open_brace;
                     },
                     '<' => {
-                        try lexer.step();
+                        lexer.step();
                         lexer.token = .t_less_than;
                     },
                     else => {
@@ -2075,7 +2079,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                                 },
                                 '&', '\r', '\n', 0x2028, 0x2029 => {
                                     needs_fixing = true;
-                                    try lexer.step();
+                                    lexer.step();
                                 },
                                 '{', '<' => {
                                     break :string_literal;
@@ -2083,7 +2087,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                                 else => {
                                     // Non-ASCII strings need the slow path
                                     needs_fixing = needs_fixing or lexer.code_point >= 0x80;
-                                    try lexer.step();
+                                    lexer.step();
                                 },
                             }
                         }
@@ -2195,7 +2199,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                         break :brk strings.unicode_replacement;
                     };
 
-                    cursor.i += @intCast(u32, length);
+                    cursor.i += @intCast(u32, length) + 1;
                     cursor.width = 1;
                 } else if (tables.jsxEntity.get(entity)) |ent| {
                     cursor.c = ent;
@@ -2240,7 +2244,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
 
         fn scanRegExpValidateAndStep(lexer: *LexerType) !void {
             if (lexer.code_point == '\\') {
-                try lexer.step();
+                lexer.step();
             }
 
             switch (lexer.code_point) {
@@ -2252,7 +2256,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                     try lexer.syntaxError();
                 },
                 else => {
-                    try lexer.step();
+                    lexer.step();
                 },
             }
         }
@@ -2323,7 +2327,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
         fn parseNumericLiteralOrDot(lexer: *LexerType) !void {
             // Number or dot;
             var first = lexer.code_point;
-            try lexer.step();
+            lexer.step();
 
             // Dot without a digit after it;
             if (first == '.' and (lexer.code_point < '0' or lexer.code_point > '9')) {
@@ -2332,8 +2336,8 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                     lexer.current < lexer.source.contents.len) and
                     lexer.source.contents[lexer.current] == '.')
                 {
-                    try lexer.step();
-                    try lexer.step();
+                    lexer.step();
+                    lexer.step();
                     lexer.token = T.t_dot_dot_dot;
                     return;
                 }
@@ -2381,7 +2385,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                 var isInvalidLegacyOctalLiteral = false;
                 lexer.number = 0;
                 if (!lexer.is_legacy_octal_literal) {
-                    try lexer.step();
+                    lexer.step();
                 }
 
                 integerLiteral: while (true) {
@@ -2442,7 +2446,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                         },
                     }
 
-                    try lexer.step();
+                    lexer.step();
                     isFirst = false;
                 }
 
@@ -2504,7 +2508,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                         lastUnderscoreEnd = lexer.end;
                         underscoreCount += 1;
                     }
-                    try lexer.step();
+                    lexer.step();
                 }
 
                 // Fractional digits;
@@ -2516,7 +2520,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                     }
 
                     hasDotOrExponent = true;
-                    try lexer.step();
+                    lexer.step();
                     if (lexer.code_point == '_') {
                         try lexer.syntaxError();
                     }
@@ -2534,7 +2538,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                             lastUnderscoreEnd = lexer.end;
                             underscoreCount += 1;
                         }
-                        try lexer.step();
+                        lexer.step();
                     }
                 }
 
@@ -2547,9 +2551,9 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                     }
 
                     hasDotOrExponent = true;
-                    try lexer.step();
+                    lexer.step();
                     if (lexer.code_point == '+' or lexer.code_point == '-') {
-                        try lexer.step();
+                        lexer.step();
                     }
                     if (lexer.code_point < '0' or lexer.code_point > '9') {
                         try lexer.syntaxError();
@@ -2568,7 +2572,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                             lastUnderscoreEnd = lexer.end;
                             underscoreCount += 1;
                         }
-                        try lexer.step();
+                        lexer.step();
                     }
                 }
 
@@ -2626,7 +2630,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             // Handle bigint literals after the underscore-at-end check above;
             if (lexer.code_point == 'n' and !hasDotOrExponent) {
                 lexer.token = T.t_big_integer_literal;
-                try lexer.step();
+                lexer.step();
             }
 
             // Identifiers can't occur immediately after numbers;

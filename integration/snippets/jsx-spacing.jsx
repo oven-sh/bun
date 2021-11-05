@@ -24,8 +24,11 @@ line7 trailing newline that ${terminates} the string literal
   const esbuild =
     "line1\nline2 trailing space \n\nline4 no trailing space 'single quote' \\t\\f\\v\\uF000 `template string`\n\nline6 no trailing space\nline7 trailing newline that ${terminates} the string literal\n";
 
+  const tsc =
+    "line1\nline2 trailing space \n\nline4 no trailing space 'single quote' \\t\\f\\v\\uF000 `template string`\n\nline6 no trailing space\nline7 trailing newline that ${terminates} the string literal\n";
+
   console.assert(
-    bun === esbuild,
+    bun === esbuild && bun === tsc,
     `strings did not match: ${JSON.stringify(
       {
         received: bun,

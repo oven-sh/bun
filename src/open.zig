@@ -24,3 +24,4 @@ pub fn openURL(url: string) !void {
     _ = try child_process.wait();
     return;
 }
+

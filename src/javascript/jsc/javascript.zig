@@ -566,26 +566,34 @@ pub const Bun = struct {
                 },
             },
         },
-        .{ .main = .{
-            .get = getMain,
-            .ts = d.ts{ .name = "main", .@"return" = "string" },
-        }, .cwd = .{
-            .get = getCWD,
-            .ts = d.ts{ .name = "cwd", .@"return" = "string" },
-        }, .origin = .{
-            .get = getOrigin,
-            .ts = d.ts{ .name = "origin", .@"return" = "string" },
-        }, .routesDir = .{
-            .get = getRoutesDir,
-            .ts = d.ts{ .name = "routesDir", .@"return" = "string" },
-        }, .assetPrefix = .{
-            .get = getAssetPrefix,
-            .ts = d.ts{ .name = "assetPrefix", .@"return" = "string" },
-        }, .env = .{
-            .get = EnvironmentVariables.getter,
-        }, .enableANSIColors = .{
-            .get = enableANSIColors,
-        } },
+        .{
+            .main = .{
+                .get = getMain,
+                .ts = d.ts{ .name = "main", .@"return" = "string" },
+            },
+            .cwd = .{
+                .get = getCWD,
+                .ts = d.ts{ .name = "cwd", .@"return" = "string" },
+            },
+            .origin = .{
+                .get = getOrigin,
+                .ts = d.ts{ .name = "origin", .@"return" = "string" },
+            },
+            .routesDir = .{
+                .get = getRoutesDir,
+                .ts = d.ts{ .name = "routesDir", .@"return" = "string" },
+            },
+            .assetPrefix = .{
+                .get = getAssetPrefix,
+                .ts = d.ts{ .name = "assetPrefix", .@"return" = "string" },
+            },
+            .env = .{
+                .get = EnvironmentVariables.getter,
+            },
+            .enableANSIColors = .{
+                .get = enableANSIColors,
+            },
+        },
     );
 
     /// EnvironmentVariables is runtime defined.

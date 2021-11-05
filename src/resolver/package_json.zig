@@ -64,7 +64,6 @@ pub const PackageJSON = struct {
     always_bundle: []string = &.{},
     macros: MacroMap = MacroMap{},
 
-
     // Present if the "browser" field is present. This field is intended to be
     // used by bundlers and lets you redirect the paths of certain 3rd-party
     // modules that don't work in the browser to other modules that shim that
@@ -696,7 +695,6 @@ pub const PackageJSON = struct {
             }
         }
 
-
         // used by `bun run`
         if (include_scripts) {
             read_scripts: {
@@ -1242,6 +1240,7 @@ pub const ESModule = struct {
     }
 
     threadlocal var resolve_target_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var resolve_target_buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     fn resolveTarget(
         r: *const ESModule,
         package_url: string,
@@ -1308,8 +1307,8 @@ pub const ESModule = struct {
                 if (comptime pattern) {
                     // Return the URL resolution of resolvedTarget with every instance of "*" replaced with subpath.
                     const len = std.mem.replacementSize(u8, resolved_target, "*", subpath);
-                    _ = std.mem.replace(u8, resolved_target, "*", subpath, &resolve_target_buf);
-                    const result = resolve_target_buf[0..len];
+                    _ = std.mem.replace(u8, resolved_target, "*", subpath, &resolve_target_buf2);
+                    const result = resolve_target_buf2[0..len];
                     if (r.debug_logs) |log| {
                         log.addNoteFmt("Subsituted \"{s}\" for \"*\" in \".{s}\" to get \".{s}\" ", .{ subpath, resolved_target, result }) catch unreachable;
                     }
@@ -1317,7 +1316,7 @@ pub const ESModule = struct {
                     return Resolution{ .path = result, .status = .Exact, .debug = .{ .token = target.first_token } };
                 } else {
                     var parts2 = [_]string{ package_url, str, subpath };
-                    const result = resolve_path.joinStringBuf(&resolve_target_buf, parts2, .auto);
+                    const result = resolve_path.joinStringBuf(&resolve_target_buf2, parts2, .auto);
                     if (r.debug_logs) |log| {
                         log.addNoteFmt("Substituted \"{s}\" for \"*\" in \".{s}\" to get \".{s}\" ", .{ subpath, resolved_target, result }) catch unreachable;
                     }

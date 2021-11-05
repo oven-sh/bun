@@ -35,6 +35,7 @@ pub const Shell = enum {
 };
 
 commands: []const []const u8 = &[_][]u8{},
+descriptions: []const []const u8 = &[_][]u8{},
 flags: []const []const u8 = &[_][]u8{},
 shell: Shell = Shell.unknown,
 
@@ -46,12 +47,21 @@ pub fn print(this: @This()) void {
     const delimiter = if (this.shell == Shell.fish) " " else "\n";
 
     writer.writeAll(this.commands[0]) catch return;
+    
+    if (this.descriptions.len > 0) {
+        writer.writeAll("\t") catch return;
+        writer.writeAll(this.descriptions[0]) catch return;
+    }
 
     if (this.commands.len > 1) {
         for (this.commands[1..]) |cmd, i| {
             writer.writeAll(delimiter) catch return;
 
             writer.writeAll(cmd) catch return;
+            if (this.descriptions.len > 0) {
+                writer.writeAll("\t") catch return;
+                writer.writeAll(this.descriptions[i]) catch return;
+            }
         }
     }
 }

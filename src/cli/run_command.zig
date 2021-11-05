@@ -295,6 +295,7 @@ pub const RunCommand = struct {
         all,
         bun_js,
         all_plus_bun_js,
+        script_and_descriptions,
     };
 
     pub fn completions(ctx: Command.Context, default_completions: ?[]const string, comptime filter: Filter) !ShellCompletions {
@@ -341,6 +342,7 @@ pub const RunCommand = struct {
         }
 
         var results = ResultList.init(ctx.allocator);
+        var descriptions = std.ArrayList(string).init(ctx.allocator);
 
         if (default_completions) |defaults| {
             try results.ensureUnusedCapacity(defaults.len);
@@ -397,12 +399,67 @@ pub const RunCommand = struct {
             }
         }
 
-        if (filter == Filter.script or filter == Filter.all or filter == Filter.all_plus_bun_js) {
+        if (filter == Filter.script or filter == Filter.all or filter == Filter.all_plus_bun_js or filter == Filter.script_and_descriptions) {
             if (root_dir_info.enclosing_package_json) |package_json| {
                 if (package_json.scripts) |scripts| {
                     try results.ensureUnusedCapacity(scripts.count());
+                    if (filter == Filter.script_and_descriptions) {
+                        try descriptions.ensureUnusedCapacity(scripts.count());
+                    }
+
+                    var max_description_len: usize = 20;
+                    if (this_bundler.env.map.get("MAX_DESCRIPTION_LEN")) |max| {
+                        if (std.fmt.parseInt(usize, max, 10) catch null) |max_len| {
+                            max_description_len = max_len;
+                        }
+                    }
+
                     for (scripts.keys()) |key| {
-                        _ = results.getOrPutAssumeCapacity(key);
+                        var entry_item = results.getOrPutAssumeCapacity(key);
+
+                        if (filter == Filter.script_and_descriptions and max_description_len > 0) {
+                            var description = scripts.get(key).?;
+
+                            // When the command starts with something like
+                            // NODE_OPTIONS='--max-heap-size foo' bar
+                            // ^--------------------------------^ trim that
+                            // that way, you can see the real command that's being run
+                            if (description.len > 0) {
+                                trimmer: {
+                                    if (description.len > 0 and strings.startsWith(description, "NODE_OPTIONS=")) {
+                                        if (strings.indexOfChar(description, '=')) |i| {
+                                            const delimiter: u8 = if (description.len > i + 1)
+                                                @as(u8, switch (description[i + 1]) {
+                                                    '\'' => '\'',
+                                                    '"' => '"',
+                                                    else => ' ',
+                                                })
+                                            else
+                                                break :trimmer;
+
+                                            const delimiter_offset = @as(usize, if (delimiter == ' ') 1 else 2);
+                                            if (description.len > delimiter_offset + i) {
+                                                if (strings.indexOfChar(description[delimiter_offset + i ..], delimiter)) |j| {
+                                                    description = std.mem.trim(u8, description[delimiter_offset + i ..][j + 1 ..], " ");
+                                                } else {
+                                                    break :trimmer;
+                                                }
+                                            } else {
+                                                break :trimmer;
+                                            }
+                                        } else {
+                                            break :trimmer;
+                                        }
+                                    }
+                                }
+
+                                if (description.len > max_description_len) {
+                                    description = description[0..max_description_len];
+                                }
+                            }
+
+                            try descriptions.insert(entry_item.index, description);
+                        }
                     }
                 }
             }
@@ -412,6 +469,7 @@ pub const RunCommand = struct {
 
         strings.sortAsc(all_keys);
         shell_out.commands = all_keys;
+        shell_out.descriptions = descriptions.toOwnedSlice();
 
         return shell_out;
     }

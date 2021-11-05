@@ -682,6 +682,8 @@ pub const Command = struct {
                     completions = try RunCommand.completions(ctx, null, .all_plus_bun_js);
                 } else if (strings.eqlComptime(filter[0], "j")) {
                     completions = try RunCommand.completions(ctx, null, .bun_js);
+                } else if (strings.eqlComptime(filter[0], "z")) {
+                    completions = try RunCommand.completions(ctx, null, .script_and_descriptions);
                 }
 
                 completions.print();

@@ -55,6 +55,118 @@ pub const RunCommand = struct {
     const BUN_BIN_NAME = if (isDebug) "bun-debug" else "bun";
     const BUN_RUN = std.fmt.comptimePrint("{s} run", .{BUN_BIN_NAME});
 
+    // Look for invocations of any:
+    // - yarn run
+    // - yarn $cmdName
+    // - pnpm run
+    // - npm run
+    // Replace them with "bun run"
+
+    pub inline fn replacePackageManagerRun(copy_script: *std.ArrayList(u8), script: string) !void {
+        var entry_i: usize = 0;
+        var delimiter: u8 = ' ';
+
+        while (entry_i < script.len) {
+            const start = entry_i;
+
+            switch (script[entry_i]) {
+                'y' => {
+                    if (delimiter > 0) {
+                        if (entry_i + "arn".len < script.len) {
+                            const yarn_i = entry_i + "arn ".len;
+                            var remainder = script[start..];
+                            if (remainder.len > "yarn ".len and strings.eqlComptimeIgnoreLen(remainder[0.."yarn ".len], "yarn ")) {
+                                const next = remainder["yarn ".len..];
+                                // We have yarn
+                                // Find the next space
+                                if (strings.indexOfChar(next, ' ')) |space| {
+                                    const yarn_cmd = next[0..space];
+                                    if (strings.eqlComptime(yarn_cmd, "run")) {
+                                        try copy_script.appendSlice("bun run");
+                                        entry_i += "yarn run".len;
+                                        continue;
+                                    }
+
+                                    // yarn npm is a yarn 2 subcommand
+                                    if (strings.eqlComptime(yarn_cmd, "npm")) {
+                                        entry_i += "yarn npm ".len;
+                                        try copy_script.appendSlice("yarn npm ");
+                                        continue;
+                                    }
+
+                                    // implicit yarn commands
+                                    if (std.mem.indexOfScalar(u64, yarn_commands, std.hash.Wyhash.hash(0, yarn_cmd)) == null) {
+                                        try copy_script.appendSlice("bun run");
+                                        try copy_script.append(' ');
+                                        try copy_script.appendSlice(yarn_cmd);
+                                        entry_i += "yarn ".len + yarn_cmd.len;
+                                        delimiter = 0;
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    delimiter = 0;
+                },
+
+                // do we need to escape?
+                ' ' => {
+                    delimiter = ' ';
+                },
+                '"' => {
+                    delimiter = '"';
+                },
+                '\'' => {
+                    delimiter = '\'';
+                },
+
+                'n' => {
+                    if (delimiter > 0) {
+                        const npm_i = entry_i + "pm run ".len;
+                        if (npm_i < script.len) {
+                            const base = script[start..];
+                            if (base.len > "npm run ".len) {
+                                const remainder = base[0.."npm run ".len];
+                                if (strings.eqlComptimeIgnoreLen(remainder, "npm run ")) {
+                                    try copy_script.appendSlice("bun run ");
+                                    entry_i += remainder.len;
+                                    delimiter = 0;
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+
+                    delimiter = 0;
+                },
+                'p' => {
+                    if (delimiter > 0) {
+                        const npm_i = entry_i + "npm run ".len;
+                        if (npm_i < script.len) {
+                            const remainder = script[start .. npm_i + 1];
+                            if (remainder.len > npm_i and strings.eqlComptimeIgnoreLen(remainder, "pnpm run") and remainder[remainder.len - 1] == delimiter) {
+                                try copy_script.appendSlice("bun run ");
+                                entry_i += remainder.len;
+                                delimiter = 0;
+                                continue;
+                            }
+                        }
+                    }
+
+                    delimiter = 0;
+                },
+                else => {
+                    delimiter = 0;
+                },
+            }
+
+            try copy_script.append(script[entry_i]);
+            entry_i += 1;
+        }
+    }
+
     pub fn runPackageScript(
         ctx: Command.Context,
         original_script: string,
@@ -69,101 +181,9 @@ pub const RunCommand = struct {
         var script = original_script;
         var copy_script = try std.ArrayList(u8).initCapacity(ctx.allocator, script.len);
 
-        // Look for invocations of any:
-        // - yarn run
-        // - pnpm run
-        // - npm run
-        // Replace them with "bun run"
-        // If "yarn" exists and
-        var splitter = std.mem.split(u8, script, " ");
-        var is_first = true;
-        var skip_next = false;
-        while (splitter.next()) |entry_| {
-            const skip = skip_next;
-            skip_next = false;
-            var entry = entry_;
-
-            if (strings.startsWith(entry, "\\\"") and strings.endsWith(entry, "\\\"") and entry.len > 4) {
-                entry = entry[2 .. entry.len - 2];
-            }
-
-            if (strings.startsWith(entry, "'") and strings.endsWith(entry, "'") and entry.len > 2) {
-                entry = entry[1 .. entry.len - 1];
-            }
-
-            var replace = false;
-            defer is_first = false;
-
-            if (!skip) {
-                replacer: {
-                    if (strings.eqlComptime(entry, "yarn")) {
-                        var _split = splitter;
-
-                        if (_split.next()) |entry2| {
-                            if (strings.eqlComptime(entry2, "run")) {
-                                replace = true;
-                                _ = splitter.next();
-
-                                break :replacer;
-                            }
-
-                            // "yarn npm" is a valid command
-                            // this will confuse us
-                            // so when we have a valid yarn command, rather than try to carefully parse & handle each version's arguments
-                            // we just skip the command that says "yarn npm"
-                            // this works because yarn is the only package manager that lets you omit "run"
-                            // (bun is not a package manager)
-                            const hash = std.hash.Wyhash.hash(0, entry2);
-                            if (std.mem.indexOfScalar(u64, yarn_commands, hash) != null) {
-                                skip_next = true;
-                                break :replacer;
-                            }
-
-                            replace = true;
-                            break :replacer;
-                        }
-                    }
-
-                    if (strings.eqlComptime(entry, "pnpm")) {
-                        var _split = splitter;
-
-                        if (_split.next()) |entry2| {
-                            if (strings.eqlComptime(entry2, "run")) {
-                                replace = true;
-                                _ = splitter.next();
-
-                                break :replacer;
-                            }
-                        }
-                    }
-
-                    if (strings.eqlComptime(entry, "npm")) {
-                        var _split = splitter;
-
-                        if (_split.next()) |entry2| {
-                            if (strings.eqlComptime(entry2, "run")) {
-                                replace = true;
-                                _ = splitter.next();
-                                break :replacer;
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (replace) {
-                if (!is_first) {
-                    copy_script.append(' ') catch unreachable;
-                }
-                try copy_script.appendSlice(BUN_RUN);
-            } else {
-                if (!is_first) {
-                    copy_script.append(' ') catch unreachable;
-                }
-
-                try copy_script.appendSlice(entry);
-            }
-        }
+        // We're going to do this slowly.
+        // Find exact matches of yarn, pnpm, npm
+        try replacePackageManagerRun(&copy_script, script);
 
         var combined_script: string = copy_script.items;
 
@@ -792,3 +812,97 @@ pub const RunCommand = struct {
         return false;
     }
 };
+
+test "replacePackageManagerRun" {
+    var copy_script = std.ArrayList(u8).init(default_allocator);
+
+    {
+        copy_script.clearRetainingCapacity();
+        try RunCommand.replacePackageManagerRun(&copy_script, "yarn run foo");
+        try std.testing.expectEqualStrings(copy_script.items, "bun run foo");
+    }
+
+    {
+        copy_script.clearRetainingCapacity();
+        try RunCommand.replacePackageManagerRun(&copy_script, "yarn install foo");
+        try std.testing.expectEqualStrings(copy_script.items, "yarn install foo");
+    }
+
+    {
+        copy_script.clearRetainingCapacity();
+        try RunCommand.replacePackageManagerRun(&copy_script, "yarn");
+        try std.testing.expectEqualStrings(copy_script.items, "yarn");
+    }
+
+    {
+        copy_script.clearRetainingCapacity();
+        try RunCommand.replacePackageManagerRun(&copy_script, "yarn ");
+        try std.testing.expectEqualStrings(copy_script.items, "yarn ");
+    }
+
+    {
+        copy_script.clearRetainingCapacity();
+        try RunCommand.replacePackageManagerRun(&copy_script, "npm ");
+        try std.testing.expectEqualStrings(copy_script.items, "npm ");
+    }
+
+    {
+        copy_script.clearRetainingCapacity();
+        try RunCommand.replacePackageManagerRun(&copy_script, "npm bacon run");
+        try std.testing.expectEqualStrings(copy_script.items, "npm bacon run");
+    }
+
+    {
+        copy_script.clearRetainingCapacity();
+        try RunCommand.replacePackageManagerRun(&copy_script, "yarn bacon foo");
+        try std.testing.expectEqualStrings(copy_script.items, "bun run bacon foo");
+    }
+
+    {
+        copy_script.clearRetainingCapacity();
+        try RunCommand.replacePackageManagerRun(&copy_script, "yarn npm run foo");
+        try std.testing.expectEqualStrings(copy_script.items, "yarn npm run foo");
+    }
+
+    {
+        copy_script.clearRetainingCapacity();
+        try RunCommand.replacePackageManagerRun(&copy_script, "npm run foo");
+        try std.testing.expectEqualStrings(copy_script.items, "bun run foo");
+    }
+
+    {
+        copy_script.clearRetainingCapacity();
+        try RunCommand.replacePackageManagerRun(&copy_script, "bpm run foo");
+        try std.testing.expectEqualStrings(copy_script.items, "bpm run foo");
+    }
+
+    {
+        copy_script.clearRetainingCapacity();
+        try RunCommand.replacePackageManagerRun(&copy_script, "pnpm run foo");
+        try std.testing.expectEqualStrings(copy_script.items, "bun run foo");
+    }
+
+    {
+        copy_script.clearRetainingCapacity();
+        try RunCommand.replacePackageManagerRun(&copy_script, "foopnpm run foo");
+        try std.testing.expectEqualStrings(copy_script.items, "foopnpm run foo");
+    }
+
+    {
+        copy_script.clearRetainingCapacity();
+        try RunCommand.replacePackageManagerRun(&copy_script, "foopnpm rune foo");
+        try std.testing.expectEqualStrings(copy_script.items, "foopnpm rune foo");
+    }
+
+    {
+        copy_script.clearRetainingCapacity();
+        try RunCommand.replacePackageManagerRun(&copy_script, "foopnpm ru foo");
+        try std.testing.expectEqualStrings(copy_script.items, "foopnpm ru foo");
+    }
+
+    {
+        copy_script.clearRetainingCapacity();
+        try RunCommand.replacePackageManagerRun(&copy_script, "'npm run foo'");
+        try std.testing.expectEqualStrings(copy_script.items, "'bun run foo'");
+    }
+}

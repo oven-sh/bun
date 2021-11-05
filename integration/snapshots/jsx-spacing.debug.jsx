@@ -30,7 +30,15 @@ line4 no trailing space 'single quote' \\t\\f\\v\\uF000 \`template string\`
 line6 no trailing space
 line7 trailing newline that \${terminates} the string literal
 `;
-  console.assert(bun === esbuild, `strings did not match: ${JSON.stringify({
+  const tsc = `line1
+line2 trailing space 
+
+line4 no trailing space 'single quote' \\t\\f\\v\\uF000 \`template string\`
+
+line6 no trailing space
+line7 trailing newline that \${terminates} the string literal
+`;
+  console.assert(bun === esbuild && bun === tsc, `strings did not match: ${JSON.stringify({
     received: bun,
     expected: esbuild
   }, null, 2)}`);

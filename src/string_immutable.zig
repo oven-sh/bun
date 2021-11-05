@@ -532,6 +532,61 @@ pub fn encodeWTF8RuneT(p: *[4]u8, comptime R: type, r: R) u3 {
     }
 }
 
+pub inline fn wtf8ByteSequenceLength(first_byte: u8) u3 {
+    return switch (first_byte) {
+        0 => 0,
+        1...0x80 - 1 => 1,
+        else => if ((first_byte & 0xE0) == 0xC0)
+            @as(u3, 2)
+        else if ((first_byte & 0xF0) == 0xE0)
+            @as(u3, 3)
+        else if ((first_byte & 0xF8) == 0xF0)
+            @as(u3, 4)
+        else
+            @as(u3, 1),
+    };
+}
+
+/// Asserts a multi-byte codepoint
+pub inline fn decodeWTF8RuneTMultibyte(p: *const [4]u8, len: u3, comptime T: type, comptime zero: T) T {
+    std.debug.assert(len > 1);
+
+    const s1 = p[1];
+    if ((s1 & 0xC0) != 0x80) return zero;
+
+    if (len == 2) {
+        const cp = @as(T, p[0] & 0x1F) << 6 | @as(T, s1 & 0x3F);
+        if (cp < 0x80) return zero;
+        return cp;
+    }
+
+    const s2 = p[2];
+
+    if ((s2 & 0xC0) != 0x80) return zero;
+
+    if (len == 3) {
+        const cp = (@as(T, p[0] & 0x0F) << 12) | (@as(T, s1 & 0x3F) << 6) | (@as(T, s2 & 0x3F));
+        if (cp < 0x800) return zero;
+        return cp;
+    }
+
+    const s3 = p[3];
+    {
+        const cp = (@as(T, p[0] & 0x07) << 18) | (@as(T, s1 & 0x3F) << 12) | (@as(T, s2 & 0x3F) << 6) | (@as(T, s3 & 0x3F));
+        if (cp < 0x10000 or cp > 0x10FFFF) return zero;
+        return cp;
+    }
+
+    unreachable;
+}
+
+pub fn decodeWTF8RuneT(p: *const [4]u8, len: u3, comptime T: type, comptime zero: T) T {
+    if (len == 0) return zero;
+    if (len == 1) return p[0];
+
+    return decodeWTF8RuneTMultibyte(p, len, T, zero);
+}
+
 pub fn codepointSize(comptime R: type, r: R) u3 {
     return switch (r) {
         0b0000_0000...0b0111_1111 => 1,
@@ -707,21 +762,27 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
                 return false;
             }
 
-            const cp_len = utf8ByteSequenceLength(it.bytes[pos]);
+            const cp_len = wtf8ByteSequenceLength(it.bytes[pos]);
+            const error_char = comptime std.math.minInt(CodePointType);
+
+            const codepoint = @as(
+                CodePointType,
+                switch (cp_len) {
+                    0 => return false,
+                    1 => it.bytes[pos],
+                    else => decodeWTF8RuneTMultibyte(it.bytes[pos..].ptr[0..4], cp_len, CodePointType, error_char),
+                },
+            );
+
             cursor.* = Cursor{
                 .i = pos,
-                .c = @as(
-                    CodePointType,
-                    switch (cp_len) {
-                        1 => it.bytes[pos],
-                        2 => std.unicode.utf8Decode2(it.bytes[pos..][0..2]) catch return false,
-                        3 => std.unicode.utf8Decode3(it.bytes[pos..][0..3]) catch return false,
-                        4 => std.unicode.utf8Decode4(it.bytes[pos..][0..4]) catch return false,
-                        else => return false,
-                    },
-                ),
-                .width = cp_len,
+                .c = if (error_char != codepoint)
+                    codepoint
+                else
+                    unicode_replacement,
+                .width = if (codepoint != error_char) cp_len else 1,
             };
+
             return true;
         }
 
@@ -788,34 +849,6 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
             return it.c;
         }
 
-        pub fn nextCodepointNullable(it: *Iterator) ?CodePointType {
-            const slice = it.nextCodepointSlice();
-            if (slice.len == 0) return null;
-
-            it.c = switch (slice.len) {
-                1 => @intCast(CodePointType, slice[0]),
-                2 => @intCast(CodePointType, std.unicode.utf8Decode2(slice) catch unreachable),
-                3 => @intCast(CodePointType, std.unicode.utf8Decode3(slice) catch unreachable),
-                4 => @intCast(CodePointType, std.unicode.utf8Decode4(slice) catch unreachable),
-                else => unreachable,
-            };
-
-            return it.c;
-        }
-
-        pub fn nextCodepointNoReturn(it: *Iterator) void {
-            const slice = it.nextCodepointSlice();
-
-            it.c = switch (slice.len) {
-                0 => zeroValue,
-                1 => @intCast(CodePointType, slice[0]),
-                2 => @intCast(CodePointType, std.unicode.utf8Decode2(slice) catch unreachable),
-                3 => @intCast(CodePointType, std.unicode.utf8Decode3(slice) catch unreachable),
-                4 => @intCast(CodePointType, std.unicode.utf8Decode4(slice) catch unreachable),
-                else => unreachable,
-            };
-        }
-
         /// Look ahead at the next n codepoints without advancing the iterator.
         /// If fewer than n codepoints are available, then return the remainder of the string.
         pub fn peek(it: *Iterator, n: usize) []const u8 {
@@ -875,3 +908,8 @@ test "sortDesc" {
 pub usingnamespace @import("exact_size_matcher.zig");
 
 pub const unicode_replacement = 0xFFFD;
+pub const unicode_replacement_str = brk: {
+    var out: [std.unicode.utf8CodepointSequenceLength(unicode_replacement) catch unreachable]u8 = undefined;
+    _ = std.unicode.utf8Encode(unicode_replacement, &out) catch unreachable;
+    break :brk out;
+};

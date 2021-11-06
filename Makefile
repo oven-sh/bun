@@ -316,7 +316,7 @@ BUN_LLD_FLAGS = $(OBJ_FILES) \
 		$(PLATFORM_LINKER_FLAGS)
 
 
-bun: vendor identifier-cache build-obj bun-link-lld-release
+bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local
 
 
 vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib s2n libarchive 
@@ -456,8 +456,23 @@ s2n-mac-debug:
 libcrypto_path:
 	@echo ${LIBCRYPTO_STATIC_LIB}
 
+bun-codesign-debug:
+bun-codesign-release-local:
+
+
 ifeq ($(OS_NAME),darwin)
 s2n: s2n-mac
+
+
+# Hardened runtime will not work with debugging
+bun-codesign-debug:
+	codesign --entitlements $(realpath entitlements.plist) --force --timestamp --sign "$(CODESIGN_IDENTITY)" -vvvv --deep --strict $(DEBUG_BUN)
+
+bun-codesign-release-local:
+	codesign --entitlements $(realpath entitlements.plist) --options runtime --force --timestamp --sign "$(CODESIGN_IDENTITY)" -vvvv --deep --strict $(RELEASE_BUN)
+	codesign --entitlements $(realpath entitlements.plist) --options runtime --force --timestamp --sign "$(CODESIGN_IDENTITY)" -vvvv --deep --strict $(BUN_BIN)
+
+
 endif
 
 jsc: jsc-build jsc-bindings
@@ -512,7 +527,8 @@ ifeq ($(OS_NAME),darwin)
 # strip will remove the entitlements.plist 
 # which, in turn, will break JIT
 release-bin-entitlements:
-	codesign --entitlements $(realpath entitlements.plist) --options runtime --force --timestamp --sign "$(CODESIGN_IDENTITY)" -vvvv --deep --strict $(BUN_RELEASE_BIN)
+	codesign --entitlements $(realpath entitlements.plist) --options runtime --force --timestamp --sign "$(CODESIGN_IDENTITY)" -vvvv --deep --strict $(PACKAGE_DIR)/bun
+	codesign --entitlements $(realpath entitlements.plist) --options runtime --force --timestamp --sign "$(CODESIGN_IDENTITY)" -vvvv --deep --strict $(PACKAGE_DIR)/bun-profile
 
 
 # macOS expects a specific directory structure for the zip file
@@ -562,7 +578,7 @@ dev-obj:
 dev-obj-linux:
 	$(ZIG) build obj -Dtarget=x86_64-linux-gnu
 
-dev: mkdir-dev dev-obj bun-link-lld-debug
+dev: mkdir-dev dev-obj bun-link-lld-debug bun-codesign-debug
 
 mkdir-dev:
 	mkdir -p $(DEBUG_PACKAGE_DIR)/bin
@@ -637,7 +653,7 @@ jsc-copy-headers:
 	find src/javascript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} src/javascript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/JavaScriptCore/ \;
 
 jsc-build-mac-compile:
-	cd src/javascript/jsc/WebKit && ICU_INCLUDE_DIRS="$(HOMEBREW_PREFIX)opt/icu4c/include" ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo -DPTHREAD_JIT_PERMISSIONS_API=1"
+	cd src/javascript/jsc/WebKit && ICU_INCLUDE_DIRS="$(HOMEBREW_PREFIX)opt/icu4c/include" ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo -DUSE_PTHREAD_JIT_PERMISSIONS_API=1"
 
 jsc-build-linux-compile:
 	cd src/javascript/jsc/WebKit && ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo -DUSE_THIN_ARCHIVES=OFF"
@@ -681,6 +697,7 @@ bun-relink-copy:
 
 bun-relink: bun-relink-copy bun-link-lld-release
 
+
 bun-link-lld-release:
 	$(CXX) $(BUN_LLD_FLAGS) \
 		$(BUN_RELEASE_BIN).o \
@@ -691,6 +708,7 @@ bun-link-lld-release:
 		-O3
 	cp $(BUN_RELEASE_BIN) $(BUN_RELEASE_BIN)-profile
 	$(STRIP) $(BUN_RELEASE_BIN)
+	
 	mv $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
 
 # We do this outside of build.zig for performance reasons

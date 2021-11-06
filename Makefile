@@ -488,6 +488,8 @@ jsc-bindings-headers:
 	/tmp/build-jsc-headers
 	$(ZIG) translate-c src/javascript/jsc/bindings/headers.h > src/javascript/jsc/bindings/headers.zig
 	$(ZIG) run misctools/headers-cleaner.zig -lc
+	$(SED) -i '/pub const __darwin/d' src/javascript/jsc/bindings/headers.zig || echo "";
+	$(SED) -i '/pub const __builtin/d' src/javascript/jsc/bindings/headers.zig || echo "";
 	$(SED) -i '/pub const int/d' src/javascript/jsc/bindings/headers.zig || echo "";
 	$(SED) -i '/pub const uint/d' src/javascript/jsc/bindings/headers.zig || echo "";
 	$(SED) -i '/pub const intmax/d' src/javascript/jsc/bindings/headers.zig || echo "";

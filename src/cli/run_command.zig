@@ -304,20 +304,14 @@ pub const RunCommand = struct {
         this_bundler.configureLinker();
     }
 
-    pub const Filter = enum {
-        script,
-        bin,
-        all,
-        bun_js,
-        all_plus_bun_js,
-        script_and_descriptions,
-    };
+    pub const Filter = enum { script, bin, all, bun_js, all_plus_bun_js, script_and_descriptions, script_exclude };
 
-    pub fn completions(ctx: Command.Context, default_completions: ?[]const string, comptime filter: Filter) !ShellCompletions {
+    pub fn completions(ctx: Command.Context, default_completions: ?[]const string, reject_list: []const string, comptime filter: Filter) !ShellCompletions {
         var shell_out = ShellCompletions{};
-
-        if (default_completions) |defaults| {
-            shell_out.commands = defaults;
+        if (filter != .script_exclude) {
+            if (default_completions) |defaults| {
+                shell_out.commands = defaults;
+            }
         }
 
         var args = ctx.args;
@@ -359,10 +353,12 @@ pub const RunCommand = struct {
         var results = ResultList.init(ctx.allocator);
         var descriptions = std.ArrayList(string).init(ctx.allocator);
 
-        if (default_completions) |defaults| {
-            try results.ensureUnusedCapacity(defaults.len);
-            for (defaults) |item| {
-                _ = results.getOrPutAssumeCapacity(item);
+        if (filter != .script_exclude) {
+            if (default_completions) |defaults| {
+                try results.ensureUnusedCapacity(defaults.len);
+                for (defaults) |item| {
+                    _ = results.getOrPutAssumeCapacity(item);
+                }
             }
         }
 
@@ -418,7 +414,7 @@ pub const RunCommand = struct {
             }
         }
 
-        if (filter == Filter.script or filter == Filter.all or filter == Filter.all_plus_bun_js or filter == Filter.script_and_descriptions) {
+        if (filter == Filter.script_exclude or filter == Filter.script or filter == Filter.all or filter == Filter.all_plus_bun_js or filter == Filter.script_and_descriptions) {
             if (root_dir_info.enclosing_package_json) |package_json| {
                 if (package_json.scripts) |scripts| {
                     try results.ensureUnusedCapacity(scripts.count());

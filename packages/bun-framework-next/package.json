@@ -1,6 +1,6 @@
 {
   "name": "bun-framework-next",
-  "version": "12.0.1",
+  "version": "12.0.3",
   "description": "Bun compatibility layer for Next.js v12.0.x",
   "framework": {
     "displayName": "Next.js",
@@ -77,8 +77,11 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "dependencies": {
     "react-is": "^17.0.2"
+  },
+  "peerDependencies": {
+    "next": "^12.0.0"
   }
 }

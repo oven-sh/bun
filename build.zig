@@ -1,6 +1,5 @@
 const std = @import("std");
 const resolve_path = @import("./src/resolver/resolve_path.zig");
-
 pub fn addPicoHTTP(step: *std.build.LibExeObjStep, comptime with_obj: bool) void {
     const picohttp = step.addPackage(.{
         .name = "picohttp",
@@ -19,13 +18,25 @@ pub fn addPicoHTTP(step: *std.build.LibExeObjStep, comptime with_obj: bool) void
     // set -gx ICU_INCLUDE_DIRS "/usr/local/opt/icu4c/include"
     // homebrew-provided icu4c
 }
+
+fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
+    var file = std.fs.cwd().openFile(filepath, .{ .read = true }) catch |err| {
+        const linux_only = "\nOn Linux, you'll need to compile libiconv manually and copy the .a file into src/deps.";
+
+        std.debug.panic("error: {s} opening {s}. Please ensure you've downloaded git submodules, and ran `make vendor`, `make jsc`." ++ linux_only, .{ filepath, @errorName(err) });
+    };
+    file.close();
+
+    return filepath;
+}
+
 var x64 = "x64";
 pub fn build(b: *std.build.Builder) !void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
     // for restricting supported target set are available.
-    const target = b.standardTargetOptions(.{});
+    var target = b.standardTargetOptions(.{});
     // Standard release options allow the person running `zig build` to select
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const mode = b.standardReleaseOptions();
@@ -141,7 +152,7 @@ pub fn build(b: *std.build.Builder) !void {
         0,
         try runtime_out_file.readToEndAlloc(b.allocator, try runtime_out_file.getEndPos()),
     );
-    const runtime_version_file = std.fs.cwd().createFile("src/runtime.version", .{ .truncate = true }) catch unreachable;
+    const runtime_version_file = std.fs.cwd().createFile("src/runtime.version", .{ .truncate = true }) catch std.debug.panic("Failed to create src/runtime.version", .{});
     defer runtime_version_file.close();
     runtime_version_file.writer().print("{x}", .{runtime_hash}) catch unreachable;
     var fallback_out_file = try std.fs.cwd().openFile("src/fallback.out.js", .{ .read = true });
@@ -150,12 +161,10 @@ pub fn build(b: *std.build.Builder) !void {
         try fallback_out_file.readToEndAlloc(b.allocator, try fallback_out_file.getEndPos()),
     );
 
-
-
-    const fallback_version_file = std.fs.cwd().createFile("src/fallback.version", .{ .truncate = true }) catch unreachable;
+    const fallback_version_file = std.fs.cwd().createFile("src/fallback.version", .{ .truncate = true }) catch std.debug.panic("Failed to create src/fallback.version", .{});
 
     fallback_version_file.writer().print("{x}", .{fallback_hash}) catch unreachable;
-    
+
     defer fallback_version_file.close();
 
     exe.setTarget(target);
@@ -183,8 +192,8 @@ pub fn build(b: *std.build.Builder) !void {
             },
         ) catch unreachable;
 
-        var bindings_dir_ = cwd_dir.openDir(bindings_dir, .{ .iterate = true }) catch unreachable;
-        var bindings_walker = bindings_dir_.walk(b.allocator) catch unreachable;
+        var bindings_dir_ = cwd_dir.openDir(bindings_dir, .{ .iterate = true }) catch std.debug.panic("Error opening bindings directory. Please make sure you ran `make jsc`. {s} should exist", .{bindings_dir});
+        var bindings_walker = bindings_dir_.walk(b.allocator) catch std.debug.panic("Error reading bindings directory {s}", .{bindings_dir});
 
         var bindings_files = std.ArrayList([]const u8).init(b.allocator);
 
@@ -220,7 +229,18 @@ pub fn build(b: *std.build.Builder) !void {
         headers_obj.setMainPkgPath(javascript.main_pkg_path.?);
         headers_step.dependOn(&headers_obj.step);
 
+        {
+            b.default_step.dependOn(&b.addLog(
+                "Build {s} v{} - v{}",
+                .{
+                    triplet,
+                    target.getOsVersionMin().semver,
+                    target.getOsVersionMax().semver,
+                },
+            ).step);
+        }
         b.default_step.dependOn(&exe.step);
+
         {
             var steps = [_]*std.build.LibExeObjStep{ exe, javascript, typings_exe };
 
@@ -234,16 +254,14 @@ pub fn build(b: *std.build.Builder) !void {
                     true,
                 );
 
-                step.addObjectFile("src/deps/libJavaScriptCore.a");
-                step.addObjectFile("src/deps/libWTF.a");
-                step.addObjectFile("src/deps/libcrypto.a");
-                step.addObjectFile("src/deps/libbmalloc.a");
-                step.addObjectFile("src/deps/libarchive.a");
-                step.addObjectFile("src/deps/libs2n.a");
-
-                step.addObjectFile("src/deps/zlib/libz.a");
-
-                step.addObjectFile("src/deps/mimalloc/libmimalloc.a");
+                step.addObjectFile(panicIfNotFound("src/deps/libJavaScriptCore.a"));
+                step.addObjectFile(panicIfNotFound("src/deps/libWTF.a"));
+                step.addObjectFile(panicIfNotFound("src/deps/libcrypto.a"));
+                step.addObjectFile(panicIfNotFound("src/deps/libbmalloc.a"));
+                step.addObjectFile(panicIfNotFound("src/deps/libarchive.a"));
+                step.addObjectFile(panicIfNotFound("src/deps/libs2n.a"));
+                step.addObjectFile(panicIfNotFound("src/deps/zlib/libz.a"));
+                step.addObjectFile(panicIfNotFound("src/deps/mimalloc/libmimalloc.a"));
                 step.addLibPath("src/deps/mimalloc");
                 step.addIncludeDir("src/deps/mimalloc");
 
@@ -256,19 +274,20 @@ pub fn build(b: *std.build.Builder) !void {
                         "/usr/local/";
 
                     // We must link ICU statically
-                    step.addObjectFile(homebrew_prefix ++ "opt/icu4c/lib/libicudata.a");
-                    step.addObjectFile(homebrew_prefix ++ "opt/icu4c/lib/libicui18n.a");
-                    step.addObjectFile(homebrew_prefix ++ "opt/icu4c/lib/libicuuc.a");
-                    step.addObjectFile(homebrew_prefix ++ "opt/libiconv/lib/libiconv.a");
+                    step.addObjectFile(panicIfNotFound(homebrew_prefix ++ "opt/icu4c/lib/libicudata.a"));
+                    step.addObjectFile(panicIfNotFound(homebrew_prefix ++ "opt/icu4c/lib/libicui18n.a"));
+                    step.addObjectFile(panicIfNotFound(homebrew_prefix ++ "opt/icu4c/lib/libicuuc.a"));
+                    step.addObjectFile(panicIfNotFound(homebrew_prefix ++ "opt/libiconv/lib/libiconv.a"));
+
                     // icucore is a weird macOS only library
                     step.linkSystemLibrary("icucore");
-                    step.addLibPath(homebrew_prefix ++ "opt/icu4c/lib");
-                    step.addIncludeDir(homebrew_prefix ++ "opt/icu4c/include");
+                    step.addLibPath(panicIfNotFound(homebrew_prefix ++ "opt/icu4c/lib"));
+                    step.addIncludeDir(panicIfNotFound(homebrew_prefix ++ "opt/icu4c/include"));
                 } else {
                     step.linkSystemLibrary("icuuc");
                     step.linkSystemLibrary("icudata");
                     step.linkSystemLibrary("icui18n");
-                    step.addObjectFile("src/deps/libiconv.a");
+                    step.addObjectFile(panicIfNotFound("src/deps/libiconv.a"));
                 }
 
                 for (bindings_files.items) |binding| {
@@ -289,7 +308,19 @@ pub fn build(b: *std.build.Builder) !void {
                 .path = .{ .path = "src/deps/zig-clap/clap.zig" },
             });
 
+            {
+                obj_step.dependOn(&b.addLog(
+                    "Build {s} v{} - v{}\n",
+                    .{
+                        triplet,
+                        obj.target.getOsVersionMin().semver,
+                        obj.target.getOsVersionMax().semver,
+                    },
+                ).step);
+            }
+
             obj_step.dependOn(&obj.step);
+
             obj.setOutputDir(output_dir);
             obj.setBuildMode(mode);
             obj.linkLibC();

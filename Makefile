@@ -470,7 +470,7 @@ bun-codesign-debug:
 
 bun-codesign-release-local:
 	codesign --entitlements $(realpath entitlements.plist) --options runtime --force --timestamp --sign "$(CODESIGN_IDENTITY)" -vvvv --deep --strict $(RELEASE_BUN)
-	codesign --entitlements $(realpath entitlements.plist) --options runtime --force --timestamp --sign "$(CODESIGN_IDENTITY)" -vvvv --deep --strict $(BUN_BIN)
+	codesign --entitlements $(realpath entitlements.plist) --options runtime --force --timestamp --sign "$(CODESIGN_IDENTITY)" -vvvv --deep --strict $(PACKAGE_DIR)/bun-profile
 
 
 endif
@@ -709,7 +709,7 @@ bun-link-lld-release:
 		-ftls-model=initial-exec \
 		-O3
 	cp $(BUN_RELEASE_BIN) $(BUN_RELEASE_BIN)-profile
-	$(STRIP) $(BUN_RELEASE_BIN)
+	-$(STRIP) $(BUN_RELEASE_BIN)
 	
 	mv $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
 

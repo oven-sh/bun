@@ -1,6 +1,5 @@
 import NextPageLoader from "next/dist/client/page-loader";
 import getAssetPathFromRoute from "next/dist/shared/lib/router/utils/get-asset-path-from-route";
-// import createRouteLoader from "./route-loader";
 
 export function insertStyleSheet(url: string) {
   if (document.querySelector(`link[href="${url}"]`)) {
@@ -16,22 +15,15 @@ export function insertStyleSheet(url: string) {
 
     link.href = url;
 
-    // if (headCount) {
-    //   document.head.insertBefore(headCount, link);
-    // } else {
     document.head.appendChild(link);
-    // }
   });
 }
 
 export default class PageLoader extends NextPageLoader {
-  public routeLoader: RouteLoader;
-
   constructor(_, __, pages) {
     super(_, __);
 
     // TODO: assetPrefix?
-    // this.routeLoader = {}; //createRouteLoader("");
 
     // Rewrite the pages object to omit the entry script
     // At this point, the entry point has been loaded so we don't want to do that again.
@@ -130,25 +122,5 @@ export default class PageLoader extends NextPageLoader {
     } catch (exception) {
       console.error({ exception });
     }
-
-    // return this.routeLoader.loadRoute(route).then((res) => {
-    //   debugger;
-    //   if ("component" in res) {
-    //     return {
-    //       page: res.component,
-    //       mod: res.exports,
-    //       styleSheets: res.styles.map((o) => ({
-    //         href: o.href,
-    //         text: o.content,
-    //       })),
-    //     };
-    //   }
-    //   throw res.error;
-    // });
   }
-
-  // not used in development!
-  // prefetch(route: string): Promise<void> {
-  //   return this.routeLoader.prefetch(route);
-  // }
 }

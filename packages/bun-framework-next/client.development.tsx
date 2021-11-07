@@ -32,18 +32,11 @@ import {
   assign,
 } from "next/dist/shared/lib/router/utils/querystring";
 import { setConfig } from "next/dist/shared/lib/runtime-config";
-import {
-  getURL,
-  loadGetInitialProps,
-  NEXT_DATA,
-  ST,
-} from "next/dist/shared/lib/utils";
-// import { Portal } from "next/dist/client/portal";
+import { getURL, NEXT_DATA } from "next/dist/shared/lib/utils";
+
 import initHeadManager from "next/dist/client/head-manager";
 import { HeadManagerContext } from "next/dist/shared/lib/head-manager-context";
 import PageLoader from "./page-loader";
-import measureWebVitals from "next/dist/client/performance-relayer";
-import { RouteAnnouncer } from "next/dist/client/route-announcer";
 import {
   createRouter,
   makePublicRouterInstance,
@@ -413,7 +406,7 @@ export function renderError(e) {
 }
 
 globalThis.next = {
-  version: "12.0.2",
+  version: "12.0.3",
   emitter,
   render,
   renderError,

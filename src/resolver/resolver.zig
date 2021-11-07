@@ -592,13 +592,17 @@ pub const Resolver = struct {
 
     pub fn resolve(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind) !Result {
         r.extension_order = if (kind.isFromCSS()) std.mem.span(&options.BundleOptions.Defaults.CSSExtensionOrder) else r.opts.extension_order;
+        var timer: ?std.time.Timer = null;
         if (FeatureFlags.tracing) {
-            r.timer.reset();
+            timer = std.time.Timer.start() catch null;
         }
 
         defer {
             if (FeatureFlags.tracing) {
-                r.elapsed += r.timer.read();
+                if (timer) |time| {
+                    // technically, this should be an atomic op
+                    r.elapsed += time.read();
+                }
             }
         }
         if (r.log.level == .verbose) {

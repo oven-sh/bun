@@ -2863,6 +2863,413 @@ function encodeWebsocketMessageManifestFailure(message, bb) {
   }
 }
 
+function decodeSemverQualifier(bb) {
+  var result = {};
+
+  while (true) {
+    switch (bb.readByte()) {
+      case 0:
+        return result;
+
+      case 1:
+        result["pre"] = bb.readString();
+        break;
+
+      case 2:
+        result["build"] = bb.readString();
+        break;
+
+      default:
+        throw new Error("Attempted to parse invalid message");
+    }
+  }
+}
+
+function encodeSemverQualifier(message, bb) {
+  var value = message["pre"];
+  if (value != null) {
+    bb.writeByte(1);
+    bb.writeString(value);
+  }
+
+  var value = message["build"];
+  if (value != null) {
+    bb.writeByte(2);
+    bb.writeString(value);
+  }
+  bb.writeByte(0);
+}
+
+function decodeSemver(bb) {
+  var result = {};
+
+  result["major"] = bb.readUint32();
+  result["minor"] = bb.readUint32();
+  result["patch"] = bb.readUint32();
+  result["raw"] = decodeStringPointer(bb);
+  var length = bb.readVarUint();
+  var values = (result["qualifiers"] = Array(length));
+  for (var i = 0; i < length; i++) values[i] = decodeSemverQualifier(bb);
+  return result;
+}
+
+function encodeSemver(message, bb) {
+  var value = message["major"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error('Missing required field "major"');
+  }
+
+  var value = message["minor"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error('Missing required field "minor"');
+  }
+
+  var value = message["patch"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error('Missing required field "patch"');
+  }
+
+  var value = message["raw"];
+  if (value != null) {
+    encodeStringPointer(value, bb);
+  } else {
+    throw new Error('Missing required field "raw"');
+  }
+
+  var value = message["qualifiers"];
+  if (value != null) {
+    var values = value,
+      n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      encodeSemverQualifier(value, bb);
+    }
+  } else {
+    throw new Error('Missing required field "qualifiers"');
+  }
+}
+const NPMPackageDataKind = {
+  1: 1,
+  2: 2,
+  3: 3,
+  4: 4,
+  tarball: 1,
+  http: 2,
+  symlink: 3,
+  workspace: 4,
+};
+const NPMPackageDataKindKeys = {
+  1: "tarball",
+  2: "http",
+  3: "symlink",
+  4: "workspace",
+  tarball: "tarball",
+  http: "http",
+  symlink: "symlink",
+  workspace: "workspace",
+};
+
+function decodeNPMPackageData(bb) {
+  var result = {};
+
+  result["kind"] = NPMPackageDataKind[bb.readVarUint()];
+  result["value"] = decodeStringPointer(bb);
+  result["integrity"] = decodeStringPointer(bb);
+  result["destination"] = decodeStringPointer(bb);
+  return result;
+}
+
+function encodeNPMPackageData(message, bb) {
+  var value = message["kind"];
+  if (value != null) {
+    var encoded = NPMPackageDataKind[value];
+    if (encoded === void 0)
+      throw new Error(
+        "Invalid value " +
+          JSON.stringify(value) +
+          ' for enum "NPMPackageDataKind"'
+      );
+    bb.writeVarUint(encoded);
+  } else {
+    throw new Error('Missing required field "kind"');
+  }
+
+  var value = message["value"];
+  if (value != null) {
+    encodeStringPointer(value, bb);
+  } else {
+    throw new Error('Missing required field "value"');
+  }
+
+  var value = message["integrity"];
+  if (value != null) {
+    encodeStringPointer(value, bb);
+  } else {
+    throw new Error('Missing required field "integrity"');
+  }
+
+  var value = message["destination"];
+  if (value != null) {
+    encodeStringPointer(value, bb);
+  } else {
+    throw new Error('Missing required field "destination"');
+  }
+}
+
+function decodeNPMPackage(bb) {
+  var result = {};
+
+  result["id"] = bb.readUint32();
+  result["name"] = decodeStringPointer(bb);
+  result["version"] = decodeStringPointer(bb);
+  result["resolution"] = decodeSemver(bb);
+  result["data"] = decodeNPMPackageData(bb);
+  result["dependencies_hash"] = bb.readUint32();
+  result["dev_dependencies_hash"] = bb.readUint32();
+  result["peer_dependencies_hash"] = bb.readUint32();
+  result["optional_dependencies_hash"] = bb.readUint32();
+  var length = bb.readVarUint();
+  var values = (result["dependencies"] = Array(length));
+  for (var i = 0; i < length; i++) values[i] = decodeDependencyResolution(bb);
+  return result;
+}
+
+function encodeNPMPackage(message, bb) {
+  var value = message["id"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error('Missing required field "id"');
+  }
+
+  var value = message["name"];
+  if (value != null) {
+    encodeStringPointer(value, bb);
+  } else {
+    throw new Error('Missing required field "name"');
+  }
+
+  var value = message["version"];
+  if (value != null) {
+    encodeStringPointer(value, bb);
+  } else {
+    throw new Error('Missing required field "version"');
+  }
+
+  var value = message["resolution"];
+  if (value != null) {
+    encodeSemver(value, bb);
+  } else {
+    throw new Error('Missing required field "resolution"');
+  }
+
+  var value = message["data"];
+  if (value != null) {
+    encodeNPMPackageData(value, bb);
+  } else {
+    throw new Error('Missing required field "data"');
+  }
+
+  var value = message["dependencies_hash"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error('Missing required field "dependencies_hash"');
+  }
+
+  var value = message["dev_dependencies_hash"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error('Missing required field "dev_dependencies_hash"');
+  }
+
+  var value = message["peer_dependencies_hash"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error('Missing required field "peer_dependencies_hash"');
+  }
+
+  var value = message["optional_dependencies_hash"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error('Missing required field "optional_dependencies_hash"');
+  }
+
+  var value = message["dependencies"];
+  if (value != null) {
+    var values = value,
+      n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      encodeDependencyResolution(value, bb);
+    }
+  } else {
+    throw new Error('Missing required field "dependencies"');
+  }
+}
+
+function decodeDependencyResolution(bb) {
+  var result = {};
+
+  result["version"] = decodeSemver(bb);
+  result["package"] = bb.readUint32();
+  result["required"] = !!bb.readByte();
+  result["optional"] = !!bb.readByte();
+  result["peer"] = !!bb.readByte();
+  result["dev"] = !!bb.readByte();
+  return result;
+}
+
+function encodeDependencyResolution(message, bb) {
+  var value = message["version"];
+  if (value != null) {
+    encodeSemver(value, bb);
+  } else {
+    throw new Error('Missing required field "version"');
+  }
+
+  var value = message["package"];
+  if (value != null) {
+    bb.writeUint32(value);
+  } else {
+    throw new Error('Missing required field "package"');
+  }
+
+  var value = message["required"];
+  if (value != null) {
+    bb.writeByte(value);
+  } else {
+    throw new Error('Missing required field "required"');
+  }
+
+  var value = message["optional"];
+  if (value != null) {
+    bb.writeByte(value);
+  } else {
+    throw new Error('Missing required field "optional"');
+  }
+
+  var value = message["peer"];
+  if (value != null) {
+    bb.writeByte(value);
+  } else {
+    throw new Error('Missing required field "peer"');
+  }
+
+  var value = message["dev"];
+  if (value != null) {
+    bb.writeByte(value);
+  } else {
+    throw new Error('Missing required field "dev"');
+  }
+}
+
+function decodeLockfile(bb) {
+  var result = {};
+
+  while (true) {
+    switch (bb.readByte()) {
+      case 0:
+        return result;
+
+      case 1:
+        result["version"] = bb.readString();
+        break;
+
+      case 2:
+        result["registry"] = bb.readString();
+        break;
+
+      case 3:
+        result["root"] = bb.readUint32();
+        break;
+
+      case 4:
+        result["hashes"] = bb.readUint32ByteArray();
+        break;
+
+      case 5:
+        result["name_hashes"] = bb.readUint32ByteArray();
+        break;
+
+      case 6:
+        var length = bb.readVarUint();
+        var values = (result["packages"] = Array(length));
+        for (var i = 0; i < length; i++) values[i] = decodeNPMPackage(bb);
+        break;
+
+      case 7:
+        result["blob"] = bb.readByteArray();
+        break;
+
+      default:
+        throw new Error("Attempted to parse invalid message");
+    }
+  }
+}
+
+function encodeLockfile(message, bb) {
+  var value = message["version"];
+  if (value != null) {
+    bb.writeByte(1);
+    bb.writeString(value);
+  }
+
+  var value = message["registry"];
+  if (value != null) {
+    bb.writeByte(2);
+    bb.writeString(value);
+  }
+
+  var value = message["root"];
+  if (value != null) {
+    bb.writeByte(3);
+    bb.writeUint32(value);
+  }
+
+  var value = message["hashes"];
+  if (value != null) {
+    bb.writeByte(4);
+    bb.writeUint32ByteArray(value);
+  }
+
+  var value = message["name_hashes"];
+  if (value != null) {
+    bb.writeByte(5);
+    bb.writeUint32ByteArray(value);
+  }
+
+  var value = message["packages"];
+  if (value != null) {
+    bb.writeByte(6);
+    var values = value,
+      n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      encodeNPMPackage(value, bb);
+    }
+  }
+
+  var value = message["blob"];
+  if (value != null) {
+    bb.writeByte(7);
+    bb.writeByteArray(value);
+  }
+  bb.writeByte(0);
+}
+
 export { Loader };
 export { LoaderKeys };
 export { FrameworkEntryPointType };
@@ -2997,3 +3404,17 @@ export { decodeWebsocketMessageManifestSuccess };
 export { encodeWebsocketMessageManifestSuccess };
 export { decodeWebsocketMessageManifestFailure };
 export { encodeWebsocketMessageManifestFailure };
+export { decodeSemverQualifier };
+export { encodeSemverQualifier };
+export { decodeSemver };
+export { encodeSemver };
+export { NPMPackageDataKind };
+export { NPMPackageDataKindKeys };
+export { decodeNPMPackageData };
+export { encodeNPMPackageData };
+export { decodeNPMPackage };
+export { encodeNPMPackage };
+export { decodeDependencyResolution };
+export { encodeDependencyResolution };
+export { decodeLockfile };
+export { encodeLockfile };

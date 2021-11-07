@@ -537,4 +537,66 @@ struct WebsocketMessageManifestFailure {
   Log log;
 }
 
+message SemverQualifier {
+  string pre = 1;
+  string build = 2;
+}
+
+struct Semver {
+  uint32 major;
+  uint32 minor;
+  uint32 patch;
+  StringPointer raw;
+  SemverQualifier[] qualifiers;
+}
+
+enum NPMPackageDataKind {
+  tarball = 1;
+  http = 2;
+  symlink = 3;
+  workspace = 4;
+}
+
+struct NPMPackageData {
+  NPMPackageDataKind kind;
+  StringPointer value;
+  StringPointer integrity;
+  StringPointer destination;
+}
+
+struct NPMPackage {
+  uint32 id;
+
+  StringPointer name;
+  StringPointer version;
+  Semver resolution; 
+  NPMPackageData data;
+
+  uint32 dependencies_hash;
+  uint32 dev_dependencies_hash;
+  uint32 peer_dependencies_hash;
+  uint32 optional_dependencies_hash;
+
+  DependencyResolution[] dependencies;
+}
+
+struct DependencyResolution {
+  Semver version;
+  uint32 package;
+
+  bool required;
+  bool optional;
+  bool peer;
+  bool dev;
+}
+
+message Lockfile {
+  string version = 1;
+  string registry = 2;
+  uint32 root = 3;
+  uint32[] hashes = 4;
+  uint32[] name_hashes = 5;
+  NPMPackage[] packages = 6;
+  byte[] blob = 7;
+}
 

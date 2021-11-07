@@ -130,13 +130,6 @@ pub const RunCommand = struct {
                     delimiter = '\'';
                 },
 
-                '\\' => {
-                    entry_i += 1;
-                    try copy_script.appendSlice(script[start..@minimum(entry_i + 1, script.len)]);
-                    delimiter = 0;
-                    continue;
-                },
-
                 'n' => {
                     if (delimiter > 0) {
                         const npm_i = entry_i + "pm run ".len;

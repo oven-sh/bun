@@ -131,7 +131,7 @@ pub const Arguments = struct {
         clap.parseParam("--disable-hmr                     Disable Hot Module Reloading (disables fast refresh too)") catch unreachable,
         clap.parseParam("--extension-order <STR>...        defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
         clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
-        clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments using the classic JSX runtime") catch unreachable,
+        clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments") catch unreachable,
         clap.parseParam("--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\"") catch unreachable,
         clap.parseParam("--jsx-production                  Use jsx instead of jsxDEV (default) for the automatic runtime") catch unreachable,
         clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\"") catch unreachable,
@@ -623,6 +623,12 @@ pub const Command = struct {
         "discord",
     };
 
+    const reject_list = default_completions_list ++ [_]string{
+        "build",
+        "completions",
+        "help",
+    };
+
     pub fn start(allocator: *std.mem.Allocator, log: *logger.Log) !void {
         const tag = which(allocator);
         switch (tag) {
@@ -671,19 +677,21 @@ pub const Command = struct {
                 var completions = ShellCompletions{};
 
                 if (filter.len == 0) {
-                    completions = try RunCommand.completions(ctx, &default_completions_list, .all);
+                    completions = try RunCommand.completions(ctx, &default_completions_list, &reject_list, .all);
                 } else if (strings.eqlComptime(filter[0], "s")) {
-                    completions = try RunCommand.completions(ctx, null, .script);
+                    completions = try RunCommand.completions(ctx, null, &reject_list, .script);
+                } else if (strings.eqlComptime(filter[0], "i")) {
+                    completions = try RunCommand.completions(ctx, &default_completions_list, &reject_list, .script_exclude);
                 } else if (strings.eqlComptime(filter[0], "b")) {
-                    completions = try RunCommand.completions(ctx, null, .bin);
+                    completions = try RunCommand.completions(ctx, null, &reject_list, .bin);
                 } else if (strings.eqlComptime(filter[0], "r")) {
-                    completions = try RunCommand.completions(ctx, null, .all);
+                    completions = try RunCommand.completions(ctx, null, &reject_list, .all);
                 } else if (strings.eqlComptime(filter[0], "g")) {
-                    completions = try RunCommand.completions(ctx, null, .all_plus_bun_js);
+                    completions = try RunCommand.completions(ctx, null, &reject_list, .all_plus_bun_js);
                 } else if (strings.eqlComptime(filter[0], "j")) {
-                    completions = try RunCommand.completions(ctx, null, .bun_js);
+                    completions = try RunCommand.completions(ctx, null, &reject_list, .bun_js);
                 } else if (strings.eqlComptime(filter[0], "z")) {
-                    completions = try RunCommand.completions(ctx, null, .script_and_descriptions);
+                    completions = try RunCommand.completions(ctx, null, &reject_list, .script_and_descriptions);
                 }
 
                 completions.print();

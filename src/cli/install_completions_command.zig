@@ -187,11 +187,13 @@ pub const InstallCompletionsCommand = struct {
                         }
                     }
 
-                    outer: {
-                        completions_dir = "/usr/local/share/zsh-completions";
-                        break :found std.fs.openDirAbsolute("/usr/local/share/zsh-completions", .{ .iterate = true }) catch |err| {
-                            break :outer;
-                        };
+                    if (std.os.getenvZ("BUN_INSTALL")) |home_dir| {
+                        outer: {
+                            completions_dir = home_dir;
+                            break :found std.fs.openDirAbsolute(home_dir, .{ .iterate = true }) catch |err| {
+                                break :outer;
+                            };
+                        }
                     }
 
                     if (std.os.getenvZ("HOME")) |home_dir| {
@@ -216,31 +218,16 @@ pub const InstallCompletionsCommand = struct {
                         }
                     }
 
-                    {
-                        outer: {
-                            completions_dir = "/usr/local/share/zsh/site-functions";
-                            break :found std.fs.openDirAbsolute("/usr/local/share/zsh/site-functions", .{ .iterate = true }) catch |err| {
-                                break :outer;
-                            };
-                        }
-                    }
+                    const dirs_to_try = [_]string{
+                        "/usr/local/share/zsh/site-functions",
+                        "/usr/local/share/zsh/completions",
+                        "/opt/homebrew/share/zsh/completions",
+                        "/opt/homebrew/share/zsh/site-functions",
+                    };
 
-                    outer: {
-                        if (Environment.isMac) {
-                            if (!Environment.isAarch64) {
-                                // homebrew zsh
-                                completions_dir = "/usr/local/share/zsh/completions";
-                                break :found std.fs.openDirAbsoluteZ("/usr/local/share/zsh/completions", .{ .iterate = true }) catch |err| {
-                                    break :outer;
-                                };
-                            } else {
-                                // homebrew zsh
-                                completions_dir = "/opt/homebrew/share/zsh/completions";
-                                break :found std.fs.openDirAbsoluteZ("/opt/homebrew/share/zsh/completions", .{ .iterate = true }) catch |err| {
-                                    break :outer;
-                                };
-                            }
-                        }
+                    for (dirs_to_try) |dir| {
+                        completions_dir = dir;
+                        break :found std.fs.openDirAbsolute(dir, .{ .iterate = true }) catch continue;
                     }
                 },
                 .bash => {},
@@ -332,6 +319,16 @@ pub const InstallCompletionsCommand = struct {
                             zshrc_filepath[zdot_dir.len + "/.zshrc".len] = 0;
                             var filepath = zshrc_filepath[0 .. zdot_dir.len + "/.zshrc".len :0];
                             break :zshrc std.fs.openFileAbsoluteZ(filepath, .{ .read = true, .write = true }) catch break :second;
+                        }
+                    }
+
+                    third: {
+                        if (std.os.getenvZ("HOME")) |zdot_dir| {
+                            std.mem.copy(u8, &zshrc_filepath, std.mem.span(zdot_dir));
+                            std.mem.copy(u8, zshrc_filepath[zdot_dir.len..], "/.zshenv");
+                            zshrc_filepath[zdot_dir.len + "/.zshenv".len] = 0;
+                            var filepath = zshrc_filepath[0 .. zdot_dir.len + "/.zshenv".len :0];
+                            break :zshrc std.fs.openFileAbsoluteZ(filepath, .{ .read = true, .write = true }) catch break :third;
                         }
                     }
 

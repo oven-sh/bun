@@ -83,5 +83,8 @@
   },
   "peerDependencies": {
     "next": "^12.0.0"
+  },
+  "devDependencies": {
+    "react-refresh": "^0.10.0"
   }
 }

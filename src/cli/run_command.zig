@@ -433,7 +433,23 @@ pub const RunCommand = struct {
                         }
                     }
 
-                    for (scripts.keys()) |key| {
+                    const keys = scripts.keys();
+                    var key_i: usize = 0;
+                    loop: while (key_i < keys.len) : (key_i += 1) {
+                        const key = keys[key_i];
+
+                        if (filter == Filter.script_exclude) {
+                            for (reject_list) |default| {
+                                if (std.mem.eql(u8, default, key)) {
+                                    continue :loop;
+                                }
+                            }
+                        }
+
+                        if (strings.startsWith(key, "post") or strings.startsWith(key, "pre")) {
+                            continue :loop;
+                        }
+
                         var entry_item = results.getOrPutAssumeCapacity(key);
 
                         if (filter == Filter.script_and_descriptions and max_description_len > 0) {

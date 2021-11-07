@@ -7,16 +7,10 @@ pub const __int32_t = c_int;
 pub const __uint32_t = c_uint;
 pub const __int64_t = c_longlong;
 pub const __uint64_t = c_ulonglong;
-pub const __darwin_intptr_t = c_long;
-pub const __darwin_natural_t = c_uint;
-pub const __darwin_ct_rune_t = c_int;
 pub const __mbstate_t = extern union {
     __mbstate8: [128]u8,
     _mbstateL: c_longlong,
 };
-pub const __darwin_mbstate_t = __mbstate_t;
-pub const __darwin_ptrdiff_t = c_long;
-pub const __darwin_size_t = c_ulong;
 
 pub const JSC__RegExpPrototype = struct_JSC__RegExpPrototype;
 

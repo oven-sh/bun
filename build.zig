@@ -38,8 +38,16 @@ pub fn build(b: *std.build.Builder) !void {
 
     var triplet_buf: [64]u8 = undefined;
     var os_tagname = @tagName(target.getOs().tag);
+
+    const arch: std.Target.Cpu.Arch = target.getCpuArch();
+
     if (std.mem.eql(u8, os_tagname, "macos")) {
         os_tagname = "darwin";
+        if (arch.isAARCH64()) {
+            target.os_version_min = std.build.Target.OsVersion{ .semver = .{ .major = 11, .minor = 0, .patch = 0 } };
+        } else if (arch.isX86()) {
+            target.os_version_min = std.build.Target.OsVersion{ .semver = .{ .major = 10, .minor = 14, .patch = 0 } };
+        }
     }
 
     std.mem.copy(

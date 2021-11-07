@@ -341,12 +341,13 @@ pub const Resolver = struct {
     allocator: *std.mem.Allocator,
     node_module_bundle: ?*NodeModuleBundle,
     extension_order: []const string = undefined,
+    timer: std.time.Timer = undefined,
 
     care_about_bin_folder: bool = false,
     care_about_scripts: bool = false,
 
     debug_logs: ?DebugLogs = null,
-    elapsed: i128 = 0, // tracing
+    elapsed: u64 = 0, // tracing
 
     onStartWatchingDirectory: ?fn (*HTTPWatcher, dir_path: string, dir_fd: StoredFileDescriptorType) void = null,
     onStartWatchingDirectoryCtx: ?*HTTPWatcher = null,
@@ -414,6 +415,7 @@ pub const Resolver = struct {
             .mutex = &resolver_Mutex,
             .caches = CacheSet.init(allocator),
             .opts = opts,
+            .timer = std.time.Timer.start() catch @panic("Timer error!"),
             .fs = _fs,
             .node_module_bundle = opts.node_modules_bundle,
             .log = log,
@@ -590,13 +592,13 @@ pub const Resolver = struct {
 
     pub fn resolve(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind) !Result {
         r.extension_order = if (kind.isFromCSS()) std.mem.span(&options.BundleOptions.Defaults.CSSExtensionOrder) else r.opts.extension_order;
-
         if (FeatureFlags.tracing) {
-            tracing_start = std.time.nanoTimestamp();
+            r.timer.reset();
         }
+
         defer {
             if (FeatureFlags.tracing) {
-                r.elapsed += std.time.nanoTimestamp() - tracing_start;
+                r.elapsed += r.timer.read();
             }
         }
         if (r.log.level == .verbose) {

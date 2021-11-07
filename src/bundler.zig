@@ -113,12 +113,12 @@ pub const Bundler = struct {
     output_files: std.ArrayList(options.OutputFile),
     resolve_results: *ResolveResults,
     resolve_queue: ResolveQueue,
-    elapsed: i128 = 0,
+    elapsed: u64 = 0,
     needs_runtime: bool = false,
     router: ?Router = null,
 
     linker: Linker,
-    timer: Timer = Timer{},
+    timer: std.time.Timer = undefined,
     env: *DotEnv.Loader,
 
     // must be pointer array because we can't we don't want the source to point to invalid memory if the array size is reallocated
@@ -193,6 +193,7 @@ pub const Bundler = struct {
             .options = bundle_options,
             .fs = fs,
             .allocator = allocator,
+            .timer = std.time.Timer.start() catch @panic("Timer fail"),
             .resolver = Resolver.init1(allocator, log, fs, bundle_options),
             .log = log,
             // .thread_pool = pool,
@@ -2547,12 +2548,11 @@ pub const Bundler = struct {
         const loader = this_parse.loader;
 
         if (FeatureFlags.tracing) {
-            bundler.timer.start();
+            bundler.timer.reset();
         }
         defer {
             if (FeatureFlags.tracing) {
-                bundler.timer.stop();
-                bundler.elapsed += bundler.timer.elapsed;
+                bundler.elapsed += bundler.timer.read();
             }
         }
         var result: ParseResult = undefined;

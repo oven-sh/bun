@@ -4,8 +4,14 @@ globalThis.Bun_disableCSSImports = true;
 // We're disabling Object.freeze because it breaks CJS => ESM and can cause
 // issues with Suspense and other things that expect the CJS module namespace
 // to be mutable when the ESM module namespace is NOT mutable
-globalThis.Object.freeze = (obj) => {
-  return obj;
+const freezer = new WeakMap();
+
+globalThis.Object.freeze = function freeze(obj) {
+  freezer.set(freezer, true);
+};
+
+globalThis.Object.isFrozen = function isFrozen(obj) {
+  return freezer.has(obj);
 };
 
 import * as React from "react";

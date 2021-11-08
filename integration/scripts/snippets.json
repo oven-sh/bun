@@ -21,5 +21,6 @@
   "/react-context-value-func.tsx",
   "/latin1-chars-in-regexp.js",
   "/jsx-spacing.jsx",
-  "/jsx-entities.jsx"
+  "/jsx-entities.jsx",
+  "/optional-chain-with-function.js"
 ]

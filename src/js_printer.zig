@@ -1159,9 +1159,9 @@ pub fn NewPrinter(
                 .e_dot => |e| {
                     var wrap = false;
                     if (e.optional_chain == null) {
-                        flags.has_non_optional_chain_parent = false;
+                        flags.has_non_optional_chain_parent = true;
                     } else {
-                        if (flags.has_non_optional_chain_parent) {
+                        if (!flags.has_non_optional_chain_parent) {
                             wrap = true;
                             p.print("(");
                         }
@@ -1173,18 +1173,23 @@ pub fn NewPrinter(
                     // https://github.com/ziglang/zig/issues/6059
                     const isOptionalChain = (e.optional_chain orelse js_ast.OptionalChain.ccontinue) == js_ast.OptionalChain.start;
 
-                    if (isOptionalChain) {
-                        p.print("?");
-                    }
                     if (p.canPrintIdentifier(e.name)) {
                         if (isOptionalChain and p.prev_num_end == p.writer.written) {
                             // "1.toString" is a syntax error, so print "1 .toString" instead
                             p.print(" ");
                         }
-                        p.print(".");
+                        if (isOptionalChain) {
+                            p.print("?.");
+                        } else {
+                            p.print(".");
+                        }
+
                         p.addSourceMapping(e.name_loc);
                         p.printIdentifier(e.name);
                     } else {
+                        if (isOptionalChain) {
+                            p.print("?.");
+                        }
                         p.print("[");
                         p.addSourceMapping(e.name_loc);
                         p.printQuotedUTF8(e.name, true);

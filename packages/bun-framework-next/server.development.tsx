@@ -1,5 +1,5 @@
 import nextPackage from "next/package.json";
-import "./polyfills";
+import "./server-polyfills";
 import { render } from "./renderDocument";
 
 const { version } = nextPackage;

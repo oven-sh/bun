@@ -779,6 +779,7 @@ pub const Query = struct {
         var count: u8 = 0;
         var skip_round = false;
         var is_or = false;
+        var enable_hyphen = false;
 
         var last_non_whitespace: usize = 0;
 
@@ -860,7 +861,82 @@ pub const Query = struct {
                 const parse_result = Version.parse(input[i..], allocator);
                 token.wildcard = parse_result.wildcard;
 
-                if (count == 0 and token.tag == .version) {
+                i += parse_result.stopped_at;
+                const rollback = i;
+
+                const had_space = i < input.len and input[i] == ' ';
+
+                // TODO: can we do this without rolling back?
+                const hyphenate: bool = had_space and possibly_hyphenate: {
+                    i += 1;
+                    while (i < input.len and input[i] == ' ') : (i += 1) {}
+                    if (!(i < input.len and input[i] == '-')) break :possibly_hyphenate false;
+                    i += 1;
+                    if (!(i < input.len and input[i] == ' ')) break :possibly_hyphenate false;
+                    i += 1;
+                    while (i < input.len and switch (input[i]) {
+                        ' ', 'v', '=' => true,
+                        else => false,
+                    }) : (i += 1) {}
+                    if (!(i < input.len and switch (input[i]) {
+                        '0'...'9', 'X', 'x', '*' => true,
+                        else => false,
+                    })) break :possibly_hyphenate false;
+
+                    break :possibly_hyphenate true;
+                };
+
+                if (!hyphenate) i = rollback;
+                i += @as(usize, @boolToInt(!hyphenate));
+
+                if (hyphenate) {
+                    var second_version = Version.parse(input[i..], allocator);
+
+                    const range: Range = brk: {
+                        switch (second_version.wildcard) {
+                            .major => {
+                                second_version.version.major += 1;
+                                break :brk Range{
+                                    .left = .{ .op = .gte, .version = parse_result.version },
+                                    .right = .{ .op = .lte, .version = second_version.version },
+                                };
+                            },
+                            .minor => {
+                                second_version.version.major += 1;
+                                second_version.version.minor = 0;
+                                second_version.version.patch = 0;
+
+                                break :brk Range{
+                                    .left = .{ .op = .gte, .version = parse_result.version },
+                                    .right = .{ .op = .lt, .version = second_version.version },
+                                };
+                            },
+                            .patch => {
+                                second_version.version.minor += 1;
+                                second_version.version.patch = 0;
+
+                                break :brk Range{
+                                    .left = .{ .op = .gte, .version = parse_result.version },
+                                    .right = .{ .op = .lt, .version = second_version.version },
+                                };
+                            },
+                            .none => {
+                                break :brk Range{
+                                    .left = .{ .op = .gte, .version = parse_result.version },
+                                    .right = .{ .op = .lte, .version = second_version.version },
+                                };
+                            },
+                        }
+                    };
+
+                    if (is_or) {
+                        try list.orRange(range);
+                    } else {
+                        try list.andRange(range);
+                    }
+
+                    i += second_version.stopped_at + 1;
+                } else if (count == 0 and token.tag == .version) {
                     switch (parse_result.wildcard) {
                         .none => {
                             try list.orVersion(parse_result.version);
@@ -877,7 +953,6 @@ pub const Query = struct {
                     try list.andRange(token.toRange(parse_result.version));
                 }
 
-                i += parse_result.stopped_at + 1;
                 is_or = false;
                 count += 1;
                 token.wildcard = .none;
@@ -1171,4 +1246,23 @@ test "Range parsing" {
     expect.range("> 2.2 || 2.1.0 || >3", "3.0.1", @src());
     expect.range("~2", "2.0.0", @src());
     expect.range("~2", "2.1.0", @src());
+
+    expect.range("1.2.0 - 1.3.0", "1.2.2", @src());
+    expect.range("1.2 - 1.3", "1.2.2", @src());
+    expect.range("1 - 1.3", "1.2.2", @src());
+    expect.range("1 - 1.3", "1.3.0", @src());
+    expect.range("1.2 - 1.3", "1.3.1", @src());
+    expect.notRange("1.2 - 1.3", "1.4.0", @src());
+    expect.range("1 - 1.3", "1.3.1", @src());
+
+    expect.notRange("1.2 - 1.3 || 5.0", "6.4.0", @src());
+    expect.range("1.2 - 1.3 || 5.0", "1.2.1", @src());
+    expect.range("5.0 || 1.2 - 1.3", "1.2.1", @src());
+    expect.range("1.2 - 1.3 || 5.0", "5.0", @src());
+    expect.range("5.0 || 1.2 - 1.3", "5.0", @src());
+    expect.range("1.2 - 1.3 || 5.0", "5.0.2", @src());
+    expect.range("5.0 || 1.2 - 1.3", "5.0.2", @src());
+    expect.range("1.2 - 1.3 || 5.0", "5.0.2", @src());
+    expect.range("5.0 || 1.2 - 1.3", "5.0.2", @src());
+    expect.range("5.0 || 1.2 - 1.3 || >8", "9.0.2", @src());
 }

@@ -162,7 +162,7 @@ const LinuxFutex = struct {
     fn wake(ptr: *const Atomic(u32), num_waiters: u32) void {
         switch (linux.getErrno(linux.futex_wake(
             @ptrCast(*const i32, ptr),
-            linux.FUTEX_PRIVATE_FLAG | linux.FUTEX_WAIT,
+            linux.FUTEX_PRIVATE_FLAG | linux.FUTEX_WAKE,
             std.math.cast(i32, num_waiters) catch std.math.maxInt(i32),
         ))) {
             .SUCCESS => {}, // successful wake up
@@ -200,17 +200,11 @@ const DarwinFutex = struct {
         // true so that we we know to ignore the ETIMEDOUT result.
         var timeout_overflowed = false;
         const status = blk: {
-            // WARNING: darwin.__ulock_wait2 must not be referenced OR catalina will *not* work
-            // This os target range code seems to not be working correctly.
-            // if (target.os.version_range.semver.max.major >= 11) {
-            //     break :blk darwin.__ulock_wait2(flags, addr, expect, timeout_ns, 0);
-            // } else {
             const timeout_us = std.math.cast(u32, timeout_ns / std.time.ns_per_us) catch overflow: {
                 timeout_overflowed = true;
                 break :overflow std.math.maxInt(u32);
             };
             break :blk darwin.__ulock_wait(flags, addr, expect, timeout_us);
-            // }
         };
 
         if (status >= 0) return;
@@ -357,7 +351,7 @@ const PosixFutex = struct {
             var ts_ptr: ?*const std.os.timespec = null;
             if (timeout) |timeout_ns| {
                 ts_ptr = &ts;
-                std.os.clock_gettime(std.os.CLOCK.REALTIME, &ts) catch unreachable;
+                std.os.clock_gettime(std.os.CLOCK_REALTIME, &ts) catch unreachable;
                 ts.tv_sec += @intCast(@TypeOf(ts.tv_sec), timeout_ns / std.time.ns_per_s);
                 ts.tv_nsec += @intCast(@TypeOf(ts.tv_nsec), timeout_ns % std.time.ns_per_s);
                 if (ts.tv_nsec >= std.time.ns_per_s) {

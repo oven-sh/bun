@@ -7,7 +7,7 @@ pub const Version = struct {
     patch: u32 = 0,
     tag: Tag = Tag{},
     extra_tags: []const Tag = &[_]Tag{},
-    raw: strings.StringOrTinyString = strings.StringOrTinyString{},
+    raw: strings.StringOrTinyString = strings.StringOrTinyString.init(""),
 
     pub fn format(self: Version, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
         try std.fmt.format(writer, "{d}.{d}.{d}", .{ self.major, self.minor, self.patch });
@@ -35,6 +35,10 @@ pub const Version = struct {
         };
     }
 
+    pub fn eql(lhs: Version, rhs: Version) bool {
+        return lhs.major == rhs.major and lhs.minor == rhs.minor and lhs.patch == rhs.patch and rhs.tag.eql(lhs.tag);
+    }
+
     pub fn order(lhs: Version, rhs: Version) std.math.Order {
         if (lhs.major < rhs.major) return .lt;
         if (lhs.major > rhs.major) return .gt;
@@ -47,8 +51,8 @@ pub const Version = struct {
     }
 
     pub const Tag = struct {
-        pre: strings.StringOrTinyString = strings.StringOrTinyString{},
-        build: strings.StringOrTinyString = strings.StringOrTinyString{},
+        pre: strings.StringOrTinyString = strings.StringOrTinyString.init(""),
+        build: strings.StringOrTinyString = strings.StringOrTinyString.init(""),
 
         pub inline fn hasPre(this: Tag) bool {
             return this.pre.slice().len > 0;
@@ -56,6 +60,10 @@ pub const Version = struct {
 
         pub inline fn hasBuild(this: Tag) bool {
             return this.build.slice().len > 0;
+        }
+
+        pub fn eql(lhs: Tag, rhs: Tag) bool {
+            return strings.eql(lhs.pre.slice(), rhs.pre.slice()) and strings.eql(rhs.build.slice(), lhs.build.slice());
         }
 
         pub const TagResult = struct {
@@ -78,6 +86,7 @@ pub const Version = struct {
                     '-' => {
                         pre_count += 1;
                     },
+                    else => {},
                 }
             }
 
@@ -88,7 +97,7 @@ pub const Version = struct {
             }
 
             if (@maximum(build_count, pre_count) > 1 and !multi_tag_warn) {
-                Output.prettyErrorln("<r><orange>warn<r>: Multiple pre/build tags is not supported yet.", .{});
+                Output.prettyErrorln("<r><magenta>warn<r>: Multiple pre/build tags is not supported yet.", .{});
                 multi_tag_warn = true;
             }
 
@@ -140,6 +149,7 @@ pub const Version = struct {
                         state = .pre;
                         start = i + 1;
                     },
+                    else => {},
                 }
             }
 
@@ -175,9 +185,9 @@ pub const Version = struct {
     pub fn parse(input: string, allocator: *std.mem.Allocator) ParseResult {
         var result = ParseResult{};
 
-        var part_i_: i8 = -1;
-        var part_start_i_: i32 = -1;
-        var last_char_i: u32 = 0;
+        var part_i: u8 = 0;
+        var part_start_i: usize = 0;
+        var last_char_i: usize = 0;
 
         if (input.len == 0) {
             result.valid = false;
@@ -185,15 +195,19 @@ pub const Version = struct {
         }
         var is_done = false;
         var stopped_at: i32 = 0;
-        for (input) |char, i| {
+
+        var i: usize = 0;
+
+        // two passes :(
+        while (i < input.len) {
             if (is_done) {
                 break;
             }
 
-            stopped_at = i;
-            switch (char) {
+            stopped_at = @intCast(i32, i);
+            switch (input[i]) {
                 ' ' => {
-                    if (part_i_ > 2) {
+                    if (part_i > 2) {
                         is_done = true;
                         break;
                     }
@@ -204,63 +218,101 @@ pub const Version = struct {
                     break;
                 },
                 '0'...'9' => {
-                    if (part_start_i_ == -1) {
-                        part_start_i_ = @intCast(i32, i);
+                    part_start_i = i;
+                    i += 1;
+
+                    while (i < input.len and switch (input[i]) {
+                        '0'...'9' => true,
+                        else => false,
+                    }) {
+                        i += 1;
                     }
-                    last_char_i = @intCast(u32, i);
+
+                    last_char_i = i;
+
+                    switch (part_i) {
+                        0 => {
+                            result.version.major = parseVersionNumber(input[part_start_i..last_char_i]);
+                            part_i = 1;
+                        },
+                        1 => {
+                            result.version.minor = parseVersionNumber(input[part_start_i..last_char_i]);
+                            part_i = 2;
+                        },
+                        2 => {
+                            result.version.patch = parseVersionNumber(input[part_start_i..last_char_i]);
+                            part_i = 3;
+                        },
+                        else => {},
+                    }
+
+                    if (i < input.len and switch (input[i]) {
+                        '.' => true,
+                        else => false,
+                    }) {
+                        i += 1;
+                    }
                 },
                 '.' => {
-                    if (part_start_i_ > -1 and part_i <= 2) {
-                        switch (part_i) {
-                            0 => {
-                                result.version.major = parseVersionNumber(input[@intCast(usize, part_start_i)..i]);
-                            },
-                            1 => {
-                                result.version.minor = parseVersionNumber(input[@intCast(usize, part_start_i)..i]);
-                            },
-                            else => {},
-                        }
-
-                        part_start_i_ = -1;
-                        part_i_ += 1;
-                        // "fo.o.b.ar"
-                    } else if (part_i > 2 or part_start_i_ == -1) {
-                        result.valid = false;
-                        is_done = true;
-                        break;
-                    }
+                    result.valid = false;
+                    is_done = true;
+                    break;
                 },
                 '-', '+' => {
-                    if (part_i == 2 and part_start_i_ > -1) {
-                        result.version.patch = parseVersionNumber(input[@intCast(usize, part_start_i)..i]);
-                        result.wildcard = Query.Token.Wildcard.none;
-                        part_start_i_ = @intCast(i32, i);
-                        part_i_ = 3;
-                        is_done = true;
-                        break;
-                    } else {
+                    // Just a plain tag with no version is invalid.
+
+                    if (part_i < 2) {
                         result.valid = false;
                         is_done = true;
                         break;
                     }
+
+                    part_start_i = i;
+                    i += 1;
+                    while (i < input.len and switch (input[i]) {
+                        ' ' => true,
+                        else => false,
+                    }) {
+                        i += 1;
+                    }
+                    const tag_result = Tag.parse(allocator, input[part_start_i..]);
+                    result.version.tag = tag_result.tag;
+                    result.version.extra_tags = tag_result.extra_tags;
+                    break;
                 },
                 'x', '*', 'X' => {
-                    if (part_start_i_ == -1) {
-                        part_start_i_ = @intCast(i32, i);
-                    }
-                    last_char_i = @intCast(u32, i);
+                    part_start_i = i;
+                    i += 1;
 
-                    // We want min wildcard
+                    while (i < input.len and switch (input[i]) {
+                        'x', '*', 'X' => true,
+                        else => false,
+                    }) {
+                        i += 1;
+                    }
+
+                    last_char_i = i;
+
+                    if (i < input.len and switch (input[i]) {
+                        '.' => true,
+                        else => false,
+                    }) {
+                        i += 1;
+                    }
+
                     if (result.wildcard == .none) {
-                        switch (part_i_) {
+                        switch (part_i) {
                             0 => {
                                 result.wildcard = Query.Token.Wildcard.major;
+                                part_i = 1;
                             },
                             1 => {
                                 result.wildcard = Query.Token.Wildcard.minor;
+                                part_i = 2;
                             },
                             2 => {
                                 result.wildcard = Query.Token.Wildcard.patch;
+                                part_i = 3;
                             },
                             else => unreachable,
                         }
@@ -268,57 +320,15 @@ pub const Version = struct {
                 },
                 else => {
                     last_char_i = 0;
-                    result.is_valid = false;
+                    result.valid = false;
                     is_done = true;
                     break;
                 },
             }
         }
 
-        const part_i = @intCast(u8, @maximum(0, part_i_));
-        result.valid = result.valid and part_i_ > -1;
-
-        const part_start_i = @intCast(u32, @maximum(0, part_start_i_));
-
-        if (last_char_i == -1 or part_start_i > last_char_i)
-            last_char_i = input.len - 1;
-
-        // Where did we leave off?
-        switch (part_i) {
-            // That means they used a match like this:
-            // "1"
-            // So its a wildcard major
-            0 => {
-                if (result.wildcard == .none) {
-                    result.wildcard = Query.Token.Wildcard.minor;
-                }
-
-                result.version.major = parseVersionNumber(input[@as(usize, part_start_i) .. last_char_i + 1]);
-            },
-            1 => {
-                if (result.wildcard == .none) {
-                    result.wildcard = Query.Token.Wildcard.patch;
-                }
-
-                result.version.minor = parseVersionNumber(input[@as(usize, part_start_i) .. last_char_i + 1]);
-            },
-            2 => {
-                result.version.patch = parseVersionNumber(input[@as(usize, part_start_i) .. last_char_i + 1]);
-            },
-            3 => {
-                const tag_result = Tag.parse(allocator, input[part_start_i..]);
-                result.version.tag = tag_result.tag;
-                if (tag_result.extra_tags.len > 0) {
-                    result.version.extra_tags = tag_result.extra_tags;
-                }
-
-                stopped_at = @intCast(i32, tag_result.len) + part_start_i;
-            },
-            else => {},
-        }
-
-        result.stopped_at = @intCast(u32, @maximum(stopped_at, 0));
-        result.version.raw = strings.StringOrTinyString.init(input[0..result.stopped_at]);
+        result.stopped_at = @intCast(u32, i);
+        result.version.raw = strings.StringOrTinyString.init(input[0..i]);
         return result;
     }
 
@@ -544,6 +554,10 @@ pub const Query = struct {
         pub fn orRange(self: *List, range: Range) !void {
             try self.addRange(range, false);
         }
+
+        pub inline fn satisfies(this: *List, version: Version) bool {
+            return this.head.satisfies(version);
+        }
     };
 
     pub fn satisfies(this: *Query, version: Version) bool {
@@ -761,3 +775,164 @@ pub const Query = struct {
         return query;
     }
 };
+
+const expect = struct {
+    pub var counter: usize = 0;
+    pub fn isRangeMatch(input: string, version_str: string) void {
+        var parsed = Version.parse(input, default_allocator);
+        std.debug.assert(parsed.version.valid);
+        std.debug.assert(strings.eql(parsed.version.raw.slice(), version_str));
+
+        var list = try Query.parse(default_allocator, input);
+
+        return list.satisfies(parsed.version);
+    }
+
+    pub fn range(input: string, version_str: string, src: std.builtin.SourceLocation) void {
+        Output.initTest();
+        defer counter += 1;
+        if (!isRangeMatch(input, version_str)) {
+            Output.panic("<r><red>Fail<r> Expected range <b>\"{s}\"<r> to match <b>\"{s}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
+                input,
+                version_str,
+                src.file,
+                src.line,
+                src.column,
+                src.fn_name,
+            });
+        }
+    }
+
+    pub fn done(src: std.builtin.SourceLocation) void {
+        Output.prettyErrorln("<r><green>{d} passed expectations <d>in {s}<r>", .{ counter, src.fn_name });
+        Output.flush();
+        counter = 0;
+    }
+
+    pub fn version(input: string, v: [3]u32, src: std.builtin.SourceLocation) void {
+        Output.initTest();
+        defer counter += 1;
+        var result = Version.parse(input, default_allocator);
+        var other = Version{ .major = v[0], .minor = v[1], .patch = v[2] };
+
+        if (!other.eql(result.version)) {
+            Output.panic("<r><red>Fail<r> Expected version <b>\"{s}\"<r> to match <b>\"{d}.{d}.{d}\" but received <red>\"{d}.{d}.{d}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
+                input,
+                v[0],
+                v[1],
+                v[2],
+                result.version.major,
+                result.version.minor,
+                result.version.patch,
+                src.file,
+                src.line,
+                src.column,
+                src.fn_name,
+            });
+        }
+    }
+
+    pub fn versionT(input: string, v: Version, src: std.builtin.SourceLocation) void {
+        Output.initTest();
+        defer counter += 1;
+        var result = Version.parse(input, default_allocator);
+        if (!v.eql(result.version)) {
+            Output.panic("<r><red>Fail<r> Expected version <b>\"{s}\"<r> to match <b>\"{s}\" but received <red>\"{}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
+                input,
+                v,
+                result.version,
+                src.file,
+                src.line,
+                src.column,
+                src.fn_name,
+            });
+        }
+    }
+};
+
+test "Version parsing" {
+    defer expect.done(@src());
+
+    expect.version("1.0.0", .{ 1, 0, 0 }, @src());
+    expect.version("1.1.0", .{ 1, 1, 0 }, @src());
+    expect.version("1.1.1", .{ 1, 1, 1 }, @src());
+    expect.version("1.1.0", .{ 1, 1, 0 }, @src());
+    expect.version("0.1.1", .{ 0, 1, 1 }, @src());
+    expect.version("0.0.1", .{ 0, 0, 1 }, @src());
+    expect.version("0.0.0", .{ 0, 0, 0 }, @src());
+
+    expect.version("1.x", .{ 1, 0, 0 }, @src());
+    expect.version("2.2.x", .{ 2, 2, 0 }, @src());
+    expect.version("2.x.2", .{ 2, 0, 2 }, @src());
+
+    expect.version("1.X", .{ 1, 0, 0 }, @src());
+    expect.version("2.2.X", .{ 2, 2, 0 }, @src());
+    expect.version("2.X.2", .{ 2, 0, 2 }, @src());
+
+    expect.version("1.*", .{ 1, 0, 0 }, @src());
+    expect.version("2.2.*", .{ 2, 2, 0 }, @src());
+    expect.version("2.*.2", .{ 2, 0, 2 }, @src());
+    expect.version("3", .{ 3, 0, 0 }, @src());
+    expect.version("3.x", .{ 3, 0, 0 }, @src());
+    expect.version("3.x.x", .{ 3, 0, 0 }, @src());
+    expect.version("3.*.*", .{ 3, 0, 0 }, @src());
+    expect.version("3.X.x", .{ 3, 0, 0 }, @src());
+
+    {
+        var v = Version{
+            .major = 1,
+            .minor = 0,
+            .patch = 0,
+        };
+        v.tag.pre = strings.StringOrTinyString.init("beta");
+        expect.versionT("1.0.0-beta", v, @src());
+    }
+
+    {
+        var v = Version{
+            .major = 1,
+            .minor = 0,
+            .patch = 0,
+        };
+        v.tag.build = strings.StringOrTinyString.init("build101");
+        expect.versionT("1.0.0+build101", v, @src());
+    }
+
+    {
+        var v = Version{
+            .major = 1,
+            .minor = 0,
+            .patch = 0,
+        };
+        v.tag.build = strings.StringOrTinyString.init("build101");
+        v.tag.pre = strings.StringOrTinyString.init("beta");
+        expect.versionT("1.0.0-beta+build101", v, @src());
+    }
+
+    var buf: [1024]u8 = undefined;
+
+    var triplet = [3]u32{ 0, 0, 0 };
+    var x: u32 = 0;
+    var y: u32 = 0;
+    var z: u32 = 0;
+
+    while (x < 32) : (x += 1) {
+        while (y < 32) : (y += 1) {
+            while (z < 32) : (z += 1) {
+                triplet[0] = x;
+                triplet[1] = y;
+                triplet[2] = z;
+                expect.version(try std.fmt.bufPrint(&buf, "{d}.{d}.{d}", .{ x, y, z }), triplet, @src());
+                triplet[0] = z;
+                triplet[1] = x;
+                triplet[2] = y;
+                expect.version(try std.fmt.bufPrint(&buf, "{d}.{d}.{d}", .{ z, x, y }), triplet, @src());
+
+                triplet[0] = y;
+                triplet[1] = x;
+                triplet[2] = z;
+                expect.version(try std.fmt.bufPrint(&buf, "{d}.{d}.{d}", .{ y, x, z }), triplet, @src());
+            }
+        }
+    }
+}

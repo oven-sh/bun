@@ -108,6 +108,14 @@ pub const Output = struct {
         enable_buffering = false;
     }
 
+    pub fn panic(comptime fmt: string, args: anytype) void {
+        if (Output.isEmojiEnabled()) {
+            std.debug.panic(comptime Output.prettyFmt(fmt, true), args);
+        } else {
+            std.debug.panic(comptime Output.prettyFmt(fmt, false), args);
+        }
+    }
+
     pub const WriterType: type = @typeInfo(std.meta.declarationInfo(Source.StreamType, "writer").data.Fn.fn_type).Fn.return_type.?;
 
     pub fn errorWriter() WriterType {

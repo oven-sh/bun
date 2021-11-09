@@ -278,7 +278,8 @@ CLANG_FLAGS = $(INCLUDE_DIRS) \
 # This flag is only added to webkit builds on Apple platforms
 # It has something to do with ICU
 ifeq ($(OS_NAME), darwin)
-CLANG_FLAGS += -DDU_DISABLE_RENAMING=1 
+CLANG_FLAGS += -DDU_DISABLE_RENAMING=1 \
+		-mmacosx-version-min=10.11
 endif
 
 

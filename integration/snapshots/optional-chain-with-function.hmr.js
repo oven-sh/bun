@@ -12,7 +12,10 @@ var hmr = new HMR(3608848620, "optional-chain-with-function.js"), exports = hmr.
     try {
       const multipleSecondaryValues = undefined;
       const ratings = ["123"];
-      const multipleSecondaryIds = ratings && (multipleSecondaryValues?.map)((value) => false);
+      var bar = multipleSecondaryValues?.map((value) => false);
+      bar = bar?.multipleSecondaryValues?.map((value) => false);
+      bar = bar?.bar?.multipleSecondaryValues?.map((value) => false);
+      bar = {}?.bar?.multipleSecondaryValues?.map((value) => false);
     } catch (e) {
       throw e;
     }

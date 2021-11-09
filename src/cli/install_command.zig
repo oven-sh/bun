@@ -37,6 +37,6 @@ const ShellCompletions = @import("./shell_completions.zig");
 
 pub const InstallCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
-        
+                
     }
 };

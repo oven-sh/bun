@@ -108,7 +108,7 @@ pub const Output = struct {
         enable_buffering = false;
     }
 
-    pub fn panic(comptime fmt: string, args: anytype) void {
+    pub fn panic(comptime fmt: string, args: anytype) noreturn {
         if (Output.isEmojiEnabled()) {
             std.debug.panic(comptime Output.prettyFmt(fmt, true), args);
         } else {

@@ -47,7 +47,7 @@ pub const Version = struct {
         if (lhs.patch < rhs.patch) return .lt;
         if (lhs.patch > rhs.patch) return .gt;
 
-        return .eql;
+        return .eq;
     }
 
     pub const Tag = struct {
@@ -207,10 +207,8 @@ pub const Version = struct {
             stopped_at = @intCast(i32, i);
             switch (input[i]) {
                 ' ' => {
-                    if (part_i > 2) {
-                        is_done = true;
-                        break;
-                    }
+                    is_done = true;
+                    break;
                 },
                 '|', '^', '#', '&', '%', '!' => {
                     is_done = true;
@@ -324,6 +322,21 @@ pub const Version = struct {
                     is_done = true;
                     break;
                 },
+            }
+        }
+
+        if (result.wildcard == .none) {
+            switch (part_i) {
+                0 => {
+                    result.wildcard = Query.Token.Wildcard.major;
+                },
+                1 => {
+                    result.wildcard = Query.Token.Wildcard.minor;
+                },
+                2 => {
+                    result.wildcard = Query.Token.Wildcard.patch;
+                },
+                else => {},
             }
         }
 
@@ -461,19 +474,19 @@ pub const Range = struct {
         version: Version = Version{},
 
         pub fn satisfies(this: Comparator, version: Version) bool {
-            const order = this.version.order(version);
+            const order = version.order(this.version);
 
             return switch (order) {
-                .eql => switch (this.op) {
+                .eq => switch (this.op) {
                     .lte, .gte, .eql => true,
                     else => false,
                 },
                 .gt => switch (this.op) {
-                    .gt => true,
+                    .gt, .gte => true,
                     else => false,
                 },
                 .lt => switch (this.op) {
-                    .lt => true,
+                    .lt, .lte => true,
                     else => false,
                 },
             };
@@ -482,7 +495,7 @@ pub const Range = struct {
 
     pub fn satisfies(this: Range, version: Version) bool {
         if (!this.hasLeft()) {
-            return false;
+            return true;
         }
 
         if (!this.left.satisfies(version)) {
@@ -497,6 +510,10 @@ pub const Range = struct {
     }
 };
 
+/// Linked-list of AND ranges
+/// "^1 ^2"
+/// ----|-----
+/// That is two Query
 pub const Query = struct {
     pub const Op = enum {
         none,
@@ -505,68 +522,94 @@ pub const Query = struct {
     };
 
     range: Range = Range{},
-    next_op: Op = Op.none,
 
-    next: *Query = undefined,
+    // AND
+    next: ?*Query = null,
 
+    /// Linked-list of Queries OR'd together
+    /// "^1 || ^2"
+    /// ----|-----
+    /// That is two List
     pub const List = struct {
-        head: Query,
+        head: Query = Query{},
         tail: ?*Query = null,
-        allocator: *std.mem.Allocator,
-        pub fn orVersion(self: *List, version: Version) !void {
-            if (!self.head.range.hasLeft() and self.tail == null) {
-                std.debug.assert(!self.head.range.hasRight());
-                self.head.range.left.version = version;
-                self.head.range.left.op = .eql;
-                return;
-            }
 
-            var tail = try self.allocator.create(Query);
-            tail.* = Query{};
-            tail.range.left.version = version;
-            tail.range.left.op = .eql;
+        // OR
+        next: ?*List = null,
 
-            var last_tail = self.tail orelse &self.head;
-            std.debug.assert(last_tail.next_op == .none);
-
-            last_tail.next_op = .OR;
-            last_tail.next = tail;
-            self.tail = tail;
+        pub inline fn satisfies(this: *const List, version: Version) bool {
+            return this.head.satisfies(version) or (this.next orelse return false).satisfies(version);
         }
 
-        fn addRange(self: *List, range: Range, is_and: bool) !void {
+        pub fn andRange(self: *List, allocator: *std.mem.Allocator, range: Range) !void {
             if (!self.head.range.hasLeft() and !self.head.range.hasRight()) {
                 self.head.range = range;
                 return;
             }
 
-            var tail = try self.allocator.create(Query);
+            var tail = try allocator.create(Query);
+            tail.* = Query{
+                .range = range,
+            };
             tail.range = range;
 
             var last_tail = self.tail orelse &self.head;
-            std.debug.assert(last_tail.next_op == .none);
             last_tail.next = tail;
-            last_tail.next_op = if (is_and) .AND else .OR;
+            self.tail = tail;
         }
-        pub fn andRange(self: *List, range: Range) !void {
-            try self.addRange(range, true);
-        }
-        pub fn orRange(self: *List, range: Range) !void {
-            try self.addRange(range, false);
+    };
+
+    pub const Group = struct {
+        head: List = List{},
+        tail: ?*List = null,
+        allocator: *std.mem.Allocator,
+
+        pub fn orVersion(self: *Group, version: Version) !void {
+            if (self.tail == null and !self.head.head.range.hasLeft()) {
+                self.head.head.range.left.version = version;
+                self.head.head.range.left.op = .eql;
+                return;
+            }
+
+            var new_tail = try self.allocator.create(List);
+            new_tail.* = List{};
+            new_tail.head.range.left.version = version;
+            new_tail.head.range.left.op = .eql;
+
+            var prev_tail = self.tail orelse &self.head;
+            prev_tail.next = new_tail;
+            self.tail = new_tail;
         }
 
-        pub inline fn satisfies(this: *List, version: Version) bool {
+        pub fn andRange(self: *Group, range: Range) !void {
+            var tail = self.tail orelse &self.head;
+            try tail.andRange(self.allocator, range);
+        }
+
+        pub fn orRange(self: *Group, range: Range) !void {
+            if (self.tail == null and self.head.tail == null and !self.head.head.range.hasLeft()) {
+                self.head.head.range = range;
+                return;
+            }
+
+            var new_tail = try self.allocator.create(List);
+            new_tail.* = List{};
+            new_tail.head.range = range;
+
+            var prev_tail = self.tail orelse &self.head;
+            prev_tail.next = new_tail;
+            self.tail = new_tail;
+        }
+
+        pub inline fn satisfies(this: *const Group, version: Version) bool {
             return this.head.satisfies(version);
         }
     };
 
-    pub fn satisfies(this: *Query, version: Version) bool {
+    pub inline fn satisfies(this: *const Query, version: Version) bool {
         const left = this.range.satisfies(version);
-        return switch (this.next_op) {
-            .none => left,
-            .AND => left and this.next.satisfies(version),
-            .OR => left or this.next.satisfies(version),
-        };
+
+        return left and (this.next orelse return true).satisfies(version);
     }
 
     pub const Token = struct {
@@ -577,22 +620,25 @@ pub const Query = struct {
             switch (this.tag) {
                 // Allows changes that do not modify the left-most non-zero element in the [major, minor, patch] tuple
                 .caret => {
-                    var range = Range{ .left = .{ .op = .gte, .version = Version{ .raw = version.raw } } };
+                    const major = if (version.major == 0) std.math.maxInt(u32) else version.major;
+                    const minor = if (version.minor == 0 or version.major == 0) std.math.maxInt(u32) else version.minor;
+                    const patch = if (version.minor == 0 or version.patch == 0) std.math.maxInt(u32) else version.patch;
 
-                    if (version.patch > 0 or version.minor > 0) {
-                        range.right = .{
+                    return Range{
+                        .left = .{
+                            .op = .gte,
+                            .version = version,
+                        },
+                        .right = .{
                             .op = .lt,
-                            .version = Version{ .raw = version.raw, .major = version.major, .minor = version.minor + 1, .patch = 0 },
-                        };
-                        return range;
-                    }
-
-                    range.right = .{
-                        .op = .lt,
-                        .version = Version{ .raw = version.raw, .major = version.major + 1, .minor = 0, .patch = 0 },
+                            .version = Version{
+                                .raw = version.raw,
+                                .major = major,
+                                .minor = minor,
+                                .patch = patch,
+                            },
+                        },
                     };
-
-                    return range;
                 },
                 .tilda => {
                     if (version.minor == 0 or this.wildcard == .minor or this.wildcard == .major) {
@@ -602,30 +648,103 @@ pub const Query = struct {
                     return Range.initWildcard(version, .patch);
                 },
                 .none => unreachable,
+                .version => {
+                    if (this.wildcard != Wildcard.none) {
+                        return Range.initWildcard(version, this.wildcard);
+                    }
+
+                    return Range{ .left = .{ .op = .eql, .version = version } };
+                },
                 else => {},
             }
 
-            if (this.wildcard != Wildcard.none) {
-                return Range.initWildcard(version, this.wildcard);
-            }
-
-            switch (this.tag) {
-                .version => {
-                    return Range{ .left = .{ .op = .eql, .version = version } };
-                },
-                .gt => {
-                    return Range{ .left = .{ .op = .gt, .version = version } };
-                },
-                .gte => {
-                    return Range{ .left = .{ .op = .gte, .version = version } };
-                },
-                .lt => {
-                    return Range{ .left = .{ .op = .lt, .version = version } };
-                },
-                .lte => {
-                    return Range{ .left = .{ .op = .lte, .version = version } };
-                },
-                else => unreachable,
+            {
+                var _version = version;
+                switch (this.wildcard) {
+                    .major => {
+                        return Range{
+                            .left = .{ .op = .gte, .version = _version },
+                            .right = .{
+                                .op = .lte,
+                                .version = Version{
+                                    .major = std.math.maxInt(u32),
+                                    .minor = std.math.maxInt(u32),
+                                    .patch = std.math.maxInt(u32),
+                                },
+                            },
+                        };
+                    },
+                    .minor => {
+                        switch (this.tag) {
+                            .lt, .lte => {
+                                return Range{
+                                    .left = .{
+                                        .op = if (this.tag == .lt) .lt else .lte,
+                                        .version = Version{
+                                            .major = version.major,
+                                            .minor = 0,
+                                            .patch = 0,
+                                        },
+                                    },
+                                };
+                            },
+                            else => {
+                                return Range{
+                                    .left = .{
+                                        .op = if (this.tag == .gt) .gt else .gte,
+                                        .version = Version{
+                                            .major = version.major,
+                                            .minor = std.math.maxInt(u32),
+                                            .patch = std.math.maxInt(u32),
+                                        },
+                                    },
+                                };
+                            },
+                        }
+                    },
+                    .patch => {
+                        switch (this.tag) {
+                            .lt, .lte => {
+                                return Range{
+                                    .left = .{
+                                        .op = if (this.tag == .lt) .lt else .lte,
+                                        .version = Version{
+                                            .major = version.major,
+                                            .minor = version.minor,
+                                            .patch = 0,
+                                        },
+                                    },
+                                };
+                            },
+                            else => {
+                                return Range{
+                                    .left = .{
+                                        .op = if (this.tag == .gt) .gt else .gte,
+                                        .version = Version{
+                                            .major = version.major,
+                                            .minor = version.minor,
+                                            .patch = std.math.maxInt(u32),
+                                        },
+                                    },
+                                };
+                            },
+                        }
+                    },
+                    .none => {
+                        return Range{
+                            .left = .{
+                                .op = switch (this.tag) {
+                                    .gt => .gt,
+                                    .gte => .gte,
+                                    .lt => .lt,
+                                    .lte => .lte,
+                                    else => unreachable,
+                                },
+                                .version = version,
+                            },
+                        };
+                    },
+                }
             }
         }
 
@@ -648,9 +767,11 @@ pub const Query = struct {
         };
     };
 
-    pub fn parse(allocator: *std.mem.Allocator, input: string) !List {
+    pub fn parse(allocator: *std.mem.Allocator, input: string) !Group {
         var i: usize = 0;
-        var list = List{ .allocator = allocator };
+        var list = Group{
+            .allocator = allocator,
+        };
 
         var token = Token{};
         var prev_token = Token{};
@@ -666,10 +787,6 @@ pub const Query = struct {
 
             switch (input[i]) {
                 '>' => {
-                    if (prev_token.tag == .version) {
-                        is_or = false;
-                    }
-
                     if (input.len > i + 1 and input[i + 1] == '=') {
                         token.tag = .gte;
                         i += 1;
@@ -740,26 +857,19 @@ pub const Query = struct {
             }
 
             if (!skip_round) {
-                const parse_result = Version.parse(input[i..]);
+                const parse_result = Version.parse(input[i..], allocator);
+                token.wildcard = parse_result.wildcard;
 
                 if (count == 0 and token.tag == .version) {
-                    prev_token.tag = token.tag;
-
-                    token.wildcard = parse_result.wildcard;
-
                     switch (parse_result.wildcard) {
                         .none => {
                             try list.orVersion(parse_result.version);
                         },
                         else => {
-                            try list.andRange(token.toRange(parse_result.version));
+                            try list.orRange(token.toRange(parse_result.version));
                         },
                     }
-                    token.tag = Token.Tag.none;
-                    token.wildcard = .none;
                 } else if (count == 0) {
-                    prev_token.tag = token.tag;
-                    token.wildcard = parse_result.wildcard;
                     try list.andRange(token.toRange(parse_result.version));
                 } else if (is_or) {
                     try list.orRange(token.toRange(parse_result.version));
@@ -769,21 +879,24 @@ pub const Query = struct {
 
                 i += parse_result.stopped_at + 1;
                 is_or = false;
+                count += 1;
+                token.wildcard = .none;
+                prev_token.tag = token.tag;
             }
         }
 
-        return query;
+        return list;
     }
 };
 
 const expect = struct {
     pub var counter: usize = 0;
-    pub fn isRangeMatch(input: string, version_str: string) void {
-        var parsed = Version.parse(input, default_allocator);
-        std.debug.assert(parsed.version.valid);
+    pub fn isRangeMatch(input: string, version_str: string) bool {
+        var parsed = Version.parse(version_str, default_allocator);
+        std.debug.assert(parsed.valid);
         std.debug.assert(strings.eql(parsed.version.raw.slice(), version_str));
 
-        var list = try Query.parse(default_allocator, input);
+        var list = Query.parse(default_allocator, input) catch |err| Output.panic("Test fail due to error {s}", .{@errorName(err)});
 
         return list.satisfies(parsed.version);
     }
@@ -793,6 +906,20 @@ const expect = struct {
         defer counter += 1;
         if (!isRangeMatch(input, version_str)) {
             Output.panic("<r><red>Fail<r> Expected range <b>\"{s}\"<r> to match <b>\"{s}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
+                input,
+                version_str,
+                src.file,
+                src.line,
+                src.column,
+                src.fn_name,
+            });
+        }
+    }
+    pub fn notRange(input: string, version_str: string, src: std.builtin.SourceLocation) void {
+        Output.initTest();
+        defer counter += 1;
+        if (isRangeMatch(input, version_str)) {
+            Output.panic("<r><red>Fail<r> Expected range <b>\"{s}\"<r> NOT match <b>\"{s}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
                 input,
                 version_str,
                 src.file,
@@ -935,4 +1062,113 @@ test "Version parsing" {
             }
         }
     }
+}
+
+test "Range parsing" {
+    defer expect.done(@src());
+    expect.range(">2", "3", @src());
+    expect.notRange(">2", "2.1", @src());
+    expect.notRange(">2", "2", @src());
+    expect.notRange(">2", "1.0", @src());
+    expect.notRange(">1.3", "1.3.1", @src());
+    expect.range(">1.3", "2.0.0", @src());
+    expect.range(">2.1.0", "2.2.0", @src());
+    expect.range("<=2.2.99999", "2.2.0", @src());
+    expect.range(">=2.1.99999", "2.2.0", @src());
+    expect.range("<2.2.99999", "2.2.0", @src());
+    expect.range(">2.1.99999", "2.2.0", @src());
+    expect.range(">1.0.0", "2.0.0", @src());
+    expect.range("1.0.0", "1.0.0", @src());
+    expect.notRange("1.0.0", "2.0.0", @src());
+
+    expect.range("1.0.0 || 2.0.0", "1.0.0", @src());
+    expect.range("2.0.0 || 1.0.0", "1.0.0", @src());
+    expect.range("1.0.0 || 2.0.0", "2.0.0", @src());
+    expect.range("2.0.0 || 1.0.0", "2.0.0", @src());
+    expect.range("2.0.0 || >1.0.0", "2.0.0", @src());
+
+    expect.range(">1.0.0 <2.0.0 <2.0.1 >1.0.1", "1.0.2", @src());
+
+    expect.range("2.x", "2.0.0", @src());
+    expect.range("2.x", "2.1.0", @src());
+    expect.range("2.x", "2.2.0", @src());
+    expect.range("2.x", "2.3.0", @src());
+    expect.range("2.x", "2.1.1", @src());
+    expect.range("2.x", "2.2.2", @src());
+    expect.range("2.x", "2.3.3", @src());
+
+    expect.range("<2.0.1 >1.0.0", "2.0.0", @src());
+    expect.range("<=2.0.1 >=1.0.0", "2.0.0", @src());
+
+    expect.range("^2", "2.0.0", @src());
+    expect.range("^2", "2.9.9", @src());
+    expect.range("~2", "2.0.0", @src());
+    expect.range("~2", "2.1.0", @src());
+    expect.range("~2.2", "2.2.1", @src());
+
+    {
+        const passing = [_]string{ "2.4.0", "2.4.1", "3.0.0", "3.0.1", "3.1.0", "3.2.0", "3.3.0", "3.3.1", "3.4.0", "3.5.0", "3.6.0", "3.7.0", "2.4.2", "3.8.0", "3.9.0", "3.9.1", "3.9.2", "3.9.3", "3.10.0", "3.10.1", "4.0.0", "4.0.1", "4.1.0", "4.2.0", "4.2.1", "4.3.0", "4.4.0", "4.5.0", "4.5.1", "4.6.0", "4.6.1", "4.7.0", "4.8.0", "4.8.1", "4.8.2", "4.9.0", "4.10.0", "4.11.0", "4.11.1", "4.11.2", "4.12.0", "4.13.0", "4.13.1", "4.14.0", "4.14.1", "4.14.2", "4.15.0", "4.16.0", "4.16.1", "4.16.2", "4.16.3", "4.16.4", "4.16.5", "4.16.6", "4.17.0", "4.17.1", "4.17.2", "4.17.3", "4.17.4", "4.17.5", "4.17.9", "4.17.10", "4.17.11", "2.0.0", "2.1.0" };
+
+        for (passing) |item| {
+            expect.range("^2 <2.2 || > 2.3", item, @src());
+            expect.range("> 2.3 || ^2 <2.2", item, @src());
+        }
+
+        const not_passing = [_]string{
+            "0.1.0",
+            "0.10.0",
+            "0.2.0",
+            "0.2.1",
+            "0.2.2",
+            "0.3.0",
+            "0.3.1",
+            "0.3.2",
+            "0.4.0",
+            "0.4.1",
+            "0.4.2",
+            "0.5.0",
+            // "0.5.0-rc.1",
+            "0.5.1",
+            "0.5.2",
+            "0.6.0",
+            "0.6.1",
+            "0.7.0",
+            "0.8.0",
+            "0.8.1",
+            "0.8.2",
+            "0.9.0",
+            "0.9.1",
+            "0.9.2",
+            "1.0.0",
+            "1.0.1",
+            "1.0.2",
+            "1.1.0",
+            "1.1.1",
+            "1.2.0",
+            "1.2.1",
+            "1.3.0",
+            "1.3.1",
+            "2.2.0",
+            "2.2.1",
+            "2.3.0",
+            // "1.0.0-rc.1",
+            // "1.0.0-rc.2",
+            // "1.0.0-rc.3",
+        };
+
+        for (not_passing) |item| {
+            expect.notRange("^2 <2.2 || > 2.3", item, @src());
+            expect.notRange("> 2.3 || ^2 <2.2", item, @src());
+        }
+    }
+    expect.range("2.1.0 || > 2.2 || >3", "2.1.0", @src());
+    expect.range(" > 2.2 || >3 || 2.1.0", "2.1.0", @src());
+    expect.range(" > 2.2 || 2.1.0 || >3", "2.1.0", @src());
+    expect.range("> 2.2 || 2.1.0 || >3", "2.3.0", @src());
+    expect.notRange("> 2.2 || 2.1.0 || >3", "2.2.1", @src());
+    expect.notRange("> 2.2 || 2.1.0 || >3", "2.2.0", @src());
+    expect.range("> 2.2 || 2.1.0 || >3", "2.3.0", @src());
+    expect.range("> 2.2 || 2.1.0 || >3", "3.0.1", @src());
+    expect.range("~2", "2.0.0", @src());
+    expect.range("~2", "2.1.0", @src());
 }

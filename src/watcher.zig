@@ -7,6 +7,7 @@ const IndexType = @import("./allocators.zig").IndexType;
 const os = std.os;
 
 const Mutex = @import("./lock.zig").Lock;
+const Futex = @import("./futex.zig");
 const WatchItemIndex = u16;
 const NoWatchItem: WatchItemIndex = std.math.maxInt(WatchItemIndex);
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
@@ -68,14 +69,14 @@ pub const INotify = struct {
     pub fn watchPath(pathname: [:0]const u8) !EventListIndex {
         std.debug.assert(loaded_inotify);
         const old_count = watch_count.fetchAdd(1, .Release);
-        defer if (old_count == 0) std.Thread.Futex.wake(&watch_count, 10);
+        defer if (old_count == 0) Futex.wake(&watch_count, 10);
         return std.os.inotify_add_watchZ(inotify_fd, pathname, watch_file_mask);
     }
 
     pub fn watchDir(pathname: [:0]const u8) !EventListIndex {
         std.debug.assert(loaded_inotify);
         const old_count = watch_count.fetchAdd(1, .Release);
-        defer if (old_count == 0) std.Thread.Futex.wake(&watch_count, 10);
+        defer if (old_count == 0) Futex.wake(&watch_count, 10);
         return std.os.inotify_add_watchZ(inotify_fd, pathname, watch_dir_mask);
     }
 
@@ -96,7 +97,7 @@ pub const INotify = struct {
         std.debug.assert(loaded_inotify);
 
         restart: while (true) {
-            std.Thread.Futex.wait(&watch_count, 0, null) catch unreachable;
+            Futex.wait(&watch_count, 0, null) catch unreachable;
             const rc = std.os.system.read(
                 inotify_fd,
                 @ptrCast([*]u8, @alignCast(@alignOf([*]u8), &eventlist)),

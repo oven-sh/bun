@@ -8,6 +8,7 @@ const Fs = @import("../fs.zig");
 const Analytics = @import("./analytics_schema.zig").analytics;
 const Writer = @import("./analytics_schema.zig").Writer;
 const Headers = @import("../javascript/jsc/webcore/response.zig").Headers;
+const Futex = @import("../futex.zig");
 
 fn NewUint64(val: u64) Analytics.Uint64 {
     const bytes = std.mem.asBytes(&val);
@@ -302,7 +303,7 @@ pub fn enqueue(comptime name: EventName) void {
 
     var items = [_]Event{Event.init(name)};
     _ = event_queue.write(&items) catch false;
-    std.Thread.Futex.wake(&counter, 1);
+    Futex.wake(&counter, 1);
 }
 
 pub var thread: std.Thread = undefined;
@@ -364,7 +365,7 @@ fn readloop() anyerror!void {
             event_list.flush();
         }
 
-        std.Thread.Futex.wait(&counter, counter.load(.Acquire), null) catch unreachable;
+        Futex.wait(&counter, counter.load(.Acquire), null) catch unreachable;
     }
 }
 

@@ -34,6 +34,7 @@ const Lock = @import("../lock.zig").Lock;
 const Headers = @import("../javascript/jsc/webcore/response.zig").Headers;
 const CopyFile = @import("../copy_file.zig");
 var bun_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+const Futex = @import("../futex.zig");
 
 const target_nextjs_version = "12.0.2";
 pub var initialized_store = false;
@@ -1721,7 +1722,7 @@ const PackageDownloadThread = struct {
         this.done.store(0, .Release);
         this.response = try this.client.send("", &this.buffer);
         this.done.store(1, .Release);
-        std.Thread.Futex.wake(&this.done, 1);
+        Futex.wake(&this.done, 1);
     }
 
     pub fn spawn(allocator: *std.mem.Allocator, tarball_url: string, progress_node: *std.Progress.Node) !*PackageDownloadThread {
@@ -2064,7 +2065,7 @@ pub const Example = struct {
         refresher.maybeRefresh();
 
         while (thread.done.load(.Acquire) == 0) {
-            std.Thread.Futex.wait(&thread.done, 1, std.time.ns_per_ms * 10000) catch {};
+            Futex.wait(&thread.done, 1, std.time.ns_per_ms * 10000) catch {};
         }
 
         refresher.maybeRefresh();
@@ -2252,14 +2253,14 @@ const GitHandler = struct {
                 2,
             .Release,
         );
-        std.Thread.Futex.wake(&success, 1);
+        Futex.wake(&success, 1);
     }
 
     pub fn wait() bool {
         @fence(.Release);
 
         while (success.load(.Acquire) == 0) {
-            std.Thread.Futex.wait(&success, 0, 1000) catch continue;
+            Futex.wait(&success, 0, 1000) catch continue;
         }
 
         const outcome = success.load(.Acquire) == 1;

@@ -1,6 +1,6 @@
 const std = @import("std");
 const Atomic = std.atomic.Atomic;
-const Futex = std.Thread.Futex;
+const Futex = @import("./futex.zig");
 
 // Credit: this is copypasta from @kprotty. Thank you @kprotty!
 pub const Mutex = struct {

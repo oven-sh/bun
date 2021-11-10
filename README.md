@@ -462,13 +462,29 @@ If you're interested in adding a framework integration, please reach out. There'
 
 # FAQ
 
-When running bun on an M1 (or Apple Silicon), if you see a message like this:
+##### When running bun on an M1 (or Apple Silicon), if you see a message like this:
 
 > [1] 28447 killed bun create next ./test
 
 It most likely means you're running bun's x64 version on Apple Silicon. This happens if bun is running via Rosetta. Rosetta is unable to emulate AVX2 instructions, which Bun indirectly uses.
 
 The fix is to ensure you installed a version of Bun built for Apple Silicon.
+
+##### error: Unexpected
+
+If you see an error like this:
+
+![image](https://user-images.githubusercontent.com/709451/141210854-89434678-d21b-42f4-b65a-7df3b785f7b9.png)
+
+It usually means the max number of open file descriptors is being explicitly set to a low number. By default, Bun requests the max number of file descriptors available (which on macOS, is something like 32,000). But, if you previously ran into ulimit issues with e.g. Chokidar, someone on The Internet may have advised you to run `ulimit -n 8096`.
+
+That advice unfortunately **lowers** the hard limit to `8096`. This can be a problem in large repositories or projects with lots of dependencies. Chokidar (and other watchers) don't seem to call `setrlimit`, which means they're reliant on the (much lower) soft limit.
+
+To fix this issue:
+
+1. Remove any scripts that call `ulimit -n` and restart your shell.
+2. Try agin, and if the error still occurs, try setting `ulimit -n` to an absurdly high number, such as `ulimit -n 65542`
+3. Try again, and if that still doesn't fix it, open an issue
 
 # Reference
 

@@ -1,8 +1,8 @@
 {
   "name": "bun-framework-next",
   "version": "12.0.5",
-  "main": "empty.tsx",
-  "module": "empty.tsx",
+  "main": "empty.js",
+  "module": "empty.js",
   "description": "Bun compatibility layer for Next.js v12.0.x",
   "scripts": {
     "test": "echo Worked",
@@ -86,9 +86,9 @@
       }
     },
     "production": {
-      "client": "empty.tsx",
-      "server": "empty.tsx",
-      "fallback": "empty.tsx",
+      "client": "empty.js",
+      "server": "empty.js",
+      "fallback": "empty.js",
       "css": "onimportcss"
     }
   }

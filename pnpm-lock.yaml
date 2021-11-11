@@ -1,30 +1,60 @@
 lockfileVersion: 5.3
 
-specifiers:
-  '@types/node': ^16.9.2
-  '@types/puppeteer': ^5.4.4
-  cli-highlight: ^2.1.11
-  highlight.js: ^11.3.1
-  moment: ^2.29.1
-  peechy: 0.4.20
-  prettier: latest
-  puppeteer: ^10.2.0
-  react: ^17.0.2
-  react-dom: ^17.0.2
+importers:
 
-dependencies:
-  cli-highlight: 2.1.11
-  highlight.js: 11.3.1
-  moment: 2.29.1
-  peechy: 0.4.20
-  prettier: 2.4.1
-  puppeteer: 10.4.0
-  react: 17.0.2
-  react-dom: 17.0.2_react@17.0.2
+  .:
+    specifiers:
+      '@types/node': ^16.9.2
+      '@types/puppeteer': ^5.4.4
+      cli-highlight: ^2.1.11
+      highlight.js: ^11.3.1
+      moment: ^2.29.1
+      peechy: 0.4.20
+      prettier: latest
+      puppeteer: ^10.2.0
+      react: ^17.0.2
+      react-dom: ^17.0.2
+    dependencies:
+      cli-highlight: 2.1.11
+      highlight.js: 11.3.1
+      moment: 2.29.1
+      peechy: 0.4.20
+      prettier: 2.4.1
+      puppeteer: 10.4.0
+      react: 17.0.2
+      react-dom: 17.0.2_react@17.0.2
+    devDependencies:
+      '@types/node': 16.11.4
+      '@types/puppeteer': 5.4.4
 
-devDependencies:
-  '@types/node': 16.11.4
-  '@types/puppeteer': 5.4.4
+  packages/bun-error:
+    specifiers:
+      esbuild: ^0.12.26
+      preact: ^10.5.14
+      preact-compat: ^3.19.0
+      react: ^17.0.2
+      react-dom: ^17.0.2
+    dependencies:
+      esbuild: 0.12.29
+      preact: 10.5.15
+      preact-compat: 3.19.0_preact@10.5.15
+      react: 17.0.2
+      react-dom: 17.0.2_react@17.0.2
+
+  packages/bun-framework-next:
+    specifiers:
+      react-is: ^17.0.2
+      react-refresh: ^0.10.0
+    dependencies:
+      react-is: 17.0.2
+    devDependencies:
+      react-refresh: 0.10.0
+
+  packages/bun-macro-relay:
+    specifiers:
+      graphql: ^15.6.0
+    devDependencies:
+      graphql: 15.7.2
 
 packages:
 
@@ -225,6 +255,12 @@ packages:
       once: 1.4.0
     dev: false
 
+  /esbuild/0.12.29:
+    resolution: {integrity: sha512-w/XuoBCSwepyiZtIRsKsetiLDUVGPVw1E/R3VTFSecIy8UR7Cq3SOtwKHJMFoVqqVG36aGkzh4e8BvpO1Fdc7g==}
+    hasBin: true
+    requiresBuild: true
+    dev: false
+
   /escalade/3.1.1:
     resolution: {integrity: sha512-k0er2gUkLf8O0zKJiAhmkTnJlTvINGv7ygDNPbeIsX/TJjGJZHuh9B2UxbsaEkmlEo9MfhrSzmhIlhRlI2GXnw==}
     engines: {node: '>=6'}
@@ -289,6 +325,11 @@ packages:
       path-is-absolute: 1.0.1
     dev: false
 
+  /graphql/15.7.2:
+    resolution: {integrity: sha512-AnnKk7hFQFmU/2I9YSQf3xw44ctnSFCfp3zE0N6W174gqe9fWG/2rKaKxROK7CcI3XtERpjEKFqts8o319Kf7A==}
+    engines: {node: '>= 10.x'}
+    dev: true
+
   /has-flag/4.0.0:
     resolution: {integrity: sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ==}
     engines: {node: '>=8'}
@@ -324,6 +365,12 @@ packages:
     resolution: {integrity: sha512-dcyqhDvX1C46lXZcVqCpK+FtMRQVdIMN6/Df5js2zouUsqG7I6sFxitIC+7KYK29KdXOLHdu9zL4sFnoVQnqaA==}
     dev: false
 
+  /immutability-helper/2.9.1:
+    resolution: {integrity: sha512-r/RmRG8xO06s/k+PIaif2r5rGc3j4Yhc01jSBfwPCXDLYZwp/yxralI37Df1mwmuzcCsen/E/ITKcTEvc1PQmQ==}
+    dependencies:
+      invariant: 2.2.4
+    dev: false
+
   /inflight/1.0.6:
     resolution: {integrity: sha1-Sb1jMdfQLQwJvJEKEHW6gWW1bfk=}
     dependencies:
@@ -333,6 +380,12 @@ packages:
 
   /inherits/2.0.4:
     resolution: {integrity: sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ==}
+    dev: false
+
+  /invariant/2.2.4:
+    resolution: {integrity: sha512-phJfQVBuaJM5raOpJjSfkiD6BpbCE4Ns//LaXl6wGYtUBY83nWS6Rf9tXm2e8VaK60JEjYldbPif/A2B1C2gNA==}
+    dependencies:
+      loose-envify: 1.4.0
     dev: false
 
   /is-fullwidth-code-point/3.0.0:
@@ -502,15 +555,70 @@ packages:
       find-up: 4.1.0
     dev: false
 
+  /preact-compat/3.19.0_preact@10.5.15:
+    resolution: {integrity: sha512-f83A4hIhH8Uzhb9GbIcGk8SM19ffWlwP9mDaYwQdRnMdekZwcCA7eIAbeV4EMQaV9C0Yuy8iKgBAtyTKPZQt/Q==}
+    peerDependencies:
+      preact: <10
+    dependencies:
+      immutability-helper: 2.9.1
+      preact: 10.5.15
+      preact-context: 1.1.4_preact@10.5.15
+      preact-render-to-string: 3.8.2_preact@10.5.15
+      preact-transition-group: 1.1.1_preact@10.5.15
+      prop-types: 15.7.2
+      standalone-react-addons-pure-render-mixin: 0.1.1
+    dev: false
+
+  /preact-context/1.1.4_preact@10.5.15:
+    resolution: {integrity: sha512-gcCjPJ65R0MiW9hDu8W/3WAmyTElIvwLyEO6oLQiM6/TbLKLxCpBCWV8GJjx52TTEyUr60HLDcmoCXZlslelzQ==}
+    peerDependencies:
+      preact: ^8.2.7
+    dependencies:
+      preact: 10.5.15
+    dev: false
+
+  /preact-render-to-string/3.8.2_preact@10.5.15:
+    resolution: {integrity: sha512-przuZPajiurStGgxMoJP0EJeC4xj5CgHv+M7GfF3YxAdhGgEWAkhOSE0xympAFN20uMayntBZpttIZqqLl77fw==}
+    peerDependencies:
+      preact: '*'
+    dependencies:
+      preact: 10.5.15
+      pretty-format: 3.8.0
+    dev: false
+
+  /preact-transition-group/1.1.1_preact@10.5.15:
+    resolution: {integrity: sha1-8KSTJ+pRXs406ivoZMSn0p5dbhA=}
+    peerDependencies:
+      preact: '*'
+    dependencies:
+      preact: 10.5.15
+    dev: false
+
+  /preact/10.5.15:
+    resolution: {integrity: sha512-5chK29n6QcJc3m1lVrKQSQ+V7K1Gb8HeQY6FViQ5AxCAEGu3DaHffWNDkC9+miZgsLvbvU9rxbV1qinGHMHzqA==}
+    dev: false
+
   /prettier/2.4.1:
     resolution: {integrity: sha512-9fbDAXSBcc6Bs1mZrDYb3XKzDLm4EXXL9sC1LqKP5rZkT6KRr/rf9amVUcODVXgguK/isJz0d0hP72WeaKWsvA==}
     engines: {node: '>=10.13.0'}
     hasBin: true
     dev: false
 
+  /pretty-format/3.8.0:
+    resolution: {integrity: sha1-v77VbV6ad2ZF9LH/eqGjrE+jw4U=}
+    dev: false
+
   /progress/2.0.1:
     resolution: {integrity: sha512-OE+a6vzqazc+K6LxJrX5UPyKFvGnL5CYmq2jFGNIBWHpc4QyE49/YOumcrpQFJpfejmvRtbJzgO1zPmMCqlbBg==}
     engines: {node: '>=0.4.0'}
+    dev: false
+
+  /prop-types/15.7.2:
+    resolution: {integrity: sha512-8QQikdH7//R2vurIJSutZ1smHYTcLpRWEOlHnzcWHmBYrOGUysKwSsrC89BCiFj3CbrfJ/nXFdJepOVrY1GCHQ==}
+    dependencies:
+      loose-envify: 1.4.0
+      object-assign: 4.1.1
+      react-is: 16.13.1
     dev: false
 
   /proxy-from-env/1.1.0:
@@ -557,6 +665,19 @@ packages:
       react: 17.0.2
       scheduler: 0.20.2
     dev: false
+
+  /react-is/16.13.1:
+    resolution: {integrity: sha512-24e6ynE2H+OKt4kqsOvNd8kBpV65zoxbA4BVsEOB3ARVWQki/DHzaUoC5KuON/BiccDaCCTZBuOcfZs70kR8bQ==}
+    dev: false
+
+  /react-is/17.0.2:
+    resolution: {integrity: sha512-w2GsyukL62IJnlaff/nRegPQR94C/XXamvMWmSHRJ4y7Ts/4ocGRmTHvOs8PSE6pB3dWOrD/nueuU5sduBsQ4w==}
+    dev: false
+
+  /react-refresh/0.10.0:
+    resolution: {integrity: sha512-PgidR3wST3dDYKr6b4pJoqQFpPGNKDSCDx4cZoshjXipw3LzO7mG1My2pwEzz2JVkF+inx3xRpDeQLFQGH/hsQ==}
+    engines: {node: '>=0.10.0'}
+    dev: true
 
   /react/17.0.2:
     resolution: {integrity: sha512-gnhPt75i/dq/z3/6q/0asP78D0u592D5L1pd7M8P+dck6Fu/jJeL6iVVK23fptSUZj8Vjf++7wXA8UNclGQcbA==}
@@ -611,6 +732,10 @@ packages:
     dependencies:
       dot-case: 3.0.4
       tslib: 2.3.1
+    dev: false
+
+  /standalone-react-addons-pure-render-mixin/0.1.1:
+    resolution: {integrity: sha1-PHQJ9MecQN6axyxhbPZ5qZTzdVE=}
     dev: false
 
   /string-width/4.2.3:

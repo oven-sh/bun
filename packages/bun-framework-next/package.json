@@ -4,6 +4,20 @@
   "main": "index.js",
   "module": "index.js",
   "description": "Bun compatibility layer for Next.js v12.0.x",
+  "scripts": {
+    "test": "echo Worked"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "react-is": "^17.0.2"
+  },
+  "peerDependencies": {
+    "next": "^12.0.0"
+  },
+  "devDependencies": {
+    "react-refresh": "^0.10.0"
+  },
   "framework": {
     "displayName": "Next.js",
     "static": "public",
@@ -74,19 +88,5 @@
       "fallback": "fallback.production.tsx",
       "css": "onimportcss"
     }
-  },
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "author": "",
-  "license": "MIT",
-  "dependencies": {
-    "react-is": "^17.0.2"
-  },
-  "peerDependencies": {
-    "next": "^12.0.0"
-  },
-  "devDependencies": {
-    "react-refresh": "^0.10.0"
   }
 }

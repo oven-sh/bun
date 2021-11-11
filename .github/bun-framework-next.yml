@@ -1,0 +1,40 @@
+name: CI workflow for bun-framework-next
+on: [push]
+jobs:
+  build:
+    name: lint, test and build on Node ${{ matrix.node }} and ${{ matrix.os }}
+
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        node: ["14.x"]
+        os: [macOS-latest]
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v2
+
+      - name: Use Node ${{ matrix.node }}
+        uses: actions/setup-node@v2
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install PNPM
+        uses: pnpm/action-setup@v2.0.1
+        with:
+          version: 6.21.0
+
+      - name: Cache pnpm modules
+        uses: actions/cache@v2
+        with:
+          path: ~/.pnpm-store
+          key: ${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Test bun framework next
+        run: pnpm test --filter bun-framework-next

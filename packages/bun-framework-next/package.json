@@ -5,7 +5,8 @@
   "module": "index.js",
   "description": "Bun compatibility layer for Next.js v12.0.x",
   "scripts": {
-    "test": "echo Worked"
+    "test": "echo Worked",
+    "check": "tsc --noEmit"
   },
   "author": "",
   "license": "MIT",
@@ -16,7 +17,9 @@
     "next": "^12.0.0"
   },
   "devDependencies": {
-    "react-refresh": "^0.10.0"
+    "next": "^12.0.0",
+    "react-refresh": "^0.10.0",
+    "typescript": "^4.4.4"
   },
   "framework": {
     "displayName": "Next.js",

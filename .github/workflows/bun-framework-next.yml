@@ -41,5 +41,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Test bun framework next
+      - name: Test bun-framework-next
+        run: pnpm test --filter bun-framework-next
+
+      - name: Typecheck bun-framework-next
         run: pnpm test --filter bun-framework-next

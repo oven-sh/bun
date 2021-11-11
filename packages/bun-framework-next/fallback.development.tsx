@@ -1,8 +1,5 @@
 import { insertStyleSheet } from "./page-loader";
-import type {
-  FallbackMessageContainer,
-  FallbackStep,
-} from "../../../src/api/schema";
+import type { FallbackMessageContainer } from "../../../src/api/schema";
 
 var once = false;
 function insertNextHeadCount() {
@@ -30,13 +27,9 @@ document.addEventListener("onimportcss", insertGlobalStyleSheet, {
   passive: true,
 });
 
-import { renderError, _boot, pageLoader } from "./client.development";
+import { _boot, pageLoader } from "./client.development";
 
-function renderFallback({
-  router,
-  reason,
-  problems,
-}: FallbackMessageContainer) {
+function renderFallback({ router }: FallbackMessageContainer) {
   const route = router.routes.values[router.route];
 
   if (!document.getElementById("__next")) {

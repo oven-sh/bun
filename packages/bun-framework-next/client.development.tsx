@@ -59,7 +59,6 @@ declare global {
 function nextDataFromBunData() {
   const {
     router: { routes, route, params: paramsList },
-    problems,
   } = globalThis.__BUN_DATA__;
 
   const paramsMap = new Map();
@@ -100,13 +99,13 @@ type RenderRouteInfo = PrivateRouteInfo & {
   App: AppComponent;
   scroll?: { x: number; y: number } | null;
 };
-type RenderErrorProps = Omit<RenderRouteInfo, "Component" | "styleSheets">;
 
 const nextDataTag = document.getElementById("__NEXT_DATA__");
 
 const data: typeof window["__NEXT_DATA__"] = nextDataTag
   ? JSON.parse(document.getElementById("__NEXT_DATA__")!.textContent!)
   : nextDataFromBunData();
+
 window.__NEXT_DATA__ = data;
 
 const {
@@ -151,8 +150,6 @@ const headManager: {
 } = initHeadManager();
 const appElement: HTMLElement | null = document.getElementById("__next");
 
-let lastRenderReject: (() => void) | null;
-let webpackHMR: any;
 export let router: Router;
 let CachedApp: AppComponent = App,
   onPerfEntry: (metric: any) => void;

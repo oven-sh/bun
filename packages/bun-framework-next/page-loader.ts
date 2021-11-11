@@ -69,7 +69,7 @@ export default class PageLoader extends NextPageLoader {
     );
   };
 
-  prefetch(route) {
+  prefetch() {
     return Promise.resolve({});
   }
 

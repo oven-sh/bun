@@ -20,7 +20,6 @@ import {
 } from "next/dist/shared/lib/utils";
 import * as NextDocument from "next/document";
 import * as ReactDOMServer from "react-dom/server.browser";
-import * as url from "url";
 import * as React from "react";
 import * as ReactIs from "react-is";
 import { BODY_RENDER_TARGET } from "next/constants";
@@ -78,8 +77,8 @@ function getScripts(files: DocumentFiles) {
     buildManifest,
     isDevelopment,
     devOnlyCacheBusterQueryString,
-    disableOptimizedLoading,
   } = context;
+
   const normalScripts = files.allFiles.filter(isJSFile);
   const lowPriorityScripts = buildManifest.lowPriorityFiles?.filter(isJSFile);
 
@@ -96,33 +95,6 @@ function getScripts(files: DocumentFiles) {
     );
   });
 }
-
-// function fixLink(from: string) {
-//   if (from.startsWith("/_next/http://") || from.startsWith("/_next/https://"))
-//     return from.substring("/_next".length);
-//   return from;
-// }
-
-// function cloneWithOverwrittenLink(element: React.ReactElement<any>) {
-//   const props = { ...element.props };
-//   if ("href" in element.props) {
-//     props.href = fixLink(props.href);
-//   }
-
-//   if ("n-href" in element.props) {
-//     props["n-href"] = fixLink(props["n-href"]);
-//   }
-
-//   if ("n-src" in element.props) {
-//     props["n-src"] = fixLink(props["n-src"]);
-//   }
-
-//   if ("src" in element.props) {
-//     props["src"] = fixLink(props.src);
-//   }
-
-//   return React.cloneElement(element, props);
-// }
 
 interface DomainLocale {
   defaultLocale: string;

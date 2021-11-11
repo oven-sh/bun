@@ -39,6 +39,8 @@ pub const JSONOptions = struct {
     /// This is technically invalid, since we parse from the first value of the string 
     ignore_leading_escape_sequences: bool = false,
     ignore_trailing_escape_sequences: bool = false,
+
+    json_warn_duplicate_keys: bool = true,
 };
 
 pub fn NewLexer(comptime json_options: JSONOptions) type {

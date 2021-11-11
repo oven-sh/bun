@@ -39,6 +39,46 @@ const locModuleScope = logger.Loc.Empty;
 
 const LEXER_DEBUGGER_WORKAROUND = isDebug;
 
+const HashMapPool = struct {
+    const HashMap = std.HashMap(u64, void, IdentityContext, 80);
+    const LinkedList = std.SinglyLinkedList(HashMap);
+    threadlocal var list: LinkedList = undefined;
+    threadlocal var loaded: bool = false;
+
+    const IdentityContext = struct {
+        pub fn eql(this: @This(), a: u64, b: u64) bool {
+            return a == b;
+        }
+
+        pub fn hash(this: @This(), a: u64) u64 {
+            return a;
+        }
+    };
+
+    pub fn get(allocator: *std.mem.Allocator) *LinkedList.Node {
+        if (loaded) {
+            if (list.popFirst()) |node| {
+                node.data.clearRetainingCapacity();
+                return node;
+            }
+        }
+
+        var new_node = allocator.create(LinkedList.Node) catch unreachable;
+        new_node.* = LinkedList.Node{ .data = HashMap.initContext(allocator, IdentityContext{}) };
+        return new_node;
+    }
+
+    pub fn release(node: *LinkedList.Node) void {
+        if (loaded) {
+            list.prepend(node);
+            return;
+        }
+
+        list = LinkedList{ .first = node };
+        loaded = true;
+    }
+};
+
 fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
     return struct {
         const Lexer = js_lexer.NewLexer(if (LEXER_DEBUGGER_WORKAROUND) js_lexer.JSONOptions{} else opts);
@@ -131,14 +171,32 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                         is_single_line = false;
                     }
                     try p.lexer.expect(.t_close_bracket);
-                    return p.e(E.Array{ .items = exprs.toOwnedSlice() }, loc);
+                    return p.e(E.Array{ .items = exprs.items }, loc);
                 },
                 .t_open_brace => {
                     try p.lexer.next();
                     var is_single_line = !p.lexer.has_newline_before;
                     var properties = std.ArrayList(G.Property).init(p.allocator);
-                    var duplicates = std.AutoHashMap(u64, void).init(p.allocator);
-                    defer duplicates.deinit();
+
+                    const DuplicateNodeType = comptime if (opts.json_warn_duplicate_keys) *HashMapPool.LinkedList.Node else void;
+                    const HashMapType = comptime if (opts.json_warn_duplicate_keys) HashMapPool.HashMap else void;
+
+                    var duplicates_node: DuplicateNodeType = if (comptime opts.json_warn_duplicate_keys)
+                        HashMapPool.get(p.allocator)
+                    else
+                        void{};
+
+                    var duplicates: HashMapType = if (comptime opts.json_warn_duplicate_keys)
+                        duplicates_node.data
+                    else
+                        void{};
+
+                    defer {
+                        if (comptime opts.json_warn_duplicate_keys) {
+                            duplicates_node.data = duplicates;
+                            HashMapPool.release(duplicates_node);
+                        }
+                    }
 
                     while (p.lexer.token != .t_close_brace) {
                         if (properties.items.len > 0) {
@@ -154,14 +212,17 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                         }
 
                         var str = p.lexer.toEString();
-                        const hash_key = str.hash();
-                        const duplicate_get_or_put = duplicates.getOrPut(hash_key) catch unreachable;
-                        duplicate_get_or_put.key_ptr.* = hash_key;
+                        const key_range = p.lexer.range();
 
-                        var key_range = p.lexer.range();
-                        // Warn about duplicate keys
-                        if (duplicate_get_or_put.found_existing) {
-                            p.log.addRangeWarningFmt(p.source, key_range, p.allocator, "Duplicate key \"{s}\" in object literal", .{p.lexer.string_literal_slice}) catch unreachable;
+                        if (comptime opts.json_warn_duplicate_keys) {
+                            const hash_key = str.hash();
+                            const duplicate_get_or_put = duplicates.getOrPut(hash_key) catch unreachable;
+                            duplicate_get_or_put.key_ptr.* = hash_key;
+
+                            // Warn about duplicate keys
+                            if (duplicate_get_or_put.found_existing) {
+                                p.log.addRangeWarningFmt(p.source, key_range, p.allocator, "Duplicate key \"{s}\" in object literal", .{p.lexer.string_literal_slice}) catch unreachable;
+                            }
                         }
 
                         var key = p.e(str, key_range.loc);
@@ -177,7 +238,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                     }
                     try p.lexer.expect(.t_close_brace);
                     return p.e(E.Object{
-                        .properties = properties.toOwnedSlice(),
+                        .properties = properties.items,
                         .is_single_line = is_single_line,
                     }, loc);
                 },
@@ -202,7 +263,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
             try p.lexer.expect(.t_comma);
 
             if (p.lexer.token == closer) {
-                if (!opts.allow_trailing_commas) {
+                if (comptime !opts.allow_trailing_commas) {
                     p.log.addRangeError(p.source, comma_range, "JSON does not support trailing commas") catch unreachable;
                 }
                 return false;
@@ -214,6 +275,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
 }
 
 const JSONParser = JSONLikeParser(js_lexer.JSONOptions{ .is_json = true });
+const RemoteJSONParser = JSONLikeParser(js_lexer.JSONOptions{ .is_json = true, .json_warn_duplicate_keys = false });
 const DotEnvJSONParser = JSONLikeParser(js_lexer.JSONOptions{
     .ignore_leading_escape_sequences = true,
     .ignore_trailing_escape_sequences = true,

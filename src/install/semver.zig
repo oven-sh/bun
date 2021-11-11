@@ -9,6 +9,27 @@ pub const Version = struct {
     extra_tags: []const Tag = &[_]Tag{},
     raw: strings.StringOrTinyString = strings.StringOrTinyString.init(""),
 
+    pub fn hash(this: Version) u32 {
+        var hasher = std.hash.Wyhash.init(0);
+        const triplet = [3]u32{ this.major, this.minor, this.patch };
+
+        hasher.update(std.mem.sliceAsBytes(&triplet));
+        const pre = this.tag.pre.slice();
+        const build = this.tag.build.slice();
+
+        if (pre.len > 0) {
+            hasher.update("+");
+            hasher.update(pre);
+        }
+
+        if (build.len > 0) {
+            hasher.update("-");
+            hasher.update(build);
+        }
+
+        return @truncate(u32, hasher.final());
+    }
+
     pub fn format(self: Version, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
         try std.fmt.format(writer, "{d}.{d}.{d}", .{ self.major, self.minor, self.patch });
 
@@ -38,6 +59,16 @@ pub const Version = struct {
     pub fn eql(lhs: Version, rhs: Version) bool {
         return lhs.major == rhs.major and lhs.minor == rhs.minor and lhs.patch == rhs.patch and rhs.tag.eql(lhs.tag);
     }
+
+    pub const HashContext = struct {
+        pub fn hash(this: @This(), lhs: Version) u32 {
+            return lhs.hash();
+        }
+
+        pub fn eql(this: @This(), lhs: Version, rhs: Version) bool {
+            return lhs.eql(rhs);
+        }
+    };
 
     pub fn order(lhs: Version, rhs: Version) std.math.Order {
         if (lhs.major < rhs.major) return .lt;

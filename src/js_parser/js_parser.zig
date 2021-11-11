@@ -2643,18 +2643,18 @@ pub const Parser = struct {
 
             var remaining_parts = _parts;
             if (before_len > 0) {
-                var parts_to_copy = before.toOwnedSlice();
+                const parts_to_copy = before.items;
                 std.mem.copy(js_ast.Part, remaining_parts, parts_to_copy);
                 remaining_parts = remaining_parts[parts_to_copy.len..];
             }
             if (parts_len > 0) {
-                var parts_to_copy = parts.toOwnedSlice();
+                const parts_to_copy = parts.items;
                 std.mem.copy(js_ast.Part, remaining_parts, parts_to_copy);
                 remaining_parts = remaining_parts[parts_to_copy.len..];
             }
 
             if (after_len > 0) {
-                var parts_to_copy = after.toOwnedSlice();
+                const parts_to_copy = after.items;
                 std.mem.copy(js_ast.Part, remaining_parts, parts_to_copy);
             }
 
@@ -2662,7 +2662,7 @@ pub const Parser = struct {
         } else {
             after.deinit();
             before.deinit();
-            parts_slice = parts.toOwnedSlice();
+            parts_slice = parts.items;
         }
         debugl("</p.appendPart>");
 

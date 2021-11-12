@@ -40,6 +40,21 @@ pub const URI = union(Tag) {
 };
 
 const Semver = @import("./semver.zig");
+const ExternalString = Semver.ExternalString;
+const StringBuilder = @import("../string_builder.zig");
+const SlicedString = Semver.SlicedString;
+
+pub const ExternalStringMap = extern struct {
+    name: []const ExternalString = &[_]ExternalString{},
+
+    value: []const ExternalString = &[_]ExternalString{},
+};
+
+pub const ExternalDependencyMap = extern struct {
+    len: u32,
+    versions: []const Semver.Version = &[_]Semver.Version{},
+    dependencies: []const ExternalStringMap = &[_]ExternalStringMap{},
+};
 
 pub const Dependency = struct {
     name: string,
@@ -433,37 +448,84 @@ const Npm = struct {
         url: URL,
     };
 
-    /// A package's "dependencies" field by their Semver version.
-    ///
-    /// Ordered by NPM registry version
-    ///
-    /// When the dependencies haven't changed between package versions,
-    /// Consider Dependency.List to be immutable. It may share a pointer with other entries in this map.
-    const DependencyMap = extern struct {
-        names: []const 
-    };
-
     const ResolvedPackage = struct {
-        name: string,
-        name_hash: u32,
+        name: ExternalString = ExternalString{},
 
-        releases: DependencyMap,
-        prereleases: DependencyMap,
-        dist_tags: DistTagMap,
+        releases: VersionMap,
+        prereleases: VersionMap,
+        dist_tags: DistTagMap = DistTagMap{},
 
-        const DistTagMap = std.StringArrayHashMap(Semver.Version);
+        last_modified: ExternalString = ExternalString{},
+        etag: ExternalString = ExternalString{},
+
+        string_buf: []u8,
+
+        pub fn findBestVersion(this: *const ResolvedPackage, group: Semver.Query.Group) ?*VersionedPackage {
+            const left = group.head.head.range.left;
+            // Fast path: exact version
+            if (left.op == .version) {
+                if (!left.version.tag.hasPre()) {
+                    return this.releases.getPtr(left.version);
+                } else {
+                    return this.prereleases.getPtr(left.version);
+                }
+            }
+
+            // For now, this is the dumb way
+            for (this.releases.keys()) |version| {
+                if (group.satisfies(version)) {
+                    return this.releases.getPtr(version);
+                }
+            }
+
+            for (this.prereleases.keys()) |version| {
+                if (group.satisfies(version)) {
+                    return this.prereleases.getPtr(version);
+                }
+            }
+
+            return null;
+        }
+
+        const VersionMap = std.ArrayHashMap(Semver.Version, VersionedPackage, Semver.Version.HashContext, false);
+        const DistTagMap = extern struct {
+            tags: []const ExternalString = &[_]ExternalString{},
+            versions: []const Semver.Version = &[_]Semver.Version{},
+        };
+
+        pub const VersionedPackage = extern struct {
+            dependencies: ExternalStringMap = ExternalStringMap{},
+            optional_dependencies: ExternalStringMap = ExternalStringMap{},
+            integrity: ExternalString = ExternalString{},
+            shasum: ExternalString = ExternalString{},
+            bins: ExternalStringMap = ExternalStringMap{},
+            bin_dir: ExternalString = ExternalString{},
+            man_dir: ExternalString = ExternalString{},
+            unpacked_size: u64 = 0,
+            file_count: u64 = 0,
+
+            os_matches: bool = true,
+            cpu_matches: bool = true,
+
+            loaded_dependencies: ?*Dependency.List = null,
+            loaded_optional_dependencies: ?*Dependency.List = null,
+        };
 
         pub fn parse(
             allocator: *std.mem.Allocator,
             log: *logger.Log,
             json_buffer: []const u8,
             expected_name: []const u8,
+            etag: []const u8,
+            last_modified: []const u8,
         ) !?ResolvedPackage {
-            const source = logger.Source.initPathString(expected_name, json_buffer);
+            // npm package names have a max of 512 chars
+            // we add an extra 32 because a little wiggle room is good
+            var expected_name_buf: [512 + "/package.json".len + 32]u8 = undefined;
+            const source = logger.Source.initPathString(try std.fmt.bufPrint(&expected_name_buf, "{s}/package.json", .{expected_name}), json_buffer);
             const json = json_parser.ParseJSON(&source, log, allocator) catch |err| {
                 return null;
             };
-            
 
             if (json.asProperty("error")) |error_q| {
                 if (error_q.asString(allocator)) |err| {
@@ -472,6 +534,15 @@ const Npm = struct {
                 }
             }
 
+            var result = ResolvedPackage{
+                .name = ExternalString{},
+                .releases = DependencyMap.initContext(allocator, Semver.Version.HashContext{}),
+                .prereleases = DependencyMap.initContext(allocator, Semver.Version.HashContext{}),
+                .string_buf = &[_]u8{},
+            };
+
+            var string_builder = StringBuilder{};
+
             if (json.asProperty("name")) |name_q| {
                 const name = name_q.expr.asString(allocator) orelse return null;
 
@@ -479,6 +550,87 @@ const Npm = struct {
                     Output.panic("<r>internal: <red>package name mismatch<r> expected \"{s}\" but received <b>\"{s}\"<r>", .{ expected_name, name });
                     return null;
                 }
+
+                string_builder.count(name);
+            }
+
+            var release_versions_len: usize = 0;
+            var pre_versions_len: usize = 0;
+            var dependency_sum: usize = 0;
+
+            get_versions: {
+                if (json.asProperty("versions")) |versions_q| {
+                    if (versions_q.expr.data != .e_object) break :get_versions;
+
+                    const versions = versions_q.expr.data.e_object.properties;
+
+                    for (versions) |prop| {
+                        const name = prop.key.?.asString(allocator) orelse continue;
+                        if (std.mem.indexOfScalar(u8, name, '-') != null) {
+                            pre_versions_len += 1;
+                        } else {
+                            release_versions_len += 1;
+                        }
+
+                        string_builder.count(name);
+
+                        integrity: {
+                            if (prop.value.?.asProperty("dist")) |dist| {
+                                if (dist.expr.data == .e_object) {
+                                    if (dist.expr.asProperty("integrity")) |shasum| {
+                                        if (shasum.expr.asString(allocator)) |shasum_str| {
+                                            string_builder.count(shasum_str);
+                                            break :integrity;
+                                        }
+                                    }
+
+                                    if (dist.expr.asProperty("shasum")) |shasum| {
+                                        if (shasum.expr.asString(allocator)) |shasum_str| {
+                                            string_builder.count(shasum_str);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (prop.value.?.asProperty("dependencies")) |versioned_deps| {
+                            if (versioned_deps.expr.data == .e_object) {
+                                dependency_sum += versioned_deps.expr.data.e_object.properties.len;
+                                const properties = versioned_deps.expr.data.e_object.properties;
+                                for (properties) |property| {
+                                    if (property.key.?.asString(allocator)) |key| {
+                                        string_builder.count(key);
+                                        string_builder.count(property.value.?.data.e_string.utf8.len);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            var extern_string_count: usize = dependency_sum * 2;
+
+            if (json.asProperty("dist-tags")) |dist| {
+                if (dist.expr.data == .e_object) {
+                    const tags = dist.expr.data.e_object.properties;
+                    for (tags) |tag| {
+                        if (tag.key.?.asString(allocator)) |key| {
+                            string_builder.count(key);
+                            extern_string_count += 1;
+                        }
+                    }
+                }
+            }
+
+            var all_extern_strings = try allocator.alloc(ExternalString, extern_string_count);
+            try string_builder.allocate();
+            var string_buf = string_builder.ptr.?[0..string_builder.cap];
+
+            if (json.asProperty("name")) |name_q| {
+                const name = name_q.expr.asString(allocator) orelse return null;
+                string_builder.append(name);
+                result.name = name;
             }
 
             get_versions: {
@@ -486,34 +638,209 @@ const Npm = struct {
                     if (versions_q.expr.data != .e_object) break :get_versions;
 
                     const versions = versions_q.expr.data.e_object.properties;
-                    if (versions.len == 0) break :get_versions;
 
-                    var release_versions = DependencyMap{};
-                    var pre_versions = DependencyMap{};
+                    var package_versions = try allocator.alloc(VersionedPackage, release_versions_len + pre_versions_len);
+                    try result.releases.ensureTotalCapacity(release_versions_len);
+                    try result.prereleases.ensureTotalCapacity(pre_versions_len);
 
-                    var release_versions_len: usize = 0;
-                    var pre_versions_len: usize = 0;
+                    var all_dependency_names_and_values = all_extern_strings[0 .. dependency_sum * 2];
+                    all_extern_strings = all_extern_strings[dependency_sum * 2 ..];
+                    var dependency_names = all_dependency_names_and_values[0..dependency_sum];
+                    var dependency_values = all_dependency_names_and_values[dependency_sum..];
 
-                    for (versions) |prop| {
-                        const version_str = prop.key.?.asString(allocator) orelse continue;
-                        if (std.mem.indexOfScalar(u8, version_str, '-') != null) {
-                            pre_versions_len += 1;
-                        } else {
-                            release_versions_len += 1;
+                    var prev_names = dependency_names[0..0];
+                    var prev_versions = dependency_values[0..0];
+
+                    for (versions) |prop, version_i| {
+                        const version_name = string_builder.append(prop.key.?.asString(allocator) orelse continue);
+
+                        const parsed_version = Semver.Version.parse(SlicedString.init(string_buf, version_name), allocator);
+                        std.debug.assert(parsed_version.valid);
+
+                        if (!parsed_version.valid) {
+                            log.addErrorFmt(source, prop.value.?.loc, allocator, "Failed to parse dependency {s}", .{name}) catch unreachable;
+                            continue;
                         }
-                    }
 
-                    try release_versions.ensureTotalCapacity(release_versions_len);
-                    try pre_versions.ensureTotalCapacity(pre_versions_len);
+                        var package_version = VersionedPackage{};
 
-                    for (versions) |prop| {
-                        const version_str = prop.key.?.asString(allocator) orelse continue;
-                        const value = prop.value.?.asString(allocator) orelse continue;
+                        var count: usize = 0;
+                        if (prop.value.?.asProperty("dependencies")) |versioned_deps| {
+                            if (versioned_deps.expr.data == .e_object) {
+                                count = versioned_deps.expr.data.e_object.properties.len;
+                            }
+                        }
 
+                        if (prop.value.?.asProperty("cpu")) |cpu_prop| {
+                            const CPU = comptime if (Environment.isAarch64) "arm64" else "x64";
+                            package_version.cpu_matches = false;
 
+                            switch (cpu_prop.expr.data) {
+                                .e_array => |arr| {
+                                    for (arr.items) |item| {
+                                        if (item.asString(allocator)) |cpu| {
+                                            if (cpu.eql(@TypeOf(CPU), CPU)) {
+                                                package_version.cpu_matches = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                },
+                                .e_string => |str| {
+                                    package_version.cpu_matches = str.eql(@TypeOf(CPU), CPU);
+                                },
+                                else => {},
+                            }
+                        }
+
+                        if (prop.value.?.asProperty("os")) |cpu_prop| {
+                            // TODO: musl
+                            const OS = comptime if (Environment.isLinux) "linux" else "darwin";
+                            package_version.os_matches = false;
+
+                            switch (cpu_prop.expr.data) {
+                                .e_array => |arr| {
+                                    for (arr.items) |item| {
+                                        if (item.asString(allocator)) |cpu| {
+                                            if (cpu.eql(@TypeOf(OS), OS)) {
+                                                package_version.os_matches = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                },
+                                .e_string => |str| {
+                                    package_version.os_matches = str.eql(@TypeOf(OS), OS);
+                                },
+                                else => {},
+                            }
+                        }
+
+                        var this_names = dependency_names[0..count];
+                        var this_versions = dependency_values[0..count];
+
+                        integrity: {
+                            if (prop.value.?.asProperty("dist")) |dist| {
+                                if (dist.expr.data == .e_object) {
+                                    if (dist.expr.asProperty("integrity")) |shasum| {
+                                        if (shasum.expr.asString(allocator)) |shasum_str| {
+                                            package_version.integrity = string_builder.append(shasum_str);
+                                            break :integrity;
+                                        }
+                                    }
+
+                                    if (dist.expr.asProperty("fileCount")) |file_count_| {
+                                        if (file_count_.expr.data == .e_number) {
+                                            package_version.file_count = @floatToInt(u64, @maximum(@floor(file_count_.expr.data.e_number.value), 0));
+                                        }
+                                    }
+
+                                    if (dist.expr.asProperty("unpackedSize")) |file_count_| {
+                                        if (file_count_.expr.data == .e_number) {
+                                            package_version.unpacked_size = @floatToInt(u64, @maximum(@floor(file_count_.expr.data.e_number.value), 0));
+                                        }
+                                    }
+
+                                    if (dist.expr.asProperty("shasum")) |shasum| {
+                                        if (shasum.expr.asString(allocator)) |shasum_str| {
+                                            package_version.shasum = string_builder.append(shasum_str);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (prop.value.?.asProperty("dependencies")) |versioned_deps| {
+                            const items = versioned_deps.expr.data.e_object.properties;
+                            var any_differences = false;
+                            for (items) |item, i| {
+
+                                // Often, npm packages have the same dependency names/versions many times.
+                                // This is a cheap way to usually dedup these dependencies.
+                                const name_str = item.key.?.asString(allocator) orelse continue;
+                                const name_hash = std.hash.Wyhash.hash(0, name_str);
+
+                                if (prev_names.len > i) this_names[i] = prev_names[i];
+                                if (!(prev_names.len > i and prev_names[i].hash == name_hash)) {
+                                    any_differences = true;
+                                    this_names[i] = ExternalString.init(string_buf, string_builder.append(name_str), name_hash);
+                                }
+
+                                const version_str = item.value.?.asString(allocator) orelse continue;
+                                const version_hash = std.hash.Wyhash.hash(0, version_str);
+
+                                if (prev_versions.len > i) this_versions[i] = prev_versions[i];
+                                if (!(prev_versions.len > i and prev_versions[i].hash == version_hash)) {
+                                    any_differences = true;
+                                    this_versions[i] = ExternalString.init(string_buf, string_builder.append(version_str), version_hash);
+                                }
+                            }
+
+                            if (any_differences) {
+                                dependency_names = dependency_names[count..];
+                                dependency_values = dependency_values[count..];
+                            } else {
+                                this_names = prev_names;
+                                this_versions = prev_versions;
+                            }
+                        }
+
+                        package_version.dependencies = ExternalStringMap{ .name = this_names, .value = this_versions };
+                        package_versions[0] = package_version;
+                        package_versions = package_versions[1..];
+
+                        if (!parsed_version.version.tag.hasPre()) {
+                            result.releases.putAssumeCapacityNoClobber(
+                                parsed_version.version,
+                                list,
+                            );
+                        } else {
+                            result.prereleases.putAssumeCapacityNoClobber(
+                                parsed_version.version,
+                                list,
+                            );
+                        }
+
+                        if (count > 0) {
+                            prev_names = this_names;
+                            prev_versions = this_versions;
+                        }
                     }
                 }
             }
+
+            // Since dist-tags are what will change most often, we will put them last incase we want to someday do incremental updates
+            if (json.asProperty("dist-tags")) |dist| {
+                if (dist.expr.data == .e_object) {
+                    const tags = dist.expr.data.e_object.properties;
+                    result.dist_tags.tags = all_extern_strings;
+                    for (tags) |tag, i| {
+                        if (tag.key.?.asString(allocator)) |key| {
+                            const tag_str = string_builder.append(key);
+                            const tag_hash = std.hash.Wyhash.hash(0, tag_str);
+                            result.dist_tags.tags[i] = ExternalString.init(string_buf, tag_str, tag_hash);
+
+                            var parse_result = Semver.Version.parse(SlicedString.init(source.contents, tag.value.?.asString(allocator)), allocator);
+                            if (parse_result.valid) {
+                                if (parse_result.version.tag.hasPre()) {
+                                    const entry = result.prereleases.getEntry(parse_result.version) orelse unreachable;
+                                    // saves us from copying the semver versions again
+                                    result.dist_tags.versions[i] = entry.key_ptr.*;
+                                } else {
+                                    const entry = result.releases.getEntry(parse_result.version) orelse unreachable;
+                                    result.dist_tags.versions[i] = entry.key_ptr.*;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (string_builder.ptr) |ptr| {
+                result.string_buf = ptr[0..string_builder.len];
+            }
+
+            return result;
         }
     };
 };

@@ -14,6 +14,16 @@ pub const ExternalString = extern struct {
         };
     }
 
+    pub inline fn init(buf: string, in: string, hash: u64) ExternalString {
+        std.debug.assert(@ptrToInt(buf.ptr) <= @ptrToInt(in.ptr) and ((@ptrToInt(in.ptr) + in.len) <= (@ptrToInt(buf.ptr) + buf.len)));
+
+        return ExternalString{
+            .off = @ptrToInt(in.ptr) - @ptrToInt(buf.ptr),
+            .len = in.len,
+            .hash = hash,
+        };
+    }
+
     pub fn slice(this: ExternalString, buf: string) string {
         return buf[this.off..][0..this.len];
     }
@@ -48,10 +58,10 @@ pub const Version = extern struct {
 
     const HashableVersion = extern struct { major: u32, minor: u32, patch: u32, pre: u64, build: u64 };
 
-    pub fn hash(this: Version) u32 {
+    pub fn hash(this: Version) u64 {
         const hashable = HashableVersion{ .major = this.major, .minor = this.minor, .patch = this.patch, .pre = this.tag.pre.hash, .build = this.tag.build.hash };
         const bytes = std.mem.asBytes(&hashable);
-        return @truncate(u32, std.hash.Wyhash.hash(0, bytes));
+        return std.hash.Wyhash.hash(0, bytes);
     }
 
     pub const Formatter = struct {
@@ -91,7 +101,7 @@ pub const Version = extern struct {
 
     pub const HashContext = struct {
         pub fn hash(this: @This(), lhs: Version) u32 {
-            return lhs.hash();
+            return @truncate(u32, lhs.hash());
         }
 
         pub fn eql(this: @This(), lhs: Version, rhs: Version) bool {
@@ -628,6 +638,8 @@ pub const Query = struct {
         tail: ?*List = null,
         allocator: *std.mem.Allocator,
         input: string = "",
+        has_pre: bool = false,
+        has_post: bool = false,
 
         pub fn orVersion(self: *Group, version: Version) !void {
             if (self.tail == null and !self.head.head.range.hasLeft()) {

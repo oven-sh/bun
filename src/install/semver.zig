@@ -1,51 +1,80 @@
 usingnamespace @import("../global.zig");
 const std = @import("std");
 
-pub const Version = struct {
+pub const ExternalString = extern struct {
+    off: u64 = 0,
+    len: u64 = 0,
+    hash: u64 = 0,
+
+    pub fn from(in: string) ExternalString {
+        return ExternalString{
+            .off = 0,
+            .len = in.len,
+            .hash = std.hash.Wyhash.hash(0, in),
+        };
+    }
+
+    pub fn slice(this: ExternalString, buf: string) string {
+        return buf[this.off..][0..this.len];
+    }
+};
+
+pub const SlicedString = struct {
+    buf: string,
+    slice: string,
+
+    pub inline fn init(buf: string, slice: string) SlicedString {
+        return SlicedString{ .buf = buf, .slice = slice };
+    }
+
+    pub inline fn external(this: SlicedString) ExternalString {
+        std.debug.assert(@ptrToInt(this.buf.ptr) <= @ptrToInt(this.slice.ptr) and ((@ptrToInt(this.slice.ptr) + this.slice.len) <= (@ptrToInt(this.buf.ptr) + this.buf.len)));
+
+        return ExternalString{ .off = @ptrToInt(this.slice.ptr) - @ptrToInt(this.buf.ptr), .len = this.slice.len, .hash = std.hash.Wyhash.hash(0, this.slice) };
+    }
+
+    pub inline fn sub(this: SlicedString, input: string) SlicedString {
+        std.debug.assert(@ptrToInt(this.buf.ptr) <= @ptrToInt(this.buf.ptr) and ((@ptrToInt(input.ptr) + input.len) <= (@ptrToInt(this.buf.ptr) + this.buf.len)));
+        return SlicedString{ .buf = this.buf, .slice = input };
+    }
+};
+
+pub const Version = extern struct {
     major: u32 = 0,
     minor: u32 = 0,
     patch: u32 = 0,
     tag: Tag = Tag{},
-    extra_tags: []const Tag = &[_]Tag{},
-    raw: strings.StringOrTinyString = strings.StringOrTinyString.init(""),
+    raw: ExternalString = ExternalString{},
+
+    const HashableVersion = extern struct { major: u32, minor: u32, patch: u32, pre: u64, build: u64 };
 
     pub fn hash(this: Version) u32 {
-        var hasher = std.hash.Wyhash.init(0);
-        const triplet = [3]u32{ this.major, this.minor, this.patch };
-
-        hasher.update(std.mem.sliceAsBytes(&triplet));
-        const pre = this.tag.pre.slice();
-        const build = this.tag.build.slice();
-
-        if (pre.len > 0) {
-            hasher.update("+");
-            hasher.update(pre);
-        }
-
-        if (build.len > 0) {
-            hasher.update("-");
-            hasher.update(build);
-        }
-
-        return @truncate(u32, hasher.final());
+        const hashable = HashableVersion{ .major = this.major, .minor = this.minor, .patch = this.patch, .pre = this.tag.pre.hash, .build = this.tag.build.hash };
+        const bytes = std.mem.asBytes(&hashable);
+        return @truncate(u32, std.hash.Wyhash.hash(0, bytes));
     }
 
-    pub fn format(self: Version, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-        try std.fmt.format(writer, "{d}.{d}.{d}", .{ self.major, self.minor, self.patch });
+    pub const Formatter = struct {
+        version: Version,
+        input: string,
 
-        const pre = self.tag.pre.slice();
-        const build = self.tag.build.slice();
+        pub fn format(formatter: Formatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            const self = formatter.version;
+            try std.fmt.format(writer, "{d}.{d}.{d}", .{ self.major, self.minor, self.patch });
 
-        if (pre.len > 0) {
-            try writer.writeAll("-");
-            try writer.writeAll(pre);
+            if (self.tag.pre.len > 0) {
+                const pre = self.tag.pre.slice(self.input);
+                try writer.writeAll("-");
+                try writer.writeAll(pre);
+            }
+
+            if (self.tag.build.len > 0) {
+                const build = self.tag.build.slice(self.input);
+                try writer.writeAll("+");
+                try writer.writeAll(build);
+            }
         }
-
-        if (build.len > 0) {
-            try writer.writeAll("+");
-            try writer.writeAll(build);
-        }
-    }
+    };
 
     inline fn atPart(i: u8) u32 {
         return switch (i) {
@@ -81,30 +110,31 @@ pub const Version = struct {
         return .eq;
     }
 
-    pub const Tag = struct {
-        pre: strings.StringOrTinyString = strings.StringOrTinyString.init(""),
-        build: strings.StringOrTinyString = strings.StringOrTinyString.init(""),
+    pub const Tag = extern struct {
+        pre: ExternalString = ExternalString{},
+        build: ExternalString = ExternalString{},
 
         pub inline fn hasPre(this: Tag) bool {
-            return this.pre.slice().len > 0;
+            return this.pre.len > 0;
         }
 
         pub inline fn hasBuild(this: Tag) bool {
-            return this.build.slice().len > 0;
+            return this.build.len > 0;
         }
 
         pub fn eql(lhs: Tag, rhs: Tag) bool {
-            return strings.eql(lhs.pre.slice(), rhs.pre.slice()) and strings.eql(rhs.build.slice(), lhs.build.slice());
+            return lhs.build.hash == rhs.build.hash and lhs.pre.hash == rhs.pre.hash;
         }
 
         pub const TagResult = struct {
             tag: Tag = Tag{},
-            extra_tags: []const Tag = &[_]Tag{},
             len: u32 = 0,
         };
+
         var multi_tag_warn = false;
         // TODO: support multiple tags
-        pub fn parse(allocator: *std.mem.Allocator, input: string) TagResult {
+        pub fn parse(allocator: *std.mem.Allocator, sliced_string: SlicedString) TagResult {
+            var input = sliced_string.slice;
             var build_count: u32 = 0;
             var pre_count: u32 = 0;
 
@@ -127,11 +157,6 @@ pub const Version = struct {
                 };
             }
 
-            if (@maximum(build_count, pre_count) > 1 and !multi_tag_warn) {
-                Output.prettyErrorln("<r><magenta>warn<r>: Multiple pre/build tags is not supported yet.", .{});
-                multi_tag_warn = true;
-            }
-
             const State = enum { none, pre, build };
             var result = TagResult{};
             // Common case: no allocation is necessary.
@@ -141,22 +166,25 @@ pub const Version = struct {
             var tag_i: usize = 0;
             var had_content = false;
 
-            for (input) |c, i| {
+            var i: usize = 0;
+
+            while (i < input.len) : (i += 1) {
+                const c = input[i];
                 switch (c) {
                     ' ' => {
                         switch (state) {
                             .none => {},
                             .pre => {
-                                result.tag.pre = strings.StringOrTinyString.init(input[start..i]);
+                                result.tag.pre = sliced_string.sub(input[start..i]).external();
                                 if (comptime Environment.isDebug) {
-                                    std.debug.assert(!strings.containsChar(result.tag.pre.slice(), '-'));
+                                    std.debug.assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
                                 }
                                 state = State.none;
                             },
                             .build => {
-                                result.tag.build = strings.StringOrTinyString.init(input[start..i]);
+                                result.tag.build = sliced_string.sub(input[start..i]).external();
                                 if (comptime Environment.isDebug) {
-                                    std.debug.assert(!strings.containsChar(result.tag.build.slice(), '-'));
+                                    std.debug.assert(!strings.containsChar(result.tag.build.slice(sliced_string.buf), '-'));
                                 }
                                 state = State.none;
                             },
@@ -167,18 +195,22 @@ pub const Version = struct {
                     '+' => {
                         // qualifier  ::= ( '-' pre )? ( '+' build )?
                         if (state == .pre) {
-                            result.tag.pre = strings.StringOrTinyString.init(input[start..i]);
+                            result.tag.pre = sliced_string.sub(input[start..i]).external();
                             if (comptime Environment.isDebug) {
-                                std.debug.assert(!strings.containsChar(result.tag.pre.slice(), '-'));
+                                std.debug.assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
                             }
                         }
 
-                        state = .build;
-                        start = i + 1;
+                        if (state != .build) {
+                            state = .build;
+                            start = i + 1;
+                        }
                     },
                     '-' => {
-                        state = .pre;
-                        start = i + 1;
+                        if (state != .pre) {
+                            state = .pre;
+                            start = i + 1;
+                        }
                     },
                     else => {},
                 }
@@ -187,20 +219,21 @@ pub const Version = struct {
             switch (state) {
                 .none => {},
                 .pre => {
-                    result.tag.pre = strings.StringOrTinyString.init(input[start..]);
+                    result.tag.pre = sliced_string.sub(input[start..i]).external();
                     if (comptime Environment.isDebug) {
-                        std.debug.assert(!strings.containsChar(result.tag.pre.slice(), '-'));
+                        std.debug.assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
                     }
-                    result.len = @truncate(u32, input.len);
+                    state = State.none;
                 },
                 .build => {
-                    result.tag.build = strings.StringOrTinyString.init(input[start..]);
+                    result.tag.build = sliced_string.sub(input[start..i]).external();
                     if (comptime Environment.isDebug) {
-                        std.debug.assert(!strings.containsChar(result.tag.build.slice(), '-'));
+                        std.debug.assert(!strings.containsChar(result.tag.build.slice(sliced_string.buf), '-'));
                     }
-                    result.len = @truncate(u32, input.len);
+                    state = State.none;
                 },
             }
+            result.len = @truncate(u32, i);
 
             return result;
         }
@@ -213,7 +246,8 @@ pub const Version = struct {
         stopped_at: u32 = 0,
     };
 
-    pub fn parse(input: string, allocator: *std.mem.Allocator) ParseResult {
+    pub fn parse(sliced_string: SlicedString, allocator: *std.mem.Allocator) ParseResult {
+        var input = sliced_string.slice;
         var result = ParseResult{};
 
         var part_i: u8 = 0;
@@ -304,9 +338,8 @@ pub const Version = struct {
                     }) {
                         i += 1;
                     }
-                    const tag_result = Tag.parse(allocator, input[part_start_i..]);
+                    const tag_result = Tag.parse(allocator, sliced_string.sub(input[part_start_i..]));
                     result.version.tag = tag_result.tag;
-                    result.version.extra_tags = tag_result.extra_tags;
                     break;
                 },
                 'x', '*', 'X' => {
@@ -372,7 +405,7 @@ pub const Version = struct {
         }
 
         result.stopped_at = @intCast(u32, i);
-        result.version.raw = strings.StringOrTinyString.init(input[0..i]);
+        result.version.raw = sliced_string.sub(input[0..i]).external();
         return result;
     }
 
@@ -594,6 +627,7 @@ pub const Query = struct {
         head: List = List{},
         tail: ?*List = null,
         allocator: *std.mem.Allocator,
+        input: string = "",
 
         pub fn orVersion(self: *Group, version: Version) !void {
             if (self.tail == null and !self.head.head.range.hasLeft()) {
@@ -802,6 +836,7 @@ pub const Query = struct {
         var i: usize = 0;
         var list = Group{
             .allocator = allocator,
+            .input = input,
         };
 
         var token = Token{};
@@ -889,7 +924,7 @@ pub const Query = struct {
             }
 
             if (!skip_round) {
-                const parse_result = Version.parse(input[i..], allocator);
+                const parse_result = Version.parse(SlicedString.init(input, input[i..]), allocator);
                 token.wildcard = parse_result.wildcard;
 
                 i += parse_result.stopped_at;
@@ -921,7 +956,7 @@ pub const Query = struct {
                 i += @as(usize, @boolToInt(!hyphenate));
 
                 if (hyphenate) {
-                    var second_version = Version.parse(input[i..], allocator);
+                    var second_version = Version.parse(SlicedString.init(input, input[i..]), allocator);
 
                     const range: Range = brk: {
                         switch (second_version.wildcard) {
@@ -998,9 +1033,9 @@ pub const Query = struct {
 const expect = struct {
     pub var counter: usize = 0;
     pub fn isRangeMatch(input: string, version_str: string) bool {
-        var parsed = Version.parse(version_str, default_allocator);
+        var parsed = Version.parse(SlicedString.init(version_str, version_str), default_allocator);
         std.debug.assert(parsed.valid);
-        std.debug.assert(strings.eql(parsed.version.raw.slice(), version_str));
+        std.debug.assert(strings.eql(parsed.version.raw.slice(version_str), version_str));
 
         var list = Query.parse(default_allocator, input) catch |err| Output.panic("Test fail due to error {s}", .{@errorName(err)});
 
@@ -1045,7 +1080,7 @@ const expect = struct {
     pub fn version(input: string, v: [3]u32, src: std.builtin.SourceLocation) void {
         Output.initTest();
         defer counter += 1;
-        var result = Version.parse(input, default_allocator);
+        var result = Version.parse(SlicedString.init(input, input), default_allocator);
         var other = Version{ .major = v[0], .minor = v[1], .patch = v[2] };
 
         if (!other.eql(result.version)) {
@@ -1068,7 +1103,8 @@ const expect = struct {
     pub fn versionT(input: string, v: Version, src: std.builtin.SourceLocation) void {
         Output.initTest();
         defer counter += 1;
-        var result = Version.parse(input, default_allocator);
+
+        var result = Version.parse(SlicedString.init(input, input), default_allocator);
         if (!v.eql(result.version)) {
             Output.panic("<r><red>Fail<r> Expected version <b>\"{s}\"<r> to match <b>\"{s}\" but received <red>\"{}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
                 input,
@@ -1117,8 +1153,9 @@ test "Version parsing" {
             .minor = 0,
             .patch = 0,
         };
-        v.tag.pre = strings.StringOrTinyString.init("beta");
-        expect.versionT("1.0.0-beta", v, @src());
+        var input: string = "1.0.0-beta";
+        v.tag.pre = SlicedString.init(input, input["1.0.0-".len..]).external();
+        expect.versionT(input, v, @src());
     }
 
     {
@@ -1127,8 +1164,9 @@ test "Version parsing" {
             .minor = 0,
             .patch = 0,
         };
-        v.tag.build = strings.StringOrTinyString.init("build101");
-        expect.versionT("1.0.0+build101", v, @src());
+        var input: string = "1.0.0-build101";
+        v.tag.pre = SlicedString.init(input, input["1.0.0-".len..]).external();
+        expect.versionT(input, v, @src());
     }
 
     {
@@ -1137,9 +1175,10 @@ test "Version parsing" {
             .minor = 0,
             .patch = 0,
         };
-        v.tag.build = strings.StringOrTinyString.init("build101");
-        v.tag.pre = strings.StringOrTinyString.init("beta");
-        expect.versionT("1.0.0-beta+build101", v, @src());
+        var input: string = "1.0.0-beta+build101";
+        v.tag.build = SlicedString.init(input, input["1.0.0-beta+".len..]).external();
+        v.tag.pre = SlicedString.init(input, input["1.0.0-".len..][0..4]).external();
+        expect.versionT(input, v, @src());
     }
 
     var buf: [1024]u8 = undefined;

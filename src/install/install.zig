@@ -439,14 +439,19 @@ const Npm = struct {
     ///
     /// When the dependencies haven't changed between package versions,
     /// Consider Dependency.List to be immutable. It may share a pointer with other entries in this map.
-    const DependencyMap = std.ArrayHashMap(Semver.Version, Dependency.List, Semver.Version.HashContext, true);
+    const DependencyMap = extern struct {
+        names: []const 
+    };
 
     const ResolvedPackage = struct {
         name: string,
         name_hash: u32,
 
-        release_versions: DependencyMap,
-        pre_versions: DependencyMap,
+        releases: DependencyMap,
+        prereleases: DependencyMap,
+        dist_tags: DistTagMap,
+
+        const DistTagMap = std.StringArrayHashMap(Semver.Version);
 
         pub fn parse(
             allocator: *std.mem.Allocator,
@@ -458,6 +463,7 @@ const Npm = struct {
             const json = json_parser.ParseJSON(&source, log, allocator) catch |err| {
                 return null;
             };
+            
 
             if (json.asProperty("error")) |error_q| {
                 if (error_q.asString(allocator)) |err| {
@@ -472,6 +478,40 @@ const Npm = struct {
                 if (name != expected_name) {
                     Output.panic("<r>internal: <red>package name mismatch<r> expected \"{s}\" but received <b>\"{s}\"<r>", .{ expected_name, name });
                     return null;
+                }
+            }
+
+            get_versions: {
+                if (json.asProperty("versions")) |versions_q| {
+                    if (versions_q.expr.data != .e_object) break :get_versions;
+
+                    const versions = versions_q.expr.data.e_object.properties;
+                    if (versions.len == 0) break :get_versions;
+
+                    var release_versions = DependencyMap{};
+                    var pre_versions = DependencyMap{};
+
+                    var release_versions_len: usize = 0;
+                    var pre_versions_len: usize = 0;
+
+                    for (versions) |prop| {
+                        const version_str = prop.key.?.asString(allocator) orelse continue;
+                        if (std.mem.indexOfScalar(u8, version_str, '-') != null) {
+                            pre_versions_len += 1;
+                        } else {
+                            release_versions_len += 1;
+                        }
+                    }
+
+                    try release_versions.ensureTotalCapacity(release_versions_len);
+                    try pre_versions.ensureTotalCapacity(pre_versions_len);
+
+                    for (versions) |prop| {
+                        const version_str = prop.key.?.asString(allocator) orelse continue;
+                        const value = prop.value.?.asString(allocator) orelse continue;
+
+
+                    }
                 }
             }
         }

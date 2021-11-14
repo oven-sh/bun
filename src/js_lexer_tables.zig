@@ -5,8 +5,7 @@ const expectString = std.testing.expectEqualStrings;
 const expect = std.testing.expect;
 const logger = @import("logger.zig");
 const unicode = std.unicode;
-const alloc = @import("alloc.zig");
-
+const default_allocator = @import("./global.zig").default_allocator;
 pub const T = enum(u8) {
     t_end_of_file,
     t_syntax_error,

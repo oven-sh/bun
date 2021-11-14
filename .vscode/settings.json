@@ -10,9 +10,10 @@
   "[zig]": {
     "editor.defaultFormatter": "tiehuis.zig"
   },
-  "lldb.verboseLogging": true,
   "zig.beforeDebugCmd": "make build-unit ${file} ${filter} ${bin}",
   "zig.testCmd": "make test ${file} ${filter} ${bin}",
+
+  "lldb.verboseLogging": false,
   "files.exclude": {
     "**/.git": true,
     "**/.svn": true,

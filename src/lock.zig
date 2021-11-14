@@ -46,9 +46,7 @@ pub const Mutex = struct {
         // Give up spinning if the Mutex is contended.
         // This helps acquire() latency under micro-contention.
         //
-        // Only spin on x86 as other platforms are assumed to
-        // prioritize power efficiency over strict performance.
-        var spin: u8 = comptime if (is_x86) 100 else 0;
+        var spin: u8 = 100;
         while (spin > 0) : (spin -= 1) {
             std.atomic.spinLoopHint();
 

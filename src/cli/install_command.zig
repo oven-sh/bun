@@ -34,9 +34,9 @@ const NpmArgs = struct {
 const yarn_commands: []u64 = @import("./list-of-yarn-commands.zig").all_yarn_commands;
 
 const ShellCompletions = @import("./shell_completions.zig");
-
+const PackageManager = @import("../install/install.zig").PackageManager;
 pub const InstallCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
-                
+        try PackageManager.install(ctx);
     }
 };

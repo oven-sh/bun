@@ -12,6 +12,7 @@ const HTTPClient = @This();
 const SOCKET_FLAGS = os.SOCK_CLOEXEC;
 const S2n = @import("./s2n.zig");
 const Zlib = @import("./zlib.zig");
+const StringBuilder = @import("./string_builder.zig");
 
 fn writeRequest(
     comptime Writer: type,
@@ -72,7 +73,7 @@ const Socket = std.x.os.Socket;
 const os = std.os;
 
 // lowercase hash header names so that we can be sure
-fn hashHeaderName(name: string) u64 {
+pub fn hashHeaderName(name: string) u64 {
     var hasher = std.hash.Wyhash.init(0);
     var remain: string = name;
     var buf: [32]u8 = undefined;
@@ -84,6 +85,7 @@ fn hashHeaderName(name: string) u64 {
         hasher.update(strings.copyLowercase(std.mem.span(remain[0..end]), buf_slice));
         remain = remain[end..];
     }
+
     return hasher.final();
 }
 
@@ -127,6 +129,43 @@ const location_header_hash = hashHeaderName("Location");
 pub fn headerStr(this: *const HTTPClient, ptr: Api.StringPointer) string {
     return this.header_buf[ptr.offset..][0..ptr.length];
 }
+
+pub const HeaderBuilder = struct {
+    content: StringBuilder = StringBuilder{},
+    header_count: u64 = 0,
+    entries: Headers.Entries = Headers.Entries{},
+
+    pub fn count(this: *HeaderBuilder, name: string, value: string) void {
+        this.header_count += 1;
+        this.content.count(name);
+        this.content.count(value);
+    }
+
+    pub fn allocate(this: *HeaderBuilder, allocator: *std.mem.Allocator) !void {
+        try this.content.allocate(allocator);
+        try this.entries.ensureTotalCapacity(allocator, this.header_count);
+    }
+    pub fn append(this: *HeaderBuilder, name: string, value: string) void {
+        const name_ptr = Api.StringPointer{
+            .offset = @truncate(u32, this.content.len),
+            .length = @truncate(u32, name.len),
+        };
+
+        _ = this.content.append(name);
+
+        const value_ptr = Api.StringPointer{
+            .offset = @truncate(u32, this.content.len),
+            .length = @truncate(u32, value.len),
+        };
+        _ = this.content.append(value);
+        this.entries.appendAssumeCapacity(Headers.Kv{ .name = name_ptr, .value = value_ptr });
+    }
+
+    pub fn apply(this: *HeaderBuilder, client: *HTTPClient) void {
+        client.header_entries = this.entries;
+        client.header_buf = this.content.ptr.?[0..this.content.len];
+    }
+};
 
 threadlocal var server_name_buf: [1024]u8 = undefined;
 

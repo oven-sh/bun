@@ -1058,6 +1058,11 @@ pub const E = struct {
     pub const Number = struct {
         value: f64,
 
+        pub inline fn toU64(self: Number) u64 {
+            @setRuntimeSafety(false);
+            return @floatToInt(u64, @maximum(@floor(self.value), 0));
+        }
+
         pub fn jsonStringify(self: *const Number, opts: anytype, o: anytype) !void {
             return try std.json.stringify(self.value, opts, o);
         }

@@ -36,6 +36,7 @@ const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
 const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
 const RunCommand = @import("./cli/run_command.zig").RunCommand;
 const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
+const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
 const InstallCompletionsCommand = @import("./cli/install_completions_command.zig").InstallCompletionsCommand;
 const ShellCompletions = @import("./cli/shell_completions.zig");
 var start_time: i128 = undefined;
@@ -463,6 +464,7 @@ const HelpCommand = struct {
                 \\> <r> <b><green>dev     <r><d>  ./a.ts ./b.jsx<r>        Start a Bun Dev Server
                 \\> <r> <b><magenta>bun     <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
                 \\> <r> <b><green>run     <r><d>  test        <r>          Run a package.json script or executable<r>
+                \\> <r> <b><green>install<r>                            Install dependencies for a package.json<r>
                 \\> <r> <b><cyan>create    <r><d>next ./app<r>            Start a new project from a template <d>(shorthand: c)<r>
                 \\> <r> <b><blue>upgrade <r>                        Get the latest version of Bun
                 \\> <r> <b><d>completions<r>                     Install shell completions for tab-completion
@@ -485,6 +487,7 @@ const HelpCommand = struct {
                 \\> <r> <green>run    <r><d>  ./a.ts        <r>        Run a JavaScript-like file with Bun.js
                 \\> <r> <b><blue>discord<r>                           Open Bun's Discord server
                 \\> <r> <b><blue>upgrade <r>                        Get the latest version of Bun
+                \\> <r> <b><green>install<r>                            Install dependencies for a package.json<r>
                 \\> <r> <b><d>help      <r>                        Print this help menu
                 \\
             ;
@@ -589,6 +592,7 @@ pub const Command = struct {
                 RootCommandMatcher.case("upgrade") => .UpgradeCommand,
                 RootCommandMatcher.case("completions") => .InstallCompletionsCommand,
                 RootCommandMatcher.case("getcompletes") => .GetCompletionsCommand,
+                RootCommandMatcher.case("i"), RootCommandMatcher.case("install") => .InstallCommand,
                 RootCommandMatcher.case("c"), RootCommandMatcher.case("create") => .CreateCommand,
 
                 RootCommandMatcher.case("b"), RootCommandMatcher.case("build") => .BuildCommand,
@@ -617,6 +621,7 @@ pub const Command = struct {
         // "build",
         "run",
         "dev",
+        "install",
         "create",
         "bun",
         "upgrade",
@@ -656,6 +661,10 @@ pub const Command = struct {
             },
             .InstallCompletionsCommand => {
                 try InstallCompletionsCommand.exec(allocator);
+                return;
+            },
+            .InstallCommand => {
+                try InstallCommand.exec(allocator);
                 return;
             },
             .GetCompletionsCommand => {
@@ -770,17 +779,18 @@ pub const Command = struct {
     }
 
     pub const Tag = enum {
-        InitCommand,
+        AutoCommand,
+        BuildCommand,
         BunCommand,
+        CreateCommand,
         DevCommand,
         DiscordCommand,
-        BuildCommand,
-        RunCommand,
-        AutoCommand,
-        HelpCommand,
-        CreateCommand,
-        UpgradeCommand,
-        InstallCompletionsCommand,
         GetCompletionsCommand,
+        HelpCommand,
+        InitCommand,
+        InstallCommand,
+        InstallCompletionsCommand,
+        RunCommand,
+        UpgradeCommand,
     };
 };

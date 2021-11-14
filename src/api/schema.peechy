@@ -538,16 +538,15 @@ struct WebsocketMessageManifestFailure {
 }
 
 message SemverQualifier {
-  string pre = 1;
-  string build = 2;
+  StringPointer pre = 1;
+  StringPointer build = 2;
 }
 
 struct Semver {
   uint32 major;
   uint32 minor;
   uint32 patch;
-  StringPointer raw;
-  SemverQualifier[] qualifiers;
+  qualifier SemverQualifier;
 }
 
 enum NPMPackageDataKind {

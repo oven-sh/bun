@@ -2,14 +2,14 @@ usingnamespace @import("../global.zig");
 const std = @import("std");
 
 pub const ExternalString = extern struct {
-    off: u64 = 0,
-    len: u64 = 0,
+    off: u32 = 0,
+    len: u16 = 0,
     hash: u64 = 0,
 
     pub fn from(in: string) ExternalString {
         return ExternalString{
             .off = 0,
-            .len = in.len,
+            .len = @truncate(u16, in.len),
             .hash = std.hash.Wyhash.hash(0, in),
         };
     }
@@ -18,8 +18,36 @@ pub const ExternalString = extern struct {
         std.debug.assert(@ptrToInt(buf.ptr) <= @ptrToInt(in.ptr) and ((@ptrToInt(in.ptr) + in.len) <= (@ptrToInt(buf.ptr) + buf.len)));
 
         return ExternalString{
-            .off = @ptrToInt(in.ptr) - @ptrToInt(buf.ptr),
-            .len = in.len,
+            .off = @truncate(u32, @ptrToInt(in.ptr) - @ptrToInt(buf.ptr)),
+            .len = @truncate(u16, in.len),
+            .hash = hash,
+        };
+    }
+
+    pub fn slice(this: ExternalString, buf: string) string {
+        return buf[this.off..][0..this.len];
+    }
+};
+
+pub const BigExternalString = extern struct {
+    off: u32 = 0,
+    len: u32 = 0,
+    hash: u64 = 0,
+
+    pub fn from(in: string) ExternalString {
+        return ExternalString{
+            .off = 0,
+            .len = @truncate(u32, in.len),
+            .hash = std.hash.Wyhash.hash(0, in),
+        };
+    }
+
+    pub inline fn init(buf: string, in: string, hash: u64) ExternalString {
+        std.debug.assert(@ptrToInt(buf.ptr) <= @ptrToInt(in.ptr) and ((@ptrToInt(in.ptr) + in.len) <= (@ptrToInt(buf.ptr) + buf.len)));
+
+        return ExternalString{
+            .off = @truncate(u32, @ptrToInt(in.ptr) - @ptrToInt(buf.ptr)),
+            .len = @truncate(u32, in.len),
             .hash = hash,
         };
     }
@@ -40,7 +68,7 @@ pub const SlicedString = struct {
     pub inline fn external(this: SlicedString) ExternalString {
         std.debug.assert(@ptrToInt(this.buf.ptr) <= @ptrToInt(this.slice.ptr) and ((@ptrToInt(this.slice.ptr) + this.slice.len) <= (@ptrToInt(this.buf.ptr) + this.buf.len)));
 
-        return ExternalString{ .off = @ptrToInt(this.slice.ptr) - @ptrToInt(this.buf.ptr), .len = this.slice.len, .hash = std.hash.Wyhash.hash(0, this.slice) };
+        return ExternalString{ .off = @truncate(u32, @ptrToInt(this.slice.ptr) - @ptrToInt(this.buf.ptr)), .len = @truncate(u16, this.slice.len), .hash = std.hash.Wyhash.hash(0, this.slice) };
     }
 
     pub inline fn sub(this: SlicedString, input: string) SlicedString {
@@ -49,12 +77,13 @@ pub const SlicedString = struct {
     }
 };
 
+const RawType = void;
 pub const Version = extern struct {
     major: u32 = 0,
     minor: u32 = 0,
     patch: u32 = 0,
     tag: Tag = Tag{},
-    raw: ExternalString = ExternalString{},
+    // raw: RawType = RawType{},
 
     const HashableVersion = extern struct { major: u32, minor: u32, patch: u32, pre: u64, build: u64 };
 
@@ -230,15 +259,17 @@ pub const Version = extern struct {
                 .none => {},
                 .pre => {
                     result.tag.pre = sliced_string.sub(input[start..i]).external();
+                    // a pre can contain multiple consecutive tags
                     if (comptime Environment.isDebug) {
-                        std.debug.assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
+                        std.debug.assert(!strings.startsWithChar(result.tag.pre.slice(sliced_string.buf), '-'));
                     }
                     state = State.none;
                 },
                 .build => {
+                    // a build can contain multiple consecutive tags
                     result.tag.build = sliced_string.sub(input[start..i]).external();
                     if (comptime Environment.isDebug) {
-                        std.debug.assert(!strings.containsChar(result.tag.build.slice(sliced_string.buf), '-'));
+                        std.debug.assert(!strings.startsWithChar(result.tag.build.slice(sliced_string.buf), '+'));
                     }
                     state = State.none;
                 },
@@ -415,7 +446,11 @@ pub const Version = extern struct {
         }
 
         result.stopped_at = @intCast(u32, i);
-        result.version.raw = sliced_string.sub(input[0..i]).external();
+
+        if (comptime RawType != void) {
+            result.version.raw = sliced_string.sub(input[0..i]).external();
+        }
+
         return result;
     }
 
@@ -487,15 +522,21 @@ pub const Range = struct {
                 return Range{
                     .left = Comparator{
                         .op = Op.gte,
-                        .version = Version{ .raw = version.raw },
+                        .version = Version{
+                            // .raw = version.raw
+                        },
                     },
                 };
             },
             .minor => {
-                var lhs = Version{ .raw = version.raw };
+                var lhs = Version{
+                    // .raw = version.raw
+                };
                 lhs.major = version.major + 1;
 
-                var rhs = Version{ .raw = version.raw };
+                var rhs = Version{
+                    // .raw = version.raw
+                };
                 rhs.major = version.major;
 
                 return Range{
@@ -518,8 +559,8 @@ pub const Range = struct {
                 rhs.major = version.major;
                 rhs.minor = version.minor;
 
-                rhs.raw = version.raw;
-                lhs.raw = version.raw;
+                // rhs.raw = version.raw;
+                // lhs.raw = version.raw;
 
                 return Range{
                     .left = Comparator{
@@ -709,7 +750,7 @@ pub const Query = struct {
                         .right = .{
                             .op = .lt,
                             .version = Version{
-                                .raw = version.raw,
+                                // .raw = version.raw,
                                 .major = major,
                                 .minor = minor,
                                 .patch = patch,
@@ -1047,7 +1088,7 @@ const expect = struct {
     pub fn isRangeMatch(input: string, version_str: string) bool {
         var parsed = Version.parse(SlicedString.init(version_str, version_str), default_allocator);
         std.debug.assert(parsed.valid);
-        std.debug.assert(strings.eql(parsed.version.raw.slice(version_str), version_str));
+        // std.debug.assert(strings.eql(parsed.version.raw.slice(version_str), version_str));
 
         var list = Query.parse(default_allocator, input) catch |err| Output.panic("Test fail due to error {s}", .{@errorName(err)});
 

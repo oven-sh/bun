@@ -998,10 +998,11 @@ pub const FileSystem = struct {
         // doNotCacheEntries bool
     };
 
-    pub const Implementation = switch (build_target) {
-        .wasi, .native => RealFS,
-        .wasm => WasmFS,
-    };
+    pub const Implementation = RealFS;
+    // pub const Implementation = switch (build_target) {
+    // .wasi, .native => RealFS,
+    //     .wasm => WasmFS,
+    // };
 };
 
 pub const Directory = struct { path: Path, contents: []string };
@@ -1260,5 +1261,3 @@ test "PathName.init" {
     try std.testing.expectEqualStrings(res.base, "file");
     try std.testing.expectEqualStrings(res.ext, ".ext");
 }
-
-test {}

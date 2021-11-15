@@ -1473,11 +1473,7 @@ pub fn NewPrinter(
 
                     p.print("`");
                     if (e.head.isPresent()) {
-                        if (e.tag != null) {
-                            p.print(e.head.utf8);
-                        } else {
-                            p.printStringContent(&e.head, '`');
-                        }
+                        p.printStringContent(&e.head, '`');
                     }
 
                     for (e.parts) |part| {
@@ -1485,11 +1481,7 @@ pub fn NewPrinter(
                         p.printExpr(part.value, .lowest, ExprFlag.None());
                         p.print("}");
                         if (part.tail.isPresent()) {
-                            if (e.tag != null) {
-                                p.print(part.tail.utf8);
-                            } else {
-                                p.printStringContent(&part.tail, '`');
-                            }
+                            p.printStringContent(&part.tail, '`');
                         }
                     }
                     p.print("`");

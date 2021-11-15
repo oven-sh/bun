@@ -22,5 +22,6 @@
   "/latin1-chars-in-regexp.js",
   "/jsx-spacing.jsx",
   "/jsx-entities.jsx",
-  "/optional-chain-with-function.js"
+  "/optional-chain-with-function.js",
+  "/template-literal.js"
 ]

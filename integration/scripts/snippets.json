@@ -23,5 +23,6 @@
   "/jsx-spacing.jsx",
   "/jsx-entities.jsx",
   "/optional-chain-with-function.js",
-  "/template-literal.js"
+  "/template-literal.js",
+  "/number-literal-bug.js"
 ]

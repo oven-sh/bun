@@ -1753,7 +1753,6 @@ pub const PackageManager = struct {
     resolved_package_index: PackageIndex = PackageIndex{},
 
     task_queue: TaskDependencyQueue = TaskDependencyQueue{},
-    progress: *std.Progress,
 
     const PackageIndex = std.AutoHashMapUnmanaged(u64, *Package);
     const PackageManifestMap = std.HashMapUnmanaged(u32, Npm.PackageManifest, IdentityContext, 80);
@@ -2175,6 +2174,8 @@ pub const PackageManager = struct {
             Output.flush();
         }
 
+        // var progress = std.Progress{};
+        // var node = progress.start(name: []const u8, estimated_total_items: usize)
         manager = PackageManager{
             .enable_cache = enable_cache,
             .cache_directory_path = cache_directory_path,
@@ -2186,6 +2187,7 @@ pub const PackageManager = struct {
             .root_package = root,
             .thread_pool = ThreadPool.init(.{}),
             .resolve_tasks = TaskChannel{},
+            // .progress
         };
         package_list.allocator = ctx.allocator;
 
@@ -2197,11 +2199,18 @@ pub const PackageManager = struct {
                 .is_main = true,
             },
         );
-
+        var total_count = count;
+        var extracted_count: usize = 0;
         while (count > 0) : (count = @maximum(count, 1) - 1) {
-            while (manager.resolve_tasks.tryReadItem() catch null) |task| {
+            while (manager.resolve_tasks.tryReadItem() catch null) |task_| {
+                var task: *Task = task_;
                 switch (task.tag) {
                     .package_manifest => {
+                        if (task.status == .fail) {
+                            Output.prettyErrorln("Failed to download package manifest for {s}", .{task.request.package_manifest});
+                            Output.flush();
+                            continue;
+                        }
                         const manifest = task.data.package_manifest;
                         var entry = try manager.manifests.getOrPutValue(ctx.allocator, @truncate(u32, manifest.name.hash), manifest);
                         const dependency_list = manager.task_queue.get(task.id).?;
@@ -2210,11 +2219,25 @@ pub const PackageManager = struct {
                             var dependency: *Dependency = TaskCallbackContext.get(item, Dependency).?;
                             if (try manager.enqueueDependency(dependency, dependency.required)) |new_task| {
                                 count += 1;
+                                total_count += 1;
                             }
                         }
                     },
+                    .tarball_download => {
+                        if (task.status == .fail) {
+                            Output.prettyErrorln("Failed to download package manifest for {s}", .{task.request.package_manifest});
+                            Output.flush();
+                            continue;
+                        }
+                        extracted_count += 1;
+                        task.request.tarball_download.package.preinstall_state = Package.PreinstallState.done;
+                    },
                 }
             }
+        }
+
+        if (verbose_install) {
+            Output.prettyErrorln("Preinstall complete.\n       Extracted: {d}         Tasks: {d}", .{ extracted_count, total_count });
         }
 
         try manager.installDependencies();

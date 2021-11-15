@@ -7,15 +7,23 @@ globalThis.Buffer = Buffer;
 import * as React from "react";
 
 class URL {
-  constructor(base, source) {
+  pathname: string;
+  href: string;
+
+  constructor(base: string, source: string) {
     this.pathname = source;
     this.href = base + source;
   }
 }
+
 var onlyChildPolyfill = React.Children.only;
 
 React.Children.only = function (children) {
-  if (children && typeof children === "object" && children.length == 1) {
+  if (
+    children &&
+    typeof children === "object" &&
+    (children as any).length == 1
+  ) {
     return onlyChildPolyfill(children[0]);
   }
 

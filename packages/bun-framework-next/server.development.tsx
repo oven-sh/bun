@@ -1,6 +1,7 @@
 import nextPackage from "next/package.json";
 import "./server-polyfills";
 import { render } from "./renderDocument";
+import { ResolveError } from "../../src/runtime/errors";
 
 const { version } = nextPackage;
 if (

@@ -1,10 +1,20 @@
+/// <reference types="react-dom/experimental" />
+
 globalThis.global = globalThis;
 globalThis.Bun_disableCSSImports = true;
 
 import * as React from "react";
+
 var onlyChildPolyfill = React.Children.only;
-React.Children.only = function (children) {
-  if (children && typeof children === "object" && children.length == 1) {
+
+React.Children.only = function only(
+  children: React.ReactNode | React.ReactNode[]
+) {
+  if (
+    children &&
+    typeof children === "object" &&
+    (children as any).length == 1
+  ) {
     return onlyChildPolyfill(children[0]);
   }
 
@@ -23,9 +33,7 @@ import Router, {
   PrivateRouteInfo,
 } from "next/dist/shared/lib/router/router";
 
-const App = NextApp;
-
-import * as NextRouteLoader from "next/dist/client/route-loader";
+import NextRouteLoader from "next/dist/client/route-loader";
 import { isDynamicRoute } from "next/dist/shared/lib/router/utils/is-dynamic";
 import {
   urlQueryToSearchParams,
@@ -41,7 +49,10 @@ import {
   createRouter,
   makePublicRouterInstance,
 } from "next/dist/client/router";
+
 export const emitter: MittEmitter<string> = mitt();
+
+const App = NextApp;
 
 declare global {
   interface Window {
@@ -102,7 +113,8 @@ type RenderRouteInfo = PrivateRouteInfo & {
 
 const nextDataTag = document.getElementById("__NEXT_DATA__");
 
-const data: typeof window["__NEXT_DATA__"] = nextDataTag
+// pages is added at runtime and doesn't exist in Next types
+const data: NEXT_DATA & { pages: Record<string, string[]> } = nextDataTag
   ? JSON.parse(document.getElementById("__NEXT_DATA__")!.textContent!)
   : nextDataFromBunData();
 
@@ -116,12 +128,14 @@ const {
   buildId,
   assetPrefix,
   runtimeConfig,
+  // Todo, revist this constant when supporting dynamic()
   dynamicIds,
   isFallback,
   locale,
   locales,
   domainLocales,
   isPreview,
+  pages,
 } = data;
 
 const prefix: string = assetPrefix || "";
@@ -138,24 +152,19 @@ if (hasBasePath(asPath)) {
   asPath = delBasePath(asPath);
 }
 
-export const pageLoader: PageLoader = new PageLoader(
-  buildId,
-  prefix,
-  data.pages
-);
+export const pageLoader: PageLoader = new PageLoader(buildId, prefix, pages);
 
 const headManager: {
   mountedInstances: Set<unknown>;
   updateHead: (head: JSX.Element[]) => void;
 } = initHeadManager();
-const appElement: HTMLElement | null = document.getElementById("__next");
 
 export let router: Router;
-let CachedApp: AppComponent = App,
-  onPerfEntry: (metric: any) => void;
 
-export default function boot(EntryPointNamespace, loader) {
-  _boot(EntryPointNamespace).then(() => {}, false);
+let CachedApp: AppComponent = null;
+
+export default function boot(EntryPointNamespace) {
+  _boot(EntryPointNamespace, false);
 }
 
 class Container extends React.Component<{
@@ -274,7 +283,7 @@ let reactRoot: any = null;
 const USE_REACT_18 = "hydrateRoot" in ReactDOM;
 
 export async function _boot(EntryPointNamespace, isError) {
-  NextRouteLoader.default.getClientBuildManifest = () => Promise.resolve({});
+  NextRouteLoader.getClientBuildManifest = () => Promise.resolve({});
 
   const PageComponent = EntryPointNamespace.default;
 
@@ -293,6 +302,7 @@ export async function _boot(EntryPointNamespace, isError) {
 
     if (appSrc) {
       const AppModule = await import(appSrc);
+
       console.assert(
         AppModule.default,
         appSrc + " must have a default export'd React component"
@@ -332,7 +342,9 @@ export async function _boot(EntryPointNamespace, isError) {
   });
 
   globalThis.next.router = router;
+
   const domEl = document.querySelector("#__next");
+
   const reactEl = (
     <TopLevelRender
       App={CachedApp}
@@ -361,9 +373,9 @@ export async function _boot(EntryPointNamespace, isError) {
   }
 }
 
-function TopLevelRender({ App, Component, props, scroll }) {
+function TopLevelRender({ App, Component, props }) {
   return (
-    <AppContainer scroll={scroll}>
+    <AppContainer>
       <App Component={Component} {...props}></App>
     </AppContainer>
   );
@@ -381,18 +393,15 @@ export function render(props) {
 }
 
 export function renderError(e) {
-  const reactEl = (
-    <AppContainer>
-      <App Component={<div>UH OH!!!!</div>} pageProps={data.props}></App>
-    </AppContainer>
-  );
+  // TODO verify this works
+  const reactEl = <AppContainer>{null}</AppContainer>;
 
   if (USE_REACT_18) {
     if (!reactRoot) {
       const domEl = document.querySelector("#__next");
 
       // Unlike with createRoot, you don't need a separate root.render() call here
-      reactRoot = ReactDOM.createRoot(domEl, reactEl);
+      reactRoot = ReactDOM.hydrateRoot(domEl, reactEl);
     } else {
       reactRoot.render(reactEl);
     }

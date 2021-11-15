@@ -43,6 +43,9 @@ importers:
 
   packages/bun-framework-next:
     specifiers:
+      '@types/react': ^17.0.34
+      '@types/react-dom': ^17.0.11
+      bun-framework-next: ^12.0.4
       next: ^12.0.0
       react-is: ^17.0.2
       react-refresh: ^0.10.0
@@ -50,6 +53,8 @@ importers:
     dependencies:
       react-is: 17.0.2
     devDependencies:
+      '@types/react': 17.0.34
+      '@types/react-dom': 17.0.11
       next: 12.0.3_react-dom@17.0.2+react@17.0.2
       react-refresh: 0.10.0
       typescript: 4.4.4
@@ -279,10 +284,32 @@ packages:
   /@types/node/16.11.4:
     resolution: {integrity: sha512-TMgXmy0v2xWyuCSCJM6NCna2snndD8yvQF67J29ipdzMcsPa9u+o0tjF5+EQNdhcuZplYuouYqpc4zcd5I6amQ==}
 
+  /@types/prop-types/15.7.4:
+    resolution: {integrity: sha512-rZ5drC/jWjrArrS8BR6SIr4cWpW09RNTYt9AMZo3Jwwif+iacXAqgVjm0B0Bv/S1jhDXKHqRVNCbACkJ89RAnQ==}
+    dev: true
+
   /@types/puppeteer/5.4.4:
     resolution: {integrity: sha512-3Nau+qi69CN55VwZb0ATtdUAlYlqOOQ3OfQfq0Hqgc4JMFXiQT/XInlwQ9g6LbicDslE6loIFsXFklGh5XmI6Q==}
     dependencies:
       '@types/node': 16.11.4
+    dev: true
+
+  /@types/react-dom/17.0.11:
+    resolution: {integrity: sha512-f96K3k+24RaLGVu/Y2Ng3e1EbZ8/cVJvypZWd7cy0ofCBaf2lcM46xNhycMZ2xGwbBjRql7hOlZ+e2WlJ5MH3Q==}
+    dependencies:
+      '@types/react': 17.0.34
+    dev: true
+
+  /@types/react/17.0.34:
+    resolution: {integrity: sha512-46FEGrMjc2+8XhHXILr+3+/sTe3OfzSPU9YGKILLrUYbQ1CLQC9Daqo1KzENGXAWwrFwiY0l4ZbF20gRvgpWTg==}
+    dependencies:
+      '@types/prop-types': 15.7.4
+      '@types/scheduler': 0.16.2
+      csstype: 3.0.10
+    dev: true
+
+  /@types/scheduler/0.16.2:
+    resolution: {integrity: sha512-hppQEBDmlwhFAXKJX2KnWLYu5yMfi91yazPb2l+lbJiwW+wdo1gNeRA+3RgNSO39WYX2euey41KEwnqesU2Jew==}
     dev: true
 
   /@types/yauzl/2.9.2:
@@ -747,6 +774,10 @@ packages:
     dependencies:
       cssnano-preset-simple: 3.0.0_postcss@8.2.15
       postcss: 8.2.15
+    dev: true
+
+  /csstype/3.0.10:
+    resolution: {integrity: sha512-2u44ZG2OcNUO9HDp/Jl8C07x6pU/eTR3ncV91SiK3dhG9TWvRVsCoJw14Ckx5DgWkzGA3waZWO3d7pgqpUI/XA==}
     dev: true
 
   /data-uri-to-buffer/3.0.1:

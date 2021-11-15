@@ -1,5 +1,5 @@
 import { insertStyleSheet } from "./page-loader";
-import type { FallbackMessageContainer } from "../../../src/api/schema";
+import type { FallbackMessageContainer } from "../../src/api/schema";
 
 var once = false;
 function insertNextHeadCount() {
@@ -65,6 +65,7 @@ function renderFallback({ router }: FallbackMessageContainer) {
 }
 
 export default function render(props: FallbackMessageContainer) {
+  // @ts-expect-error bun:error.js is real
   return import("/bun:error.js").then(({ renderFallbackError }) => {
     return renderFallback(props).then(
       () => {

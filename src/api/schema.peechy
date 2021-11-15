@@ -546,7 +546,7 @@ struct Semver {
   uint32 major;
   uint32 minor;
   uint32 patch;
-  qualifier SemverQualifier;
+  SemverQualifier qualifier;
 }
 
 enum NPMPackageDataKind {

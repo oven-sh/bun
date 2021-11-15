@@ -317,6 +317,18 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "Install",
+      "program": "bun-debug",
+      "args": ["install"],
+      "cwd": "/tmp/wow-such-npm",
+      "env": {
+        "GOMAXPROCS": "1"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "Integration Test Dev (no hmr)",
       "program": "bun-debug",
       "args": ["--disable-hmr"],

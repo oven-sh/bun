@@ -257,8 +257,8 @@ pub inline fn endsWith(self: string, str: string) bool {
     return str.len == 0 or @call(.{ .modifier = .always_inline }, std.mem.endsWith, .{ u8, self, str });
 }
 
-pub inline fn endsWithComptime(self: string, comptime str: antype) bool {
-    return self.len >= str.len and strings.eqlComptimeIgnoreLen(self[self.len - str.len .. self.len], comptime str);
+pub inline fn endsWithComptime(self: string, comptime str: anytype) bool {
+    return self.len >= str.len and eqlComptimeIgnoreLen(self[self.len - str.len .. self.len], comptime str);
 }
 
 pub inline fn startsWithChar(self: string, char: u8) bool {

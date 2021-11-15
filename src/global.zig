@@ -58,6 +58,7 @@ pub const Output = struct {
         }
 
         pub fn configureThread() void {
+            if (source_set) return;
             std.debug.assert(stdout_stream_set);
             source = Source.init(stdout_stream, stderr_stream);
         }

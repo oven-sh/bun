@@ -9,11 +9,17 @@ pub inline fn s2nassert(value: c_int) void {
     std.debug.assert(value == 0);
 }
 
+var booted_any: bool = false;
 pub fn boot(allcoator: *std.mem.Allocator) void {
+    if (!booted_any) {
+        s2nassert(s2n_disable_atexit());
+        s2nassert(s2n_init());
+        Allocator.allocator = allcoator;
+        CacheStore.instance = CacheStore{ .allocator = allcoator, .map = @TypeOf(CacheStore.instance.map).init(allcoator) };
+    }
+    booted_any = true;
     if (booted) return;
     booted = true;
-    Allocator.allocator = allcoator;
-    CacheStore.instance = CacheStore{ .allocator = allcoator, .map = @TypeOf(CacheStore.instance.map).init(allcoator) };
 
     // Important for any website using Cloudflare.
     // Do to our modifications in the library, this must be called _first_
@@ -43,8 +49,6 @@ pub fn boot(allcoator: *std.mem.Allocator) void {
     // Also, the implementation
     // s2nassert(s2n_mem_set_callbacks(Allocator.initCallback, Allocator.deinitCallback, Allocator.mallocCallback, Allocator.freeCallback));
 
-    s2nassert(s2n_disable_atexit());
-    s2nassert(s2n_init());
     global_s2n_config = s2n_fetch_default_config();
     // s2nassert(s2n_config_set_verify_host_callback(global_s2n_config, verify_host_callback, null));
     // s2nassert(s2n_config_set_check_stapled_ocsp_response(global_s2n_config, 0));
@@ -546,8 +550,8 @@ pub const s2n_offered_psk_list = struct_s2n_offered_psk_list;
 pub const s2n_async_pkey_op = struct_s2n_async_pkey_op;
 pub const s2n_offered_early_data = struct_s2n_offered_early_data;
 
-var booted = false;
-pub var global_s2n_config: *s2n_config = undefined;
+threadlocal var booted = false;
+pub threadlocal var global_s2n_config: *s2n_config = undefined;
 const unexpectedErrno = std.os.unexpectedErrno;
 const S2NError = error{ Closed, WouldBlock, Alert, Protocol, Internal, Usage };
 pub inline fn s2nErrorNo(rc: c_int) S2NError!std.os.system.E {

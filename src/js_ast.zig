@@ -1060,7 +1060,7 @@ pub const E = struct {
 
         pub inline fn toU64(self: Number) u64 {
             @setRuntimeSafety(false);
-            return @floatToInt(u64, @maximum(@floor(self.value), 0));
+            return @floatToInt(u64, @maximum(@trunc(self.value), 0));
         }
 
         pub fn jsonStringify(self: *const Number, opts: anytype, o: anytype) !void {

@@ -540,7 +540,7 @@ pub const Archive = struct {
         var archive = stream.archive;
         var count: u32 = 0;
 
-        const dir: std.fs.Dir = brk: {
+        var dir: std.fs.Dir = brk: {
             const cwd = std.fs.cwd();
             cwd.makePath(
                 root,

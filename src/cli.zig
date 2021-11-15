@@ -664,7 +664,9 @@ pub const Command = struct {
                 return;
             },
             .InstallCommand => {
-                try InstallCommand.exec(allocator);
+                const ctx = try Command.Context.create(allocator, log, .BuildCommand);
+
+                try InstallCommand.exec(ctx);
                 return;
             },
             .GetCompletionsCommand => {

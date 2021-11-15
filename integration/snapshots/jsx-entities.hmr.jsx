@@ -918,7 +918,7 @@ var hmr = new HMR(817082122, "jsx-entities.jsx"), exports = hmr.exports;
       children: "."
     }, undefined, false, undefined, this))]: 46,
     [ReactDOM.renderToString(jsx(JSXFrag, {
-      children: "\x2F"
+      children: "/"
     }, undefined, false, undefined, this))]: 47,
     [ReactDOM.renderToString(jsx(JSXFrag, {
       children: "0"

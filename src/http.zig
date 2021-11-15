@@ -84,6 +84,9 @@ pub const RequestContext = struct {
     full_url: [:0]const u8 = "",
     res_headers_count: usize = 0,
 
+    /// --disable-bun.js propagates here
+    pub var fallback_only = false;
+
     pub fn getFullURL(this: *RequestContext) [:0]const u8 {
         if (this.full_url.len == 0) {
             if (this.bundler.options.origin.isAbsolute()) {
@@ -213,7 +216,13 @@ pub const RequestContext = struct {
         };
 
         defer this.done();
-        try this.writeStatus(500);
+
+        if (RequestContext.fallback_only) {
+            try this.writeStatus(200);
+        } else {
+            try this.writeStatus(500);
+        }
+
         const route_name = if (route_index > -1) this.matched_route.?.name else this.url.pathname;
         if (comptime fmt.len > 0) Output.prettyErrorln(fmt, args);
         Output.flush();
@@ -2390,6 +2399,7 @@ pub const Server = struct {
     timer: std.time.Timer = undefined,
     transform_options: Api.TransformOptions,
     javascript_enabled: bool = false,
+    fallback_only: bool = false,
 
     pub fn onTCPConnection(server: *Server, conn: tcp.Connection, comptime features: ConnectionFeatures) void {
         conn.client.setNoDelay(true) catch {};
@@ -2973,6 +2983,7 @@ pub const Server = struct {
         }
 
         if (debug.fallback_only) {
+            RequestContext.fallback_only = true;
             RequestContext.JavaScriptHandler.javascript_disabled = true;
         }
 

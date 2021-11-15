@@ -1160,7 +1160,14 @@ const Npm = struct {
                     for (versions) |prop, version_i| {
                         const version_name = prop.key.?.asString(allocator) orelse continue;
 
-                        const parsed_version = Semver.Version.parse(SlicedString.init(version_name, version_name), allocator);
+
+
+                        // We only need to copy the version tags if it's a pre/post
+                        if (std.mem.indexOfAny(u8, version_name, "-+") != null) {
+                            sliced_string = SlicedString.init(string_buf, string_builder.append(version_name));
+                        }
+
+                        const parsed_version = Semver.Version.parse(sliced_string, allocator);
                         std.debug.assert(parsed_version.valid);
 
                         if (!parsed_version.valid) {
@@ -1261,6 +1268,7 @@ const Npm = struct {
 
                             const items = versioned_deps.expr.data.e_object.properties;
                             var any_differences = false;
+                            
                             for (items) |item, i| {
 
                                 // Often, npm packages have the same dependency names/versions many times.
@@ -1332,6 +1340,18 @@ const Npm = struct {
                 result.pkg.etag = string_slice.sub(string_builder.append(etag)).external();
             }
 
+            if (json.asProperty("dist-tags")) |dist| {
+                if (dist.expr.data == .e_object) {
+                    const tags = dist.expr.data.e_object.properties;
+                    const extern_strings_start = extern_strings
+                    for (tags) |tag| {
+                        if (tag.key.?.asString(allocator)) |key| {
+                            extern_strings string_builder.append(key);
+                            extern_string_count += 1;
+                        }
+                    }
+                }
+            }
             result.pkg.releases.keys.len = @truncate(u32, release_versions_len);
             result.pkg.releases.values.len = @truncate(u32, release_versions_len);
 
@@ -2382,15 +2402,13 @@ test "getPackageMetadata" {
     var registry = Npm.Registry{};
     var log = logger.Log.init(default_allocator);
 
-    var response = try registry.getPackageMetadata(default_allocator, &log, "lodash", "", "");
-
-    const react_17 = try Semver.Query.parse(default_allocator, "1.2.0");
+    var response = try registry.getPackageMetadata(default_allocator, &log, "react", "", "");
 
     switch (response) {
         .cached, .not_found => unreachable,
         .fresh => |package| {
             package.reportSize();
-            const react = package.findBestVersion(react_17) orelse unreachable;
+            const react = package.findByDistTag("alpha") orelse try std.testing.expect(false);
 
             const entry = react.package.dependencies.name.get(package.external_strings)[0];
             // try std.testing.expectEqualStrings("loose-envify", entry.slice(package.string_buf));

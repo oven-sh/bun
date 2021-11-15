@@ -8832,8 +8832,8 @@ pub fn NewParser(
 
             parseTemplatePart: while (true) {
                 try p.lexer.next();
-                var value = try p.parseExpr(.lowest);
-                var tail_loc = p.lexer.loc();
+                const value = try p.parseExpr(.lowest);
+                const tail_loc = p.lexer.loc();
                 try p.lexer.rescanCloseBraceAsTemplateToken();
 
                 var tail = p.lexer.toEString();

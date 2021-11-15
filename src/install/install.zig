@@ -650,7 +650,7 @@ fn ObjectPool(comptime Type: type, comptime Init: (fn (allocator: *std.mem.Alloc
 const Npm = struct {
     pub const Registry = struct {
         url: URL = URL.parse("https://registry.npmjs.org/"),
-        const JSONPool = ObjectPool(MutableString, MutableString.init2048);
+        pub const BodyPool = ObjectPool(MutableString, MutableString.init2048);
 
         const default_headers_buf: string = "Acceptapplication/vnd.npm.install-v1+json";
 
@@ -677,8 +677,8 @@ const Npm = struct {
             var url_buf = try std.fmt.allocPrint(allocator, "{s}://{s}/{s}", .{ this.url.displayProtocol(), this.url.hostname, package_name });
             defer allocator.free(url_buf);
 
-            var json_pooled = JSONPool.get(allocator);
-            defer JSONPool.release(json_pooled);
+            var json_pooled = BodyPool.get(allocator);
+            defer BodyPool.release(json_pooled);
 
             var header_builder = HTTPClient.HeaderBuilder{};
 
@@ -1464,11 +1464,193 @@ const TarballDownload = struct {
     version: Semver.Version,
     registry: string,
     cache_dir: string,
-};
+    package: *Package,
+    extracted_file_count: usize = 0,
 
-const ExtractTarball = struct {
-    destination: string,
-    file_path: string,
+    pub fn run(this: TarballDownload) !string {
+        var body_node = Npm.Registry.BodyPool.get(default_allocator);
+        defer Npm.Registry.BodyPool.release(body_node);
+        body_node.data.reset();
+        try this.download(&body_node.data);
+        return this.extract(body_node.data.items);
+    }
+
+    fn buildURL(allocator: *std.mem.Allocator, registry_: string, full_name: string, version: Semver.Version) !string {
+        const registry = std.mem.trimRight(u8, registry_, "/");
+
+        var name = full_name;
+        if (name[0] == '@') {
+            if (std.mem.indexOfScalar(u8, name, '/')) |i| {
+                name = name[i + 1 ..];
+            }
+        }
+
+        const default_format = "{s}/{s}/-/";
+
+        if (!version.tag.hasPre() and !version.tag.hasBuild()) {
+            return try std.fmt.allocPrint(
+                default_format ++ "{s}-{d}.{d}.{d}",
+                .{ registry, full_name, name, version.major, version.minor, version.patch },
+            );
+            // TODO: tarball URLs for build/pre
+        } else if (version.tag.hasPre() and version.tag.hasBuild()) {
+            return try std.fmt.allocPrint(
+                default_format ++ "{s}-{d}.{d}.{d}.{d}-{x}+{X}",
+                .{ registry, full_name, name, version.major, version.minor, version.patch, version.tag.pre.hash, version.tag.build.hash },
+            );
+            // TODO: tarball URLs for build/pre
+        } else if (version.tag.hasPre()) {
+            return try std.fmt.allocPrint(
+                default_format ++ "{s}-{d}.{d}.{d}.{d}-{x}",
+                .{ registry, full_name, name, version.major, version.minor, version.patch, version.tag.pre.hash },
+            );
+            // TODO: tarball URLs for build/pre
+        } else if (version.tag.hasBuild()) {
+            return try std.fmt.allocPrint(
+                default_format ++ "{s}-{d}.{d}.{d}.{d}+{X}",
+                .{ registry, full_name, name, version.major, version.minor, version.patch, version.tag.build.hash },
+            );
+        } else {
+            unreachable;
+        }
+    }
+
+    fn download(this: *const TarballDownload, body: *MutableString) !void {
+        var url_str = try buildURL(default_allocator, this.registry, this.name, this.version);
+        defer default_allocator.free(url_str);
+        var client = HTTPClient.init(default_allocator, .GET, URL.parse(url_str), .{}, "");
+
+        if (verbose_install) {
+            Output.prettyErrorln("<d>[{s}] GET - {s} 1/2<r>", .{ this.name, url_str });
+            Output.flush();
+        }
+
+        const response = try client.send("", body);
+
+        if (verbose_install) {
+            Output.prettyErrorln("[{s}] {d} GET {s}<r>", .{ this.name, response.status_code, url_str });
+            Output.flush();
+        }
+
+        switch (response.status_code) {
+            200 => {},
+            else => return error.HTTPError,
+        }
+    }
+
+    threadlocal var abs_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var abs_buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+
+    fn extract(this: *const TarballDownload, tgz_bytes: []const u8) !string {
+        var tmpdir = Fs.FileSystem.instance.tmpdir();
+        var tmpname_buf: [128]u8 = undefined;
+
+        var basename = this.name;
+        if (basename[0] == '@') {
+            if (std.mem.indexOfScalar(u8, basename, '/')) |i| {
+                basename = basename[i + 1 ..];
+            }
+        }
+
+        var tmpname = Fs.FileSystem.instance.tmpname(basename, &tmpname_buf, tgz_bytes.len);
+
+        var cache_dir = tmpdir.makeOpenPath(tmpname) catch |err| {
+            Output.panic("err: {s} when create temporary directory named {s} (while extracting {s})", .{ @errorName(err), tmpname, this.name });
+        };
+        var temp_destination = std.os.getFdPath(cache_dir.handle, &abs_buf) catch |err| {
+            Output.panic("err: {s} when resolve path for temporary directory named {s} (while extracting {s})", .{ @errorName(err), tmpname, this.name });
+        };
+        cache_dir.close();
+
+        if (verbose_install) {
+            Output.prettyErrorln("[{s}] Start extracting {s}<r>", .{this.name});
+            Output.flush();
+        }
+
+        const Archive = @import("../libarchive/libarchive.zig").Archive;
+
+        const extracted_file_count = try Archive.extractToDisk(
+            tgz_bytes,
+            temp_destination,
+            null,
+            void,
+            void{},
+            // for npm packages, the root dir is always "package"
+            1,
+            true,
+            verbose_install,
+        );
+
+        if (extracted_file_count != this.extracted_file_count) {
+            Output.prettyErrorln(
+                "[{s}] <red>Extracted file count mismatch<r>:\n    Expected: <b>{d}<r>\n    Received: <b>{d}<r>",
+                .{
+                    this.name,
+                    this.extracted_file_count,
+                    extracted_file_count,
+                },
+            );
+        }
+
+        if (verbose_install) {
+            Output.prettyErrorln(
+                "[{s}] Extracted<r>",
+                .{
+                    this.name,
+                },
+            );
+            Output.flush();
+        }
+
+        var folder_name = PackageManager.cachedNPMPackageFolderNamePrint(&abs_buf2, this.name, this.version);
+        if (folder_name.len == 0 or (folder_name.len == 1 and folder_name[0] == '/')) @panic("Tried to delete root and stopped it");
+        PackageManager.instance.cache_directory.deleteTree(folder_name) catch {};
+
+        // Now that we've extracted the archive, we rename.
+        std.os.renameatZ(tmpdir.fd, tmpname, PackageManager.instance.cache_directory.fd, folder_name) catch |err| {
+            Output.prettyErrorln(
+                "<r><red>Error {s}<r> moving {s} to cache dir:\n   From: {s}    To: {s}",
+                .{
+                    @errorName(err),
+                    this.name,
+                    tmpname,
+                    folder_name,
+                },
+            );
+            Output.flush();
+            Output.crash();
+        };
+
+        // We return a resolved absolute absolute file path to the cache dir.
+        // To get that directory, we open the directory again.
+        var final_dir = PackageManager.instance.cache_directory.openDirZ(PackageManager.instance.cache_directory.fd, folder_name) catch |err| {
+            Output.prettyErrorln(
+                "<r><red>Error {s}<r> failed to verify cache dir for {s}",
+                .{
+                    @errorName(err),
+                    this.name,
+                },
+            );
+            Output.flush();
+            Output.crash();
+        };
+        defer final_dir.close();
+        // and get the fd path
+        var final_path = std.os.getFdPath(
+            final_dir,
+        ) catch |err| {
+            Output.prettyErrorln(
+                "<r><red>Error {s}<r> failed to verify cache dir for {s}",
+                .{
+                    @errorName(err),
+                    this.name,
+                },
+            );
+            Output.flush();
+            Output.crash();
+        };
+        return try Fs.FileSystem.instance.dirname_store.append(@TypeOf(final_path), final_path);
+    }
 };
 
 /// Schedule long-running callbacks for a task
@@ -1478,7 +1660,7 @@ const Task = struct {
     request: Request,
     data: Data,
     status: Status = Status.waiting,
-    threadpool_task: ThreadPool.Task,
+    threadpool_task: ThreadPool.Task = ThreadPool.Task{ .callback = callback },
     id: u64,
 
     /// An ID that lets us register a callback without keeping the same pointer around
@@ -1502,7 +1684,7 @@ const Task = struct {
         }
     };
 
-    pub fn run(task: *ThreadPool.Task) void {
+    pub fn callback(task: *ThreadPool.Task) void {
         var this = @fieldParentPtr(Task, "threadpool_task", task);
 
         switch (this.tag) {}
@@ -1511,7 +1693,6 @@ const Task = struct {
     pub const Tag = enum(u4) {
         package_manifest = 1,
         tarball_download = 2,
-        extract_tarball = 3,
     };
 
     pub const Status = enum {
@@ -1522,17 +1703,14 @@ const Task = struct {
 
     pub const Data = union {
         package_manifest: Npm.PackageManifest,
-        tarball_download: TarballDownload,
-        extract_tarball: ExtractTarball,
+        tarball_download: string,
     };
 
     pub const Request = union {
         /// package name
         // todo: Registry URL
         package_manifest: string,
-
         tarball_download: TarballDownload,
-        extract_tarball: ExtractTarball,
     };
 };
 
@@ -1588,25 +1766,35 @@ pub const PackageManager = struct {
 
     var cached_package_folder_name_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
+    pub var instance: PackageManager = undefined;
+
     // TODO: normalize to alphanumeric
     pub fn cachedNPMPackageFolderName(name: string, version: Semver.Version) stringZ {
+        return cachedNPMPackageFolderNamePrint(&cached_package_folder_name_buf, name, version);
+    }
+
+    // TODO: normalize to alphanumeric
+    pub fn cachedNPMPackageFolderNamePrint(buf: []u8, name: string, version: Semver.Version) stringZ {
         if (!version.tag.hasPre() and !version.tag.hasBuild()) {
-            return try std.fmt.bufPrintZ("{s}@{d}.{d}.{d}", .{ name, version.major, version.minor, version.patch });
+            return std.fmt.bufPrintZ(buf, "{s}@{d}.{d}.{d}", .{ name, version.major, version.minor, version.patch }) catch unreachable;
         } else if (version.tag.hasPre() and version.tag.hasBuild()) {
-            return try std.fmt.bufPrintZ(
+            return std.fmt.bufPrintZ(
+                buf,
                 "{s}@{d}.{d}.{d}.{d}-{x}+{X}",
                 .{ name, version.major, version.minor, version.patch, version.tag.pre.hash, version.tag.build.hash },
-            );
+            ) catch unreachable;
         } else if (version.tag.hasPre()) {
-            return try std.fmt.bufPrintZ(
+            return std.fmt.bufPrintZ(
+                buf,
                 "{s}@{d}.{d}.{d}.{d}-{x}",
                 .{ name, version.major, version.minor, version.patch, version.tag.pre.hash },
-            );
+            ) catch unreachable;
         } else if (version.tag.hasBuild()) {
-            return try std.fmt.bufPrintZ(
+            return std.fmt.bufPrintZ(
+                buf,
                 "{s}@{d}.{d}.{d}.{d}+{X}",
                 .{ name, version.major, version.minor, version.patch, version.tag.build.hash },
-            );
+            ) catch unreachable;
         } else {
             unreachable;
         }
@@ -1633,12 +1821,14 @@ pub const PackageManager = struct {
         version: Dependency.Version,
         resolution: *PackageID,
     ) !?ResolvedPackageResult {
+        // Have we already resolved this package?
         if (package_list.at(resolution.*)) |pkg| {
             return ResolvedPackageResult{ .package = pkg };
         }
 
         switch (version) {
             .npm, .dist_tag => {
+                // Resolve the version from the loaded NPM manifest
                 const manifest = this.manifests.getPtr(name_hash) orelse return null; // manifest might still be dowlnoading
                 const find_result = switch (version) {
                     .dist_tag => manifest.findByDistTag(version.dist_tag),
@@ -1651,6 +1841,7 @@ pub const PackageManager = struct {
 
                 var resolved_package_entry = try this.resolved_package_index.getOrPut(this.allocator, Package.hash(name, find_result.version));
 
+                // Was this package already allocated? Let's reuse the existing one.
                 if (resolved_package_entry.found_existing) {
                     resolution.* = resolved_package_entry.value_ptr.*.id;
                     return ResolvedPackageResult{ .package = resolved_package_entry.value_ptr };
@@ -1671,12 +1862,35 @@ pub const PackageManager = struct {
                 resolved_package_entry.value_ptr.* = ptr;
 
                 switch (ptr.determinePreinstallState(this)) {
+                    // Is this package already in the cache?
                     .done => {},
+
+                    // Do we need to download the tarball?
                     .tarball_download => {
                         ptr.preinstall_state = .tarball_downloading;
                         const task_id = Task.Id.forPackage(Task.Tag.tarball_download, ptr.name, ptr.version);
                         const dedupe_entry = try this.task_queue.getOrPut(this.allocator, task_id);
+
+                        // Assert that we don't end up downloading the tarball twice.
                         std.debug.assert(!dedupe_entry.found_existing);
+
+                        var task = try this.allocator.create(Task);
+                        task.* = Task{
+                            .id = task_id,
+                            .tag = .tarball_download,
+                            .data = undefined,
+                            .request = .{
+                                .tarball_download = TarballDownload{
+                                    .name = name,
+                                    .version = ptr.version,
+                                    .cache_dir = this.cache_directory_path,
+                                    .registry = this.registry.url.href,
+                                    .package = ptr,
+                                },
+                            },
+                        };
+
+                        return ResolvedPackageResult{ .package = ptr, .task = task };
                     },
                     else => unreachable,
                 }
@@ -1695,15 +1909,16 @@ pub const PackageManager = struct {
         manifest: *const Npm.PackageManifest,
     ) !void {}
 
-    inline fn enqueueNpmPackage(this: *PackageManager, name: string, task_id: u64) *ThreadPool.Task {
+    inline fn enqueueNpmPackage(
+        this: *PackageManager,
+        task_id: u64,
+        name: string,
+    ) *ThreadPool.Task {
         var task = this.allocator.create(Task) catch unreachable;
         task.* = Task{
             .tag = Task.Tag.package_manifest,
             .request = .{ .package_manifest = name },
             .id = task_id,
-            .threadpool_task = ThreadPool.Task{
-                .callback = Task.callback,
-            },
             .data = undefined,
         };
         return task;
@@ -1715,7 +1930,7 @@ pub const PackageManager = struct {
         const version: Dependency.Version = dependency.version;
         switch (dependency.version) {
             .npm, .dist_tag => {
-                const resolved_package = this.getOrPutResolvedPackage(name_hash, name, version, &dependency.resolution) catch |err| {
+                const resolve_result = this.getOrPutResolvedPackage(name_hash, name, version, &dependency.resolution) catch |err| {
                     switch (err) {
                         error.DistTagNotFound => {
                             if (required) {
@@ -1752,7 +1967,22 @@ pub const PackageManager = struct {
                     }
                 };
 
-                if (resolved_package == null) {
+                if (resolve_result) |result| {
+                    if (verbose_install) {
+                        if (result.task != null) {
+                            Output.prettyErrorln("Enqueue download & extract tarball: {s}", .{result.package.name});
+                        } else {
+                            const label: string = switch (version) {
+                                .npm => version.npm.input,
+                                .dist_tag => version.dist_tag,
+                            };
+
+                            Output.prettyErrorln("Resolved \"{s}\": \"{s}\" -> {s}@{s}", .{ result.package.name, label });
+                        }
+                    }
+
+                    return result.task;
+                } else {
                     const task_id = Task.Id.forManifest(Task.Tag.package_manifest, name);
                     var manifest_download_queue_entry = try this.task_queue.getOrPutContext(this.allocator, task_id, .{});
                     if (!manifest_download_queue_entry.found_existing) {
@@ -1762,7 +1992,7 @@ pub const PackageManager = struct {
                     try manifest_download_queue_entry.value_ptr.append(this.allocator, TaskCallbackContext.init(dependency));
                     if (!manifest_download_queue_entry.found_existing) {
                         if (verbose_install) {
-                            Output.prettyErrorln("Enqueue dependency: {s}", .{name});
+                            Output.prettyErrorln("Enqueue package manifest: {s}", .{name});
                         }
 
                         return this.enqueueNpmPackage(task_id, name);
@@ -1945,9 +2175,10 @@ pub const PackageManager = struct {
             Output.flush();
         }
 
-        var manager = PackageManager{
+        manager = PackageManager{
             .enable_cache = enable_cache,
             .cache_directory_path = cache_directory_path,
+            .cache_directory = cache_directory,
             .env_loader = env_loader,
             .allocator = ctx.allocator,
             .log = ctx.log,
@@ -1967,7 +2198,7 @@ pub const PackageManager = struct {
             },
         );
 
-        while (count > 0) {
+        while (count > 0) : (count = @maximum(count, 1) - 1) {
             while (manager.resolve_tasks.tryReadItem() catch null) |task| {
                 switch (task.tag) {
                     .package_manifest => {
@@ -1977,7 +2208,9 @@ pub const PackageManager = struct {
 
                         for (dependency_list.items) |item| {
                             var dependency: *Dependency = TaskCallbackContext.get(item, Dependency).?;
-                            if (try manager.enqueueDependency(dependency, dependency.required)) |new_task| {}
+                            if (try manager.enqueueDependency(dependency, dependency.required)) |new_task| {
+                                count += 1;
+                            }
                         }
                     },
                 }

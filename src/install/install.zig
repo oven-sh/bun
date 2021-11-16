@@ -163,7 +163,7 @@ pub const Dependency = struct {
             pub fn infer(dependency: string) Tag {
                 switch (dependency[0]) {
                     // npm package
-                    '0'...'9', '^', '*', '~', '|' => return Tag.npm,
+                    '=', '>', '<', '0'...'9', '^', '*', '~', '|' => return Tag.npm,
 
                     // MIGHT be semver, might not be.
                     'x', 'X' => {
@@ -1049,23 +1049,33 @@ const Npm = struct {
             }
 
             const releases = this.pkg.releases.keys.get(this.versions);
-            const prereleases = this.pkg.prereleases.keys.get(this.versions);
 
-            var i = releases.len;
-            // // For now, this is the dumb way
-            while (i > 0) : (i -= 1) {
-                const version = releases[i - 1];
-                if (group.satisfies(version)) {
-                    return FindResult{ .version = version, .package = &this.pkg.releases.values.mut(this.package_versions)[i] };
+            if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
+                const prereleases = this.pkg.prereleases.keys.get(this.versions);
+                var i = prereleases.len;
+                while (i > 0) : (i -= 1) {
+                    const version = prereleases[i - 1];
+                    const packages = this.pkg.prereleases.values.get(this.package_versions);
+
+                    if (group.satisfies(version)) {
+                        return FindResult{ .version = version, .package = &packages[i - 1] };
+                    }
                 }
             }
-            i = prereleases.len;
-            while (i > 0) : (i -= 1) {
-                const version = prereleases[i - 1];
-                if (group.satisfies(version)) {
-                    return FindResult{ .version = version, .package = &this.pkg.releases.values.mut(this.package_versions)[i] };
+
+            {
+                var i = releases.len;
+                // // For now, this is the dumb way
+                while (i > 0) : (i -= 1) {
+                    const version = releases[i - 1];
+                    const packages = this.pkg.releases.values.get(this.package_versions);
+
+                    if (group.satisfies(version)) {
+                        return FindResult{ .version = version, .package = &packages[i - 1] };
+                    }
                 }
             }
+
             return null;
         }
 
@@ -1388,15 +1398,15 @@ const Npm = struct {
                                 unique_string_count += @as(usize, @boolToInt(!name_entry.found_existing)) + @as(usize, @boolToInt(!version_entry.found_existing));
                                 unique_string_len += @as(usize, @boolToInt(!name_entry.found_existing) * name_str.len) + @as(usize, @boolToInt(!version_entry.found_existing) * version_str.len);
 
-                                if (!name_entry.found_existing) {
-                                    const name_hash = std.hash.Wyhash.hash(0, name_str);
-                                    name_entry.value_ptr.* = ExternalString.init(string_buf, string_builder.append(name_str), name_hash);
-                                }
+                                // if (!name_entry.found_existing) {
+                                const name_hash = std.hash.Wyhash.hash(0, name_str);
+                                name_entry.value_ptr.* = ExternalString.init(string_buf, string_builder.append(name_str), name_hash);
+                                // }
 
-                                if (!version_entry.found_existing) {
-                                    const version_hash = std.hash.Wyhash.hash(0, version_str);
-                                    version_entry.value_ptr.* = ExternalString.init(string_buf, string_builder.append(version_str), version_hash);
-                                }
+                                // if (!version_entry.found_existing) {
+                                const version_hash = std.hash.Wyhash.hash(0, version_str);
+                                version_entry.value_ptr.* = ExternalString.init(string_buf, string_builder.append(version_str), version_hash);
+                                // }
 
                                 this_versions[i] = version_entry.value_ptr.*;
                                 this_names[i] = name_entry.value_ptr.*;
@@ -1812,6 +1822,12 @@ const TarballDownload = struct {
         var folder_name = PackageManager.cachedNPMPackageFolderNamePrint(&abs_buf2, this.name, this.version);
         if (folder_name.len == 0 or (folder_name.len == 1 and folder_name[0] == '/')) @panic("Tried to delete root and stopped it");
         PackageManager.instance.cache_directory.deleteTree(folder_name) catch {};
+
+        // e.g. @next
+        // if it's a namespace package, we need to make sure the @name folder exists
+        if (basename.len != this.name.len) {
+            PackageManager.instance.cache_directory.makeDir(std.mem.trim(u8, this.name[0 .. this.name.len - basename.len], "/")) catch {};
+        }
 
         // Now that we've extracted the archive, we rename.
         std.os.renameatZ(tmpdir.fd, tmpname, PackageManager.instance.cache_directory.fd, folder_name) catch |err| {

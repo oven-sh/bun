@@ -36,41 +36,6 @@ const isJSFile = (file: string) =>
   file.endsWith(".ts") ||
   file.endsWith(".tsx");
 
-const notImplementedProxy = (base) =>
-  new Proxy(
-    {},
-    {
-      deleteProperty: function (target, prop) {
-        return undefined;
-      },
-      enumerate: function (oTarget, sKey) {
-        return [].entries();
-      },
-      ownKeys: function (oTarget, sKey) {
-        return [].values();
-      },
-      has: function (oTarget, sKey) {
-        return false;
-      },
-      defineProperty: function (oTarget, sKey, oDesc) {
-        return undefined;
-      },
-      getOwnPropertyDescriptor: function (oTarget, sKey) {
-        return undefined;
-      },
-      get(this, prop) {
-        throw new ReferenceError(
-          `${base} is not available for this environment.`
-        );
-      },
-      set(this, prop, value) {
-        throw new ReferenceError(
-          `${base} is not available for this environment.`
-        );
-      },
-    }
-  );
-
 type DocumentFiles = {
   sharedFiles: readonly string[];
   pageFiles: readonly string[];
@@ -458,7 +423,7 @@ export async function render({
   delete query.__nextDefaultLocale;
 
   const isSSG = !!getStaticProps;
-  const isBuildTimeSSG = isSSG && false;
+
   const defaultAppGetInitialProps =
     App.getInitialProps === (App as any).origGetInitialProps;
 
@@ -515,6 +480,7 @@ export async function render({
     </RouterContext.Provider>
   );
 
+  // Todo: Double check this when adding support for dynamic()
   await Loadable.preloadAll(); // Make sure all dynamic imports are loaded
 
   const router = new ServerRouter(

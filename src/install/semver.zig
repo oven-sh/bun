@@ -3,7 +3,7 @@ const std = @import("std");
 
 pub const ExternalString = extern struct {
     off: u32 = 0,
-    len: u16 = 0,
+    len: u32 = 0,
     hash: u64 = 0,
 
     pub fn from(in: string) ExternalString {
@@ -85,6 +85,10 @@ pub const Version = extern struct {
     tag: Tag = Tag{},
     // raw: RawType = RawType{},
 
+    pub fn fmt(this: Version, input: string) Formatter {
+        return Formatter{ .version = this, .input = input };
+    }
+
     const HashableVersion = extern struct { major: u32, minor: u32, patch: u32, pre: u64, build: u64 };
 
     pub fn hash(this: Version) u64 {
@@ -102,13 +106,13 @@ pub const Version = extern struct {
             try std.fmt.format(writer, "{d}.{d}.{d}", .{ self.major, self.minor, self.patch });
 
             if (self.tag.pre.len > 0) {
-                const pre = self.tag.pre.slice(self.input);
+                const pre = self.tag.pre.slice(formatter.input);
                 try writer.writeAll("-");
                 try writer.writeAll(pre);
             }
 
             if (self.tag.build.len > 0) {
-                const build = self.tag.build.slice(self.input);
+                const build = self.tag.build.slice(formatter.input);
                 try writer.writeAll("+");
                 try writer.writeAll(build);
             }
@@ -1135,6 +1139,7 @@ const expect = struct {
         defer counter += 1;
         var result = Version.parse(SlicedString.init(input, input), default_allocator);
         var other = Version{ .major = v[0], .minor = v[1], .patch = v[2] };
+        std.debug.assert(result.valid);
 
         if (!other.eql(result.version)) {
             Output.panic("<r><red>Fail<r> Expected version <b>\"{s}\"<r> to match <b>\"{d}.{d}.{d}\" but received <red>\"{d}.{d}.{d}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
@@ -1199,6 +1204,8 @@ test "Version parsing" {
     expect.version("3.x.x", .{ 3, 0, 0 }, @src());
     expect.version("3.*.*", .{ 3, 0, 0 }, @src());
     expect.version("3.X.x", .{ 3, 0, 0 }, @src());
+
+    expect.version("0.0.0", .{ 0, 0, 0 }, @src());
 
     {
         var v = Version{

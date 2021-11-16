@@ -1120,16 +1120,20 @@ pub const E = struct {
             }
         }
 
+        pub inline fn len(s: *const String) usize {
+            return @maximum(s.utf8.len, s.value.len);
+        }
+
         pub inline fn isUTF8(s: *const String) bool {
-            return @maximum(s.utf8.len, s.value.len) == s.utf8.len;
+            return s.len() == s.utf8.len;
         }
 
         pub inline fn isBlank(s: *const String) bool {
-            return @maximum(s.utf8.len, s.value.len) == 0;
+            return s.len() == 0;
         }
 
         pub inline fn isPresent(s: *const String) bool {
-            return @maximum(s.utf8.len, s.value.len) > 0;
+            return s.len() > 0;
         }
 
         pub fn eql(s: *const String, comptime _t: type, other: anytype) bool {

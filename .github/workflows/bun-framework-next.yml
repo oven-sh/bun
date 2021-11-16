@@ -30,16 +30,8 @@ jobs:
         with:
           version: 6.21.0
 
-      - name: Cache pnpm modules
-        uses: actions/cache@v2
-        with:
-          path: ~/.pnpm-store
-          key: ${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-
-
       - name: Install dependencies
-        run: pnpm install
+        run: cd packages/bun-framework-next && pnpm install
 
       - name: Test bun-framework-next
         run: pnpm test --filter bun-framework-next

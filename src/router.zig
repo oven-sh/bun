@@ -218,6 +218,7 @@ const RouteLoader = struct {
     allocator: *std.mem.Allocator,
     fs: *FileSystem,
     config: Options.RouteConfig,
+    route_dirname_len: u16 = 0,
 
     dedupe_dynamic: std.AutoArrayHashMap(u32, string),
     log: *Logger.Log,
@@ -289,6 +290,7 @@ const RouteLoader = struct {
             .static_list = std.StringHashMap(*Route).init(allocator),
             .dedupe_dynamic = std.AutoArrayHashMap(u32, string).init(allocator),
             .all_routes = .{},
+            .route_dirname_len = @truncate(u16, FileSystem.instance.relative(resolver.fs.top_level_dir, config.dir).len + @as(usize, @boolToInt(config.dir[config.dir.len - 1] != std.fs.path.sep))),
         };
         defer this.dedupe_dynamic.deinit();
         this.load(ResolverType, resolver, root_dir_info);
@@ -410,7 +412,7 @@ const RouteLoader = struct {
                                     this.log,
                                     this.allocator,
                                     public_dir,
-                                    @truncate(u16, this.config.dir.len - fs.top_level_dir.len),
+                                    this.route_dirname_len,
                                 )) |route| {
                                     this.appendRoute(route);
                                 }

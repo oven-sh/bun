@@ -308,6 +308,19 @@ pub fn build(b: *std.build.Builder) !void {
                 .path = .{ .path = "src/deps/zig-clap/clap.zig" },
             });
 
+            var platform_label = if (target.isDarwin())
+                "darwin"
+            else
+                "linux";
+            obj.addPackage(.{
+                .name = "io",
+                .path = .{ .path = try std.fmt.allocPrint(b.allocator, "src/io/io_{s}.zig", .{platform_label}) },
+            });
+            exe.addPackage(.{
+                .name = "io",
+                .path = .{ .path = try std.fmt.allocPrint(b.allocator, "src/io/io_{s}.zig", .{platform_label}) },
+            });
+
             {
                 obj_step.dependOn(&b.addLog(
                     "Build {s} v{} - v{}\n",

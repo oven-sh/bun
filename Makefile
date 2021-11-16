@@ -826,12 +826,23 @@ endif
 
 endif
 
+IO_FILE = 
+
+ifeq ($(OS_NAME),linux)
+IO_FILE = "src/io/io_linux.zig"
+endif
+
+ifeq ($(OS_NAME),darwin)
+IO_FILE = "src/io/io_darwin.zig"
+endif
+
 build-unit:
 	@rm -rf zig-out/bin/$(testname)
 	@mkdir -p zig-out/bin
 	zig test $(realpath $(testpath)) \
 	$(testfilterflag) \
 	--pkg-begin picohttp $(DEPS_DIR)/picohttp.zig --pkg-end \
+	--pkg-begin io	$(IO_FILE) --pkg-end \
 	--pkg-begin clap $(DEPS_DIR)/zig-clap/clap.zig --pkg-end \
 	--main-pkg-path $(shell pwd) \
 	--test-no-exec \

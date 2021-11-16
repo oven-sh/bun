@@ -1,7 +1,7 @@
 const Allocator = @import("std").mem.Allocator;
 const assert = @import("std").debug.assert;
 const copy = @import("std").mem.copy;
-
+const io = @import("io");
 pub fn Builder(comptime Type: type) type {
     return struct {
         const This = @This();

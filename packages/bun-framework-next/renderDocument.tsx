@@ -18,6 +18,7 @@ import {
   RenderPageResult,
   HtmlContext,
 } from "next/dist/shared/lib/utils";
+import { RenderOpts } from "next/dist/server/render";
 import * as NextDocument from "next/document";
 import * as ReactDOMServer from "react-dom/server.browser";
 import * as React from "react";
@@ -69,6 +70,12 @@ const notImplementedProxy = (base) =>
       },
     }
   );
+
+type DocumentFiles = {
+  sharedFiles: readonly string[];
+  pageFiles: readonly string[];
+  allFiles: readonly string[];
+};
 
 function getScripts(files: DocumentFiles) {
   const { context, props } = this;
@@ -147,6 +154,9 @@ function renderDocument(
     disableOptimizedLoading,
   }: RenderOpts & {
     props: any;
+    //
+    page: string;
+    //
     docComponentsRendered: DocumentProps["docComponentsRendered"];
     docProps: DocumentInitialProps;
     pathname: string;
@@ -454,7 +464,9 @@ export async function render({
 
   const hasPageGetInitialProps = !!(Component as any).getInitialProps;
   const pageIsDynamic = route.kind === "dynamic";
+  const isPreview = false;
   const isAutoExport = false;
+  const nextExport = isAutoExport || isFallback;
 
   if (isAutoExport || isFallback) {
     // // remove query values except ones that will be set during export
@@ -476,7 +488,6 @@ export async function render({
     <meta name="viewport" content="width=device-width" />,
   ];
 
-  const nextExport = isAutoExport || isFallback;
   const reactLoadableModules: string[] = [];
   var scriptLoader = {};
   const AppContainer = ({ children }: any) => (
@@ -728,8 +739,6 @@ export async function render({
   // });
   const docComponentsRendered: DocumentProps["docComponentsRendered"] = {};
 
-  const isPreview = false;
-
   let html = renderDocument(Document, {
     docComponentsRendered,
     ...renderOpts,
@@ -743,11 +752,13 @@ export async function render({
       pages: pages,
     },
     // Only enabled in production as development mode has features relying on HMR (style injection for example)
+    // @ts-expect-error
     unstable_runtimeJS: true,
     //   process.env.NODE_ENV === "production"
     //     ? pageConfig.unstable_runtimeJS
     //     : undefined,
     // unstable_JsPreload: pageConfig.unstable_JsPreload,
+    // @ts-expect-error
     unstable_JsPreload: true,
     dangerousAsPath: router.asPath,
     ampState: undefined,
@@ -770,9 +781,9 @@ export async function render({
     appGip: !defaultAppGetInitialProps ? true : undefined,
     devOnlyCacheBusterQueryString: "",
     scriptLoader,
-    isPreview: isPreview === true ? true : undefined,
-    autoExport: isAutoExport === true ? true : undefined,
-    nextExport: nextExport === true ? true : undefined,
+    isPreview: isPreview,
+    autoExport: isAutoExport,
+    nextExport: nextExport,
     useMaybeDeferContent,
   });
   const bodyRenderIdx = html.indexOf(BODY_RENDER_TARGET);

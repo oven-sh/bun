@@ -1,5 +1,5 @@
 usingnamespace @import("string_types.zig");
-
+const default_allocator = @import("./global.zig").default_allocator;
 const std = @import("std");
 const expectString = std.testing.expectEqualStrings;
 const expect = std.testing.expect;
@@ -565,7 +565,7 @@ pub fn initJSXEntityMap() !void {
     }
 
     has_loaded_jsx_map = true;
-    jsxEntity = JSXEntityMap.init(alloc.static);
+    jsxEntity = JSXEntityMap.init(default_allocator);
     // return jsxEntity;
     jsxEntity.ensureCapacity(255) catch unreachable;
 

@@ -567,7 +567,7 @@ pub const Route = struct {
             if (base.len == 0) break :brk public_dir;
             route_file_buf[0] = '/';
 
-            var buf = route_file_buf[1..];
+            var buf: []u8 = route_file_buf[1..];
 
             std.mem.copy(
                 u8,
@@ -575,10 +575,12 @@ pub const Route = struct {
                 public_dir,
             );
             buf[public_dir.len] = '/';
-            std.mem.copy(u8, buf[public_dir.len + 1 ..], base);
-
-            std.mem.copy(u8, buf[public_dir.len + 1 + base.len ..], extname);
-            break :brk route_file_buf[0 .. 1 + public_dir.len + 1 + base.len + extname.len];
+            buf = buf[public_dir.len + 1 ..];
+            std.mem.copy(u8, buf, base);
+            buf = buf[base.len..];
+            std.mem.copy(u8, buf, extname);
+            buf = buf[extname.len..];
+            break :brk route_file_buf[0 .. @ptrToInt(buf.ptr) - @ptrToInt(&route_file_buf)];
         };
 
         var name = public_path[0 .. public_path.len - extname.len];

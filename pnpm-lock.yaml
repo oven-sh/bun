@@ -10,7 +10,7 @@ importers:
       highlight.js: ^11.3.1
       moment: ^2.29.1
       peechy: 0.4.20
-      prettier: latest
+      prettier: ^2.4.1
       puppeteer: ^10.2.0
       react: ^17.0.2
       react-dom: ^17.0.2
@@ -19,13 +19,13 @@ importers:
       highlight.js: 11.3.1
       moment: 2.29.1
       peechy: 0.4.20
-      prettier: 2.4.1
       puppeteer: 10.4.0
       react: 17.0.2
       react-dom: 17.0.2_react@17.0.2
     devDependencies:
       '@types/node': 16.11.4
       '@types/puppeteer': 5.4.4
+      prettier: 2.4.1
 
   packages/bun-error:
     specifiers:
@@ -1835,7 +1835,7 @@ packages:
     resolution: {integrity: sha512-9fbDAXSBcc6Bs1mZrDYb3XKzDLm4EXXL9sC1LqKP5rZkT6KRr/rf9amVUcODVXgguK/isJz0d0hP72WeaKWsvA==}
     engines: {node: '>=10.13.0'}
     hasBin: true
-    dev: false
+    dev: true
 
   /pretty-format/3.8.0:
     resolution: {integrity: sha1-v77VbV6ad2ZF9LH/eqGjrE+jw4U=}

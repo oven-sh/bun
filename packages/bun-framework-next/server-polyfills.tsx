@@ -1,20 +1,12 @@
 globalThis.global = globalThis;
 
 import { Buffer } from "buffer";
+import { URL } from "url-polyfill";
+import { TextEncoder, TextDecoder } from "fast-text-encoding";
 
 globalThis.Buffer = Buffer;
 
 import * as React from "react";
-
-class URL {
-  pathname: string;
-  href: string;
-
-  constructor(base: string, source: string) {
-    this.pathname = source;
-    this.href = base + source;
-  }
-}
 
 var onlyChildPolyfill = React.Children.only;
 
@@ -31,8 +23,6 @@ React.Children.only = function (children) {
 };
 
 globalThis.URL = URL;
-
-import { TextEncoder, TextDecoder } from "./text-encoder-polyfill";
 
 globalThis.TextEncoder ||= TextEncoder;
 globalThis.TextDecoder ||= TextDecoder;

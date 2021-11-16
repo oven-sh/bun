@@ -11,7 +11,9 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "react-is": "^17.0.2"
+    "fast-text-encoding": "^1.0.3",
+    "react-is": "^17.0.2",
+    "url-polyfill": "^1.1.12"
   },
   "peerDependencies": {
     "next": "^12.0.0"

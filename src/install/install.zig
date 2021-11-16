@@ -837,8 +837,8 @@ const Npm = struct {
         bin_dir: ExternalString = ExternalString{},
         man_dir: ExternalString = ExternalString{},
 
-        unpacked_size: u64 = 0,
-        file_count: u64 = 0,
+        unpacked_size: u32 = 0,
+        file_count: u32 = 0,
 
         os_matches: bool = true,
         cpu_matches: bool = true,
@@ -923,6 +923,19 @@ const Npm = struct {
             package: *const PackageVersion,
         };
 
+        pub fn findByString(this: *const PackageManifest, version: string) ?FindResult {
+            switch (Dependency.Version.Tag.infer(version)) {
+                .npm => {
+                    const group = Semver.Query.parse(default_allocator, version) catch return null;
+                    return this.findBestVersion(group);
+                },
+                .dist_tag => {
+                    return this.findByDistTag(version);
+                },
+                else => return null,
+            }
+        }
+
         pub fn findByVersion(this: *const PackageManifest, version: Semver.Version) ?FindResult {
             return if (!version.tag.hasPre())
                 FindResult{
@@ -937,9 +950,10 @@ const Npm = struct {
         }
 
         pub fn findByDistTag(this: *const PackageManifest, tag: string) ?FindResult {
+            const versions = this.pkg.dist_tags.versions.get(this.versions);
             for (this.pkg.dist_tags.tags.get(this.external_strings)) |tag_str, i| {
                 if (strings.eql(tag_str.slice(this.string_buf), tag)) {
-                    return this.findByVersion(this.pkg.dist_tags.versions.get(this.versions)[i]);
+                    return this.findByVersion(versions[i]);
                 }
             }
 
@@ -1076,7 +1090,7 @@ const Npm = struct {
             }
 
             var extern_string_count: usize = dependency_sum * 2;
-
+            var dist_tag_versions: usize = 0;
             if (json.asProperty("dist-tags")) |dist| {
                 if (dist.expr.data == .e_object) {
                     const tags = dist.expr.data.e_object.properties;
@@ -1084,6 +1098,7 @@ const Npm = struct {
                         if (tag.key.?.asString(allocator)) |key| {
                             string_builder.count(key);
                             extern_string_count += 1;
+                            dist_tag_versions += 1;
                         }
                     }
                 }
@@ -1096,7 +1111,7 @@ const Npm = struct {
 
                 PackageVersion{},
             );
-            var all_semver_versions = try allocator.alloc(Semver.Version, release_versions_len + pre_versions_len);
+            var all_semver_versions = try allocator.alloc(Semver.Version, release_versions_len + pre_versions_len + dist_tag_versions);
             std.mem.set(Semver.Version, all_semver_versions, Semver.Version{});
             var all_extern_strings = try allocator.alloc(ExternalString, extern_string_count);
             std.mem.set(
@@ -1160,7 +1175,7 @@ const Npm = struct {
                     for (versions) |prop, version_i| {
                         const version_name = prop.key.?.asString(allocator) orelse continue;
 
-
+                        var sliced_string = SlicedString.init(version_name, version_name);
 
                         // We only need to copy the version tags if it's a pre/post
                         if (std.mem.indexOfAny(u8, version_name, "-+") != null) {
@@ -1237,13 +1252,13 @@ const Npm = struct {
                                 if (dist.expr.data == .e_object) {
                                     if (dist.expr.asProperty("fileCount")) |file_count_| {
                                         if (file_count_.expr.data == .e_number) {
-                                            package_version.file_count = file_count_.expr.data.e_number.toU64();
+                                            package_version.file_count = file_count_.expr.data.e_number.toU32();
                                         }
                                     }
 
                                     if (dist.expr.asProperty("unpackedSize")) |file_count_| {
                                         if (file_count_.expr.data == .e_number) {
-                                            package_version.unpacked_size = file_count_.expr.data.e_number.toU64();
+                                            package_version.unpacked_size = file_count_.expr.data.e_number.toU32();
                                         }
                                     }
 
@@ -1262,13 +1277,14 @@ const Npm = struct {
                                 }
                             }
                         }
+
                         if (versioned_deps_) |versioned_deps| {
                             var this_names = dependency_names[0..count];
                             var this_versions = dependency_values[0..count];
 
                             const items = versioned_deps.expr.data.e_object.properties;
                             var any_differences = false;
-                            
+
                             for (items) |item, i| {
 
                                 // Often, npm packages have the same dependency names/versions many times.
@@ -1329,6 +1345,8 @@ const Npm = struct {
                             versioned_package_prereleases = versioned_package_prereleases[1..];
                         }
                     }
+
+                    extern_strings = all_extern_strings[dependency_sum * 2 ..];
                 }
             }
 
@@ -1343,20 +1361,40 @@ const Npm = struct {
             if (json.asProperty("dist-tags")) |dist| {
                 if (dist.expr.data == .e_object) {
                     const tags = dist.expr.data.e_object.properties;
-                    const extern_strings_start = extern_strings
-                    for (tags) |tag| {
+                    var extern_strings_slice = extern_strings;
+                    var tag_versions = all_semver_versions[pre_versions_len + release_versions_len ..];
+                    for (tags) |tag, i| {
                         if (tag.key.?.asString(allocator)) |key| {
-                            extern_strings string_builder.append(key);
-                            extern_string_count += 1;
+                            extern_strings_slice[i] = SlicedString.init(string_buf, string_builder.append(key)).external();
+
+                            const version_name = tag.value.?.asString(allocator) orelse continue;
+
+                            var sliced_string = SlicedString.init(version_name, version_name);
+
+                            // We only need to copy the version tags if it's a pre/post
+                            if (std.mem.indexOfAny(u8, version_name, "-+") != null) {
+                                sliced_string = SlicedString.init(string_buf, string_builder.append(version_name));
+                            }
+
+                            tag_versions[i] = Semver.Version.parse(sliced_string, allocator).version;
                         }
                     }
+
+                    result.pkg.dist_tags = DistTagMap{
+                        .tags = ExternalStringList.init(all_extern_strings, extern_strings_slice),
+                        .versions = VersionSlice.init(all_semver_versions, tag_versions),
+                    };
+
+                    extern_strings = extern_strings[tags.len..];
                 }
             }
             result.pkg.releases.keys.len = @truncate(u32, release_versions_len);
             result.pkg.releases.values.len = @truncate(u32, release_versions_len);
 
             result.pkg.prereleases.keys.off = result.pkg.releases.keys.len;
-            result.pkg.prereleases.values.len = @truncate(u32, pre_versions_len);
+            result.pkg.prereleases.keys.len = @truncate(u32, all_prerelease_versions.len);
+            result.pkg.prereleases.values.len = @truncate(u32, all_prerelease_versions.len);
+            result.pkg.prereleases.values.off = result.pkg.releases.values.len;
 
             result.pkg.string_lists_buf.off = 0;
             result.pkg.string_lists_buf.len = @truncate(u32, all_extern_strings.len);
@@ -2408,9 +2446,9 @@ test "getPackageMetadata" {
         .cached, .not_found => unreachable,
         .fresh => |package| {
             package.reportSize();
-            const react = package.findByDistTag("alpha") orelse try std.testing.expect(false);
-
-            const entry = react.package.dependencies.name.get(package.external_strings)[0];
+            const react = package.findByString("beta") orelse return try std.testing.expect(false);
+            try std.testing.expect(react.package.file_count > 0);
+            try std.testing.expect(react.package.unpacked_size > 0);
             // try std.testing.expectEqualStrings("loose-envify", entry.slice(package.string_buf));
         },
     }

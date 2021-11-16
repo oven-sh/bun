@@ -1063,6 +1063,11 @@ pub const E = struct {
             return @floatToInt(u64, @maximum(@trunc(self.value), 0));
         }
 
+        pub inline fn toU32(self: Number) u32 {
+            @setRuntimeSafety(false);
+            return @floatToInt(u32, @maximum(@trunc(self.value), 0));
+        }
+
         pub fn jsonStringify(self: *const Number, opts: anytype, o: anytype) !void {
             return try std.json.stringify(self.value, opts, o);
         }

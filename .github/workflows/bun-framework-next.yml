@@ -34,7 +34,4 @@ jobs:
         run: cd packages/bun-framework-next && pnpm install
 
       - name: Test bun-framework-next
-        run: pnpm test --filter bun-framework-next
-
-      - name: Typecheck bun-framework-next
-        run: pnpm test --filter bun-framework-next
+        run: pnpm test

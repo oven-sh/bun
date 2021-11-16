@@ -1202,7 +1202,7 @@ const Pattern = struct {
                     if (std.mem.indexOfScalar(u8, path_, '/')) |i| {
                         params.append(allocator, .{
                             .name = dynamic.str(name),
-                            .value = path,
+                            .value = path_[0..i],
                         }) catch unreachable;
                         path_ = path_[i + 1 ..];
 

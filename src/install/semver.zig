@@ -385,6 +385,7 @@ pub const Version = extern struct {
                     }
                     const tag_result = Tag.parse(allocator, sliced_string.sub(input[part_start_i..]));
                     result.version.tag = tag_result.tag;
+                    i += tag_result.len;
                     break;
                 },
                 'x', '*', 'X' => {
@@ -683,8 +684,14 @@ pub const Query = struct {
         tail: ?*List = null,
         allocator: *std.mem.Allocator,
         input: string = "",
-        has_pre: bool = false,
-        has_post: bool = false,
+
+        flags: FlagsBitSet = FlagsBitSet.initEmpty(),
+        pub const Flags = struct {
+            pub const pre = 1;
+            pub const build = 0;
+        };
+
+        pub const FlagsBitSet = std.bit_set.IntegerBitSet(3);
 
         pub fn orVersion(self: *Group, version: Version) !void {
             if (self.tail == null and !self.head.head.range.hasLeft()) {
@@ -982,6 +989,9 @@ pub const Query = struct {
 
             if (!skip_round) {
                 const parse_result = Version.parse(SlicedString.init(input, input[i..]), allocator);
+                if (parse_result.version.tag.hasBuild()) list.flags.setValue(Group.Flags.build, true);
+                if (parse_result.version.tag.hasPre()) list.flags.setValue(Group.Flags.pre, true);
+
                 token.wildcard = parse_result.wildcard;
 
                 i += parse_result.stopped_at;
@@ -1014,6 +1024,8 @@ pub const Query = struct {
 
                 if (hyphenate) {
                     var second_version = Version.parse(SlicedString.init(input, input[i..]), allocator);
+                    if (second_version.version.tag.hasBuild()) list.flags.setValue(Group.Flags.build, true);
+                    if (second_version.version.tag.hasPre()) list.flags.setValue(Group.Flags.pre, true);
 
                     const range: Range = brk: {
                         switch (second_version.wildcard) {
@@ -1226,6 +1238,17 @@ test "Version parsing" {
         };
         var input: string = "1.0.0-build101";
         v.tag.pre = SlicedString.init(input, input["1.0.0-".len..]).external();
+        expect.versionT(input, v, @src());
+    }
+
+    {
+        var v = Version{
+            .major = 0,
+            .minor = 21,
+            .patch = 0,
+        };
+        var input: string = "0.21.0-beta-96ca8d915-20211115";
+        v.tag.pre = SlicedString.init(input, input["0.21.0-".len..]).external();
         expect.versionT(input, v, @src());
     }
 

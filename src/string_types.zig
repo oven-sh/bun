@@ -82,6 +82,6 @@ pub const HashedString = struct {
     }
 
     pub fn str(this: HashedString) string {
-        return this.ptr[0..len];
+        return this.ptr[0..this.len];
     }
 };

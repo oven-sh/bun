@@ -310,7 +310,7 @@ const RouteLoader = struct {
 
         const public_dir_is_in_top_level_dir = strings.startsWith(this.config.dir, this.fs.top_level_dir);
         for (this.all_routes.items) |route, i| {
-            if (route.param_count > 0 and dynamic_start == null) {
+            if (@enumToInt(route.kind) > @enumToInt(Pattern.Tag.static) and dynamic_start == null) {
                 dynamic_start = i;
             }
 
@@ -492,6 +492,8 @@ pub const Route = struct {
     /// - It has a leading slash
     public_path: PathString,
 
+    kind: Pattern.Tag = Pattern.Tag.static,
+
     pub const Ptr = TinyPtr;
 
     pub const index_route_name: string = "/";
@@ -510,7 +512,7 @@ pub const Route = struct {
             table['['] = 252;
             table[']'] = 253;
             // of each segment
-            table['/'] = 254;
+            table['/'] = 251;
             break :brk table;
         };
 
@@ -530,13 +532,43 @@ pub const Route = struct {
         }
 
         pub fn sortByName(ctx: @This(), a: *Route, b: *Route) bool {
-            // ensure that dynamic routes are always at the bottom
-            // this is so we skip looking at static routes when matching dynamic routes
-            // without allocating a new array
-            if (a.param_count > 0 and b.param_count == 0) return false;
-            if (b.param_count > 0 and a.param_count == 0) return true;
+            const a_name = a.match_name.slice();
+            const b_name = b.match_name.slice();
 
-            return @call(.{ .modifier = .always_inline }, sortByNameString, .{ ctx, a.match_name.slice(), b.match_name.slice() });
+            // route order determines route match order
+            // - static routes go first because we match those first
+            // - dynamic, catch-all, and optional catch all routes are sorted lexicographically, except "[", "]" appear last so that deepest routes are tested first
+            // - catch-all & optional catch-all appear at the end because we want to test those at the end.
+            return switch (std.math.order(@enumToInt(a.kind), @enumToInt(b.kind))) {
+                .eq => switch (a.kind) {
+                    // static + dynamic are sorted alphabetically
+                    .static, .dynamic => @call(
+                        .{ .modifier = .always_inline },
+                        sortByNameString,
+                        .{
+                            ctx,
+                            a_name,
+                            b_name,
+                        },
+                    ),
+                    // catch all and optional catch all must appear below dynamic
+                    .catch_all, .optional_catch_all => switch (std.math.order(a.param_count, b.param_count)) {
+                        .eq => @call(
+                            .{ .modifier = .always_inline },
+                            sortByNameString,
+                            .{
+                                ctx,
+                                a_name,
+                                b_name,
+                            },
+                        ),
+                        .lt => false,
+                        .gt => true,
+                    },
+                },
+                .lt => true,
+                .gt => false,
+            };
         }
     };
 
@@ -599,11 +631,11 @@ pub const Route = struct {
 
         var match_name: string = name;
 
-        var param_count: u16 = 0;
+        var validation_result = Pattern.ValidationResult{};
         const is_index = name.len == 0;
 
         if (name.len > 0) {
-            param_count = Pattern.validate(
+            validation_result = Pattern.validate(
                 name[1..],
                 allocator,
                 log,
@@ -675,7 +707,8 @@ pub const Route = struct {
                 index_route_hash
             else
                 @truncate(u32, std.hash.Wyhash.hash(0, name)),
-            .param_count = param_count,
+            .param_count = validation_result.param_count,
+            .kind = validation_result.kind,
             .abs_path = entry.abs_path,
         };
     }
@@ -994,7 +1027,7 @@ test "Route Loader" {
     }
 
     {
-        ctx = MockRequestContextType{ .url = try URLPath.parse("codes_of_conduct/123") };
+        ctx = MockRequestContextType{ .url = try URLPath.parse("/codes_of_conduct/123") };
         try router.match(*MockServer, &server, MockRequestContextType, &ctx);
         var route = ctx.matched_route.?;
         try expectEqualStrings(route.name, "/codes_of_conduct/[key]");
@@ -1003,7 +1036,7 @@ test "Route Loader" {
     }
 
     {
-        ctx = MockRequestContextType{ .url = try URLPath.parse("codes_of_conduct/123/") };
+        ctx = MockRequestContextType{ .url = try URLPath.parse("/codes_of_conduct/123/") };
         try router.match(*MockServer, &server, MockRequestContextType, &ctx);
         var route = ctx.matched_route.?;
         try expectEqualStrings(route.name, "/codes_of_conduct/[key]");
@@ -1149,7 +1182,7 @@ test "Dynamic routes" {
 }
 
 test "Pattern" {
-    const pattern = "[dynamic]/static/[dynamic2]/[...catch_all]";
+    const pattern = "[dynamic]/static/[dynamic2]/static2/[...catch_all]";
 
     const dynamic = try Pattern.init(pattern, 0);
     try expectStr(@tagName(dynamic.value), "dynamic");
@@ -1163,9 +1196,9 @@ test "Pattern" {
     try expectStr(@tagName(catch_all.value), "catch_all");
 
     try expectStr(dynamic.value.dynamic.str(pattern), "dynamic");
-    try expectStr(static.value.static, "/static/");
+    try expectStr(static.value.static.str(), "static");
     try expectStr(dynamic2.value.dynamic.str(pattern), "dynamic2");
-    try expectStr(static2.value.static, "/");
+    try expectStr(static2.value.static.str(), "static2");
     try expectStr(catch_all.value.catch_all.str(pattern), "catch_all");
 }
 
@@ -1274,10 +1307,14 @@ const Pattern = struct {
         return false;
     }
 
+    pub const ValidationResult = struct {
+        param_count: u16 = 0,
+        kind: Tag = Tag.static,
+    };
     /// Validate a Route pattern, returning the number of route parameters.
     /// `null` means invalid. Error messages are logged. 
     /// That way, we can provide a list of all invalid routes rather than failing the first time.
-    pub fn validate(input: string, allocator: *std.mem.Allocator, log: *Logger.Log) ?u16 {
+    pub fn validate(input: string, allocator: *std.mem.Allocator, log: *Logger.Log) ?ValidationResult {
         if (CodepointIterator.needsUTF8Decoding(input)) {
             const source = Logger.Source.initEmptyFile(input);
             log.addErrorFmt(
@@ -1293,7 +1330,7 @@ const Pattern = struct {
         var count: u16 = 0;
         var offset: RoutePathInt = 0;
         std.debug.assert(input.len > 0);
-
+        var kind: u4 = @enumToInt(Tag.static);
         const end = @truncate(u32, input.len - 1);
         while (offset < end) {
             const pattern: Pattern = Pattern.initUnhashed(input, offset) catch |err| {
@@ -1357,10 +1394,11 @@ const Pattern = struct {
                 return null;
             };
             offset = pattern.len;
+            kind = @maximum(@enumToInt(@as(Pattern.Tag, pattern.value)), kind);
             count += @intCast(u16, @boolToInt(@enumToInt(@as(Pattern.Tag, pattern.value)) > @enumToInt(Pattern.Tag.static)));
         }
 
-        return count;
+        return ValidationResult{ .param_count = count, .kind = @intToEnum(Tag, kind) };
     }
 
     pub fn eql(a: Pattern, b: Pattern) bool {

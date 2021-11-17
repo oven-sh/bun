@@ -2849,7 +2849,7 @@ pub const Server = struct {
 
         if (comptime features.filesystem_router) {
             if (!finished) {
-                req_ctx.bundler.router.?.match(server, RequestContext, req_ctx) catch |err| {
+                req_ctx.bundler.router.?.match(*Server, server, RequestContext, req_ctx) catch |err| {
                     switch (err) {
                         error.ModuleNotFound => {
                             req_ctx.sendNotFound() catch {};

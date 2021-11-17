@@ -194,7 +194,7 @@ pub const Routes = struct {
             const name = this.dynamic_match_names[i];
             const case_sensitive_name_without_leading_slash = this.dynamic_names[i][1..];
             var offset: u32 = 0;
-            if (Pattern.match(path, name, case_sensitive_name_without_leading_slash, allocator, *@TypeOf(ctx.params), &ctx.params, true)) {
+            if (Pattern.match(path, case_sensitive_name_without_leading_slash, name, allocator, *@TypeOf(ctx.params), &ctx.params, true)) {
                 return this.dynamic[i];
             }
         }
@@ -512,7 +512,7 @@ pub const Route = struct {
             table['['] = 252;
             table[']'] = 253;
             // of each segment
-            table['/'] = 251;
+            table['/'] = 254;
             break :brk table;
         };
 

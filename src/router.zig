@@ -254,8 +254,35 @@ const RouteLoader = struct {
 
             var new_route = this.allocator.create(Route) catch unreachable;
             new_route.* = route;
+
+            // Handle static routes with uppercase characters by ensuring exact case still matches
+            // Longer-term:
+            // - We should have an option for controlling this behavior
+            // - We should have an option for allowing case-sensitive matching
+            // - But the default should be case-insensitive matching
+            // This hack is below the engineering quality bar I'm happy with.
+            // It will cause unexpected behavior.
+            if (route.has_uppercase) {
+                var static_entry = this.static_list.getOrPut(route.name[1..]) catch unreachable;
+                if (static_entry.found_existing) {
+                    const source = Logger.Source.initEmptyFile(route.abs_path.slice());
+                    this.log.addErrorFmt(
+                        &source,
+                        Logger.Loc.Empty,
+                        this.allocator,
+                        "Route \"{s}\" is already defined by {s}",
+                        .{ route.name, static_entry.value_ptr.*.abs_path.slice() },
+                    ) catch unreachable;
+
+                    return;
+                }
+
+                static_entry.value_ptr.* = new_route;
+            }
+
             entry.value_ptr.* = new_route;
             this.all_routes.append(this.allocator, new_route) catch unreachable;
+
             return;
         }
 
@@ -480,6 +507,7 @@ pub const Route = struct {
     /// Name used for matching. 
     /// - Omits leading slash
     /// - Lowercased
+    /// This is [inconsistent with Next.js](https://github.com/vercel/next.js/issues/21498)
     match_name: PathString,
 
     entry: *Fs.FileSystem.Entry,
@@ -493,6 +521,8 @@ pub const Route = struct {
     public_path: PathString,
 
     kind: Pattern.Tag = Pattern.Tag.static,
+
+    has_uppercase: bool = false,
 
     pub const Ptr = TinyPtr;
 
@@ -634,6 +664,7 @@ pub const Route = struct {
         var validation_result = Pattern.ValidationResult{};
         const is_index = name.len == 0;
 
+        var has_uppercase = false;
         if (name.len > 0) {
             validation_result = Pattern.validate(
                 name[1..],
@@ -641,7 +672,6 @@ pub const Route = struct {
                 log,
             ) orelse return null;
 
-            var has_uppercase = false;
             var name_i: usize = 0;
             while (!has_uppercase and name_i < public_path.len) : (name_i += 1) {
                 has_uppercase = public_path[name_i] >= 'A' and public_path[name_i] <= 'Z';
@@ -710,6 +740,7 @@ pub const Route = struct {
             .param_count = validation_result.param_count,
             .kind = validation_result.kind,
             .abs_path = entry.abs_path,
+            .has_uppercase = has_uppercase,
         };
     }
 };
@@ -983,13 +1014,13 @@ pub const Test = struct {
     }
 };
 
-test "Route Loader" {
+test "Github API Route Loader" {
     var server = MockServer{};
     var ctx = MockRequestContextType{
         .url = try URLPath.parse("/hi"),
     };
     const fixtures = @import("./test/fixtures.zig");
-    var router = try Test.make("routes-basic", fixtures.github_api_routes_list);
+    var router = try Test.make("routes-github-api", fixtures.github_api_routes_list);
 
     var parameters = Param.List{};
 
@@ -1091,6 +1122,112 @@ test "Route Loader" {
         try expectEqualStrings(route.params.get(1).value, "environments/production/not-real");
 
         try expectEqual(route.params.len, 2);
+    }
+}
+
+test "Sample Route Loader" {
+    var server = MockServer{};
+    var ctx = MockRequestContextType{
+        .url = try URLPath.parse("/hi"),
+    };
+    const fixtures = @import("./test/fixtures.zig");
+    var router = try Test.make("routes-sample", fixtures.sample_route_list);
+
+    var parameters = Param.List{};
+
+    {
+        ctx = MockRequestContextType{ .url = try URLPath.parse("/foo") };
+        try router.match(*MockServer, &server, MockRequestContextType, &ctx);
+        var route = ctx.matched_route.?;
+        try std.testing.expect(!route.hasParams());
+        try expectEqualStrings(route.name, "/Foo");
+    }
+
+    {
+        ctx = MockRequestContextType{ .url = try URLPath.parse("/Foo") };
+        try router.match(*MockServer, &server, MockRequestContextType, &ctx);
+        var route = ctx.matched_route.?;
+        try std.testing.expect(!route.hasParams());
+        try expectEqualStrings(route.name, "/Foo");
+    }
+
+    {
+        ctx = MockRequestContextType{ .url = try URLPath.parse("/") };
+        try router.match(*MockServer, &server, MockRequestContextType, &ctx);
+        var route = ctx.matched_route.?;
+        try std.testing.expect(!route.hasParams());
+        try expectEqualStrings(route.name, "/");
+    }
+
+    {
+        ctx = MockRequestContextType{ .url = try URLPath.parse("/index") };
+        try router.match(*MockServer, &server, MockRequestContextType, &ctx);
+        var route = ctx.matched_route.?;
+        try std.testing.expect(!route.hasParams());
+        try expectEqualStrings(route.name, "/");
+    }
+
+    {
+        ctx = MockRequestContextType{ .url = try URLPath.parse("/Bacon/file") };
+        try router.match(*MockServer, &server, MockRequestContextType, &ctx);
+        var route = ctx.matched_route.?;
+        try std.testing.expect(route.hasParams());
+        try expectEqualStrings(route.name, "/[TitleCaseParam]/file");
+    }
+
+    {
+        ctx = MockRequestContextType{ .url = try URLPath.parse("/Bacon") };
+        try router.match(*MockServer, &server, MockRequestContextType, &ctx);
+        var route = ctx.matched_route.?;
+        try std.testing.expect(route.hasParams());
+        try expectEqualStrings(route.name, "/[TitleCaseParam]");
+    }
+
+    {
+        ctx = MockRequestContextType{ .url = try URLPath.parse("/Bacon/snow") };
+        try router.match(*MockServer, &server, MockRequestContextType, &ctx);
+        var route = ctx.matched_route.?;
+        try std.testing.expect(route.hasParams());
+        try expectEqualStrings(route.name, "/[TitleCaseParam]/[snake_case_param]");
+    }
+
+    {
+        ctx = MockRequestContextType{ .url = try URLPath.parse("/Bacon/snow/file") };
+        try router.match(*MockServer, &server, MockRequestContextType, &ctx);
+        var route = ctx.matched_route.?;
+        try std.testing.expect(route.hasParams());
+        try expectEqualStrings(route.name, "/[TitleCaseParam]/[snake_case_param]/file");
+    }
+
+    {
+        ctx = MockRequestContextType{ .url = try URLPath.parse("/Bacon/snow/bacon") };
+        try router.match(*MockServer, &server, MockRequestContextType, &ctx);
+        var route = ctx.matched_route.?;
+        try std.testing.expect(route.hasParams());
+        try expectEqualStrings(route.name, "/[TitleCaseParam]/[snake_case_param]/bacon");
+    }
+
+    {
+        ctx = MockRequestContextType{ .url = try URLPath.parse("/Bacon/snow/bacon/index") };
+        try router.match(*MockServer, &server, MockRequestContextType, &ctx);
+        var route = ctx.matched_route.?;
+        try std.testing.expect(route.hasParams());
+        try expectEqualStrings(route.name, "/[TitleCaseParam]/[snake_case_param]/bacon");
+        try expectEqualStrings(route.params.get(0).name, "TitleCaseParam");
+        try expectEqualStrings(route.params.get(0).value, "Bacon");
+
+        try expectEqualStrings(route.params.get(1).name, "snake_case_param");
+        try expectEqualStrings(route.params.get(1).value, "snow");
+    }
+
+    {
+        ctx = MockRequestContextType{ .url = try URLPath.parse("/Bacon/snow/bacon/catch-all-should-happen") };
+        try router.match(*MockServer, &server, MockRequestContextType, &ctx);
+        var route = ctx.matched_route.?;
+        try std.testing.expect(route.hasParams());
+        try expectEqualStrings(route.name, "/[...catch-all-at-root]");
+        try expectEqualStrings(route.params.get(0).name, "catch-all-at-root");
+        try expectEqualStrings(route.params.get(0).value, "Bacon/snow/bacon/catch-all-should-happen");
     }
 }
 

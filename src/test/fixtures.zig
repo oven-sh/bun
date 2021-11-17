@@ -8,6 +8,17 @@ pub const fixtures = std.ComptimeStringMap([]u8, .{
     .{ "simple-component.tsx", @embedFile("./fixtures/simple-component.tsx") },
 });
 
+pub const sample_route_list = .{
+    .@"pages/[...catch-all-at-root].js" = "//pages/[...catch-all-at-root].js",
+    .@"pages/index.js" = "//pages/index.js",
+    .@"pages/Foo.js" = "//pages/Foo.js",
+    .@"pages/[TitleCaseParam].js" = "//pages/[TitleCaseParam].js",
+    .@"pages/[TitleCaseParam]/file.js" = "//pages/[TitleCaseParam]/file.js",
+    .@"pages/[TitleCaseParam]/[snake_case_param].js" = "//pages/[TitleCaseParam]/[snake_case_param].js",
+    .@"pages/[TitleCaseParam]/[snake_case_param]/file.js" = "//pages/[TitleCaseParam]/[snake_case_param]/file.js",
+    .@"pages/[TitleCaseParam]/[snake_case_param]/bacon/index.js" = "//pages/[TitleCaseParam]/[snake_case_param]/bacon/index.js",
+};
+
 pub const github_api_routes_list = .{
     .@"pages/[...catch-all-at-root].js" = "//pages/[...catch-all-at-root].js",
     .@"pages/index.js" = "//pages/index.js",

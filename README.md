@@ -982,6 +982,15 @@ make vendor jsc identifier-cache dev
 
 Verify it worked:
 
+First ensure the node dependencies are installed
+
+```bash
+cd integration/snippets
+npm i
+```
+
+Then
+
 ```bash
 make test-dev-all
 ```
@@ -1036,6 +1045,15 @@ make vendor dev
 ```
 
 Verify it worked:
+
+First ensure the node dependencies are installed
+
+```bash
+cd integration/snippets
+npm i
+```
+
+Then
 
 ```bash
 make test-dev-all

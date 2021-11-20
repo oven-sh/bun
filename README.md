@@ -961,7 +961,7 @@ export CPPFLAGS="$CPPFLAGS -I$(brew --prefix llvm@12)/include"
 
 On fish that looks like `fish_add_path (brew --prefix llvm@12)/bin`
 
-Compile Zig:
+### Compile Zig
 
 ```bash
 git clone https://github.com/jarred-sumner/zig
@@ -970,7 +970,17 @@ git checkout jarred/zig-sloppy-with-small-structs
 cmake . -DCMAKE_PREFIX_PATH=$(brew --prefix llvm@12) -DZIG_STATIC_LLVM=ON -DCMAKE_BUILD_TYPE=Release && make -j 16
 ```
 
+Note that `brew install zig` won't work. Bun uses a build of Zig with a couple patches.
+
+Additionally, you'll need `cmake`, `npm` and `esbuild` installed globally.
+
 You'll want to make sure `zig` is in `$PATH`. The `zig` binary wil be in the same folder as the newly-cloned `zig` repo. If you use fish, you can run `fish_add_path (pwd)`.
+
+### Build bun
+
+If you're building on an Apple Silicon device, you'll need to do is ensure you have set an environment variable `CODESIGN_IDENTITY`.  You can find the correct value by visiting `Keychain Access` and looking under your `login` profile for `Certificates`.  The name would usually look like `Apple Development: user@example.com (WDYABC123)`
+
+If you're not familiar with the process, there's a guide [here](https://ioscodesigning.com/generating-code-signing-files/#generate-a-code-signing-certificate-using-xcode)
 
 In `bun`:
 
@@ -980,15 +990,23 @@ git submodule update --init --recursive --progress --depth=1
 make vendor jsc identifier-cache dev
 ```
 
-Verify it worked:
+### Verify it worked
+
+First ensure the node dependencies are installed
 
 ```bash
+cd integration/snippets
+npm i
+```
+
+Then
+
+```bash
+# if you're not already in the bun root directory
+cd ../../
 make test-dev-all
 ```
 
-Note that `brew install zig` won't work. Bun uses a build of Zig with a couple patches.
-
-Additionally, you'll need `cmake`, `npm` and `esbuild` installed globally.
 
 ### Troubleshooting
 
@@ -1035,9 +1053,20 @@ Compile Bun:
 make vendor dev
 ```
 
-Verify it worked:
+### Verify it worked
+
+First ensure the node dependencies are installed
 
 ```bash
+cd integration/snippets
+npm i
+```
+
+Then
+
+```bash
+# if you're not already in the bun root directory
+cd ../../
 make test-dev-all
 ```
 

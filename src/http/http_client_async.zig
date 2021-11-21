@@ -1,36 +1,43 @@
-// @link "/Users/jarred/Code/bun/src/deps/zlib/libz.a"
-
-const picohttp = @import("./deps/picohttp.zig");
-usingnamespace @import("./global.zig");
+const picohttp = @import("../deps/picohttp.zig");
+usingnamespace @import("../global.zig");
 const std = @import("std");
-const Headers = @import("./javascript/jsc/webcore/response.zig").Headers;
-const URL = @import("./query_string_map.zig").URL;
-const Method = @import("./http/method.zig").Method;
-const Api = @import("./api/schema.zig").Api;
-const Lock = @import("./lock.zig").Lock;
+const Headers = @import("../javascript/jsc/webcore/response.zig").Headers;
+const URL = @import("../query_string_map.zig").URL;
+const Method = @import("../http/method.zig").Method;
+const Api = @import("../api/schema.zig").Api;
+const Lock = @import("../lock.zig").Lock;
 const HTTPClient = @This();
-const SOCKET_FLAGS = os.SOCK_CLOEXEC;
-const S2n = @import("./s2n.zig");
-const Zlib = @import("./zlib.zig");
-const StringBuilder = @import("./string_builder.zig");
+const SOCKET_FLAGS = os.SOCK_CLOEXEC | os.SOCK_NONBLOCK;
+const S2n = @import("../s2n.zig");
+const Zlib = @import("../zlib.zig");
+const StringBuilder = @import("../string_builder.zig");
+const AsyncIO = @import("io");
+const ThreadPool = @import("../thread_pool.zig");
+
+const NetoworkThread = @import("./network_thread.zig");
 
 fn writeRequest(
-    comptime Writer: type,
-    writer: Writer,
+    writer: *AsyncSocket,
     request: picohttp.Request,
     body: string,
     // header_hashes: []u64,
 ) !void {
-    try writer.writeAll(request.method);
-    try writer.writeAll(" ");
-    try writer.writeAll(request.path);
-    try writer.writeAll(" HTTP/1.1\r\n");
+    _ = try writer.write(request.method);
+    _ = try writer.write(" ");
+    _ = try writer.write(request.path);
+    _ = try writer.write(" HTTP/1.1\r\n");
 
     for (request.headers) |header, i| {
-        try writer.writeAll(header.name);
-        try writer.writeAll(": ");
-        try writer.writeAll(header.value);
-        try writer.writeAll("\r\n");
+        _ = try writer.write(header.name);
+        _ = try writer.write(": ");
+        _ = try writer.write(header.value);
+        _ = try writer.write("\r\n");
+    }
+
+    _ = try writer.write("\r\n");
+
+    if (body.len > 0) {
+        _ = try writer.write(body);
     }
 }
 
@@ -46,21 +53,28 @@ read_count: u32 = 0,
 remaining_redirect_count: i8 = 127,
 redirect_buf: [2048]u8 = undefined,
 disable_shutdown: bool = true,
-timeout: u32 = 0,
+timeout: usize = 0,
 progress_node: ?*std.Progress.Node = null,
+socket: AsyncSocket = undefined,
 
-pub fn init(allocator: *std.mem.Allocator, method: Method, url: URL, header_entries: Headers.Entries, header_buf: string) HTTPClient {
+pub fn init(
+    allocator: *std.mem.Allocator,
+    method: Method,
+    url: URL,
+    header_entries: Headers.Entries,
+    header_buf: string,
+) !HTTPClient {
     return HTTPClient{
         .allocator = allocator,
         .method = method,
         .url = url,
         .header_entries = header_entries,
         .header_buf = header_buf,
+        .socket = try AsyncSocket.init(&AsyncIO.global, 0, allocator),
     };
 }
 
 threadlocal var response_headers_buf: [256]picohttp.Header = undefined;
-threadlocal var request_headers_buf: [256]picohttp.Header = undefined;
 threadlocal var request_content_len_buf: [64]u8 = undefined;
 threadlocal var header_name_hashes: [256]u64 = undefined;
 // threadlocal var resolver_cache
@@ -169,6 +183,413 @@ pub const HeaderBuilder = struct {
 
 threadlocal var server_name_buf: [1024]u8 = undefined;
 
+pub const HTTPChannel = @import("../sync.zig").Channel(*AsyncHTTP, .{ .Static = 1000 });
+
+pub const AsyncHTTP = struct {
+    request: ?picohttp.Request = null,
+    response: ?picohttp.Response = null,
+    request_headers: Headers.Entries = Headers.Entries{},
+    response_headers: Headers.Entries = Headers.Entries{},
+    response_buffer: *MutableString,
+    request_body: *MutableString,
+    allocator: *std.mem.Allocator,
+    request_header_buf: string = "",
+    method: Method = Method.GET,
+    max_retry_count: u32 = 0,
+    url: URL,
+
+    /// Timeout in nanoseconds
+    timeout: usize = 0,
+
+    response_encoding: Encoding = Encoding.identity,
+    redirect_count: u32 = 0,
+    retries_count: u32 = 0,
+
+    client: HTTPClient = undefined,
+    err: ?anyerror = null,
+
+    state: AtomicState = AtomicState.init(State.pending),
+    channel: ?*HTTPChannel = undefined,
+    elapsed: u64 = 0,
+
+    pub var active_requests_count = std.atomic.Atomic(u32).init(0);
+
+    pub const State = enum(u32) {
+        pending = 0,
+        scheduled = 1,
+        sending = 2,
+        success = 3,
+        fail = 4,
+    };
+    const AtomicState = std.atomic.Atomic(State);
+
+    pub fn init(
+        allocator: *std.mem.Allocator,
+        method: Method,
+        url: URL,
+        headers: Headers.Entries,
+        headers_buf: string,
+        response_buffer: *MutableString,
+        request_body: *MutableString,
+        timeout: usize,
+    ) !AsyncHTTP {
+        var this = AsyncHTTP{
+            .allocator = allocator,
+            .url = url,
+            .method = method,
+            .request_headers = headers,
+            .request_header_buf = headers_buf,
+            .request_body = request_body,
+            .response_buffer = response_buffer,
+        };
+        this.client = try HTTPClient.init(allocator, method, url, headers, headers_buf);
+        this.client.timeout = timeout;
+        this.timeout = timeout;
+        return this;
+    }
+
+    pub fn schedule(this: *AsyncHTTP, allocator: *std.mem.Allocator) void {
+        std.debug.assert(NetoworkThread.global_loaded);
+        var sender = HTTPSender.get(this, allocator);
+        this.state.store(.scheduled, .Monotonic);
+        NetoworkThread.global.pool.schedule(ThreadPool.Batch.from(&sender.task));
+    }
+
+    const HTTPSender = struct {
+        task: ThreadPool.Task = .{ .callback = callback },
+        frame: @Frame(AsyncHTTP.do) = undefined,
+        http: *AsyncHTTP = undefined,
+
+        next: ?*HTTPSender = null,
+
+        var head: ?*HTTPSender = null;
+
+        pub fn get(http: *AsyncHTTP, allocator: *std.mem.Allocator) *HTTPSender {
+            if (head == null) {
+                head = allocator.create(HTTPSender) catch unreachable;
+                head.?.* = HTTPSender{};
+            }
+
+            var head_ = head.?;
+            head = head.?.next;
+            head_.next = null;
+            head_.task = .{ .callback = callback };
+            head_.http = http;
+
+            return head_;
+        }
+
+        pub fn release(this: *HTTPSender) void {
+            // head = this;
+        }
+
+        pub fn callback(task: *ThreadPool.Task) void {
+            var this = @fieldParentPtr(HTTPSender, "task", task);
+            this.frame = async AsyncHTTP.do(this);
+        }
+
+        pub fn onFinish(this: *HTTPSender) void {}
+    };
+
+    pub fn do(sender: *HTTPSender) void {
+        {
+            var this = sender.http;
+            this.err = null;
+            this.state.store(.sending, .Monotonic);
+            var timer = std.time.Timer.start() catch @panic("Timer failure");
+            defer this.elapsed = timer.read();
+            _ = active_requests_count.fetchAdd(1, .Monotonic);
+            defer _ = active_requests_count.fetchSub(1, .Monotonic);
+            this.response = await this.client.sendAsync(this.request_body.list.items, this.response_buffer) catch |err| {
+                this.state.store(.fail, .Monotonic);
+                this.err = err;
+                return;
+            };
+            this.redirect_count = @intCast(u32, @maximum(127 - this.client.remaining_redirect_count, 0));
+            this.state.store(.success, .Monotonic);
+        }
+
+        switch (sender.http.state.load(.Monotonic)) {
+            .fail => {
+                if (sender.http.max_retry_count > sender.http.retries_count) {
+                    sender.http.retries_count += 1;
+                    NetoworkThread.global.pool.schedule(ThreadPool.Batch.from(&sender.task));
+                    return;
+                }
+            },
+            else => {},
+        }
+
+        if (sender.http.channel) |channel| {
+            std.debug.assert(channel.tryWriteItem(sender.http) catch false);
+        }
+
+        sender.release();
+    }
+};
+
+const AsyncMessage = struct {
+    const buffer_size = std.math.maxInt(u16) - 64;
+    used: u16 = 0,
+    sent: u16 = 0,
+    completion: AsyncIO.Completion = undefined,
+    buf: [buffer_size]u8 = undefined,
+    allocator: *std.mem.Allocator,
+    next: ?*AsyncMessage = null,
+    context: *c_void = undefined,
+
+    var _first: ?*AsyncMessage = null;
+    pub fn get(allocator: *std.mem.Allocator) *AsyncMessage {
+        if (_first) |first| {
+            var prev = first;
+            if (first.next) |next| {
+                _first = next;
+                prev.next = null;
+                return prev;
+            }
+
+            return prev;
+        }
+
+        var msg = allocator.create(AsyncMessage) catch unreachable;
+        msg.* = AsyncMessage{ .allocator = allocator };
+        return msg;
+    }
+
+    pub fn release(self: *AsyncMessage) void {
+        self.next = _first;
+        self.used = 0;
+        self.sent = 0;
+        _first = self;
+    }
+
+    const WriteResponse = struct {
+        written: u32 = 0,
+        overflow: bool = false,
+    };
+
+    pub fn writeAll(this: *AsyncMessage, buffer: []const u8) WriteResponse {
+        var remain = this.buf[this.used..];
+        var writable = buffer[0..@minimum(buffer.len, remain.len)];
+        if (writable.len == 0) {
+            return .{ .written = 0, .overflow = buffer.len > 0 };
+        }
+
+        std.mem.copy(u8, remain, writable);
+        this.used += @intCast(u16, writable.len);
+
+        return .{ .written = @truncate(u32, writable.len), .overflow = writable.len == remain.len };
+    }
+
+    pub inline fn slice(this: *const AsyncMessage) []const u8 {
+        return this.buf[0..this.used][this.sent..];
+    }
+
+    pub inline fn available(this: *AsyncMessage) []u8 {
+        return this.buf[0 .. this.buf.len - this.used];
+    }
+};
+
+const Completion = AsyncIO.Completion;
+
+const AsyncSocket = struct {
+    const This = @This();
+    io: *AsyncIO = undefined,
+    socket: std.os.socket_t = 0,
+    head: *AsyncMessage = undefined,
+    tail: *AsyncMessage = undefined,
+    allocator: *std.mem.Allocator,
+    err: ?anyerror = null,
+    queued: usize = 0,
+    sent: usize = 0,
+    send_frame: @Frame(AsyncSocket.send) = undefined,
+    read_frame: @Frame(AsyncSocket.read) = undefined,
+    connect_frame: @Frame(AsyncSocket.connect) = undefined,
+    read_context: []u8 = undefined,
+    read_offset: u64 = 0,
+    read_completion: AsyncIO.Completion = undefined,
+    connect_completion: AsyncIO.Completion = undefined,
+
+    const ConnectError = AsyncIO.ConnectError || std.os.SocketError || std.os.SetSockOptError;
+
+    pub fn init(io: *AsyncIO, socket: std.os.socket_t, allocator: *std.mem.Allocator) !AsyncSocket {
+        var head = AsyncMessage.get(allocator);
+
+        return AsyncSocket{ .io = io, .socket = socket, .head = head, .tail = head, .allocator = allocator };
+    }
+
+    fn on_connect(this: *AsyncSocket, completion: *Completion, err: ConnectError!void) void {
+        err catch |resolved_err| {
+            this.err = resolved_err;
+        };
+
+        resume this.connect_frame;
+    }
+
+    pub fn connect(this: *AsyncSocket, name: []const u8, port: u16) ConnectError!void {
+        this.socket = 0;
+
+        const list = std.net.getAddressList(this.allocator, name, port) catch |err| {
+            return @errSetCast(ConnectError, err);
+        };
+        defer list.deinit();
+
+        if (list.addrs.len == 0) return error.ConnectionRefused;
+
+        for (list.addrs) |address| {
+            const sockfd = try AsyncIO.openSocket(address.any.family, SOCKET_FLAGS | std.os.SOCK_STREAM, std.os.IPPROTO_TCP);
+
+            this.io.connect(*AsyncSocket, this, on_connect, &this.connect_completion, sockfd, address);
+            suspend {
+                this.connect_frame = @frame().*;
+            }
+
+            if (this.err) |e| {
+                std.os.closeSocket(sockfd);
+
+                switch (e) {
+                    error.ConnectionRefused => {
+                        this.err = null;
+                        continue;
+                    },
+                    else => return @errSetCast(ConnectError, e),
+                }
+            }
+
+            this.socket = sockfd;
+            return;
+        }
+
+        return error.ConnectionRefused;
+    }
+
+    fn on_send(msg: *AsyncMessage, completion: *Completion, result: SendError!usize) void {
+        var this = @ptrCast(*AsyncSocket, @alignCast(@alignOf(*AsyncSocket), msg.context));
+        const written = result catch |err| {
+            this.err = err;
+            resume this.send_frame;
+            return;
+        };
+
+        if (written == 0) {
+            resume this.send_frame;
+            return;
+        }
+
+        msg.sent += @truncate(u16, written);
+        const has_more = msg.used > msg.sent;
+        this.sent += written;
+
+        if (has_more) {
+            this.io.send(*AsyncMessage, msg, on_send, &msg.completion, this.socket, msg.slice());
+        } else {
+            msg.release();
+        }
+
+        // complete
+        if (this.queued <= this.sent) {
+            resume this.send_frame;
+        }
+    }
+
+    pub fn write(this: *AsyncSocket, buf: []const u8) AsyncSocket.SendError!usize {
+        this.tail.context = this;
+
+        const resp = this.tail.writeAll(buf);
+        this.queued += resp.written;
+
+        if (resp.overflow) {
+            var next = AsyncMessage.get(this.allocator);
+            this.tail.next = next;
+            this.tail = next;
+
+            return @as(usize, resp.written) + try this.write(buf[resp.written..]);
+        }
+
+        return @as(usize, resp.written);
+    }
+
+    pub const SendError = AsyncIO.SendError;
+
+    pub fn deinit(this: *AsyncSocket) void {
+        var node = this.head;
+        while (node.next) |element| {
+            element.release();
+            node = element.next orelse break;
+        }
+        this.head.release();
+    }
+
+    pub fn send(this: *This) SendError!usize {
+        const original_sent = this.sent;
+        this.head.context = this;
+
+        this.io.send(*AsyncMessage, this.head, on_send, &this.head.completion, this.socket, this.head.slice());
+
+        var node = this.head;
+        while (node.next) |element| {
+            this.io.send(*AsyncMessage, element, on_send, &element.completion, this.socket, element.slice());
+            node = element.next orelse break;
+        }
+
+        suspend {
+            this.send_frame = @frame().*;
+        }
+
+        if (this.err) |err| {
+            this.err = null;
+            return @errSetCast(AsyncSocket.SendError, err);
+        }
+
+        return this.sent - original_sent;
+    }
+
+    pub const RecvError = AsyncIO.RecvError;
+
+    pub fn read(
+        this: *AsyncSocket,
+        bytes: []u8,
+        offset: u64,
+    ) RecvError!u64 {
+        this.read_context = bytes;
+        this.read_offset = offset;
+        const original_read_offset = this.read_offset;
+        const Reader = struct {
+            pub fn on_read(ctx: *AsyncSocket, completion: *AsyncIO.Completion, result: RecvError!usize) void {
+                const len = result catch |err| {
+                    ctx.err = err;
+                    resume ctx.read_frame;
+                    return;
+                };
+                ctx.read_offset += len;
+                resume ctx.read_frame;
+            }
+        };
+
+        this.io.recv(
+            *AsyncSocket,
+            this,
+            Reader.on_read,
+            &this.read_completion,
+            this.socket,
+            bytes,
+        );
+
+        suspend {
+            this.read_frame = @frame().*;
+        }
+
+        if (this.err) |err| {
+            this.err = null;
+            return @errSetCast(RecvError, err);
+        }
+
+        return this.read_offset - original_read_offset;
+    }
+};
+
+threadlocal var request_headers_buf: [256]picohttp.Header = undefined;
+
 pub fn buildRequest(this: *const HTTPClient, body_len: usize) picohttp.Request {
     var header_count: usize = 0;
     var header_entries = this.header_entries.slice();
@@ -197,10 +618,10 @@ pub fn buildRequest(this: *const HTTPClient, body_len: usize) picohttp.Request {
 
         override_accept_encoding = override_accept_encoding or hash == accept_encoding_header_hash;
 
-        request_headers_buf[header_count] = picohttp.Header{
+        request_headers_buf[header_count] = (picohttp.Header{
             .name = name,
             .value = this.headerStr(header_values[i]),
-        };
+        });
 
         // header_name_hashes[header_count] = hash;
 
@@ -258,55 +679,39 @@ pub fn buildRequest(this: *const HTTPClient, body_len: usize) picohttp.Request {
 
 pub fn connect(
     this: *HTTPClient,
-) !tcp.Client {
+) !void {
     const port = this.url.getPortAuto();
-    var client: tcp.Client = undefined;
 
-    // if (this.url.isLocalhost()) {
-    //     try client.connect(
-    //         try std.x.os.Socket.Address.initIPv4(try std.net.Address.resolveIp("localhost", port), port),
-    //     );
-    // } else {
-    // } else if (this.url.isDomainName()) {
-    var stream = try std.net.tcpConnectToHost(default_allocator, this.url.hostname, port);
-    client = tcp.Client{ .socket = std.x.os.Socket.from(stream.handle) };
-
-    if (this.timeout > 0) {
-        client.setReadTimeout(this.timeout) catch {};
-        client.setWriteTimeout(this.timeout) catch {};
-    }
-
+    try this.socket.connect(this.url.hostname, port);
+    var client = std.x.net.tcp.Client{ .socket = std.x.os.Socket.from(this.socket.socket) };
     client.setNoDelay(true) catch {};
-    client.setReadBufferSize(http_req_buf.len) catch {};
+    client.setReadBufferSize(AsyncMessage.buffer_size) catch {};
     client.setQuickACK(true) catch {};
 
-    // }
-    // } else if (this.url.getIPv4Address()) |ip_addr| {
-    //     try client.connect(std.x.os.Socket.Address(ip_addr, port));
-    // } else if (this.url.getIPv6Address()) |ip_addr| {
-    //     try client.connect(std.x.os.Socket.Address.initIPv6(ip_addr, port));
-    // } else {
-    //     return error.MissingHostname;
-    // }
-
-    return client;
+    if (this.timeout > 0) {
+        client.setReadTimeout(@truncate(u32, this.timeout / std.time.ns_per_ms)) catch {};
+        client.setWriteTimeout(@truncate(u32, this.timeout / std.time.ns_per_ms)) catch {};
+    }
 }
 
-threadlocal var http_req_buf: [65436]u8 = undefined;
+pub fn sendAsync(this: *HTTPClient, body: []const u8, body_out_str: *MutableString) @Frame(HTTPClient.send) {
+    return async this.send(body, body_out_str);
+}
 
 pub fn send(this: *HTTPClient, body: []const u8, body_out_str: *MutableString) !picohttp.Response {
     // this prevents stack overflow
     redirect: while (this.remaining_redirect_count >= -1) {
         if (this.url.isHTTPS()) {
-            return this.sendHTTPS(body, body_out_str) catch |err| {
-                switch (err) {
-                    error.Redirect => {
-                        this.remaining_redirect_count -= 1;
-                        continue :redirect;
-                    },
-                    else => return err,
-                }
-            };
+            return error.NotImplementedYet;
+            // return this.sendHTTPS(body, body_out_str) catch |err| {
+            //     switch (err) {
+            //         error.Redirect => {
+            //             this.remaining_redirect_count -= 1;
+            //             continue :redirect;
+            //         },
+            //         else => return err,
+            //     }
+            // };
         } else {
             return this.sendHTTP(body, body_out_str) catch |err| {
                 switch (err) {
@@ -323,28 +728,19 @@ pub fn send(this: *HTTPClient, body: []const u8, body_out_str: *MutableString) !
     return error.TooManyRedirects;
 }
 
+const Task = ThreadPool.Task;
+
 pub fn sendHTTP(this: *HTTPClient, body: []const u8, body_out_str: *MutableString) !picohttp.Response {
-    this.tcp_client = try this.connect();
-    defer std.os.closeSocket(this.tcp_client.socket.fd);
+    try this.connect();
+    defer if (this.socket.socket > 0) std.os.closeSocket(this.socket.socket);
     var request = buildRequest(this, body.len);
     if (this.verbose) {
         Output.prettyErrorln("{s}", .{request});
     }
-    var client_writer = this.tcp_client.writer(SOCKET_FLAGS);
-    {
-        var client_writer_buffered = std.io.bufferedWriter(client_writer);
-        var client_writer_buffered_writer = client_writer_buffered.writer();
 
-        try writeRequest(@TypeOf(&client_writer_buffered_writer), &client_writer_buffered_writer, request, body);
-        try client_writer_buffered_writer.writeAll("\r\n");
-        try client_writer_buffered.flush();
-    }
-
-    if (body.len > 0) {
-        try client_writer.writeAll(body);
-    }
-
-    var client_reader = this.tcp_client.reader(SOCKET_FLAGS);
+    try writeRequest(&this.socket, request, body);
+    _ = try this.socket.send();
+    var client_reader = &this.socket;
 
     if (this.progress_node == null) {
         return this.processResponse(
@@ -406,6 +802,9 @@ const ZlibPool = struct {
 
 pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime report_progress: bool, comptime Client: type, client: Client, body_out_str: *MutableString) !picohttp.Response {
     var response: picohttp.Response = undefined;
+    var request_message = AsyncMessage.get(this.allocator);
+    defer request_message.release();
+    var request_buffer: []u8 = &request_message.buf;
     var read_length: usize = 0;
     {
         var read_headers_up_to: usize = 0;
@@ -414,7 +813,7 @@ pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime repo
         defer this.read_count += @intCast(u32, read_length);
 
         restart: while (req_buf_read != 0) {
-            req_buf_read = try client.read(http_req_buf[read_length..]);
+            req_buf_read = try client.read(request_buffer, read_length);
             read_length += req_buf_read;
             if (comptime report_progress) {
                 this.progress_node.?.activate();
@@ -422,10 +821,10 @@ pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime repo
                 this.progress_node.?.context.maybeRefresh();
             }
 
-            var request_buffer = http_req_buf[0..read_length];
+            var request_body = request_buffer[0..read_length];
             read_headers_up_to = if (read_headers_up_to > read_length) read_length else read_headers_up_to;
 
-            response = picohttp.Response.parseParts(request_buffer, &response_headers_buf, &read_headers_up_to) catch |err| {
+            response = picohttp.Response.parseParts(request_body, &response_headers_buf, &read_headers_up_to) catch |err| {
                 switch (err) {
                     error.ShortRead => {
                         continue :restart;
@@ -539,7 +938,7 @@ pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime repo
 
         var last_read: usize = 0;
         {
-            var remainder = http_req_buf[@intCast(usize, response.bytes_read)..read_length];
+            var remainder = request_buffer[@intCast(usize, response.bytes_read)..read_length];
             last_read = remainder.len;
             try buffer.inflate(std.math.max(remainder.len, 2048));
             buffer.list.expandToCapacity();
@@ -564,7 +963,7 @@ pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime repo
                 buffer.list.expandToCapacity();
             }
 
-            rret = try client.read(buffer.list.items[total_size..]);
+            rret = try client.read(buffer.list.items, total_size);
 
             if (rret == 0) {
                 return error.ChunkedEncodingError;
@@ -614,7 +1013,7 @@ pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime repo
 
     if (content_length > 0) {
         var remaining_content_length = content_length;
-        var remainder = http_req_buf[@intCast(usize, response.bytes_read)..read_length];
+        var remainder = request_buffer[@intCast(usize, response.bytes_read)..read_length];
         remainder = remainder[0..std.math.min(remainder.len, content_length)];
         var buffer_: *MutableString = body_out_str;
 
@@ -645,7 +1044,8 @@ pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime repo
 
         while (remaining_content_length > 0) {
             const size = @intCast(u32, try client.read(
-                buffer.list.items[body_size..],
+                buffer.list.items,
+                body_size,
             ));
             this.read_count += size;
             if (size == 0) break;

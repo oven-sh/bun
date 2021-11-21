@@ -1,3 +1,5 @@
 *.tgz
 tgz
 readlink-getfd
+readlink-realpath
+http_bench

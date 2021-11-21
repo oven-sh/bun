@@ -1,5 +1,20 @@
 const std = @import("std");
-const os = std.os;
+const os = struct {
+    pub usingnamespace std.os;
+    pub const EINTR = 4;
+    pub const EAGAIN = 35;
+    pub const EBADF = 9;
+    pub const ECONNRESET = 54;
+    pub const EFAULT = 14;
+    pub const EINVAL = 22;
+    pub const EIO = 5;
+    pub const EISDIR = 21;
+    pub const ENOBUFS = 55;
+    pub const ENOMEM = 12;
+    pub const ENXIO = 6;
+    pub const EOVERFLOW = 84;
+    pub const ESPIPE = 29;
+};
 const mem = std.mem;
 const assert = std.debug.assert;
 
@@ -486,7 +501,7 @@ pub fn read(
                         op.len,
                         @bitCast(isize, op.offset),
                     );
-                    return switch (os.errno(rc)) {
+                    return switch (@enumToInt(os.errno(rc))) {
                         0 => @intCast(usize, rc),
                         os.EINTR => continue,
                         os.EAGAIN => error.WouldBlock,
@@ -501,7 +516,7 @@ pub fn read(
                         os.ENXIO => error.Unseekable,
                         os.EOVERFLOW => error.Unseekable,
                         os.ESPIPE => error.Unseekable,
-                        else => |err| os.unexpectedErrno(err),
+                        else => error.Unexpected,
                     };
                 }
             }
@@ -663,3 +678,6 @@ fn buffer_limit(buffer_len: usize) usize {
     };
     return std.math.min(limit, buffer_len);
 }
+
+pub var global: IO = undefined;
+pub var global_loaded: bool = false;

@@ -872,3 +872,6 @@ pub fn write(
 pub fn openSocket(family: u32, sock_type: u32, protocol: u32) !os.socket_t {
     return os.socket(family, sock_type, protocol);
 }
+
+pub var global: IO = undefined;
+pub var global_loaded: bool = false;

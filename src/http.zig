@@ -1540,7 +1540,7 @@ pub const RequestContext = struct {
             ctx.appendHeader("Sec-WebSocket-Protocol", "bun-hmr");
             try ctx.writeStatus(101);
             try ctx.flushHeaders();
-            // Output.prettyln("<r><green>101<r><d> Hot Module Reloading connected.<r>", .{});
+            // Output.prettyErrorln("<r><green>101<r><d> Hot Module Reloading connected.<r>", .{});
             // Output.flush();
             Analytics.Features.hot_module_reloading = true;
 
@@ -1591,7 +1591,7 @@ pub const RequestContext = struct {
                 var frame = handler.websocket.read() catch |err| {
                     switch (err) {
                         error.ConnectionClosed => {
-                            // Output.prettyln("Websocket closed.", .{});
+                            // Output.prettyErrorln("Websocket closed.", .{});
                             handler.tombstone = true;
                             is_socket_closed = true;
                             continue;
@@ -1604,7 +1604,7 @@ pub const RequestContext = struct {
                 };
                 switch (frame.header.opcode) {
                     .Close => {
-                        // Output.prettyln("Websocket closed.", .{});
+                        // Output.prettyErrorln("Websocket closed.", .{});
                         is_socket_closed = true;
                         return;
                     },
@@ -1639,7 +1639,7 @@ pub const RequestContext = struct {
                                     },
                                     .success => {
                                         if (build_result.timestamp > cmd.timestamp) {
-                                            Output.prettyln(
+                                            Output.prettyErrorln(
                                                 "<r><b><green>{d}ms<r> <d>built<r> <b>{s}<r><b> <r><d>({d}+ LOC)",
                                                 .{
                                                     build_result.timestamp - cmd.timestamp,
@@ -2553,7 +2553,7 @@ pub const Server = struct {
                         );
 
                         if (comptime FeatureFlags.verbose_watcher) {
-                            Output.prettyln("<r><d>File changed: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
+                            Output.prettyErrorln("<r><d>File changed: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
                         }
                     } else {
                         const change_message = Api.WebsocketMessageFileChangeNotification{
@@ -2566,12 +2566,12 @@ pub const Server = struct {
                         const change_buf = content_fbs.getWritten();
                         const written_buf = filechange_buf[0 .. header.len + change_buf.len];
                         RequestContext.WebsocketHandler.broadcast(written_buf) catch |err| {
-                            Output.prettyln("Error writing change notification: {s}<r>", .{@errorName(err)});
+                            Output.prettyErrorln("Error writing change notification: {s}<r>", .{@errorName(err)});
                         };
                         if (comptime is_emoji_enabled) {
-                            Output.prettyln("<r>📜  <d>File change: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
+                            Output.prettyErrorln("<r>📜  <d>File change: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
                         } else {
-                            Output.prettyln("<r>   <d>File change: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
+                            Output.prettyErrorln("<r>   <d>File change: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
                         }
                     }
                 },
@@ -2583,9 +2583,9 @@ pub const Server = struct {
                     //     ctx.watcher.removeAtIndex(event.index, hashes[event.index], parent_hashes, .directory);
 
                     if (comptime is_emoji_enabled) {
-                        Output.prettyln("<r>📁  <d>Dir change: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
+                        Output.prettyErrorln("<r>📁  <d>Dir change: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
                     } else {
-                        Output.prettyln("<r>    <d>Dir change: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
+                        Output.prettyErrorln("<r>    <d>Dir change: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
                     }
                 },
             }
@@ -2839,13 +2839,13 @@ pub const Server = struct {
                             200, 304, 101 => {},
 
                             201...303, 305...399 => {
-                                Output.prettyln("<r><green>{d}<r><d> {s} <r>{s}<d> as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+                                Output.prettyErrorln("<r><green>{d}<r><d> {s} <r>{s}<d> as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
                             },
                             400...499 => {
-                                Output.prettyln("<r><yellow>{d}<r><d> {s} <r>{s}<d> as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+                                Output.prettyErrorln("<r><yellow>{d}<r><d> {s} <r>{s}<d> as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
                             },
                             else => {
-                                Output.prettyln("<r><red>{d}<r><d> {s} <r>{s}<d> as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+                                Output.prettyErrorln("<r><red>{d}<r><d> {s} <r>{s}<d> as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
                             },
                         }
                     }
@@ -2861,13 +2861,13 @@ pub const Server = struct {
                             200, 304, 101 => {},
 
                             201...303, 305...399 => {
-                                Output.prettyln("<r><green>{d}<r><d> <r>{s}<d> {s} as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+                                Output.prettyErrorln("<r><green>{d}<r><d> <r>{s}<d> {s} as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
                             },
                             400...499 => {
-                                Output.prettyln("<r><yellow>{d}<r><d> <r>{s}<d> {s} as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+                                Output.prettyErrorln("<r><yellow>{d}<r><d> <r>{s}<d> {s} as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
                             },
                             else => {
-                                Output.prettyln("<r><red>{d}<r><d> <r>{s}<d> {s} as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+                                Output.prettyErrorln("<r><red>{d}<r><d> <r>{s}<d> {s} as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
                             },
                         }
                     }

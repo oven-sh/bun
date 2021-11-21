@@ -4,9 +4,12 @@
 const std = @import("std");
 const ThreadPool = @This();
 const Futex = @import("./futex.zig");
+const AsyncIO = @import("io");
 
 const assert = std.debug.assert;
 const Atomic = std.atomic.Atomic;
+
+io: ?*AsyncIO = null,
 
 stack_size: u32,
 max_threads: u32,
@@ -15,6 +18,7 @@ idle_event: Event = .{},
 join_event: Event = .{},
 run_queue: Node.Queue = .{},
 threads: Atomic(?*Thread) = Atomic(?*Thread).init(null),
+name: []const u8 = "",
 
 const Sync = packed struct {
     /// Tracks the number of threads not searching for Tasks
@@ -172,6 +176,7 @@ noinline fn notifySlow(self: *ThreadPool, is_waking: bool) void {
             if (can_wake and sync.spawned < self.max_threads) {
                 const spawn_config = std.Thread.SpawnConfig{ .stack_size = self.stack_size };
                 const thread = std.Thread.spawn(spawn_config, Thread.run, .{self}) catch return self.unregister(null);
+                // if (self.name.len > 0) thread.setName(self.name) catch {};
                 return thread.detach();
             }
 
@@ -230,7 +235,14 @@ noinline fn wait(self: *ThreadPool, _is_waking: bool) error{Shutdown}!bool {
 
             // Wait for a signal by either notify() or shutdown() without wasting cpu cycles.
             // TODO: Add I/O polling here.
+            if (self.io) |io| {
+                io.tick() catch unreachable;
+            }
         } else {
+            if (self.io) |io| {
+                while (true) io.run_for_ns(std.time.ns_per_ms * 1000) catch {};
+            }
+
             self.idle_event.wait();
             sync = @bitCast(Sync, self.sync.load(.Monotonic));
         }
@@ -315,6 +327,8 @@ fn join(self: *ThreadPool) void {
     thread.join_event.notify();
 }
 
+const Output = @import("./global.zig").Output;
+
 const Thread = struct {
     next: ?*Thread = null,
     target: ?*Thread = null,
@@ -326,6 +340,8 @@ const Thread = struct {
 
     /// Thread entry point which runs a worker for the ThreadPool
     fn run(thread_pool: *ThreadPool) void {
+        Output.Source.configureThread();
+
         var self = Thread{};
         current = &self;
 
@@ -344,6 +360,7 @@ const Thread = struct {
                 const task = @fieldParentPtr(Task, "node", result.node);
                 (task.callback)(task);
             }
+            Output.flush();
         }
     }
 
@@ -369,6 +386,9 @@ const Thread = struct {
         }
 
         // TODO: add optimistic I/O polling here
+        if (thread_pool.io) |io| {
+            io.tick() catch {};
+        }
 
         // Then try work stealing from other threads
         var num_threads: u32 = @bitCast(Sync, thread_pool.sync.load(.Monotonic)).spawned;

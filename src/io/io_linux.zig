@@ -1,6 +1,50 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const os = std.os;
+const os = struct {
+    pub usingnamespace std.os;
+    pub const ETIME = 62;
+    pub const EINTR = 4;
+    pub const EAGAIN = 11;
+    pub const EBADF = 9;
+    pub const ECONNABORTED = 103;
+    pub const EFAULT = 14;
+    pub const EINVAL = 22;
+    pub const EMFILE = 24;
+    pub const ENFILE = 23;
+    pub const ENOBUFS = 105;
+    pub const ENOMEM = 12;
+    pub const ENOTSOCK = 88;
+    pub const EOPNOTSUPP = 95;
+    pub const EPERM = 1;
+    pub const EPROTO = 71;
+    pub const EDQUOT = 69;
+    pub const EIO = 5;
+    pub const ENOSPC = 28;
+    pub const EACCES = 13;
+    pub const EADDRINUSE = 98;
+    pub const EADDRNOTAVAIL = 99;
+    pub const EAFNOSUPPORT = 97;
+    pub const EINPROGRESS = 115;
+    pub const EALREADY = 114;
+    pub const ECONNREFUSED = 111;
+    pub const ECONNRESET = 104;
+    pub const EISCONN = 106;
+    pub const ENETUNREACH = 101;
+    pub const ENOENT = 2;
+    pub const EPROTOTYPE = 91;
+    pub const ETIMEDOUT = 110;
+    pub const EROFS = 30;
+    pub const EISDIR = 21;
+    pub const ENXIO = 6;
+    pub const EOVERFLOW = 84;
+    pub const ESPIPE = 29;
+    pub const ENOTCONN = 107;
+    pub const EDESTADDRREQ = 89;
+    pub const EMSGSIZE = 90;
+    pub const EPIPE = 32;
+    pub const ECANCELED = 125;
+    pub const EFBIG = 27;
+};
 const linux = os.linux;
 const IO_Uring = linux.IO_Uring;
 const io_uring_cqe = linux.io_uring_cqe;
@@ -253,7 +297,7 @@ pub const Completion = struct {
                     os.EOPNOTSUPP => error.OperationNotSupported,
                     os.EPERM => error.PermissionDenied,
                     os.EPROTO => error.ProtocolFailure,
-                    else => |errno| os.unexpectedErrno(@intCast(usize, errno)),
+                    else => error.Unexpected,
                 } else @intCast(os.socket_t, completion.result);
                 completion.callback(completion.context, completion, &result);
             },
@@ -264,7 +308,7 @@ pub const Completion = struct {
                     os.EDQUOT => error.DiskQuota,
                     os.EIO => error.InputOutput,
                     os.ENOSPC => error.NoSpaceLeft,
-                    else => |errno| os.unexpectedErrno(@intCast(usize, errno)),
+                    else => error.Unexpected,
                 } else assert(completion.result == 0);
                 completion.callback(completion.context, completion, &result);
             },
@@ -291,7 +335,7 @@ pub const Completion = struct {
                     os.EPERM => error.PermissionDenied,
                     os.EPROTOTYPE => error.ProtocolNotSupported,
                     os.ETIMEDOUT => error.ConnectionTimedOut,
-                    else => |errno| os.unexpectedErrno(@intCast(usize, errno)),
+                    else => error.Unexpected,
                 } else assert(completion.result == 0);
                 completion.callback(completion.context, completion, &result);
             },
@@ -307,7 +351,7 @@ pub const Completion = struct {
                     os.EIO => error.InputOutput,
                     os.ENOSPC => error.NoSpaceLeft,
                     os.EROFS => error.ReadOnlyFileSystem,
-                    else => |errno| os.unexpectedErrno(@intCast(usize, errno)),
+                    else => error.Unexpected,
                 } else assert(completion.result == 0);
                 completion.callback(completion.context, completion, &result);
             },
@@ -329,7 +373,7 @@ pub const Completion = struct {
                     os.ENXIO => error.Unseekable,
                     os.EOVERFLOW => error.Unseekable,
                     os.ESPIPE => error.Unseekable,
-                    else => |errno| os.unexpectedErrno(@intCast(usize, errno)),
+                    else => error.Unexpected,
                 } else @intCast(usize, completion.result);
                 completion.callback(completion.context, completion, &result);
             },
@@ -348,7 +392,7 @@ pub const Completion = struct {
                     os.ENOTCONN => error.SocketNotConnected,
                     os.ENOTSOCK => error.FileDescriptorNotASocket,
                     os.ECONNRESET => error.ConnectionResetByPeer,
-                    else => |errno| os.unexpectedErrno(@intCast(usize, errno)),
+                    else => error.Unexpected,
                 } else @intCast(usize, completion.result);
                 completion.callback(completion.context, completion, &result);
             },
@@ -375,7 +419,7 @@ pub const Completion = struct {
                     os.ENOTSOCK => error.FileDescriptorNotASocket,
                     os.EOPNOTSUPP => error.OperationNotSupported,
                     os.EPIPE => error.BrokenPipe,
-                    else => |errno| os.unexpectedErrno(@intCast(usize, errno)),
+                    else => error.Unexpected,
                 } else @intCast(usize, completion.result);
                 completion.callback(completion.context, completion, &result);
             },
@@ -387,7 +431,7 @@ pub const Completion = struct {
                     },
                     os.ECANCELED => error.Canceled,
                     os.ETIME => {}, // A success.
-                    else => |errno| os.unexpectedErrno(@intCast(usize, errno)),
+                    else => error.Unexpected,
                 } else unreachable;
                 completion.callback(completion.context, completion, &result);
             },
@@ -411,7 +455,7 @@ pub const Completion = struct {
                     os.EPERM => error.AccessDenied,
                     os.EPIPE => error.BrokenPipe,
                     os.ESPIPE => error.Unseekable,
-                    else => |errno| os.unexpectedErrno(@intCast(usize, errno)),
+                    else => error.Unexpected,
                 } else @intCast(usize, completion.result);
                 completion.callback(completion.context, completion, &result);
             },
@@ -875,3 +919,18 @@ pub fn openSocket(family: u32, sock_type: u32, protocol: u32) !os.socket_t {
 
 pub var global: IO = undefined;
 pub var global_loaded: bool = false;
+
+fn buffer_limit(buffer_len: usize) usize {
+
+    // Linux limits how much may be written in a `pwrite()/pread()` call, which is `0x7ffff000` on
+    // both 64-bit and 32-bit systems, due to using a signed C int as the return value, as well as
+    // stuffing the errno codes into the last `4096` values.
+    // Darwin limits writes to `0x7fffffff` bytes, more than that returns `EINVAL`.
+    // The corresponding POSIX limit is `std.math.maxInt(isize)`.
+    const limit = switch (std.Target.current.os.tag) {
+        .linux => 0x7ffff000,
+        .macos, .ios, .watchos, .tvos => std.math.maxInt(i32),
+        else => std.math.maxInt(isize),
+    };
+    return std.math.min(limit, buffer_len);
+}

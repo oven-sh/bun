@@ -12,7 +12,7 @@ pub var global: NetworkThread = undefined;
 pub var global_loaded: bool = false;
 
 pub fn init() !void {
-    AsyncIO.global = try AsyncIO.init(0, 0);
+    AsyncIO.global = try AsyncIO.init(1024, 0);
     AsyncIO.global_loaded = true;
 
     global = NetworkThread{

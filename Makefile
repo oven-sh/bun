@@ -436,6 +436,17 @@ httpbench-debug:
 		src/deps/picohttpparser.o \
 		$(LIBCRYPTO_STATIC_LIB)
 
+
+httpbench-release:
+	cd misctools; $(ZIG) build-obj -Drelease-fast ./http_bench.zig -fcompiler-rt -lc --main-pkg-path ../ --pkg-begin io ../$(IO_FILE) --pkg-end
+	$(CXX) ./misctools/http_bench.o -O3 -g -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc  \
+		src/deps/mimalloc/libmimalloc.a \
+		src/deps/zlib/libz.a \
+		src/deps/libarchive.a \
+		src/deps/libs2n.a \
+		src/deps/picohttpparser.o \
+		$(LIBCRYPTO_STATIC_LIB)
+
 s2n-mac:
 	cd $(DEPS_DIR)/s2n-tls; \
 	make clean; \

@@ -215,6 +215,8 @@ pub fn main() anyerror!void {
     var read_count: usize = 0;
     var success_count: usize = 0;
     var fail_count: usize = 0;
+    var min_duration: usize = std.math.maxInt(usize);
+    var max_duration: usize = 0;
     var timer = try std.time.Timer.start();
     while (read_count < args.count) {
         while (channel.tryReadItem() catch null) |http| {
@@ -227,7 +229,24 @@ pub fn main() anyerror!void {
                 } else {
                     fail_count += 1;
                 }
-                Output.printError(" {}\n", .{resp});
+
+                max_duration = @maximum(max_duration, http.elapsed);
+                min_duration = @minimum(min_duration, http.elapsed);
+
+                switch (resp.status_code) {
+                    200, 202, 302 => {
+                        Output.prettyError(" <r><green>{d}<r>", .{resp.status_code});
+                    },
+                    else => {
+                        Output.prettyError(" <r><red>{d}<r>", .{resp.status_code});
+                    },
+                }
+
+                Output.prettyError(" <d>{s}<r><d> - {s}<r> <d>({d} bytes)<r>\n", .{
+                    @tagName(http.client.method),
+                    http.client.url.href,
+                    http.response_buffer.list.items.len,
+                });
             } else if (http.err) |err| {
                 fail_count += 1;
                 Output.printError(" err: {s}\n", .{@errorName(err)});
@@ -239,12 +258,15 @@ pub fn main() anyerror!void {
             Output.flush();
         }
     }
-
-    Output.printElapsed(@floatCast(f64, @intToFloat(f128, timer.read()) / std.time.ns_per_ms));
-    Output.prettyErrorln("Completed {d}\n  Success: <green>{d}<r>\n  Failure: <red>{d}<r>\n", .{
-        read_count,
+    Output.prettyErrorln("\n<d>------<r>\n\n", .{});
+    Output.prettyErrorln("Success: <b><green>{d}<r>\nFailure: <b><red>{d}<r>\n\n", .{
         success_count,
         fail_count,
+    });
+
+    Output.printElapsed(@floatCast(f64, @intToFloat(f128, timer.read()) / std.time.ns_per_ms));
+    Output.prettyErrorln(" {d} requests", .{
+        read_count,
     });
     Output.flush();
 }

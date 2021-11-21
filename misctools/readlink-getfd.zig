@@ -19,32 +19,38 @@ pub fn main() anyerror!void {
 
     const to_resolve = args[args.len - 1];
     const cwd = try std.process.getCwdAlloc(allocator);
-    var parts = [1][]const u8{std.mem.span(to_resolve)};
-    var joined_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-    var joined = path_handler.joinAbsStringBuf(
-        cwd,
-        &joined_buf,
-        &parts,
-        .loose,
-    );
-    joined_buf[joined.len] = 0;
-    const joined_z: [:0]const u8 = joined_buf[0..joined.len :0];
-
-    var file = std.fs.openFileAbsoluteZ(joined_z, .{ .read = false }) catch |err| {
-        switch (err) {
-            error.NotDir, error.FileNotFound => {
-                Output.prettyError("<r><red>404 Not Found<r>: <b>\"{s}\"<r>", .{joined_z});
-                Output.flush();
-                std.process.exit(1);
-            },
-            else => {
-                return err;
-            },
-        }
-    };
-
+    var path: []u8 = undefined;
     var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-    var path = try std.os.getFdPath(file.handle, &out_buffer);
+
+    var j: usize = 0;
+    while (j < 100000) : (j += 1) {
+        var parts = [1][]const u8{std.mem.span(to_resolve)};
+        var joined_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var joined = path_handler.joinAbsStringBuf(
+            cwd,
+            &joined_buf,
+            &parts,
+            .loose,
+        );
+        joined_buf[joined.len] = 0;
+        const joined_z: [:0]const u8 = joined_buf[0..joined.len :0];
+
+        var file = std.fs.openFileAbsoluteZ(joined_z, .{ .read = false }) catch |err| {
+            switch (err) {
+                error.NotDir, error.FileNotFound => {
+                    Output.prettyError("<r><red>404 Not Found<r>: <b>\"{s}\"<r>", .{joined_z});
+                    Output.flush();
+                    std.process.exit(1);
+                },
+                else => {
+                    return err;
+                },
+            }
+        };
+
+        path = try std.os.getFdPath(file.handle, &out_buffer);
+        file.close();
+    }
 
     Output.print("{s}", .{path});
 }

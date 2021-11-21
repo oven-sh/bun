@@ -1118,19 +1118,36 @@ if (typeof window !== "undefined") {
       }
 
       const callbacksStart = performance.now();
-      const origUpdaters =
-        HMRModule.dependencies.modules[
-          this.module_index
-        ].additional_updaters.slice();
+      const origUpdaters = oldModule ? oldModule.additional_updaters.slice() : [];
       try {
         switch (this.reloader) {
           case ReloadBehavior.hotReload: {
             let foundBoundary = false;
 
+            const isOldModuleDead = oldModule && oldModule.previousVersion && oldModule.previousVersion.id === oldModule.id && oldModule.hasSameExports(oldModule.previousVersion);
+
             if (oldModule) {
-              HMRModule.dependencies.modules[
-                this.module_index
-              ].additional_updaters.push(oldModule.update.bind(oldModule));
+              // ESM-based HMR has a disadvantage against CommonJS HMR
+              // ES Namespace objects are not [[Configurable]]
+              // That means we have to loop through all previous versions of updated modules that that have unique export names
+              // and updates those exports specifically
+              // Otherwise, changes will not be reflected properly
+              // However, we only need to loop through modules that add or remove exports, i.e. those are ones which have "real" exports
+              if (!isOldModuleDead) {
+                HMRModule.dependencies.modules[
+                  this.module_index
+                ].additional_updaters.push(oldModule.update.bind(oldModule));
+                HMRModule.dependencies.modules[
+                  this.module_index
+                ].previousVersion = oldModule;
+              } else {
+                HMRModule.dependencies.modules[
+                  this.module_index
+                ].previousVersion = oldModule.previousVersion;
+                HMRModule.dependencies.modules[
+                  this.module_index
+                ].additional_updaters = origUpdaters;
+              }
             }
 
             const end = Math.min(
@@ -1190,8 +1207,11 @@ if (typeof window !== "undefined") {
               foundBoundary
             ) {
               FastRefreshLoader.RefreshRuntime.performReactRefresh();
+              // Remove potential memory leak
+              if (isOldModuleDead) oldModule.previousVersion = null;
             } else if (pendingUpdateCount === currentPendingUpdateCount) {
               FastRefreshLoader.performFullRefresh();
+
             } else {
               return Promise.reject(
                 new ThrottleModuleUpdateError(
@@ -1199,6 +1219,8 @@ if (typeof window !== "undefined") {
                 )
               );
             }
+
+            
             break;
           }
         }
@@ -1292,6 +1314,25 @@ if (typeof window !== "undefined") {
       HMRModule.dependencies.graph[this.graph_index] = this.id;
     }
 
+    previousVersion = null;
+
+    hasSameExports(that: AnyHMRModule) {
+      const thisKeys = Object.keys(this.exports);
+      const thatKeys = Object.keys(that.exports);
+      if (thisKeys.length !== thatKeys.length) {
+        return false;
+      }
+
+      for (let i = 0; i < thisKeys.length; i++) {
+        if (thisKeys[i] !== thatKeys[i]) {
+          return false;
+        }
+      }
+
+      return true;
+    }
+
+    
     additional_files = [];
     additional_updaters = [];
     _update: (exports: Object) => void;
@@ -1370,6 +1411,7 @@ if (typeof window !== "undefined") {
       this.$r_(Component, Component.name || Component.displayName);
     }
 
+ 
     // Auto-register exported React components so we only have to manually register the non-exported ones
     // This is what Metro does: https://github.com/facebook/metro/blob/9f2b1210a0f66378dd93e5fcaabc464c86c9e236/packages/metro-runtime/src/polyfills/require.js#L905
     exportAll(object: any) {

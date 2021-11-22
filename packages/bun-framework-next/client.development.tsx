@@ -342,13 +342,14 @@ export async function _boot(EntryPointNamespace, isError) {
   );
 
   if (USE_REACT_18) {
-    if (!reactRoot) {
+    if (!isError && !reactRoot) {
       // Unlike with createRoot, you don't need a separate root.render() call here
-      reactRoot = (isError ? ReactDOM.createRoot : ReactDOM.hydrateRoot)(
-        domEl,
-        reactEl
-      );
+      reactRoot = ReactDOM.hydrateRoot(domEl, reactEl);
     } else {
+      if (!reactRoot) {
+        reactRoot = ReactDOM.createRoot(domEl);
+      }
+
       reactRoot.render(reactEl);
     }
   } else {

@@ -2982,7 +2982,7 @@ pub const Server = struct {
             return;
         }
 
-        if (debug.fallback_only) {
+        if (debug.fallback_only or server.bundler.env.map.get("BUN_DISABLE_BUN_JS") != null) {
             RequestContext.fallback_only = true;
             RequestContext.JavaScriptHandler.javascript_disabled = true;
         }

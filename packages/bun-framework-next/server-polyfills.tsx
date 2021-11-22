@@ -3,12 +3,9 @@ globalThis.global = globalThis;
 import { Buffer } from "buffer";
 import { URL } from "url-polyfill";
 import { TextEncoder, TextDecoder } from "fast-text-encoding";
-
-globalThis.Buffer = Buffer;
-
 import * as React from "react";
 
-var onlyChildPolyfill = React.Children.only;
+const onlyChildPolyfill = React.Children.only;
 
 React.Children.only = function (children) {
   if (
@@ -22,7 +19,7 @@ React.Children.only = function (children) {
   return onlyChildPolyfill(children);
 };
 
+globalThis.Buffer = Buffer;
 globalThis.URL = URL;
-
 globalThis.TextEncoder ||= TextEncoder;
 globalThis.TextDecoder ||= TextDecoder;

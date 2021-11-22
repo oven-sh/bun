@@ -1,4 +1,4 @@
-import * as App from "next/app";
+import App from "next/app";
 import { AmpStateContext } from "next/dist/shared/lib/amp-context";
 import { HeadManagerContext } from "next/dist/shared/lib/head-manager-context";
 import Loadable from "next/dist/shared/lib/loadable";
@@ -23,7 +23,9 @@ import * as NextDocument from "next/document";
 import * as ReactDOMServer from "react-dom/server.browser";
 import * as React from "react";
 import * as ReactIs from "react-is";
-import { BODY_RENDER_TARGET } from "next/constants";
+
+// This constant was removed from Next, Is it doing anything?
+const BODY_RENDER_TARGET = "__NEXT_BODY_RENDER_TARGET__";
 
 const dev = process.env.NODE_ENV === "development";
 
@@ -362,11 +364,8 @@ export async function render({
     pages["/_app"] = [];
   }
 
-  const AppComponent = AppComponent_ || App.default;
-  const Document =
-    (DocumentNamespace && DocumentNamespace.default) || NextDocument.default;
-  //   Document.Html.prototype.getScripts = getScripts;
-  // }
+  const AppComponent = AppComponent_ || App;
+  const Document = (DocumentNamespace as any)?.default || NextDocument.default;
 
   const callMiddleware = async (method: string, args: any[], props = false) => {
     let results: any = props ? {} : [];
@@ -422,7 +421,7 @@ export async function render({
   delete query.__nextLocale;
   delete query.__nextDefaultLocale;
 
-  const isSSG = !!getStaticProps;
+  // const isSSG = !!getStaticProps;
 
   const defaultAppGetInitialProps =
     App.getInitialProps === (App as any).origGetInitialProps;
@@ -518,7 +517,7 @@ export async function render({
       );
     },
     defaultGetInitialProps: async (
-      docCtx: DocumentContext
+      docCtx: NextDocument.DocumentContext
     ): Promise<DocumentInitialProps> => {
       const enhanceApp = (AppComp: any) => {
         return (props: any) => <AppComp {...props} />;
@@ -696,13 +695,7 @@ export async function render({
   const renderOpts = {
     params: route.params,
   };
-  // renderOpts.params = _params || params;
 
-  // parsedUrl.pathname = denormalizePagePath(parsedUrl.pathname!);
-  // renderOpts.resolvedUrl = formatUrl({
-  //   ...parsedUrl,
-  //   query: origQuery,
-  // });
   const docComponentsRendered: DocumentProps["docComponentsRendered"] = {};
 
   let html = renderDocument(Document, {
@@ -752,6 +745,7 @@ export async function render({
     nextExport: nextExport,
     useMaybeDeferContent,
   });
+  // __NEXT_BODY_RENDER_TARGET__
   const bodyRenderIdx = html.indexOf(BODY_RENDER_TARGET);
   html =
     html.substring(0, bodyRenderIdx) +

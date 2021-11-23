@@ -396,7 +396,6 @@ export function render(props) {
 }
 
 export function renderError(e) {
-  // TODO verify this works
   const reactEl = <AppContainer>{null}</AppContainer>;
 
   if (USE_REACT_18) {

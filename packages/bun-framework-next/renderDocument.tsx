@@ -20,7 +20,7 @@ import {
 } from "next/dist/shared/lib/utils";
 import { RenderOpts } from "next/dist/server/render";
 import * as NextDocument from "next/document";
-import * as ReactDOMServer from "react-dom/server.browser";
+import * as ReactDOMServer from "react-dom/server";
 import * as React from "react";
 import * as ReactIs from "react-is";
 

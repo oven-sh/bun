@@ -20,7 +20,7 @@ import {
 } from "next/dist/shared/lib/utils";
 import { RenderOpts } from "next/dist/server/render";
 import * as NextDocument from "next/document";
-import * as ReactDOMServer from "react-dom/server";
+import * as ReactDOMServer from "react-dom/server.browser";
 import * as React from "react";
 import * as ReactIs from "react-is";
 
@@ -344,7 +344,7 @@ export async function render({
   request: Request;
 }): Promise<Response> {
   const { default: Component } = PageNamespace || {};
-  const getStaticProps = (PageNamespace as any).getStaticProps || null;
+  const getStaticProps = (PageNamespace as any)?.getStaticProps || null;
   const { default: AppComponent_ } = AppNamespace || {};
   var query = Object.assign({}, route.query);
 
@@ -746,7 +746,7 @@ export async function render({
     devOnlyCacheBusterQueryString: "",
     scriptLoader,
     isPreview: isPreview,
-    autoExport: isAutoExport,
+    autoExport: nextExport === true ? true : undefined,
     nextExport: nextExport,
     useMaybeDeferContent,
   });

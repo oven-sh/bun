@@ -52,8 +52,6 @@ import {
 
 export const emitter: MittEmitter<string> = mitt();
 
-const App = NextApp;
-
 declare global {
   interface Window {
     /* test fns */
@@ -293,6 +291,7 @@ export async function _boot(EntryPointNamespace, isError) {
   //  Construct signature return types 'App<any, any, any>' and 'Component<AppProps, any, any>' are incompatible.
   // @ts-expect-error
   CachedApp = NextApp;
+  CachedComponent = PageComponent;
 
   if (appScripts && appScripts.length > 0) {
     let appSrc;
@@ -329,9 +328,12 @@ export async function _boot(EntryPointNamespace, isError) {
       return render(
         Object.assign<
           {},
-          Omit<RenderRouteInfo, "App" | "scroll">,
-          Pick<RenderRouteInfo, "App" | "scroll">
+          Omit<RenderRouteInfo, "App" | "scroll" | "Component">,
+          Pick<RenderRouteInfo, "App" | "scroll" | "Component">
         >({}, info, {
+          // If we don't have an info.Component, we may be shallow routing,
+          // fallback to current entry point
+          Component: info.Component || CachedComponent,
           App,
           scroll,
         })

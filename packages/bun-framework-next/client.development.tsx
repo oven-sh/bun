@@ -417,7 +417,7 @@ export function renderError(e) {
 }
 
 globalThis.next = {
-  version: "12.0.3",
+  version: "12.0.4",
   emitter,
   render,
   renderError,

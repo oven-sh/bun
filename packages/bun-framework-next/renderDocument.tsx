@@ -31,6 +31,9 @@ const dev = process.env.NODE_ENV === "development";
 
 type ParsedUrlQuery = Record<string, string | string[]>;
 
+// @ts-expect-error TS doesn't understand that Bun is a global
+const origin: string = Bun.origin;
+
 const isJSFile = (file: string) =>
   file.endsWith(".js") ||
   file.endsWith(".jsx") ||
@@ -199,7 +202,11 @@ function renderDocument(
     "<!DOCTYPE html>" +
     ReactDOMServer.renderToStaticMarkup(
       <AmpStateContext.Provider value={ampState}>
+        {/* HTMLContextProvider expects useMainContent */}
+        {/* @ts-expect-error */}
         <HtmlContext.Provider value={htmlProps}>
+          {/* Document doesn't expect useMaybeDeferContent */}
+          {/* @ts-expect-error */}
           <Document {...htmlProps} {...docProps}></Document>
         </HtmlContext.Provider>
       </AmpStateContext.Provider>
@@ -336,7 +343,8 @@ export async function render({
   routeNames: string[];
   request: Request;
 }): Promise<Response> {
-  const { default: Component, getStaticProps = null } = PageNamespace || {};
+  const { default: Component } = PageNamespace || {};
+  const getStaticProps = (PageNamespace as any).getStaticProps || null;
   const { default: AppComponent_ } = AppNamespace || {};
   var query = Object.assign({}, route.query);
 
@@ -348,7 +356,7 @@ export async function render({
   for (let i = 0; i < routeNames.length; i++) {
     const filePath = routePaths[i];
     const name = routeNames[i];
-    pages[name] = [Bun.origin + filePath];
+    pages[name] = [origin + filePath];
   }
 
   if (appStylesheets.length > 0) {
@@ -490,7 +498,7 @@ export async function render({
       isFallback: isFallback,
     },
     true,
-    Bun.origin,
+    origin,
     null,
     [], // renderOpts.locales,
     null, //renderOpts.defaultLocale,
@@ -529,7 +537,7 @@ export async function render({
     },
   };
 
-  var props = await loadGetInitialProps(AppComponent, {
+  var props: any = await loadGetInitialProps(AppComponent, {
     AppTree: ctx.AppTree,
     Component,
     router,
@@ -541,6 +549,7 @@ export async function render({
   // We don't call getServerSideProps on clients.
   // This isn't correct.
   // We don't call getServerSideProps on clients.
+  // @ts-expect-error
   const getServerSideProps = PageNamespace.getServerSideProps;
 
   var responseHeaders: Headers;
@@ -637,6 +646,7 @@ export async function render({
 
   const renderToString = ReactDOMServer.renderToString;
   const ErrorDebug = null;
+
   props.pageProps = pageProps;
 
   const renderPage: RenderPage = (
@@ -659,6 +669,8 @@ export async function render({
     }
 
     const { App: EnhancedApp, Component: EnhancedComponent } =
+      // Argument of type 'NextComponentType<any, {}, {}> | typeof App' is not assignable to parameter of type 'AppType'.
+      // @ts-expect-error
       enhanceComponents(options, AppComponent, Component);
 
     const htmlOrPromise = renderToString(
@@ -702,13 +714,15 @@ export async function render({
     docComponentsRendered,
     ...renderOpts,
     disableOptimizedLoading: false,
-    canonicalBase: Bun.origin,
+    canonicalBase: origin,
     buildManifest: {
       devFiles: [],
       allFiles: [],
       polyfillFiles: [],
       lowPriorityFiles: [],
-      pages: pages,
+      // buildManifest doesn't expect pages, even though its used
+      // @ts-expect-error
+      pages,
     },
     // Only enabled in production as development mode has features relying on HMR (style injection for example)
     // @ts-expect-error

@@ -654,12 +654,7 @@ export async function render({
   ): RenderPageResult | Promise<RenderPageResult> => {
     if (ctx.err && ErrorDebug) {
       const htmlOrPromise = renderToString(<ErrorDebug error={ctx.err} />);
-      return typeof htmlOrPromise === "string"
-        ? { html: htmlOrPromise, head }
-        : htmlOrPromise.then((html) => ({
-            html,
-            head,
-          }));
+      return { html: htmlOrPromise, head };
     }
 
     if (dev && (props.router || props.Component)) {
@@ -683,12 +678,8 @@ export async function render({
         />
       </AppContainer>
     );
-    return typeof htmlOrPromise === "string"
-      ? { html: htmlOrPromise, head }
-      : htmlOrPromise.then((html) => ({
-          html,
-          head,
-        }));
+
+    return { html: htmlOrPromise, head };
   };
 
   const documentCtx = { ...ctx, renderPage };

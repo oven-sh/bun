@@ -11,7 +11,6 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "fast-text-encoding": "^1.0.3",
     "react-is": "^17.0.2",
     "url-polyfill": "^1.1.12"
   },

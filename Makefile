@@ -40,7 +40,7 @@ CC = $(shell which clang-12 2>/dev/null || which clang)
 CXX = $(shell which clang++-12 2>/dev/null || which clang++)
 
 # macOS sed is different
-SED = $(shell which gsed || which sed)
+SED = $(shell which gsed 2>/dev/null || which sed)
 
 DEPS_DIR = $(shell pwd)/src/deps
 CPUS ?= $(shell nproc)

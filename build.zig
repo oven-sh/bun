@@ -214,7 +214,7 @@ pub fn build(b: *std.build.Builder) !void {
         //     if (target.getOsTag() == .macos) "-DUSE_CF_RETAIN_PTR=1" else "",
         // };
         const headers_step = b.step("headers-obj", "JSC headers Step #1");
-        var headers_obj: *std.build.LibExeObjStep = b.addObject("headers", "src/javascript/jsc/bindings/bindings-generator.zig");
+        const headers_obj: *std.build.LibExeObjStep = b.addObject("headers", "src/javascript/jsc/bindings/bindings-generator.zig");
         headers_obj.setMainPkgPath(javascript.main_pkg_path.?);
         headers_step.dependOn(&headers_obj.step);
 
@@ -290,6 +290,7 @@ pub fn build(b: *std.build.Builder) !void {
             obj.setBuildMode(mode);
 
             addPicoHTTP(obj);
+            addMimalloc(obj);
             obj.addPackagePath("clap", "src/deps/zig-clap/clap.zig");
 
             {

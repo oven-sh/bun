@@ -8,8 +8,10 @@ pub fn addPicoHTTP(step: *std.build.LibExeObjStep) void {
 }
 
 pub fn addMimalloc(step: *std.build.LibExeObjStep) void {
-    step.addIncludeDir("src/deps/mimalloc/include");
-    step.addCSourceFiles(&.{
+    var source_files = std.ArrayList([]const u8).init(step.builder.allocator);
+    defer source_files.deinit();
+
+    inline for (.{
         "src/deps/mimalloc/src/stats.c",
         "src/deps/mimalloc/src/random.c",
         "src/deps/mimalloc/src/os.c",
@@ -24,7 +26,22 @@ pub fn addMimalloc(step: *std.build.LibExeObjStep) void {
         "src/deps/mimalloc/src/heap.c",
         "src/deps/mimalloc/src/options.c",
         "src/deps/mimalloc/src/init.c",
-    }, &.{});
+    }) |source_file| {
+        source_files.append(source_file) catch unreachable;
+    }
+
+    var source_flags = std.ArrayList([]const u8).init(step.builder.allocator);
+    defer source_flags.deinit();
+
+    source_flags.append("-DMI_ALLOC_OVERRIDE") catch unreachable;
+
+    if (step.target.getOsTag().isDarwin()) {
+        source_files.append("src/deps/mimalloc/src/alloc-override-osx.c") catch unreachable;
+        source_flags.append("-DMI_OSX_ZONE=1") catch unreachable;
+    }
+
+    step.addIncludeDir("src/deps/mimalloc/include");
+    step.addCSourceFiles(source_files.items, source_flags.items);
 }
 
 fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
@@ -323,10 +340,10 @@ pub fn build(b: *std.build.Builder) !void {
 
         {
             headers_obj.setTarget(target);
-            headers_obj.addPackagePath("clap", "src/deps/zig-clap/clap.zig");
-
-            headers_obj.setOutputDir(output_dir);
             headers_obj.setBuildMode(mode);
+            headers_obj.setOutputDir(output_dir);
+
+            headers_obj.addPackagePath("clap", "src/deps/zig-clap/clap.zig");
             headers_obj.linkLibC();
             headers_obj.linkLibCpp();
             headers_obj.bundle_compiler_rt = true;

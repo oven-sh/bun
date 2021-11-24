@@ -818,7 +818,13 @@ PICOHTTP_BUILD_FLAGS = \
 
 CLAP_BUILD_FLAGS = --pkg-begin clap $(DEPS_DIR)/zig-clap/clap.zig --pkg-end
 
-MIMALLOC_BUILD_FLAGS = \
+MIMALLOC_BUILD_FLAGS = -cflags -DMI_ALLOC_OVERRIDE
+
+ifeq ($(OS_NAME), darwin)
+MIMALLOC_BUILD_FLAGS += -DMI_OSX_ZONE=1
+endif
+
+MIMALLOC_BUILD_FLAGS += -- \
 	-I src/deps/mimalloc/include \
 	src/deps/mimalloc/src/stats.c \
 	src/deps/mimalloc/src/random.c \
@@ -834,6 +840,11 @@ MIMALLOC_BUILD_FLAGS = \
 	src/deps/mimalloc/src/heap.c \
 	src/deps/mimalloc/src/options.c \
 	src/deps/mimalloc/src/init.c
+
+ifeq ($(OS_NAME), darwin)
+MIMALLOC_BUILD_FLAGS += \
+	src/deps/mimalloc/src/alloc-override-osx.c
+endif
 
 build-unit:
 	@rm -rf zig-out/bin/$(testname)

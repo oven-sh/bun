@@ -1,5 +1,3 @@
-SHELL := /bin/bash # Use bash syntax to be consistent
-
 OS_NAME := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 ARCH_NAME_RAW := $(shell uname -m)
 BUN_AUTO_UPDATER_REPO = Jarred-Sumner/bun-releases-for-updater
@@ -38,8 +36,8 @@ ZIG ?= $(shell which zig || echo -e "error: Missing zig. Please make sure zig is
 # We must use the same compiler version for the JavaScriptCore bindings and JavaScriptCore
 # If we don't do this, strange memory allocation failures occur.
 # This is easier to happen than you'd expect.
-CC = $(shell which clang-12 || which clang)
-CXX = $(shell which clang++-12 || which clang++)
+CC = $(shell which clang-12 2>/dev/null || which clang)
+CXX = $(shell which clang++-12 2>/dev/null || which clang++)
 
 # macOS sed is different
 SED = $(shell which gsed || which sed)
@@ -58,7 +56,7 @@ LIBCRYPTO_STATIC_LIB ?= $(LIBCRYPTO_PREFIX_DIR)/lib/libcrypto.a
 LIBCRYPTO_INCLUDE_DIR = $(LIBCRYPTO_PREFIX_DIR)/include
 
 ifeq ($(OS_NAME),linux)
-LIBCRYPTO_STATIC_LIB = 
+LIBCRYPTO_STATIC_LIB = $(DEPS_DIR)/libcrypto.a
 LIBICONV_PATH = $(DEPS_DIR)/libiconv.a
 endif
 
@@ -219,7 +217,14 @@ MAC_INCLUDE_DIRS := -Isrc/javascript/jsc/WebKit/WebKitBuild/Release/JavaScriptCo
 		-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/ICU/Headers \
 		-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/ \
 		-Isrc/javascript/jsc/bindings/ \
-		-Isrc/javascript/jsc/WebKit/Source/bmalloc 
+		-Isrc/javascript/jsc/WebKit/Source/bmalloc
+
+# LINUX_INCLUDE_DIRS := -Isrc/javascript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders \
+# 		-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/WTF/Headers \
+# 		-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/ICU/Headers \
+# 		-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/ \
+# 		-Isrc/javascript/jsc/bindings/ \
+# 		-Isrc/javascript/jsc/WebKit/Source/bmalloc
 
 LINUX_INCLUDE_DIRS := -I$(JSC_INCLUDE_DIR) \
 					  -Isrc/javascript/jsc/bindings/
@@ -284,11 +289,9 @@ endif
 
 
 
-ARCHIVE_FILES_WITHOUT_LIBCRYPTO = src/deps/mimalloc/libmimalloc.a \
-		src/deps/zlib/libz.a \
+ARCHIVE_FILES_WITHOUT_LIBCRYPTO = src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
 		src/deps/libs2n.a \
-		src/deps/picohttpparser.o \
 
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) src/deps/libcrypto.a
 
@@ -319,9 +322,7 @@ BUN_LLD_FLAGS = $(OBJ_FILES) \
 
 bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local
 
-
-vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib s2n libarchive 
-
+vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error zlib s2n libarchive
 
 libarchive:
 	cd src/deps/libarchive; \
@@ -406,23 +407,19 @@ generate-install-script:
 	@esbuild --log-level=error --define:BUN_VERSION="\"$(PACKAGE_JSON_VERSION)\"" --define:process.env.NODE_ENV="\"production\"" --platform=node  --format=cjs $(PACKAGES_REALPATH)/bun/install.ts > $(PACKAGES_REALPATH)/bun/install.js
 
 fetch:
-	cd misctools; $(ZIG) build-obj -Drelease-fast ./fetch.zig -fcompiler-rt -lc --main-pkg-path ../
+	$(ZIG) build-obj -Drelease-fast misctools/fetch.zig -fcompiler-rt -lc --main-pkg-path . $(PICOHTTP_BUILD_FLAGS) $(MIMALLOC_BUILD_FLAGS) -femit-bin=misctools/fetch.o
 	$(CXX) ./misctools/fetch.o -g -O3 -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc \
-		src/deps/mimalloc/libmimalloc.a \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
 		src/deps/libs2n.a \
-		src/deps/picohttpparser.o \
 		$(LIBCRYPTO_STATIC_LIB)
 
 fetch-debug:
-	cd misctools; $(ZIG) build-obj ./fetch.zig -fcompiler-rt -lc --main-pkg-path ../
+	$(ZIG) build-obj misctools/fetch.zig -fcompiler-rt -lc --main-pkg-path . $(PICOHTTP_BUILD_FLAGS) $(MIMALLOC_BUILD_FLAGS) -femit-bin=misctools/fetch.o
 	$(CXX) ./misctools/fetch.o -g -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc  \
-		src/deps/mimalloc/libmimalloc.a \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
 		src/deps/libs2n.a \
-		src/deps/picohttpparser.o \
 		$(LIBCRYPTO_STATIC_LIB)
 
 s2n-mac:
@@ -678,17 +675,11 @@ clean-bindings:
 
 clean: clean-bindings
 	rm src/deps/*.a src/deps/*.o
-	(cd src/deps/mimalloc && make clean) || echo "";
 	(cd src/deps/libarchive && make clean) || echo "";
 	(cd src/deps/s2n-tls && make clean) || echo "";
-	(cd src/deps/picohttp && make clean) || echo "";
 	(cd src/deps/zlib && make clean) || echo "";
 
 jsc-bindings-mac: $(OBJ_FILES)
-
-
-mimalloc:
-	cd src/deps/mimalloc; cmake .; make; 
 
 bun-link-lld-debug:
 	$(CXX) $(BUN_LLD_FLAGS) \
@@ -728,9 +719,6 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 sizegen:
 	$(CXX) src/javascript/jsc/headergen/sizegen.cpp -o $(BUN_TMP_DIR)/sizegen $(CLANG_FLAGS) -O1
 	$(BUN_TMP_DIR)/sizegen > src/javascript/jsc/bindings/sizes.zig
-
-picohttp:
-	 $(CC) $(MARCH_NATIVE) -O3 -g -fPIE -c src/deps/picohttpparser/picohttpparser.c -Isrc/deps -o src/deps/picohttpparser.o; cd ../../	
 
 analytics:
 	./node_modules/.bin/peechy --schema src/analytics/schema.peechy --zig src/analytics/analytics_schema.zig
@@ -823,13 +811,38 @@ endif
 
 endif
 
+PICOHTTP_BUILD_FLAGS = \
+	--pkg-begin picohttp $(DEPS_DIR)/picohttp.zig --pkg-end \
+	-I src/deps \
+	src/deps/picohttpparser.c
+
+CLAP_BUILD_FLAGS = --pkg-begin clap $(DEPS_DIR)/zig-clap/clap.zig --pkg-end
+
+MIMALLOC_BUILD_FLAGS = \
+	-I src/deps/mimalloc/include \
+	src/deps/mimalloc/src/stats.c \
+	src/deps/mimalloc/src/random.c \
+	src/deps/mimalloc/src/os.c \
+	src/deps/mimalloc/src/bitmap.c \
+	src/deps/mimalloc/src/arena.c \
+	src/deps/mimalloc/src/region.c \
+	src/deps/mimalloc/src/segment.c \
+	src/deps/mimalloc/src/page.c \
+	src/deps/mimalloc/src/alloc.c \
+	src/deps/mimalloc/src/alloc-aligned.c \
+	src/deps/mimalloc/src/alloc-posix.c \
+	src/deps/mimalloc/src/heap.c \
+	src/deps/mimalloc/src/options.c \
+	src/deps/mimalloc/src/init.c
+
 build-unit:
 	@rm -rf zig-out/bin/$(testname)
 	@mkdir -p zig-out/bin
 	zig test $(realpath $(testpath)) \
 	$(testfilterflag) \
-	--pkg-begin picohttp $(DEPS_DIR)/picohttp.zig --pkg-end \
-	--pkg-begin clap $(DEPS_DIR)/zig-clap/clap.zig --pkg-end \
+	$(PICOHTTP_BUILD_FLAGS) \
+	$(CLAP_BUILD_FLAGS) \
+	$(MIMALLOC_BUILD_FLAGS) \
 	--main-pkg-path $(shell pwd) \
 	--test-no-exec \
 	-fPIC \

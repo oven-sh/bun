@@ -1,22 +1,47 @@
 const std = @import("std");
 const resolve_path = @import("./src/resolver/resolve_path.zig");
-pub fn addPicoHTTP(step: *std.build.LibExeObjStep, comptime with_obj: bool) void {
-    const picohttp = step.addPackage(.{
-        .name = "picohttp",
-        .path = .{ .path = "src/deps/picohttp.zig" },
-    });
 
+pub fn addPicoHTTP(step: *std.build.LibExeObjStep) void {
+    step.addPackagePath("picohttp", "src/deps/picohttp.zig");
     step.addIncludeDir("src/deps");
+    step.addCSourceFile("src/deps/picohttpparser.c", &.{});
+}
 
-    if (with_obj) {
-        step.addObjectFile("src/deps/picohttpparser.o");
+pub fn addMimalloc(step: *std.build.LibExeObjStep) void {
+    var source_files = std.ArrayList([]const u8).init(step.builder.allocator);
+    defer source_files.deinit();
+
+    inline for (.{
+        "src/deps/mimalloc/src/stats.c",
+        "src/deps/mimalloc/src/random.c",
+        "src/deps/mimalloc/src/os.c",
+        "src/deps/mimalloc/src/bitmap.c",
+        "src/deps/mimalloc/src/arena.c",
+        "src/deps/mimalloc/src/region.c",
+        "src/deps/mimalloc/src/segment.c",
+        "src/deps/mimalloc/src/page.c",
+        "src/deps/mimalloc/src/alloc.c",
+        "src/deps/mimalloc/src/alloc-aligned.c",
+        "src/deps/mimalloc/src/alloc-posix.c",
+        "src/deps/mimalloc/src/heap.c",
+        "src/deps/mimalloc/src/options.c",
+        "src/deps/mimalloc/src/init.c",
+    }) |source_file| {
+        source_files.append(source_file) catch unreachable;
     }
 
-    // step.add("/Users/jarred/Code/WebKit/WebKitBuild/Release/lib/libWTF.a");
+    var source_flags = std.ArrayList([]const u8).init(step.builder.allocator);
+    defer source_flags.deinit();
 
-    // ./Tools/Scripts/build-jsc --jsc-only  --cmakeargs="-DENABLE_STATIC_JSC=ON"
-    // set -gx ICU_INCLUDE_DIRS "/usr/local/opt/icu4c/include"
-    // homebrew-provided icu4c
+    source_flags.append("-DMI_ALLOC_OVERRIDE") catch unreachable;
+
+    if (step.target.getOsTag().isDarwin()) {
+        source_files.append("src/deps/mimalloc/src/alloc-override-osx.c") catch unreachable;
+        source_flags.append("-DMI_OSX_ZONE=1") catch unreachable;
+    }
+
+    step.addIncludeDir("src/deps/mimalloc/include");
+    step.addCSourceFiles(source_files.items, source_flags.items);
 }
 
 fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
@@ -30,54 +55,43 @@ fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
     return filepath;
 }
 
-var x64 = "x64";
+const x64 = "x64";
+
 pub fn build(b: *std.build.Builder) !void {
-    // Standard target options allows the person running `zig build` to choose
-    // what target to build for. Here we do not override the defaults, which
-    // means any target is allowed, and the default is native. Other options
-    // for restricting supported target set are available.
     var target = b.standardTargetOptions(.{});
-    // Standard release options allow the person running `zig build` to select
-    // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const mode = b.standardReleaseOptions();
 
-    var cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     const cwd: []const u8 = b.pathFromRoot(".");
     var exe: *std.build.LibExeObjStep = undefined;
     var output_dir_buf = std.mem.zeroes([4096]u8);
-    var bin_label = if (mode == std.builtin.Mode.Debug) "packages/debug-bun-" else "packages/bun-";
+    const bin_label = if (mode == std.builtin.Mode.Debug) "packages/debug-bun-" else "packages/bun-";
 
-    var triplet_buf: [64]u8 = undefined;
-    var os_tagname = @tagName(target.getOs().tag);
+    const cpu_arch: std.Target.Cpu.Arch = target.getCpuArch();
 
-    const arch: std.Target.Cpu.Arch = target.getCpuArch();
-
-    if (std.mem.eql(u8, os_tagname, "macos")) {
-        os_tagname = "darwin";
-        if (arch.isAARCH64()) {
+    var os_tag_name = @tagName(target.getOs().tag);
+    if (std.mem.eql(u8, os_tag_name, "macos")) {
+        os_tag_name = "darwin";
+        if (cpu_arch.isAARCH64()) {
             target.os_version_min = std.build.Target.OsVersion{ .semver = .{ .major = 11, .minor = 0, .patch = 0 } };
-        } else if (arch.isX86()) {
+        } else if (cpu_arch.isX86()) {
             target.os_version_min = std.build.Target.OsVersion{ .semver = .{ .major = 10, .minor = 14, .patch = 0 } };
         }
     }
 
-    std.mem.copy(
-        u8,
-        &triplet_buf,
-        os_tagname,
-    );
-    var osname = triplet_buf[0..os_tagname.len];
-    triplet_buf[osname.len] = '-';
+    var triplet_buf: [64]u8 = undefined;
+    std.mem.copy(u8, &triplet_buf, os_tag_name);
+    const os_name = triplet_buf[0..os_tag_name.len];
+    triplet_buf[os_name.len] = '-';
 
-    std.mem.copy(u8, triplet_buf[osname.len + 1 ..], @tagName(target.getCpuArch()));
-    var cpuArchName = triplet_buf[osname.len + 1 ..][0..@tagName(target.getCpuArch()).len];
-    std.mem.replaceScalar(u8, cpuArchName, '_', '-');
-    if (std.mem.eql(u8, cpuArchName, "x86-64")) {
-        std.mem.copy(u8, cpuArchName, "x64");
-        cpuArchName = cpuArchName[0..3];
+    std.mem.copy(u8, triplet_buf[os_name.len + 1 ..], @tagName(target.getCpuArch()));
+    var cpu_arch_name = triplet_buf[os_name.len + 1 ..][0..@tagName(target.getCpuArch()).len];
+    std.mem.replaceScalar(u8, cpu_arch_name, '_', '-');
+    if (std.mem.eql(u8, cpu_arch_name, "x86-64")) {
+        std.mem.copy(u8, cpu_arch_name, "x64");
+        cpu_arch_name = cpu_arch_name[0..3];
     }
 
-    var triplet = triplet_buf[0 .. osname.len + cpuArchName.len + 1];
+    const triplet = triplet_buf[0 .. os_name.len + cpu_arch_name.len + 1];
 
     const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{s}{s}", .{ bin_label, triplet });
     const output_dir = b.pathFromRoot(output_dir_base);
@@ -89,22 +103,14 @@ pub fn build(b: *std.build.Builder) !void {
         exe.linkage = .dynamic;
         exe.setOutputDir(output_dir);
     } else if (target.getCpuArch().isWasm()) {
-        // exe = b.addExecutable(
-        //     "bun",
-        //     "src/main_wasm.zig",
-        // );
-        // exe.is_linking_libc = false;
-        // exe.is_dynamic = true;
-        var lib = b.addExecutable(bun_executable_name, "src/main_wasm.zig");
+        const lib = b.addExecutable(bun_executable_name, "src/main_wasm.zig");
         lib.single_threaded = true;
         // exe.want_lto = true;
         // exe.linkLibrary(lib);
 
         if (mode == std.builtin.Mode.Debug) {
             // exception_handling
-            var features = target.getCpuFeatures();
-            features.addFeature(2);
-            target.updateCpuFeatures(&features);
+            target.cpu_features_add.addFeature(2);
         } else {
             // lib.strip = true;
         }
@@ -120,7 +126,7 @@ pub fn build(b: *std.build.Builder) !void {
         lib.setBuildMode(mode);
 
         std.fs.deleteTreeAbsolute(std.fs.path.join(b.allocator, &.{ cwd, lib.getOutputSource().getPath(b) }) catch unreachable) catch {};
-        var install = b.getInstallStep();
+
         lib.strip = false;
         lib.install();
 
@@ -137,45 +143,45 @@ pub fn build(b: *std.build.Builder) !void {
     } else {
         exe = b.addExecutable(bun_executable_name, "src/main.zig");
     }
-    // exe.setLibCFile("libc.txt");
+
     exe.linkLibC();
-    // exe.linkLibCpp();
-    exe.addPackage(.{
-        .name = "clap",
-        .path = .{ .path = "src/deps/zig-clap/clap.zig" },
-    });
+    exe.addPackagePath("clap", "src/deps/zig-clap/clap.zig");
 
     exe.setOutputDir(output_dir);
-    var cwd_dir = std.fs.cwd();
-    var runtime_out_file = try std.fs.cwd().openFile("src/runtime.out.js", .{ .read = true });
-    const runtime_hash = std.hash.Wyhash.hash(
-        0,
-        try runtime_out_file.readToEndAlloc(b.allocator, try runtime_out_file.getEndPos()),
-    );
-    const runtime_version_file = std.fs.cwd().createFile("src/runtime.version", .{ .truncate = true }) catch std.debug.panic("Failed to create src/runtime.version", .{});
+
+    const cwd_dir = std.fs.cwd();
+
+    const runtime_hash = read: {
+        const runtime_out_file = try cwd_dir.openFile("src/runtime.out.js", .{ .read = true });
+        defer runtime_out_file.close();
+        break :read std.hash.Wyhash.hash(0, try runtime_out_file.readToEndAlloc(b.allocator, try runtime_out_file.getEndPos()));
+    };
+
+    const runtime_version_file = cwd_dir.createFile("src/runtime.version", .{ .truncate = true }) catch std.debug.panic("Failed to create src/runtime.version", .{});
     defer runtime_version_file.close();
     runtime_version_file.writer().print("{x}", .{runtime_hash}) catch unreachable;
-    var fallback_out_file = try std.fs.cwd().openFile("src/fallback.out.js", .{ .read = true });
-    const fallback_hash = std.hash.Wyhash.hash(
-        0,
-        try fallback_out_file.readToEndAlloc(b.allocator, try fallback_out_file.getEndPos()),
-    );
 
-    const fallback_version_file = std.fs.cwd().createFile("src/fallback.version", .{ .truncate = true }) catch std.debug.panic("Failed to create src/fallback.version", .{});
+    const fallback_hash = read: {
+        const fallback_out_file = try cwd_dir.openFile("src/fallback.out.js", .{ .read = true });
+        defer fallback_out_file.close();
+        break :read std.hash.Wyhash.hash(0, try fallback_out_file.readToEndAlloc(b.allocator, try fallback_out_file.getEndPos()));
+    };
+
+    const fallback_version_file = cwd_dir.createFile("src/fallback.version", .{ .truncate = true }) catch std.debug.panic("Failed to create src/fallback.version", .{});
+    defer fallback_version_file.close();
 
     fallback_version_file.writer().print("{x}", .{fallback_hash}) catch unreachable;
-
-    defer fallback_version_file.close();
 
     exe.setTarget(target);
     exe.setBuildMode(mode);
     b.install_path = output_dir;
 
-    var javascript = b.addExecutable("spjs", "src/main_javascript.zig");
-    var typings_exe = b.addExecutable("typescript-decls", "src/javascript/jsc/typescript.zig");
+    const javascript = b.addExecutable("spjs", "src/main_javascript.zig");
+    const typings_exe = b.addExecutable("typescript-decls", "src/javascript/jsc/typescript.zig");
+
+    exe.setMainPkgPath(b.pathFromRoot("."));
     javascript.setMainPkgPath(b.pathFromRoot("."));
     typings_exe.setMainPkgPath(b.pathFromRoot("."));
-    exe.setMainPkgPath(b.pathFromRoot("."));
 
     // exe.want_lto = true;
     if (!target.getCpuArch().isWasm()) {
@@ -225,7 +231,7 @@ pub fn build(b: *std.build.Builder) !void {
         //     if (target.getOsTag() == .macos) "-DUSE_CF_RETAIN_PTR=1" else "",
         // };
         const headers_step = b.step("headers-obj", "JSC headers Step #1");
-        var headers_obj: *std.build.LibExeObjStep = b.addObject("headers", "src/javascript/jsc/bindings/bindings-generator.zig");
+        const headers_obj: *std.build.LibExeObjStep = b.addObject("headers", "src/javascript/jsc/bindings/bindings-generator.zig");
         headers_obj.setMainPkgPath(javascript.main_pkg_path.?);
         headers_step.dependOn(&headers_obj.step);
 
@@ -242,17 +248,15 @@ pub fn build(b: *std.build.Builder) !void {
         b.default_step.dependOn(&exe.step);
 
         {
-            var steps = [_]*std.build.LibExeObjStep{ exe, javascript, typings_exe };
+            const steps = [_]*std.build.LibExeObjStep{ exe, javascript, typings_exe };
 
             // const single_threaded = b.option(bool, "single-threaded", "Build single-threaded") orelse false;
 
-            for (steps) |step, i| {
+            for (steps) |step| {
                 step.linkLibC();
                 step.linkLibCpp();
-                addPicoHTTP(
-                    step,
-                    true,
-                );
+                addPicoHTTP(step);
+                addMimalloc(step);
 
                 step.addObjectFile(panicIfNotFound("src/deps/libJavaScriptCore.a"));
                 step.addObjectFile(panicIfNotFound("src/deps/libWTF.a"));
@@ -261,9 +265,6 @@ pub fn build(b: *std.build.Builder) !void {
                 step.addObjectFile(panicIfNotFound("src/deps/libarchive.a"));
                 step.addObjectFile(panicIfNotFound("src/deps/libs2n.a"));
                 step.addObjectFile(panicIfNotFound("src/deps/zlib/libz.a"));
-                step.addObjectFile(panicIfNotFound("src/deps/mimalloc/libmimalloc.a"));
-                step.addLibPath("src/deps/mimalloc");
-                step.addIncludeDir("src/deps/mimalloc");
 
                 // step.single_threaded = single_threaded;
 
@@ -301,12 +302,13 @@ pub fn build(b: *std.build.Builder) !void {
         {
             var obj_step = b.step("obj", "Build Bun as a .o file");
             var obj = b.addObject(bun_executable_name, exe.root_src.?.path);
+
             obj.setTarget(target);
-            addPicoHTTP(obj, false);
-            obj.addPackage(.{
-                .name = "clap",
-                .path = .{ .path = "src/deps/zig-clap/clap.zig" },
-            });
+            obj.setBuildMode(mode);
+
+            addPicoHTTP(obj);
+            addMimalloc(obj);
+            obj.addPackagePath("clap", "src/deps/zig-clap/clap.zig");
 
             {
                 obj_step.dependOn(&b.addLog(
@@ -322,7 +324,7 @@ pub fn build(b: *std.build.Builder) !void {
             obj_step.dependOn(&obj.step);
 
             obj.setOutputDir(output_dir);
-            obj.setBuildMode(mode);
+
             obj.linkLibC();
             obj.linkLibCpp();
 
@@ -338,13 +340,10 @@ pub fn build(b: *std.build.Builder) !void {
 
         {
             headers_obj.setTarget(target);
-            headers_obj.addPackage(.{
-                .name = "clap",
-                .path = .{ .path = "src/deps/zig-clap/clap.zig" },
-            });
-
-            headers_obj.setOutputDir(output_dir);
             headers_obj.setBuildMode(mode);
+            headers_obj.setOutputDir(output_dir);
+
+            headers_obj.addPackagePath("clap", "src/deps/zig-clap/clap.zig");
             headers_obj.linkLibC();
             headers_obj.linkLibCpp();
             headers_obj.bundle_compiler_rt = true;
@@ -393,5 +392,3 @@ pub fn build(b: *std.build.Builder) !void {
     var javascript_cmd = b.step("spjs", "Build standalone JavaScript runtime. Must run \"make jsc\" first.");
     javascript_cmd.dependOn(&javascript.step);
 }
-
-pub var original_make_fn: ?fn (step: *std.build.Step) anyerror!void = null;

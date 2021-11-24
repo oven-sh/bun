@@ -8,7 +8,7 @@ const Api = @import("../api/schema.zig").Api;
 const Lock = @import("../lock.zig").Lock;
 const HTTPClient = @This();
 const SOCKET_FLAGS = os.SOCK_CLOEXEC | os.SOCK_NONBLOCK;
-const S2n = @import("../s2n.zig");
+// const S2n = @import("../s2n.zig");
 const Zlib = @import("../zlib.zig");
 const StringBuilder = @import("../string_builder.zig");
 const AsyncIO = @import("io");
@@ -1096,43 +1096,7 @@ pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime repo
 }
 
 pub fn sendHTTPS(this: *HTTPClient, body_str: []const u8, body_out_str: *MutableString) !picohttp.Response {
-    var connection = try this.connect();
-    S2n.boot(default_allocator);
-    const hostname = this.url.displayHostname();
-    std.mem.copy(u8, &server_name_buf, hostname);
-    server_name_buf[hostname.len] = 0;
-    var server_name = server_name_buf[0..hostname.len :0];
-
-    var client = S2n.Connection.init(connection.socket.fd);
-    try client.start(server_name);
-    client.disable_shutdown = this.disable_shutdown;
-    defer client.close() catch {};
-
-    var request = buildRequest(this, body_str.len);
-    if (this.verbose) {
-        Output.prettyErrorln("{s}", .{request});
-    }
-    const body = body_str;
-
-    var client_writer = client.writer();
-    {
-        var client_writer_buffered = std.io.bufferedWriter(client_writer);
-        var client_writer_buffered_writer = client_writer_buffered.writer();
-
-        try writeRequest(@TypeOf(&client_writer_buffered_writer), &client_writer_buffered_writer, request, body);
-        try client_writer_buffered_writer.writeAll("\r\n");
-        try client_writer_buffered.flush();
-    }
-
-    if (body.len > 0) {
-        try client_writer.writeAll(body);
-    }
-
-    if (this.progress_node == null) {
-        return try this.processResponse(true, false, @TypeOf(&client), &client, body_out_str);
-    } else {
-        return try this.processResponse(true, true, @TypeOf(&client), &client, body_out_str);
-    }
+    return error.NotImplementedYet;
 }
 
 // zig test src/http_client.zig --test-filter "sendHTTP - only" -lc -lc++ /Users/jarred/Code/bun/src/deps/zlib/libz.a /Users/jarred/Code/bun/src/deps/picohttpparser.o --cache-dir /Users/jarred/Code/bun/zig-cache --global-cache-dir /Users/jarred/.cache/zig --name bun --pkg-begin clap /Users/jarred/Code/bun/src/deps/zig-clap/clap.zig --pkg-end --pkg-begin picohttp /Users/jarred/Code/bun/src/deps/picohttp.zig --pkg-end --pkg-begin iguanaTLS /Users/jarred/Code/bun/src/deps/iguanaTLS/src/main.zig --pkg-end -I /Users/jarred/Code/bun/src/deps -I /Users/jarred/Code/bun/src/deps/mimalloc -I /usr/local/opt/icu4c/include  -L src/deps/mimalloc -L /usr/local/opt/icu4c/lib --main-pkg-path /Users/jarred/Code/bun --enable-cache -femit-bin=zig-out/bin/test --test-no-exec

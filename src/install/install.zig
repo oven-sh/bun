@@ -2502,8 +2502,6 @@ pub const PackageManager = struct {
             .resolve_tasks = TaskChannel.init(),
             // .progress
         };
-        const S2N = @import("../s2n.zig");
-        S2N.boot(default_allocator);
         var count = manager.enqueueDependencyList(
             root,
             Package.Features{

@@ -21,7 +21,7 @@
 	path = src/deps/libarchive
 	url = https://github.com/libarchive/libarchive.git
 	ignore = dirty
-[submodule "src/deps/s2n-tls"]
-	path = src/deps/s2n-tls
-	url = https://github.com/Jarred-Sumner/s2n-tls
+[submodule "src/deps/boringssl"]
+	path = src/deps/boringssl
+	url = https://github.com/google/boringssl.git
 	ignore = dirty

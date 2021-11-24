@@ -1,5 +1,4 @@
 usingnamespace @import("string_types.zig");
-const default_allocator = @import("./global.zig").default_allocator;
 const std = @import("std");
 const expectString = std.testing.expectEqualStrings;
 const expect = std.testing.expect;

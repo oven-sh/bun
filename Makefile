@@ -54,34 +54,11 @@ LIBICONV_PATH ?= $(BREW_PREFIX_PATH)/opt/libiconv/lib/libiconv.a
 OPENSSL_LINUX_DIR = $(DEPS_DIR)/openssl/openssl-OpenSSL_1_1_1l
 
 LIBCRYPTO_PREFIX_DIR = $(BREW_PREFIX_PATH)/opt/openssl@1.1
-LIBCRYPTO_STATIC_LIB ?= $(LIBCRYPTO_PREFIX_DIR)/lib/libcrypto.a
-LIBCRYPTO_INCLUDE_DIR = $(LIBCRYPTO_PREFIX_DIR)/include
 
 ifeq ($(OS_NAME),linux)
 LIBCRYPTO_STATIC_LIB = 
 LIBICONV_PATH = $(DEPS_DIR)/libiconv.a
 endif
-
-
-
-# Linux needs to have libcrypto 1.1.1 installed
-# download-openssl-linux:
-# 	mkdir -p $(DEPS_DIR)/openssl
-# 	wget https://github.com/openssl/openssl/archive/refs/tags/OpenSSL_1_1_1l.zip
-# 	unzip -o OpenSSL_1_1_1l.zip -d $(DEPS_DIR)/openssl
-# 	rm OpenSSL_1_1_1l.zip
-
-# build-openssl-linux:
-# 	cd $(OPENSSL_LINUX_DIR); \
-# 		./config -d -fPIC \
-# 			no-md2 no-rc5 no-rfc3779 no-sctp no-ssl-trace no-zlib     \
-# 			no-hw no-mdc2 no-seed no-idea enable-ec_nistp_64_gcc_128 no-camellia \
-# 			no-bf no-ripemd no-dsa no-ssl2 no-ssl3 no-capieng                  \
-# 			-DSSL_FORBID_ENULL -DOPENSSL_NO_DTLS1 -DOPENSSL_NO_HEARTBEATS; \
-# 		make -j $(CPUS) depend; \
-# 		make -j $(CPUS); \
-# 		make -j $(CPUS) install_sw; \
-# 		cp libcrypto.a $(DEPS_DIR)/libcrypto.a
 
 build-iconv-linux:
 	cd src/deps/libiconv/libiconv-1.16; ./configure --enable-static; make -j 12; cp ./lib/.libs/libiconv.a $(DEPS_DIR)/libiconv.a
@@ -90,9 +67,6 @@ BUN_TMP_DIR := /tmp/make-bun
 BUN_DEPLOY_DIR = /tmp/bun-v$(PACKAGE_JSON_VERSION)/$(PACKAGE_NAME)
 
 DEFAULT_USE_BMALLOC := 1
-# ifeq ($(OS_NAME),linux)
-# 	DEFAULT_USE_BMALLOC = 0
-# endif
 
 USE_BMALLOC ?= DEFAULT_USE_BMALLOC
 
@@ -131,84 +105,6 @@ endif
 STRIP ?= $(shell which llvm-strip || which llvm-strip-12 || echo "Missing llvm-strip. Please pass it in the STRIP environment var"; exit 1;)
 
 HOMEBREW_PREFIX ?= $(BREW_PREFIX_PATH)
-
-s2n-ubuntu-deps:
-	# https://github.com/aws/s2n-tls/blob/main/codebuild/spec/buildspec_ubuntu.yml#L50
-	sudo apt-get install -y --no-install-recommends indent \
-		iproute2 \
-		kwstyle \
-		lcov \
-		libssl-dev \
-		m4 \
-		make \
-		net-tools \
-		nettle-bin \
-		nettle-dev \
-		pkg-config \
-		psmisc \
-		python3-pip \
-		shellcheck \
-		sudo \
-		tcpdump \
-		unzip \
-		valgrind \
-		zlib1g-dev \
-		zlib \
-		cmake \
-		tox \
-		libtool \
-		ninja-build
-
-s2n-linux:
-	cd $(DEPS_DIR)/s2n-tls; \
-	make clean; \
-	rm -rf build; \
-	CC=$(CC) CXX=$(CXX) cmake . -Bbuild -GNinja \
-		-DCMAKE_BUILD_TYPE=Release \
-		-DBUILD_SHARED_LIBS=OFF \
-		-DBENCHMARK=0; \
-	CC=$(CC) CXX=$(CXX) cmake --build ./build -j$(CPUS); \
-	CC=$(CC) CXX=$(CXX) CTEST_PARALLEL_LEVEL=$(CPUS) ninja -C build;
-	cp $(DEPS_DIR)/s2n-tls/build/lib/libs2n.a $(DEPS_DIR)/libs2n.a
-
-s2n-linux-debug:
-	# https://github.com/aws/s2n-tls/blob/main/codebuild/spec/buildspec_ubuntu.yml#L50
-	sudo apt-get install -y --no-install-recommends indent \
-		iproute2 \
-		kwstyle \
-		lcov \
-		libssl-dev \
-		m4 \
-		make \
-		net-tools \
-		nettle-bin \
-		nettle-dev \
-		pkg-config \
-		psmisc \
-		python3-pip \
-		shellcheck \
-		sudo \
-		tcpdump \
-		unzip \
-		valgrind \
-		zlib1g-dev \
-		zlibc \
-		cmake \
-		tox \
-		libtool \
-		ninja-build
-
-	cd $(DEPS_DIR)/s2n-tls; \
-	make clean; \
-	rm -rf build; \
-	CC=$(CC) CXX=$(CXX) cmake . -Bbuild -GNinja \
-		-DCMAKE_BUILD_TYPE=Debug \
-		-DBUILD_SHARED_LIBS=OFF \
-		-DBENCHMARK=0; \
-	CC=$(CC) CXX=$(CXX) cmake --build ./build -j$(CPUS); \
-	CC=$(CC) CXX=$(CXX) CTEST_PARALLEL_LEVEL=$(CPUS) ninja -C build;
-	cp $(DEPS_DIR)/s2n-tls/build/lib/libs2n.a $(DEPS_DIR)/libs2n.a
-
 
 SRC_DIR := src/javascript/jsc/bindings
 OBJ_DIR := src/javascript/jsc/bindings-obj
@@ -287,7 +183,7 @@ endif
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO = src/deps/mimalloc/libmimalloc.a \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
-		src/deps/libs2n.a \
+		src/deps/libssl.a \
 		src/deps/picohttpparser.o \
 
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) src/deps/libcrypto.a
@@ -320,8 +216,16 @@ BUN_LLD_FLAGS = $(OBJ_FILES) \
 bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local
 
 
-vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib s2n libarchive 
+vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive 
 
+boringssl-build:
+	cd $(DEPS_DIR)/boringssl && mkdir -p build && cd build && cmake -GNinja .. && ninja 
+
+boringssl-copy:
+	cp $(DEPS_DIR)/boringssl/build/ssl/libssl.a $(DEPS_DIR)/libssl.a
+	cp $(DEPS_DIR)/boringssl/build/crypto/libcrypto.a $(DEPS_DIR)/libcrypto.a
+
+boringssl: boringssl-build boringssl-copy
 
 libarchive:
 	cd src/deps/libarchive; \
@@ -411,7 +315,7 @@ fetch:
 		src/deps/mimalloc/libmimalloc.a \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
-		src/deps/libs2n.a \
+		src/deps/libssl.a \
 		src/deps/picohttpparser.o \
 		$(LIBCRYPTO_STATIC_LIB)
 
@@ -421,7 +325,7 @@ fetch-debug:
 		src/deps/mimalloc/libmimalloc.a \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
-		src/deps/libs2n.a \
+		src/deps/libssl.a \
 		src/deps/picohttpparser.o \
 		$(LIBCRYPTO_STATIC_LIB)
 
@@ -432,7 +336,7 @@ httpbench-debug:
 		src/deps/mimalloc/libmimalloc.a \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
-		src/deps/libs2n.a \
+		src/deps/libssl.a \
 		src/deps/picohttpparser.o \
 		$(LIBCRYPTO_STATIC_LIB)
 
@@ -443,46 +347,9 @@ httpbench-release:
 		src/deps/mimalloc/libmimalloc.a \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
-		src/deps/libs2n.a \
+		src/deps/libssl.a \
 		src/deps/picohttpparser.o \
 		$(LIBCRYPTO_STATIC_LIB)
-
-s2n-mac:
-	cd $(DEPS_DIR)/s2n-tls; \
-	make clean; \
-	CC=$(CC) CXX=$(CXX) cmake . -Bbuild -GNinja \
-		-DCMAKE_BUILD_TYPE=Release \
-		-DBUILD_SHARED_LIBS=OFF \
-		-DLibCrypto_INCLUDE_DIR=$(LIBCRYPTO_INCLUDE_DIR) \
-		-DLibCrypto_STATIC_LIBRARY=$(LIBCRYPTO_STATIC_LIB) \
-		-DLibCrypto_LIBRARY=$(LIBCRYPTO_STATIC_LIB) \
-		-DCMAKE_PREFIX_PATH=$(LIBCRYPTO_PREFIX_DIR); \
-	CC=$(CC) CXX=$(CXX) cmake --build ./build -j$(CPUS); \
-	CC=$(CC) CXX=$(CXX) CTEST_PARALLEL_LEVEL=$(CPUS) ninja -C build
-	cp $(DEPS_DIR)/s2n-tls/build/lib/libs2n.a $(DEPS_DIR)/libs2n.a
-
-libcrypto-old:
-	unlink $(DEPS_DIR)/libcrypto.a || echo "";
-	ln $(LIBCRYPTO_STATIC_LIB) $(DEPS_DIR)/libcrypto.a || echo "";
-
-s2n-mac-debug:
-	cd $(DEPS_DIR)/s2n-tls; \
-	make clean; \
-	CC=$(CC) CXX=$(CXX) cmake . -Bbuild -GNinja \
-		-DCMAKE_BUILD_TYPE=Debug \
-		-DBUILD_SHARED_LIBS=OFF \
-		-DLibCrypto_INCLUDE_DIR=$(LIBCRYPTO_INCLUDE_DIR) \
-		-DLibCrypto_STATIC_LIBRARY=$(LIBCRYPTO_STATIC_LIB) \
-		-DLibCrypto_LIBRARY=$(LIBCRYPTO_STATIC_LIB) \
-		-DCMAKE_PREFIX_PATH=$(LIBCRYPTO_PREFIX_DIR); \
-	CC=$(CC) CXX=$(CXX) cmake --build ./build -j$(CPUS); \
-	CC=$(CC) CXX=$(CXX) CTEST_PARALLEL_LEVEL=$(CPUS) ninja -C build test
-	cp $(DEPS_DIR)/s2n-tls/build/lib/libs2n.a $(DEPS_DIR)/libs2n.a
-	unlink $(DEPS_DIR)/libcrypto.a || echo "";
-	ln $(LIBCRYPTO_STATIC_LIB) $(DEPS_DIR)/libcrypto.a || echo "";
-
-libcrypto_path:
-	@echo ${LIBCRYPTO_STATIC_LIB}
 
 bun-codesign-debug:
 bun-codesign-release-local:

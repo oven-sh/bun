@@ -1,4 +1,4 @@
-import * as App from "next/app";
+import App from "next/app";
 import { AmpStateContext } from "next/dist/shared/lib/amp-context";
 import { HeadManagerContext } from "next/dist/shared/lib/head-manager-context";
 import Loadable from "next/dist/shared/lib/loadable";
@@ -18,15 +18,21 @@ import {
   RenderPageResult,
   HtmlContext,
 } from "next/dist/shared/lib/utils";
+import { RenderOpts } from "next/dist/server/render";
 import * as NextDocument from "next/document";
 import * as ReactDOMServer from "react-dom/server.browser";
 import * as React from "react";
 import * as ReactIs from "react-is";
-import { BODY_RENDER_TARGET } from "next/constants";
+
+// This constant was removed from Next, Is it doing anything?
+const BODY_RENDER_TARGET = "__NEXT_BODY_RENDER_TARGET__";
 
 const dev = process.env.NODE_ENV === "development";
 
 type ParsedUrlQuery = Record<string, string | string[]>;
+
+// @ts-expect-error TS doesn't understand that Bun is a global
+const origin: string = Bun.origin;
 
 const isJSFile = (file: string) =>
   file.endsWith(".js") ||
@@ -35,40 +41,11 @@ const isJSFile = (file: string) =>
   file.endsWith(".ts") ||
   file.endsWith(".tsx");
 
-const notImplementedProxy = (base) =>
-  new Proxy(
-    {},
-    {
-      deleteProperty: function (target, prop) {
-        return undefined;
-      },
-      enumerate: function (oTarget, sKey) {
-        return [].entries();
-      },
-      ownKeys: function (oTarget, sKey) {
-        return [].values();
-      },
-      has: function (oTarget, sKey) {
-        return false;
-      },
-      defineProperty: function (oTarget, sKey, oDesc) {
-        return undefined;
-      },
-      getOwnPropertyDescriptor: function (oTarget, sKey) {
-        return undefined;
-      },
-      get(this, prop) {
-        throw new ReferenceError(
-          `${base} is not available for this environment.`
-        );
-      },
-      set(this, prop, value) {
-        throw new ReferenceError(
-          `${base} is not available for this environment.`
-        );
-      },
-    }
-  );
+type DocumentFiles = {
+  sharedFiles: readonly string[];
+  pageFiles: readonly string[];
+  allFiles: readonly string[];
+};
 
 function getScripts(files: DocumentFiles) {
   const { context, props } = this;
@@ -147,6 +124,9 @@ function renderDocument(
     disableOptimizedLoading,
   }: RenderOpts & {
     props: any;
+    //
+    page: string;
+    //
     docComponentsRendered: DocumentProps["docComponentsRendered"];
     docProps: DocumentInitialProps;
     pathname: string;
@@ -222,7 +202,11 @@ function renderDocument(
     "<!DOCTYPE html>" +
     ReactDOMServer.renderToStaticMarkup(
       <AmpStateContext.Provider value={ampState}>
+        {/* HTMLContextProvider expects useMainContent */}
+        {/* @ts-expect-error */}
         <HtmlContext.Provider value={htmlProps}>
+          {/* Document doesn't expect useMaybeDeferContent */}
+          {/* @ts-expect-error */}
           <Document {...htmlProps} {...docProps}></Document>
         </HtmlContext.Provider>
       </AmpStateContext.Provider>
@@ -359,7 +343,8 @@ export async function render({
   routeNames: string[];
   request: Request;
 }): Promise<Response> {
-  const { default: Component, getStaticProps = null } = PageNamespace || {};
+  const { default: Component } = PageNamespace || {};
+  const getStaticProps = (PageNamespace as any)?.getStaticProps || null;
   const { default: AppComponent_ } = AppNamespace || {};
   var query = Object.assign({}, route.query);
 
@@ -371,7 +356,7 @@ export async function render({
   for (let i = 0; i < routeNames.length; i++) {
     const filePath = routePaths[i];
     const name = routeNames[i];
-    pages[name] = [Bun.origin + filePath];
+    pages[name] = [origin + filePath];
   }
 
   if (appStylesheets.length > 0) {
@@ -387,11 +372,8 @@ export async function render({
     pages["/_app"] = [];
   }
 
-  const AppComponent = AppComponent_ || App.default;
-  const Document =
-    (DocumentNamespace && DocumentNamespace.default) || NextDocument.default;
-  //   Document.Html.prototype.getScripts = getScripts;
-  // }
+  const AppComponent = AppComponent_ || App;
+  const Document = (DocumentNamespace as any)?.default || NextDocument.default;
 
   const callMiddleware = async (method: string, args: any[], props = false) => {
     let results: any = props ? {} : [];
@@ -447,14 +429,16 @@ export async function render({
   delete query.__nextLocale;
   delete query.__nextDefaultLocale;
 
-  const isSSG = !!getStaticProps;
-  const isBuildTimeSSG = isSSG && false;
+  // const isSSG = !!getStaticProps;
+
   const defaultAppGetInitialProps =
     App.getInitialProps === (App as any).origGetInitialProps;
 
   const hasPageGetInitialProps = !!(Component as any).getInitialProps;
   const pageIsDynamic = route.kind === "dynamic";
+  const isPreview = false;
   const isAutoExport = false;
+  const nextExport = isAutoExport || isFallback;
 
   if (isAutoExport || isFallback) {
     // // remove query values except ones that will be set during export
@@ -476,7 +460,6 @@ export async function render({
     <meta name="viewport" content="width=device-width" />,
   ];
 
-  const nextExport = isAutoExport || isFallback;
   const reactLoadableModules: string[] = [];
   var scriptLoader = {};
   const AppContainer = ({ children }: any) => (
@@ -504,6 +487,7 @@ export async function render({
     </RouterContext.Provider>
   );
 
+  // Todo: Double check this when adding support for dynamic()
   await Loadable.preloadAll(); // Make sure all dynamic imports are loaded
 
   const router = new ServerRouter(
@@ -514,7 +498,7 @@ export async function render({
       isFallback: isFallback,
     },
     true,
-    Bun.origin,
+    origin,
     null,
     [], // renderOpts.locales,
     null, //renderOpts.defaultLocale,
@@ -541,7 +525,7 @@ export async function render({
       );
     },
     defaultGetInitialProps: async (
-      docCtx: DocumentContext
+      docCtx: NextDocument.DocumentContext
     ): Promise<DocumentInitialProps> => {
       const enhanceApp = (AppComp: any) => {
         return (props: any) => <AppComp {...props} />;
@@ -553,7 +537,7 @@ export async function render({
     },
   };
 
-  var props = await loadGetInitialProps(AppComponent, {
+  var props: any = await loadGetInitialProps(AppComponent, {
     AppTree: ctx.AppTree,
     Component,
     router,
@@ -565,6 +549,7 @@ export async function render({
   // We don't call getServerSideProps on clients.
   // This isn't correct.
   // We don't call getServerSideProps on clients.
+  // @ts-expect-error
   const getServerSideProps = PageNamespace.getServerSideProps;
 
   var responseHeaders: Headers;
@@ -661,6 +646,7 @@ export async function render({
 
   const renderToString = ReactDOMServer.renderToString;
   const ErrorDebug = null;
+
   props.pageProps = pageProps;
 
   const renderPage: RenderPage = (
@@ -668,12 +654,7 @@ export async function render({
   ): RenderPageResult | Promise<RenderPageResult> => {
     if (ctx.err && ErrorDebug) {
       const htmlOrPromise = renderToString(<ErrorDebug error={ctx.err} />);
-      return typeof htmlOrPromise === "string"
-        ? { html: htmlOrPromise, head }
-        : htmlOrPromise.then((html) => ({
-            html,
-            head,
-          }));
+      return { html: htmlOrPromise, head };
     }
 
     if (dev && (props.router || props.Component)) {
@@ -683,6 +664,8 @@ export async function render({
     }
 
     const { App: EnhancedApp, Component: EnhancedComponent } =
+      // Argument of type 'NextComponentType<any, {}, {}> | typeof App' is not assignable to parameter of type 'AppType'.
+      // @ts-expect-error
       enhanceComponents(options, AppComponent, Component);
 
     const htmlOrPromise = renderToString(
@@ -695,12 +678,8 @@ export async function render({
         />
       </AppContainer>
     );
-    return typeof htmlOrPromise === "string"
-      ? { html: htmlOrPromise, head }
-      : htmlOrPromise.then((html) => ({
-          html,
-          head,
-        }));
+
+    return { html: htmlOrPromise, head };
   };
 
   const documentCtx = { ...ctx, renderPage };
@@ -719,35 +698,31 @@ export async function render({
   const renderOpts = {
     params: route.params,
   };
-  // renderOpts.params = _params || params;
 
-  // parsedUrl.pathname = denormalizePagePath(parsedUrl.pathname!);
-  // renderOpts.resolvedUrl = formatUrl({
-  //   ...parsedUrl,
-  //   query: origQuery,
-  // });
   const docComponentsRendered: DocumentProps["docComponentsRendered"] = {};
-
-  const isPreview = false;
 
   let html = renderDocument(Document, {
     docComponentsRendered,
     ...renderOpts,
     disableOptimizedLoading: false,
-    canonicalBase: Bun.origin,
+    canonicalBase: origin,
     buildManifest: {
       devFiles: [],
       allFiles: [],
       polyfillFiles: [],
       lowPriorityFiles: [],
-      pages: pages,
+      // buildManifest doesn't expect pages, even though its used
+      // @ts-expect-error
+      pages,
     },
     // Only enabled in production as development mode has features relying on HMR (style injection for example)
+    // @ts-expect-error
     unstable_runtimeJS: true,
     //   process.env.NODE_ENV === "production"
     //     ? pageConfig.unstable_runtimeJS
     //     : undefined,
     // unstable_JsPreload: pageConfig.unstable_JsPreload,
+    // @ts-expect-error
     unstable_JsPreload: true,
     dangerousAsPath: router.asPath,
     ampState: undefined,
@@ -770,11 +745,12 @@ export async function render({
     appGip: !defaultAppGetInitialProps ? true : undefined,
     devOnlyCacheBusterQueryString: "",
     scriptLoader,
-    isPreview: isPreview === true ? true : undefined,
-    autoExport: isAutoExport === true ? true : undefined,
-    nextExport: nextExport === true ? true : undefined,
+    isPreview: isPreview,
+    autoExport: nextExport === true ? true : undefined,
+    nextExport: nextExport,
     useMaybeDeferContent,
   });
+  // __NEXT_BODY_RENDER_TARGET__
   const bodyRenderIdx = html.indexOf(BODY_RENDER_TARGET);
   html =
     html.substring(0, bodyRenderIdx) +

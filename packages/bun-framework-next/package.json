@@ -1,9 +1,30 @@
 {
   "name": "bun-framework-next",
   "version": "12.0.5",
-  "main": "index.js",
-  "module": "index.js",
+  "main": "empty.js",
+  "module": "empty.js",
   "description": "Bun compatibility layer for Next.js v12.0.x",
+  "scripts": {
+    "test": "echo Worked",
+    "check": "tsc --noEmit"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "react-is": "^17.0.2",
+    "url-polyfill": "^1.1.12"
+  },
+  "peerDependencies": {
+    "next": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^17.0.34",
+    "@types/react-dom": "^17.0.11",
+    "next": "^12.0.0",
+    "react-dom": "^17.0.2",
+    "react-refresh": "^0.10.0",
+    "typescript": "^4.4.4"
+  },
   "framework": {
     "displayName": "Next.js",
     "static": "public",
@@ -69,24 +90,10 @@
       }
     },
     "production": {
-      "client": "client.production.tsx",
-      "server": "server.production.tsx",
-      "fallback": "fallback.production.tsx",
+      "client": "empty.js",
+      "server": "empty.js",
+      "fallback": "empty.js",
       "css": "onimportcss"
     }
-  },
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "author": "",
-  "license": "MIT",
-  "dependencies": {
-    "react-is": "^17.0.2"
-  },
-  "peerDependencies": {
-    "next": "^12.0.0"
-  },
-  "devDependencies": {
-    "react-refresh": "^0.10.0"
   }
 }

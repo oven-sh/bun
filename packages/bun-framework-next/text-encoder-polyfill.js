@@ -35,6 +35,10 @@ Object.defineProperty(FastTextEncoder.prototype, "encoding", {
   value: "utf-8",
 });
 
+Object.defineProperty(FastTextEncoder.prototype, "encodeInto", {
+  value: "",
+});
+
 /**
  * @param {string} string
  * @param {{stream: boolean}=} options

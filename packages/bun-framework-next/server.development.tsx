@@ -26,6 +26,8 @@ import(Bun.routesDir + "_document").then(
     DocumentLoaded = true;
   },
   (err) => {
+    // ResolveError is defined outside of bun-framework-next in ../../src/runtime/errors
+    // @ts-expect-error
     if (err instanceof ResolveError) {
       DocumentLoaded = true;
     } else {

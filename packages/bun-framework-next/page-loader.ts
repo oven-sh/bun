@@ -1,4 +1,6 @@
-import NextPageLoader from "next/dist/client/page-loader";
+import NextPageLoader, {
+  GoodPageCache as NextGoodPageCache,
+} from "next/dist/client/page-loader";
 import getAssetPathFromRoute from "next/dist/shared/lib/router/utils/get-asset-path-from-route";
 
 export function insertStyleSheet(url: string) {
@@ -10,13 +12,19 @@ export function insertStyleSheet(url: string) {
     const link = document.createElement("link");
     link.rel = "stylesheet";
 
-    link.onload = () => resolve();
-    link.onerror = () => reject();
+    // marking this resolve as void seems to break other things
+    link.onload = resolve;
+    link.onerror = reject;
 
     link.href = url;
 
     document.head.appendChild(link);
   });
+}
+
+interface GoodPageCache extends NextGoodPageCache {
+  __N_SSG: boolean;
+  __N_SSP: boolean;
 }
 
 export default class PageLoader extends NextPageLoader {
@@ -70,7 +78,7 @@ export default class PageLoader extends NextPageLoader {
   };
 
   prefetch() {
-    return Promise.resolve({});
+    return Promise.resolve();
   }
 
   async loadPage(route: string): Promise<GoodPageCache> {

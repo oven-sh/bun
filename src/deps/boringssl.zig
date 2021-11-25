@@ -15,6 +15,8 @@ pub fn load() void {
 
 var ctx_: ?*boring.SSL_CTX = null;
 pub fn initClient() *boring.SSL {
+    if (ctx_ != null) _ = boring.SSL_CTX_up_ref(ctx_.?);
+
     var ctx = ctx_ orelse brk: {
         ctx_ = boring.SSL_CTX.init().?;
         break :brk ctx_.?;

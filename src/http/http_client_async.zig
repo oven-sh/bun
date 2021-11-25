@@ -310,11 +310,13 @@ pub const AsyncHTTP = struct {
             defer this.elapsed = timer.read();
             _ = active_requests_count.fetchAdd(1, .Monotonic);
             defer _ = active_requests_count.fetchSub(1, .Monotonic);
+
             this.response = await this.client.sendAsync(this.request_body.list.items, this.response_buffer) catch |err| {
                 this.state.store(.fail, .Monotonic);
                 this.err = err;
                 return;
             };
+
             this.redirect_count = @intCast(u32, @maximum(127 - this.client.remaining_redirect_count, 0));
             this.state.store(.success, .Monotonic);
         }
@@ -411,15 +413,19 @@ pub const AsyncMessage = struct {
     allocator: *std.mem.Allocator,
     next: ?*AsyncMessage = null,
     context: *c_void = undefined,
+    released: bool = false,
     var _first_ssl: ?*AsyncMessage = null;
     pub fn getSSL(allocator: *std.mem.Allocator) *AsyncMessage {
         if (_first_ssl) |first| {
             var prev = first;
-            if (first.next) |next| {
+            std.debug.assert(prev.released);
+            if (prev.next) |next| {
                 _first_ssl = next;
                 prev.next = null;
-                return prev;
+            } else {
+                _first_ssl = null;
             }
+            prev.released = false;
 
             return prev;
         }
@@ -437,10 +443,15 @@ pub const AsyncMessage = struct {
     pub fn get(allocator: *std.mem.Allocator) *AsyncMessage {
         if (_first) |first| {
             var prev = first;
+            std.debug.assert(prev.released);
+            prev.released = false;
+
             if (first.next) |next| {
                 _first = next;
                 prev.next = null;
                 return prev;
+            } else {
+                _first = null;
             }
 
             return prev;
@@ -455,12 +466,16 @@ pub const AsyncMessage = struct {
     pub fn release(self: *AsyncMessage) void {
         self.used = 0;
         self.sent = 0;
+        std.debug.assert(!self.released);
+        self.released = true;
 
-        if (self.pooled) |pool| {
-            self.next = _first;
+        if (self.pooled != null) {
+            var old = _first;
             _first = self;
+            self.next = old;
         } else {
-            self.next = _first_ssl;
+            var old = _first_ssl;
+            self.next = old;
             _first_ssl = self;
         }
     }
@@ -623,10 +638,6 @@ const AsyncSocket = struct {
 
     pub fn deinit(this: *AsyncSocket) void {
         var node = this.head;
-        while (node.next) |element| {
-            element.release();
-            node = element.next orelse break;
-        }
         this.head.release();
     }
 
@@ -723,6 +734,7 @@ const AsyncSocket = struct {
         handshake_frame: @Frame(SSL.handshake) = undefined,
         send_frame: @Frame(SSL.send) = undefined,
         read_frame: @Frame(SSL.read) = undefined,
+        hostname: [std.fs.MAX_PATH_BYTES]u8 = undefined,
 
         const SSLConnectError = ConnectError || HandshakeError;
         const HandshakeError = error{OpenSSLError};
@@ -733,13 +745,12 @@ const AsyncSocket = struct {
 
             var ssl = boring.initClient();
 
-            // {
-            //     var hostname: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-            //     std.mem.copy(u8, &hostname, name);
-            //     hostname[name.len] = 0;
-            //     var name_ = hostname[0..name.len :0];
-            //     ssl.setHostname(name_);
-            // }
+            {
+                std.mem.copy(u8, &this.hostname, name);
+                this.hostname[name.len] = 0;
+                var name_ = this.hostname[0..name.len :0];
+                ssl.setHostname(name_);
+            }
 
             var bio = try AsyncBIO.init(this.socket.allocator);
             bio.socket_fd = this.socket.socket;
@@ -754,36 +765,33 @@ const AsyncSocket = struct {
         }
 
         fn handshake(this: *SSL) HandshakeError!void {
-            while (true) {
+            while (!this.ssl.isInitFinished()) {
+                boring.ERR_clear_error();
+                this.ssl_bio.enqueueSend();
+                const handshake_result = boring.SSL_connect(this.ssl);
+                if (handshake_result == 0) {
+                    Output.prettyErrorln("ssl accept error", .{});
+                    Output.flush();
+                    return error.OpenSSLError;
+                }
+                this.handshake_complete = handshake_result == 1 and this.ssl.isInitFinished();
+
                 if (!this.handshake_complete) {
-                    boring.ERR_clear_error();
-                    this.ssl_bio.enqueueSend();
-                    const handshake_result = boring.SSL_connect(this.ssl);
-                    if (handshake_result == 0) {
-                        Output.prettyErrorln("ssl accept error", .{});
-                        Output.flush();
-                        return error.OpenSSLError;
-                    }
-                    this.handshake_complete = handshake_result == 1;
-
-                    if (!this.handshake_complete) {
-                        // accept_result < 0
-                        const e = boring.SSL_get_error(this.ssl, handshake_result);
-                        if ((e == boring.SSL_ERROR_WANT_READ or e == boring.SSL_ERROR_WANT_WRITE)) {
-                            this.ssl_bio.enqueueSend();
-                            suspend {
-                                this.handshake_frame = @frame().*;
-                                this.ssl_bio.pending_frame = &this.handshake_frame;
-                            }
-
-                            continue;
+                    // accept_result < 0
+                    const e = boring.SSL_get_error(this.ssl, handshake_result);
+                    if ((e == boring.SSL_ERROR_WANT_READ or e == boring.SSL_ERROR_WANT_WRITE)) {
+                        this.ssl_bio.enqueueSend();
+                        suspend {
+                            this.handshake_frame = @frame().*;
+                            this.ssl_bio.pushPendingFrame(&this.handshake_frame);
                         }
 
-                        Output.prettyErrorln("ssl accept error = {}, return val was {}", .{ e, handshake_result });
-                        Output.flush();
-                        return error.OpenSSLError;
+                        continue;
                     }
-                    break;
+
+                    Output.prettyErrorln("ssl accept error = {}, return val was {}", .{ e, handshake_result });
+                    Output.flush();
+                    return error.OpenSSLError;
                 }
             }
         }
@@ -816,7 +824,7 @@ const AsyncSocket = struct {
                         error.WantRead => {
                             suspend {
                                 this.send_frame = @frame().*;
-                                this.ssl_bio.pending_frame = &this.send_frame;
+                                this.ssl_bio.pushPendingFrame(&this.send_frame);
                             }
                             continue;
                         },
@@ -825,7 +833,7 @@ const AsyncSocket = struct {
 
                             suspend {
                                 this.send_frame = @frame().*;
-                                this.ssl_bio.pending_frame = &this.send_frame;
+                                this.ssl_bio.pushPendingFrame(&this.send_frame);
                             }
                             continue;
                         },
@@ -872,7 +880,7 @@ const AsyncSocket = struct {
 
                             suspend {
                                 this.read_frame = @frame().*;
-                                this.ssl_bio.pending_frame = &this.read_frame;
+                                this.ssl_bio.pushPendingFrame(&this.read_frame);
                             }
                             continue;
                         },
@@ -893,7 +901,7 @@ const AsyncSocket = struct {
 
                             suspend {
                                 this.read_frame = @frame().*;
-                                this.ssl_bio.pending_frame = &this.read_frame;
+                                this.ssl_bio.pushPendingFrame(&this.read_frame);
                             }
                             continue;
                         },
@@ -918,7 +926,7 @@ const AsyncSocket = struct {
 
         pub fn deinit(this: *SSL) void {
             _ = boring.BIO_set_data(this.ssl_bio.bio, null);
-            this.ssl_bio.pending_frame = null;
+            this.ssl_bio.pending_frame = AsyncBIO.PendingFrame.init();
             this.ssl_bio.socket_fd = 0;
             this.ssl_bio.release();
             this.ssl.deinit();
@@ -945,16 +953,26 @@ pub const AsyncBIO = struct {
 
     read_wait: Wait = Wait.pending,
     send_wait: Wait = Wait.pending,
-    completion: AsyncIO.Completion = undefined,
+    recv_completion: AsyncIO.Completion = undefined,
+    send_completion: AsyncIO.Completion = undefined,
 
     write_buffer: ?*AsyncMessage = null,
 
     last_send_result: AsyncIO.SendError!usize = 0,
-    last_write_buffer: *AsyncMessage = undefined,
 
     last_read_result: AsyncIO.RecvError!usize = 0,
     next: ?*AsyncBIO = null,
-    pending_frame: ?anyframe = null,
+    pending_frame: PendingFrame = PendingFrame.init(),
+
+    pub const PendingFrame = std.fifo.LinearFifo(anyframe, .{ .Static = 8 });
+
+    pub inline fn pushPendingFrame(this: *AsyncBIO, frame: anyframe) void {
+        this.pending_frame.writeItem(frame) catch {};
+    }
+
+    pub inline fn popPendingFrame(this: *AsyncBIO) ?anyframe {
+        return this.pending_frame.readItem();
+    }
 
     var method: ?*boring.BIO_METHOD = null;
     var head: ?*AsyncBIO = null;
@@ -974,7 +992,8 @@ pub const AsyncBIO = struct {
             ret.read_wait = .pending;
             ret.send_wait = .pending;
             head = next;
-            ret.pending_frame = null;
+
+            ret.pending_frame = PendingFrame.init();
             return ret;
         }
 
@@ -997,7 +1016,7 @@ pub const AsyncBIO = struct {
         this.last_read_result = 0;
         this.send_wait = .pending;
         this.last_read_result = 0;
-        this.pending_frame = null;
+        this.pending_frame = PendingFrame.init();
 
         if (this.write_buffer) |write| {
             write.release();
@@ -1039,10 +1058,8 @@ pub const AsyncBIO = struct {
                 Output.flush();
             }
 
-            if (this.pending_frame) |frame| {
-                var _frame = frame;
-                this.pending_frame = null;
-                resume _frame;
+            if (this.pending_frame.readItem()) |frame| {
+                resume frame;
             }
         }
     };
@@ -1056,14 +1073,13 @@ pub const AsyncBIO = struct {
             return;
         }
 
-        self.last_write_buffer = self.write_buffer.?;
         self.last_send_result = 0;
 
         AsyncIO.global.send(
             *AsyncBIO,
             self,
             Sender.onSend,
-            &self.completion,
+            &self.send_completion,
             self.socket_fd,
             to_write,
             SOCKET_FLAGS,
@@ -1084,10 +1100,8 @@ pub const AsyncBIO = struct {
                 Output.prettyErrorln("onRead: {d}", .{read_result});
                 Output.flush();
             }
-            if (this.pending_frame) |frame| {
-                var _frame = frame;
-                this.pending_frame = null;
-                resume _frame;
+            if (this.pending_frame.readItem()) |frame| {
+                resume frame;
             }
         }
     };
@@ -1099,7 +1113,7 @@ pub const AsyncBIO = struct {
         }
 
         self.last_read_result = 0;
-        AsyncIO.global.recv(*AsyncBIO, self, Reader.onRead, &self.completion, self.socket_fd, read_buffer);
+        AsyncIO.global.recv(*AsyncBIO, self, Reader.onRead, &self.recv_completion, self.socket_fd, read_buffer);
         self.read_wait = .suspended;
         if (extremely_verbose) {
             Output.prettyErrorln("enqueuedRead: {d}", .{read_buf.len});
@@ -1363,7 +1377,9 @@ pub fn send(this: *HTTPClient, body: []const u8, body_out_str: *MutableString) !
 const Task = ThreadPool.Task;
 
 pub fn sendHTTP(this: *HTTPClient, body: []const u8, body_out_str: *MutableString) !picohttp.Response {
-    this.socket = try AsyncSocket.SSL.init(this.allocator, &AsyncIO.global);
+    this.socket = AsyncSocket.SSL{
+        .socket = try AsyncSocket.init(&AsyncIO.global, 0, this.allocator),
+    };
     var socket = &this.socket.socket;
     try this.connect(*AsyncSocket, socket);
 

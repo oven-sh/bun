@@ -24,7 +24,7 @@
       "request": "launch",
       "name": "fetch debug #2",
       "program": "${workspaceFolder}/misctools/fetch",
-      "args": ["https://www.youtube.com/", "--verbose"],
+      "args": ["https://youtube.com/", "--verbose"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"
     },

@@ -186,8 +186,9 @@ pub fn main() anyerror!void {
         args.url,
         args.headers,
         args.headers_buf,
-        request_body_string,
         response_body_string,
+        request_body_string,
+
         0,
     );
     async_http.client.verbose = args.verbose;

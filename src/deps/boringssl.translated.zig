@@ -18818,13 +18818,15 @@ pub const SSL_CTX = opaque {
         ctx.setCustomVerify(noop_custom_verify);
         if (auto_crypto_buffer_pool == null) auto_crypto_buffer_pool = CRYPTO_BUFFER_POOL_new();
         SSL_CTX_set0_buffer_pool(ctx, auto_crypto_buffer_pool);
-        _ = SSL_CTX_set_mode(ctx, SSL_MODE_AUTO_RETRY);
+        // _ = SSL_CTX_set_mode(ctx, SSL_MODE_AUTO_RETRY);
         _ = SSL_CTX_set_cipher_list(ctx, SSL_DEFAULT_CIPHER_LIST);
         return ctx;
     }
 
     pub inline fn setCustomVerify(this: *SSL_CTX, cb: ?VerifyCallback) void {
         SSL_CTX_set_custom_verify(this, 0, cb);
+        SSL_CTX_set_custom_verify(this, 1, cb);
+        SSL_CTX_set_custom_verify(this, 2, cb);
     }
 };
 

@@ -261,7 +261,7 @@ pub const AsyncHTTP = struct {
     }
 
     pub fn schedule(this: *AsyncHTTP, allocator: *std.mem.Allocator) void {
-        std.debug.assert(NetoworkThread.global_loaded);
+        std.debug.assert(NetoworkThread.global_loaded.load(.Monotonic) == 1);
         var sender = HTTPSender.get(this, allocator);
         this.state.store(.scheduled, .Monotonic);
         NetoworkThread.global.pool.schedule(ThreadPool.Batch.from(&sender.task));

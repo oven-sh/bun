@@ -11,4 +11,3 @@ cd /tmp/next-app
 BUN_CRASH_WITHOUT_JIT=1 $BUN_BIN --port 8087 &
 
 curl --fail http://localhost:8087/ && killall -9 $(basename $BUN_BIN) && echo "✅ bun create next passed."
-exit $?

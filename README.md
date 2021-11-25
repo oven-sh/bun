@@ -903,7 +903,7 @@ Bun also statically links these libraries:
 - [`picohttp`](https://github.com/h2o/picohttpparser), which is dual-licensed under the Perl License or the MIT License
 - [`mimalloc`](https://github.com/microsoft/mimalloc), which is MIT licensed
 - [`zlib-cloudflare`](https://github.com/cloudflare/zlib), which is zlib licensed
-- [`s2n-tls`](https://github.com/aws/s2n-tls), which is MIT licensed
+- [`boringssl`](https://boringssl.googlesource.com/boringssl/), which has [several licenses](https://boringssl.googlesource.com/boringssl/+/refs/heads/master/LICENSE)
 - [`libarchive`](https://github.com/libarchive/libarchive), which has [several licenses](https://github.com/libarchive/libarchive/blob/master/COPYING)
 - [`libiconv`](https://www.gnu.org/software/libiconv/), which is LGPL2. It's a dependency of libarchive.
 

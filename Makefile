@@ -154,7 +154,8 @@ ICU_FLAGS += -l icucore \
 	-I$(MACOS_ICU_INCLUDE)
 endif
 
-		
+
+BORINGSSL_PACKAGE = --pkg-begin boringssl $(DEPS_DIR)/boringssl.zig --pkg-end
 
 CLANG_FLAGS = $(INCLUDE_DIRS) \
 		-std=gnu++17 \
@@ -310,39 +311,42 @@ generate-install-script:
 	@esbuild --log-level=error --define:BUN_VERSION="\"$(PACKAGE_JSON_VERSION)\"" --define:process.env.NODE_ENV="\"production\"" --platform=node  --format=cjs $(PACKAGES_REALPATH)/bun/install.ts > $(PACKAGES_REALPATH)/bun/install.js
 
 fetch:
-	cd misctools; $(ZIG) build-obj -Drelease-fast ./fetch.zig -fcompiler-rt -lc --main-pkg-path ../
+	cd misctools; $(ZIG) build-obj -Drelease-fast ./fetch.zig -fcompiler-rt -lc --main-pkg-path ../ $(BORINGSSL_PACKAGE)  --pkg-begin io ../$(IO_FILE) --pkg-end
 	$(CXX) ./misctools/fetch.o -g -O3 -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc \
 		src/deps/mimalloc/libmimalloc.a \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
+		src/deps/libcrypto.a \
 		src/deps/libssl.a \
 		src/deps/picohttpparser.o \
 		$(LIBCRYPTO_STATIC_LIB)
 
 fetch-debug:
-	cd misctools; $(ZIG) build-obj ./fetch.zig -fcompiler-rt -lc --main-pkg-path ../
+	cd misctools; $(ZIG) build-obj ./fetch.zig -fcompiler-rt -lc --main-pkg-path ../ $(BORINGSSL_PACKAGE)  --pkg-begin io ../$(IO_FILE) --pkg-end
 	$(CXX) ./misctools/fetch.o -g -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc  \
 		src/deps/mimalloc/libmimalloc.a \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
+		src/deps/libcrypto.a \
 		src/deps/libssl.a \
 		src/deps/picohttpparser.o \
 		$(LIBCRYPTO_STATIC_LIB)
 
 
 httpbench-debug:
-	cd misctools; $(ZIG) build-obj ./http_bench.zig -fcompiler-rt -lc --main-pkg-path ../ --pkg-begin io ../$(IO_FILE) --pkg-end
+	cd misctools; $(ZIG) build-obj ./http_bench.zig -fcompiler-rt -lc --main-pkg-path ../ --pkg-begin io ../$(IO_FILE) --pkg-end $(BORINGSSL_PACKAGE)
 	$(CXX) ./misctools/http_bench.o -g -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc  \
 		src/deps/mimalloc/libmimalloc.a \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
 		src/deps/libssl.a \
+		src/deps/libcrypto.a \
 		src/deps/picohttpparser.o \
 		$(LIBCRYPTO_STATIC_LIB)
 
 
 httpbench-release:
-	cd misctools; $(ZIG) build-obj -Drelease-fast ./http_bench.zig -fcompiler-rt -lc --main-pkg-path ../ --pkg-begin io ../$(IO_FILE) --pkg-end
+	cd misctools; $(ZIG) build-obj -Drelease-fast ./http_bench.zig -fcompiler-rt -lc --main-pkg-path ../ --pkg-begin io ../$(IO_FILE) --pkg-end $(BORINGSSL_PACKAGE)
 	$(CXX) ./misctools/http_bench.o -O3 -g -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc  \
 		src/deps/mimalloc/libmimalloc.a \
 		src/deps/zlib/libz.a \
@@ -742,8 +746,7 @@ build-unit:
 	--cache-dir /tmp/zig-cache-bun-$(testname)-$(basename $(lastword $(testfilter))) \
 	-fallow-shlib-undefined \
 	-L$(LIBCRYPTO_PREFIX_DIR)/lib \
-	-lcrypto -lssl \
-	$(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) $(ICU_FLAGS) && \
+	$(ARCHIVE_FILES) $(ICU_FLAGS) && \
 	cp zig-out/bin/$(testname) $(testbinpath)
 
 run-unit:

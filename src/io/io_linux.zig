@@ -804,6 +804,7 @@ pub fn send(
     completion: *Completion,
     socket: os.socket_t,
     buffer: []const u8,
+    _: u32,
 ) void {
     completion.* = .{
         .io = self,

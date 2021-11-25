@@ -231,6 +231,7 @@ const Operation = union(enum) {
         socket: os.socket_t,
         buf: [*]const u8,
         len: u32,
+        flags: u32 = 0,
     },
     timeout: struct {
         expires: u64,
@@ -571,6 +572,7 @@ pub fn send(
     completion: *Completion,
     socket: os.socket_t,
     buffer: []const u8,
+    flags: u32,
 ) void {
     self.submit(
         context,
@@ -581,10 +583,11 @@ pub fn send(
             .socket = socket,
             .buf = buffer.ptr,
             .len = @intCast(u32, buffer_limit(buffer.len)),
+            .flags = flags,
         },
         struct {
             fn doOperation(op: anytype) SendError!usize {
-                return os.send(op.socket, op.buf[0..op.len], 0);
+                return os.send(op.socket, op.buf[0..op.len], op.flags);
             }
         },
     );

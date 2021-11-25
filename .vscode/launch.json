@@ -6,7 +6,7 @@
       "request": "launch",
       "name": "HTTP bench",
       "program": "${workspaceFolder}/misctools/http_bench",
-      "args": ["http://example.com"],
+      "args": ["https://example.com", "--count=1"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"
     },
@@ -15,7 +15,16 @@
       "request": "launch",
       "name": "fetch debug",
       "program": "${workspaceFolder}/misctools/fetch",
-      "args": ["https://api.github.com/repos/hanford/trends/tarball"],
+      "args": ["https://api.github.com/repos/hanford/trends/tarball", "--verbose"],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "fetch debug #2",
+      "program": "${workspaceFolder}/misctools/fetch",
+      "args": ["https://www.youtube.com/", "--verbose"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"
     },

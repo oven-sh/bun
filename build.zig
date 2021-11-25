@@ -12,6 +12,19 @@ pub fn addPicoHTTP(step: *std.build.LibExeObjStep, comptime with_obj: bool) void
         step.addObjectFile("src/deps/picohttpparser.o");
     }
 
+    const boringssl = step.addPackage(.{
+        .name = "boringssl",
+        .path = .{ .path = "src/deps/boringssl.zig" },
+    });
+
+    step.addIncludeDir("src/deps");
+
+    if (with_obj) {
+        step.addObjectFile("src/deps/picohttpparser.o");
+        step.addObjectFile("src/deps/libssl.a");
+        step.addObjectFile("src/deps/libcrypto.a");
+    }
+
     // step.add("/Users/jarred/Code/WebKit/WebKitBuild/Release/lib/libWTF.a");
 
     // ./Tools/Scripts/build-jsc --jsc-only  --cmakeargs="-DENABLE_STATIC_JSC=ON"

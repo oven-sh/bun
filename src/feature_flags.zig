@@ -70,7 +70,7 @@ pub const include_filename_in_jsx = false;
 
 pub const verbose_analytics = false;
 
-pub const disable_compression_in_http_client = true;
+pub const disable_compression_in_http_client = false;
 
 // Not sure why...
 // But this is slower!

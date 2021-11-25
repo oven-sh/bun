@@ -352,6 +352,7 @@ httpbench-release:
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
 		src/deps/libssl.a \
+		src/deps/libcrypto.a \
 		src/deps/picohttpparser.o \
 		$(LIBCRYPTO_STATIC_LIB)
 

@@ -63,8 +63,8 @@ const HashMapPool = struct {
             }
         }
 
-        var new_node = allocator.create(LinkedList.Node) catch unreachable;
-        new_node.* = LinkedList.Node{ .data = HashMap.initContext(allocator, IdentityContext{}) };
+        var new_node = default_allocator.create(LinkedList.Node) catch unreachable;
+        new_node.* = LinkedList.Node{ .data = HashMap.initContext(default_allocator, IdentityContext{}) };
         return new_node;
     }
 

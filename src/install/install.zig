@@ -30,6 +30,9 @@ const Lock = @import("../lock.zig").Lock;
 var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 var path_buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 const URL = @import("../query_string_map.zig").URL;
+const NetworkThread = @import("../http/network_thread.zig");
+const AsyncHTTP = @import("../http/http_client_async.zig").AsyncHTTP;
+const HTTPChannel = @import("../http/http_client_async.zig").HTTPChannel;
 
 threadlocal var initialized_store = false;
 pub fn initializeStore() void {
@@ -90,6 +93,22 @@ pub fn ExternalSlice(comptime Type: type) type {
         }
     };
 }
+
+const NetworkTask = struct {
+    http: AsyncHTTP,
+
+    data: Data,
+
+    pub const Data = union(Tag) {
+        tarball_download: *TarballDownload,
+        package_manifest: *Npm.PackageManifest,
+    };
+
+    pub const Tag = enum {
+        tarball_download,
+        package_manifest,
+    };
+};
 
 const PackageID = u32;
 const invalid_package_id = std.math.maxInt(PackageID);
@@ -1990,7 +2009,7 @@ const TaskCallbackContext = TaggedPointer.TaggedPointerUnion(.{
 
 const TaskCallbackList = std.ArrayListUnmanaged(TaskCallbackContext);
 const TaskDependencyQueue = std.HashMapUnmanaged(u64, TaskCallbackList, IdentityContext(u64), 80);
-const TaskChannel = sync.Channel(Task, .{ .Static = 64 });
+const TaskChannel = sync.Channel(Task, .{ .Static = 4096 });
 
 const ThreadPool = @import("../thread_pool.zig");
 
@@ -2483,6 +2502,8 @@ pub const PackageManager = struct {
                 cpu_count = @minimum(cpu_count, cpu_count_);
             } else |err| {}
         }
+
+        try NetworkThread.init();
 
         var manager = &instance;
         // var progress = std.Progress{};

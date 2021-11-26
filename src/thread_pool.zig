@@ -240,7 +240,14 @@ noinline fn wait(self: *ThreadPool, _is_waking: bool) error{Shutdown}!bool {
             }
         } else {
             if (self.io) |io| {
-                while (true) io.run_for_ns(std.time.ns_per_ms * 1000) catch {};
+                while (true) {
+                    io.run_for_ns(std.time.ns_per_ms * 500) catch {};
+                    const sync2 = @bitCast(Sync, self.sync.load(.Monotonic));
+                    if (sync2.state != sync.state) {
+                        sync = @bitCast(Sync, self.sync.load(.Monotonic));
+                        continue;
+                    }
+                }
             }
 
             self.idle_event.wait();

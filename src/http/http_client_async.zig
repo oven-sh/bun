@@ -15,7 +15,7 @@ const AsyncIO = @import("io");
 const ThreadPool = @import("../thread_pool.zig");
 const boring = @import("boringssl");
 
-const NetoworkThread = @import("./network_thread.zig");
+const NetworkThread = @import("./network_thread.zig");
 
 const extremely_verbose = false;
 

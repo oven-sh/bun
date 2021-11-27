@@ -94,29 +94,6 @@ pub fn ExternalSlice(comptime Type: type) type {
     };
 }
 
-const UnboundedStack = @import("./unbounded_stack.zig").UnboundedStack;
-
-const NetworkTaskItem = struct {
-    task: NetworkTask,
-    next: ?*NetworkTaskItem = null,
-
-    pub const Stack = UnboundedStack(NetworkTaskItem, .next);
-    pub const Batch = struct {
-        head: ?*NetworkTaskItem = null,
-        tail: ?*NetworkTaskItem = null,
-
-        pub fn push(this: Batch, item: *NetworkTaskItem) void {
-            if (this.head == null) {
-                this.head = item;
-                this.tail = item;
-            } else {
-                this.tail.next = item;
-                this.tail = item;
-            }
-        }
-    };
-};
-
 const NetworkTask = struct {
     http: AsyncHTTP = undefined,
     task_id: u64,
@@ -130,9 +107,7 @@ const NetworkTask = struct {
     },
 
     pub fn notify(http: *AsyncHTTP) void {
-        var network_task = @fieldParentPtr(NetworkTask, "http", http);
-        var network_task_item = @fieldParentPtr(NetworkTaskItem, "task", network_task);
-        PackageManager.instance.network_channel.push(network_task_item);
+        PackageManager.instance.network_channel.writeItem(@fieldParentPtr(NetworkTask, "http", http)) catch {};
     }
 
     const default_headers_buf: string = "Acceptapplication/vnd.npm.install-v1+json";
@@ -1993,13 +1968,6 @@ const Task = struct {
     log: logger.Log,
     id: u64,
 
-    pub const Item = struct {
-        next: ?*Item = null,
-        task: Task,
-    };
-
-    pub const Stack = UnboundedStack(Item, .next);
-
     /// An ID that lets us register a callback without keeping the same pointer around
     pub const Id = packed struct {
         tag: Task.Tag,
@@ -2039,7 +2007,7 @@ const Task = struct {
                     this.request.package_manifest.name,
                 ) catch |err| {
                     this.status = Status.fail;
-                    PackageManager.instance.resolve_tasks.push(@fieldParentPtr(Task.Item, "task", this));
+                    PackageManager.instance.resolve_tasks.writeItem(this.*) catch unreachable;
                     return;
                 };
 
@@ -2050,13 +2018,13 @@ const Task = struct {
                     .fresh => |manifest| {
                         this.data = .{ .package_manifest = manifest };
                         this.status = Status.success;
-                        PackageManager.instance.resolve_tasks.push(@fieldParentPtr(Task.Item, "task", this));
+                        PackageManager.instance.resolve_tasks.writeItem(this.*) catch unreachable;
                         return;
                     },
                     .not_found => {
                         this.log.addErrorFmt(null, logger.Loc.Empty, allocator, "404 - GET {s}", .{this.request.package_manifest.name}) catch unreachable;
                         this.status = Status.fail;
-                        PackageManager.instance.resolve_tasks.push(@fieldParentPtr(Task.Item, "task", this));
+                        PackageManager.instance.resolve_tasks.writeItem(this.*) catch unreachable;
                         return;
                     },
                 }
@@ -2067,13 +2035,13 @@ const Task = struct {
                 ) catch |err| {
                     this.status = Status.fail;
                     this.data = .{ .extract = "" };
-                    PackageManager.instance.resolve_tasks.push(@fieldParentPtr(Task.Item, "task", this));
+                    PackageManager.instance.resolve_tasks.writeItem(this.*) catch unreachable;
                     return;
                 };
 
                 this.data = .{ .extract = result };
                 this.status = Status.success;
-                PackageManager.instance.resolve_tasks.push(@fieldParentPtr(Task.Item, "task", this));
+                PackageManager.instance.resolve_tasks.writeItem(this.*) catch unreachable;
             },
         }
     }
@@ -2117,6 +2085,7 @@ const TaskCallbackContext = TaggedPointer.TaggedPointerUnion(.{
 const TaskCallbackList = std.ArrayListUnmanaged(TaskCallbackContext);
 const TaskDependencyQueue = std.HashMapUnmanaged(u64, TaskCallbackList, IdentityContext(u64), 80);
 const TaskChannel = sync.Channel(Task, .{ .Static = 4096 });
+const NetworkChannel = sync.Channel(*NetworkTask, .{ .Static = 8192 });
 const ThreadPool = @import("../thread_pool.zig");
 
 // We can't know all the package s we need until we've downloaded all the packages
@@ -2132,7 +2101,7 @@ pub const PackageManager = struct {
     allocator: *std.mem.Allocator,
     root_package: *Package,
     log: *logger.Log,
-    resolve_tasks: Task.Stack,
+    resolve_tasks: TaskChannel,
 
     default_features: Package.Features = Package.Features{},
 
@@ -2145,7 +2114,7 @@ pub const PackageManager = struct {
 
     task_queue: TaskDependencyQueue = TaskDependencyQueue{},
     network_task_queue: NetworkTaskQueue = .{},
-    network_channel: NetworkTaskItem.Stack = NetworkTaskItem.Stack{},
+    network_channel: NetworkChannel = NetworkChannel.init(),
     network_tarball_batch: ThreadPool.Batch = ThreadPool.Batch{},
     network_resolve_batch: ThreadPool.Batch = ThreadPool.Batch{},
     preallocated_network_tasks: PreallocatedNetworkTasks = PreallocatedNetworkTasks{ .buffer = undefined, .len = 0 },
@@ -2153,7 +2122,7 @@ pub const PackageManager = struct {
     total_tasks: u32 = 0,
 
     pub var package_list = PackageList{};
-    const PreallocatedNetworkTasks = std.BoundedArray(NetworkTaskItem, 1024);
+    const PreallocatedNetworkTasks = std.BoundedArray(NetworkTask, 1024);
     const NetworkTaskQueue = std.HashMapUnmanaged(u64, void, IdentityContext(u64), 80);
     const PackageIndex = std.AutoHashMapUnmanaged(u64, *Package);
     const PackageManifestMap = std.HashMapUnmanaged(u32, Npm.PackageManifest, IdentityContext(u32), 80);
@@ -2172,13 +2141,10 @@ pub const PackageManager = struct {
         if (this.preallocated_network_tasks.len + 1 < this.preallocated_network_tasks.buffer.len) {
             const len = this.preallocated_network_tasks.len;
             this.preallocated_network_tasks.len += 1;
-            this.preallocated_network_tasks.buffer[len] = .{ .task = undefined };
-            return &this.preallocated_network_tasks.buffer[len].task;
+            return &this.preallocated_network_tasks.buffer[len];
         }
 
-        var network_task_item = this.allocator.create(NetworkTaskItem) catch @panic("Memory allocation failure creating NetworkTask!");
-        network_task_item.* = NetworkTaskItem{ .task = undefined };
-        return &network_task_item.task;
+        return this.allocator.create(NetworkTask) catch @panic("Memory allocation failure creating NetworkTask!");
     }
 
     // TODO: normalize to alphanumeric
@@ -2425,9 +2391,7 @@ pub const PackageManager = struct {
                 };
 
                 if (resolve_result) |result| {
-                    if (result.package.isDisabled()) {
-                        return null;
-                    }
+                    if (result.package.isDisabled()) return null;
 
                     // First time?
                     if (result.is_first_time) {
@@ -2474,7 +2438,7 @@ pub const PackageManager = struct {
                         }
 
                         var network_task = this.getNetworkTask();
-                        network_task.* = .{
+                        network_task.* = NetworkTask{
                             .callback = undefined,
                             .task_id = task_id,
                             .allocator = this.allocator,
@@ -2704,7 +2668,7 @@ pub const PackageManager = struct {
             .thread_pool = ThreadPool.init(.{
                 .max_threads = cpu_count,
             }),
-            .resolve_tasks = Task.Stack{},
+            .resolve_tasks = TaskChannel.init(),
             // .progress
         };
 
@@ -2719,128 +2683,111 @@ pub const PackageManager = struct {
         var extracted_count: usize = 0;
         while (manager.pending_tasks > 0) {
             var batch = ThreadPool.Batch{};
-            if (manager.network_channel.popBatch()) |network_batch_| {
-                var network_batch = network_batch_;
+            while (manager.network_channel.tryReadItem() catch null) |task_| {
+                var task: *NetworkTask = task_;
+                manager.pending_tasks -= 1;
 
-                while (true) {
-                    var task: *NetworkTask = &network_batch.task;
-                    manager.pending_tasks -= 1;
+                switch (task.callback) {
+                    .package_manifest => |name| {
+                        const response = task.http.response orelse {
+                            Output.prettyErrorln("Failed to download package manifest for package {s}", .{name});
+                            Output.flush();
+                            continue;
+                        };
 
-                    switch (task.callback) {
-                        .package_manifest => |name| {
-                            const response = task.http.response orelse {
-                                Output.prettyErrorln("Failed to download package manifest for package {s}", .{name});
-                                Output.flush();
-                                continue;
-                            };
+                        if (response.status_code > 399) {
+                            Output.prettyErrorln(
+                                "<r><red><b>GET<r><red> {s}<d>  - {d}<r>",
+                                .{
+                                    name,
+                                    response.status_code,
+                                },
+                            );
+                            Output.flush();
+                            continue;
+                        }
 
-                            if (response.status_code > 399) {
-                                Output.prettyErrorln(
-                                    "<r><red><b>GET<r><red> {s}<d>  - {d}<r>",
-                                    .{
-                                        name,
-                                        response.status_code,
-                                    },
-                                );
-                                Output.flush();
-                                continue;
-                            }
+                        if (verbose_install) {
+                            Output.prettyError("    ", .{});
+                            Output.printElapsed(@floatCast(f64, @intToFloat(f128, task.http.elapsed) / std.time.ns_per_ms));
+                            Output.prettyError(" <d>Downloaded <r><green>{s}<r> versions\n", .{name});
+                            Output.flush();
+                        }
 
-                            if (verbose_install) {
-                                Output.prettyError("    ", .{});
-                                Output.printElapsed(@floatCast(f64, @intToFloat(f128, task.http.elapsed) / std.time.ns_per_ms));
-                                Output.prettyError(" <d>Downloaded <r><green>{s}<r> versions\n", .{name});
-                                Output.flush();
-                            }
+                        batch.push(ThreadPool.Batch.from(manager.enqueueParseNPMPackage(task.task_id, name, task)));
+                    },
+                    .extract => |extract| {
+                        const response = task.http.response orelse {
+                            Output.prettyErrorln("Failed to download package tarball for package {s}", .{extract.name});
+                            Output.flush();
+                            continue;
+                        };
 
-                            batch.push(ThreadPool.Batch.from(manager.enqueueParseNPMPackage(task.task_id, name, task)));
-                        },
-                        .extract => |extract| {
-                            const response = task.http.response orelse {
-                                Output.prettyErrorln("Failed to download package tarball for package {s}", .{extract.name});
-                                Output.flush();
-                                continue;
-                            };
+                        if (response.status_code > 399) {
+                            Output.prettyErrorln(
+                                "<r><red><b>GET<r><red> {s}<d>  - {d}<r>",
+                                .{
+                                    task.http.url.href,
+                                    response.status_code,
+                                },
+                            );
+                            Output.flush();
+                            continue;
+                        }
 
-                            if (response.status_code > 399) {
-                                Output.prettyErrorln(
-                                    "<r><red><b>GET<r><red> {s}<d>  - {d}<r>",
-                                    .{
-                                        task.http.url.href,
-                                        response.status_code,
-                                    },
-                                );
-                                Output.flush();
-                                continue;
-                            }
+                        if (verbose_install) {
+                            Output.prettyError("    ", .{});
+                            Output.printElapsed(@floatCast(f64, @intToFloat(f128, task.http.elapsed) / std.time.ns_per_ms));
+                            Output.prettyError(" <d>Downloaded <r><green>{s}<r> tarball\n", .{extract.name});
+                            Output.flush();
+                        }
 
-                            if (verbose_install) {
-                                Output.prettyError("    ", .{});
-                                Output.printElapsed(@floatCast(f64, @intToFloat(f128, task.http.elapsed) / std.time.ns_per_ms));
-                                Output.prettyError(" <d>Downloaded <r><green>{s}<r> tarball\n", .{extract.name});
-                                Output.flush();
-                            }
-
-                            batch.push(ThreadPool.Batch.from(manager.enqueueExtractNPMPackage(extract, task)));
-                        },
-                    }
-                    if (network_batch.next) |next| {
-                        network_batch = next;
-                        continue;
-                    }
-                    break;
+                        batch.push(ThreadPool.Batch.from(manager.enqueueExtractNPMPackage(extract, task)));
+                    },
                 }
             }
 
-            if (manager.resolve_tasks.popBatch()) |task_batch_| {
-                var task_batch = task_batch_;
-                while (true) {
-                    var task = task_batch.task;
-                    manager.pending_tasks -= 1;
+            while (manager.resolve_tasks.tryReadItem() catch null) |task_| {
+                manager.pending_tasks -= 1;
 
-                    if (task.log.msgs.items.len > 0) {
-                        if (Output.enable_ansi_colors) {
-                            try task.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-                        } else {
-                            try task.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
+                var task: Task = task_;
+                if (task.log.msgs.items.len > 0) {
+                    if (Output.enable_ansi_colors) {
+                        try task.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
+                    } else {
+                        try task.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
+                    }
+                }
+
+                switch (task.tag) {
+                    .package_manifest => {
+                        if (task.status == .fail) {
+                            Output.prettyErrorln("Failed to parse package manifest for {s}", .{task.request.package_manifest.name});
+                            Output.flush();
+                            continue;
                         }
-                    }
+                        const manifest = task.data.package_manifest;
+                        var entry = try manager.manifests.getOrPutValue(ctx.allocator, @truncate(u32, manifest.pkg.name.hash), manifest);
+                        const dependency_list = manager.task_queue.get(task.id).?;
 
-                    switch (task.tag) {
-                        .package_manifest => {
-                            if (task.status == .fail) {
-                                Output.prettyErrorln("Failed to parse package manifest for {s}", .{task.request.package_manifest.name});
-                                Output.flush();
-                                continue;
+                        for (dependency_list.items) |item| {
+                            var dependency: *Dependency = TaskCallbackContext.get(item, Dependency).?;
+                            if (try manager.enqueueDependency(dependency, dependency.required)) |new_batch| {
+                                batch.push(new_batch);
                             }
-                            const manifest = task.data.package_manifest;
-                            var entry = try manager.manifests.getOrPutValue(ctx.allocator, @truncate(u32, manifest.pkg.name.hash), manifest);
-                            const dependency_list = manager.task_queue.get(task.id).?;
-
-                            for (dependency_list.items) |item| {
-                                var dependency: *Dependency = TaskCallbackContext.get(item, Dependency).?;
-                                if (try manager.enqueueDependency(dependency, dependency.required)) |new_batch| {
-                                    batch.push(new_batch);
-                                }
-                            }
-                        },
-                        .extract => {
-                            if (task.status == .fail) {
-                                Output.prettyErrorln("Failed to extract tarball for {s}", .{
-                                    task.request.extract.tarball.name,
-                                });
-                                Output.flush();
-                                continue;
-                            }
-                            extracted_count += 1;
-                            task.request.extract.tarball.package.preinstall_state = Package.PreinstallState.done;
-                        },
-                    }
-                    if (task_batch.next) |next| {
-                        task_batch = next;
-                        continue;
-                    }
-                    break;
+                        }
+                    },
+                    .extract => {
+                        if (task.status == .fail) {
+                            Output.prettyErrorln("Failed to extract tarball for {s}", .{
+                                task.request.extract.tarball.name,
+                            });
+                            Output.flush();
+                            continue;
+                        }
+                        extracted_count += 1;
+                        task.request.extract.tarball.package.preinstall_state = Package.PreinstallState.done;
+                    },
                 }
             }
 

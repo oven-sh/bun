@@ -24,7 +24,16 @@
       "request": "launch",
       "name": "fetch debug #2",
       "program": "${workspaceFolder}/misctools/fetch",
-      "args": ["https://youtube.com/", "--verbose"],
+      "args": ["https://registry.npmjs.org/react", "--verbose"],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "fetch debug #3",
+      "program": "${workspaceFolder}/misctools/fetch",
+      "args": ["http://example.com/", "--verbose"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"
     },
@@ -340,7 +349,17 @@
       "args": ["install"],
       "cwd": "/tmp/wow-such-npm",
       "env": {
-        "GOMAXPROCS": "1"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Install #2",
+      "program": "bun-debug",
+      "args": ["install"],
+      "cwd": "/tmp/wow-such-npm2",
+      "env": {
       },
       "console": "internalConsole"
     },

@@ -749,9 +749,20 @@ pub const Query = struct {
             switch (this.tag) {
                 // Allows changes that do not modify the left-most non-zero element in the [major, minor, patch] tuple
                 .caret => {
-                    const major = if (version.major == 0) std.math.maxInt(u32) else version.major;
-                    const minor = if (version.minor == 0 or version.major == 0) std.math.maxInt(u32) else version.minor;
-                    const patch = if (version.minor == 0 or version.patch == 0) std.math.maxInt(u32) else version.patch;
+                    var right_version = version;
+                    // https://github.com/npm/node-semver/blob/cb1ca1d5480a6c07c12ac31ba5f2071ed530c4ed/classes/range.js#L310-L336
+                    if (right_version.major == 0) {
+                        if (right_version.minor == 0) {
+                            right_version.patch += 1;
+                        } else {
+                            right_version.minor += 1;
+                            right_version.patch = 0;
+                        }
+                    } else {
+                        right_version.major += 1;
+                        right_version.patch = 0;
+                        right_version.minor = 0;
+                    }
 
                     return Range{
                         .left = .{
@@ -760,12 +771,7 @@ pub const Query = struct {
                         },
                         .right = .{
                             .op = .lt,
-                            .version = Version{
-                                // .raw = version.raw,
-                                .major = major,
-                                .minor = minor,
-                                .patch = patch,
-                            },
+                            .version = right_version,
                         },
                     };
                 },
@@ -896,7 +902,11 @@ pub const Query = struct {
         };
     };
 
-    pub fn parse(allocator: *std.mem.Allocator, input: string) !Group {
+    pub fn parse(
+        allocator: *std.mem.Allocator,
+        input: string,
+        sliced: SlicedString,
+    ) !Group {
         var i: usize = 0;
         var list = Group{
             .allocator = allocator,
@@ -988,7 +998,7 @@ pub const Query = struct {
             }
 
             if (!skip_round) {
-                const parse_result = Version.parse(SlicedString.init(input, input[i..]), allocator);
+                const parse_result = Version.parse(sliced.sub(input[i..]), allocator);
                 if (parse_result.version.tag.hasBuild()) list.flags.setValue(Group.Flags.build, true);
                 if (parse_result.version.tag.hasPre()) list.flags.setValue(Group.Flags.pre, true);
 
@@ -1023,7 +1033,7 @@ pub const Query = struct {
                 i += @as(usize, @boolToInt(!hyphenate));
 
                 if (hyphenate) {
-                    var second_version = Version.parse(SlicedString.init(input, input[i..]), allocator);
+                    var second_version = Version.parse(sliced.sub(input[i..]), allocator);
                     if (second_version.version.tag.hasBuild()) list.flags.setValue(Group.Flags.build, true);
                     if (second_version.version.tag.hasPre()) list.flags.setValue(Group.Flags.pre, true);
 
@@ -1106,7 +1116,11 @@ const expect = struct {
         std.debug.assert(parsed.valid);
         // std.debug.assert(strings.eql(parsed.version.raw.slice(version_str), version_str));
 
-        var list = Query.parse(default_allocator, input) catch |err| Output.panic("Test fail due to error {s}", .{@errorName(err)});
+        var list = Query.parse(
+            default_allocator,
+            input,
+            SlicedString.init(input, input),
+        ) catch |err| Output.panic("Test fail due to error {s}", .{@errorName(err)});
 
         return list.satisfies(parsed.version);
     }
@@ -1294,6 +1308,8 @@ test "Version parsing" {
 
 test "Range parsing" {
     defer expect.done(@src());
+    expect.range("^1.1.4", "1.1.4", @src());
+
     expect.range(">2", "3", @src());
     expect.notRange(">2", "2.1", @src());
     expect.notRange(">2", "2", @src());

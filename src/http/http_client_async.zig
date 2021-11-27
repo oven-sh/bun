@@ -7,7 +7,7 @@ const Method = @import("../http/method.zig").Method;
 const Api = @import("../api/schema.zig").Api;
 const Lock = @import("../lock.zig").Lock;
 const HTTPClient = @This();
-const SOCKET_FLAGS = os.SOCK_CLOEXEC | os.SOCK_NONBLOCK;
+const SOCKET_FLAGS = os.SOCK_CLOEXEC;
 // const S2n = @import("../s2n.zig");
 const Zlib = @import("../zlib.zig");
 const StringBuilder = @import("../string_builder.zig");
@@ -60,6 +60,7 @@ disable_shutdown: bool = true,
 timeout: usize = 0,
 progress_node: ?*std.Progress.Node = null,
 socket: AsyncSocket.SSL = undefined,
+gzip_elapsed: u64 = 0,
 
 pub fn init(
     allocator: *std.mem.Allocator,
@@ -196,6 +197,16 @@ threadlocal var server_name_buf: [1024]u8 = undefined;
 
 pub const HTTPChannel = @import("../sync.zig").Channel(*AsyncHTTP, .{ .Static = 1000 });
 
+pub const HTTPChannelContext = struct {
+    http: AsyncHTTP = undefined,
+    channel: *HTTPChannel,
+
+    pub fn callback(http: *AsyncHTTP) void {
+        var this: *HTTPChannelContext = @fieldParentPtr(HTTPChannelContext, "http", http);
+        this.channel.writeItem(http) catch unreachable;
+    }
+};
+
 pub const AsyncHTTP = struct {
     request: ?picohttp.Request = null,
     response: ?picohttp.Response = null,
@@ -221,9 +232,14 @@ pub const AsyncHTTP = struct {
     err: ?anyerror = null,
 
     state: AtomicState = AtomicState.init(State.pending),
-    channel: ?*HTTPChannel = undefined,
     elapsed: u64 = 0,
+    gzip_elapsed: u64 = 0,
 
+    /// Callback runs when request finishes
+    /// Executes on the network thread
+    callback: ?CompletionCallback = null,
+
+    pub const CompletionCallback = fn (this: *AsyncHTTP) void;
     pub var active_requests_count = std.atomic.Atomic(u32).init(0);
 
     pub const State = enum(u32) {
@@ -260,11 +276,11 @@ pub const AsyncHTTP = struct {
         return this;
     }
 
-    pub fn schedule(this: *AsyncHTTP, allocator: *std.mem.Allocator) void {
-        std.debug.assert(NetoworkThread.global_loaded.load(.Monotonic) == 1);
+    pub fn schedule(this: *AsyncHTTP, allocator: *std.mem.Allocator, batch: *ThreadPool.Batch) void {
+        std.debug.assert(NetworkThread.global_loaded.load(.Monotonic) == 1);
         var sender = HTTPSender.get(this, allocator);
         this.state.store(.scheduled, .Monotonic);
-        NetoworkThread.global.pool.schedule(ThreadPool.Batch.from(&sender.task));
+        batch.push(ThreadPool.Batch.from(&sender.task));
     }
 
     const HTTPSender = struct {
@@ -302,7 +318,7 @@ pub const AsyncHTTP = struct {
     };
 
     pub fn do(sender: *HTTPSender) void {
-        {
+        outer: {
             var this = sender.http;
             this.err = null;
             this.state.store(.sending, .Monotonic);
@@ -314,26 +330,22 @@ pub const AsyncHTTP = struct {
             this.response = await this.client.sendAsync(this.request_body.list.items, this.response_buffer) catch |err| {
                 this.state.store(.fail, .Monotonic);
                 this.err = err;
-                return;
+
+                if (sender.http.max_retry_count > sender.http.retries_count) {
+                    sender.http.retries_count += 1;
+                    NetworkThread.global.pool.schedule(ThreadPool.Batch.from(&sender.task));
+                    return;
+                }
+                break :outer;
             };
 
             this.redirect_count = @intCast(u32, @maximum(127 - this.client.remaining_redirect_count, 0));
             this.state.store(.success, .Monotonic);
+            this.gzip_elapsed = this.client.gzip_elapsed;
         }
 
-        switch (sender.http.state.load(.Monotonic)) {
-            .fail => {
-                if (sender.http.max_retry_count > sender.http.retries_count) {
-                    sender.http.retries_count += 1;
-                    NetoworkThread.global.pool.schedule(ThreadPool.Batch.from(&sender.task));
-                    return;
-                }
-            },
-            else => {},
-        }
-
-        if (sender.http.channel) |channel| {
-            std.debug.assert(channel.tryWriteItem(sender.http) catch false);
+        if (sender.http.callback) |callback| {
+            callback(sender.http);
         }
 
         sender.release();
@@ -521,11 +533,14 @@ const AsyncSocket = struct {
     sent: usize = 0,
     send_frame: @Frame(AsyncSocket.send) = undefined,
     read_frame: @Frame(AsyncSocket.read) = undefined,
-    connect_frame: @Frame(AsyncSocket.connect) = undefined,
+    connect_frame: @Frame(AsyncSocket.connectToAddress) = undefined,
+    close_frame: @Frame(AsyncSocket.close) = undefined,
+
     read_context: []u8 = undefined,
     read_offset: u64 = 0,
     read_completion: AsyncIO.Completion = undefined,
     connect_completion: AsyncIO.Completion = undefined,
+    close_completion: AsyncIO.Completion = undefined,
 
     const ConnectError = AsyncIO.ConnectError || std.os.SocketError || std.os.SetSockOptError;
 
@@ -535,7 +550,7 @@ const AsyncSocket = struct {
         return AsyncSocket{ .io = io, .socket = socket, .head = head, .tail = head, .allocator = allocator };
     }
 
-    fn on_connect(this: *AsyncSocket, completion: *Completion, err: ConnectError!void) void {
+    fn on_connect(this: *AsyncSocket, _: *Completion, err: ConnectError!void) void {
         err catch |resolved_err| {
             this.err = resolved_err;
         };
@@ -543,41 +558,76 @@ const AsyncSocket = struct {
         resume this.connect_frame;
     }
 
+    fn on_close(this: *AsyncSocket, _: *Completion, _: AsyncIO.CloseError!void) void {
+        resume this.close_frame;
+    }
+
+    pub fn close(this: *AsyncSocket) void {
+        if (this.socket == 0) return;
+        this.io.close(*AsyncSocket, this, on_close, &this.close_completion, this.socket);
+        suspend {
+            this.close_frame = @frame().*;
+        }
+        this.socket = 0;
+    }
+
+    fn connectToAddress(this: *AsyncSocket, address: std.net.Address) ConnectError!void {
+        const sockfd = AsyncIO.openSocket(address.any.family, SOCKET_FLAGS | std.os.SOCK_STREAM, std.os.IPPROTO_TCP) catch return error.ConnectionRefused;
+
+        this.io.connect(*AsyncSocket, this, on_connect, &this.connect_completion, sockfd, address);
+        suspend {
+            this.connect_frame = @frame().*;
+        }
+
+        if (this.err) |e| {
+            return @errSetCast(ConnectError, e);
+        }
+
+        this.socket = sockfd;
+        return;
+    }
+
     pub fn connect(this: *AsyncSocket, name: []const u8, port: u16) ConnectError!void {
         this.socket = 0;
+        outer: while (true) {
+            // on macOS, getaddrinfo() is very slow
+            // If you send ~200 network requests, about 1.5s is spent on getaddrinfo()
+            // So, we cache this.
+            var address_list = NetworkThread.getAddressList(this.allocator, name, port) catch |err| {
+                return @errSetCast(ConnectError, err);
+            };
 
-        const list = std.net.getAddressList(this.allocator, name, port) catch |err| {
-            return @errSetCast(ConnectError, err);
-        };
-        defer list.deinit();
+            const list = address_list.address_list;
+            if (list.addrs.len == 0) return error.ConnectionRefused;
 
-        if (list.addrs.len == 0) return error.ConnectionRefused;
+            try_cached_index: {
+                if (address_list.index) |i| {
+                    const address = list.addrs[i];
+                    this.connectToAddress(address) catch |err| {
+                        if (err == error.ConnectionRefused) {
+                            address_list.index = null;
+                            break :try_cached_index;
+                        }
 
-        for (list.addrs) |address| {
-            const sockfd = try AsyncIO.openSocket(address.any.family, SOCKET_FLAGS | std.os.SOCK_STREAM, std.os.IPPROTO_TCP);
-
-            this.io.connect(*AsyncSocket, this, on_connect, &this.connect_completion, sockfd, address);
-            suspend {
-                this.connect_frame = @frame().*;
-            }
-
-            if (this.err) |e| {
-                std.os.closeSocket(sockfd);
-
-                switch (e) {
-                    error.ConnectionRefused => {
-                        this.err = null;
-                        continue;
-                    },
-                    else => return @errSetCast(ConnectError, e),
+                        address_list.invalidate();
+                        continue :outer;
+                    };
                 }
             }
 
-            this.socket = sockfd;
-            return;
-        }
+            for (list.addrs) |address, i| {
+                this.connectToAddress(address) catch |err| {
+                    if (err == error.ConnectionRefused) continue;
+                    address_list.invalidate();
+                    return err;
+                };
+                address_list.index = @truncate(u32, i);
+                return;
+            }
 
-        return error.ConnectionRefused;
+            address_list.invalidate();
+            return error.ConnectionRefused;
+        }
     }
 
     fn on_send(msg: *AsyncMessage, completion: *Completion, result: SendError!usize) void {
@@ -764,6 +814,10 @@ const AsyncSocket = struct {
             try this.handshake();
         }
 
+        pub fn close(this: *SSL) void {
+            this.socket.close();
+        }
+
         fn handshake(this: *SSL) HandshakeError!void {
             while (!this.ssl.isInitFinished()) {
                 boring.ERR_clear_error();
@@ -818,7 +872,6 @@ const AsyncSocket = struct {
             var len: usize = 0;
             while (bio_) |bio| {
                 var slice = bio.slice();
-
                 len += this.ssl.write(slice) catch |err| {
                     switch (err) {
                         error.WantRead => {
@@ -1383,7 +1436,7 @@ pub fn sendHTTP(this: *HTTPClient, body: []const u8, body_out_str: *MutableStrin
     var socket = &this.socket.socket;
     try this.connect(*AsyncSocket, socket);
 
-    defer if (this.socket.socket.socket > 0) std.os.closeSocket(this.socket.socket.socket);
+    defer this.socket.close();
     var request = buildRequest(this, body.len);
     if (this.verbose) {
         Output.prettyErrorln("{s}", .{request});
@@ -1417,6 +1470,8 @@ const ZlibPool = struct {
     allocator: *std.mem.Allocator,
     pub var instance: ZlibPool = undefined;
     pub var loaded: bool = false;
+    pub var decompression_thread_pool: ThreadPool = undefined;
+    pub var decompression_thread_pool_loaded: bool = false;
 
     pub fn init(allocator: *std.mem.Allocator) ZlibPool {
         return ZlibPool{
@@ -1426,8 +1481,6 @@ const ZlibPool = struct {
     }
 
     pub fn get(this: *ZlibPool) !*MutableString {
-        this.lock.lock();
-        defer this.lock.unlock();
         switch (this.items.items.len) {
             0 => {
                 var mutable = try this.allocator.create(MutableString);
@@ -1443,11 +1496,101 @@ const ZlibPool = struct {
     }
 
     pub fn put(this: *ZlibPool, mutable: *MutableString) !void {
-        this.lock.lock();
-        defer this.lock.unlock();
         mutable.reset();
         try this.items.append(mutable);
     }
+
+    pub fn decompress(compressed_data: []const u8, output: *MutableString) Zlib.ZlibError!void {
+        // Heuristic: if we have more than 128 KB of data to decompress
+        // it may take 1ms or so
+        // We must keep the network thread unblocked as often as possible
+        // So if we have more than 50 KB of data to decompress, we do it off the network thread
+        // if (compressed_data.len < 50_000) {
+        var reader = try Zlib.ZlibReaderArrayList.init(compressed_data, &output.list, default_allocator);
+        try reader.readAll();
+        return;
+        // }
+
+        // var task = try DecompressionTask.get(default_allocator);
+        // defer task.release();
+        // task.* = DecompressionTask{
+        //     .data = compressed_data,
+        //     .output = output,
+        //     .event_fd = AsyncIO.global.eventfd(),
+        // };
+        // task.scheduleAndWait();
+
+        // if (task.err) |err| {
+        //     return @errSetCast(Zlib.ZlibError, err);
+        // }
+    }
+
+    pub const DecompressionTask = struct {
+        task: ThreadPool.Task = ThreadPool.Task{ .callback = callback },
+        frame: @Frame(scheduleAndWait) = undefined,
+        data: []const u8,
+        output: *MutableString = undefined,
+        completion: Completion = undefined,
+        event_fd: std.os.fd_t = 0,
+        err: ?anyerror = null,
+        next: ?*DecompressionTask = null,
+
+        pub var head: ?*DecompressionTask = null;
+
+        pub fn get(allocator: *std.mem.Allocator) !*DecompressionTask {
+            if (head) |head_| {
+                var this = head_;
+                head = this.next;
+                this.next = null;
+                return this;
+            }
+
+            return try allocator.create(DecompressionTask);
+        }
+
+        pub fn scheduleAndWait(task: *DecompressionTask) void {
+            if (!decompression_thread_pool_loaded) {
+                decompression_thread_pool_loaded = true;
+                decompression_thread_pool = ThreadPool.init(.{ .max_threads = 1 });
+            }
+
+            AsyncIO.global.event(
+                *DecompressionTask,
+                task,
+                DecompressionTask.finished,
+                &task.completion,
+                task.event_fd,
+            );
+
+            suspend {
+                var batch = ThreadPool.Batch.from(&task.task);
+                decompression_thread_pool.schedule(batch);
+                task.frame = @frame().*;
+            }
+        }
+
+        pub fn release(this: *DecompressionTask) void {
+            this.next = head;
+            head = this;
+        }
+
+        fn callback_(this: *DecompressionTask) Zlib.ZlibError!void {
+            var reader = try Zlib.ZlibReaderArrayList.init(this.data, &this.output.list, default_allocator);
+            try reader.readAll();
+        }
+
+        pub fn callback(task: *ThreadPool.Task) void {
+            var this: *DecompressionTask = @fieldParentPtr(DecompressionTask, "task", task);
+            this.callback_() catch |err| {
+                this.err = err;
+            };
+            AsyncIO.triggerEvent(this.event_fd, &this.completion) catch {};
+        }
+
+        pub fn finished(this: *DecompressionTask, completion: *Completion, _: void) void {
+            resume this.frame;
+        }
+    };
 };
 
 pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime report_progress: bool, comptime Client: type, client: Client, body_out_str: *MutableString) !picohttp.Response {
@@ -1653,16 +1796,15 @@ pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime repo
 
         switch (encoding) {
             Encoding.gzip, Encoding.deflate => {
+                var gzip_timer = std.time.Timer.start() catch @panic("Timer failure");
                 body_out_str.list.expandToCapacity();
                 defer ZlibPool.instance.put(buffer_) catch unreachable;
-                var reader = try Zlib.ZlibReaderArrayList.init(buffer.list.items, &body_out_str.list, default_allocator);
-                reader.readAll() catch |err| {
-                    if (reader.errorMessage()) |msg| {
-                        Output.prettyErrorln("<r><red>Zlib error<r>: <b>{s}<r>", .{msg});
-                        Output.flush();
-                    }
+                ZlibPool.decompress(buffer.list.items, body_out_str) catch |err| {
+                    Output.prettyErrorln("<r><red>Zlib error<r>", .{});
+                    Output.flush();
                     return err;
                 };
+                this.gzip_elapsed = gzip_timer.read();
             },
             else => {},
         }
@@ -1737,16 +1879,15 @@ pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime repo
 
         switch (encoding) {
             Encoding.gzip, Encoding.deflate => {
+                var gzip_timer = std.time.Timer.start() catch @panic("Timer failure");
                 body_out_str.list.expandToCapacity();
                 defer ZlibPool.instance.put(buffer_) catch unreachable;
-                var reader = try Zlib.ZlibReaderArrayList.init(buffer.list.items, &body_out_str.list, default_allocator);
-                reader.readAll() catch |err| {
-                    if (reader.errorMessage()) |msg| {
-                        Output.prettyErrorln("<r><red>Zlib error<r>: <b>{s}<r>", .{msg});
-                        Output.flush();
-                    }
+                ZlibPool.decompress(buffer.list.items, body_out_str) catch |err| {
+                    Output.prettyErrorln("<r><red>Zlib error<r>", .{});
+                    Output.flush();
                     return err;
                 };
+                this.gzip_elapsed = gzip_timer.read();
             },
             else => {},
         }
@@ -1765,8 +1906,8 @@ pub fn sendHTTPS(this: *HTTPClient, body_str: []const u8, body_out_str: *Mutable
     this.socket = try AsyncSocket.SSL.init(this.allocator, &AsyncIO.global);
     var socket = &this.socket;
     try this.connect(*AsyncSocket.SSL, socket);
+    defer this.socket.close();
 
-    defer if (this.socket.socket.socket > 0) std.os.closeSocket(this.socket.socket.socket);
     var request = buildRequest(this, body_str.len);
     if (this.verbose) {
         Output.prettyErrorln("{s}", .{request});

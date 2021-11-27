@@ -398,8 +398,16 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
     };
 }
 
+pub const ZlibError = error{
+    OutOfMemory,
+    InvalidArgument,
+    ZlibError,
+    ShortRead,
+};
+
 pub const ZlibReaderArrayList = struct {
     const ZlibReader = ZlibReaderArrayList;
+
     pub const State = enum {
         Uninitialized,
         Inflating,
@@ -438,7 +446,7 @@ pub const ZlibReaderArrayList = struct {
         }
     }
 
-    pub fn init(input: []const u8, list: *std.ArrayListUnmanaged(u8), allocator: *std.mem.Allocator) !*ZlibReader {
+    pub fn init(input: []const u8, list: *std.ArrayListUnmanaged(u8), allocator: *std.mem.Allocator) ZlibError!*ZlibReader {
         var zlib_reader = try allocator.create(ZlibReader);
         zlib_reader.* = ZlibReader{
             .input = input,
@@ -496,7 +504,7 @@ pub const ZlibReaderArrayList = struct {
         return null;
     }
 
-    pub fn readAll(this: *ZlibReader) !void {
+    pub fn readAll(this: *ZlibReader) ZlibError!void {
         defer {
             this.list.shrinkRetainingCapacity(this.zlib.total_out);
             this.list_ptr.* = this.list;

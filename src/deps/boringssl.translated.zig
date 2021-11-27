@@ -18825,8 +18825,8 @@ pub const SSL_CTX = opaque {
 
     pub inline fn setCustomVerify(this: *SSL_CTX, cb: ?VerifyCallback) void {
         SSL_CTX_set_custom_verify(this, 0, cb);
-        SSL_CTX_set_custom_verify(this, 1, cb);
-        SSL_CTX_set_custom_verify(this, 2, cb);
+        // SSL_CTX_set_custom_verify(this, 1, cb);
+        // SSL_CTX_set_custom_verify(this, 2, cb);
     }
 };
 

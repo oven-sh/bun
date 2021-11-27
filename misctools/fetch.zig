@@ -179,22 +179,25 @@ pub fn main() anyerror!void {
 
     try NetworkThread.init();
 
-    var async_http = try default_allocator.create(HTTP.AsyncHTTP);
-    async_http.* = try HTTP.AsyncHTTP.init(
-        default_allocator,
-        args.method,
-        args.url,
-        args.headers,
-        args.headers_buf,
-        response_body_string,
-        request_body_string,
+    var ctx = try default_allocator.create(HTTP.HTTPChannelContext);
+    ctx.* = .{
+        .channel = channel,
+        .http = try HTTP.AsyncHTTP.init(
+            default_allocator,
+            args.method,
+            args.url,
+            args.headers,
+            args.headers_buf,
+            response_body_string,
+            request_body_string,
 
-        0,
-    );
-    async_http.client.verbose = args.verbose;
-    async_http.verbose = args.verbose;
-    async_http.channel = channel;
-    async_http.schedule(default_allocator);
+            0,
+        ),
+    };
+    ctx.http.callback = HTTP.HTTPChannelContext.callback;
+    ctx.http.schedule(default_allocator);
+    ctx.http.client.verbose = args.verbose;
+    ctx.http.verbose = args.verbose;
 
     while (true) {
         while (channel.tryReadItem() catch null) |http| {

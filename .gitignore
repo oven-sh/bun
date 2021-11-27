@@ -78,3 +78,4 @@ src/deps/libiconv
 src/deps/openssl
 src/tests.zig
 *.blob
+src/deps/s2n-tls

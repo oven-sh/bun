@@ -190,26 +190,36 @@ pub fn main() anyerror!void {
 
     try NetworkThread.init();
 
+    const Group = struct {
+        response_body: MutableString = undefined,
+        request_body: MutableString = undefined,
+        context: HTTP.HTTPChannelContext = undefined,
+    };
+    var groups = try default_allocator.alloc(Group, args.count);
     var i: usize = 0;
     while (i < args.count) : (i += 1) {
-        var response_body = try default_allocator.create(MutableString);
+        groups[i] = Group{};
+        var response_body = &groups[i].response_body;
         response_body.* = try MutableString.init(default_allocator, 1024);
-        var request_body = try default_allocator.create(MutableString);
+        var request_body = &groups[i].request_body;
         request_body.* = try MutableString.init(default_allocator, 0);
 
-        var async_http = try default_allocator.create(HTTP.AsyncHTTP);
-        async_http.* = try HTTP.AsyncHTTP.init(
-            default_allocator,
-            args.method,
-            args.url,
-            args.headers,
-            args.headers_buf,
-            request_body,
-            response_body,
-            args.timeout,
-        );
-        async_http.channel = channel;
-        async_http.schedule(default_allocator);
+        var ctx = &groups[i].context;
+        ctx.* = .{
+            .channel = channel,
+            .http = try HTTP.AsyncHTTP.init(
+                default_allocator,
+                args.method,
+                args.url,
+                args.headers,
+                args.headers_buf,
+                request_body,
+                response_body,
+                args.timeout,
+            ),
+        };
+        ctx.http.callback = HTTP.HTTPChannelContext.callback;
+        ctx.http.schedule(default_allocator);
     }
 
     var read_count: usize = 0;
@@ -242,11 +252,21 @@ pub fn main() anyerror!void {
                     },
                 }
 
-                Output.prettyError(" <d>{s}<r><d> - {s}<r> <d>({d} bytes)<r>\n", .{
-                    @tagName(http.client.method),
-                    http.client.url.href,
-                    http.response_buffer.list.items.len,
-                });
+                if (http.gzip_elapsed > 0) {
+                    Output.prettyError(" <d>{s}<r><d> - {s}<r> <d>({d} bytes, ", .{
+                        @tagName(http.client.method),
+                        http.client.url.href,
+                        http.response_buffer.list.items.len,
+                    });
+                    Output.printElapsed(@floatCast(f64, @intToFloat(f128, http.gzip_elapsed) / std.time.ns_per_ms));
+                    Output.prettyError("<d> gzip)<r>\n", .{});
+                } else {
+                    Output.prettyError(" <d>{s}<r><d> - {s}<r> <d>({d} bytes)<r>\n", .{
+                        @tagName(http.client.method),
+                        http.client.url.href,
+                        http.response_buffer.list.items.len,
+                    });
+                }
             } else if (http.err) |err| {
                 fail_count += 1;
                 Output.printError(" err: {s}\n", .{@errorName(err)});

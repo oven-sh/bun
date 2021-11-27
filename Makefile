@@ -318,8 +318,7 @@ fetch:
 		src/deps/libarchive.a \
 		src/deps/libcrypto.a \
 		src/deps/libssl.a \
-		src/deps/picohttpparser.o \
-		$(LIBCRYPTO_STATIC_LIB)
+		src/deps/picohttpparser.o
 
 fetch-debug:
 	cd misctools; $(ZIG) build-obj ./fetch.zig -fcompiler-rt -lc --main-pkg-path ../ $(BORINGSSL_PACKAGE)  --pkg-begin io ../$(IO_FILE) --pkg-end
@@ -329,8 +328,8 @@ fetch-debug:
 		src/deps/libarchive.a \
 		src/deps/libcrypto.a \
 		src/deps/libssl.a \
-		src/deps/picohttpparser.o \
-		$(LIBCRYPTO_STATIC_LIB)
+		src/deps/picohttpparser.o
+
 
 
 httpbench-debug:

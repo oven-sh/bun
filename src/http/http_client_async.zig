@@ -62,6 +62,14 @@ progress_node: ?*std.Progress.Node = null,
 socket: AsyncSocket.SSL = undefined,
 gzip_elapsed: u64 = 0,
 
+/// Some HTTP servers (such as npm) report Last-Modified times but ignore If-Modified-Since.
+/// This is a workaround for that.
+force_last_modified: bool = false,
+if_modified_since: string = "",
+request_content_len_buf: ["-4294967295".len]u8 = undefined,
+request_headers_buf: [128]picohttp.Header = undefined,
+response_headers_buf: [128]picohttp.Header = undefined,
+
 pub fn init(
     allocator: *std.mem.Allocator,
     method: Method,
@@ -86,9 +94,6 @@ pub fn deinit(this: *HTTPClient) !void {
     }
 }
 
-threadlocal var response_headers_buf: [256]picohttp.Header = undefined;
-threadlocal var request_content_len_buf: [64]u8 = undefined;
-threadlocal var header_name_hashes: [256]u64 = undefined;
 // threadlocal var resolver_cache
 const tcp = std.x.net.tcp;
 const ip = std.x.net.ip;
@@ -192,8 +197,6 @@ pub const HeaderBuilder = struct {
         client.header_buf = this.content.ptr.?[0..this.content.len];
     }
 };
-
-threadlocal var server_name_buf: [1024]u8 = undefined;
 
 pub const HTTPChannel = @import("../sync.zig").Channel(*AsyncHTTP, .{ .Static = 1000 });
 
@@ -1282,15 +1285,15 @@ pub const AsyncBIO = struct {
     };
 };
 
-threadlocal var request_headers_buf: [256]picohttp.Header = undefined;
-
-pub fn buildRequest(this: *const HTTPClient, body_len: usize) picohttp.Request {
+pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var header_count: usize = 0;
     var header_entries = this.header_entries.slice();
     var header_names = header_entries.items(.name);
     var header_values = header_entries.items(.value);
+    var request_headers_buf = &this.request_headers_buf;
 
     var override_accept_encoding = false;
+    var override_accept_header = false;
 
     var override_user_agent = false;
     for (header_names) |head, i| {
@@ -1305,6 +1308,14 @@ pub fn buildRequest(this: *const HTTPClient, body_len: usize) picohttp.Request {
             connection_header_hash,
             content_length_header_hash,
             => continue,
+            hashHeaderName("if-modified-since") => {
+                if (this.force_last_modified and this.if_modified_since.len == 0) {
+                    this.if_modified_since = this.headerStr(header_values[i]);
+                }
+            },
+            accept_header_hash => {
+                override_accept_header = true;
+            },
             else => {},
         }
 
@@ -1341,8 +1352,10 @@ pub fn buildRequest(this: *const HTTPClient, body_len: usize) picohttp.Request {
         header_count += 1;
     }
 
-    request_headers_buf[header_count] = accept_header;
-    header_count += 1;
+    if (!override_accept_header) {
+        request_headers_buf[header_count] = accept_header;
+        header_count += 1;
+    }
 
     request_headers_buf[header_count] = picohttp.Header{
         .name = host_header_name,
@@ -1358,7 +1371,7 @@ pub fn buildRequest(this: *const HTTPClient, body_len: usize) picohttp.Request {
     if (body_len > 0) {
         request_headers_buf[header_count] = picohttp.Header{
             .name = content_length_header_name,
-            .value = std.fmt.bufPrint(&request_content_len_buf, "{d}", .{body_len}) catch "0",
+            .value = std.fmt.bufPrint(&this.request_content_len_buf, "{d}", .{body_len}) catch "0",
         };
         header_count += 1;
     }
@@ -1383,7 +1396,7 @@ pub fn connect(
     client.setNoDelay(true) catch {};
     client.setReadBufferSize(BufferPool.len) catch {};
     client.setQuickACK(true) catch {};
-
+    this.tcp_client = client;
     if (this.timeout > 0) {
         client.setReadTimeout(@truncate(u32, this.timeout / std.time.ns_per_ms)) catch {};
         client.setWriteTimeout(@truncate(u32, this.timeout / std.time.ns_per_ms)) catch {};
@@ -1618,7 +1631,7 @@ pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime repo
             var request_body = request_buffer[0..read_length];
             read_headers_up_to = if (read_headers_up_to > read_length) read_length else read_headers_up_to;
 
-            response = picohttp.Response.parseParts(request_body, &response_headers_buf, &read_headers_up_to) catch |err| {
+            response = picohttp.Response.parseParts(request_body, &this.response_headers_buf, &read_headers_up_to) catch |err| {
                 switch (err) {
                     error.ShortRead => {
                         continue :restart;
@@ -1642,9 +1655,7 @@ pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime repo
 
     var location: string = "";
 
-    if (this.verbose) {
-        Output.prettyErrorln("Response: {s}", .{response});
-    }
+    var pretend_its_304 = false;
 
     for (response.headers) |header| {
         switch (hashHeaderName(header.name)) {
@@ -1679,9 +1690,20 @@ pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime repo
             location_header_hash => {
                 location = header.value;
             },
+            hashHeaderName("Last-Modified") => {
+                if (this.force_last_modified and response.status_code > 199 and response.status_code < 300 and this.if_modified_since.len > 0) {
+                    if (strings.eql(this.if_modified_since, header.value)) {
+                        pretend_its_304 = true;
+                    }
+                }
+            },
 
             else => {},
         }
+    }
+
+    if (this.verbose) {
+        Output.prettyErrorln("Response: {s}", .{response});
     }
 
     if (location.len > 0 and this.remaining_redirect_count > 0) {
@@ -1727,169 +1749,177 @@ pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime repo
         }
     }
 
-    if (transfer_encoding == Encoding.chunked) {
-        var decoder = std.mem.zeroes(picohttp.phr_chunked_decoder);
-        var buffer_: *MutableString = body_out_str;
+    body_getter: {
+        if (pretend_its_304) {
+            response.status_code = 304;
+        }
 
-        switch (encoding) {
-            Encoding.gzip, Encoding.deflate => {
-                if (!ZlibPool.loaded) {
-                    ZlibPool.instance = ZlibPool.init(default_allocator);
-                    ZlibPool.loaded = true;
+        if (response.status_code == 304) break :body_getter;
+
+        if (transfer_encoding == Encoding.chunked) {
+            var decoder = std.mem.zeroes(picohttp.phr_chunked_decoder);
+            var buffer_: *MutableString = body_out_str;
+
+            switch (encoding) {
+                Encoding.gzip, Encoding.deflate => {
+                    if (!ZlibPool.loaded) {
+                        ZlibPool.instance = ZlibPool.init(default_allocator);
+                        ZlibPool.loaded = true;
+                    }
+
+                    buffer_ = try ZlibPool.instance.get();
+                },
+                else => {},
+            }
+
+            var buffer = buffer_.*;
+
+            var last_read: usize = 0;
+            {
+                var remainder = request_buffer[@intCast(usize, response.bytes_read)..read_length];
+                last_read = remainder.len;
+                try buffer.inflate(std.math.max(remainder.len, 2048));
+                buffer.list.expandToCapacity();
+                std.mem.copy(u8, buffer.list.items, remainder);
+            }
+
+            // set consume_trailer to 1 to discard the trailing header
+            // using content-encoding per chunk is not supported
+            decoder.consume_trailer = 1;
+
+            // these variable names are terrible
+            // it's copypasta from https://github.com/h2o/picohttpparser#phr_decode_chunked
+            // (but ported from C -> zig)
+            var rret: usize = 0;
+            var rsize: usize = last_read;
+            var pret: isize = picohttp.phr_decode_chunked(&decoder, buffer.list.items.ptr, &rsize);
+            var total_size = rsize;
+
+            while (pret == -2) {
+                if (buffer.list.items[total_size..].len < @intCast(usize, decoder.bytes_left_in_chunk) or buffer.list.items[total_size..].len < 512) {
+                    try buffer.inflate(std.math.max(total_size * 2, 1024));
+                    buffer.list.expandToCapacity();
                 }
 
-                buffer_ = try ZlibPool.instance.get();
-            },
-            else => {},
-        }
+                rret = try client.read(buffer.list.items, total_size);
 
-        var buffer = buffer_.*;
+                if (rret == 0) {
+                    return error.ChunkedEncodingError;
+                }
 
-        var last_read: usize = 0;
-        {
-            var remainder = request_buffer[@intCast(usize, response.bytes_read)..read_length];
-            last_read = remainder.len;
-            try buffer.inflate(std.math.max(remainder.len, 2048));
-            buffer.list.expandToCapacity();
-            std.mem.copy(u8, buffer.list.items, remainder);
-        }
+                rsize = rret;
+                pret = picohttp.phr_decode_chunked(&decoder, buffer.list.items[total_size..].ptr, &rsize);
+                if (pret == -1) return error.ChunkedEncodingParseError;
 
-        // set consume_trailer to 1 to discard the trailing header
-        // using content-encoding per chunk is not supported
-        decoder.consume_trailer = 1;
+                total_size += rsize;
 
-        // these variable names are terrible
-        // it's copypasta from https://github.com/h2o/picohttpparser#phr_decode_chunked
-        // (but ported from C -> zig)
-        var rret: usize = 0;
-        var rsize: usize = last_read;
-        var pret: isize = picohttp.phr_decode_chunked(&decoder, buffer.list.items.ptr, &rsize);
-        var total_size = rsize;
-
-        while (pret == -2) {
-            if (buffer.list.items[total_size..].len < @intCast(usize, decoder.bytes_left_in_chunk) or buffer.list.items[total_size..].len < 512) {
-                try buffer.inflate(std.math.max(total_size * 2, 1024));
-                buffer.list.expandToCapacity();
+                if (comptime report_progress) {
+                    this.progress_node.?.activate();
+                    this.progress_node.?.setCompletedItems(total_size);
+                    this.progress_node.?.context.maybeRefresh();
+                }
             }
 
-            rret = try client.read(buffer.list.items, total_size);
+            buffer.list.shrinkRetainingCapacity(total_size);
+            buffer_.* = buffer;
 
-            if (rret == 0) {
-                return error.ChunkedEncodingError;
+            switch (encoding) {
+                Encoding.gzip, Encoding.deflate => {
+                    var gzip_timer = std.time.Timer.start() catch @panic("Timer failure");
+                    body_out_str.list.expandToCapacity();
+                    defer ZlibPool.instance.put(buffer_) catch unreachable;
+                    ZlibPool.decompress(buffer.list.items, body_out_str) catch |err| {
+                        Output.prettyErrorln("<r><red>Zlib error<r>", .{});
+                        Output.flush();
+                        return err;
+                    };
+                    this.gzip_elapsed = gzip_timer.read();
+                },
+                else => {},
             }
-
-            rsize = rret;
-            pret = picohttp.phr_decode_chunked(&decoder, buffer.list.items[total_size..].ptr, &rsize);
-            if (pret == -1) return error.ChunkedEncodingParseError;
-
-            total_size += rsize;
 
             if (comptime report_progress) {
                 this.progress_node.?.activate();
-                this.progress_node.?.setCompletedItems(total_size);
+                this.progress_node.?.setCompletedItems(body_out_str.list.items.len);
                 this.progress_node.?.context.maybeRefresh();
             }
+
+            this.body_size = @intCast(u32, body_out_str.list.items.len);
+            return response;
         }
 
-        buffer.list.shrinkRetainingCapacity(total_size);
-        buffer_.* = buffer;
+        if (content_length > 0) {
+            var remaining_content_length = content_length;
+            var remainder = request_buffer[@intCast(usize, response.bytes_read)..read_length];
+            remainder = remainder[0..std.math.min(remainder.len, content_length)];
+            var buffer_: *MutableString = body_out_str;
 
-        switch (encoding) {
-            Encoding.gzip, Encoding.deflate => {
-                var gzip_timer = std.time.Timer.start() catch @panic("Timer failure");
-                body_out_str.list.expandToCapacity();
-                defer ZlibPool.instance.put(buffer_) catch unreachable;
-                ZlibPool.decompress(buffer.list.items, body_out_str) catch |err| {
-                    Output.prettyErrorln("<r><red>Zlib error<r>", .{});
-                    Output.flush();
-                    return err;
-                };
-                this.gzip_elapsed = gzip_timer.read();
-            },
-            else => {},
-        }
+            switch (encoding) {
+                Encoding.gzip, Encoding.deflate => {
+                    if (!ZlibPool.loaded) {
+                        ZlibPool.instance = ZlibPool.init(default_allocator);
+                        ZlibPool.loaded = true;
+                    }
 
-        if (comptime report_progress) {
-            this.progress_node.?.activate();
-            this.progress_node.?.setCompletedItems(body_out_str.list.items.len);
-            this.progress_node.?.context.maybeRefresh();
-        }
+                    buffer_ = try ZlibPool.instance.get();
+                    if (buffer_.list.capacity < remaining_content_length) {
+                        try buffer_.list.ensureUnusedCapacity(buffer_.allocator, remaining_content_length);
+                    }
+                    buffer_.list.items = buffer_.list.items.ptr[0..remaining_content_length];
+                },
+                else => {},
+            }
+            var buffer = buffer_.*;
 
-        this.body_size = @intCast(u32, body_out_str.list.items.len);
-        return response;
-    }
+            var body_size: usize = 0;
+            if (remainder.len > 0) {
+                std.mem.copy(u8, buffer.list.items, remainder);
+                body_size = remainder.len;
+                this.read_count += @intCast(u32, body_size);
+                remaining_content_length -= @intCast(u32, remainder.len);
+            }
 
-    if (content_length > 0) {
-        var remaining_content_length = content_length;
-        var remainder = request_buffer[@intCast(usize, response.bytes_read)..read_length];
-        remainder = remainder[0..std.math.min(remainder.len, content_length)];
-        var buffer_: *MutableString = body_out_str;
+            while (remaining_content_length > 0) {
+                const size = @intCast(u32, try client.read(
+                    buffer.list.items,
+                    body_size,
+                ));
+                this.read_count += size;
+                if (size == 0) break;
 
-        switch (encoding) {
-            Encoding.gzip, Encoding.deflate => {
-                if (!ZlibPool.loaded) {
-                    ZlibPool.instance = ZlibPool.init(default_allocator);
-                    ZlibPool.loaded = true;
+                body_size += size;
+                remaining_content_length -= size;
+
+                if (comptime report_progress) {
+                    this.progress_node.?.activate();
+                    this.progress_node.?.setCompletedItems(body_size);
+                    this.progress_node.?.context.maybeRefresh();
                 }
-
-                buffer_ = try ZlibPool.instance.get();
-                if (buffer_.list.capacity < remaining_content_length) {
-                    try buffer_.list.ensureUnusedCapacity(buffer_.allocator, remaining_content_length);
-                }
-                buffer_.list.items = buffer_.list.items.ptr[0..remaining_content_length];
-            },
-            else => {},
-        }
-        var buffer = buffer_.*;
-
-        var body_size: usize = 0;
-        if (remainder.len > 0) {
-            std.mem.copy(u8, buffer.list.items, remainder);
-            body_size = remainder.len;
-            this.read_count += @intCast(u32, body_size);
-            remaining_content_length -= @intCast(u32, remainder.len);
-        }
-
-        while (remaining_content_length > 0) {
-            const size = @intCast(u32, try client.read(
-                buffer.list.items,
-                body_size,
-            ));
-            this.read_count += size;
-            if (size == 0) break;
-
-            body_size += size;
-            remaining_content_length -= size;
+            }
 
             if (comptime report_progress) {
                 this.progress_node.?.activate();
                 this.progress_node.?.setCompletedItems(body_size);
                 this.progress_node.?.context.maybeRefresh();
             }
-        }
 
-        if (comptime report_progress) {
-            this.progress_node.?.activate();
-            this.progress_node.?.setCompletedItems(body_size);
-            this.progress_node.?.context.maybeRefresh();
-        }
+            buffer.list.shrinkRetainingCapacity(body_size);
+            buffer_.* = buffer;
 
-        buffer.list.shrinkRetainingCapacity(body_size);
-        buffer_.* = buffer;
-
-        switch (encoding) {
-            Encoding.gzip, Encoding.deflate => {
-                var gzip_timer = std.time.Timer.start() catch @panic("Timer failure");
-                body_out_str.list.expandToCapacity();
-                defer ZlibPool.instance.put(buffer_) catch unreachable;
-                ZlibPool.decompress(buffer.list.items, body_out_str) catch |err| {
-                    Output.prettyErrorln("<r><red>Zlib error<r>", .{});
-                    Output.flush();
-                    return err;
-                };
-                this.gzip_elapsed = gzip_timer.read();
-            },
-            else => {},
+            switch (encoding) {
+                Encoding.gzip, Encoding.deflate => {
+                    var gzip_timer = std.time.Timer.start() catch @panic("Timer failure");
+                    body_out_str.list.expandToCapacity();
+                    defer ZlibPool.instance.put(buffer_) catch unreachable;
+                    ZlibPool.decompress(buffer.list.items, body_out_str) catch |err| {
+                        Output.prettyErrorln("<r><red>Zlib error<r>", .{});
+                        Output.flush();
+                        return err;
+                    };
+                    this.gzip_elapsed = gzip_timer.read();
+                },
+                else => {},
+            }
         }
     }
 

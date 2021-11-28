@@ -211,11 +211,18 @@ noinline fn wait(self: *ThreadPool, _is_waking: bool) error{Shutdown}!bool {
                 .Acquire,
                 .Monotonic,
             ) orelse {
+                if (self.io) |io| {
+                    io.tick() catch {};
+                }
+
                 return is_waking or (sync.state == .signaled);
             });
 
             // No notification to consume.
             // Mark this thread as idle before sleeping on the idle_event.
+            if (self.io) |io| {
+                io.tick() catch {};
+            }
         } else if (!is_idle) {
             var new_sync = sync;
             new_sync.idle += 1;
@@ -236,13 +243,13 @@ noinline fn wait(self: *ThreadPool, _is_waking: bool) error{Shutdown}!bool {
             // Wait for a signal by either notify() or shutdown() without wasting cpu cycles.
             // TODO: Add I/O polling here.
             if (self.io) |io| {
-                io.tick() catch unreachable;
+                io.tick() catch {};
             }
         } else {
             if (self.io) |io| {
                 const HTTP = @import("./http/http_client_async.zig");
-                io.run_for_ns(std.time.ns_per_us * 100) catch {};
-                while (HTTP.AsyncHTTP.active_requests_count.load(.Monotonic) > 100) {
+                io.run_for_ns(std.time.ns_per_us * 10) catch {};
+                while (HTTP.AsyncHTTP.active_requests_count.load(.Monotonic) > 255) {
                     io.tick() catch {};
                 }
                 sync = @bitCast(Sync, self.sync.load(.Monotonic));

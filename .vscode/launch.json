@@ -6,7 +6,7 @@
       "request": "launch",
       "name": "HTTP bench",
       "program": "${workspaceFolder}/misctools/http_bench",
-      "args": ["https://example.com", "--count=1"],
+      "args": ["https://registry.npmjs.org/next", "--count=1"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"
     },
@@ -349,6 +349,8 @@
       "args": ["install"],
       "cwd": "/tmp/wow-such-npm",
       "env": {
+        "GOMAXPROCS": "1",
+        "BUN_MANIFEST_CACHE": "1"
       },
       "console": "internalConsole"
     },

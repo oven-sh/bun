@@ -72,15 +72,15 @@ pub fn ExternalSlice(comptime Type: type) type {
         off: u32 = 0,
         len: u32 = 0,
 
-        pub inline fn get(this: Slice, in: []const Type) []const Type {
+        pub inline fn get(this: Slice, in: []align(1) const Type) []align(1) const Type {
             return in[this.off..@minimum(in.len, this.off + this.len)];
         }
 
-        pub inline fn mut(this: Slice, in: []Type) []Type {
+        pub inline fn mut(this: Slice, in: []align(1) Type) []align(1) Type {
             return in[this.off..@minimum(in.len, this.off + this.len)];
         }
 
-        pub fn init(buf: []const Type, in: []const Type) Slice {
+        pub fn init(buf: []align(1) const Type, in: []align(1) const Type) Slice {
             // if (comptime isDebug or isTest) {
             //     std.debug.assert(@ptrToInt(buf.ptr) <= @ptrToInt(in.ptr));
             //     std.debug.assert((@ptrToInt(in.ptr) + in.len) <= (@ptrToInt(buf.ptr) + buf.len));
@@ -102,7 +102,10 @@ const NetworkTask = struct {
     request_buffer: MutableString = undefined,
     response_buffer: MutableString = undefined,
     callback: union(Task.Tag) {
-        package_manifest: string,
+        package_manifest: struct {
+            loaded_manifest: ?Npm.PackageManifest = null,
+            name: string,
+        },
         extract: ExtractTarball,
     },
 
@@ -116,32 +119,42 @@ const NetworkTask = struct {
         name: string,
         allocator: *std.mem.Allocator,
         registry_url: URL,
+        loaded_manifest: ?Npm.PackageManifest,
     ) !void {
         this.url_buf = try std.fmt.allocPrint(allocator, "{s}://{s}/{s}", .{ registry_url.displayProtocol(), registry_url.hostname, name });
         var last_modified: string = "";
         var etag: string = "";
-        var header_builder = HTTPClient.HeaderBuilder{};
-
-        if (last_modified.len != 0) {
-            header_builder.count("If-Modified-Since", last_modified);
+        if (loaded_manifest) |manifest| {
+            last_modified = manifest.pkg.last_modified.slice(manifest.string_buf);
+            etag = manifest.pkg.etag.slice(manifest.string_buf);
         }
+
+        var header_builder = HTTPClient.HeaderBuilder{};
 
         if (etag.len != 0) {
             header_builder.count("If-None-Match", etag);
+        } else if (last_modified.len != 0) {
+            header_builder.count("If-Modified-Since", last_modified);
         }
 
-        if (header_builder.content.len > 0) {
+        if (header_builder.header_count > 0) {
             header_builder.count("Accept", "application/vnd.npm.install-v1+json");
-
-            if (last_modified.len != 0) {
-                header_builder.append("If-Modified-Since", last_modified);
+            if (last_modified.len > 0 and etag.len > 0) {
+                header_builder.content.count(last_modified);
             }
+            try header_builder.allocate(allocator);
 
             if (etag.len != 0) {
                 header_builder.append("If-None-Match", etag);
+            } else if (last_modified.len != 0) {
+                header_builder.append("If-Modified-Since", last_modified);
             }
 
             header_builder.append("Accept", "application/vnd.npm.install-v1+json");
+
+            if (last_modified.len > 0 and etag.len > 0) {
+                last_modified = header_builder.content.append(last_modified);
+            }
         } else {
             try header_builder.entries.append(
                 allocator,
@@ -167,7 +180,24 @@ const NetworkTask = struct {
             &this.request_buffer,
             0,
         );
-        this.callback = .{ .package_manifest = name };
+        this.callback = .{
+            .package_manifest = .{
+                .name = name,
+                .loaded_manifest = loaded_manifest,
+            },
+        };
+
+        if (verbose_install) {
+            this.http.verbose = true;
+            this.http.client.verbose = true;
+        }
+
+        // Incase the ETag causes invalidation, we fallback to the last modified date.
+        if (last_modified.len != 0) {
+            this.http.client.force_last_modified = true;
+            this.http.client.if_modified_since = last_modified;
+        }
+
         this.http.callback = notify;
     }
 
@@ -540,7 +570,7 @@ pub const Package = struct {
         log: *logger.Log,
         manifest: *const Npm.PackageManifest,
         version: Semver.Version,
-        package_version: *const Npm.PackageVersion,
+        package_version: *align(1) const Npm.PackageVersion,
         features: Features,
         string_buf: []const u8,
     ) Package {
@@ -614,8 +644,8 @@ pub const Package = struct {
         package_id: PackageID,
         log: *logger.Log,
         npm_count_: *u32,
-        names: []const ExternalString,
-        values: []const ExternalString,
+        names: []align(1) const ExternalString,
+        values: []align(1) const ExternalString,
         string_buf: []const u8,
         required: bool,
     ) ?Dependency.List {
@@ -921,7 +951,7 @@ const Npm = struct {
                 not_found,
             };
 
-            cached: void,
+            cached: PackageManifest,
             fresh: PackageManifest,
             not_found: void,
         };
@@ -933,12 +963,16 @@ const Npm = struct {
             body: []const u8,
             log: *logger.Log,
             package_name: string,
+            loaded_manifest: ?PackageManifest,
         ) !PackageVersionResponse {
             switch (response.status_code) {
+                400 => return error.BadRequest,
                 429 => return error.TooManyRequests,
                 404 => return PackageVersionResponse{ .not_found = .{} },
                 500...599 => return error.HTTPInternalServerError,
-                304 => return PackageVersionResponse{ .cached = .{} },
+                304 => return PackageVersionResponse{
+                    .cached = loaded_manifest.?,
+                },
                 else => {},
             }
 
@@ -967,7 +1001,21 @@ const Npm = struct {
                 JSAst.Stmt.Data.Store.reset();
             }
 
-            if (try PackageManifest.parse(allocator, log, body, package_name, newly_last_modified, new_etag, 300)) |package| {
+            if (try PackageManifest.parse(
+                allocator,
+                log,
+                body,
+                package_name,
+                newly_last_modified,
+                new_etag,
+                @truncate(u32, @intCast(u64, @maximum(0, std.time.timestamp()))) + 300,
+            )) |package| {
+                if (PackageManager.instance.enable_manifest_cache) {
+                    var tmpdir = Fs.FileSystem.instance.tmpdir();
+
+                    PackageManifest.Serializer.save(&package, tmpdir, PackageManager.instance.cache_directory) catch {};
+                }
+
                 return PackageVersionResponse{ .fresh = package };
             }
 
@@ -986,7 +1034,7 @@ const Npm = struct {
         keys: VersionSlice = VersionSlice{},
         values: PackageVersionList = PackageVersionList{},
 
-        pub fn findKeyIndex(this: ExternVersionMap, buf: []const Semver.Version, find: Semver.Version) ?u32 {
+        pub fn findKeyIndex(this: ExternVersionMap, buf: []align(1) const Semver.Version, find: Semver.Version) ?u32 {
             for (this.keys.get(buf)) |key, i| {
                 if (key.eql(find)) {
                     return @truncate(u32, i);
@@ -1024,22 +1072,21 @@ const Npm = struct {
     /// Everything inside here is just pointers to one of the three arrays
     const NpmPackage = extern struct {
         name: ExternalString = ExternalString{},
+        /// HTTP response headers
+        last_modified: ExternalString = ExternalString{},
+        etag: ExternalString = ExternalString{},
+
+        /// "modified" in the JSON
+        modified: ExternalString = ExternalString{},
 
         releases: ExternVersionMap = ExternVersionMap{},
         prereleases: ExternVersionMap = ExternVersionMap{},
         dist_tags: DistTagMap = DistTagMap{},
 
-        /// "modified" in the JSON
-        modified: ExternalString = ExternalString{},
-
-        /// HTTP response headers
-        last_modified: ExternalString = ExternalString{},
-        etag: ExternalString = ExternalString{},
-        public_max_age: u32 = 0,
-
-        string_buf: BigExternalString = BigExternalString{},
         versions_buf: VersionSlice = VersionSlice{},
         string_lists_buf: ExternalStringList = ExternalStringList{},
+        string_buf: BigExternalString = BigExternalString{},
+        public_max_age: u32 = 0,
     };
 
     const PackageManifest = struct {
@@ -1048,9 +1095,139 @@ const Npm = struct {
         pkg: NpmPackage = NpmPackage{},
 
         string_buf: []const u8 = &[_]u8{},
-        versions: []const Semver.Version = &[_]Semver.Version{},
-        external_strings: []const ExternalString = &[_]ExternalString{},
-        package_versions: []PackageVersion = &[_]PackageVersion{},
+        versions: []align(1) const Semver.Version = &[_]Semver.Version{},
+        external_strings: []align(1) const ExternalString = &[_]ExternalString{},
+        package_versions: []align(1) const PackageVersion = &[_]PackageVersion{},
+
+        pub const Serializer = struct {
+            pub const version = "bun-npm-manifest-cache-v0.0.1\n";
+            const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
+
+            pub fn writeArray(comptime Writer: type, writer: Writer, comptime Type: type, array: []align(1) const Type, pos: *u64) !void {
+                const bytes = std.mem.sliceAsBytes(array);
+                if (bytes.len == 0) {
+                    try writer.writeIntNative(u64, 0);
+                    pos.* += 8;
+                    return;
+                }
+
+                try writer.writeAll(std.mem.asBytes(&array.len));
+                pos.* += 8;
+                try writer.writeAll(
+                    bytes,
+                );
+                pos.* += bytes.len;
+            }
+
+            pub fn readArray(stream: *std.io.FixedBufferStream([]const u8), comptime Type: type) ![]align(1) const Type {
+                var reader = stream.reader();
+                const len = try reader.readIntNative(u64);
+                if (len == 0) {
+                    return &[_]Type{};
+                }
+                const result = @ptrCast([*]align(1) const Type, &stream.buffer[stream.pos])[0..len];
+                stream.pos += std.mem.sliceAsBytes(result).len;
+                return result;
+            }
+
+            pub fn write(this: *const PackageManifest, comptime Writer: type, writer: Writer) !void {
+                var pos: u64 = 0;
+                try writer.writeAll(header_bytes);
+                pos += header_bytes.len;
+
+                // try writer.writeAll(&std.mem.zeroes([header_bytes.len % @alignOf(NpmPackage)]u8));
+
+                // package metadata first
+                try writer.writeAll(std.mem.asBytes(&this.pkg));
+                pos += std.mem.asBytes(&this.pkg).len;
+
+                try writeArray(Writer, writer, PackageVersion, this.package_versions, &pos);
+                try writeArray(Writer, writer, Semver.Version, this.versions, &pos);
+                try writeArray(Writer, writer, ExternalString, this.external_strings, &pos);
+
+                // strings
+                try writer.writeAll(std.mem.asBytes(&this.string_buf.len));
+                if (this.string_buf.len > 0) try writer.writeAll(this.string_buf);
+            }
+
+            pub fn save(this: *const PackageManifest, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
+                const file_id = std.hash.Wyhash.hash(0, this.name);
+                var dest_path_buf: [512 + 64]u8 = undefined;
+                var out_path_buf: ["-18446744073709551615".len + ".npm".len + 1]u8 = undefined;
+                var dest_path_stream = std.io.fixedBufferStream(&dest_path_buf);
+                var dest_path_stream_writer = dest_path_stream.writer();
+                try dest_path_stream_writer.print("{x}.npm-{x}", .{ file_id, @maximum(std.time.milliTimestamp(), 0) });
+                try dest_path_stream_writer.writeByte(0);
+                var tmp_path: [:0]u8 = dest_path_buf[0 .. dest_path_stream.pos - 1 :0];
+                {
+                    var tmpfile = try tmpdir.createFileZ(tmp_path, .{
+                        .truncate = true,
+                    });
+                    var writer = tmpfile.writer();
+                    try Serializer.write(this, @TypeOf(writer), writer);
+                    tmpfile.close();
+                }
+
+                var out_path = std.fmt.bufPrintZ(&out_path_buf, "{x}.npm", .{file_id}) catch unreachable;
+                try std.os.renameatZ(tmpdir.fd, tmp_path, cache_dir.fd, out_path);
+            }
+
+            pub fn load(allocator: *std.mem.Allocator, cache_dir: std.fs.Dir, package_name: string) !?PackageManifest {
+                const file_id = std.hash.Wyhash.hash(0, package_name);
+                var file_path_buf: [512 + 64]u8 = undefined;
+                var file_path = try std.fmt.bufPrintZ(&file_path_buf, "{x}.npm", .{file_id});
+                var cache_file = cache_dir.openFileZ(
+                    file_path,
+                    .{
+                        .read = true,
+                    },
+                ) catch return null;
+                var timer: std.time.Timer = undefined;
+                if (verbose_install) {
+                    timer = std.time.Timer.start() catch @panic("timer fail");
+                }
+                defer cache_file.close();
+                var bytes = try cache_file.readToEndAlloc(allocator, std.math.maxInt(u32));
+                errdefer allocator.free(bytes);
+                if (bytes.len < header_bytes.len) return null;
+                const result = try readAll(bytes);
+                if (verbose_install) {
+                    Output.prettyError("\n ", .{});
+                    Output.printTimer(&timer);
+                    Output.prettyErrorln("<d> [cache hit] {s}<r>", .{package_name});
+                }
+                return result;
+            }
+
+            pub fn readAll(bytes: []const u8) !PackageManifest {
+                var remaining = bytes;
+                if (!strings.eqlComptime(bytes[0..header_bytes.len], header_bytes)) {
+                    return error.InvalidPackageManifest;
+                }
+                remaining = remaining[header_bytes.len..];
+                var pkg_stream = std.io.fixedBufferStream(remaining);
+                var pkg_reader = pkg_stream.reader();
+                var package_manifest = PackageManifest{
+                    .name = "",
+                    .pkg = try pkg_reader.readStruct(NpmPackage),
+                };
+
+                package_manifest.package_versions = try readArray(&pkg_stream, PackageVersion);
+                package_manifest.versions = try readArray(&pkg_stream, Semver.Version);
+                package_manifest.external_strings = try readArray(&pkg_stream, ExternalString);
+
+                {
+                    const len = try pkg_reader.readIntNative(u64);
+                    const start = pkg_stream.pos;
+                    pkg_stream.pos += len;
+                    if (len > 0) package_manifest.string_buf = remaining[start .. start + len];
+                }
+
+                package_manifest.name = package_manifest.pkg.name.slice(package_manifest.string_buf);
+
+                return package_manifest;
+            }
+        };
 
         pub fn str(self: *const PackageManifest, external: ExternalString) string {
             return external.slice(self.string_buf);
@@ -1093,7 +1270,7 @@ const Npm = struct {
 
         pub const FindResult = struct {
             version: Semver.Version,
-            package: *const PackageVersion,
+            package: *align(1) const PackageVersion,
         };
 
         pub fn findByString(this: *const PackageManifest, version: string) ?FindResult {
@@ -1114,7 +1291,7 @@ const Npm = struct {
 
         pub fn findByVersion(this: *const PackageManifest, version: Semver.Version) ?FindResult {
             const list = if (!version.tag.hasPre()) this.pkg.releases else this.pkg.prereleases;
-            const values = list.values.mut(this.package_versions);
+            const values = list.values.get(this.package_versions);
             const keys = list.keys.get(this.versions);
             const index = list.findKeyIndex(this.versions, version) orelse return null;
             return FindResult{
@@ -1180,8 +1357,8 @@ const Npm = struct {
             log: *logger.Log,
             json_buffer: []const u8,
             expected_name: []const u8,
-            etag: []const u8,
             last_modified: []const u8,
+            etag: []const u8,
             public_max_age: u32,
         ) !?PackageManifest {
             const source = logger.Source.initPathString(expected_name, json_buffer);
@@ -1202,8 +1379,6 @@ const Npm = struct {
             };
 
             var string_builder = StringBuilder{};
-            string_builder.count(last_modified);
-            string_builder.count(etag);
 
             if (json.asProperty("name")) |name_q| {
                 const name = name_q.expr.asString(allocator) orelse return null;
@@ -1297,22 +1472,18 @@ const Npm = struct {
                 }
             }
 
-            var versioned_packages = try allocator.alloc(PackageVersion, release_versions_len + pre_versions_len);
-            std.mem.set(
-                PackageVersion,
-                versioned_packages,
+            if (last_modified.len > 0) {
+                string_builder.count(last_modified);
+            }
 
-                PackageVersion{},
-            );
-            var all_semver_versions = try allocator.alloc(Semver.Version, release_versions_len + pre_versions_len + dist_tags_count);
-            std.mem.set(Semver.Version, all_semver_versions, Semver.Version{});
-            var all_extern_strings = try allocator.alloc(ExternalString, extern_string_count);
-            std.mem.set(
-                ExternalString,
-                all_extern_strings,
+            if (etag.len > 0) {
+                string_builder.count(etag);
+            }
 
-                ExternalString{},
-            );
+            var versioned_packages = try allocator.allocAdvanced(PackageVersion, 1, release_versions_len + pre_versions_len, .exact);
+            var all_semver_versions = try allocator.allocAdvanced(Semver.Version, 1, release_versions_len + pre_versions_len + dist_tags_count, .exact);
+            var all_extern_strings = try allocator.allocAdvanced(ExternalString, 1, extern_string_count, .exact);
+
             var versioned_package_releases = versioned_packages[0..release_versions_len];
             var all_versioned_package_releases = versioned_package_releases;
             var versioned_package_prereleases = versioned_packages[release_versions_len..][0..pre_versions_len];
@@ -1618,6 +1789,7 @@ const Npm = struct {
             result.versions = all_semver_versions;
             result.external_strings = all_extern_strings;
             result.package_versions = versioned_packages;
+            result.pkg.public_max_age = public_max_age;
 
             if (string_builder.ptr) |ptr| {
                 result.string_buf = ptr[0..string_builder.len];
@@ -2005,6 +2177,7 @@ const Task = struct {
                     this.request.package_manifest.network.response_buffer.toOwnedSliceLeaky(),
                     &this.log,
                     this.request.package_manifest.name,
+                    this.request.package_manifest.network.callback.package_manifest.loaded_manifest,
                 ) catch |err| {
                     this.status = Status.fail;
                     PackageManager.instance.resolve_tasks.writeItem(this.*) catch unreachable;
@@ -2088,12 +2261,20 @@ const TaskChannel = sync.Channel(Task, .{ .Static = 4096 });
 const NetworkChannel = sync.Channel(*NetworkTask, .{ .Static = 8192 });
 const ThreadPool = @import("../thread_pool.zig");
 
+pub const CacheLevel = struct {
+    use_cache_control_headers: bool,
+    use_etag: bool,
+    use_last_modified: bool,
+};
+
 // We can't know all the package s we need until we've downloaded all the packages
 // The easy way wouild be:
 // 1. Download all packages, parsing their dependencies and enqueuing all dependnecies for resolution
 // 2.
 pub const PackageManager = struct {
     enable_cache: bool = true,
+    enable_manifest_cache: bool = true,
+    enable_manifest_cache_public: bool = true,
     cache_directory_path: string = "",
     cache_directory: std.fs.Dir = undefined,
     root_dir: *Fs.FileSystem.DirEntry,
@@ -2198,6 +2379,83 @@ pub const PackageManager = struct {
         network_task: ?*NetworkTask = null,
     };
 
+    pub fn getOrPutResolvedPackageWithFindResult(
+        this: *PackageManager,
+        name_hash: u32,
+        name: string,
+        version: Dependency.Version,
+        resolution: *PackageID,
+        manifest: *const Npm.PackageManifest,
+        find_result: Npm.PackageManifest.FindResult,
+    ) !?ResolvedPackageResult {
+        var resolved_package_entry = try this.resolved_package_index.getOrPut(this.allocator, Package.hash(name, find_result.version));
+
+        // Was this package already allocated? Let's reuse the existing one.
+        if (resolved_package_entry.found_existing) {
+            resolution.* = resolved_package_entry.value_ptr.*.id;
+            return ResolvedPackageResult{ .package = resolved_package_entry.value_ptr.* };
+        }
+
+        const id = package_list.reserveOne() catch unreachable;
+        resolution.* = id;
+        var ptr = package_list.at(id).?;
+        ptr.* = Package.fromNPM(
+            this.allocator,
+            id,
+            this.log,
+            manifest,
+            find_result.version,
+            find_result.package,
+            this.default_features,
+            manifest.string_buf,
+        );
+        resolved_package_entry.value_ptr.* = ptr;
+
+        switch (ptr.determinePreinstallState(this)) {
+            // Is this package already in the cache?
+            // We don't need to download the tarball, but we should enqueue dependencies
+            .done => {
+                return ResolvedPackageResult{ .package = ptr, .is_first_time = true };
+            },
+
+            // Do we need to download the tarball?
+            .extract => {
+                const task_id = Task.Id.forPackage(Task.Tag.extract, ptr.name, ptr.version);
+                const dedupe_entry = try this.network_task_queue.getOrPut(this.allocator, task_id);
+
+                // Assert that we don't end up downloading the tarball twice.
+                std.debug.assert(!dedupe_entry.found_existing);
+                var network_task = this.getNetworkTask();
+                network_task.* = NetworkTask{
+                    .task_id = task_id,
+                    .callback = undefined,
+                    .allocator = this.allocator,
+                };
+
+                try network_task.forTarball(
+                    this.allocator,
+                    ExtractTarball{
+                        .name = name,
+                        .version = ptr.version,
+                        .cache_dir = this.cache_directory_path,
+                        .registry = this.registry.url.href,
+                        .package = ptr,
+                        .extracted_file_count = find_result.package.file_count,
+                    },
+                );
+
+                return ResolvedPackageResult{
+                    .package = ptr,
+                    .is_first_time = true,
+                    .network_task = network_task,
+                };
+            },
+            else => unreachable,
+        }
+
+        return ResolvedPackageResult{ .package = ptr };
+    }
+
     pub fn getOrPutResolvedPackage(
         this: *PackageManager,
         name_hash: u32,
@@ -2224,72 +2482,7 @@ pub const PackageManager = struct {
                     else => unreachable,
                 };
 
-                var resolved_package_entry = try this.resolved_package_index.getOrPut(this.allocator, Package.hash(name, find_result.version));
-
-                // Was this package already allocated? Let's reuse the existing one.
-                if (resolved_package_entry.found_existing) {
-                    resolution.* = resolved_package_entry.value_ptr.*.id;
-                    return ResolvedPackageResult{ .package = resolved_package_entry.value_ptr.* };
-                }
-
-                const id = package_list.reserveOne() catch unreachable;
-                resolution.* = id;
-                var ptr = package_list.at(id).?;
-                ptr.* = Package.fromNPM(
-                    this.allocator,
-                    id,
-                    this.log,
-                    manifest,
-                    find_result.version,
-                    find_result.package,
-                    this.default_features,
-                    manifest.string_buf,
-                );
-                resolved_package_entry.value_ptr.* = ptr;
-
-                switch (ptr.determinePreinstallState(this)) {
-                    // Is this package already in the cache?
-                    // We don't need to download the tarball, but we should enqueue dependencies
-                    .done => {
-                        return ResolvedPackageResult{ .package = ptr, .is_first_time = true };
-                    },
-
-                    // Do we need to download the tarball?
-                    .extract => {
-                        const task_id = Task.Id.forPackage(Task.Tag.extract, ptr.name, ptr.version);
-                        const dedupe_entry = try this.network_task_queue.getOrPut(this.allocator, task_id);
-
-                        // Assert that we don't end up downloading the tarball twice.
-                        std.debug.assert(!dedupe_entry.found_existing);
-                        var network_task = this.getNetworkTask();
-                        network_task.* = NetworkTask{
-                            .task_id = task_id,
-                            .callback = undefined,
-                            .allocator = this.allocator,
-                        };
-
-                        try network_task.forTarball(
-                            this.allocator,
-                            ExtractTarball{
-                                .name = name,
-                                .version = ptr.version,
-                                .cache_dir = this.cache_directory_path,
-                                .registry = this.registry.url.href,
-                                .package = ptr,
-                                .extracted_file_count = find_result.package.file_count,
-                            },
-                        );
-
-                        return ResolvedPackageResult{
-                            .package = ptr,
-                            .is_first_time = true,
-                            .network_task = network_task,
-                        };
-                    },
-                    else => unreachable,
-                }
-
-                return ResolvedPackageResult{ .package = ptr };
+                return try getOrPutResolvedPackageWithFindResult(this, name_hash, name, version, resolution, manifest, find_result);
             },
 
             else => return null,
@@ -2351,111 +2544,155 @@ pub const PackageManager = struct {
         const name_hash = dependency.name_hash;
         const version: Dependency.Version = dependency.version;
         var batch = ThreadPool.Batch{};
+        var loaded_manifest: ?Npm.PackageManifest = null;
+
         switch (dependency.version) {
             .npm, .dist_tag => {
-                const resolve_result = this.getOrPutResolvedPackage(name_hash, name, version, &dependency.resolution) catch |err| {
-                    switch (err) {
-                        error.DistTagNotFound => {
-                            if (required) {
-                                this.log.addErrorFmt(
-                                    null,
-                                    logger.Loc.Empty,
-                                    this.allocator,
-                                    "Package \"{s}\" with tag \"{s}\" not found, but package exists",
-                                    .{
-                                        name,
-                                        version.dist_tag,
-                                    },
-                                ) catch unreachable;
+                retry_from_manifests_ptr: while (true) {
+                    var resolve_result_ = this.getOrPutResolvedPackage(name_hash, name, version, &dependency.resolution);
+
+                    retry_with_new_resolve_result: while (true) {
+                        const resolve_result = resolve_result_ catch |err| {
+                            switch (err) {
+                                error.DistTagNotFound => {
+                                    if (required) {
+                                        this.log.addErrorFmt(
+                                            null,
+                                            logger.Loc.Empty,
+                                            this.allocator,
+                                            "Package \"{s}\" with tag \"{s}\" not found, but package exists",
+                                            .{
+                                                name,
+                                                version.dist_tag,
+                                            },
+                                        ) catch unreachable;
+                                    }
+
+                                    return null;
+                                },
+                                error.NoMatchingVersion => {
+                                    if (required) {
+                                        this.log.addErrorFmt(
+                                            null,
+                                            logger.Loc.Empty,
+                                            this.allocator,
+                                            "No version matching \"{s}\" found for package {s} (but package exists)",
+                                            .{
+                                                version.npm.input,
+                                                name,
+                                            },
+                                        ) catch unreachable;
+                                    }
+                                    return null;
+                                },
+                                else => return err,
                             }
-
-                            return null;
-                        },
-                        error.NoMatchingVersion => {
-                            if (required) {
-                                this.log.addErrorFmt(
-                                    null,
-                                    logger.Loc.Empty,
-                                    this.allocator,
-                                    "No version matching \"{s}\" found for package {s} (but package exists)",
-                                    .{
-                                        version.npm.input,
-                                        name,
-                                    },
-                                ) catch unreachable;
-                            }
-                            return null;
-                        },
-                        else => return err,
-                    }
-                };
-
-                if (resolve_result) |result| {
-                    if (result.package.isDisabled()) return null;
-
-                    // First time?
-                    if (result.is_first_time) {
-                        if (verbose_install) {
-                            const label: string = switch (version) {
-                                .npm => version.npm.input,
-                                .dist_tag => version.dist_tag,
-                                else => unreachable,
-                            };
-
-                            Output.prettyErrorln("   -> \"{s}\": \"{s}\" -> {s}@{}", .{
-                                result.package.name,
-                                label,
-                                result.package.name,
-                                result.package.version.fmt(result.package.string_buf),
-                            });
-                        }
-                        // Resolve dependencies first
-                        batch.push(this.enqueuePackages(result.package.dependencies, true));
-                        if (this.default_features.peer_dependencies) batch.push(this.enqueuePackages(result.package.peer_dependencies, true));
-                        if (this.default_features.optional_dependencies) batch.push(this.enqueuePackages(result.package.optional_dependencies, false));
-                    }
-
-                    if (result.network_task) |network_task| {
-                        if (result.package.preinstall_state == .extract) {
-                            Output.prettyErrorln("  ↓📦 {s}@{}", .{
-                                result.package.name,
-                                result.package.version.fmt(result.package.string_buf),
-                            });
-                            result.package.preinstall_state = .extracting;
-                            network_task.schedule(&this.network_tarball_batch);
-                        }
-                    }
-
-                    if (batch.len > 0) {
-                        return batch;
-                    }
-                } else {
-                    const task_id = Task.Id.forManifest(Task.Tag.package_manifest, name);
-                    var network_entry = try this.network_task_queue.getOrPutContext(this.allocator, task_id, .{});
-                    if (!network_entry.found_existing) {
-                        if (verbose_install) {
-                            Output.prettyErrorln("Enqueue package manifest for download: {s}", .{name});
-                        }
-
-                        var network_task = this.getNetworkTask();
-                        network_task.* = NetworkTask{
-                            .callback = undefined,
-                            .task_id = task_id,
-                            .allocator = this.allocator,
                         };
-                        try network_task.forManifest(name, this.allocator, this.registry.url);
-                        network_task.schedule(&this.network_resolve_batch);
-                    }
 
-                    var manifest_entry_parse = try this.task_queue.getOrPutContext(this.allocator, task_id, .{});
-                    if (!manifest_entry_parse.found_existing) {
-                        manifest_entry_parse.value_ptr.* = TaskCallbackList{};
-                    }
+                        if (resolve_result) |result| {
+                            if (result.package.isDisabled()) return null;
 
-                    try manifest_entry_parse.value_ptr.append(this.allocator, TaskCallbackContext.init(dependency));
+                            // First time?
+                            if (result.is_first_time) {
+                                if (verbose_install) {
+                                    const label: string = switch (version) {
+                                        .npm => version.npm.input,
+                                        .dist_tag => version.dist_tag,
+                                        else => unreachable,
+                                    };
+
+                                    Output.prettyErrorln("   -> \"{s}\": \"{s}\" -> {s}@{}", .{
+                                        result.package.name,
+                                        label,
+                                        result.package.name,
+                                        result.package.version.fmt(result.package.string_buf),
+                                    });
+                                }
+                                // Resolve dependencies first
+                                batch.push(this.enqueuePackages(result.package.dependencies, true));
+                                if (this.default_features.peer_dependencies) batch.push(this.enqueuePackages(result.package.peer_dependencies, true));
+                                if (this.default_features.optional_dependencies) batch.push(this.enqueuePackages(result.package.optional_dependencies, false));
+                            }
+
+                            if (result.network_task) |network_task| {
+                                if (result.package.preinstall_state == .extract) {
+                                    Output.prettyErrorln("  ↓📦 {s}@{}", .{
+                                        result.package.name,
+                                        result.package.version.fmt(result.package.string_buf),
+                                    });
+                                    result.package.preinstall_state = .extracting;
+                                    network_task.schedule(&this.network_tarball_batch);
+                                }
+                            }
+
+                            if (batch.len > 0) {
+                                return batch;
+                            }
+                        } else {
+                            const task_id = Task.Id.forManifest(Task.Tag.package_manifest, name);
+                            var network_entry = try this.network_task_queue.getOrPutContext(this.allocator, task_id, .{});
+                            if (!network_entry.found_existing) {
+                                if (this.enable_manifest_cache) {
+                                    if (Npm.PackageManifest.Serializer.load(this.allocator, this.cache_directory, name) catch null) |manifest_| {
+                                        const manifest: Npm.PackageManifest = manifest_;
+                                        loaded_manifest = manifest;
+
+                                        if (this.enable_manifest_cache_public and manifest.pkg.public_max_age > @truncate(u32, @intCast(u64, @maximum(std.time.timestamp(), 0)))) {
+                                            try this.manifests.put(this.allocator, @truncate(u32, manifest.pkg.name.hash), manifest);
+                                        }
+
+                                        // If it's an exact package version already living in the cache
+                                        // We can skip the network request, even if it's beyond the caching period
+                                        if (dependency.version == .npm and dependency.version.npm.isExact()) {
+                                            if (loaded_manifest.?.findByVersion(dependency.version.npm.head.head.range.left.version)) |find_result| {
+                                                if (this.getOrPutResolvedPackageWithFindResult(
+                                                    name_hash,
+                                                    name,
+                                                    version,
+                                                    &dependency.resolution,
+                                                    &loaded_manifest.?,
+                                                    find_result,
+                                                ) catch null) |new_resolve_result| {
+                                                    resolve_result_ = new_resolve_result;
+                                                    _ = this.network_task_queue.remove(task_id);
+                                                    continue :retry_with_new_resolve_result;
+                                                }
+                                            }
+                                        }
+
+                                        // Was it recent enough to just load it without the network call?
+                                        if (this.enable_manifest_cache_public and manifest.pkg.public_max_age > @truncate(u32, @intCast(u64, @maximum(std.time.timestamp(), 0)))) {
+                                            _ = this.network_task_queue.remove(task_id);
+                                            continue :retry_from_manifests_ptr;
+                                        }
+                                    }
+                                }
+
+                                if (verbose_install) {
+                                    Output.prettyErrorln("Enqueue package manifest for download: {s}", .{name});
+                                }
+
+                                var network_task = this.getNetworkTask();
+                                network_task.* = NetworkTask{
+                                    .callback = undefined,
+                                    .task_id = task_id,
+                                    .allocator = this.allocator,
+                                };
+                                try network_task.forManifest(name, this.allocator, this.registry.url, loaded_manifest);
+                                network_task.schedule(&this.network_resolve_batch);
+                            }
+
+                            var manifest_entry_parse = try this.task_queue.getOrPutContext(this.allocator, task_id, .{});
+                            if (!manifest_entry_parse.found_existing) {
+                                manifest_entry_parse.value_ptr.* = TaskCallbackList{};
+                            }
+
+                            try manifest_entry_parse.value_ptr.append(this.allocator, TaskCallbackContext.init(dependency));
+                        }
+
+                        return null;
+                    }
                 }
-
-                return null;
             },
             else => {},
         }
@@ -2672,6 +2909,24 @@ pub const PackageManager = struct {
             // .progress
         };
 
+        if (!enable_cache) {
+            manager.enable_manifest_cache = false;
+            manager.enable_manifest_cache_public = false;
+        }
+
+        if (env_loader.map.get("BUN_MANIFEST_CACHE")) |manifest_cache| {
+            if (strings.eqlComptime(manifest_cache, "1")) {
+                manager.enable_manifest_cache = true;
+                manager.enable_manifest_cache_public = false;
+            } else if (strings.eqlComptime(manifest_cache, "2")) {
+                manager.enable_manifest_cache = true;
+                manager.enable_manifest_cache_public = true;
+            } else {
+                manager.enable_manifest_cache = false;
+                manager.enable_manifest_cache_public = false;
+            }
+        }
+
         manager.enqueueDependencyList(
             root,
             Package.Features{
@@ -2688,7 +2943,8 @@ pub const PackageManager = struct {
                 manager.pending_tasks -= 1;
 
                 switch (task.callback) {
-                    .package_manifest => |name| {
+                    .package_manifest => |manifest_req| {
+                        const name = manifest_req.name;
                         const response = task.http.response orelse {
                             Output.prettyErrorln("Failed to download package manifest for package {s}", .{name});
                             Output.flush();
@@ -2712,6 +2968,29 @@ pub const PackageManager = struct {
                             Output.printElapsed(@floatCast(f64, @intToFloat(f128, task.http.elapsed) / std.time.ns_per_ms));
                             Output.prettyError(" <d>Downloaded <r><green>{s}<r> versions\n", .{name});
                             Output.flush();
+                        }
+
+                        if (response.status_code == 304) {
+                            // The HTTP request was cached
+                            if (manifest_req.loaded_manifest) |manifest| {
+                                var entry = try manager.manifests.getOrPut(ctx.allocator, @truncate(u32, manifest.pkg.name.hash));
+                                entry.value_ptr.* = manifest;
+                                entry.value_ptr.*.pkg.public_max_age = @truncate(u32, @intCast(u64, @maximum(0, std.time.timestamp()))) + 300;
+                                {
+                                    var tmpdir = Fs.FileSystem.instance.tmpdir();
+                                    Npm.PackageManifest.Serializer.save(entry.value_ptr, tmpdir, PackageManager.instance.cache_directory) catch {};
+                                }
+
+                                const dependency_list = manager.task_queue.get(task.task_id).?;
+
+                                for (dependency_list.items) |item| {
+                                    var dependency: *Dependency = TaskCallbackContext.get(item, Dependency).?;
+                                    if (try manager.enqueueDependency(dependency, dependency.required)) |new_batch| {
+                                        batch.push(new_batch);
+                                    }
+                                }
+                                continue;
+                            }
                         }
 
                         batch.push(ThreadPool.Batch.from(manager.enqueueParseNPMPackage(task.task_id, name, task)));

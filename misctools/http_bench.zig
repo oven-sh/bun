@@ -197,6 +197,8 @@ pub fn main() anyerror!void {
     };
     var groups = try default_allocator.alloc(Group, args.count);
     var i: usize = 0;
+    const Batch = @import("../src/thread_pool.zig").Batch;
+    var batch = Batch{};
     while (i < args.count) : (i += 1) {
         groups[i] = Group{};
         var response_body = &groups[i].response_body;
@@ -219,8 +221,9 @@ pub fn main() anyerror!void {
             ),
         };
         ctx.http.callback = HTTP.HTTPChannelContext.callback;
-        ctx.http.schedule(default_allocator);
+        ctx.http.schedule(default_allocator, &batch);
     }
+    NetworkThread.global.pool.schedule(batch);
 
     var read_count: usize = 0;
     var success_count: usize = 0;

@@ -410,6 +410,7 @@ pub fn build(b: *std.build.Builder) !void {
     typings_cmd.step.dependOn(&typings_exe.step);
 
     typings_exe.linkLibC();
+
     typings_exe.linkLibCpp();
     typings_exe.setMainPkgPath(cwd);
 

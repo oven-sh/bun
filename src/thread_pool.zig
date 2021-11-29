@@ -248,7 +248,7 @@ noinline fn wait(self: *ThreadPool, _is_waking: bool) error{Shutdown}!bool {
         } else {
             if (self.io) |io| {
                 const HTTP = @import("./http/http_client_async.zig");
-                io.run_for_ns(std.time.ns_per_us * 10) catch {};
+                io.run_for_ns(std.time.ns_per_us * 100) catch {};
                 while (HTTP.AsyncHTTP.active_requests_count.load(.Monotonic) > 255) {
                     io.tick() catch {};
                 }

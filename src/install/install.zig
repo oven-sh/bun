@@ -47,6 +47,28 @@ pub fn initializeStore() void {
     JSAst.Stmt.Data.Store.create(default_allocator);
 }
 
+pub fn IdentityContext(comptime Key: type) type {
+    return struct {
+        pub fn hash(this: @This(), key: Key) u64 {
+            return key;
+        }
+
+        pub fn eql(this: @This(), a: Key, b: Key) bool {
+            return a == b;
+        }
+    };
+}
+
+const ArrayIdentityContext = struct {
+    pub fn hash(this: @This(), key: u32) u32 {
+        return key;
+    }
+
+    pub fn eql(this: @This(), a: u32, b: u32) bool {
+        return a == b;
+    }
+};
+
 pub const URI = union(Tag) {
     local: string,
     remote: URL,
@@ -248,12 +270,78 @@ pub const ExternalStringMap = extern struct {
     value: ExternalStringList = ExternalStringList{},
 };
 
+const Lockfile = struct {
+
+    // Serialized data
+    version: Version = .v0,
+    entries: Entry.List = Entry.List{},
+    buffers: Buffers = Buffers{},
+
+    // Not serialized data
+    pub const Stateful = struct {
+        /// name -> PackageID || [*]PackageID
+        /// Not for iterating. Only for 
+        package_index: PackageIndex.Map,
+        
+    };
+
+    const PackageNameHash = u64;
+    const PackageIndex = struct {
+        pub const Map = std.HashMap(PackageNameHash, PackageIndex.Entry);
+        pub const Entry = extern union {
+            single: PackageID,
+            multi: [*:invalid_package_id]PackageID,
+
+            pub const Tag = enum { single, multiple };
+            pub inline fn tag(this: PackageIndex.Entry) Tag {
+                const TagItem = packed struct {
+                    reserved_pointer_bits: u60,
+                    top: u4,
+                };
+                const item = @bitCast(TagItem, this);
+                return if (item.top == 0) .single else .multiple;
+            }
+        };
+    };
+
+    pub const Version = enum(u32) {
+        v0,
+        _,
+    };
+
+    const DependencySlice = ExternalSlice(Dependency);
+    const PackageIDSlice = ExternalSlice(PackageID);
+    const PackageIDList = std.ArrayListUnmanaged(PackageID);
+    const DependencyList = std.ArrayListUnmanaged(Dependency);
+    const StringBuffer = std.ArrayListUnmanaged(u8);
+    const PackageBuffer = std.ArrayListUnmanaged(Entry);
+
+    const Entry = struct {
+        sorted_id: PackageID,
+        name: ExternalString,
+        name_hash: u32,
+        version: Semver.Version,
+        package: Package,
+        dependencies: DependencySlice,
+        resolutions: PackageIDSlice,
+
+        pub const List = std.MultiArrayList(Entry);
+    };
+
+    const Buffers = struct {
+        sorted_ids: PackageIDList = PackageIDList{},
+        packages: PackageBuffer = PackageBuffer{},
+        resolutions: PackageIDList = PackageIDList{},
+        dependencies: DependencyList = DependencyList{},
+        string_bytes: StringBuffer = StringBuffer{},
+    };
+};
+
 pub const Dependency = struct {
     name: string,
     name_hash: u32,
     version: Dependency.Version,
-    from: PackageID = invalid_package_id,
-    resolution: PackageID = invalid_package_id,
+
     required: bool = true,
 
     pub const Version = union(Tag) {
@@ -474,6 +562,14 @@ pub const Dependency = struct {
         github: void,
     };
 
+    pub fn eql(a: Dependency, b: Dependency) bool {
+        if (a.isNPM() and b.tag.isNPM()) {
+            return a.resolution == b.resolution;
+        }
+
+        return @as(Dependency.Version.Tag, a.version) == @as(Dependency.Version.Tag, b.version) and a.resolution == b.resolution;
+    }
+
     pub const List = std.ArrayHashMapUnmanaged(u32, Dependency, ArrayIdentityContext, false);
 
     pub fn parse(
@@ -538,7 +634,6 @@ pub const Dependency = struct {
 
 pub const Package = struct {
     id: PackageID,
-    parent_id: PackageID = 0,
 
     name: string = "",
     version: Semver.Version = Semver.Version{},
@@ -893,15 +988,25 @@ pub const Package = struct {
     }
 };
 
-fn ObjectPool(comptime Type: type, comptime Init: (fn (allocator: *std.mem.Allocator) anyerror!Type)) type {
+fn ObjectPool(comptime Type: type, comptime Init: (fn (allocator: *std.mem.Allocator) anyerror!Type), comptime threadsafe: bool) type {
     return struct {
         const LinkedList = std.SinglyLinkedList(Type);
-        // mimalloc crashes on realloc across threads
-        threadlocal var list: LinkedList = undefined;
-        threadlocal var loaded: bool = false;
+        const Data = if (threadsafe)
+            struct {
+                list: LinkedList = undefined,
+                loaded: bool = false,
+            }
+        else
+            struct {
+                list: LinkedList = undefined,
+                loaded: bool = false,
+            };
+
+        var data: Data = Data{};
+
         pub fn get(allocator: *std.mem.Allocator) *LinkedList.Node {
-            if (loaded) {
-                if (list.popFirst()) |node| {
+            if (data.loaded) {
+                if (data.list.popFirst()) |node| {
                     node.data.reset();
                     return node;
                 }
@@ -918,13 +1023,13 @@ fn ObjectPool(comptime Type: type, comptime Init: (fn (allocator: *std.mem.Alloc
         }
 
         pub fn release(node: *LinkedList.Node) void {
-            if (loaded) {
-                list.prepend(node);
+            if (data.loaded) {
+                data.list.prepend(node);
                 return;
             }
 
-            list = LinkedList{ .first = node };
-            loaded = true;
+            data.list = LinkedList{ .first = node };
+            data.loaded = true;
         }
     };
 }
@@ -932,7 +1037,7 @@ fn ObjectPool(comptime Type: type, comptime Init: (fn (allocator: *std.mem.Alloc
 const Npm = struct {
     pub const Registry = struct {
         url: URL = URL.parse("https://registry.npmjs.org/"),
-        pub const BodyPool = ObjectPool(MutableString, MutableString.init2048);
+        pub const BodyPool = ObjectPool(MutableString, MutableString.init2048, true);
 
         const PackageVersionResponse = union(Tag) {
             pub const Tag = enum {
@@ -1033,6 +1138,35 @@ const Npm = struct {
 
             return null;
         }
+    };
+
+    /// https://nodejs.org/api/os.html#oscpu
+    pub const OperatingSystem = enum(u8) {
+        aix,
+        darwin,
+        freebsd,
+        linux,
+        openbsd,
+        sunos,
+        win32,
+        android,
+        _,
+    };
+
+    /// https://nodejs.org/api/os.html#osarch
+    pub const Architecture = enum(u8) {
+        arm,
+        arm64,
+        ia32,
+        mips,
+        mipsel,
+        ppc,
+        ppc64,
+        s390,
+        s390x,
+        x32,
+        x64,
+        _,
     };
 
     // ~384 bytes each?
@@ -1565,16 +1699,28 @@ const Npm = struct {
                             switch (cpu.expr.data) {
                                 .e_array => |arr| {
                                     for (arr.items) |item| {
-                                        if (item.asString(allocator)) |cpu_str| {
+                                        if (item.asString(allocator)) |cpu_str_| {
+                                            const not = cpu_str_.len > 1 and cpu_str_[0] == '!';
+                                            const cpu_str = std.mem.trimLeft(u8, cpu_str_, "!");
                                             if (strings.eqlComptime(cpu_str, CPU)) {
-                                                package_version.cpu_matches = true;
+                                                package_version.cpu_matches = !not;
                                                 break;
+                                            } else if (not) {
+                                                package_version.cpu_matches = true;
                                             }
                                         }
                                     }
                                 },
                                 .e_string => |str| {
-                                    package_version.cpu_matches = strings.eql(str.utf8, CPU);
+                                    const cpu_str_ = str.utf8;
+                                    const not = cpu_str_.len > 1 and cpu_str_[0] == '!';
+                                    const cpu_str = std.mem.trimLeft(u8, cpu_str_, "!");
+
+                                    if (strings.eqlComptime(cpu_str, CPU)) {
+                                        package_version.cpu_matches = !not;
+                                    } else if (not) {
+                                        package_version.cpu_matches = true;
+                                    }
                                 },
                                 else => {},
                             }
@@ -1804,9 +1950,6 @@ const Npm = struct {
     };
 };
 
-pub const DependencyLevel = enum { dependency, dev, optional, peer };
-pub const Dependents = std.EnumArray(DependencyLevel, std.ArrayListUnmanaged(PackageID));
-
 pub const Download = struct {
     tarball_path: string,
 };
@@ -1814,8 +1957,6 @@ pub const Download = struct {
 const PackageBlock = struct {
     pub const block_size = 256;
     items: [block_size]Package = undefined,
-    dependents: [block_size]Dependents = undefined,
-    downloads: [block_size]Download = undefined,
     len: u16 = 0,
 
     pub fn append(this: *PackageBlock, package: Package) *Package {
@@ -1824,7 +1965,6 @@ const PackageBlock = struct {
         const i = this.len;
         this.len += 1;
         this.items[i] = package;
-        this.dependents[i] = Dependents.initFill(std.ArrayListUnmanaged(PackageID){});
         return &this.items[i];
     }
 };
@@ -1855,7 +1995,6 @@ const PackageList = struct {
             var tail = try this.allocator.create(PackageBlock);
             tail.* = PackageBlock{};
             tail.items[0] = package;
-            tail.dependents[0] = Dependents.initFill(std.ArrayListUnmanaged(PackageID){});
             tail.len = 1;
             this.block_i += 1;
             this.blocks[this.block_i] = tail;
@@ -1875,7 +2014,6 @@ const PackageList = struct {
             var tail = try this.allocator.create(PackageBlock);
             tail.* = PackageBlock{};
             tail.items[0] = undefined;
-            tail.dependents[0] = Dependents.initFill(std.ArrayListUnmanaged(PackageID){});
             tail.len = 1;
             this.block_i += 1;
             this.blocks[this.block_i] = tail;
@@ -1886,28 +2024,6 @@ const PackageList = struct {
             block.len += 1;
             return result;
         }
-    }
-};
-
-pub fn IdentityContext(comptime Key: type) type {
-    return struct {
-        pub fn hash(this: @This(), key: Key) u64 {
-            return key;
-        }
-
-        pub fn eql(this: @This(), a: Key, b: Key) bool {
-            return a == b;
-        }
-    };
-}
-
-const ArrayIdentityContext = struct {
-    pub fn hash(this: @This(), key: u32) u32 {
-        return key;
-    }
-
-    pub fn eql(this: @This(), a: u32, b: u32) bool {
-        return a == b;
     }
 };
 
@@ -2744,14 +2860,142 @@ pub const PackageManager = struct {
         this.network_resolve_batch = .{};
     }
 
-    const Hoister = struct {};
-
     /// Hoisting means "find the topmost path to insert the node_modules folder in"
     /// We must hoist for many reasons.
     /// 1. File systems have a maximum file path length. Without hoisting, it is easy to exceed that.
     /// 2. It's faster due to fewer syscalls
     /// 3. It uses less disk space
-    pub fn hoist(this: *PackageManager) !void {}
+    const NodeModulesFolder = struct {
+        in: PackageID = invalid_package_id,
+        dependencies: Dependency.List = .{},
+        parent: ?*NodeModulesFolder = null,
+        allocator: *std.mem.Allocator,
+        children: std.ArrayListUnmanaged(*NodeModulesFolder) = std.ArrayListUnmanaged(*NodeModulesFolder){},
+
+        pub const State = enum {
+            /// We found a hoisting point, but it's not the root one
+            /// (e.g. we're in a subdirectory of a package)
+            hoist,
+
+            /// We found the topmost hoisting point
+            /// (e.g. we're in the root of a package)
+            root,
+
+            /// The parent already has the dependency, so we don't need to add it
+            duplicate,
+
+            conflict,
+        };
+
+        pub const Determination = union(State) {
+            hoist: *NodeModulesFolder,
+            duplicate: *NodeModulesFolder,
+            root: *NodeModulesFolder,
+            conflict: *NodeModulesFolder,
+        };
+
+        pub var trace_buffer: std.ArrayListUnmanaged(PackageID) = undefined;
+
+        pub fn determine(this: *NodeModulesFolder, dependency: Dependency) Determination {
+            var top = this.parent orelse return Determination{
+                .root = this,
+            };
+            var previous_top = this;
+            var last_non_dead_end = this;
+
+            while (true) {
+                if (top.dependencies.getEntry(dependency.name_hash)) |entry| {
+                    const existing: Dependency = entry.value_ptr.*;
+                    // Since we search breadth-first, every instance of the current dependency is already at the highest level, so long as duplicate dependencies aren't listed
+                    if (existing.eql(dependency)) {
+                        return Determination{
+                            .duplicate = top,
+                        };
+                        // Assuming a dependency tree like this:
+                        //  - bar@12.0.0
+                        //  - foo@12.0.1
+                        //          - bacon@12.0.1
+                        //              - lettuce@12.0.1
+                        //                  - bar@11.0.0
+                        //
+                        // Ideally, we place "bar@11.0.0" in "foo@12.0.1"'s node_modules folder
+                        // However, "foo" may not have it's own node_modules folder at this point.
+                        //
+                    } else if (previous_top != top) {
+                        return Determination{
+                            .hoist = previous_top,
+                        };
+                    } else {
+                        // slow path: we need to create a new node_modules folder
+                        // We have to trace the path of the original dependency starting from where it was imported
+                        // and find the first node_modules folder before that one
+
+                        return Determination{
+                            .conflict = entry.value_ptr,
+                        };
+                    }
+                }
+
+                if (top.parent) |parent| {
+                    previous_top = top;
+                    top = parent;
+                    continue;
+                }
+
+                return Determination{
+                    .root = top,
+                };
+            }
+
+            unreachable;
+        }
+    };
+
+    pub fn hoist(this: *PackageManager) !void {
+        NodeModulesFolder.trace_buffer = std.ArrayList(PackageID).init(this.allocator);
+
+        const DependencyQueue = std.fifo.LinearFifo(*Dependency.List, .{ .Dynamic = .{} });
+
+        const PackageVisitor = struct {
+            visited: std.DynamicBitSet,
+            log: *logger.Log,
+            allocator: *std.mem.Allocator,
+
+            /// Returns a new parent NodeModulesFolder 
+            pub fn visitDependencyList(
+                visitor: *PackageVisitor,
+                modules: *NodeModulesFolder,
+                dependency_list: *Dependency.List,
+            ) ?NodeModulesFolder {
+                const dependencies = dependency_list.values();
+                var i: usize = 0;
+                while (i < dependencies.len) : (i += 1) {
+                    const dependency = dependencies[i];
+                    switch (modules.determine(dependency)) {
+                        .hoist => |target| {
+                            var entry = target.dependencies.getOrPut(visitor.allocator, dependency.name_hash) catch unreachable;
+                            entry.value_ptr.* = dependency;
+                        },
+                        .root => |target| {
+                            var entry = target.dependencies.getOrPut(visitor.allocator, dependency.name_hash) catch unreachable;
+                            entry.value_ptr.* = dependency;
+                        },
+                        .conflict => |conflict| {
+                            // When there's a conflict, it means we must create a new node_modules folder
+                            // however, since the tree is already flattened ahead of time, we don't know where to put it...
+                            var child_folder = NodeModulesFolder{
+                                .parent = modules,
+                                .allocator = visitor.allocator,
+                                .in = dependency.resolution,
+                                .dependencies = .{},
+                            };
+                            child_folder.dependencies.append(dependency) catch unreachable;
+                        },
+                    }
+                }
+            }
+        };
+    }
     pub fn link(this: *PackageManager) !void {}
 
     pub fn fetchCacheDirectoryPath(

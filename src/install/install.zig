@@ -1,7 +1,7 @@
 usingnamespace @import("../global.zig");
 const std = @import("std");
 
-const lex = @import("../js_lexer.zig");
+const JSLexer = @import("../js_lexer.zig");
 const logger = @import("../logger.zig");
 const alloc = @import("../alloc.zig");
 const options = @import("../options.zig");
@@ -81,7 +81,7 @@ pub const URI = union(Tag) {
 
 const Semver = @import("./semver.zig");
 const ExternalString = Semver.ExternalString;
-const StringBuilder = @import("../string_builder.zig");
+const GlobalStringBuilder = @import("../string_builder.zig");
 const SlicedString = Semver.SlicedString;
 
 const StructBuilder = @import("../builder.zig");
@@ -90,6 +90,8 @@ const ExternalStringBuilder = StructBuilder.Builder(ExternalString);
 pub fn ExternalSlice(comptime Type: type) type {
     return extern struct {
         const Slice = @This();
+
+        pub const Child: type = Type;
 
         off: u32 = 0,
         len: u32 = 0,
@@ -115,6 +117,26 @@ pub fn ExternalSlice(comptime Type: type) type {
         }
     };
 }
+
+const Integrity = extern struct {
+    tag: Tag = Tag.none,
+    /// Possibly a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value initially
+    /// We transform it though.
+    value: ExternalString.Small = ExternalString.Small{},
+
+    pub const Tag = enum(u8) {
+        none,
+        /// "shasum" in the metadata
+        sha1,
+        /// The value is a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value
+        sha256,
+        /// The value is a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value
+        sha328,
+        /// The value is a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value
+        sha512,
+        _,
+    };
+};
 
 const NetworkTask = struct {
     http: AsyncHTTP = undefined,
@@ -265,46 +287,332 @@ const invalid_package_id = std.math.maxInt(PackageID);
 const ExternalStringList = ExternalSlice(ExternalString);
 const VersionSlice = ExternalSlice(Semver.Version);
 
+pub const StringPair = extern struct {
+    key: ExternalString = ExternalString{},
+    value: ExternalString = ExternalString{},
+};
+
 pub const ExternalStringMap = extern struct {
     name: ExternalStringList = ExternalStringList{},
     value: ExternalStringList = ExternalStringList{},
+
+    pub const Iterator = NewIterator(ExternalStringList);
+
+    pub const Small = extern struct {
+        name: SmallExternalStringList = SmallExternalStringList{},
+        value: SmallExternalStringList = SmallExternalStringList{},
+
+        pub const Iterator = NewIterator(SmallExternalStringList);
+
+        pub inline fn iterator(this: Small, buf: []const ExternalString.Small) Small.Iterator {
+            return Small.Iterator.init(buf, this.name, this.value);
+        }
+    };
+
+    pub inline fn iterator(this: ExternalStringMap, buf: []const ExternalString.Small) Iterator {
+        return Iterator.init(buf, this.name, this.value);
+    }
+
+    fn NewIterator(comptime Type: type) type {
+        return struct {
+            const ThisIterator = @This();
+
+            i: usize = 0,
+            names: []const Type.Child,
+            values: []const Type.Child,
+
+            pub fn init(all: []const Type.Child, names: Type, values: Type) ThisIterator {
+                this.names = names.get(all);
+                this.values = values.get(all);
+                return this;
+            }
+
+            pub fn next(this: *ThisIterator) ?[2]Type.Child {
+                if (this.i < this.names.len) {
+                    const ret = [2]Type.Child{ this.names[this.i], this.values[this.i] };
+                    this.i += 1;
+                }
+
+                return null;
+            }
+        };
+    }
+};
+
+pub const PackageNameHash = u64;
+
+pub const Origin = enum(u8) {
+    local = 0,
+    npm = 1,
+    tarball = 2,
+};
+
+pub const Features = struct {
+    optional_dependencies: bool = false,
+    dev_dependencies: bool = false,
+    scripts: bool = false,
+    peer_dependencies: bool = true,
+    is_main: bool = false,
+
+    check_for_duplicate_dependencies: bool = true,
+};
+
+pub const PreinstallState = enum {
+    unknown,
+    done,
+    extract,
+    extracting,
+};
+
+/// Normalized `bin` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
+/// Can be a:
+/// - file path (relative to the package root)
+/// - directory (relative to the package root)
+/// - map where keys are names of the binaries and values are file paths to the binaries
+pub const Bin = extern struct {
+    tag: Tag = Tag.none,
+    value: Value = Value{ .none = .{} },
+
+    pub const Value = extern union {
+        /// no "bin", or empty "bin"
+        none: void,
+
+        /// "bin" is a string
+        /// ```
+        /// "bin": "./bin/foo",
+        /// ```
+        file: ExternalString.Small,
+
+        // Single-entry map
+        ///```
+        /// "bin": {
+        ///     "babel": "./cli.js",
+        /// }
+        ///```
+        named_file: [2]ExternalString.Small,
+
+        /// "bin" is a directory
+        ///```
+        /// "dirs": {
+        ///     "bin": "./bin",
+        /// }
+        ///```
+        dir: ExternalString.Small,
+        // "bin" is a map
+        ///```
+        /// "bin": {
+        ///     "babel": "./cli.js",
+        ///     "babel-cli": "./cli.js",
+        /// }
+        ///```
+        map: ExternalStringList,
+    };
+
+    pub const Tag = enum(u8) {
+        /// no bin field
+        none = 0,
+        /// "bin" is a string
+        /// ```
+        /// "bin": "./bin/foo",
+        /// ```
+        file = 1,
+
+        // Single-entry map
+        ///```
+        /// "bin": {
+        ///     "babel": "./cli.js",
+        /// }
+        ///```
+        named_file = 2,
+        /// "bin" is a directory
+        ///```
+        /// "dirs": {
+        ///     "bin": "./bin",
+        /// }
+        ///```
+        dir = 3,
+        // "bin" is a map
+        ///```
+        /// "bin": {
+        ///     "babel": "./cli.js",
+        ///     "babel-cli": "./cli.js",
+        /// }
+        ///```
+        map = 4,
+    };
 };
 
 const Lockfile = struct {
 
     // Serialized data
-    version: Version = .v0,
-    entries: Entry.List = Entry.List{},
+    /// The version of the lockfile format, intended to prevent data corruption for format changes.
+    format: FormatVersion = .v0,
+
+    /// 
+    packages: Package.List = Package.List{},
     buffers: Buffers = Buffers{},
 
-    // Not serialized data
-    pub const Stateful = struct {
-        /// name -> PackageID || [*]PackageID
-        /// Not for iterating. Only for 
-        package_index: PackageIndex.Map,
-        
+    /// name -> PackageID || [*]PackageID
+    /// Not for iterating.
+    package_index: PackageIndex.Map,
+    duplicates: std.DynamicBitSetUnmanaged,
+    string_pool: std.HashMap(u64, ExternalString.Small, IdentityContext(u64), 80),
+    allocator: *std.mem.Allocator,
+    scratch: Scratch = Scratch{},
+
+    pub inline fn stringHash(str: []const u8) u64 {
+        var bin = Bin{};
+
+        return std.hash.Wyhash.hash(0, str);
+    }
+
+    pub inline fn stringBuilder(this: *Lockfile) Lockfile.StringBuilder {
+        return Lockfile.StringBuilder{
+            .lockfile = this,
+        };
+    }
+
+    pub const Scratch = struct {
+        const DuplicateCheckerMap = std.HashMap(PackageNameHash, logger.Loc, IdentityContext(PackageNameHash), 80);
+        duplicate_checker_map: DuplicateCheckerMap = undefined,
     };
 
-    const PackageNameHash = u64;
-    const PackageIndex = struct {
+    pub const StringBuilder = struct {
+        const Allocator = @import("std").mem.Allocator;
+        const assert = @import("std").debug.assert;
+        const copy = @import("std").mem.copy;
+
+        len: usize = 0,
+        cap: usize = 0,
+        off: usize = 0,
+        ptr: ?[*]u8 = null,
+        lockfile: *Lockfile = undefined,
+
+        pub inline fn count(this: *StringBuilder, slice: string) void {
+            return countWithHash(this, slice, stringHash(hash));
+        }
+
+        pub inline fn countWithHash(this: *StringBuilder, slice: string, hash: u64) void {
+            if (!this.lockfile.string_pool.contains(hash)) {
+                this.cap += slice.len;
+            }
+        }
+
+        pub fn allocate(this: *StringBuilder) !void {
+            try this.lockfile.buffers.string_bytes.ensureUnusedCapacity(this.lockfile.allocator, this.cap);
+            const prev_len = this.lockfile.buffers.string_bytes.items.len;
+            this.off = prev_len;
+            this.lockfile.buffers.string_bytes.items = this.lockfile.buffers.string_bytes.items.ptr[0 .. this.lockfile.buffers.string_bytes.items.len + this.cap];
+            this.ptr = this.lockfile.buffers.string_bytes.items.ptr[prev_len .. prev_len + this.cap].ptr;
+            this.len = 0;
+        }
+
+        pub fn append(this: *StringBuilder, comptime Type: type, slice: string) Type {
+            return @call(.{ .modifier = .always_inline }, appendWithHash, .{ this, Type, slice, stringHash(slice) });
+        }
+
+        pub fn appendWithoutPool(this: *StringBuilder, comptime Type: type, slice: string, hash: u64) Type {
+            assert(this.len <= this.cap); // didn't count everything
+            assert(this.ptr != null); // must call allocate first
+
+            copy(u8, this.ptr.?[this.len..this.cap], slice);
+            const final_slice = this.ptr.?[this.len..this.cap][0..slice.len];
+            this.len += slice.len;
+
+            assert(this.len <= this.cap);
+
+            switch (Type) {
+                SlicedString => {
+                    return SlicedString.init(this.lockfile.buffers.string_bytes.items, final_slice);
+                },
+                ExternalString.Small => {
+                    return ExternalString.Small.init(this.lockfile.buffer.string_bytes.items, final_slice);
+                },
+                ExternalString => {
+                    return ExternalString.init(this.lockfile.buffer.string_bytes.items, final_slice, hash);
+                },
+                else => @compileError("Invalid type passed to StringBuilder"),
+            }
+        }
+
+        pub fn appendWithHash(this: *StringBuilder, comptime Type: type, slice: string, hash: u64) Type {
+            assert(this.len <= this.cap); // didn't count everything
+            assert(this.ptr != null); // must call allocate first
+
+            var string_entry = this.lockfile.string_pool.getOrPut(hash) catch unreachable;
+            if (!string_entry.found_existing) {
+                copy(u8, this.ptr.?[this.len..this.cap], slice);
+                const final_slice = this.ptr.?[this.len..this.cap][0..slice.len];
+                this.len += slice.len;
+
+                string_entry.value_ptr.* = ExternalString.Small.init(this.lockfile.buffers.items, final_slice);
+            }
+
+            assert(this.len <= this.cap);
+
+            switch (Type) {
+                SlicedString => {
+                    return SlicedString.init(this.lockfile.buffers.string_bytes.items, string_entry.value_ptr.*.slice(this.lockfile.buffers.string_bytes.items));
+                },
+                ExternalString.Small => {
+                    return string_entry.value_ptr.*;
+                },
+                ExternalString => {
+                    return ExternalString{
+                        .off = string_entry.value_ptr.*.off,
+                        .len = string_entry.value_ptr.*.len,
+                        .hash = hash,
+                    };
+                },
+                else => @compileError("Invalid type passed to StringBuilder"),
+            }
+        }
+    };
+
+    pub const PackageIndex = struct {
         pub const Map = std.HashMap(PackageNameHash, PackageIndex.Entry);
         pub const Entry = extern union {
             single: PackageID,
-            multi: [*:invalid_package_id]PackageID,
+            multi: PackageIDMultiple,
 
-            pub const Tag = enum { single, multiple };
+            const TagItem = packed struct {
+                reserved_pointer_bits: u60,
+                top: Tag,
+            };
+
+            pub const Tag = enum(u4) { single, multiple };
+            pub const PackageIDMultiple = [*:invalid_package_id]PackageID;
+
             pub inline fn tag(this: PackageIndex.Entry) Tag {
-                const TagItem = packed struct {
-                    reserved_pointer_bits: u60,
-                    top: u4,
-                };
                 const item = @bitCast(TagItem, this);
                 return if (item.top == 0) .single else .multiple;
+            }
+
+            pub fn init(comptime Type: type, value: Type) PackageIndex.Entry {
+                switch (comptime Type) {
+                    PackageID => {
+                        const item = TagItem{
+                            .reserved_pointer_bits = value,
+                            .top = Tag.single,
+                        };
+                        return @bitCast(PackageIndex.Entry, item);
+                    },
+                    PackageIDMultiple => {
+                        const item = TagItem{
+                            // Only the top 52 bits of a pointer are used
+                            .reserved_pointer_bits = @truncate(u60, @ptrToInt(value)),
+
+                            .top = Tag.multiple,
+                        };
+                        return @bitCast(PackageIndex.Entry, item);
+                    },
+                    else => @compileError("Unexpected type " ++ @typeName(Type)),
+                }
             }
         };
     };
 
-    pub const Version = enum(u32) {
+    pub const FormatVersion = enum(u32) {
         v0,
         _,
     };
@@ -314,38 +622,490 @@ const Lockfile = struct {
     const PackageIDList = std.ArrayListUnmanaged(PackageID);
     const DependencyList = std.ArrayListUnmanaged(Dependency);
     const StringBuffer = std.ArrayListUnmanaged(u8);
-    const PackageBuffer = std.ArrayListUnmanaged(Entry);
+    const SmallExternalStringBuffer = std.ArrayListUnmanaged(ExternalString.Small);
 
-    const Entry = struct {
-        sorted_id: PackageID,
-        name: ExternalString,
-        name_hash: u32,
-        version: Semver.Version,
-        package: Package,
-        dependencies: DependencySlice,
-        resolutions: PackageIDSlice,
+    pub const Package = struct {
+        name: ExternalString.Small = ExternalString.Small{},
+        name_hash: PackageNameHash = 0,
+        version: Semver.Version = Semver.Version{},
+        dependencies: DependencySlice = DependencySlice{},
+        resolutions: PackageIDSlice = PackageIDSlice{},
+        meta: Meta = Meta{},
 
-        pub const List = std.MultiArrayList(Entry);
+        const Version = Dependency.Version;
+        const DependencyGroup = struct {
+            prop: string,
+            field: string,
+            behavior: Behavior,
+
+            pub const dependencies = DependencyGroup{ .prop = "dependencies", .field = "dependencies", .behavior = Behavior.normal };
+            pub const dev = DependencyGroup{ .prop = "devDependencies", .field = "dev_dependencies", .behavior = Behavior.dev };
+            pub const optional = DependencyGroup{ .prop = "optionalDependencies", .field = "optional_dependencies", .behavior = Behavior.optional };
+            pub const peer = DependencyGroup{ .prop = "peerDependencies", .field = "peer_dependencies", .behavior = Behavior.peer };
+        };
+
+        pub fn isDisabled(this: *const Package) bool {
+            return !this.meta.arch.isMatch() or !this.meta.os.isMatch();
+        }
+
+        pub fn fromNPM(
+            allocator: *std.mem.Allocator,
+            lockfile: *Lockfile,
+            log: *logger.Log,
+            manifest: *const Npm.PackageManifest,
+            version: Semver.Version,
+            package_version_ptr: *align(1) const Npm.PackageVersion,
+            string_buf: []const u8,
+            comptime features: Features,
+        ) Package {
+            var npm_count: u32 = 0;
+            var package = Package{};
+
+            const package_version = package_version_ptr.*;
+
+            const dependency_groups = comptime brk: {
+                var out_groups = [_]DependencyGroup{};
+
+                if (features.dependencies) {
+                    out_groups = out_groups ++ DependencyGroup.dependencies;
+                }
+
+                // if (features.dev_dependencies) {
+                //     out_groups = out_groups ++ DependencyGroup.dev;
+                // }
+
+                if (features.optional_dependencies) {
+                    out_groups = out_groups ++ DependencyGroup.optional;
+                }
+
+                if (features.peer_dependencies) {
+                    out_groups = out_groups ++ DependencyGroup.peer;
+                }
+
+                break :brk out_groups;
+            };
+
+            var string_builder = lockfile.stringBuilder();
+            var total_dependencies_count: u32 = 0;
+
+            // --- Counting
+            {
+                string_builder.count(manifest.name);
+                version.count(@TypeOf(&string_builder), &string_builder);
+
+                string_builder.cap += package_version.integrity.len;
+                string_builder.cap += package_version.shasum.len;
+
+                inline for (dependency_groups) |group| {
+                    const map: ExternalStringMap = @field(manifest, group.field);
+                    const keys = map.name.get(manifest.external_strings);
+                    const version_strings = map.value.get(manifest.external_strings);
+                    total_dependencies_count += map.value.len;
+
+                    if (comptime Environment.isDebug) std.debug.assert(keys.len == version_strings.len);
+
+                    for (keys) |key, i| {
+                        string_builder.count(key.slice(string_buf));
+                        string_builder.count(version_strings[i].slice(string_buf));
+                    }
+                }
+            }
+
+            try string_builder.allocate(allocator);
+            try lockfile.buffers.dependencies.ensureUnusedCapacity(lockfile.allocator, total_dependencies_count);
+            try lockfile.buffers.resolutions.ensureUnusedCapacity(lockfile.allocator, total_dependencies_count);
+
+            // -- Cloning
+            {
+                const package_name: ExternalString = string_builder.appendWithHash(ExternalString, manifest.name, manifest.pkg.name.hash);
+                package.name_hash = package_name.hash;
+                package.name = package_name.small();
+                package.version = version.clone(@TypeOf(&string_builder), &string_builder);
+
+                const total_len = lockfile.entries.dependencies.items.len + total_dependencies_count;
+                std.debug.assert(lockfile.buffers.dependencies.items.len == lockfile.buffers.resolutions.items.len);
+
+                var dependencies = lockfile.buffers.dependencies.items.ptr[lockfile.entries.dependencies.items.len..total_len];
+
+                const off = @truncate(u32, lockfile.entries.dependencies.items.len);
+
+                inline for (dependency_groups) |group| {
+                    const map: ExternalStringMap = @field(manifest, group.field);
+                    const keys = map.name.get(manifest.external_strings);
+                    const version_strings = map.value.get(manifest.external_strings);
+
+                    if (comptime Environment.isDebug) std.debug.assert(keys.len == version_strings.len);
+
+                    for (keys) |key, i| {
+                        const version_string_ = version_strings[i];
+                        const name: ExternalString = string_builder.appendWithHash(ExternalString, key.slice(string_buf), key.hash);
+                        const dep_version = string_builder.appendWithHash(ExternalString.Small, version_string_.slice(string_buf), version_string_.hash);
+                        const literal = dep_version.slice(lockfile.buffers.string_bytes.items);
+                        const dependency = Dependency{
+                            .name = name.small(),
+                            .name_hash = name.hash,
+                            .behavior = group.behavior,
+                        };
+                        const dependency_version = Dependency.parse(
+                            allocator,
+                            literal,
+
+                            SlicedString.init(
+                                lockfile.buffers.string_bytes.items,
+                                literal,
+                            ),
+                            log,
+                        ) orelse Dependency.Version{};
+
+                        package.meta.npm_dependency_count += @as(u32, @boolToInt(dependency.version.tag.isNPM()));
+
+                        dependencies[0] = dependency;
+                        dependencies = dependencies[1..];
+                    }
+                }
+
+                package.meta.arch = package_version.arch;
+                package.meta.os = package_version.os;
+                package.meta.unpacked_size = package_version.unpacked_size;
+                package.meta.file_count = package_version.file_count;
+
+                package.meta.integrity = string_builder.appendWithoutPool(
+                    ExternalString.Small,
+                    package_version.integrity.slice(string_buf),
+                    0,
+                );
+                package.meta.shasum = string_builder.appendWithoutPool(
+                    ExternalString.Small,
+                    package_version.shasum.slice(string_buf),
+                    0,
+                );
+
+                package.dependencies.off = @truncate(u32, lockfile.buffers.dependencies.items.len);
+                package.resolutions.off = @truncate(u32, lockfile.buffers.resolutions.items.len);
+
+                package.dependencies.len = total_dependencies_count - @truncate(u32, dependencies.len);
+                package.resolutions.len = package.dependencies.len;
+
+                lockfile.buffers.dependencies.items = lockfile.buffers.dependencies.items.ptr[0 .. package.dependencies.off + package.dependencies.len];
+                lockfile.buffers.resolutions.items = lockfile.buffers.resolutions.items.ptr[0 .. package.dependencies.off + package.dependencies.len];
+
+                return package;
+            }
+        }
+
+        pub fn determinePreinstallState(this: *Package, lockfile: *Lockfile, manager: *PackageManager) PreinstallState {
+            switch (this.meta.preinstall_state) {
+                .unknown => {
+                    const folder_path = PackageManager.cachedNPMPackageFolderName(this.name.slice(lockfile.buffers.string_bytes.items), this.version);
+                    if (manager.isFolderInCache(folder_path)) {
+                        this.meta.preinstall_state = .done;
+                        return this.meta.preinstall_state;
+                    }
+
+                    this.meta.preinstall_state = .extract;
+                    return this.meta.preinstall_state;
+                },
+                else => return this.meta.preinstall_state,
+            }
+        }
+
+        pub fn hash(name: string, version: Semver.Version) u64 {
+            var hasher = std.hash.Wyhash.init(0);
+            hasher.update(name);
+            hasher.update(std.mem.asBytes(&version));
+            return hasher.final();
+        }
+
+        pub fn parse(
+            lockfile: *Lockfile,
+            package: *Package,
+            allocator: *std.mem.Allocator,
+            log: *logger.Log,
+            source: logger.Source,
+            comptime features: Features,
+        ) !void {
+            initializeStore();
+
+            var json = json_parser.ParseJSON(&source, log, allocator) catch |err| {
+                if (Output.enable_ansi_colors) {
+                    log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                } else {
+                    log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                }
+
+                Output.panic("<r><red>{s}<r> parsing package.json for <b>\"{s}\"<r>", .{ @errorName(err), source.path.prettyDir() });
+            };
+
+            var string_builder = lockfile.stringBuilder();
+            var total_dependencies_count: u32 = 0;
+
+            package.meta.origin = if (features.is_main) .local else .npm;
+
+            // -- Count the sizes
+            if (json.asProperty("name")) |name_q| {
+                if (name_q.expr.asString(allocator)) |name| {
+                    string_builder.count(name);
+                }
+            }
+
+            if (comptime !features.is_main) {
+                if (json.asProperty("version")) |version_q| {
+                    if (version_q.expr.asString(allocator)) |version_str| {
+                        string_builder.count(version_str);
+                    }
+                }
+            }
+
+            const dependency_groups = comptime brk: {
+                var out_groups = [_]DependencyGroup{};
+
+                if (features.dependencies) {
+                    out_groups = out_groups ++ DependencyGroup.dependencies;
+                }
+
+                if (features.dev_dependencies) {
+                    out_groups = out_groups ++ DependencyGroup.dev;
+                }
+
+                if (features.optional_dependencies) {
+                    out_groups = out_groups ++ DependencyGroup.optional;
+                }
+
+                if (features.peer_dependencies) {
+                    out_groups = out_groups ++ DependencyGroup.peer;
+                }
+
+                break :brk out_groups;
+            };
+
+            inline for (dependency_groups) |group| {
+                if (json.asProperty(group.prop)) |dependencies_q| {
+                    if (dependencies_q.expr.data == .e_object) {
+                        for (dependencies_q.expr.data.e_object.properties) |item| {
+                            string_builder.count(item.key.?.asString(allocator) orelse "");
+                            string_builder.count(item.value.?.asString(allocator) orelse "");
+                        }
+                        total_dependencies_count += @truncate(u32, dependencies_q.expr.data.e_object.properties.len);
+                    }
+                }
+            }
+
+            try string_builder.allocate(allocator);
+            try lockfile.buffers.dependencies.ensureUnusedCapacity(lockfile.allocator, total_dependencies_count);
+            try lockfile.buffers.resolutions.ensureUnusedCapacity(lockfile.allocator, total_dependencies_count);
+
+            const total_len = lockfile.entries.dependencies.items.len + total_dependencies_count;
+            std.debug.assert(lockfile.buffers.dependencies.items.len == lockfile.buffers.resolutions.items.len);
+            const off = lockfile.entries.dependencies.items.len;
+
+            var dependencies = lockfile.buffers.dependencies.items.ptr[off..total_len];
+
+            if (json.asProperty("name")) |name_q| {
+                if (name_q.expr.asString(allocator)) |name| {
+                    const external_string = string_builder.append(ExternalString, name);
+                    package.name = ExternalString.Small{ .off = external_string.off, .len = external_string.len };
+                    package.name_hash = external_string.hash;
+                }
+            }
+
+            if (comptime !features.is_main) {
+                if (json.asProperty("version")) |version_q| {
+                    if (version_q.expr.asString(allocator)) |version_str_| {
+                        const version_str: SlicedString = string_builder.append(SlicedString, version_str_);
+                        const semver_version = Semver.Version.parse(version_str, allocator);
+
+                        if (semver_version.valid) {
+                            package.version = semver_version.version;
+                        } else {
+                            log.addErrorFmt(null, logger.Loc.Empty, allocator, "invalid version \"{s}\"", .{version_str}) catch unreachable;
+                        }
+                    }
+                }
+            }
+
+            if (comptime features.check_for_duplicate_dependencies) {
+                lockfile.scratch.duplicate_checker_map.clearRetainingCapacity();
+                try lockfile.scratch.duplicate_checker_map.ensureTotalCapacity(total_dependencies_count);
+            }
+
+            inline for (dependency_groups) |group| {
+                if (json.asProperty(group.prop)) |dependencies_q| {
+                    if (dependencies_q.expr.data == .e_object) {
+                        for (dependencies_q.expr.data.e_object.properties) |item| {
+                            const name_ = item.key.?.asString(allocator) orelse "";
+                            const version_ = item.value.?.asString(allocator) orelse "";
+
+                            const external_name = string_builder.append(ExternalString, name);
+
+                            if (comptime features.check_for_duplicate_dependencies) {
+                                var entry = lockfile.scratch.duplicate_checker_map.getOrPutAssumeCapacity(external_name.hash);
+                                if (entry.found_existing) {
+                                    var notes = try allocator.alloc(logger.Data, 1);
+                                    notes[0] = logger.Data{
+                                        .text = try std.fmt.allocPrint(p.allocator, "\"{s}\" was originally specified here", .{name_}),
+                                        .location = logger.Location.init_or_nil(&source, JSLexer.rangeOfString(&source, entry.value_ptr.*)),
+                                    };
+
+                                    try log.addRangeErrorFmtWithNotes(
+                                        &source,
+                                        JSLexer.rangeOfString(&source, item.key.?.loc),
+                                        lockfile.allocator,
+                                        notes,
+                                        "Duplicate dependency: \"{s}\"",
+                                        .{name_},
+                                    );
+                                }
+
+                                entry.value_ptr.* = dependencies_q.loc;
+                            }
+
+                            const external_version = string_builder.append(ExternalString.Small, version_);
+
+                            const name = external_name.slice(lockfile.buffers.string_bytes.items);
+                            const version = external_version.slice(lockfile.buffers.string_bytes.items);
+                            const dependency_version = Dependency.parse(
+                                allocator,
+                                version,
+
+                                SlicedString.init(
+                                    lockfile.buffers.string_bytes.items,
+                                    version,
+                                ),
+                                log,
+                            ) orelse Dependency.Version{};
+                            dependencies[0] = Dependency{
+                                .behavior = group.behavior,
+                                .name = ExternalString.Small{ .off = external_name.off, .len = external_name.len },
+                                .name_hash = external_name.hash,
+                                .version = dependency_version,
+                            };
+                            package.meta.npm_dependency_count += @as(u32, @boolToInt(dependency_version.tag.isNPM()));
+                            dependencies = dependencies[1..];
+                        }
+                    }
+                }
+            }
+
+            total_dependencies_count -= @truncate(u32, dependencies.len);
+            package.dependencies.off = @truncate(u32, off);
+            package.dependencies.len = @truncate(u32, total_dependencies_count);
+
+            package.resolutions.off = package.dependencies.off;
+            package.resolutions.len = package.dependencies.len;
+
+            std.mem.set(PackageID, lockfile.buffers.resolutions.items[off..total_len], invalid_package_id);
+            lockfile.buffers.dependencies.items = lockfile.buffers.dependencies.items.ptr[0 .. lockfile.buffers.dependencies.item.len + dependencies.len];
+            lockfile.buffers.resolutions.items = lockfile.buffers.resolutions.items.ptr[0 .. lockfile.buffers.resolutions.items.len + dependencies.len];
+        }
+
+        pub const List = std.MultiArrayList(Package);
+
+        pub const Meta = extern struct {
+            origin: Origin = Origin.npm,
+            arch: Npm.Architecture = Npm.Architecture.all,
+            os: Npm.OperatingSystem = Npm.OperatingSystem.all,
+
+            // This technically shouldn't be stored.
+            preinstall_state: PreinstallState = PreinstallState.unknown,
+
+            file_count: u32 = 0,
+            npm_dependency_count: u32 = 0,
+            id: PackageID,
+
+            bin: Bin = Bin{},
+            man_dir: ExternalString.Small = ExternalString.Small{},
+            integrity: ExternalString.Small = ExternalString.Small{},
+            shasum: ExternalString.Small = ExternalString.Small{},
+            unpacked_size: u64 = 0,
+        };
     };
 
     const Buffers = struct {
         sorted_ids: PackageIDList = PackageIDList{},
-        packages: PackageBuffer = PackageBuffer{},
         resolutions: PackageIDList = PackageIDList{},
         dependencies: DependencyList = DependencyList{},
+        extern_strings: SmallExternalStringBuffer = SmallExternalStringBuffer{},
         string_bytes: StringBuffer = StringBuffer{},
     };
 };
 
 pub const Dependency = struct {
-    name: string,
-    name_hash: u32,
-    version: Dependency.Version,
+    name_hash: PackageNameHash = 0,
+    name: ExternalString.Small = ExternalString.Small{},
+    version: Dependency.Version = Dependency.Version{},
 
-    required: bool = true,
+    /// This is how the dependency is specified in the package.json file.
+    /// This allows us to track whether a package originated in any permutation of:
+    /// - `dependencies`
+    /// - `devDependencies`
+    /// - `optionalDependencies`
+    /// - `peerDependencies`
+    /// Technically, having the same package name specified under multiple fields is invalid
+    /// But we don't want to allocate extra arrays for them. So we use a bitfield instead.
+    behavior: Behavior = Behavior.uninitialized,
 
-    pub const Version = union(Tag) {
+    pub const External = extern struct {
+        name: ExternalString.Small = ExternalString.Small{},
+        name_hash: PackageNameHash = 0,
+        behavior: Behavior = Behavior.uninitialized,
+        version: Dependency.Version.External,
+    };
+
+    pub fn toExternal(this: Dependency) External {
+        return External{
+            .name = this.name,
+            .name_hash = this.name_hash,
+            .behavior = this.behavior,
+            .version = this.version.toExternal(),
+        };
+    }
+
+    pub const Behavior = enum(u8) {
+        uninitialized = 0,
+        _,
+
+        pub const normal: u8 = 1 << 1;
+        pub const optional: u8 = 1 << 2;
+        pub const dev: u8 = 1 << 3;
+        pub const peer: u8 = 1 << 4;
+
+        pub inline fn isOptional(this: Behavior) bool {
+            return (@enumToInt(this) & Dependency.Behavior.optional) != 0;
+        }
+
+        pub inline fn isDev(this: Behavior) bool {
+            return (@enumToInt(this) & Dependency.Behavior.dev) != 0;
+        }
+
+        pub inline fn isPeer(this: Behavior) bool {
+            return (@enumToInt(this) & Dependency.Behavior.peer) != 0;
+        }
+
+        pub inline fn isRequired(this: Behavior) bool {
+            return !isOptional(this);
+        }
+    };
+
+    pub const Version = struct {
+        tag: Dependency.Version.Tag = Dependency.Version.Tag.uninitialized,
+        literal: ExternalString.Small = ExternalString.Small{},
+        value: Value = Value{ .uninitialized = void{} },
+
+        pub const External = extern struct {
+            tag: Dependency.Version.Tag,
+            literal: ExternalString.Small,
+        };
+
+        pub inline fn toExternal(this: Version) Version.External {
+            return Version.External{
+                .tag = this.tag,
+                .literal = this.literal,
+            };
+        }
+
         pub const Tag = enum(u8) {
+            uninitialized = 0,
+
             /// Semver range
             npm = 1,
 
@@ -367,11 +1127,11 @@ pub const Dependency = struct {
             /// TODO:
             github = 8,
 
-            pub fn isNPM(this: Tag) bool {
+            pub inline fn isNPM(this: Tag) bool {
                 return @enumToInt(this) < 3;
             }
 
-            pub fn isGitHubRepoPath(dependency: string) bool {
+            pub inline fn isGitHubRepoPath(dependency: string) bool {
                 var slash_count: u8 = 0;
 
                 for (dependency) |c| {
@@ -390,7 +1150,7 @@ pub const Dependency = struct {
 
             // this won't work for query string params
             // i'll let someone file an issue before I add that
-            pub fn isTarball(dependency: string) bool {
+            pub inline fn isTarball(dependency: string) bool {
                 return strings.endsWithComptime(dependency, ".tgz") or strings.endsWithComptime(dependency, ".tar.gz");
             }
 
@@ -547,19 +1307,23 @@ pub const Dependency = struct {
             }
         };
 
-        npm: Semver.Query.Group,
-        dist_tag: string,
-        tarball: URI,
-        folder: string,
+        pub const Value = union {
+            unininitialized: void,
 
-        /// Unsupported, but still parsed so an error can be thrown
-        symlink: void,
-        /// Unsupported, but still parsed so an error can be thrown
-        workspace: void,
-        /// Unsupported, but still parsed so an error can be thrown
-        git: void,
-        /// Unsupported, but still parsed so an error can be thrown
-        github: void,
+            npm: Semver.Query.Group,
+            dist_tag: ExternalString.Small,
+            tarball: URI,
+            folder: ExternalString.Small,
+
+            /// Unsupported, but still parsed so an error can be thrown
+            symlink: void,
+            /// Unsupported, but still parsed so an error can be thrown
+            workspace: void,
+            /// Unsupported, but still parsed so an error can be thrown
+            git: void,
+            /// Unsupported, but still parsed so an error can be thrown
+            github: void,
+        };
     };
 
     pub fn eql(a: Dependency, b: Dependency) bool {
@@ -569,8 +1333,6 @@ pub const Dependency = struct {
 
         return @as(Dependency.Version.Tag, a.version) == @as(Dependency.Version.Tag, b.version) and a.resolution == b.resolution;
     }
-
-    pub const List = std.ArrayHashMapUnmanaged(u32, Dependency, ArrayIdentityContext, false);
 
     pub fn parse(
         allocator: *std.mem.Allocator,
@@ -593,10 +1355,18 @@ pub const Dependency = struct {
                     return null;
                 };
 
-                return Version{ .npm = version };
+                return Version{
+                    .literal = sliced.small(),
+                    .value = .{ .npm = version },
+                    .tag = .npm,
+                };
             },
             .dist_tag => {
-                return Version{ .dist_tag = dependency };
+                return Version{
+                    .literal = sliced.small(),
+                    .value = .{ .dist_tag = dependency },
+                    .tag = .dist_tag,
+                };
             },
             .tarball => {
                 if (strings.contains(dependency, "://")) {
@@ -610,7 +1380,13 @@ pub const Dependency = struct {
                     }
                 }
 
-                return Version{ .tarball = URI{ .local = dependency } };
+                return Version{
+                    .literal = sliced.small(),
+                    .value = .{
+                        .tarball = URI{ .local = dependency },
+                    },
+                    .tag = .tarball,
+                };
             },
             .folder => {
                 if (strings.contains(dependency, "://")) {
@@ -622,7 +1398,11 @@ pub const Dependency = struct {
                     return null;
                 }
 
-                return Version{ .folder = dependency };
+                return Version{
+                    .value = .{ .folder = dependency },
+                    .tag = .folder,
+                    .literal = sliced.small(),
+                };
             },
             .symlink, .workspace, .git, .github => {
                 log.addErrorFmt(null, logger.Loc.Empty, allocator, "Unsupported dependency type {s} for \"{s}\"", .{ @tagName(tag), dependency }) catch unreachable;
@@ -632,361 +1412,7 @@ pub const Dependency = struct {
     }
 };
 
-pub const Package = struct {
-    id: PackageID,
-
-    name: string = "",
-    version: Semver.Version = Semver.Version{},
-    name_hash: u32 = 0,
-    dependencies: Dependency.List = Dependency.List{},
-    dev_dependencies: Dependency.List = Dependency.List{},
-    peer_dependencies: Dependency.List = Dependency.List{},
-    optional_dependencies: Dependency.List = Dependency.List{},
-
-    is_main: bool = false,
-
-    origin: Origin = Origin.npm,
-
-    npm_count: u32 = 0,
-
-    preinstall_state: PreinstallState = PreinstallState.unknown,
-    string_buf: []const u8,
-    cpu_matches: bool = true,
-    os_matches: bool = true,
-
-    const Version = Dependency.Version;
-
-    pub fn isDisabled(this: *const Package) bool {
-        return !this.cpu_matches or !this.os_matches;
-    }
-
-    pub fn fromNPM(
-        allocator: *std.mem.Allocator,
-        package_id: PackageID,
-        log: *logger.Log,
-        manifest: *const Npm.PackageManifest,
-        version: Semver.Version,
-        package_version: *align(1) const Npm.PackageVersion,
-        features: Features,
-        string_buf: []const u8,
-    ) Package {
-        var npm_count: u32 = 0;
-
-        const dependencies = Package.createDependencyList(
-            allocator,
-            package_id,
-            log,
-            &npm_count,
-            package_version.dependencies.name.get(manifest.external_strings),
-            package_version.dependencies.value.get(manifest.external_strings),
-            manifest.string_buf,
-            true,
-        ) orelse Dependency.List{};
-
-        const optional_dependencies = if (features.optional_dependencies)
-            Package.createDependencyList(
-                allocator,
-                package_id,
-                log,
-                &npm_count,
-                package_version.optional_dependencies.name.get(manifest.external_strings),
-                package_version.optional_dependencies.value.get(manifest.external_strings),
-                manifest.string_buf,
-                false,
-            ) orelse Dependency.List{}
-        else
-            Dependency.List{};
-
-        const peer_dependencies = if (features.peer_dependencies)
-            Package.createDependencyList(
-                allocator,
-                package_id,
-                log,
-                &npm_count,
-                package_version.peer_dependencies.name.get(manifest.external_strings),
-                package_version.peer_dependencies.value.get(manifest.external_strings),
-                manifest.string_buf,
-                true,
-            ) orelse Dependency.List{}
-        else
-            Dependency.List{};
-
-        return Package{
-            .id = package_id,
-            .string_buf = string_buf,
-            .name = manifest.name,
-            .version = version,
-            .dependencies = dependencies,
-            .optional_dependencies = optional_dependencies,
-            .peer_dependencies = peer_dependencies,
-            .cpu_matches = package_version.cpu_matches,
-            .os_matches = package_version.os_matches,
-        };
-    }
-
-    fn createDependencyList(
-        allocator: *std.mem.Allocator,
-        package_id: PackageID,
-        log: *logger.Log,
-        npm_count_: *u32,
-        names: []align(1) const ExternalString,
-        values: []align(1) const ExternalString,
-        string_buf: []const u8,
-        required: bool,
-    ) ?Dependency.List {
-        if (names.len == 0 or names.len != values.len) return null;
-
-        var dependencies = Dependency.List{};
-        dependencies.ensureTotalCapacity(allocator, names.len) catch @panic("OOM while parsing dependencies?");
-
-        var npm_count = npm_count_.*;
-        defer npm_count_.* = npm_count;
-        for (names) |name_, i| {
-            const name = name_.slice(string_buf);
-            const value = values[i].slice(string_buf);
-            const version = Dependency.parse(
-                allocator,
-                value,
-                SlicedString.init(value, value),
-                log,
-            ) orelse continue;
-
-            const name_hash = @truncate(u32, std.hash.Wyhash.hash(0, name));
-            const dependency = Dependency{
-                .name = name,
-                .name_hash = name_hash,
-                .version = version,
-                .from = package_id,
-                .required = required,
-            };
-            var entry = dependencies.getOrPutAssumeCapacityContext(name_hash, ArrayIdentityContext{});
-
-            entry.value_ptr.* = dependency;
-            npm_count += @as(u32, @boolToInt(@enumToInt(dependency.version) > @enumToInt(Version.Tag.npm))) * @as(u32, @boolToInt(!entry.found_existing));
-        }
-        return dependencies;
-    }
-
-    pub const Origin = enum {
-        local,
-        npm,
-        tarball,
-    };
-
-    pub const Features = struct {
-        optional_dependencies: bool = false,
-        dev_dependencies: bool = false,
-        scripts: bool = false,
-        peer_dependencies: bool = true,
-        is_main: bool = false,
-    };
-
-    pub const PreinstallState = enum {
-        unknown,
-        done,
-        extract,
-        extracting,
-    };
-
-    pub fn determinePreinstallState(this: *Package, manager: *PackageManager) PreinstallState {
-        switch (this.preinstall_state) {
-            .unknown => {
-                const folder_path = PackageManager.cachedNPMPackageFolderName(this.name, this.version);
-                if (manager.isFolderInCache(folder_path)) {
-                    this.preinstall_state = .done;
-                    return this.preinstall_state;
-                }
-
-                this.preinstall_state = .extract;
-                return this.preinstall_state;
-            },
-            else => return this.preinstall_state,
-        }
-    }
-
-    pub fn hash(name: string, version: Semver.Version) u64 {
-        var hasher = std.hash.Wyhash.init(0);
-        hasher.update(name);
-        hasher.update(std.mem.asBytes(&version));
-        return hasher.final();
-    }
-
-    fn parseDependencyList(
-        allocator: *std.mem.Allocator,
-        string_builder: *StringBuilder,
-        package_id: PackageID,
-        log: *logger.Log,
-        npm_count_: *u32,
-        expr: JSAst.Expr,
-        required: bool,
-    ) ?Dependency.List {
-        if (expr.data != .e_object) return null;
-
-        const properties = expr.data.e_object.properties;
-        if (properties.len == 0) return null;
-
-        var dependencies = Dependency.List{};
-        dependencies.ensureTotalCapacity(allocator, properties.len) catch @panic("OOM while parsing dependencies?");
-
-        var npm_count = npm_count_.*;
-        defer npm_count_.* = npm_count;
-        for (properties) |prop| {
-            const name = string_builder.append(prop.key.?.asString(allocator) orelse continue);
-            const value = string_builder.append(prop.value.?.asString(allocator) orelse continue);
-            const version = Dependency.parse(
-                allocator,
-                value,
-                SlicedString.init(string_builder.ptr.?[0..string_builder.cap], value),
-                log,
-            ) orelse continue;
-
-            const name_hash = @truncate(u32, std.hash.Wyhash.hash(0, name));
-            const dependency = Dependency{
-                .name = name,
-                .name_hash = name_hash,
-                .version = version,
-                .from = package_id,
-                .required = required,
-            };
-            var entry = dependencies.getOrPutAssumeCapacityContext(name_hash, ArrayIdentityContext{});
-
-            entry.value_ptr.* = dependency;
-            npm_count += @as(u32, @boolToInt(@enumToInt(dependency.version) > @enumToInt(Version.Tag.npm))) * @as(u32, @boolToInt(!entry.found_existing));
-        }
-        return dependencies;
-    }
-
-    pub fn parse(
-        package_id: PackageID,
-        allocator: *std.mem.Allocator,
-        log: *logger.Log,
-        source: logger.Source,
-        comptime features: Features,
-    ) !Package {
-        initializeStore();
-
-        var json = json_parser.ParseJSON(&source, log, allocator) catch |err| {
-            if (Output.enable_ansi_colors) {
-                log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-            }
-
-            Output.panic("<r><red>{s}<r> parsing package.json for <b>\"{s}\"<r>", .{ @errorName(err), source.path.prettyDir() });
-        };
-
-        var string_builder: StringBuilder = StringBuilder{};
-
-        var package = Package{
-            .id = package_id,
-            .origin = if (features.is_main) .local else .npm,
-            .string_buf = "",
-        };
-
-        // -- Count the sizes
-        if (json.asProperty("name")) |name_q| {
-            if (name_q.expr.asString(allocator)) |name| {
-                string_builder.count(name);
-            }
-        }
-
-        if (comptime !features.is_main) {
-            if (json.asProperty("version")) |version_q| {
-                if (version_q.expr.asString(allocator)) |version_str| {
-                    string_builder.count(version_str);
-                }
-            }
-        }
-
-        if (json.asProperty("dependencies")) |dependencies_q| {
-            if (dependencies_q.expr.data == .e_object) {
-                for (dependencies_q.expr.data.e_object.properties) |item| {
-                    string_builder.count(item.key.?.asString(allocator) orelse "");
-                    string_builder.count(item.value.?.asString(allocator) orelse "");
-                }
-            }
-        }
-
-        if (comptime features.dev_dependencies) {
-            if (json.asProperty("devDependencies")) |dependencies_q| {
-                if (dependencies_q.expr.data == .e_object) {
-                    for (dependencies_q.expr.data.e_object.properties) |item| {
-                        string_builder.count(item.key.?.asString(allocator) orelse "");
-                        string_builder.count(item.value.?.asString(allocator) orelse "");
-                    }
-                }
-            }
-        }
-
-        if (comptime features.optional_dependencies) {
-            if (json.asProperty("optionalDependencies")) |dependencies_q| {
-                if (dependencies_q.expr.data == .e_object) {
-                    for (dependencies_q.expr.data.e_object.properties) |item| {
-                        string_builder.count(item.key.?.asString(allocator) orelse "");
-                        string_builder.count(item.value.?.asString(allocator) orelse "");
-                    }
-                }
-            }
-        }
-
-        if (comptime features.peer_dependencies) {
-            if (json.asProperty("peerDependencies")) |dependencies_q| {
-                if (dependencies_q.expr.data == .e_object) {
-                    for (dependencies_q.expr.data.e_object.properties) |item| {
-                        string_builder.count(item.key.?.asString(allocator) orelse "");
-                        string_builder.count(item.value.?.asString(allocator) orelse "");
-                    }
-                }
-            }
-        }
-
-        try string_builder.allocate(allocator);
-
-        if (comptime !features.is_main) {
-            if (json.asProperty("version")) |version_q| {
-                if (version_q.expr.asString(allocator)) |version_str_| {
-                    const version_str = string_builder.append(version_str_);
-                    const semver_version = Semver.Version.parse(version_str, allocator);
-
-                    if (semver_version.valid) {
-                        package.version = semver_version.version;
-                    } else {
-                        log.addErrorFmt(null, logger.Loc.Empty, allocator, "invalid version \"{s}\"", .{version_str}) catch unreachable;
-                    }
-                }
-            }
-        }
-
-        if (json.asProperty("dependencies")) |dependencies_q| {
-            package.dependencies = parseDependencyList(allocator, &string_builder, package_id, log, &package.npm_count, dependencies_q.expr, true) orelse Dependency.List{};
-        }
-
-        if (comptime features.dev_dependencies) {
-            if (json.asProperty("devDependencies")) |dependencies_q| {
-                package.dev_dependencies = parseDependencyList(allocator, &string_builder, package_id, log, &package.npm_count, dependencies_q.expr, true) orelse Dependency.List{};
-            }
-        }
-
-        if (comptime features.optional_dependencies) {
-            if (json.asProperty("optionalDependencies")) |dependencies_q| {
-                package.optional_dependencies = parseDependencyList(allocator, &string_builder, package_id, log, &package.npm_count, dependencies_q.expr, false) orelse Dependency.List{};
-            }
-        }
-
-        if (comptime features.peer_dependencies) {
-            if (json.asProperty("peerDependencies")) |dependencies_q| {
-                package.peer_dependencies = parseDependencyList(allocator, &string_builder, package_id, log, &package.npm_count, dependencies_q.expr, true) orelse Dependency.List{};
-            }
-        }
-
-        if (comptime !features.is_main) {}
-        if (string_builder.ptr) |ptr| {
-            package.string_buf = ptr[0..string_builder.len];
-        }
-
-        return package;
-    }
-};
+const SmallExternalStringList = ExternalSlice(ExternalString.Small);
 
 fn ObjectPool(comptime Type: type, comptime Init: (fn (allocator: *std.mem.Allocator) anyerror!Type), comptime threadsafe: bool) type {
     return struct {
@@ -1140,54 +1566,167 @@ const Npm = struct {
         }
     };
 
-    /// https://nodejs.org/api/os.html#oscpu
-    pub const OperatingSystem = enum(u8) {
-        aix,
-        darwin,
-        freebsd,
-        linux,
-        openbsd,
-        sunos,
-        win32,
-        android,
+    /// https://nodejs.org/api/os.html#osplatform
+    pub const OperatingSystem = enum(u16) {
+        none = 0,
+        all = all_value,
+
         _,
+
+        pub const aix: u16 = 1 << 1;
+        pub const darwin: u16 = 1 << 2;
+        pub const freebsd: u16 = 1 << 3;
+        pub const linux: u16 = 1 << 4;
+        pub const openbsd: u16 = 1 << 5;
+        pub const sunos: u16 = 1 << 6;
+        pub const win32: u16 = 1 << 7;
+        pub const android: u16 = 1 << 8;
+
+        pub const all_value: u16 = aix | darwin | freebsd | linux | openbsd | sunos | win32 | android;
+
+        pub fn isMatch(this: OperatingSystem) bool {
+            if (comptime Environment.isLinux) {
+                return (@enumToInt(this) & linux) != 0;
+            } else if (comptime Environment.isMac) {
+                return (@enumToInt(this) & darwin) != 0;
+            } else {
+                return false;
+            }
+        }
+
+        const Matcher = strings.ExactSizeMatcher(8);
+
+        pub fn apply(this_: OperatingSystem, str: []const u8) OperatingSystem {
+            if (str.len == 0) {
+                return this;
+            }
+            const this = @enumToInt(this_);
+
+            const is_not = str[0] == '!';
+            const offset: usize = if (str[0] == '!') 1 else 0;
+            const input = str[offset..];
+
+            const field: u16 = switch (Matcher.match(input)) {
+                Matcher.case("aix") => aix,
+                Matcher.case("darwin") => darwin,
+                Matcher.case("freebsd") => freebsd,
+                Matcher.case("linux") => linux,
+                Matcher.case("openbsd") => openbsd,
+                Matcher.case("sunos") => sunos,
+                Matcher.case("win32") => win32,
+                Matcher.case("android") => android,
+                else => return this_,
+            };
+
+            if (is_not) {
+                return @intToEnum(OperatingSystem, this & ~field);
+            } else {
+                return @intToEnum(OperatingSystem, this | field);
+            }
+        }
     };
 
+    /// https://docs.npmjs.com/cli/v8/configuring-npm/package-json#cpu
     /// https://nodejs.org/api/os.html#osarch
-    pub const Architecture = enum(u8) {
-        arm,
-        arm64,
-        ia32,
-        mips,
-        mipsel,
-        ppc,
-        ppc64,
-        s390,
-        s390x,
-        x32,
-        x64,
+    pub const Architecture = enum(u16) {
+        all = all_value,
         _,
+
+        pub const arm: u16 = 1 << 1;
+        pub const arm64: u16 = 1 << 2;
+        pub const ia32: u16 = 1 << 3;
+        pub const mips: u16 = 1 << 4;
+        pub const mipsel: u16 = 1 << 5;
+        pub const ppc: u16 = 1 << 6;
+        pub const ppc64: u16 = 1 << 7;
+        pub const s390: u16 = 1 << 8;
+        pub const s390x: u16 = 1 << 9;
+        pub const x32: u16 = 1 << 10;
+        pub const x64: u16 = 1 << 11;
+
+        pub const all_value: u16 = arm | arm64 | ia32 | mips | mipsel | ppc | ppc64 | s390 | s390x | x32 | x64;
+
+        pub fn isMatch(this: Architecture) bool {
+            if (comptime Environment.isAarch64) {
+                return (@enumToInt(this) & arm64) != 0;
+            } else if (comptime Environment.isX64) {
+                return (@enumToInt(this) & x64) != 0;
+            } else {
+                return false;
+            }
+        }
+
+        const Matcher = strings.ExactSizeMatcher(8);
+
+        pub fn apply(this_: Architecture, str: []const u8) Architecture {
+            if (str.len == 0) {
+                return this;
+            }
+            const this = @enumToInt(this_);
+
+            const is_not = str[0] == '!';
+            const offset: usize = if (str[0] == '!') 1 else 0;
+            const input = str[offset..];
+
+            const field: u16 = switch (Matcher.match(input)) {
+                Matcher.case("arm") => arm,
+                Matcher.case("arm64") => arm64,
+                Matcher.case("ia32") => ia32,
+                Matcher.case("mips") => mips,
+                Matcher.case("mipsel") => mipsel,
+                Matcher.case("ppc") => ppc,
+                Matcher.case("ppc64") => ppc64,
+                Matcher.case("s390") => s390,
+                Matcher.case("s390x") => s390x,
+                Matcher.case("x32") => x32,
+                Matcher.case("x64") => x64,
+                else => return this_,
+            };
+
+            if (is_not) {
+                return @intToEnum(Architecture, this & ~field);
+            } else {
+                return @intToEnum(Architecture, this | field);
+            }
+        }
     };
 
     // ~384 bytes each?
     pub const PackageVersion = extern struct {
-        // 32 bytes each
+        /// "dependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#dependencies)
         dependencies: ExternalStringMap = ExternalStringMap{},
-        optional_dependencies: ExternalStringMap = ExternalStringMap{},
-        peer_dependencies: ExternalStringMap = ExternalStringMap{},
-        bins: ExternalStringMap = ExternalStringMap{},
 
-        // 24 bytes each
-        integrity: ExternalString = ExternalString{},
-        shasum: ExternalString = ExternalString{},
-        bin_dir: ExternalString = ExternalString{},
+        /// `"optionalDependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#optionaldependencies)
+        optional_dependencies: ExternalStringMap = ExternalStringMap{},
+
+        /// `"peerDependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#peerdependencies)
+        peer_dependencies: ExternalStringMap = ExternalStringMap{},
+
+        /// `"devDependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#devdependencies)
+        /// We deliberately choose not to populate this field.
+        /// We keep it in the data layout so that if it turns out we do need it, we can add it without invalidating everyone's history.
+        dev_dependencies: ExternalStringMap = ExternalStringMap{},
+
+        /// `"engines"` field in package.json
+        /// not implemented yet, but exists so we can add it later if needed
+        engines: ExternalStringMap = ExternalStringMap{},
+
+        /// `"bin"` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
+        bin: Bin = Bin{},
+
+        /// `"integrity"` field || `"shasum"` field
+        /// https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#dist
+        integrity: Integrity = Integrity{},
+
         man_dir: ExternalString = ExternalString{},
 
         unpacked_size: u32 = 0,
         file_count: u32 = 0,
 
-        os_matches: bool = true,
-        cpu_matches: bool = true,
+        /// `"os"` field in package.json
+        os: OperatingSystem = OperatingSystem.all,
+        /// `"cpu"` field in package.json
+        arch: Architecture = Architecture.all,
     };
 
     const BigExternalString = Semver.BigExternalString;
@@ -1503,7 +2042,7 @@ const Npm = struct {
                 .name = "",
             };
 
-            var string_builder = StringBuilder{};
+            var string_builder = GlobalStringBuilder{};
 
             if (json.asProperty("name")) |name_q| {
                 const name = name_q.expr.asString(allocator) orelse return null;
@@ -1693,59 +2232,103 @@ const Npm = struct {
                         const os_prop = prop.value.?.asProperty("os");
 
                         if (cpu_prop) |cpu| {
-                            const CPU = comptime if (Environment.isAarch64) "arm64" else "x64";
-                            package_version.cpu_matches = false;
+                            package_version.arch = Architecture.all;
 
                             switch (cpu.expr.data) {
                                 .e_array => |arr| {
-                                    for (arr.items) |item| {
-                                        if (item.asString(allocator)) |cpu_str_| {
-                                            const not = cpu_str_.len > 1 and cpu_str_[0] == '!';
-                                            const cpu_str = std.mem.trimLeft(u8, cpu_str_, "!");
-                                            if (strings.eqlComptime(cpu_str, CPU)) {
-                                                package_version.cpu_matches = !not;
-                                                break;
-                                            } else if (not) {
-                                                package_version.cpu_matches = true;
+                                    if (arr.items.len > 0) {
+                                        package_version.arch = Architecture.none;
+                                        for (arr.items) |item| {
+                                            if (item.asString(allocator)) |cpu_str_| {
+                                                package_version.arch = package_version.arch.apply(cpu_str_);
                                             }
                                         }
                                     }
                                 },
                                 .e_string => |str| {
-                                    const cpu_str_ = str.utf8;
-                                    const not = cpu_str_.len > 1 and cpu_str_[0] == '!';
-                                    const cpu_str = std.mem.trimLeft(u8, cpu_str_, "!");
-
-                                    if (strings.eqlComptime(cpu_str, CPU)) {
-                                        package_version.cpu_matches = !not;
-                                    } else if (not) {
-                                        package_version.cpu_matches = true;
-                                    }
+                                    package_version.arch = Architecture.apply(Architecture.none, str.utf8);
                                 },
                                 else => {},
                             }
                         }
 
                         if (os_prop) |os| {
-                            // TODO: musl
-                            const OS = comptime if (Environment.isLinux) "linux" else "darwin";
-                            package_version.os_matches = false;
+                            package_version.arch = OperatingSystem.all;
 
                             switch (os.expr.data) {
                                 .e_array => |arr| {
-                                    for (arr.items) |item| {
-                                        if (item.asString(allocator)) |os_str| {
-                                            if (strings.eqlComptime(os_str, OS)) {
-                                                package_version.os_matches = true;
-                                                break;
+                                    if (arr.items.len > 0) {
+                                        package_version.os = OperatingSystem.none;
+                                        for (arr.items) |item| {
+                                            if (item.asString(allocator)) |cpu_str_| {
+                                                package_version.os = package_version.os.apply(cpu_str_);
                                             }
                                         }
                                     }
                                 },
                                 .e_string => |str| {
-                                    package_version.os_matches = strings.eql(str.utf8, OS);
+                                    package_version.os = OperatingSystem.apply(OperatingSystem.none, str.utf8);
                                 },
                                 else => {},
+                            }
+                        }
+
+                        bin: {
+                            if (prop.value.?.asProperty("bin")) |bin| {
+                                switch (bin.expr.data) {
+                                    .e_object => |obj| {
+                                        if (obj.properties.len > 0) {
+                                            const name = obj.properties[0].key.?.asString(allocator) orelse break :bin;
+                                            const value = obj.properties[0].value.?.asString(allocator) orelse break :bin;
+                                            // For now, we're only supporting the first bin
+                                            // We'll fix that later
+                                            package_version.bin = Bin{
+                                                .tag = Bin.Tag.named_file,
+                                                .value = .{
+                                                    .named_file = .{
+                                                        ExternalString.Small.init(string_buf, string_builder.append(name)),
+                                                        ExternalString.Small.init(string_buf, string_builder.append(value)),
+                                                    },
+                                                },
+                                            };
+                                            break :bin;
+
+                                            // for (arr.items) |item| {
+                                            //     if (item.asString(allocator)) |bin_str_| {
+                                            //         package_version.bin =
+                                            //     }
+                                            // }
+                                        }
+                                    },
+                                    .e_string => |str| {
+                                        if (str.utf8.len > 0) {
+                                            package_version.bin = Bin{
+                                                .tag = Bin.Tag.file,
+                                                .value = .{
+                                                    .file = ExternalString.Small.init(string_buf, string_builder.append(str.utf8)),
+                                                },
+                                            };
+                                            break :bin;
+                                        }
+                                    },
+                                    else => {},
+                                }
+                            }
+
+                            if (prop.value.?.asProperty("directories")) |dirs| {
+                                if (dirs.expr.asProperty("bin")) |bin_prop| {
+                                    if (bin_prop.expr.asString(allocator)) |e_str| {
+                                        if (e_str.utf8.len > 0) {
+                                            package_version.bin = Bin{
+                                                .tag = Bin.Tag.dir,
+                                                .value = .{
+                                                    .dir = ExternalString.Small.init(string_buf, string_builder.append(e_str.utf8)),
+                                                },
+                                            };
+                                            break :bin;
+                                        }
+                                    }
+                                }
                             }
                         }
 
@@ -1948,83 +2531,6 @@ const Npm = struct {
             return result;
         }
     };
-};
-
-pub const Download = struct {
-    tarball_path: string,
-};
-
-const PackageBlock = struct {
-    pub const block_size = 256;
-    items: [block_size]Package = undefined,
-    len: u16 = 0,
-
-    pub fn append(this: *PackageBlock, package: Package) *Package {
-        // this.lock.lock();
-        // defer this.lock.unlock();
-        const i = this.len;
-        this.len += 1;
-        this.items[i] = package;
-        return &this.items[i];
-    }
-};
-
-const PackageList = struct {
-    head: PackageBlock = PackageBlock{},
-    blocks: [PackageBlock.block_size]*PackageBlock = undefined,
-    block_i: usize = 0,
-
-    allocator: *std.mem.Allocator = undefined,
-
-    pub fn at(this: *PackageList, index: PackageID) ?*Package {
-        if (index == invalid_package_id) return null;
-
-        const block_id = index >> 8;
-        std.debug.assert(this.block_i >= block_id);
-        return if (block_id == 0)
-            &this.head.items[index]
-        else
-            &this.blocks[block_id].items[index % comptime (PackageBlock.block_size - 1)];
-    }
-    pub fn append(this: *PackageList, package: Package) !*Package {
-        var block: *PackageBlock = this.blocks[this.block_i];
-
-        if (block.len >= PackageBlock.block_size) {
-            // block.lock.lock();
-            // defer block.lock.unlock();
-            var tail = try this.allocator.create(PackageBlock);
-            tail.* = PackageBlock{};
-            tail.items[0] = package;
-            tail.len = 1;
-            this.block_i += 1;
-            this.blocks[this.block_i] = tail;
-
-            return &tail.items[0];
-        } else {
-            return block.append(package);
-        }
-    }
-
-    pub fn reserveOne(this: *PackageList) !PackageID {
-        var block: *PackageBlock = this.blocks[this.block_i];
-
-        if (block.len >= PackageBlock.block_size) {
-            // block.lock.lock();
-            // defer block.lock.unlock();
-            var tail = try this.allocator.create(PackageBlock);
-            tail.* = PackageBlock{};
-            tail.items[0] = undefined;
-            tail.len = 1;
-            this.block_i += 1;
-            this.blocks[this.block_i] = tail;
-            const result = this.block_i << 8;
-            return @truncate(u32, result);
-        } else {
-            const result = @truncate(PackageID, @as(usize, block.len) + (this.block_i << 8));
-            block.len += 1;
-            return result;
-        }
-    }
 };
 
 const ExtractTarball = struct {
@@ -2399,7 +2905,7 @@ pub const PackageManager = struct {
     log: *logger.Log,
     resolve_tasks: TaskChannel,
 
-    default_features: Package.Features = Package.Features{},
+    default_features: Features = Features{},
 
     registry: Npm.Registry = Npm.Registry{},
 
@@ -2816,7 +3322,7 @@ pub const PackageManager = struct {
         return null;
     }
 
-    fn enqueuePackages(this: *PackageManager, dependencies: Dependency.List, required: bool) ThreadPool.Batch {
+    fn enqueuePackages(this: *PackageManager, dependencies: []Dependency, required: bool) ThreadPool.Batch {
         var batch = ThreadPool.Batch{};
         var count: u32 = 0;
         var slice = dependencies.entries.slice();

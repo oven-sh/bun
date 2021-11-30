@@ -2120,7 +2120,7 @@ pub const Expr = struct {
         return ArrayIterator{ .array = array, .index = 0 };
     }
 
-    pub fn asString(expr: *const Expr, allocator: *std.mem.Allocator) ?string {
+    pub inline fn asString(expr: *const Expr, allocator: *std.mem.Allocator) ?string {
         if (std.meta.activeTag(expr.data) != .e_string) return null;
 
         const key_str = expr.data.e_string;

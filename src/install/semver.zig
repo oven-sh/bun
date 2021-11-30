@@ -6,11 +6,45 @@ pub const ExternalString = extern struct {
     len: u32 = 0,
     hash: u64 = 0,
 
-    pub fn from(in: string) ExternalString {
+    /// ExternalString but without the hash
+    pub const Small = extern struct {
+        off: u32 = 0,
+        len: u32 = 0,
+
+        pub inline fn slice(this: Small, buf: string) string {
+            return buf[this.off..][0..this.len];
+        }
+
+        pub inline fn from(in: string) Small {
+            return Small{
+                .off = 0,
+                .len = @truncate(u32, in.len),
+                .hash = std.hash.Wyhash.hash(0, in),
+            };
+        }
+
+        pub inline fn init(buf: string, in: string) Small {
+            std.debug.assert(@ptrToInt(buf.ptr) <= @ptrToInt(in.ptr) and ((@ptrToInt(in.ptr) + in.len) <= (@ptrToInt(buf.ptr) + buf.len)));
+
+            return Small{
+                .off = @truncate(u32, @ptrToInt(in.ptr) - @ptrToInt(buf.ptr)),
+                .len = @truncate(u32, in.len),
+            };
+        }
+    };
+
+    pub inline fn from(in: string) ExternalString {
         return ExternalString{
             .off = 0,
-            .len = @truncate(u16, in.len),
+            .len = @truncate(u32, in.len),
             .hash = std.hash.Wyhash.hash(0, in),
+        };
+    }
+
+    pub inline fn small(this: ExternalString) ExternalString.Small {
+        return ExternalString.Small{
+            .off = this.off,
+            .len = this.len,
         };
     }
 
@@ -19,12 +53,12 @@ pub const ExternalString = extern struct {
 
         return ExternalString{
             .off = @truncate(u32, @ptrToInt(in.ptr) - @ptrToInt(buf.ptr)),
-            .len = @truncate(u16, in.len),
+            .len = @truncate(u32, in.len),
             .hash = hash,
         };
     }
 
-    pub fn slice(this: ExternalString, buf: string) string {
+    pub inline fn slice(this: ExternalString, buf: string) string {
         return buf[this.off..][0..this.len];
     }
 };
@@ -66,9 +100,18 @@ pub const SlicedString = struct {
     }
 
     pub inline fn external(this: SlicedString) ExternalString {
-        std.debug.assert(@ptrToInt(this.buf.ptr) <= @ptrToInt(this.slice.ptr) and ((@ptrToInt(this.slice.ptr) + this.slice.len) <= (@ptrToInt(this.buf.ptr) + this.buf.len)));
+        if (comptime Environment.isDebug or Environment.isTest) std.debug.assert(@ptrToInt(this.buf.ptr) <= @ptrToInt(this.slice.ptr) and ((@ptrToInt(this.slice.ptr) + this.slice.len) <= (@ptrToInt(this.buf.ptr) + this.buf.len)));
 
-        return ExternalString{ .off = @truncate(u32, @ptrToInt(this.slice.ptr) - @ptrToInt(this.buf.ptr)), .len = @truncate(u16, this.slice.len), .hash = std.hash.Wyhash.hash(0, this.slice) };
+        return ExternalString{ .off = @truncate(u32, @ptrToInt(this.slice.ptr) - @ptrToInt(this.buf.ptr)), .len = @truncate(u32, this.slice.len), .hash = std.hash.Wyhash.hash(0, this.slice) };
+    }
+
+    pub inline fn small(this: SlicedString) ExternalString.Small {
+        if (comptime Environment.isDebug or Environment.isTest) std.debug.assert(@ptrToInt(this.buf.ptr) <= @ptrToInt(this.slice.ptr) and ((@ptrToInt(this.slice.ptr) + this.slice.len) <= (@ptrToInt(this.buf.ptr) + this.buf.len)));
+
+        return ExternalString.Small{
+            .off = @truncate(u32, @ptrToInt(this.slice.ptr) - @ptrToInt(this.buf.ptr)),
+            .len = @truncate(u32, this.slice.len),
+        };
     }
 
     pub inline fn sub(this: SlicedString, input: string) SlicedString {
@@ -87,6 +130,20 @@ pub const Version = extern struct {
 
     pub fn fmt(this: Version, input: string) Formatter {
         return Formatter{ .version = this, .input = input };
+    }
+
+    pub fn count(this: Version, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
+        if (this.tag.hasPre()) builder.count(this.tag.pre.slice(buf));
+        if (this.tag.hasBuild()) builder.count(this.tag.build.slice(buf));
+    }
+
+    pub fn clone(this: Version, comptime StringBuilder: type, builder: StringBuilder) Version {
+        var that = this;
+
+        if (this.tag.hasPre()) that.tag.pre = builder.append(ExternalString, this.tag.pre.slice(buf));
+        if (this.tag.hasBuild()) that.tag.build = builder.append(ExternalString, this.tag.build.slice(buf));
+
+        return that;
     }
 
     const HashableVersion = extern struct { major: u32, minor: u32, patch: u32, pre: u64, build: u64 };

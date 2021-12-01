@@ -128,6 +128,19 @@ pub const Version = extern struct {
     tag: Tag = Tag{},
     // raw: RawType = RawType{},
 
+    pub fn cloneInto(this: Version, slice: []const u8, buf: []u8) Version {
+        return Version{
+            .major = this.major,
+            .minor = this.minor,
+            .patch = this.patch,
+            .tag = this.tag.cloneInto(slice, buf),
+        };
+    }
+
+    pub inline fn len(this: *const Version) u32 {
+        return this.tag.build.len + this.tag.pre.len;
+    }
+
     pub fn fmt(this: Version, input: string) Formatter {
         return Formatter{ .version = this, .input = input };
     }
@@ -137,7 +150,7 @@ pub const Version = extern struct {
         if (this.tag.hasBuild()) builder.count(this.tag.build.slice(buf));
     }
 
-    pub fn clone(this: Version, comptime StringBuilder: type, builder: StringBuilder) Version {
+    pub fn clone(this: Version, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) Version {
         var that = this;
 
         if (this.tag.hasPre()) that.tag.pre = builder.append(ExternalString, this.tag.pre.slice(buf));
@@ -213,6 +226,25 @@ pub const Version = extern struct {
     pub const Tag = extern struct {
         pre: ExternalString = ExternalString{},
         build: ExternalString = ExternalString{},
+
+        pub fn cloneInto(this: Tag, slice: []const u8, buf: []u8) Tag {
+            const pre_slice = this.pre.slice(slice);
+            const build_slice = this.build.slice(slice);
+            std.mem.copy(u8, buf, pre_slice);
+            std.mem.copy(u8, buf[pre_slice.len..], build_slice);
+            return Tag{
+                .pre = .{
+                    .off = 0,
+                    .len = this.pre.len,
+                    .hash = this.pre.hash,
+                },
+                .build = .{
+                    .off = this.pre.len,
+                    .len = this.build.len,
+                    .hash = this.build.hash,
+                },
+            };
+        }
 
         pub inline fn hasPre(this: Tag) bool {
             return this.pre.len > 0;

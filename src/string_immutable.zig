@@ -91,6 +91,14 @@ pub const StringOrTinyString = struct {
         // allocator.free(slice_);
     }
 
+    pub fn initAppendIfNeeded(stringy: string, comptime Appender: type, appendy: Appender) !StringOrTinyString {
+        if (stringy.len <= StringOrTinyString.Max) {
+            return StringOrTinyString.init(stringy);
+        }
+
+        return StringOrTinyString.init(try appendy.append(string, stringy));
+    }
+
     pub fn init(stringy: string) StringOrTinyString {
         switch (stringy.len) {
             0 => {
@@ -102,7 +110,7 @@ pub const StringOrTinyString = struct {
                     .is_tiny_string = 1,
                     .remainder_len = @truncate(u7, stringy.len),
                 };
-                std.mem.copy(u8, &tiny.remainder_buf, stringy);
+                @memcpy(&tiny.remainder_buf, stringy.ptr, tiny.remainder_len);
                 return tiny;
             },
             else => {

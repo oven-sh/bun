@@ -48,7 +48,16 @@ pub const Output = struct {
             stream: StreamType,
             err: StreamType,
         ) Source {
+            if (comptime Environment.isDebug) {
+                if (comptime use_mimalloc) {
+                    if (!source_set) {
+                        const Mimalloc = @import("./allocators/mimalloc.zig");
+                        Mimalloc.mi_option_set(.show_errors, 1);
+                    }
+                }
+            }
             source_set = true;
+
             return Source{
                 .stream = stream,
                 .error_stream = err,
@@ -422,6 +431,13 @@ pub const Global = struct {
         verbose: bool = false,
         long_running: bool = false,
     };
+
+    pub inline fn mimalloc_cleanup() void {
+        if (comptime use_mimalloc) {
+            const Mimalloc = @import("./allocators/mimalloc.zig");
+            Mimalloc.mi_collect(false);
+        }
+    }
 
     // Enabling huge pages slows down Bun by 8x or so
     // Keeping this code for:

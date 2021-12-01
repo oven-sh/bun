@@ -211,7 +211,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                             }
                         }
 
-                        var str = p.lexer.toEString();
+                        const str = p.lexer.toEString();
                         const key_range = p.lexer.range();
 
                         if (comptime opts.json_warn_duplicate_keys) {
@@ -225,11 +225,11 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                             }
                         }
 
-                        var key = p.e(str, key_range.loc);
+                        const key = p.e(str, key_range.loc);
                         try p.lexer.expect(.t_string_literal);
 
                         try p.lexer.expect(.t_colon);
-                        var value = try p.parseExpr(false);
+                        const value = try p.parseExpr(false);
                         properties.append(G.Property{ .key = key, .value = value }) catch unreachable;
                     }
 

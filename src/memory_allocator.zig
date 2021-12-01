@@ -24,10 +24,9 @@ const CAllocator = struct {
         if (supports_posix_memalign) {
             // The posix_memalign only accepts alignment values that are a
             // multiple of the pointer size
-            const eff_alignment = std.math.max(alignment, @sizeOf(usize));
 
             var aligned_ptr: ?*c_void = undefined;
-            if (mimalloc.mi_posix_memalign(&aligned_ptr, eff_alignment, len) != 0)
+            if (mimalloc.mi_posix_memalign(&aligned_ptr, @maximum(alignment, @sizeOf(usize)), len) != 0)
                 return null;
 
             return @ptrCast([*]u8, aligned_ptr);

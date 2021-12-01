@@ -103,29 +103,28 @@ pub extern fn mi_reserve_huge_os_pages_at(pages: usize, numa_node: c_int, timeou
 pub extern fn mi_reserve_os_memory(size: usize, commit: bool, allow_large: bool) c_int;
 pub extern fn mi_manage_os_memory(start: ?*c_void, size: usize, is_committed: bool, is_large: bool, is_zero: bool, numa_node: c_int) bool;
 pub extern fn mi_reserve_huge_os_pages(pages: usize, max_secs: f64, pages_reserved: [*c]usize) c_int;
-pub const mi_option_show_errors: c_int = 0;
-pub const mi_option_show_stats: c_int = 1;
-pub const mi_option_verbose: c_int = 2;
-pub const mi_option_eager_commit: c_int = 3;
-pub const mi_option_eager_region_commit: c_int = 4;
-pub const mi_option_reset_decommits: c_int = 5;
-pub const mi_option_large_os_pages: c_int = 6;
-pub const mi_option_reserve_huge_os_pages: c_int = 7;
-pub const mi_option_reserve_os_memory: c_int = 8;
-pub const mi_option_segment_cache: c_int = 9;
-pub const mi_option_page_reset: c_int = 10;
-pub const mi_option_abandoned_page_reset: c_int = 11;
-pub const mi_option_segment_reset: c_int = 12;
-pub const mi_option_eager_commit_delay: c_int = 13;
-pub const mi_option_reset_delay: c_int = 14;
-pub const mi_option_use_numa_nodes: c_int = 15;
-pub const mi_option_limit_os_alloc: c_int = 16;
-pub const mi_option_os_tag: c_int = 17;
-pub const mi_option_max_errors: c_int = 18;
-pub const mi_option_max_warnings: c_int = 19;
-pub const _mi_option_last: c_int = 20;
-pub const enum_mi_option_e = c_uint;
-pub const mi_option_t = enum_mi_option_e;
+pub const mi_option_t = enum(c_uint) {
+    show_errors = 0,
+    show_stats = 1,
+    verbose = 2,
+    eager_commit = 3,
+    eager_region_commit = 4,
+    reset_decommits = 5,
+    large_os_pages = 6,
+    reserve_huge_os_pages = 7,
+    reserve_os_memory = 8,
+    segment_cache = 9,
+    page_reset = 10,
+    abandoned_page_reset = 11,
+    segment_reset = 12,
+    eager_commit_delay = 13,
+    reset_delay = 14,
+    use_numa_nodes = 15,
+    limit_os_alloc = 16,
+    os_tag = 17,
+    max_errors = 18,
+    max_warnings = 19,
+};
 pub extern fn mi_option_is_enabled(option: mi_option_t) bool;
 pub extern fn mi_option_enable(option: mi_option_t) void;
 pub extern fn mi_option_disable(option: mi_option_t) void;

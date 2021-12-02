@@ -412,6 +412,57 @@ inline fn eqlComptimeCheckLen(a: string, comptime b: anytype, comptime check_len
     return true;
 }
 
+pub fn eqlLong(a_: string, b: string, comptime check_len: bool) bool {
+    if (comptime check_len) {
+        if (a_.len == 0) {
+            return b.len == 0;
+        }
+
+        if (a_.len != b.len) {
+            return false;
+        }
+    }
+
+    const len = b.len;
+    var dword_length = b.len >> 3;
+    var b_ptr: usize = 0;
+    const a = a_.ptr;
+
+    while (dword_length > 0) : (dword_length -= 1) {
+        const slice = b.ptr;
+        if (@bitCast(usize, a[b_ptr..len][0..@sizeOf(usize)].*) != @bitCast(usize, (slice[b_ptr..b.len])[0..@sizeOf(usize)].*))
+            return false;
+        b_ptr += @sizeOf(usize);
+        if (b_ptr == b.len) return true;
+    }
+
+    if (comptime @sizeOf(usize) == 8) {
+        if ((len & 4) != 0) {
+            const slice = b.ptr;
+            if (@bitCast(u32, a[b_ptr..len][0..@sizeOf(u32)].*) != @bitCast(u32, (slice[b_ptr..b.len])[0..@sizeOf(u32)].*))
+                return false;
+
+            b_ptr += @sizeOf(u32);
+
+            if (b_ptr == b.len) return true;
+        }
+    }
+
+    if ((len & 2) != 0) {
+        const slice = b.ptr;
+        if (@bitCast(u16, a[b_ptr..len][0..@sizeOf(u16)].*) != @bitCast(u16, b.ptr[b_ptr..len][0..@sizeOf(u16)].*))
+            return false;
+
+        b_ptr += @sizeOf(u16);
+
+        if (b_ptr == b.len) return true;
+    }
+
+    if (((len & 1) != 0) and a[b_ptr] != b[b_ptr]) return false;
+
+    return true;
+}
+
 pub inline fn append(allocator: *std.mem.Allocator, self: string, other: string) !string {
     return std.fmt.allocPrint(allocator, "{s}{s}", .{ self, other });
 }

@@ -19,7 +19,6 @@ pub const ExternalString = extern struct {
             return Small{
                 .off = 0,
                 .len = @truncate(u32, in.len),
-                .hash = std.hash.Wyhash.hash(0, in),
             };
         }
 

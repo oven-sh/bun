@@ -349,8 +349,8 @@
       "args": ["install"],
       "cwd": "/tmp/wow-such-npm",
       "env": {
-        "GOMAXPROCS": "1",
-        "BUN_MANIFEST_CACHE": "1"
+
+      
       },
       "console": "internalConsole"
     },
@@ -379,15 +379,6 @@
       "request": "launch",
       "name": "Fixtures Dev",
       "program": "a",
-      "args": ["dev"],
-      "cwd": "${workspaceFolder}/src/test/fixtures",
-      "console": "internalConsole"
-    },
-    {
-      "type": "cppvsdbg",
-      "request": "launch",
-      "name": "Fixtures Rel",
-      "program": "${workspaceFolder}/build/macos-x86_64/bun",
       "args": ["dev"],
       "cwd": "${workspaceFolder}/src/test/fixtures",
       "console": "internalConsole"
@@ -486,15 +477,7 @@
       "cwd": "${workspaceFolder}/src/test/fixtures",
       "console": "internalConsole"
     },
-    {
-      "name": "esbuild",
-      "type": "go",
-      "request": "launch",
-      "mode": "debug",
-      "program": "/Users/jarred/Code/esbuild/cmd/esbuild",
-      "cwd": "/Users/jarred/Code/bun/src/test/fixtures",
-      "args": ["--bundle", "--outfile=out.esbuild.js", "await.ts"]
-    },
+ 
 
     // {
     //   "type": "lldb",

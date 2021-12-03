@@ -1258,6 +1258,7 @@ pub const RequestContext = struct {
         var __arena: std.heap.ArenaAllocator = undefined;
         pub fn runLoop(vm: *JavaScript.VirtualMachine, thread: *HandlerThread) !void {
             var module_map = ZigGlobalObject.getModuleRegistryMap(vm.global);
+
             if (!VM.isJITEnabled()) {
                 Output.prettyErrorln("<red><r>warn:<r> JIT is disabled,,,this is a bug in Bun and/or a permissions problem. JS will run slower.", .{});
                 if (vm.bundler.env.map.get("BUN_CRASH_WITHOUT_JIT") != null) {

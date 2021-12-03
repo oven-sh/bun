@@ -677,9 +677,19 @@ pub const Range = struct {
         return this.right.op != Op.unset;
     }
 
+    /// Is the Range equal to another Range
+    /// This does not evaluate the range.
+    pub inline fn eql(lhs: Range, rhs: Range) bool {
+        return lhs.left.eql(rhs.left) and lhs.right.eql(rhs.right);
+    }
+
     pub const Comparator = struct {
         op: Op = Op.unset,
         version: Version = Version{},
+
+        pub inline fn eql(lhs: Comparator, rhs: Comparator) bool {
+            return lhs.op == rhs.op and lhs.version.eql(rhs.version);
+        }
 
         pub fn satisfies(this: Comparator, version: Version) bool {
             const order = version.order(this.version);
@@ -749,6 +759,15 @@ pub const Query = struct {
             return this.head.satisfies(version) or (this.next orelse return false).satisfies(version);
         }
 
+        pub inline fn eql(lhs: *const List, rhs: *const List) bool {
+            if (!lhs.head.eql(&rhs.head)) return false;
+
+            var lhs_next = lhs.next orelse return rhs.next == null;
+            var rhs_next = rhs.next orelse return false;
+
+            return lhs_next.eql(rhs_next);
+        }
+
         pub fn andRange(self: *List, allocator: *std.mem.Allocator, range: Range) !void {
             if (!self.head.range.hasLeft() and !self.head.range.hasRight()) {
                 self.head.range = range;
@@ -783,6 +802,10 @@ pub const Query = struct {
 
         pub fn isExact(this: *const Group) bool {
             return this.head.next == null and this.head.head.next == null and !this.head.head.range.hasRight() and this.head.head.range.left.op == .eql;
+        }
+
+        pub inline fn eql(lhs: Group, rhs: Group) bool {
+            return lhs.head.eql(&rhs.head);
         }
 
         pub fn orVersion(self: *Group, version: Version) !void {
@@ -826,6 +849,15 @@ pub const Query = struct {
             return this.head.satisfies(version);
         }
     };
+
+    pub fn eql(lhs: *const Query, rhs: *const Query) bool {
+        if (!lhs.range.eql(rhs.range)) return false;
+
+        const lhs_next = lhs.next orelse return rhs.next == null;
+        const rhs_next = rhs.next orelse return false;
+
+        return lhs_next.eql(rhs_next);
+    }
 
     pub inline fn satisfies(this: *const Query, version: Version) bool {
         const left = this.range.satisfies(version);

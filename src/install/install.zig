@@ -36,6 +36,13 @@ const AsyncHTTP = @import("../http/http_client_async.zig").AsyncHTTP;
 const HTTPChannel = @import("../http/http_client_async.zig").HTTPChannel;
 
 threadlocal var initialized_store = false;
+
+// these bytes are skipped
+// so we just make it repeat bun bun bun bun bun bun bun bun bun
+// because why not
+const alignment_bytes_to_repeat = "bun";
+const alignment_bytes_to_repeat_buffer = "bunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbun";
+
 pub fn initializeStore() void {
     if (initialized_store) {
         JSAst.Expr.Data.Store.reset();
@@ -74,6 +81,18 @@ pub const URI = union(Tag) {
     local: ExternalString.Small,
     remote: ExternalString.Small,
 
+    pub fn eql(lhs: URI, rhs: URI, lhs_buf: []const u8, rhs_buf: []const u8) bool {
+        if (@as(Tag, lhs) != @as(Tag, rhs)) {
+            return false;
+        }
+
+        if (@as(Tag, lhs) == .local) {
+            return strings.eql(lhs.local.slice(lhs_buf), rhs.local.slice(rhs_buf));
+        } else {
+            return strings.eql(lhs.remote.slice(lhs_buf), rhs.remote.slice(rhs_buf));
+        }
+    }
+
     pub const Tag = enum {
         local,
         remote,
@@ -87,6 +106,22 @@ const SlicedString = Semver.SlicedString;
 
 const StructBuilder = @import("../builder.zig");
 const ExternalStringBuilder = StructBuilder.Builder(ExternalString);
+
+pub const Aligner = struct {
+    pub fn write(comptime Type: type, comptime Writer: type, writer: Writer, pos: usize) !usize {
+        const to_write = std.mem.alignForward(pos, @alignOf(Type)) - pos;
+        var i: usize = 0;
+
+        var remainder: string = alignment_bytes_to_repeat_buffer[0..@minimum(to_write, alignment_bytes_to_repeat_buffer.len)];
+        try writer.writeAll(remainder);
+
+        return to_write;
+    }
+
+    pub inline fn skipAmount(comptime Type: type, pos: usize) usize {
+        return std.mem.alignForward(pos, @alignOf(Type)) - pos;
+    }
+};
 
 pub fn ExternalSlice(comptime Type: type) type {
     return ExternalSliceAligned(Type, null);
@@ -609,7 +644,7 @@ const Lockfile = struct {
     scratch: Scratch = Scratch{},
 
     const Stream = std.io.FixedBufferStream([]u8);
-    pub const default_filename = "bun.lock";
+    pub const default_filename = "bun.lockb";
 
     pub const LoadFromDiskResult = union(Tag) {
         not_found: void,
@@ -634,7 +669,7 @@ const Lockfile = struct {
         std.debug.assert(FileSystem.instance_loaded);
         var file = std.fs.cwd().openFileZ(filename, .{ .read = true }) catch |err| {
             return switch (err) {
-                error.EACCESS, error.FileNotFound => LoadFromDiskResult{ .not_found = .{} },
+                error.AccessDenied, error.BadPathName, error.FileNotFound => LoadFromDiskResult{ .not_found = .{} },
                 else => LoadFromDiskResult{ .err = .{ .step = .open_file, .value = err } },
             };
         };
@@ -642,33 +677,95 @@ const Lockfile = struct {
         var buf = file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
             return LoadFromDiskResult{ .err = .{ .step = .read_file, .value = err } };
         };
-        var lockfile = Lockfile{};
-        Lockfile.Serializer.load(&lockfile, allocator, log, buf) catch |err| {
-            return LoadFromDiskResult{ .err = .{ .step = .parse, .value = err } };
+        var lockfile: Lockfile = undefined;
+        var stream = Stream{ .buffer = buf, .pos = 0 };
+        Lockfile.Serializer.load(&lockfile, &stream, allocator, log) catch |err| {
+            return LoadFromDiskResult{ .err = .{ .step = .parse_file, .value = err } };
         };
 
         return LoadFromDiskResult{ .ok = lockfile };
     }
 
+    pub const TreePrinter = struct {
+        lockfile: *Lockfile,
+        indent: usize = 0,
+        visited: std.DynamicBitSetUnmanaged,
+
+        pub fn print(this: *TreePrinter) !void {
+            var slice = this.lockfile.packages.slice();
+            var names = slice.items(.name);
+            var versions = slice.items(.name);
+            // var fifo = std.fifo.LinearFif
+        }
+    };
+
+    pub fn clean(this: *Lockfile) !void {}
+
+    pub fn verify(this: *Lockfile) !void {
+        std.debug.assert(this.format == .v0);
+        {
+            var i: usize = 0;
+            while (i < this.packages.len) : (i += 1) {
+                const package: Lockfile.Package = this.packages.get(i);
+                std.debug.assert(this.str(package.name).len == @as(usize, package.name.len));
+                std.debug.assert(stringHash(this.str(package.name)) == @as(usize, package.name_hash));
+                std.debug.assert(package.dependencies.get(this.buffers.dependencies.items).len == @as(usize, package.dependencies.len));
+                std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.resolutions.len));
+                std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.dependencies.len));
+                const dependencies = package.dependencies.get(this.buffers.dependencies.items);
+                for (dependencies) |dependency| {
+                    std.debug.assert(this.str(dependency.name).len == @as(usize, dependency.name.len));
+                    std.debug.assert(stringHash(this.str(dependency.name)) == dependency.name_hash);
+                }
+            }
+        }
+    }
+
     pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
+        if (comptime Environment.isDebug) {
+            this.verify() catch |err| {
+                Output.prettyErrorln("<r><red>error:<r> failed to verify lockfile: {s}", .{@errorName(err)});
+                Output.flush();
+                Global.crash();
+            };
+        }
         std.debug.assert(FileSystem.instance_loaded);
-        var file = std.fs.AtomicFile.init(
-            std.mem.span(filename),
-            0000010 | 0000100 | 0000001 | 0001000 | 0000040 | 0000004 | 0000002 | 0000400 | 0000200 | 0000020,
-            std.fs.cwd(),
-            false,
-        ) catch |err| {
+        var tmpname_buf: [512]u8 = undefined;
+        tmpname_buf[0..8].* = "bunlock-".*;
+        var tmpfile = FileSystem.RealFS.Tmpfile{};
+        var secret: [32]u8 = undefined;
+        std.mem.writeIntNative(u64, secret[0..8], @intCast(u64, std.time.milliTimestamp()));
+        var rng = std.rand.Gimli.init(secret);
+        var base64_bytes: [64]u8 = undefined;
+        rng.random.bytes(&base64_bytes);
+
+        const tmpname__ = std.fmt.bufPrint(tmpname_buf[8..], "{s}", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
+        tmpname_buf[tmpname__.len + 8] = 0;
+        const tmpname = tmpname_buf[0 .. tmpname__.len + 8 :0];
+
+        tmpfile.create(&FileSystem.instance.fs, tmpname) catch |err| {
             Output.prettyErrorln("<r><red>error:<r> failed to open lockfile: {s}", .{@errorName(err)});
             Output.flush();
             Global.crash();
         };
 
-        Lockfile.Serializer.save(this, std.fs.File, file.file) catch |err| {
+        var file = tmpfile.file();
+
+        Lockfile.Serializer.save(this, std.fs.File, file) catch |err| {
+            tmpfile.dir().deleteFileZ(tmpname) catch {};
             Output.prettyErrorln("<r><red>error:<r> failed to serialize lockfile: {s}", .{@errorName(err)});
             Output.flush();
             Global.crash();
         };
-        file.finish() catch |err| {
+
+        _ = C.fchmod(
+            tmpfile.fd,
+            // chmod 777
+            0000010 | 0000100 | 0000001 | 0001000 | 0000040 | 0000004 | 0000002 | 0000400 | 0000200 | 0000020,
+        );
+
+        tmpfile.promote(tmpname, std.fs.cwd().fd, filename) catch |err| {
+            tmpfile.dir().deleteFileZ(tmpname) catch {};
             Output.prettyErrorln("<r><red>error:<r> failed to save lockfile: {s}", .{@errorName(err)});
             Output.flush();
             Global.crash();
@@ -698,6 +795,15 @@ const Lockfile = struct {
             .allocator = allocator,
             .scratch = Scratch.init(allocator),
         };
+    }
+
+    /// Update the lockfile to reflect the desired state of the dependency graph.
+    pub fn applyDiff(this: *Lockfile, queue: *Lockfile.Package.Diff.List, diff: Lockfile.Package.Diff) void {
+        switch (diff) {
+            .add => |add| {},
+            .remove => |remove| {},
+            .update => |update| {},
+        }
     }
 
     pub fn getPackageID(this: *Lockfile, name_hash: u64, version: Semver.Version) ?PackageID {
@@ -854,11 +960,12 @@ const Lockfile = struct {
         }
 
         pub fn allocate(this: *StringBuilder) !void {
-            try this.lockfile.buffers.string_bytes.ensureUnusedCapacity(this.lockfile.allocator, this.cap);
-            const prev_len = this.lockfile.buffers.string_bytes.items.len;
+            var string_bytes = &this.lockfile.buffers.string_bytes;
+            try string_bytes.ensureUnusedCapacity(this.lockfile.allocator, this.cap);
+            const prev_len = string_bytes.items.len;
             this.off = prev_len;
-            this.lockfile.buffers.string_bytes.items = this.lockfile.buffers.string_bytes.items.ptr[0 .. this.lockfile.buffers.string_bytes.items.len + this.cap];
-            this.ptr = this.lockfile.buffers.string_bytes.items.ptr[prev_len .. prev_len + this.cap].ptr;
+            string_bytes.items = string_bytes.items.ptr[0 .. string_bytes.items.len + this.cap];
+            this.ptr = string_bytes.items.ptr[prev_len .. prev_len + this.cap].ptr;
             this.len = 0;
         }
 
@@ -1035,8 +1142,10 @@ const Lockfile = struct {
             }
 
             try string_builder.allocate();
-            try lockfile.buffers.dependencies.ensureUnusedCapacity(lockfile.allocator, total_dependencies_count);
-            try lockfile.buffers.resolutions.ensureUnusedCapacity(lockfile.allocator, total_dependencies_count);
+            var dependencies_list = &lockfile.buffers.dependencies;
+            var resolutions_list = &lockfile.buffers.resolutions;
+            try dependencies_list.ensureUnusedCapacity(lockfile.allocator, total_dependencies_count);
+            try resolutions_list.ensureUnusedCapacity(lockfile.allocator, total_dependencies_count);
 
             // -- Cloning
             {
@@ -1045,12 +1154,12 @@ const Lockfile = struct {
                 package.name = package_name.small();
                 package.version = version.clone(manifest.string_buf, @TypeOf(&string_builder), &string_builder);
 
-                const total_len = lockfile.buffers.dependencies.items.len + total_dependencies_count;
-                std.debug.assert(lockfile.buffers.dependencies.items.len == lockfile.buffers.resolutions.items.len);
+                const total_len = dependencies_list.items.len + total_dependencies_count;
+                std.debug.assert(dependencies_list.items.len == resolutions_list.items.len);
 
-                var dependencies = lockfile.buffers.dependencies.items.ptr[lockfile.buffers.dependencies.items.len..total_len];
+                var dependencies = dependencies_list.items.ptr[dependencies_list.items.len..total_len];
 
-                const off = @truncate(u32, lockfile.buffers.dependencies.items.len);
+                const off = @truncate(u32, dependencies_list.items.len);
 
                 inline for (dependency_groups) |group| {
                     const map: ExternalStringMap = @field(package_version, group.field);
@@ -1094,15 +1203,17 @@ const Lockfile = struct {
 
                 package.meta.integrity = package_version.integrity;
 
-                package.dependencies.off = @truncate(u32, lockfile.buffers.dependencies.items.len);
+                package.dependencies.off = @truncate(u32, dependencies_list.items.len);
                 package.dependencies.len = total_dependencies_count - @truncate(u32, dependencies.len);
-                package.resolutions = @bitCast(@TypeOf(package.resolutions), package.dependencies);
+                package.resolutions.off = package.dependencies.off;
+                package.resolutions.len = package.dependencies.len;
 
-                lockfile.buffers.dependencies.items = lockfile.buffers.dependencies.items.ptr[0 .. package.dependencies.off + package.dependencies.len];
+                const new_length = package.dependencies.len + dependencies_list.items.len;
 
-                std.mem.set(PackageID, lockfile.buffers.resolutions.items.ptr[package.dependencies.off .. package.dependencies.off + package.dependencies.len], invalid_package_id);
+                std.mem.set(PackageID, resolutions_list.items.ptr[package.dependencies.off .. package.dependencies.off + package.dependencies.len], invalid_package_id);
 
-                lockfile.buffers.resolutions.items = lockfile.buffers.resolutions.items.ptr[0..lockfile.buffers.dependencies.items.len];
+                dependencies_list.items = dependencies_list.items.ptr[0..new_length];
+                resolutions_list.items = resolutions_list.items.ptr[0..new_length];
 
                 return package;
             }
@@ -1111,42 +1222,107 @@ const Lockfile = struct {
         pub const Diff = union(Op) {
             add: Lockfile.Package.Diff.Entry,
             remove: Lockfile.Package.Diff.Entry,
-            update: struct { from: Dependency, to: Dependency, from_resolution: PackageID, to_resolution: PackageID },
+            update: struct { in: PackageID, from: Dependency, to: Dependency, from_resolution: PackageID, to_resolution: PackageID },
 
-            pub const Entry = struct { dependency: Dependency, resolution: PackageID };
+            pub const Entry = struct { in: PackageID, dependency: Dependency, resolution: PackageID };
             pub const Op = enum {
                 add,
                 remove,
                 update,
             };
 
-            pub const List = std.fifo.LinearFifo(Diff, .{.Dynamic});
+            pub const List = std.fifo.LinearFifo(Diff, .Dynamic);
+
+            pub const Summary = struct {
+                add: u32 = 0,
+                remove: u32 = 0,
+                update: u32 = 0,
+
+                pub inline fn sum(this: *Summary, that: Summary) void {
+                    this.add += that.add;
+                    this.remove += that.remove;
+                    this.update += that.update;
+                }
+            };
 
             pub fn generate(
                 allocator: *std.mem.Allocator,
                 fifo: *Lockfile.Package.Diff.List,
                 from_lockfile: *Lockfile,
+                to_lockfile: *Lockfile,
                 from: *Lockfile.Package,
                 to: *Lockfile.Package,
-                to_lockfile: *Lockfile,
-            ) !void {
-                const to_deps = to.dependencies.get(to_lockfile.buffers.dependencies);
-                const to_res = to.dependencies.get(to_lockfile.buffers.dependencies);
-                const from_res = to.dependencies.get(from_lockfile.buffers.resolutions);
-                const from_deps = from.dependencies.get(from_lockfile.buffers.dependencies);
+            ) !Summary {
+                var summary = Summary{};
+                const to_deps = to.dependencies.get(to_lockfile.buffers.dependencies.items);
+                const to_res = to.resolutions.get(to_lockfile.buffers.resolutions.items);
+                const from_res = from.resolutions.get(from_lockfile.buffers.resolutions.items);
+                const from_deps = from.dependencies.get(from_lockfile.buffers.dependencies.items);
 
-                for (from_deps) |dependency, i| {
-                    const old_i = if (to_deps.len > i and to_deps[i].name_hash == dependency.name_hash)
+                for (from_deps) |from_dep, i| {
+                    // common case: dependency is present in both versions and in the same position
+                    const to_i = if (to_deps.len > i and to_deps[i].name_hash == from_dep.name_hash)
                         i
                     else brk: {
+                        // less common, o(n^2) case
                         for (to_deps) |to_dep, j| {
-                            if (dependency.name_hash == to_dep.name_hash) break :brk j;
+                            if (from_dep.name_hash == to_dep.name_hash) break :brk j;
                         }
 
-                        try fifo.writeItem(.{ .add = .{ .dependency = to_dep, .resolution = to_res[i] } });
+                        // We found a removed dependency!
+                        try fifo.writeItem(
+                            .{
+                                .remove = .{
+                                    .dependency = from_dep,
+                                    .resolution = from_res[i],
+                                    .in = from.meta.id,
+                                },
+                            },
+                        );
+                        summary.remove += 1;
                         continue;
                     };
+
+                    if (to_deps[to_i].eql(from_dep, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items)) {
+                        continue;
+                    }
+
+                    // We found a changed dependency!
+                    try fifo.writeItem(
+                        .{
+                            .update = .{
+                                .from = from_dep,
+                                .to = to_deps[to_i],
+                                .from_resolution = from_res[i],
+                                .to_resolution = to_res[to_i],
+                                .in = from.meta.id,
+                            },
+                        },
+                    );
+                    summary.update += 1;
                 }
+
+                outer: for (to_deps) |to_dep, i| {
+                    if (from_deps.len > i and from_deps[i].name_hash == to_dep.name_hash) continue;
+
+                    for (from_deps) |from_dep, j| {
+                        if (from_dep.name_hash == to_dep.name_hash) continue :outer;
+                    }
+
+                    // We found a new dependency!
+                    try fifo.writeItem(
+                        .{
+                            .add = .{
+                                .dependency = to_dep,
+                                .resolution = to_res[i],
+                                .in = from.meta.id,
+                            },
+                        },
+                    );
+                    summary.add += 1;
+                }
+
+                return summary;
             }
         };
 
@@ -1263,7 +1439,8 @@ const Lockfile = struct {
             std.debug.assert(lockfile.buffers.dependencies.items.len == lockfile.buffers.resolutions.items.len);
             const off = lockfile.buffers.dependencies.items.len;
 
-            var dependencies = lockfile.buffers.dependencies.items.ptr[off..total_len];
+            var package_dependencies = lockfile.buffers.dependencies.items.ptr[off..total_len];
+            var dependencies = package_dependencies;
 
             if (json.asProperty("name")) |name_q| {
                 if (name_q.expr.asString(allocator)) |name| {
@@ -1351,6 +1528,13 @@ const Lockfile = struct {
                 }
             }
 
+            std.sort.sort(
+                Dependency,
+                package_dependencies[0 .. package_dependencies.len - dependencies.len],
+                lockfile.buffers.string_bytes.items,
+                Dependency.isLessThan,
+            );
+
             total_dependencies_count -= @truncate(u32, dependencies.len);
             package.dependencies.off = @truncate(u32, off);
             package.dependencies.len = @truncate(u32, total_dependencies_count);
@@ -1396,17 +1580,19 @@ const Lockfile = struct {
                     size: usize,
                     size_index: usize,
                     alignment: usize,
+                    Type: type,
                 };
                 var data: [fields.len]Data = undefined;
                 for (fields) |field_info, i| {
                     data[i] = .{
                         .size = @sizeOf(field_info.field_type),
                         .size_index = i,
+                        .Type = field_info.field_type,
                         .alignment = if (@sizeOf(field_info.field_type) == 0) 1 else field_info.alignment,
                     };
                 }
                 const Sort = struct {
-                    fn lessThan(trash: *i32, lhs: Data, rhs: Data) bool {
+                    fn lessThan(trash: *i32, comptime lhs: Data, comptime rhs: Data) bool {
                         _ = trash;
                         return lhs.alignment > rhs.alignment;
                     }
@@ -1415,15 +1601,20 @@ const Lockfile = struct {
                 std.sort.sort(Data, &data, &trash, Sort.lessThan);
                 var sizes_bytes: [fields.len]usize = undefined;
                 var field_indexes: [fields.len]usize = undefined;
+                var Types: [fields.len]type = undefined;
                 for (data) |elem, i| {
                     sizes_bytes[i] = elem.size;
                     field_indexes[i] = elem.size_index;
+                    Types[i] = elem.Type;
                 }
                 break :blk .{
                     .bytes = sizes_bytes,
                     .fields = field_indexes,
+                    .Types = Types,
                 };
             };
+
+            const FieldsEnum = @typeInfo(Lockfile.Package.List.Field).Enum;
 
             pub fn byteSize(list: Lockfile.Package.List) usize {
                 const sizes_vector: std.meta.Vector(sizes.bytes.len, usize) = sizes.bytes;
@@ -1431,38 +1622,64 @@ const Lockfile = struct {
                 return @reduce(.Add, capacity_vector * sizes_vector);
             }
 
+            const AlignmentType = sizes.Types[sizes.fields[0]];
+
             pub fn save(list: Lockfile.Package.List, comptime StreamType: type, stream: StreamType, comptime Writer: type, writer: Writer) !void {
-                try writer.writeIntLittle(u64, list.len);
                 const bytes = list.bytes[0..byteSize(list)];
                 try writer.writeIntLittle(u64, bytes.len);
-                try writer.writeAll(bytes);
+                try writer.writeIntLittle(u64, list.len);
+                // _ = try Aligner.write(AlignmentType, Writer, writer, try stream.getPos());
+                var slice = list.slice();
+                inline for (sizes.fields) |field_index| {
+                    const Type = sizes.Types[field_index];
+                    _ = try Aligner.write(Type, Writer, writer, try stream.getPos());
+                    try writer.writeAll(std.mem.sliceAsBytes(
+                        slice.items(
+                            @intToEnum(Lockfile.Package.List.Field, FieldsEnum.fields[field_index].value),
+                        ),
+                    ));
+                }
             }
 
-            pub fn load(stream: *Stream) !Lockfile.Package.List {
+            pub fn load(
+                stream: *Stream,
+                allocator: *std.mem.Allocator,
+            ) !Lockfile.Package.List {
                 var reader = stream.reader();
-                const list_len = try reader.readIntLittle(u64);
+
                 const byte_len = try reader.readIntLittle(u64);
-                const start = stream.pos;
 
                 if (byte_len == 0) {
                     return Lockfile.Package.List{
-                        .len = list_len,
+                        .len = 0,
                         .capacity = 0,
                     };
                 }
 
-                stream.pos += byte_len;
+                // Count of items in the list
+                const list_len = try reader.readIntLittle(u64);
 
-                if (stream.pos > stream.buffer.len) {
-                    return error.BufferOverflow;
+                var list = Lockfile.Package.List{};
+                try list.ensureTotalCapacity(allocator, list_len);
+                list.len = list_len;
+                var slice = list.slice();
+
+                inline for (sizes.fields) |field_index| {
+                    const Type = sizes.Types[field_index];
+                    stream.pos += Aligner.skipAmount(Type, try stream.getPos());
+                    var bytes = std.mem.sliceAsBytes(
+                        slice.items(
+                            @intToEnum(Lockfile.Package.List.Field, FieldsEnum.fields[field_index].value),
+                        ),
+                    );
+                    @memcpy(bytes.ptr, @ptrCast([*]u8, &stream.buffer[stream.pos]), bytes.len);
+                    stream.pos += bytes.len;
                 }
 
-                var bytes = stream.buffer[start..stream.pos];
-                return Lockfile.Package.List{
-                    .bytes = @alignCast(@alignOf([*]Lockfile.Package), bytes.ptr),
-                    .len = list_len,
-                    .capacity = bytes.len,
-                };
+                // Alignment bytes to skip
+                // stream.pos += Aligner.skipAmount(AlignmentType, try stream.getPos());
+
+                return list;
             }
         };
     };
@@ -1475,17 +1692,29 @@ const Lockfile = struct {
         string_bytes: StringBuffer = StringBuffer{},
 
         pub fn readArray(stream: *Stream, comptime ArrayList: type) !ArrayList {
-            const byte_len = try stream.readIntLittle(u64);
-            const start = stream.pos;
             const arraylist: ArrayList = undefined;
-            stream.pos += byte_len * @sizeOf(std.meta.Child(arraylist.items.ptr));
+
+            const PointerType = std.meta.Child(@TypeOf(arraylist.items.ptr));
+            const alignment = @alignOf([*]PointerType);
+
+            var reader = stream.reader();
+            const byte_len = try reader.readIntLittle(u64);
+
+            if (byte_len == 0) return ArrayList{
+                .items = &[_]PointerType{},
+                .capacity = 0,
+            };
+
+            stream.pos += Aligner.skipAmount(PointerType, stream.pos);
+            const start = stream.pos;
+            stream.pos += byte_len;
 
             if (stream.pos > stream.buffer.len) {
                 return error.BufferOverflow;
             }
 
             return ArrayList{
-                .items = stream.buffer[start..stream.pos],
+                .items = @ptrCast([*]PointerType, @alignCast(alignment, &stream.buffer[start]))[0 .. byte_len / @sizeOf(PointerType)],
                 .capacity = byte_len,
             };
         }
@@ -1534,44 +1763,78 @@ const Lockfile = struct {
             const bytes = std.mem.sliceAsBytes(array);
             try writer.writeIntLittle(u64, bytes.len);
 
-            const original = try stream.getPos();
-            const repeat_count = std.mem.alignForward(original, @alignOf(ArrayList)) - original;
-            try writer.writeByteNTimes(0, repeat_count);
+            if (bytes.len > 0) {
+                _ = try Aligner.write(std.meta.Child(ArrayList), Writer, writer, try stream.getPos());
 
-            try writer.writeAll(bytes);
+                try writer.writeAll(bytes);
+            }
         }
 
         pub fn save(this: Buffers, allocator: *std.mem.Allocator, comptime StreamType: type, stream: StreamType, comptime Writer: type, writer: Writer) !void {
             inline for (sizes.names) |name, i| {
+                var pos: usize = 0;
+                if (comptime Environment.isDebug) {
+                    pos = try stream.getPos();
+                }
+
                 // Dependencies have to be converted to .toExternal first
                 // We store pointers in Version.Value, so we can't just write it directly
                 if (comptime strings.eqlComptime(name, "dependencies")) {
-                    const original = try stream.getPos();
-                    const aligned = std.mem.alignForward(original, @alignOf(Dependency.External));
-                    try writer.writeByteNTimes(0, aligned);
-
-                    // write roughly 8 KB of data at a time
-                    const buffered_len: usize = 8096 / @sizeOf(Dependency.External);
-                    var buffer: [buffered_len]Dependency.External = undefined;
                     var remaining = this.dependencies.items;
 
-                    var out_len = @minimum(remaining.len, buffered_len);
-                    try writer.writeIntLittle(u64, remaining.len);
-                    while (out_len > 0) {
-                        for (remaining[0..out_len]) |dep, dep_i| {
-                            buffer[dep_i] = dep.toExternal();
-                        }
-                        var writable = buffer[0..out_len];
-                        try writer.writeAll(std.mem.sliceAsBytes(writable));
-                        remaining = remaining[out_len..];
-                        out_len = @minimum(remaining.len, buffered_len);
+                    var buf: [128]Dependency.External = undefined;
+
+                    switch (remaining.len) {
+                        0 => {
+                            try writer.writeIntLittle(u64, 0);
+                        },
+                        1...127 => {
+                            for (remaining) |dep, j| {
+                                buf[j] = dep.toExternal();
+                            }
+                            const to_write = std.mem.sliceAsBytes(buf[0..remaining.len]);
+                            try writer.writeIntLittle(u64, to_write.len);
+                            _ = try Aligner.write(
+                                [*]Dependency.External,
+                                Writer,
+                                writer,
+                                try stream.getPos(),
+                            );
+                            try writer.writeAll(to_write);
+                        },
+                        else => {
+                            try writer.writeIntLittle(u64, @sizeOf(Dependency.External) * remaining.len);
+                            _ = try Aligner.write(
+                                [*]Dependency.External,
+                                Writer,
+                                writer,
+                                try stream.getPos(),
+                            );
+
+                            var buf_i: usize = 0;
+                            for (remaining) |dep| {
+                                if (buf_i >= buf.len) {
+                                    try writer.writeAll(std.mem.sliceAsBytes(&buf));
+                                    buf_i = 0;
+                                }
+                                buf[buf_i] = dep.toExternal();
+                                buf_i += 1;
+                            }
+                            if (buf_i > 0) {
+                                const to_write = std.mem.sliceAsBytes(buf[0..buf_i]);
+                                try writer.writeAll(to_write);
+                            }
+                        },
                     }
                 } else {
-                    var list_ = @field(this, name);
-                    var list = list_.toOwnedSlice(allocator);
+                    const list = @field(this, name).items;
                     const Type = @TypeOf(list);
 
                     try writeArray(StreamType, stream, Writer, writer, Type, list);
+                }
+
+                if (comptime Environment.isDebug) {
+                    Output.prettyErrorln("Field {s}: {d} - {d}", .{ name, pos, try stream.getPos() });
                 }
             }
         }
@@ -1580,17 +1843,36 @@ const Lockfile = struct {
             var this = Buffers{};
             var external_dependency_list: []Dependency.External = &[_]Dependency.External{};
             inline for (sizes.types) |Type, i| {
-                if (comptime Type == @TypeOf(field.dependencies)) {
-                    const len = try stream.readIntLittle(u64);
-                    const start = stream.pos;
-                    stream.pos += len * @sizeOf(Dependency.External);
-                    if (stream.pos > stream.buffer.len) {
-                        return error.BufferOverflow;
+                var pos: usize = 0;
+                if (comptime Environment.isDebug) {
+                    pos = try stream.getPos();
+                }
+
+                if (comptime Type == @TypeOf(this.dependencies)) {
+                    var reader = stream.reader();
+                    const len = try reader.readIntLittle(u64);
+                    if (len > 0) {
+                        stream.pos += Aligner.skipAmount([*]Dependency.External, stream.pos);
+                        const start = stream.pos;
+                        stream.pos += len;
+                        if (stream.pos > stream.buffer.len) {
+                            return error.BufferOverflow;
+                        }
+                        var bytes = stream.buffer[start..][0..len];
+                        external_dependency_list = @alignCast(
+                            @alignOf([]Dependency.External),
+                            std.mem.bytesAsSlice(
+                                Dependency.External,
+                                bytes,
+                            ),
+                        );
                     }
-                    var bytes = stream.buffer[start..stream.pos];
-                    external_dependency_list = @ptrCast([*]Dependency.External, @alignCast(@alignOf([*]Dependency.External), bytes.ptr))[0..len];
                 } else {
                     @field(this, sizes.names[i]) = try readArray(stream, Type);
+                }
+
+                if (comptime Environment.isDebug) {
+                    Output.prettyErrorln("Field {s}: {d} - {d}", .{ sizes.names[i], pos, try stream.getPos() });
                 }
             }
 
@@ -1600,10 +1882,11 @@ const Lockfile = struct {
             const extern_context = Dependency.External.Context{
                 .log = log,
                 .allocator = allocator,
-                .string_buffer = this.string_bytes.items,
+                .buffer = this.string_bytes.items,
             };
 
-            this.dependencies.items = this.dependencies.items.ptr[0..external_dependency_list.len];
+            this.dependencies.expandToCapacity();
+            this.dependencies.items.len = external_dependency_list.len;
             for (external_dependency_list) |dep, i| {
                 this.dependencies.items[i] = dep.toDependency(extern_context);
             }
@@ -1622,15 +1905,15 @@ const Lockfile = struct {
             try writer.writeIntLittle(u32, @enumToInt(this.format));
             const pos = try stream.getPos();
             try writer.writeIntLittle(u64, 0);
-            this.packages.shrinkAndFree(this.allocator, this.packages.len);
 
             try Lockfile.Package.Serializer.save(this.packages, StreamType, stream, @TypeOf(&writer), &writer);
             try Lockfile.Buffers.save(this.buffers, this.allocator, StreamType, stream, @TypeOf(&writer), &writer);
 
             try writer.writeIntLittle(u64, 0);
             const end = try stream.getPos();
-            try stream.seekTo(pos);
-            try writer.writeIntLittle(u64, end);
+            try writer.writeAll(alignment_bytes_to_repeat_buffer);
+
+            _ = try std.os.pwrite(stream.handle, std.mem.asBytes(&end), pos);
         }
         pub fn load(
             lockfile: *Lockfile,
@@ -1651,27 +1934,28 @@ const Lockfile = struct {
                 return error.InvalidLockfileVersion;
             }
             lockfile.format = .v0;
-
+            lockfile.allocator = allocator;
             const byte_len = try reader.readIntLittle(u64);
 
             lockfile.packages = try Lockfile.Package.Serializer.load(
                 stream,
                 allocator,
             );
-            lockfile.buffers = try Lockfile.Buffers.Serializer.load(stream, allocator, log);
+            lockfile.buffers = try Lockfile.Buffers.load(stream, allocator, log);
 
             {
-                try lockfile.package_index.ensureTotalCapacity(lockfile.packages.len);
+                lockfile.package_index = PackageIndex.Map.initContext(allocator, .{});
+                lockfile.duplicates = try std.DynamicBitSetUnmanaged.initEmpty(lockfile.packages.len, allocator);
+                lockfile.string_pool = StringPool.initContext(allocator, .{});
+                try lockfile.package_index.ensureTotalCapacity(@truncate(u32, lockfile.packages.len));
                 var slice = lockfile.packages.slice();
                 var name_hashes = slice.items(.name_hash);
                 for (name_hashes) |name_hash, id| {
-                    try lockfile.getOrPutID(id, name_hash);
+                    try lockfile.getOrPutID(@truncate(PackageID, id), name_hash);
                 }
             }
 
-            try reader.readIntLittle(u64);
-            const end = stream.pos;
-            try stream.seekTo(pos);
+            // const end = try reader.readIntLittle(u64);
         }
     };
 };
@@ -1701,6 +1985,42 @@ pub const Behavior = enum(u8) {
         return (@enumToInt(this) & Behavior.normal) != 0;
     }
 
+    pub inline fn cmp(lhs: Behavior, rhs: Behavior) std.math.Order {
+        if (@enumToInt(lhs) == @enumToInt(rhs)) {
+            return .eq;
+        }
+
+        if (lhs.isNormal() != rhs.isNormal()) {
+            return if (lhs.isNormal())
+                .gt
+            else
+                .lt;
+        }
+
+        if (lhs.isDev() != rhs.isDev()) {
+            return if (lhs.isDev())
+                .gt
+            else
+                .lt;
+        }
+
+        if (lhs.isOptional() != rhs.isOptional()) {
+            return if (lhs.isOptional())
+                .gt
+            else
+                .lt;
+        }
+
+        if (lhs.isPeer() != rhs.isPeer()) {
+            return if (lhs.isPeer())
+                .gt
+            else
+                .lt;
+        }
+
+        return .eq;
+    }
+
     pub inline fn isRequired(this: Behavior) bool {
         return !isOptional(this);
     }
@@ -1727,6 +2047,20 @@ pub const Dependency = struct {
     /// Technically, having the same package name specified under multiple fields is invalid
     /// But we don't want to allocate extra arrays for them. So we use a bitfield instead.
     behavior: Behavior = Behavior.uninitialized,
+
+    /// Sorting order for dependencies is:
+    /// 1. [`dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`]
+    /// 2. name
+    pub fn isLessThan(string_buf: []const u8, lhs: Dependency, rhs: Dependency) bool {
+        const behavior = lhs.behavior.cmp(rhs.behavior);
+        if (behavior != .eq) {
+            return behavior == .lt;
+        }
+
+        const lhs_name = lhs.name.slice(string_buf);
+        const rhs_name = rhs.name.slice(string_buf);
+        return strings.cmpStringsDesc(void{}, lhs_name, rhs_name);
+    }
 
     pub const External = extern struct {
         name: ExternalString.Small = ExternalString.Small{},
@@ -1775,12 +2109,12 @@ pub const Dependency = struct {
                 this: Version.External,
                 ctx: Dependency.External.Context,
             ) Dependency.Version {
-                const input = this.literal.slice(ctx.string_buffer);
+                const input = this.literal.slice(ctx.buffer);
                 return Dependency.parseWithTag(
                     ctx.allocator,
                     input,
                     this.tag,
-                    SlicedString.init(ctx.string_buffer, input),
+                    SlicedString.init(ctx.buffer, input),
                     ctx.log,
                 ) orelse Dependency.Version{};
             }
@@ -1790,6 +2124,27 @@ pub const Dependency = struct {
             return Version.External{
                 .tag = this.tag,
                 .literal = this.literal,
+            };
+        }
+
+        pub inline fn eql(
+            lhs: Version,
+            rhs: Version,
+            lhs_buf: []const u8,
+            rhs_buf: []const u8,
+        ) bool {
+            if (lhs.tag != rhs.tag) {
+                return false;
+            }
+
+            return switch (lhs.tag) {
+                // if the two versions are identical as strings, it should often be faster to compare that than the actual semver version
+                // semver ranges involve a ton of pointer chasing
+                .npm => strings.eql(lhs.literal.slice(lhs_buf), rhs.literal.slice(rhs_buf)) or
+                    lhs.value.npm.eql(rhs.value.npm),
+                .folder, .dist_tag => lhs.literal.len == rhs.literal.len and strings.eql(lhs.literal.slice(lhs_buf), rhs.literal.slice(rhs_buf)),
+                .tarball => lhs.value.tarball.eql(rhs.value.tarball, lhs_buf, rhs_buf),
+                else => true,
             };
         }
 
@@ -2016,8 +2371,13 @@ pub const Dependency = struct {
         };
     };
 
-    pub fn eql(a: Dependency, b: Dependency) bool {
-        return a.name_hash == b.name_hash and a.name.len == b.name.len and a.version.eql(b.version);
+    pub fn eql(
+        a: Dependency,
+        b: Dependency,
+        lhs_buf: []const u8,
+        rhs_buf: []const u8,
+    ) bool {
+        return a.name_hash == b.name_hash and a.name.len == b.name.len and a.version.eql(b.version, lhs_buf, rhs_buf);
     }
 
     pub fn eqlResolved(a: Dependency, b: Dependency) bool {
@@ -2533,7 +2893,12 @@ const Npm = struct {
 
                 const original = pos.*;
                 pos.* = std.mem.alignForward(original, @alignOf(Type));
-                try writer.writeByteNTimes(0, pos.* - original);
+
+                const repeat_count = pos.* - original;
+                var i: usize = 0;
+                while (i < repeat_count) : (i += 1) {
+                    try writer.writeByte(alignment_bytes_to_repeat[i % alignment_bytes_to_repeat.len]);
+                }
 
                 try writer.writeAll(
                     bytes,
@@ -3665,6 +4030,7 @@ pub const PackageManager = struct {
     timestamp: u32 = 0,
     extracted_count: u32 = 0,
     default_features: Features = Features{},
+    summary: Lockfile.Package.Diff.Summary = Lockfile.Package.Diff.Summary{},
 
     registry: Npm.Registry = Npm.Registry{},
 
@@ -4498,7 +4864,7 @@ pub const PackageManager = struct {
             break :brk std.fs.cwd().openFileZ("package.json", .{ .read = true, .write = true }) catch |err2| {
                 var this_cwd = original_cwd;
                 outer: while (std.fs.path.dirname(this_cwd)) |parent| {
-                    cwd_buf[parent.len + 1] = 0;
+                    cwd_buf[parent.len] = 0;
                     var chdir = cwd_buf[0..parent.len :0];
 
                     std.os.chdirZ(chdir) catch |err| {
@@ -4597,7 +4963,6 @@ pub const PackageManager = struct {
             // .progress
         };
         manager.lockfile = try ctx.allocator.create(Lockfile);
-        try manager.lockfile.initEmpty(ctx.allocator);
 
         if (!enable_cache) {
             manager.enable_manifest_cache = false;
@@ -4618,44 +4983,98 @@ pub const PackageManager = struct {
         }
         manager.timestamp = @truncate(u32, @intCast(u64, @maximum(std.time.timestamp(), 0)));
 
-        const load_lockfile_result = Lockfile.loadFromDisk(ctx.allocator, ctx.log, Lockfile.default_filename);
+        var load_lockfile_result = Lockfile.loadFromDisk(ctx.allocator, ctx.log, Lockfile.default_filename);
 
         var root = Lockfile.Package{};
-        try Lockfile.Package.parse(
-            manager.lockfile,
-            &root,
-            ctx.allocator,
-            ctx.log,
-            package_json_source,
-            Features{
-                .optional_dependencies = true,
-                .dev_dependencies = true,
-                .is_main = true,
-            },
-        );
 
-        const should_ignore_lockfile = load_lockfile_result != .ok;
+        var needs_new_lockfile = load_lockfile_result != .ok;
+
+        var diffs = Lockfile.Package.Diff.List.init(ctx.allocator);
 
         switch (load_lockfile_result) {
             .err => |cause| {
                 switch (cause.step) {
                     .open_file => Output.prettyErrorln("<r><red>error opening lockfile:<r> {s}. Discarding lockfile.", .{
-                        @errorName(load_lockfile_result.err),
+                        @errorName(cause.value),
                     }),
                     .parse_file => Output.prettyErrorln("<r><red>error parsing lockfile:<r> {s}. Discarding lockfile.", .{
-                        @errorName(load_lockfile_result.err),
+                        @errorName(cause.value),
                     }),
                     .read_file => Output.prettyErrorln("<r><red>error reading lockfile:<r> {s}. Discarding lockfile.", .{
-                        @errorName(load_lockfile_result.err),
+                        @errorName(cause.value),
                     }),
+                }
+                if (ctx.log.errors > 0) {
+                    if (Output.enable_ansi_colors) {
+                        try manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
+                    } else {
+                        try manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
+                    }
                 }
                 Output.flush();
             },
-            .ok => |current_lockfile| {},
+            .ok => {
+                differ: {
+                    root = load_lockfile_result.ok.rootPackage() orelse {
+                        needs_new_lockfile = true;
+                        break :differ;
+                    };
+
+                    if (root.dependencies.len == 0) {
+                        needs_new_lockfile = true;
+                        break :differ;
+                    }
+
+                    var lockfile: Lockfile = undefined;
+                    try lockfile.initEmpty(ctx.allocator);
+                    var new_root: Lockfile.Package = undefined;
+                    try Lockfile.Package.parse(
+                        &lockfile,
+                        &new_root,
+                        ctx.allocator,
+                        ctx.log,
+                        package_json_source,
+                        Features{
+                            .optional_dependencies = true,
+                            .dev_dependencies = true,
+                            .is_main = true,
+                        },
+                    );
+                    manager.lockfile.* = load_lockfile_result.ok;
+
+                    manager.summary = try Package.Diff.generate(
+                        ctx.allocator,
+                        &diffs,
+                        manager.lockfile,
+                        &lockfile,
+                        &root,
+                        &new_root,
+                    );
+                }
+            },
             else => {},
         }
 
-        if (should_ignore_lockfile) {
+        while (diffs.readItem()) |diff| {
+            manager.lockfile.applyDiff(&diffs, diff);
+        }
+
+        if (needs_new_lockfile) {
+            root = Lockfile.Package{};
+            try manager.lockfile.initEmpty(ctx.allocator);
+            try Lockfile.Package.parse(
+                manager.lockfile,
+                &root,
+                ctx.allocator,
+                ctx.log,
+                package_json_source,
+                Features{
+                    .optional_dependencies = true,
+                    .dev_dependencies = true,
+                    .is_main = true,
+                },
+            );
+
             root = try manager.lockfile.appendPackage(root);
             manager.enqueueDependencyList(
                 root.dependencies,
@@ -4681,7 +5100,16 @@ pub const PackageManager = struct {
         try manager.hoist();
         try manager.link();
 
+        try manager.lockfile.clean();
+
         manager.lockfile.saveToDisk(Lockfile.default_filename);
+
+        if (needs_new_lockfile) {
+            manager.summary.add = @truncate(u32, manager.lockfile.packages.len);
+        }
+
+        Output.prettyln("   <green>+{d}<r> add | <cyan>{d}<r> update | <r><red>-{d}<r> remove", .{ manager.summary.add, manager.summary.update, manager.summary.remove });
+        Output.flush();
     }
 };
 

@@ -561,19 +561,6 @@ const AsyncSocket = struct {
         resume this.connect_frame;
     }
 
-    fn on_close(this: *AsyncSocket, _: *Completion, _: AsyncIO.CloseError!void) void {
-        resume this.close_frame;
-    }
-
-    pub fn close(this: *AsyncSocket) void {
-        if (this.socket == 0) return;
-        this.io.close(*AsyncSocket, this, on_close, &this.close_completion, this.socket);
-        suspend {
-            this.close_frame = @frame().*;
-        }
-        this.socket = 0;
-    }
-
     fn connectToAddress(this: *AsyncSocket, address: std.net.Address) ConnectError!void {
         const sockfd = AsyncIO.openSocket(address.any.family, SOCKET_FLAGS | std.os.SOCK_STREAM, std.os.IPPROTO_TCP) catch return error.ConnectionRefused;
 
@@ -588,6 +575,19 @@ const AsyncSocket = struct {
 
         this.socket = sockfd;
         return;
+    }
+
+    fn on_close(this: *AsyncSocket, _: *Completion, _: AsyncIO.CloseError!void) void {
+        resume this.close_frame;
+    }
+
+    pub fn close(this: *AsyncSocket) void {
+        if (this.socket == 0) return;
+        this.io.close(*AsyncSocket, this, on_close, &this.close_completion, this.socket);
+        suspend {
+            this.close_frame = @frame().*;
+        }
+        this.socket = 0;
     }
 
     pub fn connect(this: *AsyncSocket, name: []const u8, port: u16) ConnectError!void {

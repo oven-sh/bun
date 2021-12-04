@@ -1625,11 +1625,13 @@ pub const Bundler = struct {
                                         );
                                     } else |err| {
                                         if (comptime isDebug) {
-                                            Output.prettyErrorln("\n<r><red>{s}<r> on resolving \"{s}\" from \"{s}\"", .{
-                                                @errorName(err),
-                                                import_record.path.text,
-                                                file_path.text,
-                                            });
+                                            if (!import_record.handles_import_errors) {
+                                                Output.prettyErrorln("\n<r><red>{s}<r> on resolving \"{s}\" from \"{s}\"", .{
+                                                    @errorName(err),
+                                                    import_record.path.text,
+                                                    file_path.text,
+                                                });
+                                            }
                                         }
 
                                         // Disable failing packages from being printed.
@@ -1640,37 +1642,39 @@ pub const Bundler = struct {
 
                                         switch (err) {
                                             error.ModuleNotFound => {
-                                                if (isPackagePath(import_record.path.text)) {
-                                                    if (this.bundler.options.platform.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
-                                                        try log.addResolveErrorWithTextDupe(
-                                                            &source,
-                                                            import_record.range,
-                                                            this.allocator,
-                                                            "Could not resolve Node.js builtin: \"{s}\".",
-                                                            .{import_record.path.text},
-                                                            import_record.kind,
-                                                        );
+                                                if (!import_record.handles_import_errors) {
+                                                    if (isPackagePath(import_record.path.text)) {
+                                                        if (this.bundler.options.platform.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
+                                                            try log.addResolveErrorWithTextDupe(
+                                                                &source,
+                                                                import_record.range,
+                                                                this.allocator,
+                                                                "Could not resolve Node.js builtin: \"{s}\".",
+                                                                .{import_record.path.text},
+                                                                import_record.kind,
+                                                            );
+                                                        } else {
+                                                            try log.addResolveErrorWithTextDupe(
+                                                                &source,
+                                                                import_record.range,
+                                                                this.allocator,
+                                                                "Could not resolve: \"{s}\". Maybe you need to \"npm install\" (or yarn/pnpm)?",
+                                                                .{import_record.path.text},
+                                                                import_record.kind,
+                                                            );
+                                                        }
                                                     } else {
                                                         try log.addResolveErrorWithTextDupe(
                                                             &source,
                                                             import_record.range,
                                                             this.allocator,
-                                                            "Could not resolve: \"{s}\". Maybe you need to \"npm install\" (or yarn/pnpm)?",
-                                                            .{import_record.path.text},
+                                                            "Could not resolve: \"{s}\"",
+                                                            .{
+                                                                import_record.path.text,
+                                                            },
                                                             import_record.kind,
                                                         );
                                                     }
-                                                } else {
-                                                    try log.addResolveErrorWithTextDupe(
-                                                        &source,
-                                                        import_record.range,
-                                                        this.allocator,
-                                                        "Could not resolve: \"{s}\"",
-                                                        .{
-                                                            import_record.path.text,
-                                                        },
-                                                        import_record.kind,
-                                                    );
                                                 }
                                             },
                                             // assume other errors are already in the log
@@ -2063,37 +2067,39 @@ pub const Bundler = struct {
                                 } else |err| {
                                     switch (err) {
                                         error.ModuleNotFound => {
-                                            if (isPackagePath(import_record.path.text)) {
-                                                if (this.bundler.options.platform.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
-                                                    try log.addResolveErrorWithTextDupe(
-                                                        &source,
-                                                        import_record.range,
-                                                        this.allocator,
-                                                        "Could not resolve Node.js builtin: \"{s}\".",
-                                                        .{import_record.path.text},
-                                                        import_record.kind,
-                                                    );
+                                            if (!import_record.handles_import_errors) {
+                                                if (isPackagePath(import_record.path.text)) {
+                                                    if (this.bundler.options.platform.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
+                                                        try log.addResolveErrorWithTextDupe(
+                                                            &source,
+                                                            import_record.range,
+                                                            this.allocator,
+                                                            "Could not resolve Node.js builtin: \"{s}\".",
+                                                            .{import_record.path.text},
+                                                            import_record.kind,
+                                                        );
+                                                    } else {
+                                                        try log.addResolveErrorWithTextDupe(
+                                                            &source,
+                                                            import_record.range,
+                                                            this.allocator,
+                                                            "Could not resolve: \"{s}\". Maybe you need to \"npm install\" (or yarn/pnpm)?",
+                                                            .{import_record.path.text},
+                                                            import_record.kind,
+                                                        );
+                                                    }
                                                 } else {
                                                     try log.addResolveErrorWithTextDupe(
                                                         &source,
                                                         import_record.range,
                                                         this.allocator,
-                                                        "Could not resolve: \"{s}\". Maybe you need to \"npm install\" (or yarn/pnpm)?",
-                                                        .{import_record.path.text},
+                                                        "Could not resolve: \"{s}\"",
+                                                        .{
+                                                            import_record.path.text,
+                                                        },
                                                         import_record.kind,
                                                     );
                                                 }
-                                            } else {
-                                                try log.addResolveErrorWithTextDupe(
-                                                    &source,
-                                                    import_record.range,
-                                                    this.allocator,
-                                                    "Could not resolve: \"{s}\"",
-                                                    .{
-                                                        import_record.path.text,
-                                                    },
-                                                    import_record.kind,
-                                                );
                                             }
                                         },
                                         // assume other errors are already in the log

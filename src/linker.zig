@@ -329,10 +329,11 @@ pub const Linker = struct {
                             import_record.module_id = @truncate(u32, std.hash.Wyhash.hash(0, path.pretty));
                         }
                     } else |err| {
-                        had_resolve_errors = true;
-
                         switch (err) {
                             error.ModuleNotFound => {
+                                if (import_record.handles_import_errors) continue;
+                                had_resolve_errors = true;
+
                                 if (import_record.path.text.len > 0 and Resolver.isPackagePath(import_record.path.text)) {
                                     if (linker.options.platform.isWebLike() and Options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
                                         try linker.log.addResolveError(
@@ -370,6 +371,8 @@ pub const Linker = struct {
                                 }
                             },
                             else => {
+                                had_resolve_errors = true;
+
                                 try linker.log.addResolveError(
                                     &result.source,
                                     import_record.range,

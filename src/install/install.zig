@@ -4,7 +4,6 @@ const std = @import("std");
 const JSLexer = @import("../js_lexer.zig");
 const logger = @import("../logger.zig");
 const alloc = @import("../alloc.zig");
-const options = @import("../options.zig");
 const js_parser = @import("../js_parser.zig");
 const json_parser = @import("../json_parser.zig");
 const js_printer = @import("../js_printer.zig");
@@ -530,13 +529,13 @@ const Lockfile = struct {
     pub fn clean(this: *Lockfile) !void {
         var old = this.*;
         var new: Lockfile = undefined;
-        new.initEmpty(
+        try new.initEmpty(
             old.allocator,
         );
         try new.string_pool.ensureTotalCapacity(old.string_pool.capacity());
         try new.package_index.ensureTotalCapacity(old.package_index.capacity());
-        try new.packages.ensureTotalCapacity(old.packages.len);
-        try new.buffers.preallocate(&old.buffers);
+        try new.packages.ensureTotalCapacity(old.allocator, old.packages.len);
+        try new.buffers.preallocate(old.buffers, old.allocator);
     }
 
     const PackageIDFifo = std.fifo.LinearFifo(PackageID, .Dynamic);
@@ -548,6 +547,48 @@ const Lockfile = struct {
         new: *Lockfile,
         old: *Lockfile,
         depth: usize = 0,
+        allocator: *std.mem.Allocator,
+        slice: Lockfile.Package.List.Slice,
+
+        log: *logger.Log,
+
+        pub fn run(old: *Lockfile, new: *Lockfile, log: *logger.Log) !void {
+            var visitor = CleanVisitor{
+                .visited = try std.DynamicBitSetUnmanaged.initEmpty(old.packages.len, old.allocator),
+                .sorted_ids = std.ArrayListUnmanaged(PackageID){},
+                .queue = PackageIDFifo.init(old.allcoator),
+                .new = new,
+                .allocator = old.allocator,
+                .old = old,
+                .slice = old.packages.slice(),
+                .log = log,
+            };
+
+            try visitor.visit(0);
+            while (visitor.queue.readItem()) |package_id| {
+                try visitor.visit(package_id);
+            }
+        }
+
+        pub fn visit(this: *CleanVisitor, package_id: PackageID) !void {
+            const dependency_list = this.slice.items(.dependencies)[package_id];
+            const resolution_list = this.slice.items(.resolutions)[package_id];
+            const dependencies: []const Dependency = dependency_list.get(this.old.buffers.dependencies.items);
+            const resolutions: []const PackageID = resolution_list.get(this.old.buffers.resolutions.items);
+
+            this.sorted_ids.appendAssumeCapacity(package_id);
+            this.visited.set(package_id);
+            var new = this.new;
+            const max_package = this.old.packages.len;
+            for (resolutions) |resolution, i| {
+                if (resolution >= max_package) {
+                    continue;
+                }
+
+                const dependency = dependencies[i];
+                // dependency.clone(from: *Lockfile, to: *Lockfile)
+            }
+        }
     };
 
     pub fn verify(this: *Lockfile) !void {
@@ -2495,7 +2536,7 @@ const Npm = struct {
                 new_etag,
                 @truncate(u32, @intCast(u64, @maximum(0, std.time.timestamp()))) + 300,
             )) |package| {
-                if (PackageManager.instance.enable_manifest_cache) {
+                if (PackageManager.instance.options.enable.manifest_cache) {
                     var tmpdir = Fs.FileSystem.instance.tmpdir();
 
                     PackageManifest.Serializer.save(&package, tmpdir, PackageManager.instance.cache_directory) catch {};
@@ -2655,8 +2696,14 @@ const Npm = struct {
             }
         }
     };
+    const BigExternalString = Semver.BigExternalString;
 
     pub const PackageVersion = extern struct {
+        /// `"integrity"` field || `"shasum"` field
+        /// https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#dist
+        // Splitting this into it's own array ends up increasing the final size a little bit.
+        integrity: Integrity = Integrity{},
+
         /// "dependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#dependencies)
         dependencies: ExternalStringMap = ExternalStringMap{},
 
@@ -2671,19 +2718,14 @@ const Npm = struct {
         /// We keep it in the data layout so that if it turns out we do need it, we can add it without invalidating everyone's history.
         dev_dependencies: ExternalStringMap = ExternalStringMap{},
 
+        /// `"bin"` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
+        bin: Bin = Bin{},
+
         /// `"engines"` field in package.json
-        /// not implemented yet, but exists so we can add it later if needed
         engines: ExternalStringMap = ExternalStringMap{},
 
         /// `"peerDependenciesMeta"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#peerdependenciesmeta)
         optional_peer_dependencies: ExternalStringMap = ExternalStringMap{},
-
-        /// `"bin"` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
-        bin: Bin = Bin{},
-
-        /// `"integrity"` field || `"shasum"` field
-        /// https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#dist
-        integrity: Integrity = Integrity{},
 
         man_dir: ExternalString = ExternalString{},
 
@@ -2696,11 +2738,6 @@ const Npm = struct {
         cpu: Architecture = Architecture.all,
     };
 
-    const BigExternalString = Semver.BigExternalString;
-
-    /// Efficient, serializable NPM package metadata
-    /// All the "content" is stored in three separate arrays,
-    /// Everything inside here is just pointers to one of the three arrays
     const NpmPackage = extern struct {
         name: ExternalString = ExternalString{},
         /// HTTP response headers
@@ -2726,7 +2763,7 @@ const Npm = struct {
         string_buf: []const u8 = &[_]u8{},
         versions: []const Semver.Version = &[_]Semver.Version{},
         external_strings: []const ExternalString = &[_]ExternalString{},
-        // We store this in a separate buffer so that we can dedupe contiguous identical versions without having to copy the strings
+        // We store this in a separate buffer so that we can dedupe contiguous identical versions without an extra pass
         external_strings_for_versions: []const ExternalString = &[_]ExternalString{},
         package_versions: []const PackageVersion = &[_]PackageVersion{},
 
@@ -3954,9 +3991,6 @@ pub const CacheLevel = struct {
 // 1. Download all packages, parsing their dependencies and enqueuing all dependnecies for resolution
 // 2.
 pub const PackageManager = struct {
-    enable_cache: bool = true,
-    enable_manifest_cache: bool = true,
-    enable_manifest_cache_public: bool = true,
     cache_directory_path: string = "",
     cache_directory: std.fs.Dir = undefined,
     root_dir: *Fs.FileSystem.DirEntry,
@@ -3986,6 +4020,8 @@ pub const PackageManager = struct {
     total_tasks: u32 = 0,
 
     lockfile: *Lockfile = undefined,
+
+    options: Options = Options{},
 
     const PreallocatedNetworkTasks = std.BoundedArray(NetworkTask, 1024);
     const NetworkTaskQueue = std.HashMapUnmanaged(u64, void, IdentityContext(u64), 80);
@@ -4327,12 +4363,12 @@ pub const PackageManager = struct {
                             const task_id = Task.Id.forManifest(Task.Tag.package_manifest, this.lockfile.str(name));
                             var network_entry = try this.network_task_queue.getOrPutContext(this.allocator, task_id, .{});
                             if (!network_entry.found_existing) {
-                                if (this.enable_manifest_cache) {
+                                if (this.options.enable.manifest_cache) {
                                     if (Npm.PackageManifest.Serializer.load(this.allocator, this.cache_directory, this.lockfile.str(name)) catch null) |manifest_| {
                                         const manifest: Npm.PackageManifest = manifest_;
                                         loaded_manifest = manifest;
 
-                                        if (this.enable_manifest_cache_public and manifest.pkg.public_max_age > this.timestamp) {
+                                        if (this.options.enable.manifest_cache_control and manifest.pkg.public_max_age > this.timestamp) {
                                             try this.manifests.put(this.allocator, @truncate(PackageNameHash, manifest.pkg.name.hash), manifest);
                                         }
 
@@ -4356,7 +4392,7 @@ pub const PackageManager = struct {
                                         }
 
                                         // Was it recent enough to just load it without the network call?
-                                        if (this.enable_manifest_cache_public and manifest.pkg.public_max_age > this.timestamp) {
+                                        if (this.options.enable.manifest_cache_control and manifest.pkg.public_max_age > this.timestamp) {
                                             _ = this.network_task_queue.remove(task_id);
                                             continue :retry_from_manifests_ptr;
                                         }
@@ -4778,9 +4814,58 @@ pub const PackageManager = struct {
 
     pub const Options = struct {
         verbose: bool = false,
-        skip_install: bool = false,
-        lockfile_path: stringZ = Lockfile.default_path,
-        registry_url: string = Npm.Registry.url.href,
+        lockfile_path: stringZ = Lockfile.default_filename,
+        save_lockfile_path: stringZ = Lockfile.default_filename,
+        registry_url: URL = URL.parse("https://registry.npmjs.org/"),
+        cache_directory: string = "",
+        enable: Enable = .{},
+        do: Do = .{},
+
+        pub fn load(this: *Options, allocator: *std.mem.Allocator, log: *logger.Log, env_loader: *DotEnv.Loader) !void {
+            // technically, npm_config is case in-sensitive
+            // load_registry:
+            {
+                const registry_keys = [_]string{
+                    "BUN_CONFIG_REGISTRY",
+                    "NPM_CONFIG_REGISTRY",
+                    "npm_config_registry",
+                };
+
+                inline for (registry_keys) |registry_key| {
+                    if (env_loader.map.get(registry_key)) |registry_| {
+                        if (registry_.len > 0 and
+                            (strings.startsWith(registry_, "https://") or
+                            strings.startsWith(registry_, "http://")))
+                        {
+                            this.registry_url = URL.parse(registry_);
+                            // stage1 bug: break inside inline is broken
+                            // break :load_registry;
+                        }
+                    }
+                }
+            }
+
+            this.save_lockfile_path = this.lockfile_path;
+            if (env_loader.map.get("BUN_CONFIG_LOCKFILE_SAVE_PATH")) |save_lockfile_path| {
+                this.save_lockfile_path = try allocator.dupeZ(u8, save_lockfile_path);
+            }
+
+            this.do.save_lockfile = strings.eqlComptime((env_loader.map.get("BUN_CONFIG_SKIP_SAVE_LOCKFILE") orelse "0"), "0");
+            this.do.load_lockfile = strings.eqlComptime((env_loader.map.get("BUN_CONFIG_SKIP_LOAD_LOCKFILE") orelse "0"), "0");
+            this.do.install_packages = strings.eqlComptime((env_loader.map.get("BUN_CONFIG_SKIP_INSTALL_PACKAGES") orelse "0"), "0");
+        }
+
+        pub const Do = struct {
+            save_lockfile: bool = true,
+            load_lockfile: bool = true,
+            install_packages: bool = true,
+        };
+
+        pub const Enable = struct {
+            manifest_cache: bool = true,
+            manifest_cache_control: bool = true,
+            cache: bool = true,
+        };
     };
 
     var cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
@@ -4850,8 +4935,7 @@ pub const PackageManager = struct {
         };
 
         var entries_option = try fs.fs.readDirectory(fs.top_level_dir, null);
-        var enable_cache = false;
-        var cache_directory_path: string = "";
+        var options = Options{};
         var cache_directory: std.fs.Dir = undefined;
         env_loader.loadProcess();
         try env_loader.load(&fs.fs, &entries_option.entries, false);
@@ -4861,17 +4945,18 @@ pub const PackageManager = struct {
         }
 
         if (PackageManager.fetchCacheDirectoryPath(ctx.allocator, env_loader, &entries_option.entries)) |cache_dir_path| {
-            enable_cache = true;
-            cache_directory_path = try fs.dirname_store.append(@TypeOf(cache_dir_path), cache_dir_path);
-            cache_directory = std.fs.cwd().makeOpenPath(cache_directory_path, .{ .iterate = true }) catch |err| brk: {
-                enable_cache = false;
+            options.cache_directory = try fs.dirname_store.append(@TypeOf(cache_dir_path), cache_dir_path);
+            cache_directory = std.fs.cwd().makeOpenPath(options.cache_directory, .{ .iterate = true }) catch |err| brk: {
+                options.enable.cache = false;
+                options.enable.manifest_cache = false;
+                options.enable.manifest_cache_control = false;
                 Output.prettyErrorln("Cache is disabled due to error: {s}", .{@errorName(err)});
                 break :brk undefined;
             };
         } else {}
 
         if (verbose_install) {
-            Output.prettyErrorln("Cache Dir: {s}", .{cache_directory_path});
+            Output.prettyErrorln("Cache Dir: {s}", .{options.cache_directory});
             Output.flush();
         }
 
@@ -4889,8 +4974,7 @@ pub const PackageManager = struct {
         // var progress = std.Progress{};
         // var node = progress.start(name: []const u8, estimated_total_items: usize)
         manager.* = PackageManager{
-            .enable_cache = enable_cache,
-            .cache_directory_path = cache_directory_path,
+            .options = options,
             .cache_directory = cache_directory,
             .env_loader = env_loader,
             .allocator = ctx.allocator,
@@ -4905,26 +4989,36 @@ pub const PackageManager = struct {
         };
         manager.lockfile = try ctx.allocator.create(Lockfile);
 
-        if (!enable_cache) {
-            manager.enable_manifest_cache = false;
-            manager.enable_manifest_cache_public = false;
+        if (!manager.options.enable.cache) {
+            manager.options.enable.manifest_cache = false;
+            manager.options.enable.manifest_cache_control = false;
         }
 
         if (env_loader.map.get("BUN_MANIFEST_CACHE")) |manifest_cache| {
             if (strings.eqlComptime(manifest_cache, "1")) {
-                manager.enable_manifest_cache = true;
-                manager.enable_manifest_cache_public = false;
+                manager.options.enable.manifest_cache = true;
+                manager.options.enable.manifest_cache_control = false;
             } else if (strings.eqlComptime(manifest_cache, "2")) {
-                manager.enable_manifest_cache = true;
-                manager.enable_manifest_cache_public = true;
+                manager.options.enable.manifest_cache = true;
+                manager.options.enable.manifest_cache_control = true;
             } else {
-                manager.enable_manifest_cache = false;
-                manager.enable_manifest_cache_public = false;
+                manager.options.enable.manifest_cache = false;
+                manager.options.enable.manifest_cache_control = false;
             }
         }
+
+        try manager.options.load(
+            ctx.allocator,
+            ctx.log,
+            env_loader,
+        );
+
         manager.timestamp = @truncate(u32, @intCast(u64, @maximum(std.time.timestamp(), 0)));
 
-        var load_lockfile_result = Lockfile.loadFromDisk(ctx.allocator, ctx.log, Lockfile.default_filename);
+        var load_lockfile_result: Lockfile.LoadFromDiskResult = if (manager.options.do.load_lockfile)
+            Lockfile.loadFromDisk(ctx.allocator, ctx.log, manager.options.lockfile_path)
+        else
+            Lockfile.LoadFromDiskResult{ .not_found = .{} };
 
         var root = Lockfile.Package{};
 
@@ -5038,12 +5132,13 @@ pub const PackageManager = struct {
             std.os.exit(1);
         }
 
-        // try manager.lockfile.clean();
+        try manager.lockfile.clean();
 
         try manager.hoist();
         try manager.link();
 
-        manager.lockfile.saveToDisk(Lockfile.default_filename);
+        if (manager.options.do.save_lockfile)
+            manager.lockfile.saveToDisk(manager.options.save_lockfile_path);
 
         if (needs_new_lockfile) {
             manager.summary.add = @truncate(u32, manager.lockfile.packages.len);

@@ -79,3 +79,5 @@ src/deps/openssl
 src/tests.zig
 *.blob
 src/deps/s2n-tls
+.npm
+.npm.gz

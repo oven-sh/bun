@@ -1,0 +1,160 @@
+const std = @import("std");
+const strings = @import("../string_immutable.zig");
+
+pub const Integrity = extern struct {
+    tag: Tag = Tag.unknown,
+    /// Possibly a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value initially
+    /// We transform it though.
+    value: [digest_buf_len]u8 = undefined,
+
+    pub const digest_buf_len: usize = brk: {
+        const values = [_]usize{
+            std.crypto.hash.Sha1.digest_length,
+            std.crypto.hash.sha2.Sha512.digest_length,
+            std.crypto.hash.sha2.Sha256.digest_length,
+            std.crypto.hash.sha2.Sha384.digest_length,
+        };
+
+        var value: usize = 0;
+        for (values) |val| {
+            value = @maximum(val, value);
+        }
+
+        break :brk value;
+    };
+
+    pub fn parseSHASum(buf: []const u8) !Integrity {
+        if (buf.len == 0) {
+            return Integrity{
+                .tag = Tag.unknown,
+                .value = undefined,
+            };
+        }
+
+        // e.g. "3cd0599b099384b815c10f7fa7df0092b62d534f"
+        var integrity = Integrity{ .tag = Tag.sha1 };
+        const end: usize = @minimum("3cd0599b099384b815c10f7fa7df0092b62d534f".len, buf.len);
+        var out_i: usize = 0;
+        var i: usize = 0;
+
+        {
+            std.mem.set(u8, &integrity.value, 0);
+        }
+
+        while (i < end) {
+            const x0 = @as(u16, switch (buf[i]) {
+                '0'...'9' => buf[i] - '0',
+                'A'...'Z' => buf[i] - 'A' + 10,
+                'a'...'z' => buf[i] - 'a' + 10,
+                else => return error.InvalidCharacter,
+            });
+            i += 1;
+
+            const x1 = @as(u16, switch (buf[i]) {
+                '0'...'9' => buf[i] - '0',
+                'A'...'Z' => buf[i] - 'A' + 10,
+                'a'...'z' => buf[i] - 'a' + 10,
+                else => return error.InvalidCharacter,
+            });
+
+            // parse hex integer
+            integrity.value[out_i] = @truncate(u8, x0 << 4 | x1);
+
+            out_i += 1;
+            i += 1;
+        }
+
+        var remainder = &integrity.value[out_i..];
+
+        return integrity;
+    }
+
+    pub fn parse(buf: []const u8) !Integrity {
+        if (buf.len < "sha256-".len) {
+            return Integrity{
+                .tag = Tag.unknown,
+                .value = undefined,
+            };
+        }
+
+        var out: [digest_buf_len]u8 = undefined;
+        const tag = Tag.parse(buf);
+        if (tag == Tag.unknown) {
+            return Integrity{
+                .tag = Tag.unknown,
+                .value = undefined,
+            };
+        }
+
+        std.base64.url_safe.Decoder.decode(&out, buf["sha256-".len..]) catch {
+            return Integrity{
+                .tag = Tag.unknown,
+                .value = undefined,
+            };
+        };
+
+        return Integrity{ .value = out, .tag = tag };
+    }
+
+    pub const Tag = enum(u8) {
+        unknown = 0,
+        /// "shasum" in the metadata
+        sha1 = 1,
+        /// The value is a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value
+        sha256 = 2,
+        /// The value is a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value
+        sha384 = 3,
+        /// The value is a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value
+        sha512 = 4,
+
+        _,
+
+        pub inline fn isSupported(this: Tag) bool {
+            return @enumToInt(this) >= @enumToInt(Tag.sha1) and @enumToInt(this) <= @enumToInt(Tag.sha512);
+        }
+
+        pub fn parse(buf: []const u8) Tag {
+            const Matcher = strings.ExactSizeMatcher(8);
+            return switch (Matcher.match(buf[0..@minimum(buf.len, 8)])) {
+                Matcher.case("sha256-") => Tag.sha256,
+                Matcher.case("sha384-") => Tag.sha384,
+                Matcher.case("sha512-") => Tag.sha512,
+                else => .unknown,
+            };
+        }
+    };
+
+    pub fn verify(this: *const Integrity, bytes: []const u8) bool {
+        return @call(.{ .modifier = .always_inline }, verifyByTag, .{ this.tag, bytes, &this.value });
+    }
+
+    pub fn verifyByTag(tag: Tag, bytes: []const u8, sum: []const u8) bool {
+        var digest: [digest_buf_len]u8 = undefined;
+
+        switch (tag) {
+            .sha1 => {
+                var ptr = digest[0..std.crypto.hash.Sha1.digest_length];
+                std.crypto.hash.Sha1.hash(bytes, ptr, .{});
+                return strings.eqlLong(ptr, sum[0..ptr.len], true);
+            },
+            .sha512 => {
+                var ptr = digest[0..std.crypto.hash.sha2.Sha512.digest_length];
+                std.crypto.hash.sha2.Sha512.hash(bytes, ptr, .{});
+                return strings.eqlLong(ptr, sum[0..ptr.len], true);
+            },
+            .sha256 => {
+                var ptr = digest[0..std.crypto.hash.sha2.Sha256.digest_length];
+                std.crypto.hash.sha2.Sha256.hash(bytes, ptr, .{});
+                return strings.eqlLong(ptr, sum[0..ptr.len], true);
+            },
+            .sha384 => {
+                var ptr = digest[0..std.crypto.hash.sha2.Sha384.digest_length];
+                std.crypto.hash.sha2.Sha384.hash(bytes, ptr, .{});
+                return strings.eqlLong(ptr, sum[0..ptr.len], true);
+            },
+            else => return false,
+        }
+
+        unreachable;
+    }
+};

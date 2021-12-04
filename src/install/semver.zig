@@ -1,64 +1,351 @@
 usingnamespace @import("../global.zig");
 const std = @import("std");
 
-pub const ExternalString = extern struct {
-    off: u32 = 0,
-    len: u32 = 0,
-    hash: u64 = 0,
+/// String type that stores either an offset/length into an external buffer or a string inline directly
+pub const String = extern struct {
+    pub const max_inline_len: usize = 8;
+    /// This is three different types of string.
+    /// 1. Empty string. If it's all zeroes, then it's an empty string.
+    /// 2. If the final bit is set, then it's a string that is stored inline.
+    /// 3. If the final bit is not set, then it's a string that is stored in an external buffer.
+    bytes: [max_inline_len]u8 = [8]u8{ 0, 0, 0, 0, 0, 0, 0, 0 },
 
-    /// ExternalString but without the hash
-    pub const Small = extern struct {
+    pub const Tag = enum {
+        small,
+        big,
+    };
+
+    pub inline fn canInline(buf: []const u8) bool {
+        return switch (buf.len) {
+            0...max_inline_len - 1 => true,
+            max_inline_len => buf[max_inline_len - 1] & 0x80 == 0,
+            else => false,
+        };
+    }
+
+    pub inline fn isInline(this: String) bool {
+        return this.bytes[max_inline_len - 1] & 0x80 == 0;
+    }
+
+    pub inline fn sliced(this: *const String, buf: []const u8) SlicedString {
+        return if (this.isInline())
+            SlicedString.init(this.slice(""), this.slice(""))
+        else
+            SlicedString.init(buf, this.slice(buf));
+    }
+
+    pub fn init(
+        buf: string,
+        in: string,
+    ) String {
+        switch (in.len) {
+            0 => return String{},
+            1...max_inline_len => {
+                var bytes: [max_inline_len]u8 = [max_inline_len]u8{ 0, 0, 0, 0, 0, 0, 0, 0 };
+                comptime var i: usize = 0;
+
+                inline while (i < bytes.len) : (i += 1) {
+                    if (i < in.len) bytes[i] = in[i];
+                }
+
+                // If they use the final bit, then it's a big string.
+                // This should only happen for non-ascii strings that are exactly 8 bytes.
+                // so that's an edge-case
+                if ((bytes[max_inline_len - 1]) >= 128) {
+                    const ptr_ = Pointer.init(buf, in);
+                    return @bitCast(String, @as(u64, @truncate(u63, @bitCast(u64, ptr_))) | 1 << 63);
+                }
+
+                return String{ .bytes = bytes };
+            },
+            else => {
+                const ptr_ = Pointer.init(buf, in);
+                return @bitCast(String, @as(u64, @truncate(u63, @bitCast(u64, ptr_))) | 1 << 63);
+            },
+        }
+    }
+
+    pub fn eql(this: String, that: String, this_buf: []const u8, that_buf: []const u8) bool {
+        if (this.isInline() and that.isInline()) {
+            return @bitCast(u64, this.bytes) == @bitCast(u64, that.bytes);
+        } else if (this.isInline() != that.isInline()) {
+            return false;
+        } else {
+            const a = this.ptr();
+            const b = that.ptr();
+            return strings.eql(this_buf[0..a.len], that_buf[0..b.len]);
+        }
+    }
+
+    pub inline fn isEmpty(this: String) bool {
+        return @bitCast(u64, this.bytes) == @as(u64, 0);
+    }
+
+    pub fn len(this: String) usize {
+        switch (this.bytes[max_inline_len - 1] & 128) {
+            0 => {
+                // Edgecase: string that starts with a 0 byte will be considered empty.
+                switch (this.bytes[0]) {
+                    0 => {
+                        return 0;
+                    },
+                    else => {
+                        comptime var i: usize = 0;
+
+                        inline while (i < this.bytes.len) : (i += 1) {
+                            if (this.bytes[i] == 0) return i;
+                        }
+
+                        return 8;
+                    },
+                }
+            },
+            else => {
+                const ptr_ = this.ptr();
+                return ptr_.len;
+            },
+        }
+    }
+
+    pub inline fn ptr(this: String) Pointer {
+        return @bitCast(Pointer, @as(u64, @truncate(u63, @bitCast(u64, this))));
+    }
+
+    pub fn slice(this: *const String, buf: string) string {
+        switch (this.bytes[max_inline_len - 1] & 128) {
+            0 => {
+                // Edgecase: string that starts with a 0 byte will be considered empty.
+                switch (this.bytes[0]) {
+                    0 => {
+                        return "";
+                    },
+                    else => {
+                        comptime var i: usize = 0;
+
+                        inline while (i < this.bytes.len) : (i += 1) {
+                            if (this.bytes[i] == 0) return this.bytes[0..i];
+                        }
+
+                        return &this.bytes;
+                    },
+                }
+            },
+            else => {
+                const ptr_ = this.*.ptr();
+                return buf[ptr_.off..][0..ptr_.len];
+            },
+        }
+    }
+
+    pub const Builder = struct {
+        const Allocator = @import("std").mem.Allocator;
+        const assert = @import("std").debug.assert;
+        const copy = @import("std").mem.copy;
+        const IdentityContext = @import("../identity_context.zig").IdentityContext;
+
+        len: usize = 0,
+        cap: usize = 0,
+        ptr: ?[*]u8 = null,
+        string_pool: StringPool = undefined,
+
+        pub const StringPool = std.HashMap(u64, String, IdentityContext(u64), 80);
+
+        pub inline fn stringHash(buf: []const u8) u64 {
+            return std.hash.Wyhash.hash(0, buf);
+        }
+
+        pub inline fn count(this: *Builder, slice_: string) void {
+            return countWithHash(this, slice_, if (slice_.len >= String.max_inline_len) stringHash(slice_) else std.math.maxInt(u64));
+        }
+
+        pub inline fn countWithHash(this: *Builder, slice_: string, hash: u64) void {
+            if (slice_.len <= String.max_inline_len) return;
+
+            if (!this.string_pool.contains(hash)) {
+                this.cap += slice_.len;
+            }
+        }
+
+        pub inline fn allocatedSlice(this: *Builder) []u8 {
+            return if (this.cap > 0)
+                this.ptr.?[0..this.cap]
+            else
+                &[_]u8{};
+        }
+        pub fn allocate(this: *Builder, allocator: *std.mem.Allocator) !void {
+            var ptr_ = try allocator.alloc(u8, this.cap);
+            this.ptr = ptr_.ptr;
+        }
+
+        pub fn append(this: *Builder, comptime Type: type, slice_: string) Type {
+            return @call(.{ .modifier = .always_inline }, appendWithHash, .{ this, Type, slice_, stringHash(slice_) });
+        }
+
+        // SlicedString is not supported due to inline strings.
+        pub fn appendWithoutPool(this: *Builder, comptime Type: type, slice_: string, hash: u64) Type {
+            if (slice_.len < String.max_inline_len) {
+                switch (Type) {
+                    String => {
+                        return String.init(this.allocatedSlice(), slice_);
+                    },
+                    ExternalString => {
+                        return ExternalString.init(this.allocatedSlice(), slice_, hash);
+                    },
+                    else => @compileError("Invalid type passed to StringBuilder"),
+                }
+            }
+            assert(this.len <= this.cap); // didn't count everything
+            assert(this.ptr != null); // must call allocate first
+
+            copy(u8, this.ptr.?[this.len..this.cap], slice_);
+            const final_slice = this.ptr.?[this.len..this.cap][0..slice_.len];
+            this.len += slice_.len;
+
+            assert(this.len <= this.cap);
+
+            switch (Type) {
+                String => {
+                    return String.init(this.allocatedSlice(), final_slice);
+                },
+                ExternalString => {
+                    return ExternalString.init(this.allocatedSlice(), final_slice, hash);
+                },
+                else => @compileError("Invalid type passed to StringBuilder"),
+            }
+        }
+
+        pub fn appendWithHash(this: *Builder, comptime Type: type, slice_: string, hash: u64) Type {
+            if (slice_.len < String.max_inline_len) {
+                switch (Type) {
+                    String => {
+                        return String.init(this.allocatedSlice(), slice_);
+                    },
+                    ExternalString => {
+                        return ExternalString.init(this.allocatedSlice(), slice_, hash);
+                    },
+                    else => @compileError("Invalid type passed to StringBuilder"),
+                }
+            }
+
+            assert(this.len <= this.cap); // didn't count everything
+            assert(this.ptr != null); // must call allocate first
+
+            var string_entry = this.string_pool.getOrPut(hash) catch unreachable;
+            if (!string_entry.found_existing) {
+                copy(u8, this.ptr.?[this.len..this.cap], slice_);
+                const final_slice = this.ptr.?[this.len..this.cap][0..slice_.len];
+                this.len += slice_.len;
+
+                string_entry.value_ptr.* = String.init(this.allocatedSlice(), final_slice);
+            }
+
+            assert(this.len <= this.cap);
+
+            switch (Type) {
+                String => {
+                    return string_entry.value_ptr.*;
+                },
+                ExternalString => {
+                    return ExternalString{
+                        .value = string_entry.value_ptr.*,
+                        .hash = hash,
+                    };
+                },
+                else => @compileError("Invalid type passed to StringBuilder"),
+            }
+        }
+    };
+
+    pub const Pointer = extern struct {
         off: u32 = 0,
         len: u32 = 0,
 
-        pub inline fn slice(this: Small, buf: string) string {
-            return buf[this.off..][0..this.len];
-        }
-
-        pub inline fn from(in: string) Small {
-            return Small{
-                .off = 0,
-                .len = @truncate(u32, in.len),
-            };
-        }
-
-        pub inline fn init(buf: string, in: string) Small {
+        pub inline fn init(
+            buf: string,
+            in: string,
+        ) Pointer {
             std.debug.assert(@ptrToInt(buf.ptr) <= @ptrToInt(in.ptr) and ((@ptrToInt(in.ptr) + in.len) <= (@ptrToInt(buf.ptr) + buf.len)));
 
-            return Small{
+            return Pointer{
                 .off = @truncate(u32, @ptrToInt(in.ptr) - @ptrToInt(buf.ptr)),
                 .len = @truncate(u32, in.len),
             };
         }
     };
 
+    comptime {
+        if (@sizeOf(String) != @sizeOf(Pointer)) {
+            @compileError("String types must be the same size");
+        }
+    }
+};
+
+test "String works" {
+    {
+        var buf: string = "hello world";
+        var world: string = buf[6..];
+        var str = String.init(
+            buf,
+            world,
+        );
+        try std.testing.expectEqualStrings("world", str.slice(buf));
+    }
+
+    {
+        var buf: string = "hello";
+        var world: string = buf;
+        var str = String.init(
+            buf,
+            world,
+        );
+        try std.testing.expectEqualStrings("hello", str.slice(buf));
+        try std.testing.expectEqual(@bitCast(u64, str), @bitCast(u64, [8]u8{ 'h', 'e', 'l', 'l', 'o', 0, 0, 0 }));
+    }
+
+    {
+        var buf: string = &[8]u8{ 'h', 'e', 'l', 'l', 'o', 'k', 'k', 129 };
+        var world: string = buf;
+        var str = String.init(
+            buf,
+            world,
+        );
+        try std.testing.expectEqualStrings(buf, str.slice(buf));
+    }
+}
+
+pub const ExternalString = extern struct {
+    value: String = String{},
+    hash: u64 = 0,
+
+    /// ExternalString but without the hash
     pub inline fn from(in: string) ExternalString {
         return ExternalString{
-            .off = 0,
-            .len = @truncate(u32, in.len),
+            .value = String.init(in, in),
             .hash = std.hash.Wyhash.hash(0, in),
         };
     }
 
-    pub inline fn small(this: ExternalString) ExternalString.Small {
-        return ExternalString.Small{
-            .off = this.off,
-            .len = this.len,
-        };
+    pub inline fn isInline(this: ExternalString) bool {
+        return this.value.isInline();
+    }
+
+    pub inline fn isEmpty(this: ExternalString) bool {
+        return this.value.isEmpty();
+    }
+
+    pub inline fn len(this: ExternalString) usize {
+        return this.value.len();
     }
 
     pub inline fn init(buf: string, in: string, hash: u64) ExternalString {
-        std.debug.assert(@ptrToInt(buf.ptr) <= @ptrToInt(in.ptr) and ((@ptrToInt(in.ptr) + in.len) <= (@ptrToInt(buf.ptr) + buf.len)));
-
         return ExternalString{
-            .off = @truncate(u32, @ptrToInt(in.ptr) - @ptrToInt(buf.ptr)),
-            .len = @truncate(u32, in.len),
+            .value = String.init(buf, in),
             .hash = hash,
         };
     }
 
     pub inline fn slice(this: ExternalString, buf: string) string {
-        return buf[this.off..][0..this.len];
+        return this.value.slice(buf);
     }
 };
 
@@ -67,25 +354,25 @@ pub const BigExternalString = extern struct {
     len: u32 = 0,
     hash: u64 = 0,
 
-    pub fn from(in: string) ExternalString {
-        return ExternalString{
+    pub fn from(in: string) BigExternalString {
+        return BigExternalString{
             .off = 0,
             .len = @truncate(u32, in.len),
             .hash = std.hash.Wyhash.hash(0, in),
         };
     }
 
-    pub inline fn init(buf: string, in: string, hash: u64) ExternalString {
+    pub inline fn init(buf: string, in: string, hash: u64) BigExternalString {
         std.debug.assert(@ptrToInt(buf.ptr) <= @ptrToInt(in.ptr) and ((@ptrToInt(in.ptr) + in.len) <= (@ptrToInt(buf.ptr) + buf.len)));
 
-        return ExternalString{
+        return BigExternalString{
             .off = @truncate(u32, @ptrToInt(in.ptr) - @ptrToInt(buf.ptr)),
             .len = @truncate(u32, in.len),
             .hash = hash,
         };
     }
 
-    pub fn slice(this: ExternalString, buf: string) string {
+    pub fn slice(this: BigExternalString, buf: string) string {
         return buf[this.off..][0..this.len];
     }
 };
@@ -101,16 +388,13 @@ pub const SlicedString = struct {
     pub inline fn external(this: SlicedString) ExternalString {
         if (comptime Environment.isDebug or Environment.isTest) std.debug.assert(@ptrToInt(this.buf.ptr) <= @ptrToInt(this.slice.ptr) and ((@ptrToInt(this.slice.ptr) + this.slice.len) <= (@ptrToInt(this.buf.ptr) + this.buf.len)));
 
-        return ExternalString{ .off = @truncate(u32, @ptrToInt(this.slice.ptr) - @ptrToInt(this.buf.ptr)), .len = @truncate(u32, this.slice.len), .hash = std.hash.Wyhash.hash(0, this.slice) };
+        return ExternalString.init(this.buf, this.slice, std.hash.Wyhash.hash(0, this.slice));
     }
 
-    pub inline fn small(this: SlicedString) ExternalString.Small {
+    pub inline fn value(this: SlicedString) String {
         if (comptime Environment.isDebug or Environment.isTest) std.debug.assert(@ptrToInt(this.buf.ptr) <= @ptrToInt(this.slice.ptr) and ((@ptrToInt(this.slice.ptr) + this.slice.len) <= (@ptrToInt(this.buf.ptr) + this.buf.len)));
 
-        return ExternalString.Small{
-            .off = @truncate(u32, @ptrToInt(this.slice.ptr) - @ptrToInt(this.buf.ptr)),
-            .len = @truncate(u32, this.slice.len),
-        };
+        return String.init(this.buf, this.slice);
     }
 
     pub inline fn sub(this: SlicedString, input: string) SlicedString {
@@ -127,7 +411,7 @@ pub const Version = extern struct {
     tag: Tag = Tag{},
     // raw: RawType = RawType{},
 
-    pub fn cloneInto(this: Version, slice: []const u8, buf: []u8) Version {
+    pub fn cloneInto(this: Version, slice: []const u8, buf: *[]u8) Version {
         return Version{
             .major = this.major,
             .minor = this.minor,
@@ -145,15 +429,15 @@ pub const Version = extern struct {
     }
 
     pub fn count(this: Version, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
-        if (this.tag.hasPre()) builder.count(this.tag.pre.slice(buf));
-        if (this.tag.hasBuild()) builder.count(this.tag.build.slice(buf));
+        if (this.tag.hasPre() and !this.tag.pre.isInline()) builder.count(this.tag.pre.slice(buf));
+        if (this.tag.hasBuild() and !this.tag.build.isInline()) builder.count(this.tag.build.slice(buf));
     }
 
     pub fn clone(this: Version, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) Version {
         var that = this;
 
-        if (this.tag.hasPre()) that.tag.pre = builder.append(ExternalString, this.tag.pre.slice(buf));
-        if (this.tag.hasBuild()) that.tag.build = builder.append(ExternalString, this.tag.build.slice(buf));
+        if (this.tag.hasPre() and !this.tag.pre.isInline()) that.tag.pre = builder.append(ExternalString, this.tag.pre.slice(buf));
+        if (this.tag.hasBuild() and !this.tag.build.isInline()) that.tag.build = builder.append(ExternalString, this.tag.build.slice(buf));
 
         return that;
     }
@@ -174,13 +458,13 @@ pub const Version = extern struct {
             const self = formatter.version;
             try std.fmt.format(writer, "{d}.{d}.{d}", .{ self.major, self.minor, self.patch });
 
-            if (self.tag.pre.len > 0) {
+            if (self.tag.pre.len() > 0) {
                 const pre = self.tag.pre.slice(formatter.input);
                 try writer.writeAll("-");
                 try writer.writeAll(pre);
             }
 
-            if (self.tag.build.len > 0) {
+            if (self.tag.build.len() > 0) {
                 const build = self.tag.build.slice(formatter.input);
                 try writer.writeAll("+");
                 try writer.writeAll(build);
@@ -226,31 +510,46 @@ pub const Version = extern struct {
         pre: ExternalString = ExternalString{},
         build: ExternalString = ExternalString{},
 
-        pub fn cloneInto(this: Tag, slice: []const u8, buf: []u8) Tag {
-            const pre_slice = this.pre.slice(slice);
-            const build_slice = this.build.slice(slice);
-            std.mem.copy(u8, buf, pre_slice);
-            std.mem.copy(u8, buf[pre_slice.len..], build_slice);
+        pub fn cloneInto(this: Tag, slice: []const u8, buf: *[]u8) Tag {
+            var pre: String = this.pre.value;
+            var build: String = this.build.value;
+
+            if (this.pre.isInline()) {
+                pre = this.pre.value;
+            } else {
+                const pre_slice = this.pre.slice(slice);
+                std.mem.copy(u8, buf.*, pre_slice);
+                pre = String.init(buf.*, buf.*[0..pre_slice.len]);
+                buf.* = buf.*[pre_slice.len..];
+            }
+
+            if (this.build.isInline()) {
+                build = this.pre.build;
+            } else {
+                const build_slice = this.build.slice(slice);
+                std.mem.copy(u8, buf.*, build_slice);
+                build = String.init(buf.*, buf.*[0..build_slice.len]);
+                buf.* = buf.*[build_slice.len..];
+            }
+
             return Tag{
                 .pre = .{
-                    .off = 0,
-                    .len = this.pre.len,
+                    .value = pre,
                     .hash = this.pre.hash,
                 },
                 .build = .{
-                    .off = this.pre.len,
-                    .len = this.build.len,
+                    .value = this.build,
                     .hash = this.build.hash,
                 },
             };
         }
 
         pub inline fn hasPre(this: Tag) bool {
-            return this.pre.len > 0;
+            return !this.pre.isEmpty();
         }
 
         pub inline fn hasBuild(this: Tag) bool {
-            return this.build.len > 0;
+            return !this.build.isEmpty();
         }
 
         pub fn eql(lhs: Tag, rhs: Tag) bool {

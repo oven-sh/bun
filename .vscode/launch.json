@@ -349,7 +349,7 @@
       "args": ["install"],
       "cwd": "/tmp/wow-such-npm",
       "env": {
-
+        "BUN_CONFIG_SKIP_SAVE_LOCKFILE": "1"
       
       },
       "console": "internalConsole"

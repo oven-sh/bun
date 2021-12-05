@@ -285,10 +285,14 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             return try self.appendMutable(EmptyType, EmptyType{ .len = len });
         }
 
-        pub fn print(self: *Self, comptime fmt: []const u8, args: anytype) ![]const u8 {
+        pub fn printWithType(self: *Self, comptime fmt: []const u8, comptime Args: type, args: Args) ![]const u8 {
             var buf = try self.appendMutable(EmptyType, EmptyType{ .len = std.fmt.count(fmt, args) + 1 });
             buf[buf.len - 1] = 0;
             return std.fmt.bufPrint(buf.ptr[0 .. buf.len - 1], fmt, args) catch unreachable;
+        }
+
+        pub fn print(self: *Self, comptime fmt: []const u8, args: anytype) ![]const u8 {
+            return try printWithType(self, fmt, @TypeOf(args), args);
         }
 
         pub fn append(self: *Self, comptime AppendType: type, _value: AppendType) ![]const u8 {

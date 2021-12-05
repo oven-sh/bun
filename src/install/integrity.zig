@@ -7,6 +7,8 @@ pub const Integrity = extern struct {
     /// We transform it though.
     value: [digest_buf_len]u8 = undefined,
 
+    const Base64 = std.base64.standard_no_pad;
+
     pub const digest_buf_len: usize = brk: {
         const values = [_]usize{
             std.crypto.hash.Sha1.digest_length,
@@ -86,7 +88,7 @@ pub const Integrity = extern struct {
             };
         }
 
-        std.base64.url_safe.Decoder.decode(&out, buf["sha256-".len..]) catch {
+        Base64.Decoder.decode(&out, std.mem.trimRight(u8, buf["sha256-".len..], "=")) catch {
             return Integrity{
                 .tag = Tag.unknown,
                 .value = undefined,
@@ -115,14 +117,55 @@ pub const Integrity = extern struct {
 
         pub fn parse(buf: []const u8) Tag {
             const Matcher = strings.ExactSizeMatcher(8);
-            return switch (Matcher.match(buf[0..@minimum(buf.len, 8)])) {
-                Matcher.case("sha256-") => Tag.sha256,
-                Matcher.case("sha384-") => Tag.sha384,
-                Matcher.case("sha512-") => Tag.sha512,
+
+            const i = std.mem.indexOfScalar(u8, buf[0..@minimum(buf.len, 7)], '-') orelse return Tag.unknown;
+
+            return switch (Matcher.match(buf[0..i])) {
+                Matcher.case("sha1") => Tag.sha1,
+                Matcher.case("sha256") => Tag.sha256,
+                Matcher.case("sha384") => Tag.sha384,
+                Matcher.case("sha512") => Tag.sha512,
                 else => .unknown,
             };
         }
+
+        pub inline fn digestLen(this: Tag) usize {
+            return switch (this) {
+                .sha1 => std.crypto.hash.Sha1.digest_length,
+                .sha512 => std.crypto.hash.sha2.Sha512.digest_length,
+                .sha256 => std.crypto.hash.sha2.Sha256.digest_length,
+                .sha384 => std.crypto.hash.sha2.Sha384.digest_length,
+                else => 0,
+            };
+        }
     };
+
+    pub fn slice(
+        this: *const Integrity,
+    ) []const u8 {
+        return this.value[0..this.tag.digestLen()];
+    }
+
+    pub fn format(this: *const Integrity, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+        switch (this.tag) {
+            .sha1 => try writer.writeAll("sha1-"),
+            .sha256 => try writer.writeAll("sha256-"),
+            .sha384 => try writer.writeAll("sha384-"),
+            .sha512 => try writer.writeAll("sha512-"),
+            else => return,
+        }
+
+        var base64_buf: [512]u8 = undefined;
+        const bytes = this.slice();
+
+        try writer.writeAll(Base64.Encoder.encode(&base64_buf, bytes));
+
+        // consistentcy with yarn.lock
+        switch (this.tag) {
+            .sha1 => try writer.writeAll("="),
+            else => try writer.writeAll("=="),
+        }
+    }
 
     pub fn verify(this: *const Integrity, bytes: []const u8) bool {
         return @call(.{ .modifier = .always_inline }, verifyByTag, .{ this.tag, bytes, &this.value });

@@ -85,7 +85,7 @@ const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 const GlobalStringBuilder = @import("../string_builder.zig");
 const SlicedString = Semver.SlicedString;
-
+const GitSHA = String;
 const StructBuilder = @import("../builder.zig");
 const ExternalStringBuilder = StructBuilder.Builder(ExternalString);
 
@@ -198,6 +198,43 @@ pub const Aligner = struct {
     pub inline fn skipAmount(comptime Type: type, pos: usize) usize {
         return std.mem.alignForward(pos, @alignOf(Type)) - pos;
     }
+};
+
+const Repository = extern struct {
+    owner: String = String{},
+    repo: String = String{},
+    committish: GitSHA = GitSHA{},
+
+    pub fn eql(lhs: Repository, rhs: Repository, lhs_buf: []const u8, rhs_buf: []const u8) bool {
+        return lhs.owner.eql(rhs.owner, lhs_buf, rhs_buf) and
+            lhs.repo.eql(rhs.repo, lhs_buf, rhs_buf) and
+            lhs.committish.eql(rhs.committish, lhs_buf, rhs_buf);
+    }
+
+    pub fn formatAs(this: Repository, label: string, buf: []const u8, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+        const formatter = Formatter{ .label = label, .repository = this, .buf = buf };
+        return try formatter.format(layout, opts, writer);
+    }
+
+    pub const Formatter = struct {
+        label: []const u8 = "",
+        buf: []const u8,
+        repository: Repository,
+        pub fn format(formatter: Formatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            std.debug.assert(formatter.label.len > 0);
+
+            try writer.writeAll(formatter.label);
+            try writer.writeAll(":");
+
+            try writer.writeAll(formatter.repository.owner.slice(formatter.buf));
+            try writer.writeAll(formatter.repository.repo.slice(formatter.buf));
+
+            if (!formatter.repository.committish.isEmpty()) {
+                try writer.writeAll("#");
+                try writer.writeAll(formatter.repository.committish.slice(formatter.buf));
+            }
+        }
+    };
 };
 
 const NetworkTask = struct {
@@ -317,10 +354,9 @@ const NetworkTask = struct {
         tarball: ExtractTarball,
     ) !void {
         this.url_buf = try ExtractTarball.buildURL(
-            allocator,
             tarball.registry,
             tarball.name,
-            tarball.version,
+            tarball.resolution.value.npm,
             PackageManager.instance.lockfile.buffers.string_bytes.items,
         );
 
@@ -446,7 +482,7 @@ pub const Bin = extern struct {
     };
 };
 
-const Lockfile = struct {
+pub const Lockfile = struct {
 
     // Serialized data
     /// The version of the lockfile format, intended to prevent data corruption for format changes.
@@ -469,7 +505,6 @@ const Lockfile = struct {
 
     pub const LoadFromDiskResult = union(Tag) {
         not_found: void,
-        invalid_format: void,
         err: struct {
             step: Step,
             value: anyerror,
@@ -480,7 +515,6 @@ const Lockfile = struct {
 
         pub const Tag = enum {
             not_found,
-            invalid_format,
             err,
             ok,
         };
@@ -539,6 +573,283 @@ const Lockfile = struct {
     }
 
     const PackageIDFifo = std.fifo.LinearFifo(PackageID, .Dynamic);
+
+    pub const Printer = struct {
+        lockfile: *Lockfile,
+        options: PackageManager.Options,
+
+        pub const Format = enum { yarn };
+
+        var lockfile_path_buf1: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var lockfile_path_buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+
+        pub fn print(
+            allocator: *std.mem.Allocator,
+            log: *logger.Log,
+            lockfile_path_: string,
+            format: Format,
+        ) !void {
+            var lockfile_path: stringZ = undefined;
+
+            if (!std.fs.path.isAbsolute(lockfile_path_)) {
+                var cwd = try std.os.getcwd(&lockfile_path_buf1);
+                var parts = [_]string{lockfile_path_};
+                var lockfile_path__ = resolve_path.joinAbsStringBuf(cwd, &lockfile_path_buf2, &parts, .auto);
+                lockfile_path_buf2[lockfile_path__.len] = 0;
+                lockfile_path = lockfile_path_buf2[0..lockfile_path__.len :0];
+            } else {
+                std.mem.copy(u8, &lockfile_path_buf1, lockfile_path);
+                lockfile_path_buf1[lockfile_path_.len] = 0;
+                lockfile_path = lockfile_path_buf1[0..lockfile_path_.len :0];
+            }
+
+            std.os.chdir(std.fs.path.dirname(lockfile_path) orelse "/") catch {};
+
+            _ = try FileSystem.init1(allocator, null);
+
+            const load_from_disk = Lockfile.loadFromDisk(allocator, log, lockfile_path);
+            switch (load_from_disk) {
+                .err => |cause| {
+                    switch (cause.step) {
+                        .open_file => Output.prettyErrorln("<r><red>error opening lockfile:<r> {s}.", .{
+                            @errorName(cause.value),
+                        }),
+                        .parse_file => Output.prettyErrorln("<r><red>error parsing lockfile:<r> {s}", .{
+                            @errorName(cause.value),
+                        }),
+                        .read_file => Output.prettyErrorln("<r><red>error reading lockfile:<r> {s}", .{
+                            @errorName(cause.value),
+                        }),
+                    }
+                    if (log.errors > 0) {
+                        if (Output.enable_ansi_colors) {
+                            try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
+                        } else {
+                            try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
+                        }
+                    }
+                    Output.flush();
+                    std.os.exit(1);
+                    return;
+                },
+                .not_found => {
+                    Output.prettyErrorln("<r><red>lockfile not found:<r> {s}", .{
+                        std.mem.span(lockfile_path),
+                    });
+                    Output.flush();
+                    std.os.exit(1);
+                    return;
+                },
+
+                .ok => {},
+            }
+
+            var lockfile = load_from_disk.ok;
+
+            var writer = Output.writer();
+            try printWithLockfile(allocator, &lockfile, format, @TypeOf(writer), writer);
+            Output.flush();
+        }
+
+        pub fn printWithLockfile(
+            allocator: *std.mem.Allocator,
+            lockfile: *Lockfile,
+            format: Format,
+            comptime Writer: type,
+            writer: Writer,
+        ) !void {
+            var fs = &FileSystem.instance;
+            var options = PackageManager.Options{};
+
+            var entries_option = try fs.fs.readDirectory(fs.top_level_dir, null);
+
+            var env_loader: *DotEnv.Loader = brk: {
+                var map = try allocator.create(DotEnv.Map);
+                map.* = DotEnv.Map.init(allocator);
+
+                var loader = try allocator.create(DotEnv.Loader);
+                loader.* = DotEnv.Loader.init(map, allocator);
+                break :brk loader;
+            };
+
+            env_loader.loadProcess();
+            try env_loader.load(&fs.fs, &entries_option.entries, false);
+            var log = logger.Log.init(allocator);
+            try options.load(
+                allocator,
+                &log,
+                env_loader,
+            );
+
+            var printer = Printer{
+                .lockfile = lockfile,
+                .options = options,
+            };
+
+            switch (format) {
+                .yarn => {
+                    try Yarn.print(&printer, Writer, writer);
+                },
+            }
+        }
+
+        pub const Yarn = struct {
+            pub fn print(
+                this: *Printer,
+                comptime Writer: type,
+                writer: Writer,
+            ) !void {
+                try writer.writeAll(
+                    \\# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+                    \\# yarn lockfile v1
+                    \\
+                    \\
+                );
+
+                try Yarn.packages(this, Writer, writer);
+            }
+
+            pub fn packages(
+                this: *Printer,
+                comptime Writer: type,
+                writer: Writer,
+            ) !void {
+                var slice = this.lockfile.packages.slice();
+                const names: []const String = slice.items(.name);
+                const resolved: []const Lockfile.Package.Resolution = slice.items(.resolution);
+                const metas: []const Lockfile.Package.Meta = slice.items(.meta);
+                if (names.len == 0) return;
+                const dependency_lists = slice.items(.dependencies);
+                const resolutions_list = slice.items(.resolutions);
+                const resolutions_buffer = this.lockfile.buffers.resolutions.items;
+                const dependencies_buffer = this.lockfile.buffers.dependencies.items;
+                const RequestedVersion = std.HashMap(PackageID, []Dependency.Version, IdentityContext(PackageID), 80);
+                var requested_versions = RequestedVersion.init(this.lockfile.allocator);
+                var all_requested_versions = try this.lockfile.allocator.alloc(Dependency.Version, resolutions_buffer.len);
+                defer this.lockfile.allocator.free(all_requested_versions);
+                const package_count = @truncate(PackageID, names.len);
+                var alphabetized_names = try this.lockfile.allocator.alloc(PackageID, package_count - 1);
+                defer this.lockfile.allocator.free(alphabetized_names);
+
+                const string_buf = this.lockfile.buffers.string_bytes.items;
+
+                // First, we need to build a map of all requested versions
+                // This is so we can print requested versions
+                {
+                    var i: PackageID = 1;
+                    while (i < package_count) : (i += 1) {
+                        alphabetized_names[i - 1] = @truncate(PackageID, i);
+
+                        var resolutions = resolutions_buffer;
+                        var dependencies = dependencies_buffer;
+
+                        var j: PackageID = 0;
+                        var requested_version_start = all_requested_versions;
+                        while (std.mem.indexOfScalar(PackageID, resolutions, i)) |k| {
+                            j += 1;
+
+                            all_requested_versions[0] = dependencies[k].version;
+                            all_requested_versions = all_requested_versions[1..];
+
+                            dependencies = dependencies[k + 1 ..];
+                            resolutions = resolutions[k + 1 ..];
+                        }
+
+                        var dependency_versions = requested_version_start[0..j];
+                        if (dependency_versions.len > 1) std.sort.insertionSort(Dependency.Version, dependency_versions, string_buf, Dependency.Version.isLessThan);
+                        try requested_versions.put(i, dependency_versions);
+                    }
+                }
+
+                std.sort.sort(
+                    PackageID,
+                    alphabetized_names,
+                    Lockfile.Package.Alphabetizer{
+                        .names = names,
+                        .buf = string_buf,
+                        .resolutions = resolved,
+                    },
+                    Lockfile.Package.Alphabetizer.isAlphabetical,
+                );
+
+                // When printing, we start at 1
+                for (alphabetized_names) |i| {
+                    const name = names[i].slice(string_buf);
+                    const resolution = resolved[i];
+                    const meta = metas[i];
+                    const dependencies: []const Dependency = dependency_lists[i].get(dependencies_buffer);
+
+                    // This prints:
+                    // "@babel/core@7.9.0":
+                    {
+                        try writer.writeAll("\n");
+
+                        const dependency_versions = requested_versions.get(i).?;
+                        const always_needs_quote = name[0] == '@';
+
+                        for (dependency_versions) |dependency_version, j| {
+                            if (j > 0) {
+                                try writer.writeAll(", ");
+                            }
+                            const version_name = dependency_version.literal.slice(string_buf);
+                            const needs_quote = always_needs_quote or std.mem.indexOfAny(u8, version_name, " |\t-/!") != null;
+
+                            if (needs_quote) {
+                                try writer.writeByte('"');
+                            }
+
+                            try writer.writeAll(name);
+                            try writer.writeByte('@');
+                            try writer.writeAll(version_name);
+
+                            if (needs_quote) {
+                                try writer.writeByte('"');
+                            }
+                        }
+
+                        try writer.writeAll(":\n");
+                    }
+
+                    {
+                        try writer.writeAll("  version ");
+
+                        // Version is always quoted
+                        try std.fmt.format(writer, "\"{}\"\n", .{resolution.fmt(string_buf)});
+
+                        try writer.writeAll("  resolved ");
+
+                        // Resolved URL is always quoted
+                        try std.fmt.format(writer, "\"{}\"\n", .{resolution.fmtURL(&this.options, name, string_buf)});
+
+                        if (meta.integrity.tag != .unknown) {
+                            // Integrity is...never quoted?
+                            try std.fmt.format(writer, "  integrity {}\n", .{meta.integrity});
+                        }
+
+                        if (dependencies.len > 0) {
+                            try writer.writeAll("  dependencies:\n");
+
+                            for (dependencies) |dep, j| {
+                                try writer.writeAll("    ");
+                                const dependency_name = dep.name.slice(string_buf);
+                                const needs_quote = dependency_name[0] == '@';
+                                if (needs_quote) {
+                                    try writer.writeByte('"');
+                                }
+                                try writer.writeAll(dependency_name);
+                                if (needs_quote) {
+                                    try writer.writeByte('"');
+                                }
+                                try writer.writeAll(" \"");
+                                try writer.writeAll(dep.version.literal.slice(string_buf));
+                                try writer.writeAll("\"\n");
+                            }
+                        }
+                    }
+                }
+            }
+        };
+    };
 
     const CleanVisitor = struct {
         visited: std.DynamicBitSetUnmanaged,
@@ -703,9 +1014,13 @@ const Lockfile = struct {
         }
     }
 
-    pub fn getPackageID(this: *Lockfile, name_hash: u64, version: Semver.Version) ?PackageID {
+    pub fn getPackageID(
+        this: *Lockfile,
+        name_hash: u64,
+        resolution: Lockfile.Package.Resolution,
+    ) ?PackageID {
         const entry = this.package_index.get(name_hash) orelse return null;
-        const versions = this.packages.items(.version);
+        const resolutions = this.packages.items(.resolution);
         switch (entry) {
             .PackageID => |id| {
                 if (comptime Environment.isDebug or Environment.isTest) {
@@ -713,7 +1028,11 @@ const Lockfile = struct {
                     std.debug.assert(id != invalid_package_id - 1);
                 }
 
-                if (versions[id].eql(version)) {
+                if (resolutions[id].eql(
+                    resolution,
+                    this.buffers.string_bytes.items,
+                    this.buffers.string_bytes.items,
+                )) {
                     return id;
                 }
             },
@@ -726,7 +1045,7 @@ const Lockfile = struct {
 
                     if (id == invalid_package_id - 1) return null;
 
-                    if (versions[id].eql(version)) {
+                    if (resolutions[id].eql(resolution, this.buffers.string_bytes.items, this.buffers.string_bytes.items)) {
                         return id;
                     }
                 }
@@ -794,8 +1113,8 @@ const Lockfile = struct {
         const id = @truncate(u32, this.packages.len);
         defer {
             if (comptime Environment.isDebug) {
-                std.debug.assert(this.getPackageID(package_.name_hash, package_.version) != null);
-                std.debug.assert(this.getPackageID(package_.name_hash, package_.version).? == id);
+                std.debug.assert(this.getPackageID(package_.name_hash, package_.resolution) != null);
+                std.debug.assert(this.getPackageID(package_.name_hash, package_.resolution).? == id);
             }
         }
         var package = package_;
@@ -977,7 +1296,6 @@ const Lockfile = struct {
     const SmallExternalStringBuffer = std.ArrayListUnmanaged(String);
 
     pub const Package = extern struct {
-        const Version = Dependency.Version;
         const DependencyGroup = struct {
             prop: string,
             field: string,
@@ -992,6 +1310,20 @@ const Lockfile = struct {
         pub fn isDisabled(this: *const Lockfile.Package) bool {
             return !this.meta.arch.isMatch() or !this.meta.os.isMatch();
         }
+
+        const Alphabetizer = struct {
+            names: []const String,
+            buf: []const u8,
+            resolutions: []const Lockfile.Package.Resolution,
+
+            pub fn isAlphabetical(ctx: Alphabetizer, lhs: PackageID, rhs: PackageID) bool {
+                return switch (std.mem.order(u8, ctx.names[lhs].slice(ctx.buf), ctx.names[rhs].slice(ctx.buf))) {
+                    .eq => lhs < rhs,
+                    .lt => true,
+                    .gt => false,
+                };
+            }
+        };
 
         pub fn fromNPM(
             allocator: *std.mem.Allocator,
@@ -1072,7 +1404,16 @@ const Lockfile = struct {
                 const package_name: ExternalString = string_builder.appendWithHash(ExternalString, manifest.name(), manifest.pkg.name.hash);
                 package.name_hash = package_name.hash;
                 package.name = package_name.value;
-                package.version = version.clone(manifest.string_buf, @TypeOf(&string_builder), &string_builder);
+                package.resolution = Resolution{
+                    .value = .{
+                        .npm = version.clone(
+                            manifest.string_buf,
+                            @TypeOf(&string_builder),
+                            &string_builder,
+                        ),
+                    },
+                    .tag = .npm,
+                };
 
                 const total_len = dependencies_list.items.len + total_dependencies_count;
                 std.debug.assert(dependencies_list.items.len == resolutions_list.items.len);
@@ -1245,7 +1586,7 @@ const Lockfile = struct {
         pub fn determinePreinstallState(this: *Lockfile.Package, lockfile: *Lockfile, manager: *PackageManager) PreinstallState {
             switch (this.meta.preinstall_state) {
                 .unknown => {
-                    const folder_path = PackageManager.cachedNPMPackageFolderName(this.name.slice(lockfile.buffers.string_bytes.items), this.version);
+                    const folder_path = PackageManager.cachedNPMPackageFolderName(this.name.slice(lockfile.buffers.string_bytes.items), this.resolution.value.npm);
                     if (manager.isFolderInCache(folder_path)) {
                         this.meta.preinstall_state = .done;
                         return this.meta.preinstall_state;
@@ -1376,12 +1717,20 @@ const Lockfile = struct {
                         const semver_version = Semver.Version.parse(sliced_string, allocator);
 
                         if (semver_version.valid) {
-                            package.version = semver_version.version;
+                            package.resolution = .{
+                                .tag = .npm,
+                                .value = .{ .npm = semver_version.version },
+                            };
                         } else {
                             log.addErrorFmt(null, logger.Loc.Empty, allocator, "invalid version \"{s}\"", .{version_str}) catch unreachable;
                         }
                     }
                 }
+            } else {
+                package.resolution = .{
+                    .tag = .root,
+                    .value = .{ .root = .{} },
+                };
             }
 
             if (comptime features.check_for_duplicate_dependencies) {
@@ -1466,6 +1815,207 @@ const Lockfile = struct {
 
         pub const List = std.MultiArrayList(Lockfile.Package);
 
+        pub const Resolution = extern struct {
+            tag: Tag = Tag.uninitialized,
+            value: Value = Value{ .uninitialized = .{} },
+
+            pub fn fmt(this: Resolution, buf: []const u8) Formatter {
+                return Formatter{ .resolution = this, .buf = buf };
+            }
+
+            pub fn fmtURL(this: Resolution, options: *const PackageManager.Options, name: string, buf: []const u8) URLFormatter {
+                return URLFormatter{ .resolution = this, .buf = buf, .package_name = name, .options = options };
+            }
+
+            pub fn eql(
+                lhs: Resolution,
+                rhs: Resolution,
+                lhs_string_buf: []const u8,
+                rhs_string_buf: []const u8,
+            ) bool {
+                if (lhs.tag != rhs.tag) return false;
+
+                return switch (lhs.tag) {
+                    .root => true,
+                    .npm => lhs.value.npm.eql(rhs.value.npm),
+                    .local_tarball => lhs.value.local_tarball.eql(
+                        rhs.value.local_tarball,
+                        lhs_string_buf,
+                        rhs_string_buf,
+                    ),
+                    .git_ssh => lhs.value.git_ssh.eql(
+                        rhs.value.git_ssh,
+                        lhs_string_buf,
+                        rhs_string_buf,
+                    ),
+                    .git_http => lhs.value.git_http.eql(
+                        rhs.value.git_http,
+                        lhs_string_buf,
+                        rhs_string_buf,
+                    ),
+                    .folder => lhs.value.folder.eql(
+                        rhs.value.folder,
+                        lhs_string_buf,
+                        rhs_string_buf,
+                    ),
+                    .remote_tarball => lhs.value.remote_tarball.eql(
+                        rhs.value.remote_tarball,
+                        lhs_string_buf,
+                        rhs_string_buf,
+                    ),
+                    .workspace => lhs.value.workspace.eql(
+                        rhs.value.workspace,
+                        lhs_string_buf,
+                        rhs_string_buf,
+                    ),
+                    .symlink => lhs.value.symlink.eql(
+                        rhs.value.symlink,
+                        lhs_string_buf,
+                        rhs_string_buf,
+                    ),
+                    .single_file_module => lhs.value.single_file_module.eql(
+                        rhs.value.single_file_module,
+                        lhs_string_buf,
+                        rhs_string_buf,
+                    ),
+                    .github => lhs.value.github.eql(
+                        rhs.value.github,
+                        lhs_string_buf,
+                        rhs_string_buf,
+                    ),
+                    .gitlab => lhs.value.gitlab.eql(
+                        rhs.value.gitlab,
+                        lhs_string_buf,
+                        rhs_string_buf,
+                    ),
+                    else => unreachable,
+                };
+            }
+
+            pub const URLFormatter = struct {
+                resolution: Resolution,
+                options: *const PackageManager.Options,
+                package_name: string,
+
+                buf: []const u8,
+
+                pub fn format(formatter: URLFormatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+                    switch (formatter.resolution.tag) {
+                        .npm => try ExtractTarball.buildURLWithWriter(
+                            @TypeOf(writer),
+                            writer,
+                            formatter.options.registry_url.href,
+                            strings.StringOrTinyString.init(formatter.package_name),
+                            formatter.resolution.value.npm,
+                            formatter.buf,
+                        ),
+                        .local_tarball => try writer.writeAll(formatter.resolution.value.local_tarball.slice(formatter.buf)),
+                        .git_ssh => try std.fmt.format(writer, "git+ssh://{s}", .{formatter.resolution.value.git_ssh.slice(formatter.buf)}),
+                        .git_http => try std.fmt.format(writer, "https://{s}", .{formatter.resolution.value.git_http.slice(formatter.buf)}),
+                        .folder => try writer.writeAll(formatter.resolution.value.folder.slice(formatter.buf)),
+                        .remote_tarball => try writer.writeAll(formatter.resolution.value.remote_tarball.slice(formatter.buf)),
+                        .github => try formatter.resolution.value.github.formatAs("github", formatter.buf, layout, opts, writer),
+                        .gitlab => try formatter.resolution.value.gitlab.formatAs("gitlab", formatter.buf, layout, opts, writer),
+                        .workspace => try std.fmt.format(writer, "workspace://{s}", .{formatter.resolution.value.workspace.slice(formatter.buf)}),
+                        .symlink => try std.fmt.format(writer, "link://{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
+                        .single_file_module => try std.fmt.format(writer, "link://{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
+                        else => {},
+                    }
+                }
+            };
+
+            pub const Formatter = struct {
+                resolution: Resolution,
+                buf: []const u8,
+
+                pub fn format(formatter: Formatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+                    switch (formatter.resolution.tag) {
+                        .npm => try formatter.resolution.value.npm.fmt(formatter.buf).format(layout, opts, writer),
+                        .local_tarball => try writer.writeAll(formatter.resolution.value.local_tarball.slice(formatter.buf)),
+                        .git_ssh => try std.fmt.format(writer, "git+ssh://{s}", .{formatter.resolution.value.git_ssh.slice(formatter.buf)}),
+                        .git_http => try std.fmt.format(writer, "https://{s}", .{formatter.resolution.value.git_http.slice(formatter.buf)}),
+                        .folder => try writer.writeAll(formatter.resolution.value.folder.slice(formatter.buf)),
+                        .remote_tarball => try writer.writeAll(formatter.resolution.value.remote_tarball.slice(formatter.buf)),
+                        .github => try formatter.resolution.value.github.formatAs("github", formatter.buf, layout, opts, writer),
+                        .gitlab => try formatter.resolution.value.gitlab.formatAs("gitlab", formatter.buf, layout, opts, writer),
+                        .workspace => try std.fmt.format(writer, "workspace://{s}", .{formatter.resolution.value.workspace.slice(formatter.buf)}),
+                        .symlink => try std.fmt.format(writer, "link://{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
+                        .single_file_module => try std.fmt.format(writer, "link://{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
+                        else => {},
+                    }
+                }
+            };
+
+            pub const Value = extern union {
+                uninitialized: void,
+                root: void,
+
+                npm: Semver.Version,
+
+                /// File path to a tarball relative to the package root
+                local_tarball: String,
+
+                git_ssh: String,
+                git_http: String,
+
+                folder: String,
+
+                /// URL to a tarball.
+                remote_tarball: String,
+
+                github: Repository,
+                gitlab: Repository,
+
+                workspace: String,
+                symlink: String,
+
+                single_file_module: String,
+            };
+
+            pub const Tag = enum(u8) {
+                uninitialized = 0,
+                root = 1,
+                npm = 2,
+
+                folder = 4,
+
+                local_tarball = 8,
+
+                github = 16,
+                gitlab = 24,
+
+                git_ssh = 32,
+                git_http = 33,
+
+                symlink = 64,
+
+                workspace = 72,
+
+                remote_tarball = 80,
+
+                // This is a placeholder for now.
+                // But the intent is to eventually support URL imports at the package manager level.
+                //
+                // There are many ways to do it, but perhaps one way to be maximally compatible is just removing the protocol part of the URL.
+                //
+                // For example, Bun would transform this input:
+                //
+                //   import _ from "https://github.com/lodash/lodash/lodash.min.js";
+                //
+                // Into:
+                //
+                //   import _ from "github.com/lodash/lodash/lodash.min.js";
+                //
+                // github.com would become a package, with it's own package.json
+                // This is similar to how Go does it, except it wouldn't clone the whole repo.
+                // There are more efficient ways to do this, e.g. generate a .bun file just for all URL imports.
+                // There are questions of determinism, but perhaps that's what Integrity would do.
+                single_file_module = 100,
+
+                _,
+            };
+        };
+
         pub const Meta = extern struct {
             preinstall_state: PreinstallState = PreinstallState.unknown,
 
@@ -1485,7 +2035,7 @@ const Lockfile = struct {
 
         name: String = String{},
         name_hash: PackageNameHash = 0,
-        version: Semver.Version = Semver.Version{},
+        resolution: Resolution = Resolution{},
         dependencies: DependencySlice = DependencySlice{},
         resolutions: PackageIDSlice = PackageIDSlice{},
         meta: Meta = Meta{},
@@ -1984,7 +2534,7 @@ pub const Dependency = struct {
 
         const lhs_name = lhs.name.slice(string_buf);
         const rhs_name = rhs.name.slice(string_buf);
-        return strings.cmpStringsDesc(void{}, lhs_name, rhs_name);
+        return strings.cmpStringsAsc(void{}, lhs_name, rhs_name);
     }
 
     pub fn clone(this: Dependency, from: *Lockfile, to: *Lockfile) Dependency {
@@ -2034,6 +2584,11 @@ pub const Dependency = struct {
         tag: Dependency.Version.Tag = Dependency.Version.Tag.uninitialized,
         literal: String = String{},
         value: Value = Value{ .uninitialized = void{} },
+
+        pub fn isLessThan(string_buf: []const u8, lhs: Dependency.Version, rhs: Dependency.Version) bool {
+            std.debug.assert(lhs.tag == rhs.tag);
+            return strings.cmpStringsAsc(.{}, lhs.literal.slice(string_buf), rhs.literal.slice(string_buf));
+        }
 
         pub const External = extern struct {
             tag: Dependency.Version.Tag,
@@ -3425,7 +3980,7 @@ const Npm = struct {
                                     if (dist.expr.asProperty("integrity")) |shasum| {
                                         if (shasum.expr.asString(allocator)) |shasum_str| {
                                             package_version.integrity = Integrity.parse(shasum_str) catch Integrity{};
-                                            break :integrity;
+                                            if (package_version.integrity.tag.isSupported()) break :integrity;
                                         }
                                     }
 
@@ -3633,7 +4188,7 @@ const Npm = struct {
 
 const ExtractTarball = struct {
     name: strings.StringOrTinyString,
-    version: Semver.Version,
+    resolution: Package.Resolution,
     registry: string,
     cache_dir: string,
     package_id: PackageID,
@@ -3653,13 +4208,67 @@ const ExtractTarball = struct {
         return this.extract(bytes);
     }
 
-    fn buildURL(
-        allocator: *std.mem.Allocator,
+    pub fn buildURL(
         registry_: string,
         full_name_: strings.StringOrTinyString,
         version: Semver.Version,
         string_buf: []const u8,
     ) !string {
+        return try buildURLWithPrinter(
+            registry_,
+            full_name_,
+            version,
+            string_buf,
+            @TypeOf(FileSystem.instance.dirname_store),
+            string,
+            anyerror,
+            FileSystem.instance.dirname_store,
+            FileSystem.DirnameStore.print,
+        );
+    }
+
+    pub fn buildURLWithWriter(
+        comptime Writer: type,
+        writer: Writer,
+        registry_: string,
+        full_name_: strings.StringOrTinyString,
+        version: Semver.Version,
+        string_buf: []const u8,
+    ) !void {
+        const Printer = struct {
+            writer: Writer,
+
+            pub fn print(this: @This(), comptime fmt: string, args: anytype) Writer.Error!void {
+                return try std.fmt.format(this.writer, fmt, args);
+            }
+        };
+
+        return try buildURLWithPrinter(
+            registry_,
+            full_name_,
+            version,
+            string_buf,
+            Printer,
+            void,
+            Writer.Error,
+            Printer{
+                .writer = writer,
+            },
+            Printer.print,
+        );
+    }
+
+    pub fn buildURLWithPrinter(
+        registry_: string,
+        full_name_: strings.StringOrTinyString,
+        version: Semver.Version,
+        string_buf: []const u8,
+        comptime PrinterContext: type,
+        comptime ReturnType: type,
+        comptime ErrorType: type,
+        printer: PrinterContext,
+        comptime print: fn (ctx: PrinterContext, comptime str: string, args: anytype) ErrorType!ReturnType,
+    ) ErrorType!ReturnType {
         const registry = std.mem.trimRight(u8, registry_, "/");
         const full_name = full_name_.slice();
 
@@ -3673,27 +4282,32 @@ const ExtractTarball = struct {
         const default_format = "{s}/{s}/-/";
 
         if (!version.tag.hasPre() and !version.tag.hasBuild()) {
-            return try FileSystem.DirnameStore.instance.print(
+            const args = .{ registry, full_name, name, version.major, version.minor, version.patch };
+            return try print(
+                printer,
                 default_format ++ "{s}-{d}.{d}.{d}.tgz",
-                .{ registry, full_name, name, version.major, version.minor, version.patch },
+                args,
             );
-            // TODO: tarball URLs for build/pre
         } else if (version.tag.hasPre() and version.tag.hasBuild()) {
-            return try FileSystem.DirnameStore.instance.print(
+            const args = .{ registry, full_name, name, version.major, version.minor, version.patch, version.tag.pre.slice(string_buf), version.tag.build.slice(string_buf) };
+            return try print(
+                printer,
                 default_format ++ "{s}-{d}.{d}.{d}-{s}+{s}.tgz",
-                .{ registry, full_name, name, version.major, version.minor, version.patch, version.tag.pre.slice(string_buf), version.tag.build.slice(string_buf) },
+                args,
             );
-            // TODO: tarball URLs for build/pre
         } else if (version.tag.hasPre()) {
-            return try FileSystem.DirnameStore.instance.print(
+            const args = .{ registry, full_name, name, version.major, version.minor, version.patch, version.tag.pre.slice(string_buf) };
+            return try print(
+                printer,
                 default_format ++ "{s}-{d}.{d}.{d}-{s}.tgz",
-                .{ registry, full_name, name, version.major, version.minor, version.patch, version.tag.pre.slice(string_buf) },
+                args,
             );
-            // TODO: tarball URLs for build/pre
         } else if (version.tag.hasBuild()) {
-            return try FileSystem.DirnameStore.instance.print(
+            const args = .{ registry, full_name, name, version.major, version.minor, version.patch, version.tag.build.slice(string_buf) };
+            return try print(
+                printer,
                 default_format ++ "{s}-{d}.{d}.{d}+{s}.tgz",
-                .{ registry, full_name, name, version.major, version.minor, version.patch, version.tag.build.slice(string_buf) },
+                args,
             );
         } else {
             unreachable;
@@ -3783,7 +4397,7 @@ const ExtractTarball = struct {
             Output.flush();
         }
 
-        var folder_name = PackageManager.cachedNPMPackageFolderNamePrint(&abs_buf2, name, this.version);
+        var folder_name = PackageManager.cachedNPMPackageFolderNamePrint(&abs_buf2, name, this.resolution.value.npm);
         if (folder_name.len == 0 or (folder_name.len == 1 and folder_name[0] == '/')) @panic("Tried to delete root and stopped it");
         PackageManager.instance.cache_directory.deleteTree(folder_name) catch {};
 
@@ -3857,7 +4471,7 @@ const Task = struct {
         tag: Task.Tag,
         bytes: u60 = 0,
 
-        pub fn forPackage(tag: Task.Tag, package_name: string, package_version: Semver.Version) u64 {
+        pub fn forNPMPackage(tag: Task.Tag, package_name: string, package_version: Semver.Version) u64 {
             var hasher = std.hash.Wyhash.init(0);
             hasher.update(package_name);
             hasher.update("@");
@@ -4110,7 +4724,10 @@ pub const PackageManager = struct {
     ) !?ResolvedPackageResult {
 
         // Was this package already allocated? Let's reuse the existing one.
-        if (this.lockfile.getPackageID(name_hash, find_result.version)) |id| {
+        if (this.lockfile.getPackageID(name_hash, .{
+            .tag = .npm,
+            .value = .{ .npm = find_result.version },
+        })) |id| {
             const package = this.lockfile.packages.get(id);
             return ResolvedPackageResult{
                 .package = package,
@@ -4144,7 +4761,7 @@ pub const PackageManager = struct {
 
             // Do we need to download the tarball?
             .extract => {
-                const task_id = Task.Id.forPackage(Task.Tag.extract, this.lockfile.str(package.name), package.version);
+                const task_id = Task.Id.forNPMPackage(Task.Tag.extract, this.lockfile.str(package.name), package.resolution.value.npm);
                 const dedupe_entry = try this.network_task_queue.getOrPut(this.allocator, task_id);
 
                 // Assert that we don't end up downloading the tarball twice.
@@ -4163,7 +4780,7 @@ pub const PackageManager = struct {
                             strings.StringOrTinyString.init(try FileSystem.FilenameStore.instance.append(@TypeOf(this.lockfile.str(name)), this.lockfile.str(name)))
                         else
                             strings.StringOrTinyString.init(this.lockfile.str(name)),
-                        .version = package.version,
+                        .resolution = package.resolution,
                         .cache_dir = this.cache_directory_path,
                         .registry = this.registry.url.href,
                         .package_id = package.meta.id,
@@ -4343,7 +4960,7 @@ pub const PackageManager = struct {
                                         this.lockfile.str(result.package.name),
                                         label,
                                         this.lockfile.str(result.package.name),
-                                        result.package.version.fmt(this.lockfile.buffers.string_bytes.items),
+                                        result.package.resolution.fmt(this.lockfile.buffers.string_bytes.items),
                                     });
                                 }
                                 // Resolve dependencies first
@@ -5150,46 +5767,5 @@ pub const PackageManager = struct {
 };
 
 var verbose_install = false;
-
-test "getPackageMetadata" {
-    Output.initTest();
-
-    var registry = Npm.Registry{};
-    var log = logger.Log.init(default_allocator);
-
-    var response = try registry.getPackageMetadata(default_allocator, &log, "react", "", "");
-
-    switch (response) {
-        .cached, .not_found => unreachable,
-        .fresh => |package| {
-            package.reportSize();
-            const react = package.findByString("beta") orelse return try std.testing.expect(false);
-            try std.testing.expect(react.package.file_count > 0);
-            try std.testing.expect(react.package.unpacked_size > 0);
-            // try std.testing.expectEqualStrings("loose-envify", entry.slice(package.string_buf));
-        },
-    }
-}
-
-test "dumb wyhash" {
-    var i: usize = 0;
-    var j: usize = 0;
-    var z: usize = 0;
-
-    while (i < 100) {
-        j = 0;
-        while (j < 100) {
-            while (z < 100) {
-                try std.testing.expectEqual(
-                    std.hash.Wyhash.hash(0, try std.fmt.allocPrint(default_allocator, "{d}.{d}.{d}", .{ i, j, z })),
-                    std.hash.Wyhash.hash(0, try std.fmt.allocPrint(default_allocator, "{d}.{d}.{d}", .{ i, j, z })),
-                );
-                z += 1;
-            }
-            j += 1;
-        }
-        i += 1;
-    }
-}
 
 const Package = Lockfile.Package;

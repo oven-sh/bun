@@ -20,6 +20,7 @@ const resolve_path = @import("./resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("./javascript/jsc/config.zig").configureTransformOptionsForBun;
 const clap = @import("clap");
 
+const Install = @import("./install/install.zig");
 const bundler = @import("bundler.zig");
 const DotEnv = @import("./env_loader.zig");
 
@@ -39,6 +40,7 @@ const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
 const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
 const InstallCompletionsCommand = @import("./cli/install_completions_command.zig").InstallCompletionsCommand;
 const ShellCompletions = @import("./cli/shell_completions.zig");
+
 var start_time: i128 = undefined;
 
 pub const Cli = struct {
@@ -757,11 +759,24 @@ pub const Command = struct {
                     }
                 };
 
-                if (ctx.args.entry_points.len == 1 and
-                    std.mem.endsWith(u8, ctx.args.entry_points[0], ".bun"))
-                {
-                    try PrintBundleCommand.exec(ctx);
-                    return;
+                // KEYWORDS: open file argv argv0
+                if (ctx.args.entry_points.len == 1) {
+                    const extension = std.fs.path.extension(ctx.args.entry_points[0]);
+
+                    if (strings.eqlComptime(extension, ".bun")) {
+                        try PrintBundleCommand.exec(ctx);
+                        return;
+                    }
+
+                    if (strings.eqlComptime(extension, ".lockb")) {
+                        try Install.Lockfile.Printer.print(
+                            ctx.allocator,
+                            ctx.log,
+                            ctx.args.entry_points[0],
+                            .yarn,
+                        );
+                        return;
+                    }
                 }
 
                 if (ctx.positionals.len > 0 and (std.fs.path.extension(ctx.positionals[0]).len == 0)) {

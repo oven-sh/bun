@@ -368,6 +368,19 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "Print Lockfile",
+      "program": "bun-debug",
+      "args": ["./bun.lockb"],
+      "cwd": "/tmp/wow-such-npm",
+      "env": {
+        "BUN_CONFIG_SKIP_SAVE_LOCKFILE": "1"
+      
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "Integration Test Dev (no hmr)",
       "program": "bun-debug",
       "args": ["--disable-hmr"],

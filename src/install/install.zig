@@ -635,47 +635,53 @@ pub const Lockfile = struct {
         old: *Lockfile,
         cache_dir: std.fs.Dir,
         progress: *std.Progress,
+        is_dirty: bool,
     ) !InstallResult {
         var node = try progress.start("Normalizing lockfile", old.packages.len);
 
-        var new: *Lockfile = try old.allocator.create(Lockfile);
-        try new.initEmpty(
-            old.allocator,
-        );
-        try new.string_pool.ensureTotalCapacity(old.string_pool.capacity());
-        try new.package_index.ensureTotalCapacity(old.package_index.capacity());
-        try new.packages.ensureTotalCapacity(old.allocator, old.packages.len);
-        try new.buffers.preallocate(old.buffers, old.allocator);
+        var new: *Lockfile = undefined;
+        if (is_dirty) {
+            new = try old.allocator.create(Lockfile);
+            try new.initEmpty(
+                old.allocator,
+            );
+            try new.string_pool.ensureTotalCapacity(old.string_pool.capacity());
+            try new.package_index.ensureTotalCapacity(old.package_index.capacity());
+            try new.packages.ensureTotalCapacity(old.allocator, old.packages.len);
+            try new.buffers.preallocate(old.buffers, old.allocator);
 
-        old.scratch.dependency_list_queue.head = 0;
+            old.scratch.dependency_list_queue.head = 0;
 
-        // Step 1. Recreate the lockfile with only the packages that are still alive
-        const root = old.rootPackage() orelse return error.NoPackage;
+            // Step 1. Recreate the lockfile with only the packages that are still alive
+            const root = old.rootPackage() orelse return error.NoPackage;
 
-        var slices = old.packages.slice();
-        var package_id_mapping = try old.allocator.alloc(PackageID, old.packages.len);
-        std.mem.set(
-            PackageID,
-            package_id_mapping,
-            invalid_package_id,
-        );
-        var clone_queue = PendingResolutions.init(old.allocator);
-        var clone_queue_ptr = &clone_queue;
-        var duplicate_resolutions_bitset = try std.DynamicBitSetUnmanaged.initEmpty(old.buffers.resolutions.items.len, old.allocator);
-        var duplicate_resolutions_bitset_ptr = &duplicate_resolutions_bitset;
-        _ = try root.clone(old, new, package_id_mapping, clone_queue_ptr, duplicate_resolutions_bitset_ptr);
+            var slices = old.packages.slice();
+            var package_id_mapping = try old.allocator.alloc(PackageID, old.packages.len);
+            std.mem.set(
+                PackageID,
+                package_id_mapping,
+                invalid_package_id,
+            );
+            var clone_queue = PendingResolutions.init(old.allocator);
+            var clone_queue_ptr = &clone_queue;
+            var duplicate_resolutions_bitset = try std.DynamicBitSetUnmanaged.initEmpty(old.buffers.resolutions.items.len, old.allocator);
+            var duplicate_resolutions_bitset_ptr = &duplicate_resolutions_bitset;
+            _ = try root.clone(old, new, package_id_mapping, clone_queue_ptr, duplicate_resolutions_bitset_ptr);
 
-        while (clone_queue_ptr.readItem()) |to_clone_| {
-            const to_clone: PendingResolution = to_clone_;
+            while (clone_queue_ptr.readItem()) |to_clone_| {
+                const to_clone: PendingResolution = to_clone_;
 
-            if (package_id_mapping[to_clone.old_resolution] != invalid_package_id) {
-                new.buffers.resolutions.items[to_clone.resolve_id] = package_id_mapping[to_clone.old_resolution];
-                continue;
+                if (package_id_mapping[to_clone.old_resolution] != invalid_package_id) {
+                    new.buffers.resolutions.items[to_clone.resolve_id] = package_id_mapping[to_clone.old_resolution];
+                    continue;
+                }
+
+                node.completeOne();
+
+                _ = try old.packages.get(to_clone.old_resolution).clone(old, new, package_id_mapping, clone_queue_ptr, duplicate_resolutions_bitset_ptr);
             }
-
-            node.completeOne();
-
-            _ = try old.packages.get(to_clone.old_resolution).clone(old, new, package_id_mapping, clone_queue_ptr, duplicate_resolutions_bitset_ptr);
+        } else {
+            new = old;
         }
 
         node = try progress.start("Installing packages", old.packages.len);
@@ -683,10 +689,19 @@ pub const Lockfile = struct {
         new.unique_packages.unset(0);
         var toplevel_node_modules = new.unique_packages.iterator(.{});
 
-        var node_modules_folder = std.fs.cwd().makeOpenPath("node_modules", .{ .iterate = true }) catch |err| {
-            Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> opening <b>node_modules<r> folder", .{@errorName(err)});
-            Output.flush();
-            Global.crash();
+        var skip_verify = false;
+        var node_modules_folder = std.fs.cwd().openDirZ("node_modules", .{ .iterate = true }) catch brk: {
+            skip_verify = true;
+            std.fs.cwd().makeDirZ("node_modules") catch |err| {
+                Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating <b>node_modules<r> folder", .{@errorName(err)});
+                Output.flush();
+                Global.crash();
+            };
+            break :brk std.fs.cwd().openDirZ("node_modules", .{ .iterate = true }) catch |err| {
+                Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> opening <b>node_modules<r> folder", .{@errorName(err)});
+                Output.flush();
+                Global.crash();
+            };
         };
         var summary = PackageInstall.Summary{};
         {
@@ -723,11 +738,11 @@ pub const Lockfile = struct {
                             .package_version = resolution_label,
                         };
 
-                        const needs_install = !installer.verify();
-                        summary.skipped += @as(u32, @boolToInt(needs_install));
+                        const needs_install = skip_verify or !installer.verify();
+                        summary.skipped += @as(u32, @boolToInt(!needs_install));
 
                         if (needs_install) {
-                            const install_result = installer.install();
+                            const install_result = installer.install(skip_verify);
                             switch (install_result) {
                                 .success => {
                                     summary.success += 1;
@@ -4752,25 +4767,30 @@ const PackageInstall = struct {
         mutable.list.expandToCapacity();
 
         // Heuristic: most package.jsons will be less than 2048 bytes.
-        read = package_json_file.read(mutable.list.items[read..]) catch return false;
-        var remain = mutable.list.items[read..];
+        read = package_json_file.read(mutable.list.items[total..]) catch return false;
+        var remain = mutable.list.items[@minimum(total, read)..];
         if (read > 0 and remain.len < 1024) {
             mutable.growBy(4096) catch return false;
+            mutable.list.expandToCapacity();
         }
 
-        total += read;
-        while (read > 0) : (read = package_json_file.read(mutable.list.items[read..]) catch return false) {
+        while (read > 0) : (read = package_json_file.read(remain) catch return false) {
             total += read;
-            remain = mutable.list.items[read..];
+
+            mutable.list.expandToCapacity();
+            remain = mutable.list.items[total..];
+
             if (remain.len < 1024) {
                 mutable.growBy(4096) catch return false;
             }
+            mutable.list.expandToCapacity();
+            remain = mutable.list.items[total..];
         }
 
         // If it's not long enough to have {"name": "foo", "version": "1.2.0"}, there's no way it's valid
         if (total < "{\"name\":\"\",\"version\":\"\"}".len + this.package_name.len + this.package_version.len) return false;
 
-        const source = logger.Source.initPathString(std.mem.span(package_json_path), mutable.list.items[0..read]);
+        const source = logger.Source.initPathString(std.mem.span(package_json_path), mutable.list.items[0..total]);
         var log = logger.Log.init(allocator);
 
         package_json_checker = json_parser.PackageJSONVersionChecker.init(allocator, &source, &log) catch return false;
@@ -4810,6 +4830,16 @@ const PackageInstall = struct {
 
     // https://www.unix.com/man-page/mojave/2/fclonefileat/
     fn installWithClonefile(this: *const PackageInstall) CloneFileError!void {
+        if (this.package_name[0] == '@') {
+            const current = std.mem.span(this.destination_dir_subpath);
+            if (strings.indexOfChar(current, std.fs.path.sep)) |slash| {
+                this.destination_dir_subpath_buf[slash] = 0;
+                var subdir = this.destination_dir_subpath_buf[0..slash :0];
+                this.destination_dir.makeDirZ(subdir) catch {};
+                this.destination_dir_subpath_buf[slash] = std.fs.path.sep;
+            }
+        }
+
         return switch (C.clonefileat(
             this.cache_dir.fd,
             this.cache_dir_subpath,
@@ -4898,7 +4928,13 @@ const PackageInstall = struct {
             }
         };
 
-        this.file_count = FileCopier.copy(this.destination_dir, &walker_, node, this.progress) catch |err| return Result{
+        var subdir = this.destination_dir.makeOpenPath(std.mem.span(this.destination_dir_subpath), .{ .iterate = true }) catch |err| return Result{
+            .fail = .{ .err = err, .step = .opening_cache_dir },
+        };
+
+        defer subdir.close();
+
+        this.file_count = FileCopier.copy(subdir, &walker_, node, this.progress) catch |err| return Result{
             .fail = .{ .err = err, .step = .copying_files },
         };
 
@@ -4907,11 +4943,11 @@ const PackageInstall = struct {
         };
     }
 
-    pub fn install(this: *PackageInstall) Result {
+    pub fn install(this: *PackageInstall, skip_delete: bool) Result {
 
         // If this fails, we don't care.
         // we'll catch it the next error
-        this.destination_dir.deleteTree(std.mem.span(this.destination_dir_subpath)) catch {};
+        if (!skip_delete) this.destination_dir.deleteTree(std.mem.span(this.destination_dir_subpath)) catch {};
 
         if (comptime Environment.isMac) {
             if (supported_method == .clonefile) {
@@ -4996,6 +5032,7 @@ pub const Resolution = extern struct {
                 .gitlab => Resolution.Value{
                     .gitlab = this.value.gitlab.clone(buf, Builder, builder),
                 },
+                .root => Resolution.Value{ .root = .{} },
                 else => unreachable,
             },
         };
@@ -5199,14 +5236,8 @@ pub const Resolution = extern struct {
 };
 
 const TaggedPointer = @import("../tagged_pointer.zig");
-const TaskCallbackContext = union(Tag) {
-    package: PackageID,
+const TaskCallbackContext = struct {
     dependency: PackageID,
-
-    pub const Tag = enum {
-        package,
-        dependency,
-    };
 };
 
 const TaskCallbackList = std.ArrayListUnmanaged(TaskCallbackContext);
@@ -6111,6 +6142,7 @@ pub const PackageManager = struct {
             }),
             .resolve_tasks = TaskChannel.init(),
             .lockfile = undefined,
+
             // .progress
         };
         manager.lockfile = try ctx.allocator.create(Lockfile);
@@ -6211,6 +6243,7 @@ pub const PackageManager = struct {
                         &root,
                         &new_root,
                     );
+                    manager.task_queue = .{};
                 }
             },
             else => {},
@@ -6265,6 +6298,7 @@ pub const PackageManager = struct {
         const install_result = try manager.lockfile.installDirty(
             manager.cache_directory,
             &progress,
+            had_any_diffs or needs_new_lockfile,
         );
 
         manager.lockfile = install_result.lockfile;

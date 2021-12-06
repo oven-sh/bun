@@ -344,6 +344,14 @@ pub const Output = struct {
         }
     }
 
+    pub fn prettyWithPrinterFn(comptime fmt: string, args: anytype, comptime printFn: anytype, ctx: anytype) void {
+        if (enable_ansi_colors) {
+            printFn(ctx, comptime prettyFmt(fmt, true), args);
+        } else {
+            printFn(ctx, comptime prettyFmt(fmt, false), args);
+        }
+    }
+
     pub fn pretty(comptime fmt: string, args: anytype) void {
         prettyWithPrinter(fmt, args, print, .Error);
     }

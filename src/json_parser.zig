@@ -274,6 +274,193 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
     };
 }
 
+// This is a special JSON parser that stops as soon as it finds
+// {
+//    "name": "NAME_IN_HERE",
+//    "version": "VERSION_IN_HERE",
+// }
+// and then returns the name and version.
+// More precisely, it stops as soon as it finds a top-level "name" and "version" property which are strings
+// In most cases, it should perform zero heap allocations because it does not create arrays or objects (It just skips them)
+pub const PackageJSONVersionChecker = struct {
+    const Lexer = js_lexer.NewLexer(opts);
+
+    lexer: Lexer,
+    source: *const logger.Source,
+    log: *logger.Log,
+    allocator: *std.mem.Allocator,
+    depth: usize = 0,
+
+    found_version_buf: [1024]u8 = undefined,
+    found_name_buf: [1024]u8 = undefined,
+
+    found_name: []const u8 = "",
+    found_version: []const u8 = "",
+
+    has_found_name: bool = false,
+    has_found_version: bool = false,
+
+    const opts = if (LEXER_DEBUGGER_WORKAROUND) js_lexer.JSONOptions{} else js_lexer.JSONOptions{
+        .is_json = true,
+        .json_warn_duplicate_keys = false,
+        .allow_trailing_commas = true,
+    };
+
+    pub fn init(allocator: *std.mem.Allocator, source: *const logger.Source, log: *logger.Log) !Parser {
+        return Parser{
+            .lexer = try Lexer.init(log, source, allocator),
+            .allocator = allocator,
+            .log = log,
+            .source = source,
+        };
+    }
+
+    const Parser = @This();
+
+    pub fn e(p: *Parser, t: anytype, loc: logger.Loc) Expr {
+        const Type = @TypeOf(t);
+        if (@typeInfo(Type) == .Pointer) {
+            return Expr.init(std.meta.Child(Type), t.*, loc);
+        } else {
+            return Expr.init(Type, t, loc);
+        }
+    }
+    pub fn parseExpr(p: *Parser) anyerror!Expr {
+        const loc = p.lexer.loc();
+
+        if (p.has_found_name and p.has_found_version) return p.e(E.Missing{}, loc);
+
+        switch (p.lexer.token) {
+            .t_false => {
+                try p.lexer.next();
+                return p.e(E.Boolean{
+                    .value = false,
+                }, loc);
+            },
+            .t_true => {
+                try p.lexer.next();
+                return p.e(E.Boolean{
+                    .value = true,
+                }, loc);
+            },
+            .t_null => {
+                try p.lexer.next();
+                return p.e(E.Null{}, loc);
+            },
+            .t_string_literal => {
+                var str: E.String = p.lexer.toEString();
+
+                try p.lexer.next();
+                return p.e(str, loc);
+            },
+            .t_numeric_literal => {
+                const value = p.lexer.number;
+                try p.lexer.next();
+                return p.e(E.Number{ .value = value }, loc);
+            },
+            .t_minus => {
+                try p.lexer.next();
+                const value = p.lexer.number;
+                try p.lexer.expect(.t_numeric_literal);
+                return p.e(E.Number{ .value = -value }, loc);
+            },
+            .t_open_bracket => {
+                try p.lexer.next();
+                var has_exprs = false;
+
+                while (p.lexer.token != .t_close_bracket) {
+                    if (has_exprs) {
+                        if (!try p.parseMaybeTrailingComma(.t_close_bracket)) {
+                            break;
+                        }
+                    }
+
+                    _ = try p.parseExpr();
+                    has_exprs = true;
+                }
+
+                try p.lexer.expect(.t_close_bracket);
+                return p.e(E.Missing{}, loc);
+            },
+            .t_open_brace => {
+                try p.lexer.next();
+                p.depth += 1;
+                defer p.depth -= 1;
+
+                var has_properties = false;
+                while (p.lexer.token != .t_close_brace) {
+                    if (has_properties) {
+                        if (!try p.parseMaybeTrailingComma(.t_close_brace)) {
+                            break;
+                        }
+                    }
+
+                    const str = p.lexer.toEString();
+                    const key_range = p.lexer.range();
+
+                    const key = p.e(str, key_range.loc);
+                    try p.lexer.expect(.t_string_literal);
+
+                    try p.lexer.expect(.t_colon);
+                    const value = try p.parseExpr();
+
+                    if (p.depth == 1) {
+                        // if you have multiple "name" fields in the package.json....
+                        // first one wins
+                        if (key.data == .e_string and value.data == .e_string) {
+                            if (!p.has_found_name and strings.eqlComptime(key.data.e_string.utf8, "name")) {
+                                const len = @minimum(
+                                    value.data.e_string.utf8.len,
+                                    p.found_name_buf.len,
+                                );
+
+                                std.mem.copy(u8, &p.found_name_buf, value.data.e_string.utf8[0..len]);
+                                p.found_name = p.found_name_buf[0..len];
+                                p.has_found_name = true;
+                            } else if (!p.has_found_version and strings.eqlComptime(key.data.e_string.utf8, "version")) {
+                                const len = @minimum(
+                                    value.data.e_string.utf8.len,
+                                    p.found_version_buf.len,
+                                );
+                                std.mem.copy(u8, &p.found_version_buf, value.data.e_string.utf8[0..len]);
+                                p.found_version = p.found_version_buf[0..len];
+                                p.has_found_version = true;
+                            }
+                        }
+                    }
+
+                    if (p.has_found_name and p.has_found_version) return p.e(E.Missing{}, loc);
+                    has_properties = true;
+                }
+
+                try p.lexer.expect(.t_close_brace);
+                return p.e(E.Missing{}, loc);
+            },
+            else => {
+                try p.lexer.unexpected();
+                if (comptime isDebug) {
+                    @breakpoint();
+                }
+                return error.ParserError;
+            },
+        }
+    }
+
+    pub fn parseMaybeTrailingComma(p: *Parser, closer: T) !bool {
+        const comma_range = p.lexer.range();
+        try p.lexer.expect(.t_comma);
+
+        if (p.lexer.token == closer) {
+            if (comptime !opts.allow_trailing_commas) {
+                p.log.addRangeError(p.source, comma_range, "JSON does not support trailing commas") catch unreachable;
+            }
+            return false;
+        }
+
+        return true;
+    }
+};
+
 const JSONParser = JSONLikeParser(js_lexer.JSONOptions{ .is_json = true });
 const RemoteJSONParser = JSONLikeParser(js_lexer.JSONOptions{ .is_json = true, .json_warn_duplicate_keys = false });
 const DotEnvJSONParser = JSONLikeParser(js_lexer.JSONOptions{

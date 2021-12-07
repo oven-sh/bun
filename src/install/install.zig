@@ -560,7 +560,7 @@ pub const Lockfile = struct {
             step: Step,
             value: anyerror,
         },
-        ok: Lockfile,
+        ok: *Lockfile,
 
         pub const Step = enum { open_file, read_file, parse_file };
 
@@ -571,7 +571,7 @@ pub const Lockfile = struct {
         };
     };
 
-    pub fn loadFromDisk(allocator: *std.mem.Allocator, log: *logger.Log, filename: stringZ) LoadFromDiskResult {
+    pub fn loadFromDisk(this: *Lockfile, allocator: *std.mem.Allocator, log: *logger.Log, filename: stringZ) LoadFromDiskResult {
         std.debug.assert(FileSystem.instance_loaded);
         var file = std.fs.cwd().openFileZ(filename, .{ .read = true }) catch |err| {
             return switch (err) {
@@ -583,13 +583,13 @@ pub const Lockfile = struct {
         var buf = file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
             return LoadFromDiskResult{ .err = .{ .step = .read_file, .value = err } };
         };
-        var lockfile: Lockfile = undefined;
+
         var stream = Stream{ .buffer = buf, .pos = 0 };
-        Lockfile.Serializer.load(&lockfile, &stream, allocator, log) catch |err| {
+        Lockfile.Serializer.load(this, &stream, allocator, log) catch |err| {
             return LoadFromDiskResult{ .err = .{ .step = .parse_file, .value = err } };
         };
 
-        return LoadFromDiskResult{ .ok = lockfile };
+        return LoadFromDiskResult{ .ok = this };
     }
 
     const PackageIDQueue = std.fifo.LinearFifo(PackageID, .Dynamic);
@@ -631,63 +631,129 @@ pub const Lockfile = struct {
         summary: PackageInstall.Summary,
     };
 
-    pub fn installDirty(
-        old: *Lockfile,
-        cache_dir: std.fs.Dir,
-        progress: *std.Progress,
-        is_dirty: bool,
-    ) !InstallResult {
-        var node = try progress.start("Normalizing lockfile", old.packages.len);
+    pub fn clean(old: *Lockfile, deduped: *u32, progress: *std.Progress, options: *const PackageManager.Options) !*Lockfile {
+        var node = try progress.start("Cleaning lockfile", old.packages.len);
 
-        var new: *Lockfile = undefined;
-        if (is_dirty) {
-            new = try old.allocator.create(Lockfile);
-            try new.initEmpty(
-                old.allocator,
-            );
-            try new.string_pool.ensureTotalCapacity(old.string_pool.capacity());
-            try new.package_index.ensureTotalCapacity(old.package_index.capacity());
-            try new.packages.ensureTotalCapacity(old.allocator, old.packages.len);
-            try new.buffers.preallocate(old.buffers, old.allocator);
+        // We will only shrink the number of packages here.
+        // never grow
+        const max_package_id = old.packages.len;
 
-            old.scratch.dependency_list_queue.head = 0;
+        // Deduplication works like this
+        // Go through *already* resolved package versions
+        // Ask, do any of those versions happen to match a lower version?
+        // If yes, choose that version instead.
+        // The intent is to
+        if (options.enable.deduplicate_packages) {
+            var resolutions = old.buffers.resolutions.items;
+            var dependencies: []Dependency = old.buffers.dependencies.items;
+            const package_resolutions: []const Resolution = old.packages.items(.resolution);
+            for (resolutions) |resolved_package_id, dep_i| {
+                if (resolved_package_id < max_package_id and !old.unique_packages.isSet(resolved_package_id)) {
+                    const dependency = dependencies[dep_i];
+                    if (dependency.version.tag == .npm) {
+                        const original_resolution = package_resolutions[resolved_package_id];
+                        if (original_resolution.tag != .npm) continue;
+                        var chosen_version = original_resolution.value.npm;
+                        var chosen_id = resolved_package_id;
+                        if (old.package_index.get(dependency.name_hash)) |entry| {
+                            const package_ids = std.mem.span(entry.PackageIDMultiple);
 
-            // Step 1. Recreate the lockfile with only the packages that are still alive
-            const root = old.rootPackage() orelse return error.NoPackage;
+                            // First: try min
+                            for (package_ids) |id| {
+                                if (resolved_package_id == id or id >= max_package_id) continue;
+                                const package_resolution = package_resolutions[id];
+                                if (package_resolution.tag != .npm) continue;
+                                if (package_resolution.value.npm.order(chosen_version) == .lt and
+                                    dependency.version.value.npm.satisfies(package_resolution.value.npm))
+                                {
+                                    chosen_id = id;
+                                    chosen_version = package_resolution.value.npm;
+                                }
+                            }
 
-            var slices = old.packages.slice();
-            var package_id_mapping = try old.allocator.alloc(PackageID, old.packages.len);
-            std.mem.set(
-                PackageID,
-                package_id_mapping,
-                invalid_package_id,
-            );
-            var clone_queue = PendingResolutions.init(old.allocator);
-            var clone_queue_ptr = &clone_queue;
-            var duplicate_resolutions_bitset = try std.DynamicBitSetUnmanaged.initEmpty(old.buffers.resolutions.items.len, old.allocator);
-            var duplicate_resolutions_bitset_ptr = &duplicate_resolutions_bitset;
-            _ = try root.clone(old, new, package_id_mapping, clone_queue_ptr, duplicate_resolutions_bitset_ptr);
-
-            while (clone_queue_ptr.readItem()) |to_clone_| {
-                const to_clone: PendingResolution = to_clone_;
-
-                if (package_id_mapping[to_clone.old_resolution] != invalid_package_id) {
-                    new.buffers.resolutions.items[to_clone.resolve_id] = package_id_mapping[to_clone.old_resolution];
-                    continue;
+                            if (chosen_id != resolved_package_id) {
+                                resolutions[dep_i] = chosen_id;
+                                deduped.* = deduped.* + 1;
+                            }
+                        }
+                    }
                 }
-
-                node.completeOne();
-
-                _ = try old.packages.get(to_clone.old_resolution).clone(old, new, package_id_mapping, clone_queue_ptr, duplicate_resolutions_bitset_ptr);
             }
-        } else {
-            new = old;
         }
 
-        node = try progress.start("Installing packages", old.packages.len);
+        var new = try old.allocator.create(Lockfile);
+        try new.initEmpty(
+            old.allocator,
+        );
+        try new.string_pool.ensureTotalCapacity(old.string_pool.capacity());
+        try new.package_index.ensureTotalCapacity(old.package_index.capacity());
+        try new.packages.ensureTotalCapacity(old.allocator, old.packages.len);
+        try new.buffers.preallocate(old.buffers, old.allocator);
+
+        old.scratch.dependency_list_queue.head = 0;
+
+        // Step 1. Recreate the lockfile with only the packages that are still alive
+        const root = old.rootPackage() orelse return error.NoPackage;
+
+        var slices = old.packages.slice();
+        var package_id_mapping = try old.allocator.alloc(PackageID, old.packages.len);
+        std.mem.set(
+            PackageID,
+            package_id_mapping,
+            invalid_package_id,
+        );
+        var clone_queue_ = PendingResolutions.init(old.allocator);
+        var clone_queue = &clone_queue_;
+        try clone_queue.ensureUnusedCapacity(root.dependencies.len);
+
+        var duplicate_resolutions_bitset = try std.DynamicBitSetUnmanaged.initEmpty(old.buffers.resolutions.items.len, old.allocator);
+        var duplicate_resolutions_bitset_ptr = &duplicate_resolutions_bitset;
+        _ = try root.clone(old, new, package_id_mapping, clone_queue, duplicate_resolutions_bitset_ptr);
+
+        while (clone_queue.readItem()) |to_clone_| {
+            const to_clone: PendingResolution = to_clone_;
+
+            const mapping = package_id_mapping[to_clone.old_resolution];
+            if (mapping < max_package_id) {
+                new.buffers.resolutions.items[to_clone.resolve_id] = package_id_mapping[to_clone.old_resolution];
+
+                continue;
+            }
+
+            const old_package = old.packages.get(to_clone.old_resolution);
+
+            new.buffers.resolutions.items[to_clone.resolve_id] = try old_package.clone(
+                old,
+                new,
+                package_id_mapping,
+                clone_queue,
+                duplicate_resolutions_bitset_ptr,
+            );
+
+            node.completeOne();
+        }
+
+        return new;
+    }
+
+    pub fn installDirty(
+        new: *Lockfile,
+        cache_dir: std.fs.Dir,
+        progress: *std.Progress,
+        threadpool: *ThreadPool,
+        options: *const PackageManager.Options,
+    ) !InstallResult {
+        var node = try progress.start("Installing packages", new.packages.len);
 
         new.unique_packages.unset(0);
         var toplevel_node_modules = new.unique_packages.iterator(.{});
+
+        // If there was already a valid lockfile and so we did not resolve, i.e. there was zero network activity
+        // the packages could still not be in the cache dir
+        // this would be a common scenario in a CI environment
+        // or if you just cloned a repo
+        // we want to check lazily though
+        // no need to download packages you've already installed!!
 
         var skip_verify = false;
         var node_modules_folder = std.fs.cwd().openDirZ("node_modules", .{ .iterate = true }) catch brk: {
@@ -705,69 +771,146 @@ pub const Lockfile = struct {
         };
         var summary = PackageInstall.Summary{};
         {
+            const toplevel_count = new.unique_packages.count();
+            var packages_missing_from_cache = try std.DynamicBitSetUnmanaged.initEmpty(new.packages.len, new.allocator);
+
             var parts = new.packages.slice();
             var metas: []Lockfile.Package.Meta = parts.items(.meta);
             var names: []String = parts.items(.name);
             var resolutions: []Resolution = parts.items(.resolution);
             var destination_dir_subpath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-            while (toplevel_node_modules.next()) |package_id| {
-                const meta = &metas[package_id];
-                if (meta.isDisabled()) {
-                    node.completeOne();
-                    continue;
-                }
-                const name = names[package_id].slice(new.buffers.string_bytes.items);
-                const resolution = resolutions[package_id];
-                std.mem.copy(u8, &destination_dir_subpath_buf, name);
-                destination_dir_subpath_buf[name.len] = 0;
-                var destination_dir_subpath: [:0]u8 = destination_dir_subpath_buf[0..name.len :0];
-                var resolution_buf: [512]u8 = undefined;
-                var resolution_label = try std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(new.buffers.string_bytes.items)});
-                switch (resolution.tag) {
-                    .npm => {
-                        var installer = PackageInstall{
-                            .cache_dir = cache_dir,
-                            .progress = progress,
-                            .expected_file_count = meta.file_count,
-                            .cache_dir_subpath = PackageManager.cachedNPMPackageFolderName(name, resolution.value.npm),
-                            .destination_dir = node_modules_folder,
-                            .destination_dir_subpath = destination_dir_subpath,
-                            .destination_dir_subpath_buf = &destination_dir_subpath_buf,
-                            .allocator = new.allocator,
-                            .package_name = name,
-                            .package_version = resolution_label,
-                        };
 
-                        const needs_install = skip_verify or !installer.verify();
-                        summary.skipped += @as(u32, @boolToInt(!needs_install));
+            if (options.enable.clonefile) {
+                PackageInstall.supported_method = .clonefile;
+            }
 
-                        if (needs_install) {
-                            const install_result = installer.install(skip_verify);
-                            switch (install_result) {
-                                .success => {
-                                    summary.success += 1;
-                                },
-                                .fail => |cause| {
-                                    summary.fail += 1;
-                                    Output.prettyWithPrinterFn(
-                                        "<r><red>error<r> Installing <b>\"{s}\"@{}<r>: {s} <d>to node_modules/{s}<r>\n",
-                                        .{
-                                            name,
-                                            resolution.fmt(new.buffers.string_bytes.items),
-                                            @errorName(cause.err),
-                                            std.mem.span(destination_dir_subpath),
-                                        },
-                                        std.Progress.log,
-                                        progress,
-                                    );
-                                },
+            // When it's a Good Idea, run the install in single-threaded
+            // From benchmarking, apfs clonefile() is ~6x faster than copyfile() on macOS
+            // Running it in parallel is the same or slower.
+            // However, copyfile() is about 30% faster if run in paralell
+            // On Linux, the story here will be similar but with io_uring.
+            // We will have to support versions of Linux that do not have io_uring support
+            // so in that case, we will still need to support copy_file_range()
+            // git installs will always need to run in paralell, and tarball installs probably should too
+            run_install: {
+                var ran: usize = 0;
+                if (PackageInstall.supported_method.isSync()) {
+                    sync_install: {
+                        while (toplevel_node_modules.next()) |package_id| {
+                            const meta = &metas[package_id];
+
+                            if (meta.isDisabled()) {
+                                node.completeOne();
+                                ran += 1;
+                                continue;
                             }
+                            const buf = new.buffers.string_bytes.items;
+                            const name = names[package_id].slice(buf);
+                            const resolution = resolutions[package_id];
+                            std.mem.copy(u8, &destination_dir_subpath_buf, name);
+                            destination_dir_subpath_buf[name.len] = 0;
+                            var destination_dir_subpath: [:0]u8 = destination_dir_subpath_buf[0..name.len :0];
+                            var resolution_buf: [512]u8 = undefined;
+                            var resolution_label = try std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(buf)});
+                            switch (resolution.tag) {
+                                .npm => {
+                                    var installer = PackageInstall{
+                                        .cache_dir = cache_dir,
+                                        .progress = progress,
+                                        .expected_file_count = meta.file_count,
+                                        .cache_dir_subpath = PackageManager.cachedNPMPackageFolderName(name, resolution.value.npm),
+                                        .destination_dir = node_modules_folder,
+                                        .destination_dir_subpath = destination_dir_subpath,
+                                        .destination_dir_subpath_buf = &destination_dir_subpath_buf,
+                                        .allocator = new.allocator,
+                                        .package_name = name,
+                                        .package_version = resolution_label,
+                                    };
+
+                                    const needs_install = skip_verify or !installer.verify();
+                                    summary.skipped += @as(u32, @boolToInt(!needs_install));
+
+                                    if (needs_install) {
+                                        const result = installer.install(skip_verify);
+                                        switch (result) {
+                                            .success => summary.success += 1,
+                                            .fail => |cause| {
+                                                if (cause.isPackageMissingFromCache()) {
+                                                    packages_missing_from_cache.set(package_id);
+                                                } else {
+                                                    Output.prettyErrorln(
+                                                        "<r><red>error<r>: <b><red>{s}<r> installing <b>{s}<r>",
+                                                        .{ @errorName(cause.err), names[package_id].slice(buf) },
+                                                    );
+                                                    summary.fail += 1;
+                                                }
+                                            },
+                                            else => {},
+                                        }
+                                    }
+                                },
+                                else => {},
+                            }
+
+                            if (!PackageInstall.supported_method.isSync()) break :sync_install;
                         }
-                    },
-                    else => {},
+                        break :run_install;
+                    }
                 }
 
-                node.completeOne();
+                var install_context = try new.allocator.create(PackageInstall.Context);
+                install_context.* = .{
+                    .cache_dir = cache_dir,
+                    .progress = progress,
+                    .metas = metas,
+                    .names = names,
+                    .resolutions = resolutions,
+                    .string_buf = new.buffers.string_bytes.items,
+                    .allocator = new.allocator,
+                };
+                install_context.channel = PackageInstall.Task.Channel.init();
+
+                var tasks = try new.allocator.alloc(PackageInstall.Task, toplevel_count - ran);
+                var task_i: usize = 0;
+                var batch = ThreadPool.Batch{};
+                var remaining_count = task_i;
+                while (toplevel_node_modules.next()) |package_id| {
+                    const meta = &metas[package_id];
+                    if (meta.isDisabled()) {
+                        node.completeOne();
+                        continue;
+                    }
+
+                    tasks[task_i] = PackageInstall.Task{
+                        .package_id = @truncate(PackageID, package_id),
+                        .destination_dir = node_modules_folder,
+                        .ctx = install_context,
+                    };
+                    batch.push(ThreadPool.Batch.from(&tasks[task_i].task));
+                    task_i += 1;
+                }
+
+                threadpool.schedule(batch);
+
+                while (remaining_count > 0) {
+                    while (install_context.channel.tryReadItem() catch null) |item_| {
+                        var install_task: *PackageInstall.Task = item_;
+                        defer remaining_count -= 1;
+                        switch (install_task.result) {
+                            .pending => unreachable,
+                            .skip => summary.skipped += 1,
+                            .success => summary.success += 1,
+                            .fail => |cause| {
+                                Output.prettyErrorln(
+                                    "<r><red>error<r>: <b><red>{s}<r> installing <b>{s}<r>",
+                                    .{ @errorName(cause.err), install_task.ctx.names[install_task.package_id] },
+                                );
+                                summary.fail += 1;
+                            },
+                        }
+                    }
+                    std.atomic.spinLoopHint();
+                }
             }
         }
 
@@ -820,7 +963,9 @@ pub const Lockfile = struct {
 
             _ = try FileSystem.init1(allocator, null);
 
-            const load_from_disk = Lockfile.loadFromDisk(allocator, log, lockfile_path);
+            var lockfile = try allocator.create(Lockfile);
+
+            const load_from_disk = lockfile.loadFromDisk(allocator, log, lockfile_path);
             switch (load_from_disk) {
                 .err => |cause| {
                     switch (cause.step) {
@@ -857,10 +1002,8 @@ pub const Lockfile = struct {
                 .ok => {},
             }
 
-            var lockfile = load_from_disk.ok;
-
             var writer = Output.writer();
-            try printWithLockfile(allocator, &lockfile, format, @TypeOf(writer), writer);
+            try printWithLockfile(allocator, lockfile, format, @TypeOf(writer), writer);
             Output.flush();
         }
 
@@ -1050,13 +1193,16 @@ pub const Lockfile = struct {
                                     } else if (dep.behavior.isNormal()) {
                                         try writer.writeAll("  dependencies:\n");
                                         if (comptime Environment.isDebug or Environment.isTest) dependency_behavior_change_count += 1;
+                                    } else if (dep.behavior.isDev()) {
+                                        try writer.writeAll("  devDependencies:\n");
+                                        if (comptime Environment.isDebug or Environment.isTest) dependency_behavior_change_count += 1;
                                     } else {
                                         continue;
                                     }
                                     behavior = dep.behavior;
 
                                     // assert its sorted
-                                    if (comptime Environment.isDebug or Environment.isTest) std.debug.assert(dependency_behavior_change_count < 2);
+                                    if (comptime Environment.isDebug or Environment.isTest) std.debug.assert(dependency_behavior_change_count < 3);
                                 }
 
                                 try writer.writeAll("    ");
@@ -1181,15 +1327,6 @@ pub const Lockfile = struct {
             .allocator = allocator,
             .scratch = Scratch.init(allocator),
         };
-    }
-
-    /// Update the lockfile to reflect the desired state of the dependency graph.
-    pub fn applyDiff(this: *Lockfile, queue: *Lockfile.Package.Diff.List, diff: Lockfile.Package.Diff) void {
-        switch (diff) {
-            .add => |add| {},
-            .remove => |remove| {},
-            .update => |update| {},
-        }
     }
 
     pub fn getPackageID(
@@ -1519,26 +1656,25 @@ pub const Lockfile = struct {
             this: *const Lockfile.Package,
             old: *Lockfile,
             new: *Lockfile,
-            mapping: []PackageID,
+            package_id_mapping: []PackageID,
             clone_queue: *PendingResolutions,
             duplicate_resolutions_bitset: *std.DynamicBitSetUnmanaged,
         ) !PackageID {
             const old_string_buf = old.buffers.string_bytes.items;
-            var builder = new.stringBuilder();
-            defer builder.clamp();
+            var builder_ = new.stringBuilder();
+            var builder = &builder_;
 
             builder.count(this.name.slice(old_string_buf));
-            this.resolution.count(old_string_buf, *Lockfile.StringBuilder, &builder);
-            this.meta.count(old_string_buf, *Lockfile.StringBuilder, &builder);
+            this.resolution.count(old_string_buf, *Lockfile.StringBuilder, builder);
+            this.meta.count(old_string_buf, *Lockfile.StringBuilder, builder);
 
             const old_dependencies: []const Dependency = this.dependencies.get(old.buffers.dependencies.items);
             const old_resolutions: []const PackageID = this.resolutions.get(old.buffers.resolutions.items);
             for (old_dependencies) |dependency, i| {
-                dependency.count(old_string_buf, *Lockfile.StringBuilder, &builder);
+                dependency.count(old_string_buf, *Lockfile.StringBuilder, builder);
             }
 
             try builder.allocate();
-            defer builder.clamp();
 
             // should be unnecessary, but Just In Case
             try new.buffers.dependencies.ensureUnusedCapacity(new.allocator, old_dependencies.len);
@@ -1566,12 +1702,12 @@ pub const Lockfile = struct {
                     .meta = this.meta.clone(
                         old_string_buf,
                         *Lockfile.StringBuilder,
-                        &builder,
+                        builder,
                     ),
                     .resolution = this.resolution.clone(
                         old_string_buf,
                         *Lockfile.StringBuilder,
-                        &builder,
+                        builder,
                     ),
                     .dependencies = .{ .off = prev_len, .len = end - prev_len },
                     .resolutions = .{ .off = prev_len, .len = end - prev_len },
@@ -1579,23 +1715,23 @@ pub const Lockfile = struct {
                 id,
             );
 
-            mapping[this.meta.id] = new_package.meta.id;
+            package_id_mapping[this.meta.id] = new_package.meta.id;
 
             for (old_dependencies) |dependency, i| {
                 dependencies[i] = try dependency.clone(
                     old_string_buf,
                     *Lockfile.StringBuilder,
-                    &builder,
+                    builder,
                 );
 
                 const old_resolution = old_resolutions[i];
                 if (old_resolution < max_package_id) {
-                    const mapped = mapping[old_resolution];
+                    const mapped = package_id_mapping[old_resolution];
                     const resolve_id = new_package.resolutions.off + @truncate(u32, i);
 
                     if (!old.unique_packages.isSet(old_resolution)) duplicate_resolutions_bitset.set(resolve_id);
 
-                    if (mapped != invalid_package_id) {
+                    if (mapped < max_package_id) {
                         resolutions[i] = mapped;
                     } else {
                         try clone_queue.writeItem(
@@ -1608,6 +1744,8 @@ pub const Lockfile = struct {
                     }
                 }
             }
+
+            builder.clamp();
 
             return new_package.meta.id;
         }
@@ -1784,21 +1922,23 @@ pub const Lockfile = struct {
                 add: u32 = 0,
                 remove: u32 = 0,
                 update: u32 = 0,
+                deduped: u32 = 0,
 
                 pub inline fn sum(this: *Summary, that: Summary) void {
                     this.add += that.add;
                     this.remove += that.remove;
                     this.update += that.update;
+                    this.deduped += that.deduped;
                 }
             };
 
             pub fn generate(
                 allocator: *std.mem.Allocator,
-                fifo: *Lockfile.Package.Diff.List,
                 from_lockfile: *Lockfile,
                 to_lockfile: *Lockfile,
                 from: *Lockfile.Package,
                 to: *Lockfile.Package,
+                mapping: []PackageID,
             ) !Summary {
                 var summary = Summary{};
                 const to_deps = to.dependencies.get(to_lockfile.buffers.dependencies.items);
@@ -1817,35 +1957,18 @@ pub const Lockfile = struct {
                         }
 
                         // We found a removed dependency!
-                        try fifo.writeItem(
-                            .{
-                                .remove = .{
-                                    .dependency = from_dep,
-                                    .resolution = from_res[i],
-                                    .in = from.meta.id,
-                                },
-                            },
-                        );
+                        // We don't need to remove it
+                        // It will be cleaned up later
                         summary.remove += 1;
                         continue;
                     };
 
                     if (to_deps[to_i].eql(from_dep, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items)) {
+                        mapping[to_i] = @truncate(PackageID, i);
                         continue;
                     }
 
                     // We found a changed dependency!
-                    try fifo.writeItem(
-                        .{
-                            .update = .{
-                                .from = from_dep,
-                                .to = to_deps[to_i],
-                                .from_resolution = from_res[i],
-                                .to_resolution = to_res[to_i],
-                                .in = from.meta.id,
-                            },
-                        },
-                    );
                     summary.update += 1;
                 }
 
@@ -1856,16 +1979,6 @@ pub const Lockfile = struct {
                         if (from_dep.name_hash == to_dep.name_hash) continue :outer;
                     }
 
-                    // We found a new dependency!
-                    try fifo.writeItem(
-                        .{
-                            .add = .{
-                                .dependency = to_dep,
-                                .resolution = to_res[i],
-                                .in = from.meta.id,
-                            },
-                        },
-                    );
                     summary.add += 1;
                 }
 
@@ -2524,6 +2637,7 @@ pub const Lockfile = struct {
                 allocator,
             );
             lockfile.buffers = try Lockfile.Buffers.load(stream, allocator, log);
+            lockfile.scratch = Lockfile.Scratch.init(allocator);
 
             {
                 lockfile.package_index = PackageIndex.Map.initContext(allocator, .{});
@@ -3216,6 +3330,12 @@ const Npm = struct {
                 JSAst.Expr.Data.Store.reset();
                 JSAst.Stmt.Data.Store.reset();
             }
+            var new_etag_buf: [64]u8 = undefined;
+
+            if (new_etag.len < new_etag_buf.len) {
+                std.mem.copy(u8, &new_etag_buf, new_etag);
+                new_etag = new_etag_buf[0..new_etag.len];
+            }
 
             if (try PackageManifest.parse(
                 allocator,
@@ -3429,13 +3549,16 @@ const Npm = struct {
     };
 
     const NpmPackage = extern struct {
-        name: ExternalString = ExternalString{},
+
         /// HTTP response headers
-        last_modified: ExternalString = ExternalString{},
-        etag: ExternalString = ExternalString{},
+        last_modified: String = String{},
+        etag: String = String{},
 
         /// "modified" in the JSON
-        modified: ExternalString = ExternalString{},
+        modified: String = String{},
+        public_max_age: u32 = 0,
+
+        name: ExternalString = ExternalString{},
 
         releases: ExternVersionMap = ExternVersionMap{},
         prereleases: ExternVersionMap = ExternVersionMap{},
@@ -3444,7 +3567,6 @@ const Npm = struct {
         versions_buf: VersionSlice = VersionSlice{},
         string_lists_buf: ExternalStringList = ExternalStringList{},
         string_buf: BigExternalString = BigExternalString{},
-        public_max_age: u32 = 0,
     };
 
     const PackageManifest = struct {
@@ -3569,6 +3691,7 @@ const Npm = struct {
                     });
                     var writer = tmpfile.writer();
                     try Serializer.write(this, @TypeOf(writer), writer);
+                    std.os.fdatasync(tmpfile.handle) catch {};
                     tmpfile.close();
                 }
 
@@ -3929,6 +4052,23 @@ const Npm = struct {
             var all_extern_strings = try allocator.allocAdvanced(ExternalString, null, extern_string_count, .exact);
             var version_extern_strings = try allocator.allocAdvanced(ExternalString, null, dependency_sum, .exact);
 
+            if (versioned_packages.len > 0) {
+                var versioned_packages_bytes = std.mem.sliceAsBytes(versioned_packages);
+                @memset(versioned_packages_bytes.ptr, 0, versioned_packages_bytes.len);
+            }
+            if (all_semver_versions.len > 0) {
+                var all_semver_versions_bytes = std.mem.sliceAsBytes(all_semver_versions);
+                @memset(all_semver_versions_bytes.ptr, 0, all_semver_versions_bytes.len);
+            }
+            if (all_extern_strings.len > 0) {
+                var all_extern_strings_bytes = std.mem.sliceAsBytes(all_extern_strings);
+                @memset(all_extern_strings_bytes.ptr, 0, all_extern_strings_bytes.len);
+            }
+            if (version_extern_strings.len > 0) {
+                var version_extern_strings_bytes = std.mem.sliceAsBytes(version_extern_strings);
+                @memset(version_extern_strings_bytes.ptr, 0, version_extern_strings_bytes.len);
+            }
+
             var versioned_package_releases = versioned_packages[0..release_versions_len];
             var all_versioned_package_releases = versioned_package_releases;
             var versioned_package_prereleases = versioned_packages[release_versions_len..][0..pre_versions_len];
@@ -4235,14 +4375,6 @@ const Npm = struct {
                 }
             }
 
-            if (last_modified.len > 0) {
-                result.pkg.last_modified = string_builder.append(ExternalString, last_modified);
-            }
-
-            if (etag.len > 0) {
-                result.pkg.etag = string_builder.append(ExternalString, etag);
-            }
-
             if (json.asProperty("dist-tags")) |dist| {
                 if (dist.expr.data == .e_object) {
                     const tags = dist.expr.data.e_object.properties;
@@ -4279,10 +4411,18 @@ const Npm = struct {
                 }
             }
 
+            if (last_modified.len > 0) {
+                result.pkg.last_modified = string_builder.append(String, last_modified);
+            }
+
+            if (etag.len > 0) {
+                result.pkg.etag = string_builder.append(String, etag);
+            }
+
             if (json.asProperty("modified")) |name_q| {
                 const field = name_q.expr.asString(allocator) orelse return null;
 
-                result.pkg.modified = string_builder.append(ExternalString, field);
+                result.pkg.modified = string_builder.append(String, field);
             }
 
             result.pkg.releases.keys = VersionSlice.init(all_semver_versions, all_release_versions);
@@ -4602,23 +4742,20 @@ const Task = struct {
     id: u64,
 
     /// An ID that lets us register a callback without keeping the same pointer around
-    pub const Id = packed struct {
-        tag: Task.Tag,
-        bytes: u60 = 0,
-
+    pub const Id = struct {
         pub fn forNPMPackage(tag: Task.Tag, package_name: string, package_version: Semver.Version) u64 {
             var hasher = std.hash.Wyhash.init(0);
             hasher.update(package_name);
             hasher.update("@");
             hasher.update(std.mem.asBytes(&package_version));
-            return @bitCast(u64, Task.Id{ .tag = tag, .bytes = @truncate(u60, hasher.final()) });
+            return @as(u64, @truncate(u63, hasher.final())) | @as(u64, 1 << 63);
         }
 
         pub fn forManifest(
             tag: Task.Tag,
             name: string,
         ) u64 {
-            return @bitCast(u64, Task.Id{ .tag = tag, .bytes = @truncate(u60, std.hash.Wyhash.hash(0, name)) });
+            return @as(u64, @truncate(u63, std.hash.Wyhash.hash(0, name)));
         }
     };
 
@@ -4681,7 +4818,7 @@ const Task = struct {
         }
     }
 
-    pub const Tag = enum(u4) {
+    pub const Tag = enum(u2) {
         package_manifest = 1,
         extract = 2,
         // install = 3,
@@ -4716,19 +4853,90 @@ const Task = struct {
 const PackageInstall = struct {
     cache_dir: std.fs.Dir,
     destination_dir: std.fs.Dir,
-    cache_dir_subpath: stringZ,
-    destination_dir_subpath: stringZ,
-    destination_dir_subpath_buf: *[std.fs.MAX_PATH_BYTES]u8,
+    cache_dir_subpath: stringZ = "",
+    destination_dir_subpath: stringZ = "",
+    destination_dir_subpath_buf: []u8,
 
     allocator: *std.mem.Allocator,
+
+    progress: *std.Progress,
 
     package_name: string,
     package_version: string,
     expected_file_count: u32 = 0,
     file_count: u32 = 0,
-    progress: *std.Progress,
 
-    var package_json_checker: json_parser.PackageJSONVersionChecker = undefined;
+    threadlocal var package_json_checker: json_parser.PackageJSONVersionChecker = undefined;
+
+    pub const Context = struct {
+        metas: []const Lockfile.Package.Meta,
+        names: []const String,
+        resolutions: []const Resolution,
+        string_buf: []const u8,
+        channel: PackageInstall.Task.Channel = undefined,
+        skip_verify: bool = false,
+        progress: *std.Progress = undefined,
+        cache_dir: std.fs.Dir = undefined,
+        allocator: *std.mem.Allocator,
+    };
+
+    pub const Task = struct {
+        task: ThreadPool.Task = .{ .callback = callback },
+        result: Result = Result{ .pending = void{} },
+        package_install: PackageInstall = undefined,
+        package_id: PackageID,
+        ctx: *PackageInstall.Context,
+        destination_dir: std.fs.Dir,
+
+        pub const Channel = sync.Channel(*PackageInstall.Task, .{ .Static = 1024 });
+
+        pub fn callback(task: *ThreadPool.Task) void {
+            Output.Source.configureThread();
+            defer Output.flush();
+
+            var this: *PackageInstall.Task = @fieldParentPtr(PackageInstall.Task, "task", task);
+            var ctx = this.ctx;
+
+            var destination_dir_subpath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            var cache_dir_subpath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            const name = ctx.names[this.package_id].slice(ctx.string_buf);
+            const meta = ctx.metas[this.package_id];
+            const resolution = ctx.resolutions[this.package_id];
+            std.mem.copy(u8, &destination_dir_subpath_buf, name);
+            destination_dir_subpath_buf[name.len] = 0;
+            var destination_dir_subpath: [:0]u8 = destination_dir_subpath_buf[0..name.len :0];
+            var resolution_buf: [512]u8 = undefined;
+            var resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(ctx.string_buf)}) catch unreachable;
+
+            switch (resolution.tag) {
+                .npm => {
+                    this.package_install = PackageInstall{
+                        .cache_dir = ctx.cache_dir,
+                        .progress = ctx.progress,
+                        .expected_file_count = meta.file_count,
+                        .cache_dir_subpath = PackageManager.cachedNPMPackageFolderNamePrint(&cache_dir_subpath_buf, name, resolution.value.npm),
+                        .destination_dir = this.destination_dir,
+                        .destination_dir_subpath = destination_dir_subpath,
+                        .destination_dir_subpath_buf = &destination_dir_subpath_buf,
+                        .allocator = ctx.allocator,
+                        .package_name = name,
+                        .package_version = resolution_label,
+                    };
+
+                    const needs_install = ctx.skip_verify or !this.package_install.verify();
+
+                    if (needs_install) {
+                        this.result = this.package_install.install(ctx.skip_verify);
+                    } else {
+                        this.result = .{ .skip = .{} };
+                    }
+                },
+                else => {},
+            }
+
+            ctx.channel.writeItem(this) catch unreachable;
+        }
+    };
 
     pub const Summary = struct {
         fail: u32 = 0,
@@ -4740,6 +4948,13 @@ const PackageInstall = struct {
         clonefile,
         copyfile,
         copy_file_range,
+
+        pub inline fn isSync(this: Method) bool {
+            return switch (this) {
+                .clonefile => true,
+                else => false,
+            };
+        }
     };
 
     pub fn verify(
@@ -4792,6 +5007,9 @@ const PackageInstall = struct {
 
         const source = logger.Source.initPathString(std.mem.span(package_json_path), mutable.list.items[0..total]);
         var log = logger.Log.init(allocator);
+        defer log.deinit();
+
+        initializeStore();
 
         package_json_checker = json_parser.PackageJSONVersionChecker.init(allocator, &source, &log) catch return false;
         _ = package_json_checker.parseExpr() catch return false;
@@ -4803,13 +5021,24 @@ const PackageInstall = struct {
     }
 
     pub const Result = union(Tag) {
+        pending: void,
         success: void,
+        skip: void,
         fail: struct {
             err: anyerror,
             step: Step = Step.clone,
+
+            pub inline fn isPackageMissingFromCache(this: @This()) bool {
+                return this.err == error.FileNotFound and this.step == .opening_cache_dir;
+            }
         },
 
-        pub const Tag = enum { success, fail };
+        pub const Tag = enum {
+            success,
+            fail,
+            pending,
+            skip,
+        };
     };
 
     pub const Step = enum {
@@ -4821,15 +5050,18 @@ const PackageInstall = struct {
     const CloneFileError = error{
         NotSupported,
         Unexpected,
+        FileNotFound,
     };
 
     var supported_method: Method = if (Environment.isMac)
-        Method.clonefile
+        Method.copyfile
     else
         Method.copy_file_range;
 
     // https://www.unix.com/man-page/mojave/2/fclonefileat/
     fn installWithClonefile(this: *const PackageInstall) CloneFileError!void {
+        if (comptime !Environment.isMac) @compileError("clonefileat() is macOS only.");
+
         if (this.package_name[0] == '@') {
             const current = std.mem.span(this.destination_dir_subpath);
             if (strings.indexOfChar(current, std.fs.path.sep)) |slash| {
@@ -4850,6 +5082,7 @@ const PackageInstall = struct {
             0 => void{},
             else => |errno| switch (std.os.errno(errno)) {
                 .OPNOTSUPP => error.NotSupported,
+                .NOENT => error.FileNotFound,
                 else => error.Unexpected,
             },
         };
@@ -4958,7 +5191,12 @@ const PackageInstall = struct {
                         error.NotSupported => {
                             supported_method = .copyfile;
                         },
-                        else => {},
+                        error.FileNotFound => return Result{
+                            .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
+                        },
+                        else => return Result{
+                            .fail = .{ .err = err, .step = .copying_files },
+                        },
                     }
 
                     return this.installWithCopyfile();
@@ -5270,6 +5508,8 @@ pub const PackageManager = struct {
     default_features: Features = Features{},
     summary: Lockfile.Package.Diff.Summary = Lockfile.Package.Diff.Summary{},
 
+    root_dependency_list: Lockfile.DependencySlice = .{},
+
     registry: Npm.Registry = Npm.Registry{},
 
     thread_pool: ThreadPool,
@@ -5277,7 +5517,7 @@ pub const PackageManager = struct {
     manifests: PackageManifestMap = PackageManifestMap{},
     resolved_package_index: PackageIndex = PackageIndex{},
 
-    task_queue: TaskDependencyQueue = TaskDependencyQueue{},
+    task_queue: TaskDependencyQueue = .{},
     network_dedupe_map: NetworkTaskQueue = .{},
     network_channel: NetworkChannel = NetworkChannel.init(),
     network_tarball_batch: ThreadPool.Batch = ThreadPool.Batch{},
@@ -5381,9 +5621,8 @@ pub const PackageManager = struct {
             .tag = .npm,
             .value = .{ .npm = find_result.version },
         })) |id| {
-            const package = this.lockfile.packages.get(id);
             return ResolvedPackageResult{
-                .package = package,
+                .package = this.lockfile.packages.get(id),
                 .is_first_time = false,
             };
         }
@@ -5554,8 +5793,11 @@ pub const PackageManager = struct {
         var loaded_manifest: ?Npm.PackageManifest = null;
 
         if (comptime !is_main) {
-            if (!dependency.behavior.isEnabled(Features.npm))
-                return;
+            // it might really be main
+            if (!(id >= this.root_dependency_list.off and id < this.root_dependency_list.len + this.root_dependency_list.off)) {
+                if (!dependency.behavior.isEnabled(Features.npm))
+                    return;
+            }
         }
 
         switch (dependency.version.tag) {
@@ -5824,9 +6066,9 @@ pub const PackageManager = struct {
 
                     if (response.status_code > 399) {
                         Output.prettyErrorln(
-                            "<r><red><b>GET<r><red> {s}<d>  - {d}<r>",
+                            "<r><red><b>GET<r><red> {s}<d> - {d}<r>",
                             .{
-                                name,
+                                name.slice(),
                                 response.status_code,
                             },
                         );
@@ -5844,7 +6086,7 @@ pub const PackageManager = struct {
                     if (response.status_code == 304) {
                         // The HTTP request was cached
                         if (manifest_req.loaded_manifest) |manifest| {
-                            var entry = try manager.manifests.getOrPut(manager.allocator, @truncate(u32, manifest.pkg.name.hash));
+                            var entry = try manager.manifests.getOrPut(manager.allocator, manifest.pkg.name.hash);
                             entry.value_ptr.* = manifest;
                             entry.value_ptr.*.pkg.public_max_age = @truncate(u32, @intCast(u64, @maximum(0, std.time.timestamp()))) + 300;
                             {
@@ -5852,18 +6094,26 @@ pub const PackageManager = struct {
                                 Npm.PackageManifest.Serializer.save(entry.value_ptr, tmpdir, PackageManager.instance.cache_directory) catch {};
                             }
 
-                            const dependency_list = manager.task_queue.get(task.task_id).?;
+                            var dependency_list_entry = manager.task_queue.getEntry(task.task_id).?;
 
-                            for (dependency_list.items) |item| {
-                                var dependency = manager.lockfile.buffers.dependencies.items[item.dependency];
-                                var resolution = manager.lockfile.buffers.resolutions.items[item.dependency];
+                            var dependency_list = dependency_list_entry.value_ptr.*;
+                            dependency_list_entry.value_ptr.* = .{};
 
-                                try manager.enqueueDependency(
-                                    item.dependency,
-                                    dependency,
-                                    resolution,
-                                );
+                            if (dependency_list.items.len > 0) {
+                                for (dependency_list.items) |item| {
+                                    var dependency = manager.lockfile.buffers.dependencies.items[item.dependency];
+                                    var resolution = manager.lockfile.buffers.resolutions.items[item.dependency];
+
+                                    try manager.enqueueDependency(
+                                        item.dependency,
+                                        dependency,
+                                        resolution,
+                                    );
+                                }
+
+                                dependency_list.deinit(manager.allocator);
                             }
+
                             manager.flushDependencyQueue();
                             continue;
                         }
@@ -5923,17 +6173,24 @@ pub const PackageManager = struct {
                     }
                     const manifest = task.data.package_manifest;
                     var entry = try manager.manifests.getOrPutValue(manager.allocator, @truncate(PackageNameHash, manifest.pkg.name.hash), manifest);
-                    const dependency_list = manager.task_queue.get(task.id).?;
 
-                    for (dependency_list.items) |item| {
-                        var dependency = manager.lockfile.buffers.dependencies.items[item.dependency];
-                        var resolution = manager.lockfile.buffers.resolutions.items[item.dependency];
+                    var dependency_list_entry = manager.task_queue.getEntry(task.id).?;
+                    var dependency_list = dependency_list_entry.value_ptr.*;
+                    dependency_list_entry.value_ptr.* = .{};
 
-                        try manager.enqueueDependency(
-                            item.dependency,
-                            dependency,
-                            resolution,
-                        );
+                    if (dependency_list.items.len > 0) {
+                        for (dependency_list.items) |item| {
+                            var dependency = manager.lockfile.buffers.dependencies.items[item.dependency];
+                            var resolution = manager.lockfile.buffers.resolutions.items[item.dependency];
+
+                            try manager.enqueueDependency(
+                                item.dependency,
+                                dependency,
+                                resolution,
+                            );
+                        }
+
+                        dependency_list.deinit(manager.allocator);
                     }
                 },
                 .extract => {
@@ -6007,6 +6264,14 @@ pub const PackageManager = struct {
                 this.save_lockfile_path = try allocator.dupeZ(u8, save_lockfile_path);
             }
 
+            if (env_loader.map.get("BUN_CONFIG_DISABLE_CLONEFILE") != null) {
+                this.enable.clonefile = false;
+            }
+
+            if (env_loader.map.get("BUN_CONFIG_DISABLE_DEDUPLICATE") != null) {
+                this.enable.deduplicate_packages = false;
+            }
+
             this.do.save_lockfile = strings.eqlComptime((env_loader.map.get("BUN_CONFIG_SKIP_SAVE_LOCKFILE") orelse "0"), "0");
             this.do.load_lockfile = strings.eqlComptime((env_loader.map.get("BUN_CONFIG_SKIP_LOAD_LOCKFILE") orelse "0"), "0");
             this.do.install_packages = strings.eqlComptime((env_loader.map.get("BUN_CONFIG_SKIP_INSTALL_PACKAGES") orelse "0"), "0");
@@ -6022,6 +6287,8 @@ pub const PackageManager = struct {
             manifest_cache: bool = true,
             manifest_cache_control: bool = true,
             cache: bool = true,
+            clonefile: bool = Environment.isMac,
+            deduplicate_packages: bool = true,
         };
     };
 
@@ -6142,7 +6409,6 @@ pub const PackageManager = struct {
             }),
             .resolve_tasks = TaskChannel.init(),
             .lockfile = undefined,
-
             // .progress
         };
         manager.lockfile = try ctx.allocator.create(Lockfile);
@@ -6174,7 +6440,11 @@ pub const PackageManager = struct {
         manager.timestamp = @truncate(u32, @intCast(u64, @maximum(std.time.timestamp(), 0)));
 
         var load_lockfile_result: Lockfile.LoadFromDiskResult = if (manager.options.do.load_lockfile)
-            Lockfile.loadFromDisk(ctx.allocator, ctx.log, manager.options.lockfile_path)
+            manager.lockfile.loadFromDisk(
+                ctx.allocator,
+                ctx.log,
+                manager.options.lockfile_path,
+            )
         else
             Lockfile.LoadFromDiskResult{ .not_found = .{} };
 
@@ -6182,7 +6452,7 @@ pub const PackageManager = struct {
 
         var needs_new_lockfile = load_lockfile_result != .ok;
 
-        var diffs = Lockfile.Package.Diff.List.init(ctx.allocator);
+        var had_any_diffs = false;
 
         switch (load_lockfile_result) {
             .err => |cause| {
@@ -6233,25 +6503,84 @@ pub const PackageManager = struct {
                             .is_main = true,
                         },
                     );
-                    manager.lockfile.* = load_lockfile_result.ok;
-                    manager.lockfile.scratch = Lockfile.Scratch.init(manager.allocator);
+                    var mapping = try manager.lockfile.allocator.alloc(PackageID, new_root.dependencies.len);
+                    std.mem.set(PackageID, mapping, invalid_package_id);
+
                     manager.summary = try Package.Diff.generate(
                         ctx.allocator,
-                        &diffs,
                         manager.lockfile,
                         &lockfile,
                         &root,
                         &new_root,
+                        mapping,
                     );
-                    manager.task_queue = .{};
+
+                    had_any_diffs = manager.summary.add + manager.summary.remove + manager.summary.update > 0;
+
+                    // If you changed packages, we will copy over the new package from the new lockfile
+                    const new_dependencies = new_root.dependencies.get(lockfile.buffers.dependencies.items);
+
+                    if (had_any_diffs) {
+                        var builder_ = manager.lockfile.stringBuilder();
+                        // ensure we use one pointer to reference it instead of creating new ones and potentially aliasing
+                        var builder = &builder_;
+
+                        for (new_dependencies) |new_dep, i| {
+                            new_dep.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
+                        }
+
+                        const off = @truncate(u32, manager.lockfile.buffers.dependencies.items.len);
+                        const len = @truncate(u32, new_dependencies.len);
+                        var packages = manager.lockfile.packages.slice();
+                        var dep_lists = packages.items(.dependencies);
+                        var resolution_lists = packages.items(.resolutions);
+                        const old_dependencies_list = dep_lists[0];
+                        const old_resolutions_list = resolution_lists[0];
+                        dep_lists[0] = .{ .off = off, .len = len };
+                        resolution_lists[0] = .{ .off = off, .len = len };
+                        manager.root_dependency_list = dep_lists[0];
+                        try builder.allocate();
+
+                        try manager.lockfile.buffers.dependencies.ensureUnusedCapacity(manager.lockfile.allocator, len);
+                        try manager.lockfile.buffers.resolutions.ensureUnusedCapacity(manager.lockfile.allocator, len);
+
+                        var old_dependencies = old_dependencies_list.get(manager.lockfile.buffers.dependencies.items);
+                        var old_resolutions = old_resolutions_list.get(manager.lockfile.buffers.resolutions.items);
+
+                        var dependencies = manager.lockfile.buffers.dependencies.items.ptr[off .. off + len];
+                        var resolutions = manager.lockfile.buffers.resolutions.items.ptr[off .. off + len];
+                        manager.lockfile.buffers.dependencies.items = manager.lockfile.buffers.dependencies.items.ptr[0 .. off + len];
+                        manager.lockfile.buffers.resolutions.items = manager.lockfile.buffers.resolutions.items.ptr[0 .. off + len];
+
+                        for (new_dependencies) |new_dep, i| {
+                            dependencies[i] = try new_dep.clone(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
+                            if (mapping[i] != invalid_package_id) {
+                                resolutions[i] = old_resolutions[mapping[i]];
+                            }
+                        }
+
+                        builder.clamp();
+
+                        // Split this into two passes because the below may allocate memory or invalidate pointers
+                        if (manager.summary.add > 0 or manager.summary.update > 0) {
+                            var remaining = mapping;
+                            var dependency_i: PackageID = off;
+                            while (std.mem.indexOfScalar(PackageID, remaining, invalid_package_id)) |next_i_| {
+                                remaining = remaining[next_i_ + 1 ..];
+
+                                dependency_i += @intCast(PackageID, next_i_);
+                                try manager.enqueueDependencyWithMain(
+                                    dependency_i,
+                                    manager.lockfile.buffers.dependencies.items[dependency_i],
+                                    manager.lockfile.buffers.resolutions.items[dependency_i],
+                                    true,
+                                );
+                            }
+                        }
+                    }
                 }
             },
             else => {},
-        }
-
-        const had_any_diffs = diffs.count > 0;
-        while (diffs.readItem()) |diff| {
-            manager.lockfile.applyDiff(&diffs, diff);
         }
 
         if (needs_new_lockfile) {
@@ -6271,6 +6600,8 @@ pub const PackageManager = struct {
             );
 
             root = try manager.lockfile.appendPackage(root);
+
+            manager.root_dependency_list = root.dependencies;
             manager.enqueueDependencyList(
                 root.dependencies,
                 true,
@@ -6278,6 +6609,17 @@ pub const PackageManager = struct {
         }
 
         manager.flushDependencyQueue();
+
+        // Anything that needs to be downloaded from an update needs to be scheduled here
+        {
+            const count = manager.network_resolve_batch.len + manager.network_tarball_batch.len;
+            manager.pending_tasks += @truncate(u32, count);
+            manager.total_tasks += @truncate(u32, count);
+            manager.network_resolve_batch.push(manager.network_tarball_batch);
+            NetworkThread.global.pool.schedule(manager.network_resolve_batch);
+            manager.network_tarball_batch = .{};
+            manager.network_resolve_batch = .{};
+        }
 
         while (manager.pending_tasks > 0) {
             try manager.runTasks();
@@ -6295,10 +6637,15 @@ pub const PackageManager = struct {
         }
         var progress = std.Progress{};
 
+        if (had_any_diffs or needs_new_lockfile) {
+            manager.lockfile = try manager.lockfile.clean(&manager.summary.deduped, &progress, &manager.options);
+        }
+
         const install_result = try manager.lockfile.installDirty(
             manager.cache_directory,
             &progress,
-            had_any_diffs or needs_new_lockfile,
+            &manager.thread_pool,
+            &manager.options,
         );
 
         manager.lockfile = install_result.lockfile;
@@ -6310,11 +6657,12 @@ pub const PackageManager = struct {
             manager.summary.add = @truncate(u32, manager.lockfile.packages.len);
         }
 
-        Output.prettyln("   <green>+{d}<r> add | <cyan>{d}<r> update | <r><red>-{d}<r> remove | {d} installed | {d} skipped | {d} failed", .{
+        Output.prettyln("   <green>+{d}<r> add | <cyan>{d}<r> update | <r><red>-{d}<r> remove | {d} installed | {d} deduped | {d} skipped | {d} failed", .{
             manager.summary.add,
             manager.summary.update,
             manager.summary.remove,
             install_result.summary.success,
+            manager.summary.deduped,
             install_result.summary.skipped,
             install_result.summary.fail,
         });

@@ -642,7 +642,15 @@ pub const Lockfile = struct {
         // Go through *already* resolved package versions
         // Ask, do any of those versions happen to match a lower version?
         // If yes, choose that version instead.
-        // The intent is to
+        // Why lower?
+        //
+        // Normally, the problem is looks like this:
+        //   Package A: "react@^17"
+        //   Package B: "react@17.0.1
+        //
+        // Now you have two copies of React.
+        // When you really only wanted one.
+        // Since _typically_ the issue is that Semver ranges with "^" or "~" say "choose latest", we end up with latest
         if (options.enable.deduplicate_packages) {
             var resolutions = old.buffers.resolutions.items;
             var dependencies: []Dependency = old.buffers.dependencies.items;
@@ -658,7 +666,6 @@ pub const Lockfile = struct {
                         if (old.package_index.get(dependency.name_hash)) |entry| {
                             const package_ids = std.mem.span(entry.PackageIDMultiple);
 
-                            // First: try min
                             for (package_ids) |id| {
                                 if (resolved_package_id == id or id >= max_package_id) continue;
                                 const package_resolution = package_resolutions[id];

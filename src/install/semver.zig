@@ -1203,7 +1203,20 @@ pub const Query = struct {
                         return Range.initWildcard(version, .minor);
                     }
 
-                    return Range.initWildcard(version, .patch);
+                    var right_version = version;
+                    right_version.minor += 1;
+                    right_version.patch = 0;
+
+                    return Range{
+                        .left = .{
+                            .op = .gte,
+                            .version = version,
+                        },
+                        .right = .{
+                            .op = .lt,
+                            .version = right_version,
+                        },
+                    };
                 },
                 .none => unreachable,
                 .version => {

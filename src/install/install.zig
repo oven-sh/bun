@@ -537,7 +537,7 @@ pub const Lockfile = struct {
         progress: *std.Progress,
         threadpool: *ThreadPool,
         options: *const PackageManager.Options,
-    ) !InstallResult {
+    ) !PackageInstall.Summary {
         var node = try progress.start("Installing packages", new.packages.len);
 
         new.unique_packages.unset(0);
@@ -564,6 +564,11 @@ pub const Lockfile = struct {
                 Global.crash();
             };
         };
+        var skip_delete = skip_verify;
+        if (options.enable.force_install) {
+            skip_verify = true;
+            skip_delete = false;
+        }
         var summary = PackageInstall.Summary{};
         {
             const toplevel_count = new.unique_packages.count();
@@ -574,10 +579,6 @@ pub const Lockfile = struct {
             var names: []String = parts.items(.name);
             var resolutions: []Resolution = parts.items(.resolution);
             var destination_dir_subpath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-
-            if (options.enable.clonefile) {
-                PackageInstall.supported_method = .clonefile;
-            }
 
             // When it's a Good Idea, run the install in single-threaded
             // From benchmarking, apfs clonefile() is ~6x faster than copyfile() on macOS
@@ -626,7 +627,7 @@ pub const Lockfile = struct {
                                     summary.skipped += @as(u32, @boolToInt(!needs_install));
 
                                     if (needs_install) {
-                                        const result = installer.install(skip_verify);
+                                        const result = installer.install(skip_delete);
                                         switch (result) {
                                             .success => summary.success += 1,
                                             .fail => |cause| {
@@ -711,10 +712,7 @@ pub const Lockfile = struct {
 
         node.end();
 
-        return InstallResult{
-            .lockfile = new,
-            .summary = summary,
-        };
+        return summary;
     }
 
     const PendingResolution = struct {
@@ -830,6 +828,7 @@ pub const Lockfile = struct {
                 allocator,
                 &log,
                 env_loader,
+                null,
             );
 
             var printer = Printer{
@@ -964,17 +963,21 @@ pub const Lockfile = struct {
                     {
                         try writer.writeAll("  version ");
 
+                        const version_formatter = resolution.fmt(string_buf);
+
                         // Version is always quoted
-                        try std.fmt.format(writer, "\"{}\"\n", .{resolution.fmt(string_buf)});
+                        try std.fmt.format(writer, "\"{any}\"\n", .{version_formatter});
 
                         try writer.writeAll("  resolved ");
 
+                        const url_formatter = resolution.fmtURL(&this.options, name, string_buf);
+
                         // Resolved URL is always quoted
-                        try std.fmt.format(writer, "\"{}\"\n", .{resolution.fmtURL(&this.options, name, string_buf)});
+                        try std.fmt.format(writer, "\"{any}\"\n", .{url_formatter});
 
                         if (meta.integrity.tag != .unknown) {
                             // Integrity is...never quoted?
-                            try std.fmt.format(writer, "  integrity {}\n", .{meta.integrity});
+                            try std.fmt.format(writer, "  integrity {any}\n", .{&meta.integrity});
                         }
 
                         if (dependencies.len > 0) {
@@ -1856,10 +1859,8 @@ pub const Lockfile = struct {
                 out_groups[out_group_i] = DependencyGroup.dependencies;
                 out_group_i += 1;
 
-                if (features.dev_dependencies) {
-                    out_groups[out_group_i] = DependencyGroup.dev;
-                    out_group_i += 1;
-                }
+                out_groups[out_group_i] = DependencyGroup.dev;
+                out_group_i += 1;
 
                 if (features.optional_dependencies) {
                     out_groups[out_group_i] = DependencyGroup.optional;
@@ -2667,7 +2668,28 @@ const PackageInstall = struct {
     pub const Method = enum {
         clonefile,
         copyfile,
+
         copy_file_range,
+        io_uring,
+
+        const BackendSupport = std.EnumArray(Method, bool);
+
+        pub const macOS = BackendSupport.initDefault(false, .{
+            .clonefile = true,
+            .copyfile = true,
+        });
+
+        pub const linux = BackendSupport.initDefault(false, .{
+            .io_uring = true,
+            .copy_file_range = true,
+        });
+
+        pub inline fn isSupported(this: Method) bool {
+            if (comptime Environment.isMac) return macOS.get(this);
+            if (comptime Environment.isLinux) return linux.get(this);
+
+            return false;
+        }
 
         pub inline fn isSync(this: Method) bool {
             return switch (this) {
@@ -2774,7 +2796,7 @@ const PackageInstall = struct {
     };
 
     var supported_method: Method = if (Environment.isMac)
-        Method.copyfile
+        Method.clonefile
     else
         Method.copy_file_range;
 
@@ -3244,6 +3266,49 @@ pub const PackageManager = struct {
         return try this.enqueueDependencyWithMain(id, dependency, resolution, false);
     }
 
+    pub fn writeYarnLock(this: *PackageManager) !void {
+        var printer = Lockfile.Printer{
+            .lockfile = this.lockfile,
+            .options = this.options,
+        };
+
+        var tmpname_buf: [512]u8 = undefined;
+        tmpname_buf[0..8].* = "tmplock-".*;
+        var tmpfile = FileSystem.RealFS.Tmpfile{};
+        var secret: [32]u8 = undefined;
+        std.mem.writeIntNative(u64, secret[0..8], @intCast(u64, std.time.milliTimestamp()));
+        var rng = std.rand.Gimli.init(secret);
+        var base64_bytes: [64]u8 = undefined;
+        rng.random.bytes(&base64_bytes);
+
+        const tmpname__ = std.fmt.bufPrint(tmpname_buf[8..], "{s}", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
+        tmpname_buf[tmpname__.len + 8] = 0;
+        const tmpname = tmpname_buf[0 .. tmpname__.len + 8 :0];
+
+        tmpfile.create(&FileSystem.instance.fs, tmpname) catch |err| {
+            Output.prettyErrorln("<r><red>error:<r> failed to create tmpfile: {s}", .{@errorName(err)});
+            Output.flush();
+            Global.crash();
+        };
+
+        var file = tmpfile.file();
+        var file_writer = file.writer();
+        var buffered_writer = std.io.BufferedWriter(std.mem.page_size, @TypeOf(file_writer)){
+            .unbuffered_writer = file_writer,
+        };
+        var writer = buffered_writer.writer();
+        try Lockfile.Printer.Yarn.print(&printer, @TypeOf(writer), writer);
+        try buffered_writer.flush();
+
+        _ = C.fchmod(
+            tmpfile.fd,
+            // chmod 666,
+            0000040 | 0000004 | 0000002 | 0000400 | 0000200 | 0000020,
+        );
+
+        try tmpfile.promote(tmpname, std.fs.cwd().fd, "yarn.lock");
+    }
+
     fn enqueueDependencyWithMain(
         this: *PackageManager,
         id: u32,
@@ -3261,6 +3326,12 @@ pub const PackageManager = struct {
             if (!(id >= this.root_dependency_list.off and id < this.root_dependency_list.len + this.root_dependency_list.off)) {
                 if (!dependency.behavior.isEnabled(Features.npm))
                     return;
+            }
+        }
+
+        if (comptime is_main) {
+            if (!this.options.enable.install_dev_dependencies and dependency.behavior.isDev()) {
+                return;
             }
         }
 
@@ -3687,13 +3758,26 @@ pub const PackageManager = struct {
         verbose: bool = false,
         lockfile_path: stringZ = Lockfile.default_filename,
         save_lockfile_path: stringZ = Lockfile.default_filename,
-        registry_url: URL = URL.parse("https://registry.npmjs.org/"),
+        scope: Npm.Registry.Scope = .{
+            .name = "",
+            .token = "",
+            .url = URL.parse("https://registry.npmjs.org/"),
+        },
+
         registries: Npm.Registry.Map = Npm.Registry.Map{},
         cache_directory: string = "",
         enable: Enable = .{},
         do: Do = .{},
+        positionals: []const string = &[_]string{},
 
-        pub fn load(this: *Options, allocator: *std.mem.Allocator, log: *logger.Log, env_loader: *DotEnv.Loader) !void {
+        pub fn load(
+            this: *Options,
+            allocator: *std.mem.Allocator,
+            log: *logger.Log,
+            env_loader: *DotEnv.Loader,
+            cli_: ?CommandLineArguments,
+        ) !void {
+
             // technically, npm_config is case in-sensitive
             // load_registry:
             {
@@ -3711,7 +3795,7 @@ pub const PackageManager = struct {
                                 (strings.startsWith(registry_, "https://") or
                                 strings.startsWith(registry_, "http://")))
                             {
-                                this.registry_url = URL.parse(registry_);
+                                this.scope.url = URL.parse(registry_);
                                 did_set = true;
                                 // stage1 bug: break inside inline is broken
                                 // break :load_registry;
@@ -3721,13 +3805,52 @@ pub const PackageManager = struct {
                 }
             }
 
+            {
+                const token_keys = [_]string{
+                    "BUN_CONFIG_TOKEN",
+                    "NPM_CONFIG_token",
+                    "npm_config_token",
+                };
+                var did_set = false;
+
+                inline for (token_keys) |registry_key| {
+                    if (!did_set) {
+                        if (env_loader.map.get(registry_key)) |registry_| {
+                            if (registry_.len > 0) {
+                                this.scope.token = registry_;
+                                did_set = true;
+                                // stage1 bug: break inside inline is broken
+                                // break :load_registry;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (cli_) |cli| {
+                if (cli.registry.len > 0 and strings.startsWith(cli.registry, "https://") or
+                    strings.startsWith(cli.registry, "http://"))
+                {
+                    this.scope.url = URL.parse(cli.registry);
+                }
+
+                if (cli.token.len > 0) {
+                    this.scope.token = cli.token;
+                }
+
+                if (cli.lockfile.len > 0) {
+                    this.lockfile_path = try allocator.dupeZ(u8, cli.lockfile);
+                }
+            }
+
             this.save_lockfile_path = this.lockfile_path;
+
             if (env_loader.map.get("BUN_CONFIG_LOCKFILE_SAVE_PATH")) |save_lockfile_path| {
                 this.save_lockfile_path = try allocator.dupeZ(u8, save_lockfile_path);
             }
 
             if (env_loader.map.get("BUN_CONFIG_NO_CLONEFILE") != null) {
-                this.enable.clonefile = false;
+                PackageInstall.supported_method = .copyfile;
             }
 
             if (env_loader.map.get("BUN_CONFIG_NO_DEDUPLICATE") != null) {
@@ -3737,26 +3860,74 @@ pub const PackageManager = struct {
             this.do.save_lockfile = strings.eqlComptime((env_loader.map.get("BUN_CONFIG_SKIP_SAVE_LOCKFILE") orelse "0"), "0");
             this.do.load_lockfile = strings.eqlComptime((env_loader.map.get("BUN_CONFIG_SKIP_LOAD_LOCKFILE") orelse "0"), "0");
             this.do.install_packages = strings.eqlComptime((env_loader.map.get("BUN_CONFIG_SKIP_INSTALL_PACKAGES") orelse "0"), "0");
+
+            if (cli_) |cli| {
+                if (cli.no_save) {
+                    this.do.save_lockfile = false;
+                }
+
+                if (cli.dry_run) {
+                    this.do.install_packages = false;
+                }
+
+                if (cli.no_cache) {
+                    this.enable.manifest_cache = false;
+                    this.enable.manifest_cache_control = false;
+                }
+
+                if (cli.no_dedupe) {
+                    this.enable.deduplicate_packages = false;
+                }
+
+                if (cli.verbose) {
+                    this.verbose = true;
+                    PackageManager.verbose_install = this.verbose;
+                }
+
+                if (cli.yarn) {
+                    this.do.save_yarn_lock = true;
+                }
+
+                if (cli.positionals.len > 0) {
+                    this.positionals = cli.positionals;
+                }
+
+                if (cli.production) {
+                    this.enable.install_dev_dependencies = false;
+                }
+
+                if (cli.force) {
+                    this.enable.manifest_cache_control = false;
+                }
+            }
         }
 
         pub const Do = struct {
             save_lockfile: bool = true,
             load_lockfile: bool = true,
             install_packages: bool = true,
+            save_yarn_lock: bool = false,
         };
 
         pub const Enable = struct {
             manifest_cache: bool = true,
             manifest_cache_control: bool = true,
             cache: bool = true,
-            clonefile: bool = Environment.isMac,
             deduplicate_packages: bool = true,
+            install_dev_dependencies: bool = true,
+            force_install: bool = false,
         };
     };
 
-    fn init(ctx: Command.Context) !*PackageManager {
+    fn init(
+        ctx: Command.Context,
+        package_json_file_: ?std.fs.File,
+        comptime params: []const ParamType,
+    ) !*PackageManager {
         // assume that spawning a thread will take a lil so we do that asap
         try NetworkThread.init();
+
+        var cli = try CommandLineArguments.parse(ctx.allocator, params);
 
         var fs = try Fs.FileSystem.init1(ctx.allocator, null);
         var original_cwd = std.mem.trimRight(u8, fs.top_level_dir, "/");
@@ -3767,15 +3938,20 @@ pub const PackageManager = struct {
         //
         // We will walk up from the cwd, calling chdir on each directory until we find a package.json
         // If we fail to find one, we will report an error saying no packages to install
-        var package_json_file: std.fs.File = brk: {
-            break :brk std.fs.cwd().openFileZ("package.json", .{ .read = true, .write = true }) catch |err2| {
+        var package_json_file: std.fs.File = undefined;
+
+        if (package_json_file_) |file| {
+            package_json_file = file;
+        } else {
+            // can't use orelse due to a stage1 bug
+            package_json_file = std.fs.cwd().openFileZ("package.json", .{ .read = true, .write = true }) catch |err2| brk: {
                 var this_cwd = original_cwd;
                 outer: while (std.fs.path.dirname(this_cwd)) |parent| {
                     cwd_buf[parent.len] = 0;
                     var chdir = cwd_buf[0..parent.len :0];
 
                     std.os.chdirZ(chdir) catch |err| {
-                        Output.prettyErrorln("Error {s} while chdir - {s}", .{ @errorName(err), chdir });
+                        Output.prettyErrorln("Error {s} while chdir - {s}", .{ @errorName(err), std.mem.span(chdir) });
                         Output.flush();
                         return err;
                     };
@@ -3788,12 +3964,12 @@ pub const PackageManager = struct {
 
                 std.mem.copy(u8, &cwd_buf, original_cwd);
                 cwd_buf[original_cwd.len] = 0;
-                var real_cwd = cwd_buf[0..original_cwd.len :0];
+                var real_cwd: [:0]u8 = cwd_buf[0..original_cwd.len :0];
                 std.os.chdirZ(real_cwd) catch {};
 
                 return error.MissingPackageJSON;
             };
-        };
+        }
 
         fs.top_level_dir = try std.os.getcwd(&cwd_buf);
         cwd_buf[fs.top_level_dir.len] = '/';
@@ -3889,34 +4065,39 @@ pub const PackageManager = struct {
             ctx.allocator,
             ctx.log,
             env_loader,
+            cli,
         );
+        manager.registry.url = manager.options.scope.url;
+        manager.registry.scopes = manager.options.registries;
+        manager.registry.token = manager.options.scope.token;
+        manager.registry.auth = manager.options.scope.auth;
 
         manager.timestamp = @truncate(u32, @intCast(u64, @maximum(std.time.timestamp(), 0)));
         return manager;
     }
 
-    pub fn add(
+    pub inline fn add(
         ctx: Command.Context,
-    ) !void {}
+    ) !void {
+        try updatePackageJSONAndInstall(ctx, .add, &add_params);
+    }
 
-    pub fn remove(
+    pub inline fn remove(
         ctx: Command.Context,
-    ) !void {}
-
-    pub fn update(
-        ctx: Command.Context,
-    ) !void {}
+    ) !void {
+        try updatePackageJSONAndInstall(ctx, .remove, &remove_params);
+    }
 
     const ParamType = clap.Param(clap.Help);
-    pub const install_params = [_]ParamType{
-        clap.parseParam("--registry, -R <STR>              Change default registry (default: $BUN_CONFIG_REGISTRY || $npm_config_registry)") catch unreachable,
-        clap.parseParam("--token, -T <STR>                 Authentication token used for npm registry requests (default: $npm_config_token)") catch unreachable,
-        clap.parseParam("--yarn, -Y                        Write a yarn.lock file (yarn v1)") catch unreachable,
-        clap.parseParam("--production, --prod              Don't install devDependencies and throw if the package.json doesn't match the lockfile") catch unreachable,
+    pub const install_params_ = [_]ParamType{
+        clap.parseParam("--registry <STR>                  Change default registry (default: $BUN_CONFIG_REGISTRY || $npm_config_registry)") catch unreachable,
+        clap.parseParam("--token <STR>                     Authentication token used for npm registry requests (default: $npm_config_token)") catch unreachable,
+        clap.parseParam("-y, --yarn                        Write a yarn.lock file (yarn v1)") catch unreachable,
+        clap.parseParam("-p, --production                  Don't install devDependencies") catch unreachable,
         clap.parseParam("--no-save                         Don't save a lockfile") catch unreachable,
         clap.parseParam("--dry-run                         Don't install anything") catch unreachable,
         clap.parseParam("--lockfile <STR>                  Store & load a lockfile at a specific filepath") catch unreachable,
-        clap.parseParam("--force, -F                       Always request the latest versions from the registry & reinstall all dependenices") catch unreachable,
+        clap.parseParam("-f, --force                       Always request the latest versions from the registry & reinstall all dependenices") catch unreachable,
         clap.parseParam("--cache-dir <STR>                 Store & load cached data from a specific directory path") catch unreachable,
         clap.parseParam("--no-dedupe                       Disable automatic downgrading of dependencies that would otherwise cause unnecessary duplicate package versions ($BUN_CONFIG_NO_DEDUPLICATE)") catch unreachable,
         clap.parseParam("--no-cache                        Ignore manifest cache entirely") catch unreachable,
@@ -3924,27 +4105,166 @@ pub const PackageManager = struct {
         clap.parseParam("--verbose                         Excessively verbose logging") catch unreachable,
         clap.parseParam("--cwd <STR>                       Set a specific cwd") catch unreachable,
         clap.parseParam("--backend <STR>                   Platform-specific optimizations for installing dependencies. For macOS, \"clonefile\" (default), \"copyfile\"") catch unreachable,
+        clap.parseParam("--help                            Print this help menu") catch unreachable,
     };
 
-    pub const add_params = install_params ++ [_]ParamType{
+    pub const install_params = install_params_ ++ [_]ParamType{
+        clap.parseParam("<POS> ...                         ") catch unreachable,
+    };
+
+    pub const add_params = install_params_ ++ [_]ParamType{
+        clap.parseParam("-d, --development                 Add depenedency to \"devDependencies\"") catch unreachable,
+        clap.parseParam("--optional                        Add depenedency to \"optionalDependencies\"") catch unreachable,
         clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of packages to install") catch unreachable,
     };
 
-    pub const remove_params = install_params ++ [_]ParamType{
-        clap.parseParam("<POS> ...                         \"name\" of packages to remove") catch unreachable,
+    pub const remove_params = install_params_ ++ [_]ParamType{
+        clap.parseParam("<POS> ...                         \"name\" of packages to remove from package.json") catch unreachable,
+    };
+
+    const CommandLineArguments = struct {
+        registry: string = "",
+        cache_dir: string = "",
+        lockfile: string = "",
+        token: string = "",
+
+        backend: ?PackageInstall.Method = null,
+
+        positionals: []const string = &[_]string{},
+
+        yarn: bool = false,
+        production: bool = false,
+        no_save: bool = false,
+        dry_run: bool = false,
+        force: bool = false,
+        no_dedupe: bool = false,
+        no_cache: bool = false,
+        silent: bool = false,
+        verbose: bool = false,
+
+        development: bool = false,
+        optional: bool = false,
+
+        pub fn parse(
+            allocator: *std.mem.Allocator,
+            comptime params: []const ParamType,
+        ) !CommandLineArguments {
+            var diag = clap.Diagnostic{};
+
+            var args = clap.parse(clap.Help, params, .{
+                .diagnostic = &diag,
+                .allocator = allocator,
+            }) catch |err| {
+                // Report useful error and exit
+                diag.report(Output.errorWriter(), err) catch {};
+                return err;
+            };
+
+            if (args.flag("--help")) {
+                Output.prettyln("\n<b><magenta>bun<r> (package manager) flags:<r>\n\n", .{});
+                Output.flush();
+
+                clap.help(Output.writer(), params) catch {};
+
+                Output.flush();
+                std.os.exit(0);
+            }
+
+            var cli = CommandLineArguments{};
+            cli.yarn = args.flag("--yarn");
+            cli.production = args.flag("--production");
+            cli.no_save = args.flag("--no-save");
+            cli.dry_run = args.flag("--dry-run");
+            cli.force = args.flag("--force");
+            cli.no_dedupe = args.flag("--no-dedupe");
+            cli.no_cache = args.flag("--no-cache");
+            cli.silent = args.flag("--silent");
+            cli.verbose = args.flag("--verbose");
+            cli.development = args.flag("--development");
+            cli.optional = args.flag("--optional");
+
+            if (args.option("--token")) |token| {
+                cli.token = token;
+            }
+
+            if (args.option("--lockfile")) |lockfile| {
+                cli.lockfile = lockfile;
+            }
+
+            if (args.option("--cwd")) |cwd_| {
+                var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                var buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                var final_path: [:0]u8 = undefined;
+                if (cwd_.len > 0 and cwd_[0] == '.') {
+                    var cwd = try std.os.getcwd(&buf);
+                    var parts = [_]string{cwd_};
+                    var path_ = resolve_path.joinAbsStringBuf(cwd, &buf2, &parts, .auto);
+                    buf2[path_.len] = 0;
+                    final_path = buf2[0..path_.len :0];
+                } else {
+                    std.mem.copy(u8, &buf, cwd_);
+                    buf[cwd_.len] = 0;
+                    final_path = buf[0..cwd_.len :0];
+                }
+                try std.os.chdirZ(final_path);
+            }
+
+            if (args.option("--registry")) |registry_| {
+                cli.registry = registry_;
+            }
+
+            const specified_backend: ?PackageInstall.Method = brk: {
+                if (args.option("--backend")) |backend_| {
+                    if (strings.eqlComptime(backend_, "clonefile")) {
+                        break :brk PackageInstall.Method.clonefile;
+                    } else if (strings.eqlComptime(backend_, "copyfile")) {
+                        break :brk PackageInstall.Method.copyfile;
+                    } else if (strings.eqlComptime(backend_, "io_uring")) {
+                        break :brk PackageInstall.Method.io_uring;
+                    } else if (strings.eqlComptime(backend_, "copy_file_range")) {
+                        break :brk PackageInstall.Method.copy_file_range;
+                    }
+                }
+                break :brk null;
+            };
+
+            if (specified_backend) |backend| {
+                if (backend.isSupported()) {
+                    cli.backend = backend;
+                }
+            }
+
+            cli.positionals = args.positionals();
+
+            return cli;
+        }
     };
 
     fn updatePackageJSONAndInstall(
         ctx: Command.Context,
-        op: Lockfile.Package.Diff.Op,
+        comptime op: Lockfile.Package.Diff.Op,
+        comptime params: []const ParamType,
     ) !void {
-        var manager = PackageManager.init(ctx) catch |err| {
+        var manager = PackageManager.init(ctx, null, params) catch |err| brk: {
             switch (err) {
                 error.MissingPackageJSON => {
-                    if (op == .add or op == .update) {}
+                    if (op == .add or op == .update) {
+                        var package_json_file = std.fs.cwd().createFileZ("package.json", .{ .truncate = true }) catch |err2| {
+                            Output.prettyErrorln("<r><red>error:<r> {s} create package.json", .{@errorName(err2)});
+                            Global.crash();
+                        };
+                        try package_json_file.pwriteAll("{\"dependencies\": {}}", 0);
+
+                        break :brk try PackageManager.init(ctx, package_json_file, params);
+                    }
+
+                    Output.prettyErrorln("<r>No package.json, so nothing to remove\n", .{});
+                    Global.crash();
                 },
                 else => return err,
             }
+
+            unreachable;
         };
     }
 
@@ -3954,7 +4274,7 @@ pub const PackageManager = struct {
     pub inline fn install(
         ctx: Command.Context,
     ) !void {
-        try installWithManager(ctx, try PackageManager.init(ctx));
+        try installWithManager(ctx, try PackageManager.init(ctx, null, &install_params));
     }
 
     fn installWithManager(ctx: Command.Context, manager: *PackageManager) !void {
@@ -4022,18 +4342,33 @@ pub const PackageManager = struct {
                     var lockfile: Lockfile = undefined;
                     try lockfile.initEmpty(ctx.allocator);
                     var new_root: Lockfile.Package = undefined;
-                    try Lockfile.Package.parse(
-                        &lockfile,
-                        &new_root,
-                        ctx.allocator,
-                        ctx.log,
-                        package_json_source,
-                        Features{
-                            .optional_dependencies = true,
-                            .dev_dependencies = true,
-                            .is_main = true,
-                        },
-                    );
+                    if (manager.options.enable.install_dev_dependencies) {
+                        try Lockfile.Package.parse(
+                            &lockfile,
+                            &new_root,
+                            ctx.allocator,
+                            ctx.log,
+                            package_json_source,
+                            Features{
+                                .optional_dependencies = true,
+                                .dev_dependencies = true,
+                                .is_main = true,
+                            },
+                        );
+                    } else {
+                        try Lockfile.Package.parse(
+                            &lockfile,
+                            &new_root,
+                            ctx.allocator,
+                            ctx.log,
+                            package_json_source,
+                            Features{
+                                .optional_dependencies = true,
+                                .dev_dependencies = false,
+                                .is_main = true,
+                            },
+                        );
+                    }
                     var mapping = try manager.lockfile.allocator.alloc(PackageID, new_root.dependencies.len);
                     std.mem.set(PackageID, mapping, invalid_package_id);
 
@@ -4117,18 +4452,34 @@ pub const PackageManager = struct {
         if (needs_new_lockfile) {
             root = Lockfile.Package{};
             try manager.lockfile.initEmpty(ctx.allocator);
-            try Lockfile.Package.parse(
-                manager.lockfile,
-                &root,
-                ctx.allocator,
-                ctx.log,
-                package_json_source,
-                Features{
-                    .optional_dependencies = true,
-                    .dev_dependencies = true,
-                    .is_main = true,
-                },
-            );
+
+            if (manager.options.enable.install_dev_dependencies) {
+                try Lockfile.Package.parse(
+                    manager.lockfile,
+                    &root,
+                    ctx.allocator,
+                    ctx.log,
+                    package_json_source,
+                    Features{
+                        .optional_dependencies = true,
+                        .dev_dependencies = true,
+                        .is_main = true,
+                    },
+                );
+            } else {
+                try Lockfile.Package.parse(
+                    manager.lockfile,
+                    &root,
+                    ctx.allocator,
+                    ctx.log,
+                    package_json_source,
+                    Features{
+                        .optional_dependencies = true,
+                        .dev_dependencies = false,
+                        .is_main = true,
+                    },
+                );
+            }
 
             root = try manager.lockfile.appendPackage(root);
 
@@ -4172,14 +4523,15 @@ pub const PackageManager = struct {
             manager.lockfile = try manager.lockfile.clean(&manager.summary.deduped, &progress, &manager.options);
         }
 
-        const install_result = try manager.lockfile.installDirty(
-            manager.cache_directory,
-            &progress,
-            &manager.thread_pool,
-            &manager.options,
-        );
-
-        manager.lockfile = install_result.lockfile;
+        const install_summary = if (manager.options.do.install_packages)
+            try manager.lockfile.installDirty(
+                manager.cache_directory,
+                &progress,
+                &manager.thread_pool,
+                &manager.options,
+            )
+        else
+            PackageInstall.Summary{};
 
         if (manager.options.do.save_lockfile)
             manager.lockfile.saveToDisk(manager.options.save_lockfile_path);
@@ -4188,14 +4540,18 @@ pub const PackageManager = struct {
             manager.summary.add = @truncate(u32, manager.lockfile.packages.len);
         }
 
+        if (manager.options.do.save_yarn_lock) {
+            try manager.writeYarnLock();
+        }
+
         Output.prettyln("   <green>+{d}<r> add | <cyan>{d}<r> update | <r><red>-{d}<r> remove | {d} installed | {d} deduped | {d} skipped | {d} failed", .{
             manager.summary.add,
             manager.summary.update,
             manager.summary.remove,
-            install_result.summary.success,
+            install_summary.success,
             manager.summary.deduped,
-            install_result.summary.skipped,
-            install_result.summary.fail,
+            install_summary.skipped,
+            install_summary.fail,
         });
         Output.flush();
     }

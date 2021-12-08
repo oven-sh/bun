@@ -157,7 +157,7 @@ pub const Resolution = extern struct {
                 .npm => try ExtractTarball.buildURLWithWriter(
                     @TypeOf(writer),
                     writer,
-                    formatter.options.registry_url.href,
+                    formatter.options.scope.url.href,
                     strings.StringOrTinyString.init(formatter.package_name),
                     formatter.resolution.value.npm,
                     formatter.buf,

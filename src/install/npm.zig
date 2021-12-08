@@ -76,10 +76,23 @@ const Npm = @This();
 
 pub const Registry = struct {
     url: URL = URL.parse("https://registry.npmjs.org/"),
+    scopes: Map = Map{},
+
+    token: string = "",
+    auth: string = "",
+
     pub const BodyPool = ObjectPool(MutableString, MutableString.init2048, true);
 
     pub const Scope = struct {
-        name: string,
+        name: string = "",
+        // https://github.com/npm/npm-registry-fetch/blob/main/lib/auth.js#L96
+        // base64("${username}:${password}")
+        auth: string = "",
+        // URL may contain these special suffixes in the pathname:
+        //  :_authToken
+        //  :username
+        //  :_password
+        //  :_auth
         url: URL,
         token: string = "",
     };

@@ -241,6 +241,7 @@ test "StringOrTinyString Lowercase" {
     try std.testing.expectEqualStrings("hello!!!!!", str.slice());
 }
 
+/// startsWith except it checks for non-empty strings
 pub fn hasPrefix(self: string, str: string) bool {
     return str.len > 0 and startsWith(self, str);
 }

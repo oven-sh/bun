@@ -62,7 +62,7 @@ pub fn initializeStore() void {
 
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
-
+const NetworkQueue = std.fifo.LinearFifo(*NetworkTask, .Dynamic);
 const Semver = @import("./semver.zig");
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
@@ -1260,7 +1260,7 @@ pub const Lockfile = struct {
     pub const Scratch = struct {
         pub const DuplicateCheckerMap = std.HashMap(PackageNameHash, logger.Loc, IdentityContext(PackageNameHash), 80);
         pub const DependencyQueue = std.fifo.LinearFifo(DependencySlice, .Dynamic);
-        pub const NetworkQueue = std.fifo.LinearFifo(*NetworkTask, .Dynamic);
+
         duplicate_checker_map: DuplicateCheckerMap = undefined,
         dependency_list_queue: DependencyQueue = undefined,
 
@@ -3013,7 +3013,7 @@ pub const PackageManager = struct {
     network_channel: NetworkChannel = NetworkChannel.init(),
     network_tarball_batch: ThreadPool.Batch = ThreadPool.Batch{},
     network_resolve_batch: ThreadPool.Batch = ThreadPool.Batch{},
-    network_task_fifo: NetworkTaskQueue = .{},
+    network_task_fifo: NetworkQueue = undefined,
     preallocated_network_tasks: PreallocatedNetworkTasks = PreallocatedNetworkTasks{ .buffer = undefined, .len = 0 },
     pending_tasks: u32 = 0,
     total_tasks: u32 = 0,
@@ -3189,6 +3189,7 @@ pub const PackageManager = struct {
     pub fn fetchVersionsForPackageName(
         this: *PackageManager,
         name: string,
+        version: Dependency.Version,
         id: PackageID,
     ) !?Npm.PackageManifest {
         const task_id = Task.Id.forManifest(Task.Tag.package_manifest, name);
@@ -3206,8 +3207,8 @@ pub const PackageManager = struct {
 
                     // If it's an exact package version already living in the cache
                     // We can skip the network request, even if it's beyond the caching period
-                    if (dependency.version.tag == .npm and dependency.version.value.npm.isExact()) {
-                        if (loaded_manifest.?.findByVersion(dependency.version.value.npm.head.head.range.left.version) != null) {
+                    if (version.tag == .npm and version.value.npm.isExact()) {
+                        if (loaded_manifest.?.findByVersion(version.value.npm.head.head.range.left.version) != null) {
                             return manifest;
                         }
                     }
@@ -3414,7 +3415,7 @@ pub const PackageManager = struct {
                                             this.allocator,
                                             "Package \"{s}\" with tag \"{s}\" not found, but package exists",
                                             .{
-                                                name,
+                                                this.lockfile.str(name),
                                                 this.lockfile.str(version.value.dist_tag),
                                             },
                                         ) catch unreachable;
@@ -3428,10 +3429,10 @@ pub const PackageManager = struct {
                                             null,
                                             logger.Loc.Empty,
                                             this.allocator,
-                                            "No version matching \"{s}\" found for package {s} (but package exists)",
+                                            "No version matching \"{s}\" found for specifier \"{s}\" (but package exists)",
                                             .{
                                                 this.lockfile.str(version.literal),
-                                                name,
+                                                this.lockfile.str(name),
                                             },
                                         ) catch unreachable;
                                     }
@@ -4013,15 +4014,15 @@ pub const PackageManager = struct {
     };
 
     const ProgressStrings = struct {
-        const download_no_emoji_ = "Resolving dependencies";
+        const download_no_emoji_ = "Resolving";
         const download_no_emoji: string = download_no_emoji_;
         const download_emoji: string = "  🔍 " ++ download_no_emoji_;
 
-        const extract_no_emoji_ = "Resolving & extracting dependencies";
+        const extract_no_emoji_ = "Resolving & extracting";
         const extract_no_emoji: string = extract_no_emoji_;
         const extract_emoji: string = "  🚚 " ++ extract_no_emoji_;
 
-        const install_no_emoji_ = "Installing dependencies";
+        const install_no_emoji_ = "Installing";
         const install_no_emoji: string = install_no_emoji_;
         const install_emoji: string = "  📦 " ++ install_no_emoji_;
 
@@ -4154,6 +4155,7 @@ pub const PackageManager = struct {
         // var node = progress.start(name: []const u8, estimated_total_items: usize)
         manager.* = PackageManager{
             .options = options,
+            .network_task_fifo = NetworkQueue.init(ctx.allocator),
             .cache_directory = cache_directory,
             .env_loader = env_loader,
             .allocator = ctx.allocator,
@@ -4206,7 +4208,7 @@ pub const PackageManager = struct {
     pub inline fn add(
         ctx: Command.Context,
     ) !void {
-        Output.prettyErrorln("<r><b>bun add v" ++ Global.package_json_version ++ "<r>\n", .{});
+        Output.prettyErrorln("<r><b>bun add <r><d>v" ++ Global.package_json_version ++ "<r>\n", .{});
         Output.flush();
         try updatePackageJSONAndInstall(ctx, .add, &add_params);
     }
@@ -4214,7 +4216,7 @@ pub const PackageManager = struct {
     pub inline fn remove(
         ctx: Command.Context,
     ) !void {
-        Output.prettyErrorln("<r><b>bun remove v" ++ Global.package_json_version ++ "<r>\n", .{});
+        Output.prettyErrorln("<r><b>bun remove <r><d>v" ++ Global.package_json_version ++ "<r>\n", .{});
         Output.flush();
 
         try updatePackageJSONAndInstall(ctx, .remove, &remove_params);
@@ -4404,8 +4406,8 @@ pub const PackageManager = struct {
                         });
                         Global.crash();
                     };
-                    updates[request_id].resolution_string_buf = manifest.string_buf;
-                    updates[request_id].resolved_version = Resolution{
+                    updates[id].resolution_string_buf = manifest.string_buf;
+                    updates[id].resolved_version = Resolution{
                         .tag = .npm,
                         .value = Resolution.Value{ .npm = matching_version.version },
                     };
@@ -4420,8 +4422,8 @@ pub const PackageManager = struct {
                         Global.crash();
                     };
 
-                    updates[request_id].resolution_string_buf = manifest.string_buf;
-                    updates[request_id].resolved_version = Resolution{
+                    updates[id].resolution_string_buf = manifest.string_buf;
+                    updates[id].resolved_version = Resolution{
                         .tag = .npm,
                         .value = Resolution.Value{ .npm = matching_version.version },
                     };
@@ -4436,8 +4438,8 @@ pub const PackageManager = struct {
                         Global.crash();
                     };
 
-                    updates[request_id].resolution_string_buf = manifest.string_buf;
-                    updates[request_id].resolved_version = Resolution{
+                    updates[id].resolution_string_buf = manifest.string_buf;
+                    updates[id].resolved_version = Resolution{
                         .tag = .npm,
                         .value = Resolution.Value{ .npm = matching_version.version },
                     };
@@ -4463,7 +4465,9 @@ pub const PackageManager = struct {
             switch (err) {
                 error.MissingPackageJSON => {
                     if (op == .add or op == .update) {
-                        var package_json_file = std.fs.cwd().createFileZ("package.json", .{ .truncate = true }) catch |err2| {
+                        var package_json_file = std.fs.cwd().createFileZ("package.json", .{
+                            .read = true,
+                        }) catch |err2| {
                             Output.prettyErrorln("<r><red>error:<r> {s} create package.json", .{@errorName(err2)});
                             Global.crash();
                         };
@@ -4484,7 +4488,10 @@ pub const PackageManager = struct {
         var update_requests = try std.BoundedArray(UpdateRequest, 64).init(0);
         var need_to_get_versions_from_npm = false;
 
-        for (manager.options.positionals) |positional| {
+        // first one is always either:
+        // add
+        // remove
+        for (manager.options.positionals[1..]) |positional| {
             var request = UpdateRequest{
                 .name = positional,
             };
@@ -4502,8 +4509,8 @@ pub const PackageManager = struct {
                 if (positional.len > i + 1) request.version_buf = positional[i + 1 ..];
             }
 
-            if (strings.startsWith("http://", request.name) or
-                strings.startsWith("https://", request.name))
+            if (strings.hasPrefix("http://", request.name) or
+                strings.hasPrefix("https://", request.name))
             {
                 if (Output.isEmojiEnabled()) {
                     Output.prettyErrorln("<r>😢 <red>error<r><d>:<r> bun {s} http://url is not implemented yet.", .{
@@ -4525,8 +4532,8 @@ pub const PackageManager = struct {
             request.version_buf = std.mem.trim(u8, request.version_buf, "\n\r\t");
 
             // https://github.com/npm/npm-package-arg/blob/fbaf2fd0b72a0f38e7c24260fd4504f4724c9466/npa.js#L330
-            if (strings.startsWith("https://", request.version_buf) or
-                strings.startsWith("http://", request.version_buf))
+            if (strings.hasPrefix("https://", request.version_buf) or
+                strings.hasPrefix("http://", request.version_buf))
             {
                 if (Output.isEmojiEnabled()) {
                     Output.prettyErrorln("<r>😢 <red>error<r><d>:<r> bun {s} http://url is not implemented yet.", .{
@@ -4547,14 +4554,14 @@ pub const PackageManager = struct {
                 request.missing_version = true;
             } else {
                 request.missing_version = true;
-                need_to_get_versions_from_npm = true;
-                const sliced = SlicedString.from(request.version_buf);
+
+                const sliced = SlicedString.init(request.version_buf, request.version_buf);
                 request.version = Dependency.parse(ctx.allocator, request.version_buf, &sliced, ctx.log) orelse Dependency.Version{};
 
                 if (request.version.tag == .uninitialized or request.version.tag == .dist_tag) {}
-
-                update_requests.append(request) catch break;
             }
+
+            update_requests.append(request) catch break;
         }
 
         var updates: []UpdateRequest = update_requests.slice();
@@ -4571,8 +4578,9 @@ pub const PackageManager = struct {
 
             if (need_to_get_versions_from_npm) {
                 for (updates) |req, request_id| {
-                    if (manager.fetchVersionsForPackageName(req.name, request_id) catch null) |manifest| {
-                        update_handler.handle(manifest, request_id);
+                    const id = @truncate(PackageID, request_id);
+                    if (manager.fetchVersionsForPackageName(req.name, req.version, id) catch null) |manifest| {
+                        update_handler.handle(manifest, id);
                     }
                 }
 
@@ -4590,7 +4598,7 @@ pub const PackageManager = struct {
                     manager.network_resolve_batch = .{};
                 }
 
-                while (manager.pending_tasks > 0) {
+                if (manager.pending_tasks > 0) {
                     manager.downloads_node = try manager.progress.start(
                         ProgressStrings.download(),
                         manager.total_tasks,
@@ -4603,7 +4611,7 @@ pub const PackageManager = struct {
                     manager.downloads_node.?.activate();
                     manager.progress.refresh();
 
-                    {
+                    while (manager.pending_tasks > 0) {
                         while (manager.network_channel.tryReadItem() catch null) |task_| {
                             var task: *NetworkTask = task_;
                             defer manager.pending_tasks -= 1;
@@ -4643,7 +4651,14 @@ pub const PackageManager = struct {
                                     }
 
                                     if (manifest_ == null) {
-                                        const package_version_response = try Npm.Registry.getPackageMetadata(ctx.allocator, response, task.response_buffer.toOwnedSliceLeaky(), ctx.log, name, manifest_req.loaded_manifest);
+                                        const package_version_response = try Npm.Registry.getPackageMetadata(
+                                            ctx.allocator,
+                                            response,
+                                            task.response_buffer.toOwnedSliceLeaky(),
+                                            ctx.log,
+                                            name.slice(),
+                                            manifest_req.loaded_manifest,
+                                        );
                                         switch (package_version_response) {
                                             .cached => |cached| {
                                                 manifest_ = cached;
@@ -4693,9 +4708,9 @@ pub const PackageManager = struct {
 
         if (ctx.log.errors > 0) {
             if (Output.enable_ansi_colors) {
-                log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
             } else {
-                log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
             }
 
             Output.flush();
@@ -4733,7 +4748,7 @@ pub const PackageManager = struct {
                 Output.flush();
                 std.os.exit(1);
                 return;
-            } else if (current_package_json.data.e_object.len == 0) {
+            } else if (current_package_json.data.e_object.properties.len == 0) {
                 Output.prettyErrorln("<red>error<r><d>:<r> package.json is empty {{}}, so there's nothing to remove!", .{});
                 Output.flush();
                 std.os.exit(1);
@@ -4778,20 +4793,22 @@ pub const PackageManager = struct {
                                 var i: usize = 0;
                                 var new_len = dependencies.len;
                                 while (i < dependencies.len) : (i += 1) {
-                                    if (dependencies[i].value.?.data == .e_string) {
-                                        if (dependencies[i].value.?.data.e_string.eql(string, update.name)) {
+                                    if (dependencies[i].key.?.data == .e_string) {
+                                        if (dependencies[i].key.?.data.e_string.eql(string, update.name)) {
                                             if (new_len > 1) {
                                                 dependencies[i] = dependencies[new_len - 1];
-                                                any_changes = true;
-                                                new_len -= 1;
+                                            } else {
+                                                new_len = 0;
                                             }
+
+                                            any_changes = true;
                                         }
                                     }
                                 }
 
                                 const changed = new_len != dependencies.len;
                                 if (changed) {
-                                    query.expr.data.e_object.properties = expr.data.e_object.properties[0..new_len];
+                                    query.expr.data.e_object.properties = query.expr.data.e_object.properties[0..new_len];
                                     var obj = query.expr.data.e_object;
                                     obj.alphabetizeProperties();
                                 }
@@ -4799,8 +4816,17 @@ pub const PackageManager = struct {
                         }
                     }
                 }
+
+                if (!any_changes) {
+                    Output.prettyErrorln("\n<red>error<r><d>:<r> \"<b>{s}<r>\" is not in a package.json file", .{updates[0].name});
+                    Output.flush();
+                    std.os.exit(1);
+                    return;
+                }
             },
             .add, .update => {
+                const G = JSAst.G;
+
                 var remaining: usize = updates.len;
 
                 // There are three possible scenarios here
@@ -4828,38 +4854,40 @@ pub const PackageManager = struct {
                     if (remaining == 0)
                         break :ast_modifier;
 
-                    var dependencies: []G.Property = [_]G.Property{};
+                    var dependencies: []G.Property = &[_]G.Property{};
                     if (current_package_json.asProperty(dependency_list)) |query| {
                         if (query.expr.data == .e_object) {
                             dependencies = query.expr.data.e_object.properties;
                         }
                     }
 
-                    const G = JSAst.G;
                     var new_dependencies = try ctx.allocator.alloc(G.Property, dependencies.len + remaining);
                     std.mem.copy(G.Property, new_dependencies, dependencies);
                     std.mem.set(G.Property, new_dependencies[dependencies.len..], G.Property{});
 
                     outer: for (updates) |update, j| {
                         if (update.e_string != null) continue;
+
                         var k: usize = 0;
 
                         while (k < new_dependencies.len) : (k += 1) {
                             if (new_dependencies[k].key == null) {
                                 new_dependencies[k].key = JSAst.Expr.init(
+                                    JSAst.E.String,
                                     JSAst.E.String{
                                         .utf8 = update.name,
                                     },
-                                    logger.Loc.Empty{},
+                                    logger.Loc.Empty,
                                 );
                                 new_dependencies[k].value = JSAst.Expr.init(
+                                    JSAst.E.String,
                                     JSAst.E.String{
                                         // we set it later
                                         .utf8 = "",
                                     },
-                                    logger.Loc.Empty{},
+                                    logger.Loc.Empty,
                                 );
-                                updates[j].e_string = new_dependencies[k].value.expr.data.e_string;
+                                updates[j].e_string = new_dependencies[k].value.?.data.e_string;
                                 continue :outer;
                             }
 
@@ -4889,6 +4917,7 @@ pub const PackageManager = struct {
 
                     if (needs_new_dependency_list) {
                         dependencies_object = JSAst.Expr.init(
+                            JSAst.E.Object,
                             JSAst.E.Object{
                                 .properties = new_dependencies,
                             },
@@ -4900,25 +4929,27 @@ pub const PackageManager = struct {
                         var root_properties = try ctx.allocator.alloc(JSAst.G.Property, 1);
                         root_properties[0] = JSAst.G.Property{
                             .key = JSAst.Expr.init(
+                                JSAst.E.String,
                                 JSAst.E.String{
                                     .utf8 = dependency_list,
                                 },
-                                logger.Loc.Empty{},
+                                logger.Loc.Empty,
                             ),
                             .value = dependencies_object,
                         };
-                        current_package_json = JSAst.Expr.init(JSAst.E.Object{ .properties = root_properties }, logger.Loc.Empty{});
-                    } else {
+                        current_package_json = JSAst.Expr.init(JSAst.E.Object, JSAst.E.Object{ .properties = root_properties }, logger.Loc.Empty);
+                    } else if (needs_new_dependency_list) {
                         var root_properties = try ctx.allocator.alloc(JSAst.G.Property, current_package_json.data.e_object.properties.len + 1);
                         std.mem.copy(JSAst.G.Property, root_properties, current_package_json.data.e_object.properties);
                         root_properties[root_properties.len - 1].key = JSAst.Expr.init(
+                            JSAst.E.String,
                             JSAst.E.String{
                                 .utf8 = dependency_list,
                             },
-                            logger.Loc.Empty{},
+                            logger.Loc.Empty,
                         );
                         root_properties[root_properties.len - 1].value = dependencies_object;
-                        current_package_json = JSAst.Expr.init(JSAst.E.Object{ .properties = root_properties }, logger.Loc.Empty{});
+                        current_package_json = JSAst.Expr.init(JSAst.E.Object, JSAst.E.Object{ .properties = root_properties }, logger.Loc.Empty);
                     }
 
                     dependencies_object.data.e_object.packageJSONSort();
@@ -4929,15 +4960,16 @@ pub const PackageManager = struct {
                     var str = update.e_string.?;
                     // let the user type an exact version
                     if (update.version.tag == .npm and update.version.value.npm.isExact()) {
-                        str.utf8 = try std.fmt.allocPrint("{}", .{update.resolved_version.fmt(update.resolved_version_buf)});
+                        str.utf8 = try std.fmt.allocPrint(ctx.allocator, "{}", .{update.resolved_version.fmt(update.resolved_version_buf)});
                     } else {
-                        str.utf8 = try std.fmt.allocPrint("^{}", .{update.resolved_version.fmt(update.resolved_version_buf)});
+                        str.utf8 = try std.fmt.allocPrint(ctx.allocator, "^{}", .{update.resolved_version.fmt(update.resolved_version_buf)});
                     }
                 }
             },
         }
 
         var buffer_writer = try JSPrinter.BufferWriter.init(ctx.allocator);
+        try buffer_writer.buffer.list.ensureTotalCapacity(ctx.allocator, current_package_json_buf.len + 1);
         var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
 
         const written = JSPrinter.printJSON(@TypeOf(package_json_writer), package_json_writer, current_package_json, &package_json_source) catch |err| {
@@ -4945,7 +4977,7 @@ pub const PackageManager = struct {
             Global.crash();
         };
 
-        var new_package_json_source = buffer_writer.slice().ptr[0..written];
+        var new_package_json_source = package_json_writer.ctx.buffer.toOwnedSliceLeaky().ptr[0 .. written + 1];
         try installWithManager(ctx, manager, new_package_json_source);
 
         if (!manager.options.dry_run) {
@@ -4963,7 +4995,7 @@ pub const PackageManager = struct {
     pub inline fn install(
         ctx: Command.Context,
     ) !void {
-        Output.prettyErrorln("<r><b>bun install v" ++ Global.package_json_version ++ "<r>\n", .{});
+        Output.prettyErrorln("<r><b>bun install <r><d>v" ++ Global.package_json_version ++ "<r>\n", .{});
         Output.flush();
 
         var manager = try PackageManager.init(ctx, null, &install_params);

@@ -455,7 +455,7 @@ const HelpCommand = struct {
     };
 
     // someone will get mad at me for this
-    const packages_to_remove_filler = [_]string{
+    pub const packages_to_remove_filler = [_]string{
         "moment",
         "underscore",
         "jquery",
@@ -466,7 +466,7 @@ const HelpCommand = struct {
         "babel-core",
     };
 
-    const packages_to_add_filler = [_]string{
+    pub const packages_to_add_filler = [_]string{
         "astro",
         "react",
         "next@^12",

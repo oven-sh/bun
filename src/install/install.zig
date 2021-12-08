@@ -6,7 +6,7 @@ const logger = @import("../logger.zig");
 const alloc = @import("../alloc.zig");
 const js_parser = @import("../js_parser.zig");
 const json_parser = @import("../json_parser.zig");
-const js_printer = @import("../js_printer.zig");
+const JSPrinter = @import("../js_printer.zig");
 
 const linker = @import("../linker.zig");
 usingnamespace @import("../ast/base.zig");
@@ -535,7 +535,7 @@ pub const Lockfile = struct {
         threadpool: *ThreadPool,
         options: *const PackageManager.Options,
     ) !PackageInstall.Summary {
-        var node = try progress.start("Installing packages", new.packages.len);
+        var node = try progress.start(PackageManager.ProgressStrings.install(), new.packages.len);
         defer {
             progress.root.end();
             progress.* = .{};
@@ -566,6 +566,7 @@ pub const Lockfile = struct {
             };
         };
         var skip_delete = skip_verify;
+        const force_install = options.enable.force_install;
         if (options.enable.force_install) {
             skip_verify = true;
             skip_delete = false;
@@ -624,7 +625,7 @@ pub const Lockfile = struct {
                                         .package_version = resolution_label,
                                     };
 
-                                    const needs_install = skip_verify or !installer.verify();
+                                    const needs_install = force_install or skip_verify or !installer.verify();
                                     summary.skipped += @as(u32, @boolToInt(!needs_install));
 
                                     if (needs_install) {
@@ -1262,12 +1263,10 @@ pub const Lockfile = struct {
         pub const NetworkQueue = std.fifo.LinearFifo(*NetworkTask, .Dynamic);
         duplicate_checker_map: DuplicateCheckerMap = undefined,
         dependency_list_queue: DependencyQueue = undefined,
-        network_task_queue: NetworkQueue = undefined,
 
         pub fn init(allocator: *std.mem.Allocator) Scratch {
             return Scratch{
                 .dependency_list_queue = DependencyQueue.init(allocator),
-                .network_task_queue = NetworkQueue.init(allocator),
                 .duplicate_checker_map = DuplicateCheckerMap.init(allocator),
             };
         }
@@ -2957,8 +2956,13 @@ const PackageInstall = struct {
 const Resolution = @import("./resolution.zig").Resolution;
 
 const TaggedPointer = @import("../tagged_pointer.zig");
-const TaskCallbackContext = struct {
+const TaskCallbackContext = union(Tag) {
     dependency: PackageID,
+    request_id: PackageID,
+    pub const Tag = enum {
+        dependency,
+        request_id,
+    };
 };
 
 const TaskCallbackList = std.ArrayListUnmanaged(TaskCallbackContext);
@@ -3009,6 +3013,7 @@ pub const PackageManager = struct {
     network_channel: NetworkChannel = NetworkChannel.init(),
     network_tarball_batch: ThreadPool.Batch = ThreadPool.Batch{},
     network_resolve_batch: ThreadPool.Batch = ThreadPool.Batch{},
+    network_task_fifo: NetworkTaskQueue = .{},
     preallocated_network_tasks: PreallocatedNetworkTasks = PreallocatedNetworkTasks{ .buffer = undefined, .len = 0 },
     pending_tasks: u32 = 0,
     total_tasks: u32 = 0,
@@ -3179,6 +3184,62 @@ pub const PackageManager = struct {
         }
 
         return ResolvedPackageResult{ .package = package };
+    }
+
+    pub fn fetchVersionsForPackageName(
+        this: *PackageManager,
+        name: string,
+        id: PackageID,
+    ) !?Npm.PackageManifest {
+        const task_id = Task.Id.forManifest(Task.Tag.package_manifest, name);
+        var network_entry = try this.network_dedupe_map.getOrPutContext(this.allocator, task_id, .{});
+        var loaded_manifest: ?Npm.PackageManifest = null;
+        if (!network_entry.found_existing) {
+            if (this.options.enable.manifest_cache) {
+                if (this.manifests.get(std.hash.Wyhash.hash(0, name)) orelse (Npm.PackageManifest.Serializer.load(this.allocator, this.cache_directory, name) catch null)) |manifest_| {
+                    const manifest: Npm.PackageManifest = manifest_;
+                    loaded_manifest = manifest;
+
+                    if (this.options.enable.manifest_cache_control and manifest.pkg.public_max_age > this.timestamp) {
+                        try this.manifests.put(this.allocator, @truncate(PackageNameHash, manifest.pkg.name.hash), manifest);
+                    }
+
+                    // If it's an exact package version already living in the cache
+                    // We can skip the network request, even if it's beyond the caching period
+                    if (dependency.version.tag == .npm and dependency.version.value.npm.isExact()) {
+                        if (loaded_manifest.?.findByVersion(dependency.version.value.npm.head.head.range.left.version) != null) {
+                            return manifest;
+                        }
+                    }
+
+                    // Was it recent enough to just load it without the network call?
+                    if (this.options.enable.manifest_cache_control and manifest.pkg.public_max_age > this.timestamp) {
+                        return manifest;
+                    }
+                }
+            }
+
+            if (PackageManager.verbose_install) {
+                Output.prettyErrorln("Enqueue package manifest for download: {s}", .{name});
+            }
+
+            var network_task = this.getNetworkTask();
+            network_task.* = NetworkTask{
+                .callback = undefined,
+                .task_id = task_id,
+                .allocator = this.allocator,
+            };
+            try network_task.forManifest(name, this.allocator, this.registry.url, loaded_manifest);
+            try this.network_task_fifo.writeItem(network_task);
+        }
+
+        var manifest_entry_parse = try this.task_queue.getOrPutContext(this.allocator, task_id, .{});
+        if (!manifest_entry_parse.found_existing) {
+            manifest_entry_parse.value_ptr.* = TaskCallbackList{};
+        }
+
+        try manifest_entry_parse.value_ptr.append(this.allocator, TaskCallbackContext{ .request_id = id });
+        return null;
     }
 
     pub fn getOrPutResolvedPackage(
@@ -3405,7 +3466,7 @@ pub const PackageManager = struct {
                                 var meta: *Lockfile.Package.Meta = &this.lockfile.packages.items(.meta)[result.package.meta.id];
                                 if (meta.preinstall_state == .extract) {
                                     meta.preinstall_state = .extracting;
-                                    try this.lockfile.scratch.network_task_queue.writeItem(network_task);
+                                    try this.network_task_fifo.writeItem(network_task);
                                 }
                             }
                         } else {
@@ -3459,7 +3520,7 @@ pub const PackageManager = struct {
                                     .allocator = this.allocator,
                                 };
                                 try network_task.forManifest(this.lockfile.str(name), this.allocator, this.registry.url, loaded_manifest);
-                                try this.lockfile.scratch.network_task_queue.writeItem(network_task);
+                                try this.network_task_fifo.writeItem(network_task);
                             }
 
                             var manifest_entry_parse = try this.task_queue.getOrPutContext(this.allocator, task_id, .{});
@@ -3479,7 +3540,7 @@ pub const PackageManager = struct {
     }
 
     fn flushNetworkQueue(this: *PackageManager) void {
-        var network = &this.lockfile.scratch.network_task_queue;
+        var network = &this.network_task_fifo;
 
         while (network.readItem()) |network_task| {
             network_task.schedule(if (network_task.callback == .extract) &this.network_tarball_batch else &this.network_resolve_batch);
@@ -3762,6 +3823,10 @@ pub const PackageManager = struct {
 
             const completed_items = manager.total_tasks - manager.pending_tasks;
             if (completed_items != manager.downloads_node.?.unprotected_completed_items) {
+                if (manager.extracted_count > 0) {
+                    manager.downloads_node.?.name = ProgressStrings.extract();
+                }
+
                 manager.downloads_node.?.setCompletedItems(completed_items);
                 manager.downloads_node.?.setEstimatedTotalItems(manager.total_tasks);
                 manager.downloads_node.?.activate();
@@ -3785,6 +3850,13 @@ pub const PackageManager = struct {
         enable: Enable = .{},
         do: Do = .{},
         positionals: []const string = &[_]string{},
+        update: Update = Update{},
+        dry_run: bool = false,
+
+        pub const Update = struct {
+            development: bool = false,
+            optional: bool = false,
+        };
 
         pub fn load(
             this: *Options,
@@ -3884,6 +3956,7 @@ pub const PackageManager = struct {
 
                 if (cli.dry_run) {
                     this.do.install_packages = false;
+                    this.dry_run = true;
                 }
 
                 if (cli.no_cache) {
@@ -3914,7 +3987,11 @@ pub const PackageManager = struct {
 
                 if (cli.force) {
                     this.enable.manifest_cache_control = false;
+                    this.enable.force_install = true;
                 }
+
+                this.update.development = cli.development;
+                if (!this.update.development) this.update.optional = cli.optional;
             }
         }
 
@@ -3933,6 +4010,40 @@ pub const PackageManager = struct {
             install_dev_dependencies: bool = true,
             force_install: bool = false,
         };
+    };
+
+    const ProgressStrings = struct {
+        const download_no_emoji_ = "Resolving dependencies";
+        const download_no_emoji: string = download_no_emoji_;
+        const download_emoji: string = "  🔍 " ++ download_no_emoji_;
+
+        const extract_no_emoji_ = "Resolving & extracting dependencies";
+        const extract_no_emoji: string = extract_no_emoji_;
+        const extract_emoji: string = "  🚚 " ++ extract_no_emoji_;
+
+        const install_no_emoji_ = "Installing dependencies";
+        const install_no_emoji: string = install_no_emoji_;
+        const install_emoji: string = "  📦 " ++ install_no_emoji_;
+
+        const save_no_emoji_ = "Saving lockfile";
+        const save_no_emoji: string = save_no_emoji_;
+        const save_emoji: string = "  🔒 " ++ save_no_emoji_;
+
+        pub inline fn download() string {
+            return if (Output.isEmojiEnabled()) download_emoji else download_no_emoji;
+        }
+
+        pub inline fn save() string {
+            return if (Output.isEmojiEnabled()) save_emoji else save_no_emoji;
+        }
+
+        pub inline fn extract() string {
+            return if (Output.isEmojiEnabled()) extract_emoji else extract_no_emoji;
+        }
+
+        pub inline fn install() string {
+            return if (Output.isEmojiEnabled()) install_emoji else install_no_emoji;
+        }
     };
 
     fn init(
@@ -4095,12 +4206,17 @@ pub const PackageManager = struct {
     pub inline fn add(
         ctx: Command.Context,
     ) !void {
+        Output.prettyErrorln("<r><b>bun add v" ++ Global.package_json_version ++ "<r>\n", .{});
+        Output.flush();
         try updatePackageJSONAndInstall(ctx, .add, &add_params);
     }
 
     pub inline fn remove(
         ctx: Command.Context,
     ) !void {
+        Output.prettyErrorln("<r><b>bun remove v" ++ Global.package_json_version ++ "<r>\n", .{});
+        Output.flush();
+
         try updatePackageJSONAndInstall(ctx, .remove, &remove_params);
     }
 
@@ -4258,6 +4374,85 @@ pub const PackageManager = struct {
             return cli;
         }
     };
+    const latest: string = "latest";
+
+    const UpdateRequest = struct {
+        name: string = "",
+        resolved_version_buf: string = "",
+        version: Dependency.Version = Dependency.Version{},
+        version_buf: []const u8 = "",
+        resolved_version: Resolution = Resolution{},
+        resolution_string_buf: []const u8 = "",
+        missing_version: bool = false,
+        e_string: ?*JSAst.E.String = null,
+    };
+    const UpdateHandler = struct {
+        this: *PackageManager,
+        updates: []UpdateRequest,
+        pending: usize = 0,
+
+        pub fn handle(this: *UpdateHandler, manifest: Npm.PackageManifest, id: PackageID) void {
+            const req = this.updates[id];
+            var updates = this.updates;
+
+            switch (req.version.tag) {
+                Dependency.Version.Tag.npm => {
+                    const matching_version = manifest.findBestVersion(req.version.value.npm) orelse {
+                        Output.prettyErrorln("<r><red>error:<r> No version <b>\"{s}\"<r> found for package <b>{s}<r>", .{
+                            req.version_buf,
+                            req.name,
+                        });
+                        Global.crash();
+                    };
+                    updates[request_id].resolution_string_buf = manifest.string_buf;
+                    updates[request_id].resolved_version = Resolution{
+                        .tag = .npm,
+                        .value = Resolution.Value{ .npm = matching_version.version },
+                    };
+                    this.pending -= 1;
+                },
+                Dependency.Version.Tag.dist_tag => {
+                    const matching_version = manifest.findByDistTag(req.version_buf) orelse {
+                        Output.prettyErrorln("<r><red>error:<r> Tag <b>\"{s}\"<r> not found for package <b>\"{s}\"<r>", .{
+                            req.version_buf,
+                            req.name,
+                        });
+                        Global.crash();
+                    };
+
+                    updates[request_id].resolution_string_buf = manifest.string_buf;
+                    updates[request_id].resolved_version = Resolution{
+                        .tag = .npm,
+                        .value = Resolution.Value{ .npm = matching_version.version },
+                    };
+                    this.pending -= 1;
+                },
+                .uninitialized => {
+                    const matching_version = manifest.findByDistTag("latest") orelse {
+                        Output.prettyErrorln("<r><red>error:<r> Tag <b>\"{s}\"<r> not found for package <b>\"{s}\"<r>", .{
+                            "latest",
+                            req.name,
+                        });
+                        Global.crash();
+                    };
+
+                    updates[request_id].resolution_string_buf = manifest.string_buf;
+                    updates[request_id].resolved_version = Resolution{
+                        .tag = .npm,
+                        .value = Resolution.Value{ .npm = matching_version.version },
+                    };
+                    this.pending -= 1;
+                },
+                else => {
+                    Output.prettyErrorln("<r><red>error:<r> Unsupported dependency <b>\"{s}\"<r> for package <b>\"{s}\"<r>", .{
+                        req.version_buf,
+                        req.name,
+                    });
+                    Global.crash();
+                },
+            }
+        }
+    };
 
     fn updatePackageJSONAndInstall(
         ctx: Command.Context,
@@ -4285,6 +4480,481 @@ pub const PackageManager = struct {
 
             unreachable;
         };
+
+        var update_requests = try std.BoundedArray(UpdateRequest, 64).init(0);
+        var need_to_get_versions_from_npm = false;
+
+        for (manager.options.positionals) |positional| {
+            var request = UpdateRequest{
+                .name = positional,
+            };
+            var unscoped_name = positional;
+            if (unscoped_name.len > 0 and unscoped_name[0] == '@') {
+                request.name = unscoped_name[1..];
+            }
+            if (std.mem.indexOfScalar(u8, unscoped_name, '@')) |i| {
+                request.name = unscoped_name[0..i];
+
+                if (unscoped_name.ptr != positional.ptr) {
+                    request.name = request.name[0 .. i + 1];
+                }
+
+                if (positional.len > i + 1) request.version_buf = positional[i + 1 ..];
+            }
+
+            if (strings.startsWith("http://", request.name) or
+                strings.startsWith("https://", request.name))
+            {
+                if (Output.isEmojiEnabled()) {
+                    Output.prettyErrorln("<r>😢 <red>error<r><d>:<r> bun {s} http://url is not implemented yet.", .{
+                        @tagName(op),
+                    });
+                } else {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> bun {s} http://url is not implemented yet.", .{
+                        @tagName(op),
+                    });
+                }
+                Output.flush();
+
+                std.os.exit(1);
+            }
+
+            request.name = std.mem.trim(u8, request.name, "\n\r\t");
+            if (request.name.len == 0) continue;
+
+            request.version_buf = std.mem.trim(u8, request.version_buf, "\n\r\t");
+
+            // https://github.com/npm/npm-package-arg/blob/fbaf2fd0b72a0f38e7c24260fd4504f4724c9466/npa.js#L330
+            if (strings.startsWith("https://", request.version_buf) or
+                strings.startsWith("http://", request.version_buf))
+            {
+                if (Output.isEmojiEnabled()) {
+                    Output.prettyErrorln("<r>😢 <red>error<r><d>:<r> bun {s} http://url is not implemented yet.", .{
+                        @tagName(op),
+                    });
+                } else {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> bun {s} http://url is not implemented yet.", .{
+                        @tagName(op),
+                    });
+                }
+                Output.flush();
+
+                std.os.exit(1);
+            }
+
+            if (request.version_buf.len == 0) {
+                need_to_get_versions_from_npm = true;
+                request.missing_version = true;
+            } else {
+                request.missing_version = true;
+                need_to_get_versions_from_npm = true;
+                const sliced = SlicedString.from(request.version_buf);
+                request.version = Dependency.parse(ctx.allocator, request.version_buf, &sliced, ctx.log) orelse Dependency.Version{};
+
+                if (request.version.tag == .uninitialized or request.version.tag == .dist_tag) {}
+
+                update_requests.append(request) catch break;
+            }
+        }
+
+        var updates: []UpdateRequest = update_requests.slice();
+
+        // if we're just removing
+        // we don't care about getting versions from npm
+        if (op != .remove) {
+            var pending_versions = update_requests.len;
+            var update_handler = UpdateHandler{
+                .this = manager,
+                .updates = updates,
+                .pending = pending_versions,
+            };
+
+            if (need_to_get_versions_from_npm) {
+                for (updates) |req, request_id| {
+                    if (manager.fetchVersionsForPackageName(req.name, request_id) catch null) |manifest| {
+                        update_handler.handle(manifest, request_id);
+                    }
+                }
+
+                manager.flushNetworkQueue();
+
+                const download_count = manager.network_resolve_batch.len + manager.network_tarball_batch.len;
+
+                // Anything that needs to be downloaded from an update needs to be scheduled here
+                {
+                    manager.pending_tasks += @truncate(u32, download_count);
+                    manager.total_tasks += @truncate(u32, download_count);
+                    manager.network_resolve_batch.push(manager.network_tarball_batch);
+                    NetworkThread.global.pool.schedule(manager.network_resolve_batch);
+                    manager.network_tarball_batch = .{};
+                    manager.network_resolve_batch = .{};
+                }
+
+                while (manager.pending_tasks > 0) {
+                    manager.downloads_node = try manager.progress.start(
+                        ProgressStrings.download(),
+                        manager.total_tasks,
+                    );
+                    defer {
+                        manager.progress.root.end();
+                        manager.progress = .{};
+                    }
+
+                    manager.downloads_node.?.activate();
+                    manager.progress.refresh();
+
+                    {
+                        while (manager.network_channel.tryReadItem() catch null) |task_| {
+                            var task: *NetworkTask = task_;
+                            defer manager.pending_tasks -= 1;
+
+                            switch (task.callback) {
+                                .package_manifest => |manifest_req| {
+                                    const name = manifest_req.name;
+                                    const response = task.http.response orelse {
+                                        Output.prettyErrorln("Failed to download package manifest for package {s}", .{name});
+                                        Output.flush();
+                                        Global.crash();
+                                    };
+
+                                    if (response.status_code > 399) {
+                                        Output.prettyErrorln(
+                                            "<r><red><b>GET<r><red> {s}<d> - {d}<r>",
+                                            .{
+                                                name.slice(),
+                                                response.status_code,
+                                            },
+                                        );
+                                        Output.flush();
+                                        Global.crash();
+                                    }
+
+                                    if (PackageManager.verbose_install) {
+                                        Output.prettyError("    ", .{});
+                                        Output.printElapsed(@floatCast(f64, @intToFloat(f128, task.http.elapsed) / std.time.ns_per_ms));
+                                        Output.prettyError(" <d>Downloaded <r><green>{s}<r> versions\n", .{name.slice()});
+                                        Output.flush();
+                                    }
+
+                                    var manifest_: ?Npm.PackageManifest = null;
+                                    if (response.status_code == 304) {
+                                        // The HTTP request was cached
+                                        manifest_ = manifest_req.loaded_manifest;
+                                    }
+
+                                    if (manifest_ == null) {
+                                        const package_version_response = try Npm.Registry.getPackageMetadata(ctx.allocator, response, task.response_buffer.toOwnedSliceLeaky(), ctx.log, name, manifest_req.loaded_manifest);
+                                        switch (package_version_response) {
+                                            .cached => |cached| {
+                                                manifest_ = cached;
+                                            },
+                                            .fresh => |fresh| {
+                                                manifest_ = fresh;
+                                            },
+                                            else => {
+                                                @panic("Unexpected response from getPackageMetadata");
+                                            },
+                                        }
+                                    }
+                                    if (manifest_) |manifest| {
+                                        var entry = try manager.manifests.getOrPut(manager.allocator, manifest.pkg.name.hash);
+                                        entry.value_ptr.* = manifest;
+
+                                        if (response.status_code == 304) {
+                                            entry.value_ptr.*.pkg.public_max_age = @truncate(u32, @intCast(u64, @maximum(0, std.time.timestamp()))) + 300;
+                                            {
+                                                var tmpdir = Fs.FileSystem.instance.tmpdir();
+                                                Npm.PackageManifest.Serializer.save(entry.value_ptr, tmpdir, PackageManager.instance.cache_directory) catch {};
+                                            }
+                                        }
+
+                                        const task_id = Task.Id.forManifest(
+                                            Task.Tag.package_manifest,
+                                            manifest.name(),
+                                        );
+                                        var pending = manager.task_queue.get(task_id).?;
+                                        defer _ = manager.task_queue.remove(task_id);
+                                        for (pending.items) |item| {
+                                            update_handler.handle(manifest, item.request_id);
+                                        }
+                                        manager.downloads_node.?.completeOne();
+                                        continue;
+                                    }
+                                },
+                                else => unreachable,
+                            }
+                        }
+                    }
+                }
+            }
+
+            // update_e_string_values[i] = JSAst.E.String{.utf8 = };
+        }
+
+        if (ctx.log.errors > 0) {
+            if (Output.enable_ansi_colors) {
+                log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+            } else {
+                log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+            }
+
+            Output.flush();
+            Global.crash();
+        }
+
+        var current_package_json_stat = try manager.root_package_json_file.stat();
+        var current_package_json_buf = try ctx.allocator.alloc(u8, current_package_json_stat.size + 64);
+        const current_package_json_contents_len = try manager.root_package_json_file.preadAll(
+            current_package_json_buf,
+            0,
+        );
+
+        const package_json_source = logger.Source.initPathString(
+            package_json_cwd_buf[0 .. FileSystem.instance.top_level_dir.len + "package.json".len],
+            current_package_json_buf[0..current_package_json_contents_len],
+        );
+
+        initializeStore();
+        var current_package_json = json_parser.ParseJSON(&package_json_source, ctx.log, manager.allocator) catch |err| {
+            if (Output.enable_ansi_colors) {
+                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+            } else {
+                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+            }
+
+            Output.panic("<r><red>{s}<r> parsing package.json<r>", .{
+                @errorName(err),
+            });
+        };
+
+        if (op == .remove) {
+            if (current_package_json.data != .e_object) {
+                Output.prettyErrorln("<red>error<r><d>:<r> package.json is not an Object {{}}, so there's nothing to remove!", .{});
+                Output.flush();
+                std.os.exit(1);
+                return;
+            } else if (current_package_json.data.e_object.len == 0) {
+                Output.prettyErrorln("<red>error<r><d>:<r> package.json is empty {{}}, so there's nothing to remove!", .{});
+                Output.flush();
+                std.os.exit(1);
+                return;
+            } else if (current_package_json.asProperty("devDependencies") == null and
+                current_package_json.asProperty("dependencies") == null and
+                current_package_json.asProperty("optionalDependencies") == null and
+                current_package_json.asProperty("peerDependencies") == null)
+            {
+                Output.prettyErrorln("<red>error<r><d>:<r> package.json doesn't have dependencies, there's nothing to remove!", .{});
+                Output.flush();
+                std.os.exit(1);
+                return;
+            }
+        }
+
+        var any_changes = false;
+
+        const dependency_lists_to_check = [_]string{
+            "dependencies",
+            "devDependencies",
+            "optionalDependencies",
+            "peerDependencies",
+        };
+
+        var dependency_list: string = "dependencies";
+        if (manager.options.update.development) {
+            dependency_list = "devDependencies";
+        } else if (manager.options.update.optional) {
+            dependency_list = "optionalDependencies";
+        }
+
+        switch (op) {
+            .remove => {
+                // if we're removing, they don't have to specify where it is installed in the dependencies list
+                // they can even put it multiple times and we will just remove all of them
+                for (updates) |update| {
+                    inline for (dependency_lists_to_check) |list| {
+                        if (current_package_json.asProperty(list)) |query| {
+                            if (query.expr.data == .e_object) {
+                                var dependencies = query.expr.data.e_object.properties;
+                                var i: usize = 0;
+                                var new_len = dependencies.len;
+                                while (i < dependencies.len) : (i += 1) {
+                                    if (dependencies[i].value.?.data == .e_string) {
+                                        if (dependencies[i].value.?.data.e_string.eql(string, update.name)) {
+                                            if (new_len > 1) {
+                                                dependencies[i] = dependencies[new_len - 1];
+                                                any_changes = true;
+                                                new_len -= 1;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                const changed = new_len != dependencies.len;
+                                if (changed) {
+                                    query.expr.data.e_object.properties = expr.data.e_object.properties[0..new_len];
+                                    var obj = query.expr.data.e_object;
+                                    obj.alphabetizeProperties();
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            .add, .update => {
+                var remaining: usize = updates.len;
+
+                // There are three possible scenarios here
+                // 1. There is no "dependencies" (or equivalent list) or it is empty
+                // 2. There is a "dependencies" (or equivalent list), but the package name already exists in a separate list
+                // 3. There is a "dependencies" (or equivalent list), and the package name exists in multiple lists
+                ast_modifier: {
+                    // Try to use the existing spot in the dependencies list if possible
+                    for (updates) |update, i| {
+                        outer: for (dependency_lists_to_check) |list| {
+                            if (current_package_json.asProperty(list)) |query| {
+                                if (query.expr.data == .e_object) {
+                                    if (query.expr.asProperty(update.name)) |value| {
+                                        if (value.expr.data == .e_string) {
+                                            updates[i].e_string = value.expr.data.e_string;
+                                            remaining -= 1;
+                                        }
+                                        break :outer;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (remaining == 0)
+                        break :ast_modifier;
+
+                    var dependencies: []G.Property = [_]G.Property{};
+                    if (current_package_json.asProperty(dependency_list)) |query| {
+                        if (query.expr.data == .e_object) {
+                            dependencies = query.expr.data.e_object.properties;
+                        }
+                    }
+
+                    const G = JSAst.G;
+                    var new_dependencies = try ctx.allocator.alloc(G.Property, dependencies.len + remaining);
+                    std.mem.copy(G.Property, new_dependencies, dependencies);
+                    std.mem.set(G.Property, new_dependencies[dependencies.len..], G.Property{});
+
+                    outer: for (updates) |update, j| {
+                        if (update.e_string != null) continue;
+                        var k: usize = 0;
+
+                        while (k < new_dependencies.len) : (k += 1) {
+                            if (new_dependencies[k].key == null) {
+                                new_dependencies[k].key = JSAst.Expr.init(
+                                    JSAst.E.String{
+                                        .utf8 = update.name,
+                                    },
+                                    logger.Loc.Empty{},
+                                );
+                                new_dependencies[k].value = JSAst.Expr.init(
+                                    JSAst.E.String{
+                                        // we set it later
+                                        .utf8 = "",
+                                    },
+                                    logger.Loc.Empty{},
+                                );
+                                updates[j].e_string = new_dependencies[k].value.expr.data.e_string;
+                                continue :outer;
+                            }
+
+                            // This actually is a duplicate
+                            // like "react" appearing in both "dependencies" and "optionalDependencies"
+                            // For this case, we'll just swap remove it
+                            if (new_dependencies[k].key.?.data.e_string.eql(string, update.name)) {
+                                if (new_dependencies.len > 1) {
+                                    new_dependencies[k] = new_dependencies[new_dependencies.len - 1];
+                                    new_dependencies = new_dependencies[0 .. new_dependencies.len - 1];
+                                } else {
+                                    new_dependencies = &[_]G.Property{};
+                                }
+                            }
+                        }
+                    }
+
+                    var needs_new_dependency_list = true;
+                    var dependencies_object: JSAst.Expr = undefined;
+                    if (current_package_json.asProperty(dependency_list)) |query| {
+                        if (query.expr.data == .e_object) {
+                            needs_new_dependency_list = false;
+
+                            dependencies_object = query.expr;
+                        }
+                    }
+
+                    if (needs_new_dependency_list) {
+                        dependencies_object = JSAst.Expr.init(
+                            JSAst.E.Object{
+                                .properties = new_dependencies,
+                            },
+                            logger.Loc.Empty,
+                        );
+                    }
+
+                    if (current_package_json.data != .e_object or current_package_json.data.e_object.properties.len == 0) {
+                        var root_properties = try ctx.allocator.alloc(JSAst.G.Property, 1);
+                        root_properties[0] = JSAst.G.Property{
+                            .key = JSAst.Expr.init(
+                                JSAst.E.String{
+                                    .utf8 = dependency_list,
+                                },
+                                logger.Loc.Empty{},
+                            ),
+                            .value = dependencies_object,
+                        };
+                        current_package_json = JSAst.Expr.init(JSAst.E.Object{ .properties = root_properties }, logger.Loc.Empty{});
+                    } else {
+                        var root_properties = try ctx.allocator.alloc(JSAst.G.Property, current_package_json.data.e_object.properties.len + 1);
+                        std.mem.copy(JSAst.G.Property, root_properties, current_package_json.data.e_object.properties);
+                        root_properties[root_properties.len - 1].key = JSAst.Expr.init(
+                            JSAst.E.String{
+                                .utf8 = dependency_list,
+                            },
+                            logger.Loc.Empty{},
+                        );
+                        root_properties[root_properties.len - 1].value = dependencies_object;
+                        current_package_json = JSAst.Expr.init(JSAst.E.Object{ .properties = root_properties }, logger.Loc.Empty{});
+                    }
+
+                    dependencies_object.data.e_object.packageJSONSort();
+                    dependencies_object.data.e_object.properties = new_dependencies;
+                }
+
+                for (updates) |update, j| {
+                    var str = update.e_string.?;
+                    // let the user type an exact version
+                    if (update.version.tag == .npm and update.version.value.npm.isExact()) {
+                        str.utf8 = try std.fmt.allocPrint("{}", .{update.resolved_version.fmt(update.resolved_version_buf)});
+                    } else {
+                        str.utf8 = try std.fmt.allocPrint("^{}", .{update.resolved_version.fmt(update.resolved_version_buf)});
+                    }
+                }
+            },
+        }
+
+        var buffer_writer = try JSPrinter.BufferWriter.init(ctx.allocator);
+        var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
+
+        const written = JSPrinter.printJSON(@TypeOf(package_json_writer), package_json_writer, current_package_json, &package_json_source) catch |err| {
+            Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
+            Global.crash();
+        };
+
+        var new_package_json_source = buffer_writer.slice().ptr[0..written];
+        try installWithManager(ctx, manager, new_package_json_source);
+
+        if (!manager.options.dry_run) {
+            // Now that we've run the install step
+            // We can save our in-memory package.json to disk
+            try manager.root_package_json_file.pwriteAll(new_package_json_source, 0);
+            std.os.ftruncate(manager.root_package_json_file.handle, written + 1) catch {};
+            manager.root_package_json_file.close();
+        }
     }
 
     var cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
@@ -4293,10 +4963,29 @@ pub const PackageManager = struct {
     pub inline fn install(
         ctx: Command.Context,
     ) !void {
-        try installWithManager(ctx, try PackageManager.init(ctx, null, &install_params));
+        Output.prettyErrorln("<r><b>bun install v" ++ Global.package_json_version ++ "<r>\n", .{});
+        Output.flush();
+
+        var manager = try PackageManager.init(ctx, null, &install_params);
+
+        var package_json_contents = manager.root_package_json_file.readToEndAlloc(ctx.allocator, std.math.maxInt(usize)) catch |err| {
+            Output.prettyErrorln("<r><red>{s} reading package.json<r> :(", .{@errorName(err)});
+            Output.flush();
+            return;
+        };
+
+        try installWithManager(
+            ctx,
+            manager,
+            package_json_contents,
+        );
     }
 
-    fn installWithManager(ctx: Command.Context, manager: *PackageManager) !void {
+    fn installWithManager(
+        ctx: Command.Context,
+        manager: *PackageManager,
+        package_json_contents: string,
+    ) !void {
         var load_lockfile_result: Lockfile.LoadFromDiskResult = if (manager.options.do.load_lockfile)
             manager.lockfile.loadFromDisk(
                 ctx.allocator,
@@ -4313,11 +5002,6 @@ pub const PackageManager = struct {
         var had_any_diffs = false;
         manager.progress = std.Progress{};
 
-        var package_json_contents = manager.root_package_json_file.readToEndAlloc(ctx.allocator, std.math.maxInt(usize)) catch |err| {
-            Output.prettyErrorln("<r><red>{s} reading package.json<r> :(", .{@errorName(err)});
-            Output.flush();
-            return;
-        };
         // Step 2. Parse the package.json file
         //
         var package_json_source = logger.Source.initPathString(
@@ -4526,7 +5210,7 @@ pub const PackageManager = struct {
         }
 
         if (manager.pending_tasks > 0) {
-            manager.downloads_node = try manager.progress.start("Downloading from npm", 0);
+            manager.downloads_node = try manager.progress.start(ProgressStrings.download(), 0);
             manager.downloads_node.?.setEstimatedTotalItems(manager.total_tasks + manager.extracted_count);
             manager.downloads_node.?.setCompletedItems(manager.total_tasks - manager.pending_tasks);
             manager.downloads_node.?.activate();
@@ -4559,7 +5243,7 @@ pub const PackageManager = struct {
         }
 
         if (manager.options.do.save_lockfile) {
-            var node = try manager.progress.start("Saving lockfile", 0);
+            var node = try manager.progress.start(ProgressStrings.save(), 0);
             node.activate();
 
             manager.progress.refresh();

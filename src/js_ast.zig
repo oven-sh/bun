@@ -1088,6 +1088,65 @@ pub const E = struct {
         comma_after_spread: ?logger.Loc = null,
         is_single_line: bool = false,
         is_parenthesized: bool = false,
+
+        pub fn alphabetizeProperties(this: *Object) void {
+            std.sort.sort(G.Property, this.properties, void{}, Sorter.isLessThan);
+        }
+
+        pub fn packageJSONSort(this: *Object) void {
+            std.sort.sort(G.Property, this.properties, void{}, PackageJSONSort.Fields.isLessThan);
+        }
+
+        const PackageJSONSort = struct {
+            const Fields = struct {
+                const name: u8 = 0;
+                const version: u8 = 1;
+                const main: u8 = 2;
+                const module: u8 = 3;
+                const dependencies: u8 = 3;
+                const devDependencies: u8 = 4;
+                const optionalDependencies: u8 = 5;
+                const peerDependencies: u8 = 6;
+                const exports: u8 = 7;
+
+                pub const Map = std.ComptimeStringMap(u8, .{
+                    .{ "name", name },
+                    .{ "version", version },
+                    .{ "main", main },
+                    .{ "module", module },
+                    .{ "dependencies", dependencies },
+                    .{ "devDependencies", devDependencies },
+                    .{ "optionalDependencies", optionalDependencies },
+                    .{ "peerDependencies", peerDependencies },
+                    .{ "exports", exports },
+                });
+
+                pub fn isLessThan(ctx: void, lhs: G.Property, rhs: G.Property) bool {
+                    var lhs_key_size: u8 = 8;
+                    var rhs_key_size: u8 = 8;
+
+                    if (lhs.key != null and lhs.key.?.data == .e_string) {
+                        lhs_key_size = Map.get(lhs.key.?.data.e_string.utf8) orelse 8;
+                    }
+
+                    if (rhs.key != null and rhs.key.?.data == .e_string) {
+                        rhs_key_size = Map.get(rhs.key.?.data.e_string.utf8) orelse 8;
+                    }
+
+                    return switch (std.math.order(lhs_key_size, rhs_key_size)) {
+                        .lt => true,
+                        .gt => false,
+                        .eq => strings.cmpStringsAsc(ctx, lhs.key.?.data.e_string.utf8, rhs.key.?.data.e_string.utf8),
+                    };
+                }
+            };
+        };
+
+        const Sorter = struct {
+            pub fn isLessThan(ctx: void, lhs: G.Property, rhs: G.Property) bool {
+                return strings.cmpStringsAsc(ctx, lhs.key.?.data.e_string.utf8, rhs.key.?.data.e_string.utf8);
+            }
+        };
     };
 
     pub const Spread = struct { value: ExprNodeIndex };

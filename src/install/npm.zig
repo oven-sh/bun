@@ -78,6 +78,14 @@ pub const Registry = struct {
     url: URL = URL.parse("https://registry.npmjs.org/"),
     pub const BodyPool = ObjectPool(MutableString, MutableString.init2048, true);
 
+    pub const Scope = struct {
+        name: string,
+        url: URL,
+        token: string = "",
+    };
+
+    pub const Map = std.HashMapUnmanaged(u64, Scope, IdentityContext(u64), 80);
+
     const PackageVersionResponse = union(Tag) {
         pub const Tag = enum {
             cached,
@@ -337,6 +345,10 @@ pub const PackageVersion = extern struct {
     optional_peer_dependencies: ExternalStringMap = ExternalStringMap{},
 
     man_dir: ExternalString = ExternalString{},
+
+    /// can be empty!
+    /// When empty, it means that the tarball URL can be inferred
+    tarball_url: ExternalString = ExternalString{},
 
     unpacked_size: u32 = 0,
     file_count: u32 = 0,

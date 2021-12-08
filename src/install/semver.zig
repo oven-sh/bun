@@ -1203,6 +1203,7 @@ pub const Query = struct {
                         return Range.initWildcard(version, .minor);
                     }
 
+                    // This feels like it needs to be tested more.
                     var right_version = version;
                     right_version.minor += 1;
                     right_version.patch = 0;

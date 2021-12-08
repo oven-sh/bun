@@ -44,7 +44,7 @@ threadlocal var initialized_store = false;
 // so we just make it repeat bun bun bun bun bun bun bun bun bun
 // because why not
 const alignment_bytes_to_repeat = "bun";
-const alignment_bytes_to_repeat_buffer = "bunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbun";
+const alignment_bytes_to_repeat_buffer = "bunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbun";
 
 const JSAst = @import("../js_ast.zig");
 
@@ -73,6 +73,7 @@ const StructBuilder = @import("../builder.zig");
 const Bin = @import("./bin.zig").Bin;
 const Dependency = @import("./dependency.zig");
 const Behavior = @import("./dependency.zig").Behavior;
+
 pub const ExternalStringBuilder = StructBuilder.Builder(ExternalString);
 pub const SmallExternalStringList = ExternalSlice(String);
 
@@ -412,38 +413,6 @@ pub const Lockfile = struct {
     }
 
     const PackageIDQueue = std.fifo.LinearFifo(PackageID, .Dynamic);
-
-    const InstallTree = struct {};
-
-    const Cleaner = struct {
-        to: *Lockfile,
-        from: *Lockfile,
-        visited: *std.DynamicBitSetUnmanaged,
-        has_duplicate_names: *std.DynamicBitSetUnmanaged,
-        queue: *PackageIDQueue,
-
-        // old id -> new id
-        mapping: []PackageID,
-
-        pub fn enqueueDependencyList(
-            this: Cleaner,
-            // safe because we do not reallocate these slices
-            package: *const Lockfile.Package,
-            list: []const Dependency,
-            resolutions: []const PackageID,
-        ) !void {
-            for (list) |dependency, i| {
-                const id = resolutions[i];
-                std.debug.assert(id < this.from.packages.len);
-                if (id > this.from.packages.len) continue;
-
-                if (!this.visited.get(id)) {
-                    this.visited.set(id);
-                    try this.queue.writeItem(id);
-                }
-            }
-        }
-    };
 
     pub const InstallResult = struct {
         lockfile: *Lockfile,
@@ -3719,6 +3688,7 @@ pub const PackageManager = struct {
         lockfile_path: stringZ = Lockfile.default_filename,
         save_lockfile_path: stringZ = Lockfile.default_filename,
         registry_url: URL = URL.parse("https://registry.npmjs.org/"),
+        registries: Npm.Registry.Map = Npm.Registry.Map{},
         cache_directory: string = "",
         enable: Enable = .{},
         do: Do = .{},
@@ -3756,11 +3726,11 @@ pub const PackageManager = struct {
                 this.save_lockfile_path = try allocator.dupeZ(u8, save_lockfile_path);
             }
 
-            if (env_loader.map.get("BUN_CONFIG_DISABLE_CLONEFILE") != null) {
+            if (env_loader.map.get("BUN_CONFIG_NO_CLONEFILE") != null) {
                 this.enable.clonefile = false;
             }
 
-            if (env_loader.map.get("BUN_CONFIG_DISABLE_DEDUPLICATE") != null) {
+            if (env_loader.map.get("BUN_CONFIG_NO_DEDUPLICATE") != null) {
                 this.enable.deduplicate_packages = false;
             }
 
@@ -3785,6 +3755,9 @@ pub const PackageManager = struct {
     };
 
     fn init(ctx: Command.Context) !*PackageManager {
+        // assume that spawning a thread will take a lil so we do that asap
+        try NetworkThread.init();
+
         var fs = try Fs.FileSystem.init1(ctx.allocator, null);
         var original_cwd = std.mem.trimRight(u8, fs.top_level_dir, "/");
 
@@ -3812,6 +3785,11 @@ pub const PackageManager = struct {
                         continue :outer;
                     };
                 }
+
+                std.mem.copy(u8, &cwd_buf, original_cwd);
+                cwd_buf[original_cwd.len] = 0;
+                var real_cwd = cwd_buf[0..original_cwd.len :0];
+                std.os.chdirZ(real_cwd) catch {};
 
                 return error.MissingPackageJSON;
             };
@@ -3867,8 +3845,6 @@ pub const PackageManager = struct {
                 cpu_count = @minimum(cpu_count, cpu_count_);
             } else |err| {}
         }
-
-        try NetworkThread.init();
 
         var manager = &instance;
         // var progress = std.Progress{};
@@ -3931,7 +3907,32 @@ pub const PackageManager = struct {
         ctx: Command.Context,
     ) !void {}
 
-    pub const ParamType = clap.Param(clap.Help);
+    const ParamType = clap.Param(clap.Help);
+    pub const install_params = [_]ParamType{
+        clap.parseParam("--registry, -R <STR>              Change default registry (default: $BUN_CONFIG_REGISTRY || $npm_config_registry)") catch unreachable,
+        clap.parseParam("--token, -T <STR>                 Authentication token used for npm registry requests (default: $npm_config_token)") catch unreachable,
+        clap.parseParam("--yarn, -Y                        Write a yarn.lock file (yarn v1)") catch unreachable,
+        clap.parseParam("--production, --prod              Don't install devDependencies and throw if the package.json doesn't match the lockfile") catch unreachable,
+        clap.parseParam("--no-save                         Don't save a lockfile") catch unreachable,
+        clap.parseParam("--dry-run                         Don't install anything") catch unreachable,
+        clap.parseParam("--lockfile <STR>                  Store & load a lockfile at a specific filepath") catch unreachable,
+        clap.parseParam("--force, -F                       Always request the latest versions from the registry & reinstall all dependenices") catch unreachable,
+        clap.parseParam("--cache-dir <STR>                 Store & load cached data from a specific directory path") catch unreachable,
+        clap.parseParam("--no-dedupe                       Disable automatic downgrading of dependencies that would otherwise cause unnecessary duplicate package versions ($BUN_CONFIG_NO_DEDUPLICATE)") catch unreachable,
+        clap.parseParam("--no-cache                        Ignore manifest cache entirely") catch unreachable,
+        clap.parseParam("--silent                          Don't log anything") catch unreachable,
+        clap.parseParam("--verbose                         Excessively verbose logging") catch unreachable,
+        clap.parseParam("--cwd <STR>                       Set a specific cwd") catch unreachable,
+        clap.parseParam("--backend <STR>                   Platform-specific optimizations for installing dependencies. For macOS, \"clonefile\" (default), \"copyfile\"") catch unreachable,
+    };
+
+    pub const add_params = install_params ++ [_]ParamType{
+        clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of packages to install") catch unreachable,
+    };
+
+    pub const remove_params = install_params ++ [_]ParamType{
+        clap.parseParam("<POS> ...                         \"name\" of packages to remove") catch unreachable,
+    };
 
     fn updatePackageJSONAndInstall(
         ctx: Command.Context,
@@ -3939,7 +3940,9 @@ pub const PackageManager = struct {
     ) !void {
         var manager = PackageManager.init(ctx) catch |err| {
             switch (err) {
-                error.MissingPackageJSON => {},
+                error.MissingPackageJSON => {
+                    if (op == .add or op == .update) {}
+                },
                 else => return err,
             }
         };
@@ -3947,10 +3950,14 @@ pub const PackageManager = struct {
 
     var cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     var package_json_cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-    pub fn install(
+
+    pub inline fn install(
         ctx: Command.Context,
     ) !void {
-        var manager = try PackageManager.init(ctx);
+        try installWithManager(ctx, try PackageManager.init(ctx));
+    }
+
+    fn installWithManager(ctx: Command.Context, manager: *PackageManager) !void {
         var load_lockfile_result: Lockfile.LoadFromDiskResult = if (manager.options.do.load_lockfile)
             manager.lockfile.loadFromDisk(
                 ctx.allocator,

@@ -7,7 +7,7 @@ const alloc = @import("../alloc.zig");
 const js_parser = @import("../js_parser.zig");
 const json_parser = @import("../json_parser.zig");
 const js_printer = @import("../js_printer.zig");
-const JSAst = @import("../js_ast.zig");
+
 const linker = @import("../linker.zig");
 usingnamespace @import("../ast/base.zig");
 usingnamespace @import("../defines.zig");
@@ -34,6 +34,9 @@ const NetworkThread = @import("../http/network_thread.zig");
 const AsyncHTTP = @import("../http/http_client_async.zig").AsyncHTTP;
 const HTTPChannel = @import("../http/http_client_async.zig").HTTPChannel;
 const Integrity = @import("./integrity.zig").Integrity;
+const clap = @import("clap");
+const ExtractTarball = @import("./extract_tarball.zig");
+const Npm = @import("./npm.zig");
 
 threadlocal var initialized_store = false;
 
@@ -42,6 +45,8 @@ threadlocal var initialized_store = false;
 // because why not
 const alignment_bytes_to_repeat = "bun";
 const alignment_bytes_to_repeat_buffer = "bunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbun";
+
+const JSAst = @import("../js_ast.zig");
 
 pub fn initializeStore() void {
     if (initialized_store) {
@@ -58,38 +63,18 @@ pub fn initializeStore() void {
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 
-pub const URI = union(Tag) {
-    local: String,
-    remote: String,
-
-    pub fn eql(lhs: URI, rhs: URI, lhs_buf: []const u8, rhs_buf: []const u8) bool {
-        if (@as(Tag, lhs) != @as(Tag, rhs)) {
-            return false;
-        }
-
-        if (@as(Tag, lhs) == .local) {
-            return strings.eql(lhs.local.slice(lhs_buf), rhs.local.slice(rhs_buf));
-        } else {
-            return strings.eql(lhs.remote.slice(lhs_buf), rhs.remote.slice(rhs_buf));
-        }
-    }
-
-    pub const Tag = enum {
-        local,
-        remote,
-    };
-};
-
 const Semver = @import("./semver.zig");
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 const GlobalStringBuilder = @import("../string_builder.zig");
 const SlicedString = Semver.SlicedString;
-const GitSHA = String;
+const Repository = @import("./repository.zig").Repository;
 const StructBuilder = @import("../builder.zig");
-const ExternalStringBuilder = StructBuilder.Builder(ExternalString);
-
-const SmallExternalStringList = ExternalSlice(String);
+const Bin = @import("./bin.zig").Bin;
+const Dependency = @import("./dependency.zig");
+const Behavior = @import("./dependency.zig").Behavior;
+pub const ExternalStringBuilder = StructBuilder.Builder(ExternalString);
+pub const SmallExternalStringList = ExternalSlice(String);
 
 pub fn ExternalSlice(comptime Type: type) type {
     return ExternalSliceAligned(Type, null);
@@ -127,13 +112,13 @@ pub fn ExternalSliceAligned(comptime Type: type, comptime alignment_: ?u29) type
     };
 }
 
-const PackageID = u32;
-const DependencyID = u32;
-const PackageIDMultiple = [*:invalid_package_id]PackageID;
-const invalid_package_id = std.math.maxInt(PackageID);
+pub const PackageID = u32;
+pub const DependencyID = u32;
+pub const PackageIDMultiple = [*:invalid_package_id]PackageID;
+pub const invalid_package_id = std.math.maxInt(PackageID);
 
-const ExternalStringList = ExternalSlice(ExternalString);
-const VersionSlice = ExternalSlice(Semver.Version);
+pub const ExternalStringList = ExternalSlice(ExternalString);
+pub const VersionSlice = ExternalSlice(Semver.Version);
 
 pub const ExternalStringMap = extern struct {
     name: ExternalStringList = ExternalStringList{},
@@ -182,7 +167,7 @@ pub const ExternalStringMap = extern struct {
     }
 };
 
-const PackageNameHash = u64;
+pub const PackageNameHash = u64;
 
 pub const Aligner = struct {
     pub fn write(comptime Type: type, comptime Writer: type, writer: Writer, pos: usize) !usize {
@@ -198,57 +183,6 @@ pub const Aligner = struct {
     pub inline fn skipAmount(comptime Type: type, pos: usize) usize {
         return std.mem.alignForward(pos, @alignOf(Type)) - pos;
     }
-};
-
-const Repository = extern struct {
-    owner: String = String{},
-    repo: String = String{},
-    committish: GitSHA = GitSHA{},
-
-    pub fn count(this: Repository, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
-        builder.count(this.owner.slice(buf));
-        builder.count(this.repo.slice(buf));
-        builder.count(this.committish.slice(buf));
-    }
-
-    pub fn clone(this: Repository, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) Repository {
-        return Repository{
-            .owner = builder.append(String, this.owner.slice(buf)),
-            .repo = builder.append(String, this.repo.slice(buf)),
-            .committish = builder.append(GitSHA, this.committish.slice(buf)),
-        };
-    }
-
-    pub fn eql(lhs: Repository, rhs: Repository, lhs_buf: []const u8, rhs_buf: []const u8) bool {
-        return lhs.owner.eql(rhs.owner, lhs_buf, rhs_buf) and
-            lhs.repo.eql(rhs.repo, lhs_buf, rhs_buf) and
-            lhs.committish.eql(rhs.committish, lhs_buf, rhs_buf);
-    }
-
-    pub fn formatAs(this: Repository, label: string, buf: []const u8, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-        const formatter = Formatter{ .label = label, .repository = this, .buf = buf };
-        return try formatter.format(layout, opts, writer);
-    }
-
-    pub const Formatter = struct {
-        label: []const u8 = "",
-        buf: []const u8,
-        repository: Repository,
-        pub fn format(formatter: Formatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-            std.debug.assert(formatter.label.len > 0);
-
-            try writer.writeAll(formatter.label);
-            try writer.writeAll(":");
-
-            try writer.writeAll(formatter.repository.owner.slice(formatter.buf));
-            try writer.writeAll(formatter.repository.repo.slice(formatter.buf));
-
-            if (!formatter.repository.committish.isEmpty()) {
-                try writer.writeAll("#");
-                try writer.writeAll(formatter.repository.committish.slice(formatter.buf));
-            }
-        }
-    };
 };
 
 const NetworkTask = struct {
@@ -344,7 +278,7 @@ const NetworkTask = struct {
             },
         };
 
-        if (verbose_install) {
+        if (PackageManager.verbose_install) {
             this.http.verbose = true;
             this.http.client.verbose = true;
         }
@@ -416,121 +350,6 @@ pub const PreinstallState = enum(u8) {
     done = 1,
     extract = 2,
     extracting = 3,
-};
-
-/// Normalized `bin` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
-/// Can be a:
-/// - file path (relative to the package root)
-/// - directory (relative to the package root)
-/// - map where keys are names of the binaries and values are file paths to the binaries
-pub const Bin = extern struct {
-    tag: Tag = Tag.none,
-    value: Value = Value{ .none = .{} },
-
-    pub fn count(this: Bin, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
-        switch (this.tag) {
-            .file => builder.count(this.value.file.slice(buf)),
-            .named_file => {
-                builder.count(this.value.named_file[0].slice(buf));
-                builder.count(this.value.named_file[1].slice(buf));
-            },
-            .dir => builder.count(this.value.dir.slice(buf)),
-            .map => @panic("Bin.map not implemented yet!!. That means \"bin\" as multiple specific files won't work just yet"),
-            else => {},
-        }
-    }
-
-    pub fn clone(this: Bin, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) Bin {
-        return switch (this.tag) {
-            .none => Bin{ .tag = .none, .value = .{ .none = .{} } },
-            .file => Bin{
-                .tag = .file,
-                .value = .{ .file = builder.append(String, this.value.file.slice(buf)) },
-            },
-            .named_file => Bin{
-                .tag = .named_file,
-                .value = .{
-                    .named_file = [2]String{
-                        builder.append(String, this.value.named_file[0].slice(buf)),
-                        builder.append(String, this.value.named_file[1].slice(buf)),
-                    },
-                },
-            },
-            .dir => Bin{
-                .tag = .dir,
-                .value = .{ .dir = builder.append(String, this.value.dir.slice(buf)) },
-            },
-            .map => @panic("Bin.map not implemented yet!!. That means \"bin\" as multiple specific files won't work just yet"),
-        };
-    }
-
-    pub const Value = extern union {
-        /// no "bin", or empty "bin"
-        none: void,
-
-        /// "bin" is a string
-        /// ```
-        /// "bin": "./bin/foo",
-        /// ```
-        file: String,
-
-        // Single-entry map
-        ///```
-        /// "bin": {
-        ///     "babel": "./cli.js",
-        /// }
-        ///```
-        named_file: [2]String,
-
-        /// "bin" is a directory
-        ///```
-        /// "dirs": {
-        ///     "bin": "./bin",
-        /// }
-        ///```
-        dir: String,
-        // "bin" is a map
-        ///```
-        /// "bin": {
-        ///     "babel": "./cli.js",
-        ///     "babel-cli": "./cli.js",
-        /// }
-        ///```
-        map: ExternalStringList,
-    };
-
-    pub const Tag = enum(u8) {
-        /// no bin field
-        none = 0,
-        /// "bin" is a string
-        /// ```
-        /// "bin": "./bin/foo",
-        /// ```
-        file = 1,
-
-        // Single-entry map
-        ///```
-        /// "bin": {
-        ///     "babel": "./cli.js",
-        /// }
-        ///```
-        named_file = 2,
-        /// "bin" is a directory
-        ///```
-        /// "dirs": {
-        ///     "bin": "./bin",
-        /// }
-        ///```
-        dir = 3,
-        // "bin" is a map
-        ///```
-        /// "bin": {
-        ///     "babel": "./cli.js",
-        ///     "babel-cli": "./cli.js",
-        /// }
-        ///```
-        map = 4,
-    };
 };
 
 pub const Lockfile = struct {
@@ -2662,2081 +2481,6 @@ pub const Lockfile = struct {
         }
     };
 };
-
-pub const Behavior = enum(u8) {
-    uninitialized = 0,
-    _,
-
-    pub const normal: u8 = 1 << 1;
-    pub const optional: u8 = 1 << 2;
-    pub const dev: u8 = 1 << 3;
-    pub const peer: u8 = 1 << 4;
-
-    pub inline fn isOptional(this: Behavior) bool {
-        return (@enumToInt(this) & Behavior.optional) != 0;
-    }
-
-    pub inline fn isDev(this: Behavior) bool {
-        return (@enumToInt(this) & Behavior.dev) != 0;
-    }
-
-    pub inline fn isPeer(this: Behavior) bool {
-        return (@enumToInt(this) & Behavior.peer) != 0;
-    }
-
-    pub inline fn isNormal(this: Behavior) bool {
-        return (@enumToInt(this) & Behavior.normal) != 0;
-    }
-
-    pub inline fn cmp(lhs: Behavior, rhs: Behavior) std.math.Order {
-        if (@enumToInt(lhs) == @enumToInt(rhs)) {
-            return .eq;
-        }
-
-        if (lhs.isNormal() != rhs.isNormal()) {
-            return if (lhs.isNormal())
-                .gt
-            else
-                .lt;
-        }
-
-        if (lhs.isDev() != rhs.isDev()) {
-            return if (lhs.isDev())
-                .gt
-            else
-                .lt;
-        }
-
-        if (lhs.isOptional() != rhs.isOptional()) {
-            return if (lhs.isOptional())
-                .gt
-            else
-                .lt;
-        }
-
-        if (lhs.isPeer() != rhs.isPeer()) {
-            return if (lhs.isPeer())
-                .gt
-            else
-                .lt;
-        }
-
-        return .eq;
-    }
-
-    pub inline fn isRequired(this: Behavior) bool {
-        return !isOptional(this);
-    }
-
-    pub fn isEnabled(this: Behavior, features: Features) bool {
-        return this.isNormal() or
-            (features.dev_dependencies and this.isDev()) or
-            (features.peer_dependencies and this.isPeer()) or
-            (features.optional_dependencies and this.isOptional());
-    }
-};
-
-pub const Dependency = struct {
-    name_hash: PackageNameHash = 0,
-    name: String = String{},
-    version: Dependency.Version = Dependency.Version{},
-
-    /// This is how the dependency is specified in the package.json file.
-    /// This allows us to track whether a package originated in any permutation of:
-    /// - `dependencies`
-    /// - `devDependencies`
-    /// - `optionalDependencies`
-    /// - `peerDependencies`
-    /// Technically, having the same package name specified under multiple fields is invalid
-    /// But we don't want to allocate extra arrays for them. So we use a bitfield instead.
-    behavior: Behavior = Behavior.uninitialized,
-
-    /// Sorting order for dependencies is:
-    /// 1. [`dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`]
-    /// 2. name
-    pub fn isLessThan(string_buf: []const u8, lhs: Dependency, rhs: Dependency) bool {
-        const behavior = lhs.behavior.cmp(rhs.behavior);
-        if (behavior != .eq) {
-            return behavior == .lt;
-        }
-
-        const lhs_name = lhs.name.slice(string_buf);
-        const rhs_name = rhs.name.slice(string_buf);
-        return strings.cmpStringsAsc(void{}, lhs_name, rhs_name);
-    }
-
-    pub fn count(this: Dependency, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
-        builder.count(this.name.slice(buf));
-        builder.count(this.version.literal.slice(buf));
-    }
-
-    pub fn clone(this: Dependency, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) !Dependency {
-        const out_slice = builder.lockfile.buffers.string_bytes.items;
-        const new_literal = builder.append(String, this.version.literal.slice(buf));
-        const sliced = new_literal.sliced(out_slice);
-
-        return Dependency{
-            .name_hash = this.name_hash,
-            .name = builder.append(String, this.name.slice(buf)),
-            .version = Dependency.parseWithTag(
-                builder.lockfile.allocator,
-                new_literal.slice(out_slice),
-                this.version.tag,
-                &sliced,
-                null,
-            ) orelse Dependency.Version{},
-            .behavior = this.behavior,
-        };
-    }
-
-    pub const External = extern struct {
-        name: String = String{},
-        name_hash: PackageNameHash = 0,
-        behavior: Behavior = Behavior.uninitialized,
-        version: Dependency.Version.External,
-
-        pub const Context = struct {
-            allocator: *std.mem.Allocator,
-            log: *logger.Log,
-            buffer: []const u8,
-        };
-
-        pub fn toDependency(
-            this: Dependency.External,
-            ctx: Context,
-        ) Dependency {
-            return Dependency{
-                .name = this.name,
-                .name_hash = this.name_hash,
-                .behavior = this.behavior,
-                .version = this.version.toVersion(ctx),
-            };
-        }
-    };
-
-    pub fn toExternal(this: Dependency) External {
-        return External{
-            .name = this.name,
-            .name_hash = this.name_hash,
-            .behavior = this.behavior,
-            .version = this.version.toExternal(),
-        };
-    }
-
-    pub const Version = struct {
-        tag: Dependency.Version.Tag = Dependency.Version.Tag.uninitialized,
-        literal: String = String{},
-        value: Value = Value{ .uninitialized = void{} },
-
-        pub fn clone(
-            this: Version,
-            buf: []const u8,
-            comptime StringBuilder: type,
-            builder: StringBuilder,
-        ) !Version {
-            return Version{
-                .tag = this.tag,
-                .literal = builder.append(String, this.literal.slice(buf)),
-                .value = try this.value.clone(buf, builder),
-            };
-        }
-
-        pub fn isLessThan(string_buf: []const u8, lhs: Dependency.Version, rhs: Dependency.Version) bool {
-            std.debug.assert(lhs.tag == rhs.tag);
-            return strings.cmpStringsAsc(.{}, lhs.literal.slice(string_buf), rhs.literal.slice(string_buf));
-        }
-
-        pub const External = extern struct {
-            tag: Dependency.Version.Tag,
-            literal: String,
-
-            pub fn toVersion(
-                this: Version.External,
-                ctx: Dependency.External.Context,
-            ) Dependency.Version {
-                const sliced = &this.literal.sliced(ctx.buffer);
-                return Dependency.parseWithTag(
-                    ctx.allocator,
-                    sliced.slice,
-                    this.tag,
-                    sliced,
-                    ctx.log,
-                ) orelse Dependency.Version{};
-            }
-        };
-
-        pub inline fn toExternal(this: Version) Version.External {
-            return Version.External{
-                .tag = this.tag,
-                .literal = this.literal,
-            };
-        }
-
-        pub inline fn eql(
-            lhs: Version,
-            rhs: Version,
-            lhs_buf: []const u8,
-            rhs_buf: []const u8,
-        ) bool {
-            if (lhs.tag != rhs.tag) {
-                return false;
-            }
-
-            return switch (lhs.tag) {
-                // if the two versions are identical as strings, it should often be faster to compare that than the actual semver version
-                // semver ranges involve a ton of pointer chasing
-                .npm => strings.eql(lhs.literal.slice(lhs_buf), rhs.literal.slice(rhs_buf)) or
-                    lhs.value.npm.eql(rhs.value.npm),
-                .folder, .dist_tag => lhs.literal.eql(rhs.literal, lhs_buf, rhs_buf),
-                .tarball => lhs.value.tarball.eql(rhs.value.tarball, lhs_buf, rhs_buf),
-                else => true,
-            };
-        }
-
-        pub const Tag = enum(u8) {
-            uninitialized = 0,
-
-            /// Semver range
-            npm = 1,
-
-            /// NPM dist tag, e.g. "latest"
-            dist_tag = 2,
-
-            /// URI to a .tgz or .tar.gz
-            tarball = 3,
-
-            /// Local folder
-            folder = 4,
-
-            /// TODO:
-            symlink = 5,
-            /// TODO:
-            workspace = 6,
-            /// TODO:
-            git = 7,
-            /// TODO:
-            github = 8,
-
-            pub inline fn isNPM(this: Tag) bool {
-                return @enumToInt(this) < 3;
-            }
-
-            pub inline fn isGitHubRepoPath(dependency: string) bool {
-                var slash_count: u8 = 0;
-
-                for (dependency) |c| {
-                    slash_count += @as(u8, @boolToInt(c == '/'));
-                    if (slash_count > 1 or c == '#') break;
-
-                    // Must be alphanumeric
-                    switch (c) {
-                        '\\', '/', 'a'...'z', 'A'...'Z', '0'...'9', '%' => {},
-                        else => return false,
-                    }
-                }
-
-                return (slash_count == 1);
-            }
-
-            // this won't work for query string params
-            // i'll let someone file an issue before I add that
-            pub inline fn isTarball(dependency: string) bool {
-                return strings.endsWithComptime(dependency, ".tgz") or strings.endsWithComptime(dependency, ".tar.gz");
-            }
-
-            pub fn infer(dependency: string) Tag {
-                switch (dependency[0]) {
-                    // npm package
-                    '=', '>', '<', '0'...'9', '^', '*', '~', '|' => return Tag.npm,
-
-                    // MIGHT be semver, might not be.
-                    'x', 'X' => {
-                        if (dependency.len == 1) {
-                            return Tag.npm;
-                        }
-
-                        if (dependency[1] == '.') {
-                            return Tag.npm;
-                        }
-
-                        return .dist_tag;
-                    },
-
-                    // git://, git@, git+ssh
-                    'g' => {
-                        if (strings.eqlComptime(
-                            dependency[0..@minimum("git://".len, dependency.len)],
-                            "git://",
-                        ) or strings.eqlComptime(
-                            dependency[0..@minimum("git@".len, dependency.len)],
-                            "git@",
-                        ) or strings.eqlComptime(
-                            dependency[0..@minimum("git+ssh".len, dependency.len)],
-                            "git+ssh",
-                        )) {
-                            return .git;
-                        }
-
-                        if (strings.eqlComptime(
-                            dependency[0..@minimum("github".len, dependency.len)],
-                            "github",
-                        ) or isGitHubRepoPath(dependency)) {
-                            return .github;
-                        }
-
-                        return .dist_tag;
-                    },
-
-                    '/' => {
-                        if (isTarball(dependency)) {
-                            return .tarball;
-                        }
-
-                        return .folder;
-                    },
-
-                    // https://, http://
-                    'h' => {
-                        if (isTarball(dependency)) {
-                            return .tarball;
-                        }
-
-                        var remainder = dependency;
-                        if (strings.eqlComptime(
-                            remainder[0..@minimum("https://".len, remainder.len)],
-                            "https://",
-                        )) {
-                            remainder = remainder["https://".len..];
-                        }
-
-                        if (strings.eqlComptime(
-                            remainder[0..@minimum("http://".len, remainder.len)],
-                            "http://",
-                        )) {
-                            remainder = remainder["http://".len..];
-                        }
-
-                        if (strings.eqlComptime(
-                            remainder[0..@minimum("github".len, remainder.len)],
-                            "github",
-                        ) or isGitHubRepoPath(remainder)) {
-                            return .github;
-                        }
-
-                        return .dist_tag;
-                    },
-
-                    // file://
-                    'f' => {
-                        if (isTarball(dependency))
-                            return .tarball;
-
-                        if (strings.eqlComptime(
-                            dependency[0..@minimum("file://".len, dependency.len)],
-                            "file://",
-                        )) {
-                            return .folder;
-                        }
-
-                        if (isGitHubRepoPath(dependency)) {
-                            return .github;
-                        }
-
-                        return .dist_tag;
-                    },
-
-                    // link://
-                    'l' => {
-                        if (isTarball(dependency))
-                            return .tarball;
-
-                        if (strings.eqlComptime(
-                            dependency[0..@minimum("link://".len, dependency.len)],
-                            "link://",
-                        )) {
-                            return .symlink;
-                        }
-
-                        if (isGitHubRepoPath(dependency)) {
-                            return .github;
-                        }
-
-                        return .dist_tag;
-                    },
-
-                    // workspace://
-                    'w' => {
-                        if (strings.eqlComptime(
-                            dependency[0..@minimum("workspace://".len, dependency.len)],
-                            "workspace://",
-                        )) {
-                            return .workspace;
-                        }
-
-                        if (isTarball(dependency))
-                            return .tarball;
-
-                        if (isGitHubRepoPath(dependency)) {
-                            return .github;
-                        }
-
-                        return .dist_tag;
-                    },
-
-                    else => {
-                        if (isTarball(dependency))
-                            return .tarball;
-
-                        if (isGitHubRepoPath(dependency)) {
-                            return .github;
-                        }
-
-                        return .dist_tag;
-                    },
-                }
-            }
-        };
-
-        pub const Value = union {
-            uninitialized: void,
-
-            npm: Semver.Query.Group,
-            dist_tag: String,
-            tarball: URI,
-            folder: String,
-
-            /// Unsupported, but still parsed so an error can be thrown
-            symlink: void,
-            /// Unsupported, but still parsed so an error can be thrown
-            workspace: void,
-            /// Unsupported, but still parsed so an error can be thrown
-            git: void,
-            /// Unsupported, but still parsed so an error can be thrown
-            github: void,
-        };
-    };
-
-    pub fn eql(
-        a: Dependency,
-        b: Dependency,
-        lhs_buf: []const u8,
-        rhs_buf: []const u8,
-    ) bool {
-        return a.name_hash == b.name_hash and a.name.len() == b.name.len() and a.version.eql(b.version, lhs_buf, rhs_buf);
-    }
-
-    pub fn eqlResolved(a: Dependency, b: Dependency) bool {
-        if (a.isNPM() and b.tag.isNPM()) {
-            return a.resolution == b.resolution;
-        }
-
-        return @as(Dependency.Version.Tag, a.version) == @as(Dependency.Version.Tag, b.version) and a.resolution == b.resolution;
-    }
-
-    pub fn parse(allocator: *std.mem.Allocator, dependency_: string, sliced: *const SlicedString, log: *logger.Log) ?Version {
-        const dependency = std.mem.trimLeft(u8, dependency_, " \t\n\r");
-
-        if (dependency.len == 0) return null;
-        return parseWithTag(
-            allocator,
-            dependency,
-            Version.Tag.infer(dependency),
-            sliced,
-            log,
-        );
-    }
-
-    pub fn parseWithTag(
-        allocator: *std.mem.Allocator,
-        dependency: string,
-        tag: Dependency.Version.Tag,
-        sliced: *const SlicedString,
-        log_: ?*logger.Log,
-    ) ?Version {
-        switch (tag) {
-            .npm => {
-                const version = Semver.Query.parse(
-                    allocator,
-                    dependency,
-                    sliced.sub(dependency),
-                ) catch |err| {
-                    if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "{s} parsing dependency \"{s}\"", .{ @errorName(err), dependency }) catch unreachable;
-                    return null;
-                };
-
-                return Version{
-                    .literal = sliced.value(),
-                    .value = .{ .npm = version },
-                    .tag = .npm,
-                };
-            },
-            .dist_tag => {
-                return Version{
-                    .literal = sliced.value(),
-                    .value = .{ .dist_tag = sliced.value() },
-                    .tag = .dist_tag,
-                };
-            },
-            .tarball => {
-                if (strings.contains(dependency, "://")) {
-                    if (strings.startsWith(dependency, "file://")) {
-                        return Version{
-                            .tag = .tarball,
-                            .value = .{ .tarball = URI{ .local = sliced.sub(dependency[7..]).value() } },
-                        };
-                    } else if (strings.startsWith(dependency, "https://") or strings.startsWith(dependency, "http://")) {
-                        return Version{
-                            .tag = .tarball,
-                            .value = .{ .tarball = URI{ .remote = sliced.sub(dependency).value() } },
-                        };
-                    } else {
-                        if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "invalid dependency \"{s}\"", .{dependency}) catch unreachable;
-                        return null;
-                    }
-                }
-
-                return Version{
-                    .literal = sliced.value(),
-                    .value = .{
-                        .tarball = URI{
-                            .local = sliced.value(),
-                        },
-                    },
-                    .tag = .tarball,
-                };
-            },
-            .folder => {
-                if (strings.contains(dependency, "://")) {
-                    if (strings.startsWith(dependency, "file://")) {
-                        return Version{ .value = .{ .folder = sliced.sub(dependency[7..]).value() }, .tag = .folder };
-                    }
-
-                    if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "Unsupported protocol {s}", .{dependency}) catch unreachable;
-                    return null;
-                }
-
-                return Version{
-                    .value = .{ .folder = sliced.value() },
-                    .tag = .folder,
-                    .literal = sliced.value(),
-                };
-            },
-            .uninitialized => return null,
-            .symlink, .workspace, .git, .github => {
-                if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "Unsupported dependency type {s} for \"{s}\"", .{ @tagName(tag), dependency }) catch unreachable;
-                return null;
-            },
-        }
-    }
-};
-
-fn ObjectPool(comptime Type: type, comptime Init: (fn (allocator: *std.mem.Allocator) anyerror!Type), comptime threadsafe: bool) type {
-    return struct {
-        const LinkedList = std.SinglyLinkedList(Type);
-        const Data = if (threadsafe)
-            struct {
-                pub threadlocal var list: LinkedList = undefined;
-                pub threadlocal var loaded: bool = false;
-            }
-        else
-            struct {
-                pub var list: LinkedList = undefined;
-                pub var loaded: bool = false;
-            };
-
-        const data = Data;
-
-        pub fn get(allocator: *std.mem.Allocator) *LinkedList.Node {
-            if (data.loaded) {
-                if (data.list.popFirst()) |node| {
-                    node.data.reset();
-                    return node;
-                }
-            }
-
-            var new_node = allocator.create(LinkedList.Node) catch unreachable;
-            new_node.* = LinkedList.Node{
-                .data = Init(
-                    allocator,
-                ) catch unreachable,
-            };
-
-            return new_node;
-        }
-
-        pub fn release(node: *LinkedList.Node) void {
-            if (data.loaded) {
-                data.list.prepend(node);
-                return;
-            }
-
-            data.list = LinkedList{ .first = node };
-            data.loaded = true;
-        }
-    };
-}
-
-const Npm = struct {
-    pub const Registry = struct {
-        url: URL = URL.parse("https://registry.npmjs.org/"),
-        pub const BodyPool = ObjectPool(MutableString, MutableString.init2048, true);
-
-        const PackageVersionResponse = union(Tag) {
-            pub const Tag = enum {
-                cached,
-                fresh,
-                not_found,
-            };
-
-            cached: PackageManifest,
-            fresh: PackageManifest,
-            not_found: void,
-        };
-
-        const Pico = @import("picohttp");
-        pub fn getPackageMetadata(
-            allocator: *std.mem.Allocator,
-            response: Pico.Response,
-            body: []const u8,
-            log: *logger.Log,
-            package_name: string,
-            loaded_manifest: ?PackageManifest,
-        ) !PackageVersionResponse {
-            switch (response.status_code) {
-                400 => return error.BadRequest,
-                429 => return error.TooManyRequests,
-                404 => return PackageVersionResponse{ .not_found = .{} },
-                500...599 => return error.HTTPInternalServerError,
-                304 => return PackageVersionResponse{
-                    .cached = loaded_manifest.?,
-                },
-                else => {},
-            }
-
-            var newly_last_modified: string = "";
-            var new_etag: string = "";
-            for (response.headers) |header| {
-                if (!(header.name.len == "last-modified".len or header.name.len == "etag".len)) continue;
-
-                const hashed = HTTPClient.hashHeaderName(header.name);
-
-                switch (hashed) {
-                    HTTPClient.hashHeaderName("last-modified") => {
-                        newly_last_modified = header.value;
-                    },
-                    HTTPClient.hashHeaderName("etag") => {
-                        new_etag = header.value;
-                    },
-                    else => {},
-                }
-            }
-
-            JSAst.Expr.Data.Store.create(default_allocator);
-            JSAst.Stmt.Data.Store.create(default_allocator);
-            defer {
-                JSAst.Expr.Data.Store.reset();
-                JSAst.Stmt.Data.Store.reset();
-            }
-            var new_etag_buf: [64]u8 = undefined;
-
-            if (new_etag.len < new_etag_buf.len) {
-                std.mem.copy(u8, &new_etag_buf, new_etag);
-                new_etag = new_etag_buf[0..new_etag.len];
-            }
-
-            if (try PackageManifest.parse(
-                allocator,
-                log,
-                body,
-                package_name,
-                newly_last_modified,
-                new_etag,
-                @truncate(u32, @intCast(u64, @maximum(0, std.time.timestamp()))) + 300,
-            )) |package| {
-                if (PackageManager.instance.options.enable.manifest_cache) {
-                    var tmpdir = Fs.FileSystem.instance.tmpdir();
-
-                    PackageManifest.Serializer.save(&package, tmpdir, PackageManager.instance.cache_directory) catch {};
-                }
-
-                return PackageVersionResponse{ .fresh = package };
-            }
-
-            return error.PackageFailedToParse;
-        }
-    };
-
-    const VersionMap = std.ArrayHashMapUnmanaged(Semver.Version, PackageVersion, Semver.Version.HashContext, false);
-    const DistTagMap = extern struct {
-        tags: ExternalStringList = ExternalStringList{},
-        versions: VersionSlice = VersionSlice{},
-    };
-
-    const PackageVersionList = ExternalSlice(PackageVersion);
-    const ExternVersionMap = extern struct {
-        keys: VersionSlice = VersionSlice{},
-        values: PackageVersionList = PackageVersionList{},
-
-        pub fn findKeyIndex(this: ExternVersionMap, buf: []const Semver.Version, find: Semver.Version) ?u32 {
-            for (this.keys.get(buf)) |key, i| {
-                if (key.eql(find)) {
-                    return @truncate(u32, i);
-                }
-            }
-
-            return null;
-        }
-    };
-
-    /// https://nodejs.org/api/os.html#osplatform
-    pub const OperatingSystem = enum(u16) {
-        none = 0,
-        all = all_value,
-
-        _,
-
-        pub const aix: u16 = 1 << 1;
-        pub const darwin: u16 = 1 << 2;
-        pub const freebsd: u16 = 1 << 3;
-        pub const linux: u16 = 1 << 4;
-        pub const openbsd: u16 = 1 << 5;
-        pub const sunos: u16 = 1 << 6;
-        pub const win32: u16 = 1 << 7;
-        pub const android: u16 = 1 << 8;
-
-        pub const all_value: u16 = aix | darwin | freebsd | linux | openbsd | sunos | win32 | android;
-
-        pub fn isMatch(this: OperatingSystem) bool {
-            if (comptime Environment.isLinux) {
-                return (@enumToInt(this) & linux) != 0;
-            } else if (comptime Environment.isMac) {
-                return (@enumToInt(this) & darwin) != 0;
-            } else {
-                return false;
-            }
-        }
-
-        const Matcher = strings.ExactSizeMatcher(8);
-
-        pub fn apply(this_: OperatingSystem, str: []const u8) OperatingSystem {
-            if (str.len == 0) {
-                return this_;
-            }
-            const this = @enumToInt(this_);
-
-            const is_not = str[0] == '!';
-            const offset: usize = if (str[0] == '!') 1 else 0;
-            const input = str[offset..];
-
-            const field: u16 = switch (Matcher.match(input)) {
-                Matcher.case("aix") => aix,
-                Matcher.case("darwin") => darwin,
-                Matcher.case("freebsd") => freebsd,
-                Matcher.case("linux") => linux,
-                Matcher.case("openbsd") => openbsd,
-                Matcher.case("sunos") => sunos,
-                Matcher.case("win32") => win32,
-                Matcher.case("android") => android,
-                else => return this_,
-            };
-
-            if (is_not) {
-                return @intToEnum(OperatingSystem, this & ~field);
-            } else {
-                return @intToEnum(OperatingSystem, this | field);
-            }
-        }
-    };
-
-    /// https://docs.npmjs.com/cli/v8/configuring-npm/package-json#cpu
-    /// https://nodejs.org/api/os.html#osarch
-    pub const Architecture = enum(u16) {
-        none = 0,
-        all = all_value,
-        _,
-
-        pub const arm: u16 = 1 << 1;
-        pub const arm64: u16 = 1 << 2;
-        pub const ia32: u16 = 1 << 3;
-        pub const mips: u16 = 1 << 4;
-        pub const mipsel: u16 = 1 << 5;
-        pub const ppc: u16 = 1 << 6;
-        pub const ppc64: u16 = 1 << 7;
-        pub const s390: u16 = 1 << 8;
-        pub const s390x: u16 = 1 << 9;
-        pub const x32: u16 = 1 << 10;
-        pub const x64: u16 = 1 << 11;
-
-        pub const all_value: u16 = arm | arm64 | ia32 | mips | mipsel | ppc | ppc64 | s390 | s390x | x32 | x64;
-
-        pub fn isMatch(this: Architecture) bool {
-            if (comptime Environment.isAarch64) {
-                return (@enumToInt(this) & arm64) != 0;
-            } else if (comptime Environment.isX64) {
-                return (@enumToInt(this) & x64) != 0;
-            } else {
-                return false;
-            }
-        }
-
-        const Matcher = strings.ExactSizeMatcher(8);
-
-        pub fn apply(this_: Architecture, str: []const u8) Architecture {
-            if (str.len == 0) {
-                return this_;
-            }
-            const this = @enumToInt(this_);
-
-            const is_not = str[0] == '!';
-            const offset: usize = if (str[0] == '!') 1 else 0;
-            const input = str[offset..];
-
-            const field: u16 = switch (Matcher.match(input)) {
-                Matcher.case("arm") => arm,
-                Matcher.case("arm64") => arm64,
-                Matcher.case("ia32") => ia32,
-                Matcher.case("mips") => mips,
-                Matcher.case("mipsel") => mipsel,
-                Matcher.case("ppc") => ppc,
-                Matcher.case("ppc64") => ppc64,
-                Matcher.case("s390") => s390,
-                Matcher.case("s390x") => s390x,
-                Matcher.case("x32") => x32,
-                Matcher.case("x64") => x64,
-                else => return this_,
-            };
-
-            if (is_not) {
-                return @intToEnum(Architecture, this & ~field);
-            } else {
-                return @intToEnum(Architecture, this | field);
-            }
-        }
-    };
-    const BigExternalString = Semver.BigExternalString;
-
-    pub const PackageVersion = extern struct {
-        /// `"integrity"` field || `"shasum"` field
-        /// https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#dist
-        // Splitting this into it's own array ends up increasing the final size a little bit.
-        integrity: Integrity = Integrity{},
-
-        /// "dependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#dependencies)
-        dependencies: ExternalStringMap = ExternalStringMap{},
-
-        /// `"optionalDependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#optionaldependencies)
-        optional_dependencies: ExternalStringMap = ExternalStringMap{},
-
-        /// `"peerDependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#peerdependencies)
-        peer_dependencies: ExternalStringMap = ExternalStringMap{},
-
-        /// `"devDependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#devdependencies)
-        /// We deliberately choose not to populate this field.
-        /// We keep it in the data layout so that if it turns out we do need it, we can add it without invalidating everyone's history.
-        dev_dependencies: ExternalStringMap = ExternalStringMap{},
-
-        /// `"bin"` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
-        bin: Bin = Bin{},
-
-        /// `"engines"` field in package.json
-        engines: ExternalStringMap = ExternalStringMap{},
-
-        /// `"peerDependenciesMeta"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#peerdependenciesmeta)
-        optional_peer_dependencies: ExternalStringMap = ExternalStringMap{},
-
-        man_dir: ExternalString = ExternalString{},
-
-        unpacked_size: u32 = 0,
-        file_count: u32 = 0,
-
-        /// `"os"` field in package.json
-        os: OperatingSystem = OperatingSystem.all,
-        /// `"cpu"` field in package.json
-        cpu: Architecture = Architecture.all,
-    };
-
-    const NpmPackage = extern struct {
-
-        /// HTTP response headers
-        last_modified: String = String{},
-        etag: String = String{},
-
-        /// "modified" in the JSON
-        modified: String = String{},
-        public_max_age: u32 = 0,
-
-        name: ExternalString = ExternalString{},
-
-        releases: ExternVersionMap = ExternVersionMap{},
-        prereleases: ExternVersionMap = ExternVersionMap{},
-        dist_tags: DistTagMap = DistTagMap{},
-
-        versions_buf: VersionSlice = VersionSlice{},
-        string_lists_buf: ExternalStringList = ExternalStringList{},
-        string_buf: BigExternalString = BigExternalString{},
-    };
-
-    const PackageManifest = struct {
-        pkg: NpmPackage = NpmPackage{},
-
-        string_buf: []const u8 = &[_]u8{},
-        versions: []const Semver.Version = &[_]Semver.Version{},
-        external_strings: []const ExternalString = &[_]ExternalString{},
-        // We store this in a separate buffer so that we can dedupe contiguous identical versions without an extra pass
-        external_strings_for_versions: []const ExternalString = &[_]ExternalString{},
-        package_versions: []const PackageVersion = &[_]PackageVersion{},
-
-        pub inline fn name(this: *const PackageManifest) string {
-            return this.pkg.name.slice(this.string_buf);
-        }
-
-        pub const Serializer = struct {
-            pub const version = "bun-npm-manifest-cache-v0.0.1\n";
-            const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
-
-            pub const sizes = blk: {
-                // skip name
-                const fields = std.meta.fields(Npm.PackageManifest);
-
-                const Data = struct {
-                    size: usize,
-                    name: []const u8,
-                    alignment: usize,
-                };
-                var data: [fields.len]Data = undefined;
-                for (fields) |field_info, i| {
-                    data[i] = .{
-                        .size = @sizeOf(field_info.field_type),
-                        .name = field_info.name,
-                        .alignment = if (@sizeOf(field_info.field_type) == 0) 1 else field_info.alignment,
-                    };
-                }
-                const Sort = struct {
-                    fn lessThan(trash: *i32, lhs: Data, rhs: Data) bool {
-                        _ = trash;
-                        return lhs.alignment > rhs.alignment;
-                    }
-                };
-                var trash: i32 = undefined; // workaround for stage1 compiler bug
-                std.sort.sort(Data, &data, &trash, Sort.lessThan);
-                var sizes_bytes: [fields.len]usize = undefined;
-                var names: [fields.len][]const u8 = undefined;
-                for (data) |elem, i| {
-                    sizes_bytes[i] = elem.size;
-                    names[i] = elem.name;
-                }
-                break :blk .{
-                    .bytes = sizes_bytes,
-                    .fields = names,
-                };
-            };
-
-            pub fn writeArray(comptime Writer: type, writer: Writer, comptime Type: type, array: []const Type, pos: *u64) !void {
-                const bytes = std.mem.sliceAsBytes(array);
-                if (bytes.len == 0) {
-                    try writer.writeIntNative(u64, 0);
-                    pos.* += 8;
-                    return;
-                }
-
-                try writer.writeIntNative(u64, bytes.len);
-                pos.* += 8;
-                pos.* += try Aligner.write(Type, Writer, writer, pos.*);
-
-                try writer.writeAll(
-                    bytes,
-                );
-                pos.* += bytes.len;
-            }
-
-            pub fn readArray(stream: *std.io.FixedBufferStream([]const u8), comptime Type: type) ![]const Type {
-                var reader = stream.reader();
-                const byte_len = try reader.readIntNative(u64);
-                if (byte_len == 0) {
-                    return &[_]Type{};
-                }
-
-                stream.pos += Aligner.skipAmount(Type, stream.pos);
-                const result_bytes = stream.buffer[stream.pos..][0..byte_len];
-                const result = @ptrCast([*]const Type, @alignCast(@alignOf([*]const Type), result_bytes.ptr))[0 .. result_bytes.len / @sizeOf(Type)];
-                stream.pos += result_bytes.len;
-                return result;
-            }
-
-            pub fn write(this: *const PackageManifest, comptime Writer: type, writer: Writer) !void {
-                var pos: u64 = 0;
-                try writer.writeAll(header_bytes);
-                pos += header_bytes.len;
-
-                inline for (sizes.fields) |field_name| {
-                    if (comptime strings.eqlComptime(field_name, "pkg")) {
-                        const bytes = std.mem.asBytes(&this.pkg);
-                        pos += try Aligner.write(NpmPackage, Writer, writer, pos);
-                        try writer.writeAll(
-                            bytes,
-                        );
-                        pos += bytes.len;
-                    } else {
-                        const field = @field(this, field_name);
-                        try writeArray(Writer, writer, std.meta.Child(@TypeOf(field)), field, &pos);
-                    }
-                }
-            }
-
-            pub fn save(this: *const PackageManifest, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
-                const file_id = std.hash.Wyhash.hash(0, this.name());
-                var dest_path_buf: [512 + 64]u8 = undefined;
-                var out_path_buf: ["-18446744073709551615".len + ".npm".len + 1]u8 = undefined;
-                var dest_path_stream = std.io.fixedBufferStream(&dest_path_buf);
-                var dest_path_stream_writer = dest_path_stream.writer();
-                try dest_path_stream_writer.print("{x}.npm-{x}", .{ file_id, @maximum(std.time.milliTimestamp(), 0) });
-                try dest_path_stream_writer.writeByte(0);
-                var tmp_path: [:0]u8 = dest_path_buf[0 .. dest_path_stream.pos - 1 :0];
-                {
-                    var tmpfile = try tmpdir.createFileZ(tmp_path, .{
-                        .truncate = true,
-                    });
-                    var writer = tmpfile.writer();
-                    try Serializer.write(this, @TypeOf(writer), writer);
-                    std.os.fdatasync(tmpfile.handle) catch {};
-                    tmpfile.close();
-                }
-
-                var out_path = std.fmt.bufPrintZ(&out_path_buf, "{x}.npm", .{file_id}) catch unreachable;
-                try std.os.renameatZ(tmpdir.fd, tmp_path, cache_dir.fd, out_path);
-            }
-
-            pub fn load(allocator: *std.mem.Allocator, cache_dir: std.fs.Dir, package_name: string) !?PackageManifest {
-                const file_id = std.hash.Wyhash.hash(0, package_name);
-                var file_path_buf: [512 + 64]u8 = undefined;
-                var file_path = try std.fmt.bufPrintZ(&file_path_buf, "{x}.npm", .{file_id});
-                var cache_file = cache_dir.openFileZ(
-                    file_path,
-                    .{
-                        .read = true,
-                    },
-                ) catch return null;
-                var timer: std.time.Timer = undefined;
-                if (verbose_install) {
-                    timer = std.time.Timer.start() catch @panic("timer fail");
-                }
-                defer cache_file.close();
-                var bytes = try cache_file.readToEndAlloc(allocator, std.math.maxInt(u32));
-                errdefer allocator.free(bytes);
-                if (bytes.len < header_bytes.len) return null;
-                const result = try readAll(bytes);
-                if (verbose_install) {
-                    Output.prettyError("\n ", .{});
-                    Output.printTimer(&timer);
-                    Output.prettyErrorln("<d> [cache hit] {s}<r>", .{package_name});
-                }
-                return result;
-            }
-
-            pub fn readAll(bytes: []const u8) !PackageManifest {
-                if (!strings.eqlComptime(bytes[0..header_bytes.len], header_bytes)) {
-                    return error.InvalidPackageManifest;
-                }
-                var pkg_stream = std.io.fixedBufferStream(bytes);
-                pkg_stream.pos = header_bytes.len;
-                var package_manifest = PackageManifest{};
-
-                inline for (sizes.fields) |field_name| {
-                    if (comptime strings.eqlComptime(field_name, "pkg")) {
-                        pkg_stream.pos = std.mem.alignForward(pkg_stream.pos, @alignOf(Npm.NpmPackage));
-                        var reader = pkg_stream.reader();
-                        package_manifest.pkg = try reader.readStruct(NpmPackage);
-                    } else {
-                        @field(package_manifest, field_name) = try readArray(
-                            &pkg_stream,
-                            std.meta.Child(@TypeOf(@field(package_manifest, field_name))),
-                        );
-                    }
-                }
-
-                return package_manifest;
-            }
-        };
-
-        pub fn str(self: *const PackageManifest, external: ExternalString) string {
-            return external.slice(self.string_buf);
-        }
-
-        pub fn reportSize(this: *const PackageManifest) void {
-            const versions = std.mem.sliceAsBytes(this.versions);
-            const external_strings = std.mem.sliceAsBytes(this.external_strings);
-            const package_versions = std.mem.sliceAsBytes(this.package_versions);
-            const string_buf = std.mem.sliceAsBytes(this.string_buf);
-
-            Output.prettyErrorln(
-                \\ Versions count:            {d} 
-                \\ External Strings count:    {d} 
-                \\ Package Versions count:    {d}
-                \\ 
-                \\ Bytes:
-                \\
-                \\  Versions:   {d} 
-                \\  External:   {d} 
-                \\  Packages:   {d} 
-                \\  Strings:    {d}
-                \\  Total:      {d}
-            , .{
-                this.versions.len,
-                this.external_strings.len,
-                this.package_versions.len,
-
-                std.mem.sliceAsBytes(this.versions).len,
-                std.mem.sliceAsBytes(this.external_strings).len,
-                std.mem.sliceAsBytes(this.package_versions).len,
-                std.mem.sliceAsBytes(this.string_buf).len,
-                std.mem.sliceAsBytes(this.versions).len +
-                    std.mem.sliceAsBytes(this.external_strings).len +
-                    std.mem.sliceAsBytes(this.package_versions).len +
-                    std.mem.sliceAsBytes(this.string_buf).len,
-            });
-            Output.flush();
-        }
-
-        pub const FindResult = struct {
-            version: Semver.Version,
-            package: *const PackageVersion,
-        };
-
-        pub fn findByString(this: *const PackageManifest, version: string) ?FindResult {
-            switch (Dependency.Version.Tag.infer(version)) {
-                .npm => {
-                    const group = Semver.Query.parse(default_allocator, version, SlicedString.init(
-                        version,
-                        version,
-                    )) catch return null;
-                    return this.findBestVersion(group);
-                },
-                .dist_tag => {
-                    return this.findByDistTag(version);
-                },
-                else => return null,
-            }
-        }
-
-        pub fn findByVersion(this: *const PackageManifest, version: Semver.Version) ?FindResult {
-            const list = if (!version.tag.hasPre()) this.pkg.releases else this.pkg.prereleases;
-            const values = list.values.get(this.package_versions);
-            const keys = list.keys.get(this.versions);
-            const index = list.findKeyIndex(this.versions, version) orelse return null;
-            return FindResult{
-                // Be sure to use the struct from the list in the NpmPackage
-                // That is the one we can correctly recover the original version string for
-                .version = keys[index],
-                .package = &values[index],
-            };
-        }
-
-        pub fn findByDistTag(this: *const PackageManifest, tag: string) ?FindResult {
-            const versions = this.pkg.dist_tags.versions.get(this.versions);
-            for (this.pkg.dist_tags.tags.get(this.external_strings)) |tag_str, i| {
-                if (strings.eql(tag_str.slice(this.string_buf), tag)) {
-                    return this.findByVersion(versions[i]);
-                }
-            }
-
-            return null;
-        }
-
-        pub fn findBestVersion(this: *const PackageManifest, group: Semver.Query.Group) ?FindResult {
-            const left = group.head.head.range.left;
-            // Fast path: exact version
-            if (left.op == .eql) {
-                return this.findByVersion(left.version);
-            }
-
-            const releases = this.pkg.releases.keys.get(this.versions);
-
-            if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
-                const prereleases = this.pkg.prereleases.keys.get(this.versions);
-                var i = prereleases.len;
-                while (i > 0) : (i -= 1) {
-                    const version = prereleases[i - 1];
-                    const packages = this.pkg.prereleases.values.get(this.package_versions);
-
-                    if (group.satisfies(version)) {
-                        return FindResult{ .version = version, .package = &packages[i - 1] };
-                    }
-                }
-            }
-
-            {
-                var i = releases.len;
-                // // For now, this is the dumb way
-                while (i > 0) : (i -= 1) {
-                    const version = releases[i - 1];
-                    const packages = this.pkg.releases.values.get(this.package_versions);
-
-                    if (group.satisfies(version)) {
-                        return FindResult{ .version = version, .package = &packages[i - 1] };
-                    }
-                }
-            }
-
-            return null;
-        }
-
-        const ExternalStringMapDeduper = std.HashMap(u64, ExternalStringList, IdentityContext(u64), 80);
-
-        threadlocal var string_pool_: String.Builder.StringPool = undefined;
-        threadlocal var string_pool_loaded: bool = false;
-
-        threadlocal var external_string_maps_: ExternalStringMapDeduper = undefined;
-        threadlocal var external_string_maps_loaded: bool = false;
-
-        /// This parses [Abbreviated metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-metadata-format)
-        pub fn parse(
-            allocator: *std.mem.Allocator,
-            log: *logger.Log,
-            json_buffer: []const u8,
-            expected_name: []const u8,
-            last_modified: []const u8,
-            etag: []const u8,
-            public_max_age: u32,
-        ) !?PackageManifest {
-            const source = logger.Source.initPathString(expected_name, json_buffer);
-            initializeStore();
-            const json = json_parser.ParseJSON(&source, log, allocator) catch |err| {
-                return null;
-            };
-
-            if (json.asProperty("error")) |error_q| {
-                if (error_q.expr.asString(allocator)) |err| {
-                    log.addErrorFmt(&source, logger.Loc.Empty, allocator, "npm error: {s}", .{err}) catch unreachable;
-                    return null;
-                }
-            }
-
-            var result = PackageManifest{};
-
-            if (!string_pool_loaded) {
-                string_pool_ = String.Builder.StringPool.init(default_allocator);
-                string_pool_loaded = true;
-            }
-
-            if (!external_string_maps_loaded) {
-                external_string_maps_ = ExternalStringMapDeduper.initContext(default_allocator, .{});
-                external_string_maps_loaded = true;
-            }
-
-            var string_pool = string_pool_;
-            string_pool.clearRetainingCapacity();
-            var external_string_maps = external_string_maps_;
-            external_string_maps.clearRetainingCapacity();
-
-            defer string_pool_ = string_pool;
-            defer external_string_maps_ = external_string_maps;
-
-            var string_builder = String.Builder{
-                .string_pool = string_pool,
-            };
-
-            if (json.asProperty("name")) |name_q| {
-                const field = name_q.expr.asString(allocator) orelse return null;
-
-                if (!strings.eql(field, expected_name)) {
-                    Output.panic("<r>internal: <red>package name mismatch<r> expected <b>\"{s}\"<r> but received <red>\"{s}\"<r>", .{ expected_name, field });
-                    return null;
-                }
-
-                string_builder.count(field);
-            }
-
-            if (json.asProperty("modified")) |name_q| {
-                const field = name_q.expr.asString(allocator) orelse return null;
-
-                string_builder.count(field);
-            }
-
-            const DependencyGroup = struct { prop: string, field: string };
-            const dependency_groups = comptime [_]DependencyGroup{
-                .{ .prop = "dependencies", .field = "dependencies" },
-                .{ .prop = "optionalDependencies", .field = "optional_dependencies" },
-                .{ .prop = "peerDependencies", .field = "peer_dependencies" },
-            };
-
-            var release_versions_len: usize = 0;
-            var pre_versions_len: usize = 0;
-            var dependency_sum: usize = 0;
-            var extern_string_count: usize = 0;
-            get_versions: {
-                if (json.asProperty("versions")) |versions_q| {
-                    if (versions_q.expr.data != .e_object) break :get_versions;
-
-                    const versions = versions_q.expr.data.e_object.properties;
-                    for (versions) |prop| {
-                        const version_name = prop.key.?.asString(allocator) orelse continue;
-
-                        if (std.mem.indexOfScalar(u8, version_name, '-') != null) {
-                            pre_versions_len += 1;
-                            extern_string_count += 1;
-                        } else {
-                            extern_string_count += @as(usize, @boolToInt(std.mem.indexOfScalar(u8, version_name, '+') != null));
-                            release_versions_len += 1;
-                        }
-
-                        string_builder.count(version_name);
-
-                        bin: {
-                            if (prop.value.?.asProperty("bin")) |bin| {
-                                switch (bin.expr.data) {
-                                    .e_object => |obj| {
-                                        if (obj.properties.len > 0) {
-                                            string_builder.count(obj.properties[0].key.?.asString(allocator) orelse break :bin);
-                                            string_builder.count(obj.properties[0].value.?.asString(allocator) orelse break :bin);
-                                        }
-                                    },
-                                    .e_string => |str| {
-                                        if (bin.expr.asString(allocator)) |str_| {
-                                            string_builder.count(str_);
-                                            break :bin;
-                                        }
-                                    },
-                                    else => {},
-                                }
-                            }
-
-                            if (prop.value.?.asProperty("directories")) |dirs| {
-                                if (dirs.expr.asProperty("bin")) |bin_prop| {
-                                    if (bin_prop.expr.asString(allocator)) |str_| {
-                                        string_builder.count(str_);
-                                        break :bin;
-                                    }
-                                }
-                            }
-                        }
-
-                        inline for (dependency_groups) |pair| {
-                            if (prop.value.?.asProperty(pair.prop)) |versioned_deps| {
-                                if (versioned_deps.expr.data == .e_object) {
-                                    dependency_sum += versioned_deps.expr.data.e_object.properties.len;
-                                    const properties = versioned_deps.expr.data.e_object.properties;
-                                    for (properties) |property| {
-                                        if (property.key.?.asString(allocator)) |key| {
-                                            string_builder.count(key);
-                                            string_builder.count(property.value.?.asString(allocator) orelse "");
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            extern_string_count += dependency_sum;
-
-            var dist_tags_count: usize = 0;
-            if (json.asProperty("dist-tags")) |dist| {
-                if (dist.expr.data == .e_object) {
-                    const tags = dist.expr.data.e_object.properties;
-                    for (tags) |tag| {
-                        if (tag.key.?.asString(allocator)) |key| {
-                            string_builder.count(key);
-                            extern_string_count += 2;
-
-                            string_builder.count((tag.value.?.asString(allocator) orelse ""));
-                            dist_tags_count += 1;
-                        }
-                    }
-                }
-            }
-
-            if (last_modified.len > 0) {
-                string_builder.count(last_modified);
-            }
-
-            if (etag.len > 0) {
-                string_builder.count(etag);
-            }
-
-            var versioned_packages = try allocator.allocAdvanced(PackageVersion, null, release_versions_len + pre_versions_len, .exact);
-            var all_semver_versions = try allocator.allocAdvanced(Semver.Version, null, release_versions_len + pre_versions_len + dist_tags_count, .exact);
-            var all_extern_strings = try allocator.allocAdvanced(ExternalString, null, extern_string_count, .exact);
-            var version_extern_strings = try allocator.allocAdvanced(ExternalString, null, dependency_sum, .exact);
-
-            if (versioned_packages.len > 0) {
-                var versioned_packages_bytes = std.mem.sliceAsBytes(versioned_packages);
-                @memset(versioned_packages_bytes.ptr, 0, versioned_packages_bytes.len);
-            }
-            if (all_semver_versions.len > 0) {
-                var all_semver_versions_bytes = std.mem.sliceAsBytes(all_semver_versions);
-                @memset(all_semver_versions_bytes.ptr, 0, all_semver_versions_bytes.len);
-            }
-            if (all_extern_strings.len > 0) {
-                var all_extern_strings_bytes = std.mem.sliceAsBytes(all_extern_strings);
-                @memset(all_extern_strings_bytes.ptr, 0, all_extern_strings_bytes.len);
-            }
-            if (version_extern_strings.len > 0) {
-                var version_extern_strings_bytes = std.mem.sliceAsBytes(version_extern_strings);
-                @memset(version_extern_strings_bytes.ptr, 0, version_extern_strings_bytes.len);
-            }
-
-            var versioned_package_releases = versioned_packages[0..release_versions_len];
-            var all_versioned_package_releases = versioned_package_releases;
-            var versioned_package_prereleases = versioned_packages[release_versions_len..][0..pre_versions_len];
-            var all_versioned_package_prereleases = versioned_package_prereleases;
-            var _versions_open = all_semver_versions;
-            var all_release_versions = _versions_open[0..release_versions_len];
-            _versions_open = _versions_open[release_versions_len..];
-            var all_prerelease_versions = _versions_open[0..pre_versions_len];
-            _versions_open = _versions_open[pre_versions_len..];
-            var dist_tag_versions = _versions_open[0..dist_tags_count];
-            var release_versions = all_release_versions;
-            var prerelease_versions = all_prerelease_versions;
-
-            var extern_strings = all_extern_strings;
-            string_builder.cap += 1;
-            string_builder.cap *= 2;
-            try string_builder.allocate(allocator);
-
-            var string_buf: string = "";
-            if (string_builder.ptr) |ptr| {
-                // 0 it out for better determinism
-                @memset(ptr, 0, string_builder.cap);
-
-                string_buf = ptr[0..string_builder.cap];
-            }
-
-            if (json.asProperty("name")) |name_q| {
-                const field = name_q.expr.asString(allocator) orelse return null;
-                result.pkg.name = string_builder.append(ExternalString, field);
-            }
-
-            var string_slice = SlicedString.init(string_buf, string_buf);
-            get_versions: {
-                if (json.asProperty("versions")) |versions_q| {
-                    if (versions_q.expr.data != .e_object) break :get_versions;
-
-                    const versions = versions_q.expr.data.e_object.properties;
-
-                    var all_dependency_names_and_values = all_extern_strings[0..dependency_sum];
-
-                    // versions change more often than names
-                    // so names go last because we are better able to dedupe at the end
-                    var dependency_values = version_extern_strings;
-                    var dependency_names = all_dependency_names_and_values;
-
-                    var version_string__: String = String{};
-                    for (versions) |prop, version_i| {
-                        const version_name = prop.key.?.asString(allocator) orelse continue;
-
-                        var sliced_string = SlicedString.init(version_name, version_name);
-
-                        // We only need to copy the version tags if it's a pre/post
-                        if (std.mem.indexOfAny(u8, version_name, "-+") != null) {
-                            version_string__ = string_builder.append(String, version_name);
-                            sliced_string = version_string__.sliced(string_buf);
-                        }
-
-                        const parsed_version = Semver.Version.parse(sliced_string, allocator);
-                        std.debug.assert(parsed_version.valid);
-
-                        if (!parsed_version.valid) {
-                            log.addErrorFmt(&source, prop.value.?.loc, allocator, "Failed to parse dependency {s}", .{version_name}) catch unreachable;
-                            continue;
-                        }
-
-                        var package_version = PackageVersion{};
-
-                        if (prop.value.?.asProperty("cpu")) |cpu| {
-                            package_version.cpu = Architecture.all;
-
-                            switch (cpu.expr.data) {
-                                .e_array => |arr| {
-                                    if (arr.items.len > 0) {
-                                        package_version.cpu = Architecture.none;
-                                        for (arr.items) |item| {
-                                            if (item.asString(allocator)) |cpu_str_| {
-                                                package_version.cpu = package_version.cpu.apply(cpu_str_);
-                                            }
-                                        }
-                                    }
-                                },
-                                .e_string => |str| {
-                                    package_version.cpu = Architecture.apply(Architecture.none, str.utf8);
-                                },
-                                else => {},
-                            }
-                        }
-
-                        if (prop.value.?.asProperty("os")) |os| {
-                            package_version.os = OperatingSystem.all;
-
-                            switch (os.expr.data) {
-                                .e_array => |arr| {
-                                    if (arr.items.len > 0) {
-                                        package_version.os = OperatingSystem.none;
-                                        for (arr.items) |item| {
-                                            if (item.asString(allocator)) |cpu_str_| {
-                                                package_version.os = package_version.os.apply(cpu_str_);
-                                            }
-                                        }
-                                    }
-                                },
-                                .e_string => |str| {
-                                    package_version.os = OperatingSystem.apply(OperatingSystem.none, str.utf8);
-                                },
-                                else => {},
-                            }
-                        }
-
-                        bin: {
-                            if (prop.value.?.asProperty("bin")) |bin| {
-                                switch (bin.expr.data) {
-                                    .e_object => |obj| {
-                                        if (obj.properties.len > 0) {
-                                            const bin_name = obj.properties[0].key.?.asString(allocator) orelse break :bin;
-                                            const value = obj.properties[0].value.?.asString(allocator) orelse break :bin;
-                                            // For now, we're only supporting the first bin
-                                            // We'll fix that later
-                                            package_version.bin = Bin{
-                                                .tag = Bin.Tag.named_file,
-                                                .value = .{
-                                                    .named_file = .{
-                                                        string_builder.append(String, bin_name),
-                                                        string_builder.append(String, value),
-                                                    },
-                                                },
-                                            };
-                                            break :bin;
-
-                                            // for (arr.items) |item| {
-                                            //     if (item.asString(allocator)) |bin_str_| {
-                                            //         package_version.bin =
-                                            //     }
-                                            // }
-                                        }
-                                    },
-                                    .e_string => |str| {
-                                        if (str.utf8.len > 0) {
-                                            package_version.bin = Bin{
-                                                .tag = Bin.Tag.file,
-                                                .value = .{
-                                                    .file = string_builder.append(String, str.utf8),
-                                                },
-                                            };
-                                            break :bin;
-                                        }
-                                    },
-                                    else => {},
-                                }
-                            }
-
-                            if (prop.value.?.asProperty("directories")) |dirs| {
-                                if (dirs.expr.asProperty("bin")) |bin_prop| {
-                                    if (bin_prop.expr.asString(allocator)) |str_| {
-                                        if (str_.len > 0) {
-                                            package_version.bin = Bin{
-                                                .tag = Bin.Tag.dir,
-                                                .value = .{
-                                                    .dir = string_builder.append(String, str_),
-                                                },
-                                            };
-                                            break :bin;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        integrity: {
-                            if (prop.value.?.asProperty("dist")) |dist| {
-                                if (dist.expr.data == .e_object) {
-                                    if (dist.expr.asProperty("fileCount")) |file_count_| {
-                                        if (file_count_.expr.data == .e_number) {
-                                            package_version.file_count = file_count_.expr.data.e_number.toU32();
-                                        }
-                                    }
-
-                                    if (dist.expr.asProperty("unpackedSize")) |file_count_| {
-                                        if (file_count_.expr.data == .e_number) {
-                                            package_version.unpacked_size = file_count_.expr.data.e_number.toU32();
-                                        }
-                                    }
-
-                                    if (dist.expr.asProperty("integrity")) |shasum| {
-                                        if (shasum.expr.asString(allocator)) |shasum_str| {
-                                            package_version.integrity = Integrity.parse(shasum_str) catch Integrity{};
-                                            if (package_version.integrity.tag.isSupported()) break :integrity;
-                                        }
-                                    }
-
-                                    if (dist.expr.asProperty("shasum")) |shasum| {
-                                        if (shasum.expr.asString(allocator)) |shasum_str| {
-                                            package_version.integrity = Integrity.parseSHASum(shasum_str) catch Integrity{};
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        inline for (dependency_groups) |pair| {
-                            if (prop.value.?.asProperty(comptime pair.prop)) |versioned_deps| {
-                                const items = versioned_deps.expr.data.e_object.properties;
-                                var count = items.len;
-
-                                var this_names = dependency_names[0..count];
-                                var this_versions = dependency_values[0..count];
-
-                                var name_hasher = std.hash.Wyhash.init(0);
-                                var version_hasher = std.hash.Wyhash.init(0);
-
-                                var i: usize = 0;
-                                for (items) |item| {
-                                    const name_str = item.key.?.asString(allocator) orelse if (comptime isDebug or isTest) unreachable else continue;
-                                    const version_str = item.value.?.asString(allocator) orelse if (comptime isDebug or isTest) unreachable else continue;
-
-                                    this_names[i] = string_builder.append(ExternalString, name_str);
-                                    this_versions[i] = string_builder.append(ExternalString, version_str);
-
-                                    const names_hash_bytes = @bitCast([8]u8, this_names[i].hash);
-                                    name_hasher.update(&names_hash_bytes);
-                                    const versions_hash_bytes = @bitCast([8]u8, this_versions[i].hash);
-                                    version_hasher.update(&versions_hash_bytes);
-
-                                    i += 1;
-                                }
-
-                                count = i;
-
-                                var name_list = ExternalStringList.init(all_extern_strings, this_names);
-                                var version_list = ExternalStringList.init(version_extern_strings, this_versions);
-
-                                if (count > 0) {
-                                    const name_map_hash = name_hasher.final();
-                                    const version_map_hash = version_hasher.final();
-
-                                    var name_entry = try external_string_maps.getOrPut(name_map_hash);
-                                    if (name_entry.found_existing) {
-                                        name_list = name_entry.value_ptr.*;
-                                        this_names = name_list.mut(all_extern_strings);
-                                    } else {
-                                        name_entry.value_ptr.* = name_list;
-                                        dependency_names = dependency_names[count..];
-                                    }
-
-                                    var version_entry = try external_string_maps.getOrPut(version_map_hash);
-                                    if (version_entry.found_existing) {
-                                        version_list = version_entry.value_ptr.*;
-                                        this_versions = version_list.mut(version_extern_strings);
-                                    } else {
-                                        version_entry.value_ptr.* = version_list;
-                                        dependency_values = dependency_values[count..];
-                                    }
-                                }
-
-                                @field(package_version, pair.field) = ExternalStringMap{
-                                    .name = name_list,
-                                    .value = version_list,
-                                };
-
-                                if (comptime isDebug or isTest) {
-                                    const dependencies_list = @field(package_version, pair.field);
-
-                                    std.debug.assert(dependencies_list.name.off < all_extern_strings.len);
-                                    std.debug.assert(dependencies_list.value.off < all_extern_strings.len);
-                                    std.debug.assert(dependencies_list.name.off + dependencies_list.name.len < all_extern_strings.len);
-                                    std.debug.assert(dependencies_list.value.off + dependencies_list.value.len < all_extern_strings.len);
-
-                                    std.debug.assert(std.meta.eql(dependencies_list.name.get(all_extern_strings), this_names));
-                                    std.debug.assert(std.meta.eql(dependencies_list.value.get(version_extern_strings), this_versions));
-                                    var j: usize = 0;
-                                    const name_dependencies = dependencies_list.name.get(all_extern_strings);
-                                    while (j < name_dependencies.len) : (j += 1) {
-                                        const dep_name = name_dependencies[j];
-                                        std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_names[j].slice(string_buf)));
-                                        std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].key.?.asString(allocator).?));
-                                    }
-
-                                    j = 0;
-                                    while (j < dependencies_list.value.len) : (j += 1) {
-                                        const dep_name = dependencies_list.value.get(version_extern_strings)[j];
-
-                                        std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_versions[j].slice(string_buf)));
-                                        std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].value.?.asString(allocator).?));
-                                    }
-                                }
-                            }
-                        }
-
-                        if (!parsed_version.version.tag.hasPre()) {
-                            release_versions[0] = parsed_version.version;
-                            versioned_package_releases[0] = package_version;
-                            release_versions = release_versions[1..];
-                            versioned_package_releases = versioned_package_releases[1..];
-                        } else {
-                            prerelease_versions[0] = parsed_version.version;
-                            versioned_package_prereleases[0] = package_version;
-                            prerelease_versions = prerelease_versions[1..];
-                            versioned_package_prereleases = versioned_package_prereleases[1..];
-                        }
-                    }
-
-                    extern_strings = all_extern_strings[all_dependency_names_and_values.len - dependency_names.len ..];
-                    version_extern_strings = version_extern_strings[0 .. version_extern_strings.len - dependency_values.len];
-                }
-            }
-
-            if (json.asProperty("dist-tags")) |dist| {
-                if (dist.expr.data == .e_object) {
-                    const tags = dist.expr.data.e_object.properties;
-                    var extern_strings_slice = extern_strings[0..dist_tags_count];
-                    var dist_tag_i: usize = 0;
-
-                    for (tags) |tag, i| {
-                        if (tag.key.?.asString(allocator)) |key| {
-                            extern_strings_slice[dist_tag_i] = string_builder.append(ExternalString, key);
-
-                            const version_name = tag.value.?.asString(allocator) orelse continue;
-
-                            const dist_tag_value_literal = string_builder.append(ExternalString, version_name);
-                            const dist_tag_value_literal_slice = dist_tag_value_literal.slice(string_buf);
-
-                            const sliced_string = dist_tag_value_literal.value.sliced(string_buf);
-
-                            dist_tag_versions[dist_tag_i] = Semver.Version.parse(sliced_string, allocator).version;
-                            dist_tag_i += 1;
-                        }
-                    }
-
-                    result.pkg.dist_tags = DistTagMap{
-                        .tags = ExternalStringList.init(all_extern_strings, extern_strings_slice[0..dist_tag_i]),
-                        .versions = VersionSlice.init(all_semver_versions, dist_tag_versions[0..dist_tag_i]),
-                    };
-
-                    if (isDebug) {
-                        std.debug.assert(std.meta.eql(result.pkg.dist_tags.versions.get(all_semver_versions), dist_tag_versions[0..dist_tag_i]));
-                        std.debug.assert(std.meta.eql(result.pkg.dist_tags.tags.get(all_extern_strings), extern_strings_slice[0..dist_tag_i]));
-                    }
-
-                    extern_strings = extern_strings[dist_tag_i..];
-                }
-            }
-
-            if (last_modified.len > 0) {
-                result.pkg.last_modified = string_builder.append(String, last_modified);
-            }
-
-            if (etag.len > 0) {
-                result.pkg.etag = string_builder.append(String, etag);
-            }
-
-            if (json.asProperty("modified")) |name_q| {
-                const field = name_q.expr.asString(allocator) orelse return null;
-
-                result.pkg.modified = string_builder.append(String, field);
-            }
-
-            result.pkg.releases.keys = VersionSlice.init(all_semver_versions, all_release_versions);
-            result.pkg.releases.values = PackageVersionList.init(versioned_packages, all_versioned_package_releases);
-
-            result.pkg.prereleases.keys = VersionSlice.init(all_semver_versions, all_prerelease_versions);
-            result.pkg.prereleases.values = PackageVersionList.init(versioned_packages, all_versioned_package_prereleases);
-
-            if (extern_strings.len > 0) {
-                all_extern_strings = all_extern_strings[0 .. all_extern_strings.len - extern_strings.len];
-            }
-
-            result.pkg.string_lists_buf.off = 0;
-            result.pkg.string_lists_buf.len = @truncate(u32, all_extern_strings.len);
-
-            result.pkg.versions_buf.off = 0;
-            result.pkg.versions_buf.len = @truncate(u32, all_semver_versions.len);
-
-            result.versions = all_semver_versions;
-            result.external_strings = all_extern_strings;
-            result.external_strings_for_versions = version_extern_strings;
-            result.package_versions = versioned_packages;
-            result.pkg.public_max_age = public_max_age;
-
-            if (string_builder.ptr) |ptr| {
-                result.string_buf = ptr[0..string_builder.len];
-                result.pkg.string_buf = BigExternalString{
-                    .off = 0,
-                    .len = @truncate(u32, string_builder.len),
-                    .hash = 0,
-                };
-            }
-
-            return result;
-        }
-    };
-};
-
-const ExtractTarball = struct {
-    name: strings.StringOrTinyString,
-    resolution: Resolution,
-    registry: string,
-    cache_dir: string,
-    package_id: PackageID,
-    extracted_file_count: usize = 0,
-    skip_verify: bool = false,
-
-    integrity: Integrity = Integrity{},
-
-    pub inline fn run(this: ExtractTarball, bytes: []const u8) !string {
-        if (!this.skip_verify and this.integrity.tag.isSupported()) {
-            if (!this.integrity.verify(bytes)) {
-                Output.prettyErrorln("<r><red>Integrity check failed<r> for tarball: {s}", .{this.name.slice()});
-                Output.flush();
-                return error.IntegrityCheckFailed;
-            }
-        }
-        return this.extract(bytes);
-    }
-
-    pub fn buildURL(
-        registry_: string,
-        full_name_: strings.StringOrTinyString,
-        version: Semver.Version,
-        string_buf: []const u8,
-    ) !string {
-        return try buildURLWithPrinter(
-            registry_,
-            full_name_,
-            version,
-            string_buf,
-            @TypeOf(FileSystem.instance.dirname_store),
-            string,
-            anyerror,
-            FileSystem.instance.dirname_store,
-            FileSystem.DirnameStore.print,
-        );
-    }
-
-    pub fn buildURLWithWriter(
-        comptime Writer: type,
-        writer: Writer,
-        registry_: string,
-        full_name_: strings.StringOrTinyString,
-        version: Semver.Version,
-        string_buf: []const u8,
-    ) !void {
-        const Printer = struct {
-            writer: Writer,
-
-            pub fn print(this: @This(), comptime fmt: string, args: anytype) Writer.Error!void {
-                return try std.fmt.format(this.writer, fmt, args);
-            }
-        };
-
-        return try buildURLWithPrinter(
-            registry_,
-            full_name_,
-            version,
-            string_buf,
-            Printer,
-            void,
-            Writer.Error,
-            Printer{
-                .writer = writer,
-            },
-            Printer.print,
-        );
-    }
-
-    pub fn buildURLWithPrinter(
-        registry_: string,
-        full_name_: strings.StringOrTinyString,
-        version: Semver.Version,
-        string_buf: []const u8,
-        comptime PrinterContext: type,
-        comptime ReturnType: type,
-        comptime ErrorType: type,
-        printer: PrinterContext,
-        comptime print: fn (ctx: PrinterContext, comptime str: string, args: anytype) ErrorType!ReturnType,
-    ) ErrorType!ReturnType {
-        const registry = std.mem.trimRight(u8, registry_, "/");
-        const full_name = full_name_.slice();
-
-        var name = full_name;
-        if (name[0] == '@') {
-            if (std.mem.indexOfScalar(u8, name, '/')) |i| {
-                name = name[i + 1 ..];
-            }
-        }
-
-        const default_format = "{s}/{s}/-/";
-
-        if (!version.tag.hasPre() and !version.tag.hasBuild()) {
-            const args = .{ registry, full_name, name, version.major, version.minor, version.patch };
-            return try print(
-                printer,
-                default_format ++ "{s}-{d}.{d}.{d}.tgz",
-                args,
-            );
-        } else if (version.tag.hasPre() and version.tag.hasBuild()) {
-            const args = .{ registry, full_name, name, version.major, version.minor, version.patch, version.tag.pre.slice(string_buf), version.tag.build.slice(string_buf) };
-            return try print(
-                printer,
-                default_format ++ "{s}-{d}.{d}.{d}-{s}+{s}.tgz",
-                args,
-            );
-        } else if (version.tag.hasPre()) {
-            const args = .{ registry, full_name, name, version.major, version.minor, version.patch, version.tag.pre.slice(string_buf) };
-            return try print(
-                printer,
-                default_format ++ "{s}-{d}.{d}.{d}-{s}.tgz",
-                args,
-            );
-        } else if (version.tag.hasBuild()) {
-            const args = .{ registry, full_name, name, version.major, version.minor, version.patch, version.tag.build.slice(string_buf) };
-            return try print(
-                printer,
-                default_format ++ "{s}-{d}.{d}.{d}+{s}.tgz",
-                args,
-            );
-        } else {
-            unreachable;
-        }
-    }
-
-    threadlocal var abs_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var abs_buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-
-    fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
-        var tmpdir = Fs.FileSystem.instance.tmpdir();
-        var tmpname_buf: [128]u8 = undefined;
-        const name = this.name.slice();
-
-        var basename = this.name.slice();
-        if (basename[0] == '@') {
-            if (std.mem.indexOfScalar(u8, basename, '/')) |i| {
-                basename = basename[i + 1 ..];
-            }
-        }
-
-        var tmpname = try Fs.FileSystem.instance.tmpname(basename, &tmpname_buf, tgz_bytes.len);
-
-        var cache_dir = tmpdir.makeOpenPath(std.mem.span(tmpname), .{ .iterate = true }) catch |err| {
-            Output.panic("err: {s} when create temporary directory named {s} (while extracting {s})", .{ @errorName(err), tmpname, name });
-        };
-        var temp_destination = std.os.getFdPath(cache_dir.fd, &abs_buf) catch |err| {
-            Output.panic("err: {s} when resolve path for temporary directory named {s} (while extracting {s})", .{ @errorName(err), tmpname, name });
-        };
-        cache_dir.close();
-
-        if (verbose_install) {
-            Output.prettyErrorln("[{s}] Start extracting {s}<r>", .{ name, tmpname });
-            Output.flush();
-        }
-
-        const Archive = @import("../libarchive/libarchive.zig").Archive;
-        const Zlib = @import("../zlib.zig");
-        var zlib_pool = Npm.Registry.BodyPool.get(default_allocator);
-        zlib_pool.data.reset();
-        defer Npm.Registry.BodyPool.release(zlib_pool);
-
-        var zlib_entry = try Zlib.ZlibReaderArrayList.init(tgz_bytes, &zlib_pool.data.list, default_allocator);
-        zlib_entry.readAll() catch |err| {
-            Output.prettyErrorln(
-                "<r><red>Error {s}<r> decompressing {s}",
-                .{
-                    @errorName(err),
-                    name,
-                },
-            );
-            Output.flush();
-            Global.crash();
-        };
-        const extracted_file_count = if (verbose_install)
-            try Archive.extractToDisk(
-                zlib_pool.data.list.items,
-                temp_destination,
-                null,
-                void,
-                void{},
-                // for npm packages, the root dir is always "package"
-                1,
-                true,
-                true,
-            )
-        else
-            try Archive.extractToDisk(
-                zlib_pool.data.list.items,
-                temp_destination,
-                null,
-                void,
-                void{},
-                // for npm packages, the root dir is always "package"
-                1,
-                true,
-                false,
-            );
-
-        if (verbose_install) {
-            Output.prettyErrorln(
-                "[{s}] Extracted<r>",
-                .{
-                    name,
-                },
-            );
-            Output.flush();
-        }
-
-        var folder_name = PackageManager.cachedNPMPackageFolderNamePrint(&abs_buf2, name, this.resolution.value.npm);
-        if (folder_name.len == 0 or (folder_name.len == 1 and folder_name[0] == '/')) @panic("Tried to delete root and stopped it");
-        PackageManager.instance.cache_directory.deleteTree(folder_name) catch {};
-
-        // e.g. @next
-        // if it's a namespace package, we need to make sure the @name folder exists
-        if (basename.len != name.len) {
-            PackageManager.instance.cache_directory.makeDir(std.mem.trim(u8, name[0 .. name.len - basename.len], "/")) catch {};
-        }
-
-        // Now that we've extracted the archive, we rename.
-        std.os.renameatZ(tmpdir.fd, tmpname, PackageManager.instance.cache_directory.fd, folder_name) catch |err| {
-            Output.prettyErrorln(
-                "<r><red>Error {s}<r> moving {s} to cache dir:\n   From: {s}    To: {s}",
-                .{
-                    @errorName(err),
-                    name,
-                    tmpname,
-                    folder_name,
-                },
-            );
-            Output.flush();
-            Global.crash();
-        };
-
-        // We return a resolved absolute absolute file path to the cache dir.
-        // To get that directory, we open the directory again.
-        var final_dir = PackageManager.instance.cache_directory.openDirZ(folder_name, .{ .iterate = true }) catch |err| {
-            Output.prettyErrorln(
-                "<r><red>Error {s}<r> failed to verify cache dir for {s}",
-                .{
-                    @errorName(err),
-                    name,
-                },
-            );
-            Output.flush();
-            Global.crash();
-        };
-        defer final_dir.close();
-        // and get the fd path
-        var final_path = std.os.getFdPath(
-            final_dir.fd,
-            &abs_buf,
-        ) catch |err| {
-            Output.prettyErrorln(
-                "<r><red>Error {s}<r> failed to verify cache dir for {s}",
-                .{
-                    @errorName(err),
-                    name,
-                },
-            );
-            Output.flush();
-            Global.crash();
-        };
-        return try Fs.FileSystem.instance.dirname_store.append(@TypeOf(final_path), final_path);
-    }
-};
-
 /// Schedule long-running callbacks for a task
 /// Slow stuff is broken into tasks, each can run independently without locks
 const Task = struct {
@@ -5219,266 +2963,7 @@ const PackageInstall = struct {
     }
 };
 
-pub const Resolution = extern struct {
-    tag: Tag = Tag.uninitialized,
-    value: Value = Value{ .uninitialized = .{} },
-
-    pub fn count(this: *const Resolution, buf: []const u8, comptime Builder: type, builder: Builder) void {
-        switch (this.tag) {
-            .npm => this.value.npm.count(buf, Builder, builder),
-            .local_tarball => builder.count(this.value.local_tarball.slice(buf)),
-            .git_ssh => builder.count(this.value.git_ssh.slice(buf)),
-            .git_http => builder.count(this.value.git_http.slice(buf)),
-            .folder => builder.count(this.value.folder.slice(buf)),
-            .remote_tarball => builder.count(this.value.remote_tarball.slice(buf)),
-            .workspace => builder.count(this.value.workspace.slice(buf)),
-            .symlink => builder.count(this.value.symlink.slice(buf)),
-            .single_file_module => builder.count(this.value.single_file_module.slice(buf)),
-            .github => this.value.github.count(buf, Builder, builder),
-            .gitlab => this.value.gitlab.count(buf, Builder, builder),
-            else => {},
-        }
-    }
-
-    pub fn clone(this: Resolution, buf: []const u8, comptime Builder: type, builder: Builder) Resolution {
-        return Resolution{
-            .tag = this.tag,
-            .value = switch (this.tag) {
-                .npm => Resolution.Value{
-                    .npm = this.value.npm.clone(buf, Builder, builder),
-                },
-                .local_tarball => Resolution.Value{
-                    .local_tarball = builder.append(String, this.value.local_tarball.slice(buf)),
-                },
-                .git_ssh => Resolution.Value{
-                    .git_ssh = builder.append(String, this.value.git_ssh.slice(buf)),
-                },
-                .git_http => Resolution.Value{
-                    .git_http = builder.append(String, this.value.git_http.slice(buf)),
-                },
-                .folder => Resolution.Value{
-                    .folder = builder.append(String, this.value.folder.slice(buf)),
-                },
-                .remote_tarball => Resolution.Value{
-                    .remote_tarball = builder.append(String, this.value.remote_tarball.slice(buf)),
-                },
-                .workspace => Resolution.Value{
-                    .workspace = builder.append(String, this.value.workspace.slice(buf)),
-                },
-                .symlink => Resolution.Value{
-                    .symlink = builder.append(String, this.value.symlink.slice(buf)),
-                },
-                .single_file_module => Resolution.Value{
-                    .single_file_module = builder.append(String, this.value.single_file_module.slice(buf)),
-                },
-                .github => Resolution.Value{
-                    .github = this.value.github.clone(buf, Builder, builder),
-                },
-                .gitlab => Resolution.Value{
-                    .gitlab = this.value.gitlab.clone(buf, Builder, builder),
-                },
-                .root => Resolution.Value{ .root = .{} },
-                else => unreachable,
-            },
-        };
-    }
-
-    pub fn fmt(this: Resolution, buf: []const u8) Formatter {
-        return Formatter{ .resolution = this, .buf = buf };
-    }
-
-    pub fn fmtURL(this: Resolution, options: *const PackageManager.Options, name: string, buf: []const u8) URLFormatter {
-        return URLFormatter{ .resolution = this, .buf = buf, .package_name = name, .options = options };
-    }
-
-    pub fn eql(
-        lhs: Resolution,
-        rhs: Resolution,
-        lhs_string_buf: []const u8,
-        rhs_string_buf: []const u8,
-    ) bool {
-        if (lhs.tag != rhs.tag) return false;
-
-        return switch (lhs.tag) {
-            .root => true,
-            .npm => lhs.value.npm.eql(rhs.value.npm),
-            .local_tarball => lhs.value.local_tarball.eql(
-                rhs.value.local_tarball,
-                lhs_string_buf,
-                rhs_string_buf,
-            ),
-            .git_ssh => lhs.value.git_ssh.eql(
-                rhs.value.git_ssh,
-                lhs_string_buf,
-                rhs_string_buf,
-            ),
-            .git_http => lhs.value.git_http.eql(
-                rhs.value.git_http,
-                lhs_string_buf,
-                rhs_string_buf,
-            ),
-            .folder => lhs.value.folder.eql(
-                rhs.value.folder,
-                lhs_string_buf,
-                rhs_string_buf,
-            ),
-            .remote_tarball => lhs.value.remote_tarball.eql(
-                rhs.value.remote_tarball,
-                lhs_string_buf,
-                rhs_string_buf,
-            ),
-            .workspace => lhs.value.workspace.eql(
-                rhs.value.workspace,
-                lhs_string_buf,
-                rhs_string_buf,
-            ),
-            .symlink => lhs.value.symlink.eql(
-                rhs.value.symlink,
-                lhs_string_buf,
-                rhs_string_buf,
-            ),
-            .single_file_module => lhs.value.single_file_module.eql(
-                rhs.value.single_file_module,
-                lhs_string_buf,
-                rhs_string_buf,
-            ),
-            .github => lhs.value.github.eql(
-                rhs.value.github,
-                lhs_string_buf,
-                rhs_string_buf,
-            ),
-            .gitlab => lhs.value.gitlab.eql(
-                rhs.value.gitlab,
-                lhs_string_buf,
-                rhs_string_buf,
-            ),
-            else => unreachable,
-        };
-    }
-
-    pub const URLFormatter = struct {
-        resolution: Resolution,
-        options: *const PackageManager.Options,
-        package_name: string,
-
-        buf: []const u8,
-
-        pub fn format(formatter: URLFormatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-            switch (formatter.resolution.tag) {
-                .npm => try ExtractTarball.buildURLWithWriter(
-                    @TypeOf(writer),
-                    writer,
-                    formatter.options.registry_url.href,
-                    strings.StringOrTinyString.init(formatter.package_name),
-                    formatter.resolution.value.npm,
-                    formatter.buf,
-                ),
-                .local_tarball => try writer.writeAll(formatter.resolution.value.local_tarball.slice(formatter.buf)),
-                .git_ssh => try std.fmt.format(writer, "git+ssh://{s}", .{formatter.resolution.value.git_ssh.slice(formatter.buf)}),
-                .git_http => try std.fmt.format(writer, "https://{s}", .{formatter.resolution.value.git_http.slice(formatter.buf)}),
-                .folder => try writer.writeAll(formatter.resolution.value.folder.slice(formatter.buf)),
-                .remote_tarball => try writer.writeAll(formatter.resolution.value.remote_tarball.slice(formatter.buf)),
-                .github => try formatter.resolution.value.github.formatAs("github", formatter.buf, layout, opts, writer),
-                .gitlab => try formatter.resolution.value.gitlab.formatAs("gitlab", formatter.buf, layout, opts, writer),
-                .workspace => try std.fmt.format(writer, "workspace://{s}", .{formatter.resolution.value.workspace.slice(formatter.buf)}),
-                .symlink => try std.fmt.format(writer, "link://{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
-                .single_file_module => try std.fmt.format(writer, "link://{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
-                else => {},
-            }
-        }
-    };
-
-    pub const Formatter = struct {
-        resolution: Resolution,
-        buf: []const u8,
-
-        pub fn format(formatter: Formatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-            switch (formatter.resolution.tag) {
-                .npm => try formatter.resolution.value.npm.fmt(formatter.buf).format(layout, opts, writer),
-                .local_tarball => try writer.writeAll(formatter.resolution.value.local_tarball.slice(formatter.buf)),
-                .git_ssh => try std.fmt.format(writer, "git+ssh://{s}", .{formatter.resolution.value.git_ssh.slice(formatter.buf)}),
-                .git_http => try std.fmt.format(writer, "https://{s}", .{formatter.resolution.value.git_http.slice(formatter.buf)}),
-                .folder => try writer.writeAll(formatter.resolution.value.folder.slice(formatter.buf)),
-                .remote_tarball => try writer.writeAll(formatter.resolution.value.remote_tarball.slice(formatter.buf)),
-                .github => try formatter.resolution.value.github.formatAs("github", formatter.buf, layout, opts, writer),
-                .gitlab => try formatter.resolution.value.gitlab.formatAs("gitlab", formatter.buf, layout, opts, writer),
-                .workspace => try std.fmt.format(writer, "workspace://{s}", .{formatter.resolution.value.workspace.slice(formatter.buf)}),
-                .symlink => try std.fmt.format(writer, "link://{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
-                .single_file_module => try std.fmt.format(writer, "link://{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
-                else => {},
-            }
-        }
-    };
-
-    pub const Value = extern union {
-        uninitialized: void,
-        root: void,
-
-        npm: Semver.Version,
-
-        /// File path to a tarball relative to the package root
-        local_tarball: String,
-
-        git_ssh: String,
-        git_http: String,
-
-        folder: String,
-
-        /// URL to a tarball.
-        remote_tarball: String,
-
-        github: Repository,
-        gitlab: Repository,
-
-        workspace: String,
-        symlink: String,
-
-        single_file_module: String,
-    };
-
-    pub const Tag = enum(u8) {
-        uninitialized = 0,
-        root = 1,
-        npm = 2,
-
-        folder = 4,
-
-        local_tarball = 8,
-
-        github = 16,
-        gitlab = 24,
-
-        git_ssh = 32,
-        git_http = 33,
-
-        symlink = 64,
-
-        workspace = 72,
-
-        remote_tarball = 80,
-
-        // This is a placeholder for now.
-        // But the intent is to eventually support URL imports at the package manager level.
-        //
-        // There are many ways to do it, but perhaps one way to be maximally compatible is just removing the protocol part of the URL.
-        //
-        // For example, Bun would transform this input:
-        //
-        //   import _ from "https://github.com/lodash/lodash/lodash.min.js";
-        //
-        // Into:
-        //
-        //   import _ from "github.com/lodash/lodash/lodash.min.js";
-        //
-        // github.com would become a package, with it's own package.json
-        // This is similar to how Go does it, except it wouldn't clone the whole repo.
-        // There are more efficient ways to do this, e.g. generate a .bun file just for all URL imports.
-        // There are questions of determinism, but perhaps that's what Integrity would do.
-        single_file_module = 100,
-
-        _,
-    };
-};
+const Resolution = @import("./resolution.zig").Resolution;
 
 const TaggedPointer = @import("../tagged_pointer.zig");
 const TaskCallbackContext = struct {
@@ -5514,7 +2999,9 @@ pub const PackageManager = struct {
     extracted_count: u32 = 0,
     default_features: Features = Features{},
     summary: Lockfile.Package.Diff.Summary = Lockfile.Package.Diff.Summary{},
+    env: *DotEnv.Loader,
 
+    root_package_json_file: std.fs.File,
     root_dependency_list: Lockfile.DependencySlice = .{},
 
     registry: Npm.Registry = Npm.Registry{},
@@ -5540,6 +3027,7 @@ pub const PackageManager = struct {
     const PreallocatedNetworkTasks = std.BoundedArray(NetworkTask, 1024);
     const NetworkTaskQueue = std.HashMapUnmanaged(u64, void, IdentityContext(u64), 80);
     const PackageIndex = std.AutoHashMapUnmanaged(u64, *Package);
+    pub var verbose_install = false;
 
     const PackageDedupeList = std.HashMapUnmanaged(
         u32,
@@ -5855,7 +3343,7 @@ pub const PackageManager = struct {
 
                             // First time?
                             if (result.is_first_time) {
-                                if (verbose_install) {
+                                if (PackageManager.verbose_install) {
                                     const label: string = this.lockfile.str(version.literal);
 
                                     Output.prettyErrorln("   -> \"{s}\": \"{s}\" -> {s}@{}", .{
@@ -5918,7 +3406,7 @@ pub const PackageManager = struct {
                                     }
                                 }
 
-                                if (verbose_install) {
+                                if (PackageManager.verbose_install) {
                                     Output.prettyErrorln("Enqueue package manifest for download: {s}", .{this.lockfile.str(name)});
                                 }
 
@@ -6005,7 +3493,7 @@ pub const PackageManager = struct {
         // Step 2. If there were cached dependencies, go through all of those but don't download the devDependencies for them.
         this.flushDependencyQueue();
 
-        if (verbose_install) Output.flush();
+        if (PackageManager.verbose_install) Output.flush();
 
         // It's only network requests here because we don't store tarballs.
         const count = this.network_resolve_batch.len + this.network_tarball_batch.len;
@@ -6052,9 +3540,6 @@ pub const PackageManager = struct {
         return null;
     }
 
-    fn loadAllDependencies(this: *PackageManager) !void {}
-    fn installDependencies(this: *PackageManager) !void {}
-
     fn runTasks(manager: *PackageManager) !void {
         var batch = ThreadPool.Batch{};
 
@@ -6083,7 +3568,7 @@ pub const PackageManager = struct {
                         continue;
                     }
 
-                    if (verbose_install) {
+                    if (PackageManager.verbose_install) {
                         Output.prettyError("    ", .{});
                         Output.printElapsed(@floatCast(f64, @intToFloat(f128, task.http.elapsed) / std.time.ns_per_ms));
                         Output.prettyError(" <d>Downloaded <r><green>{s}<r> versions\n", .{name.slice()});
@@ -6147,7 +3632,7 @@ pub const PackageManager = struct {
                         continue;
                     }
 
-                    if (verbose_install) {
+                    if (PackageManager.verbose_install) {
                         Output.prettyError("    ", .{});
                         Output.printElapsed(@floatCast(f64, @intToFloat(f128, task.http.elapsed) / std.time.ns_per_ms));
                         Output.prettyError(" <d>Downloaded <r><green>{s}<r> tarball\n", .{extract.name.slice()});
@@ -6299,11 +3784,7 @@ pub const PackageManager = struct {
         };
     };
 
-    var cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-    var package_json_cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-    pub fn install(
-        ctx: Command.Context,
-    ) !void {
+    fn init(ctx: Command.Context) !*PackageManager {
         var fs = try Fs.FileSystem.init1(ctx.allocator, null);
         var original_cwd = std.mem.trimRight(u8, fs.top_level_dir, "/");
 
@@ -6323,7 +3804,7 @@ pub const PackageManager = struct {
                     std.os.chdirZ(chdir) catch |err| {
                         Output.prettyErrorln("Error {s} while chdir - {s}", .{ @errorName(err), chdir });
                         Output.flush();
-                        return;
+                        return err;
                     };
 
                     break :brk std.fs.cwd().openFileZ("package.json", .{ .read = true, .write = true }) catch |err| {
@@ -6332,9 +3813,7 @@ pub const PackageManager = struct {
                     };
                 }
 
-                Output.prettyErrorln("<r><green>No package.json<r> Nothing to install.", .{});
-                Output.flush();
-                return;
+                return error.MissingPackageJSON;
             };
         };
 
@@ -6344,17 +3823,10 @@ pub const PackageManager = struct {
         fs.top_level_dir = cwd_buf[0 .. fs.top_level_dir.len + 1];
         std.mem.copy(u8, &package_json_cwd_buf, fs.top_level_dir);
         std.mem.copy(u8, package_json_cwd_buf[fs.top_level_dir.len..], "package.json");
-        var package_json_contents = package_json_file.readToEndAlloc(ctx.allocator, std.math.maxInt(usize)) catch |err| {
-            Output.prettyErrorln("<r><red>{s} reading package.json<r> :(", .{@errorName(err)});
-            Output.flush();
-            return;
-        };
-        // Step 2. Parse the package.json file
-        //
-        var package_json_source = logger.Source.initPathString(
-            package_json_cwd_buf[0 .. fs.top_level_dir.len + "package.json".len],
-            package_json_contents,
-        );
+
+        var entries_option = try fs.fs.readDirectory(fs.top_level_dir, null);
+        var options = Options{};
+        var cache_directory: std.fs.Dir = undefined;
 
         var env_loader: *DotEnv.Loader = brk: {
             var map = try ctx.allocator.create(DotEnv.Map);
@@ -6365,14 +3837,11 @@ pub const PackageManager = struct {
             break :brk loader;
         };
 
-        var entries_option = try fs.fs.readDirectory(fs.top_level_dir, null);
-        var options = Options{};
-        var cache_directory: std.fs.Dir = undefined;
         env_loader.loadProcess();
         try env_loader.load(&fs.fs, &entries_option.entries, false);
 
         if (env_loader.map.get("BUN_INSTALL_VERBOSE") != null) {
-            verbose_install = true;
+            PackageManager.verbose_install = true;
         }
 
         if (PackageManager.fetchCacheDirectoryPath(ctx.allocator, env_loader, &entries_option.entries)) |cache_dir_path| {
@@ -6386,7 +3855,7 @@ pub const PackageManager = struct {
             };
         } else {}
 
-        if (verbose_install) {
+        if (PackageManager.verbose_install) {
             Output.prettyErrorln("Cache Dir: {s}", .{options.cache_directory});
             Output.flush();
         }
@@ -6411,11 +3880,13 @@ pub const PackageManager = struct {
             .allocator = ctx.allocator,
             .log = ctx.log,
             .root_dir = &entries_option.entries,
+            .env = env_loader,
             .thread_pool = ThreadPool.init(.{
                 .max_threads = cpu_count,
             }),
             .resolve_tasks = TaskChannel.init(),
             .lockfile = undefined,
+            .root_package_json_file = package_json_file,
             // .progress
         };
         manager.lockfile = try ctx.allocator.create(Lockfile);
@@ -6445,7 +3916,41 @@ pub const PackageManager = struct {
         );
 
         manager.timestamp = @truncate(u32, @intCast(u64, @maximum(std.time.timestamp(), 0)));
+        return manager;
+    }
 
+    pub fn add(
+        ctx: Command.Context,
+    ) !void {}
+
+    pub fn remove(
+        ctx: Command.Context,
+    ) !void {}
+
+    pub fn update(
+        ctx: Command.Context,
+    ) !void {}
+
+    pub const ParamType = clap.Param(clap.Help);
+
+    fn updatePackageJSONAndInstall(
+        ctx: Command.Context,
+        op: Lockfile.Package.Diff.Op,
+    ) !void {
+        var manager = PackageManager.init(ctx) catch |err| {
+            switch (err) {
+                error.MissingPackageJSON => {},
+                else => return err,
+            }
+        };
+    }
+
+    var cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    var package_json_cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    pub fn install(
+        ctx: Command.Context,
+    ) !void {
+        var manager = try PackageManager.init(ctx);
         var load_lockfile_result: Lockfile.LoadFromDiskResult = if (manager.options.do.load_lockfile)
             manager.lockfile.loadFromDisk(
                 ctx.allocator,
@@ -6461,16 +3966,28 @@ pub const PackageManager = struct {
 
         var had_any_diffs = false;
 
+        var package_json_contents = manager.root_package_json_file.readToEndAlloc(ctx.allocator, std.math.maxInt(usize)) catch |err| {
+            Output.prettyErrorln("<r><red>{s} reading package.json<r> :(", .{@errorName(err)});
+            Output.flush();
+            return;
+        };
+        // Step 2. Parse the package.json file
+        //
+        var package_json_source = logger.Source.initPathString(
+            package_json_cwd_buf[0 .. FileSystem.instance.top_level_dir.len + "package.json".len],
+            package_json_contents,
+        );
+
         switch (load_lockfile_result) {
             .err => |cause| {
                 switch (cause.step) {
-                    .open_file => Output.prettyErrorln("<r><red>error opening lockfile:<r> {s}. Discarding lockfile.", .{
+                    .open_file => Output.prettyErrorln("<r><red>error opening lockfile:<r> {s}. <b>Ignoring lockfile<r>.", .{
                         @errorName(cause.value),
                     }),
-                    .parse_file => Output.prettyErrorln("<r><red>error parsing lockfile:<r> {s}. Discarding lockfile.", .{
+                    .parse_file => Output.prettyErrorln("<r><red>error parsing lockfile:<r> {s}. <b>Ignoring lockfile<r>.", .{
                         @errorName(cause.value),
                     }),
-                    .read_file => Output.prettyErrorln("<r><red>error reading lockfile:<r> {s}. Discarding lockfile.", .{
+                    .read_file => Output.prettyErrorln("<r><red>error reading lockfile:<r> {s}. <b>Ignoring lockfile<r>.", .{
                         @errorName(cause.value),
                     }),
                 }
@@ -6676,7 +4193,5 @@ pub const PackageManager = struct {
         Output.flush();
     }
 };
-
-var verbose_install = false;
 
 const Package = Lockfile.Package;

@@ -419,8 +419,7 @@ pub const Lockfile = struct {
         summary: PackageInstall.Summary,
     };
 
-    pub fn clean(old: *Lockfile, deduped: *u32, progress: *std.Progress, options: *const PackageManager.Options) !*Lockfile {
-        var node = try progress.start("Cleaning lockfile", old.packages.len);
+    pub fn clean(old: *Lockfile, deduped: *u32, options: *const PackageManager.Options) !*Lockfile {
 
         // We will only shrink the number of packages here.
         // never grow
@@ -524,8 +523,6 @@ pub const Lockfile = struct {
                 clone_queue,
                 duplicate_resolutions_bitset_ptr,
             );
-
-            node.completeOne();
         }
 
         return new;
@@ -539,6 +536,10 @@ pub const Lockfile = struct {
         options: *const PackageManager.Options,
     ) !PackageInstall.Summary {
         var node = try progress.start("Installing packages", new.packages.len);
+        defer {
+            progress.root.end();
+            progress.* = .{};
+        }
 
         new.unique_packages.unset(0);
         var toplevel_node_modules = new.unique_packages.iterator(.{});
@@ -647,8 +648,8 @@ pub const Lockfile = struct {
                                 },
                                 else => {},
                             }
-
                             if (!PackageInstall.supported_method.isSync()) break :sync_install;
+                            node.completeOne();
                         }
                         break :run_install;
                     }
@@ -705,12 +706,12 @@ pub const Lockfile = struct {
                             },
                         }
                     }
+                    node.completeOne();
+
                     std.atomic.spinLoopHint();
                 }
             }
         }
-
-        node.end();
 
         return summary;
     }
@@ -1849,8 +1850,7 @@ pub const Lockfile = struct {
 
             const dependency_groups = comptime brk: {
                 var out_groups: [
-                    1 +
-                        @as(usize, @boolToInt(features.dev_dependencies)) +
+                    2 +
                         @as(usize, @boolToInt(features.optional_dependencies)) +
                         @as(usize, @boolToInt(features.peer_dependencies))
                 ]DependencyGroup = undefined;
@@ -2325,7 +2325,7 @@ pub const Lockfile = struct {
                 }
 
                 if (comptime Environment.isDebug) {
-                    Output.prettyErrorln("Field {s}: {d} - {d}", .{ name, pos, try stream.getPos() });
+                    // Output.prettyErrorln("Field {s}: {d} - {d}", .{ name, pos, try stream.getPos() });
                 }
             }
         }
@@ -2363,7 +2363,7 @@ pub const Lockfile = struct {
                 }
 
                 if (comptime Environment.isDebug) {
-                    Output.prettyErrorln("Field {s}: {d} - {d}", .{ sizes.names[i], pos, try stream.getPos() });
+                    // Output.prettyErrorln("Field {s}: {d} - {d}", .{ sizes.names[i], pos, try stream.getPos() });
                 }
             }
 
@@ -2849,7 +2849,7 @@ const PackageInstall = struct {
         };
         defer walker_.deinit();
         var node = this.progress.start(this.package_name, @maximum(this.expected_file_count, 1)) catch unreachable;
-        defer node.end();
+        defer node.completeOne();
 
         const FileCopier = struct {
             pub fn copy(
@@ -2991,6 +2991,8 @@ pub const PackageManager = struct {
     default_features: Features = Features{},
     summary: Lockfile.Package.Diff.Summary = Lockfile.Package.Diff.Summary{},
     env: *DotEnv.Loader,
+    progress: std.Progress = .{},
+    downloads_node: ?*std.Progress.Node = null,
 
     root_package_json_file: std.fs.File,
     root_dependency_list: Lockfile.DependencySlice = .{},
@@ -3511,7 +3513,11 @@ pub const PackageManager = struct {
         this.flushNetworkQueue();
     }
 
-    pub fn enqueueDependencyList(this: *PackageManager, dependencies_list: Lockfile.DependencySlice, comptime is_main: bool) void {
+    pub fn enqueueDependencyList(
+        this: *PackageManager,
+        dependencies_list: Lockfile.DependencySlice,
+        comptime is_main: bool,
+    ) void {
         this.task_queue.ensureUnusedCapacity(this.allocator, dependencies_list.len) catch unreachable;
         var lockfile = this.lockfile;
 
@@ -3580,7 +3586,9 @@ pub const PackageManager = struct {
         return null;
     }
 
-    fn runTasks(manager: *PackageManager) !void {
+    fn runTasks(
+        manager: *PackageManager,
+    ) !void {
         var batch = ThreadPool.Batch{};
 
         while (manager.network_channel.tryReadItem() catch null) |task_| {
@@ -3751,6 +3759,14 @@ pub const PackageManager = struct {
             NetworkThread.global.pool.schedule(manager.network_resolve_batch);
             manager.network_tarball_batch = .{};
             manager.network_resolve_batch = .{};
+
+            const completed_items = manager.total_tasks - manager.pending_tasks;
+            if (completed_items != manager.downloads_node.?.unprotected_completed_items) {
+                manager.downloads_node.?.setCompletedItems(completed_items);
+                manager.downloads_node.?.setEstimatedTotalItems(manager.total_tasks);
+                manager.downloads_node.?.activate();
+                manager.progress.refresh();
+            }
         }
     }
 
@@ -4180,8 +4196,11 @@ pub const PackageManager = struct {
             cli.no_cache = args.flag("--no-cache");
             cli.silent = args.flag("--silent");
             cli.verbose = args.flag("--verbose");
-            cli.development = args.flag("--development");
-            cli.optional = args.flag("--optional");
+
+            if (comptime params.len == add_params.len) {
+                cli.development = args.flag("--development");
+                cli.optional = args.flag("--optional");
+            }
 
             if (args.option("--token")) |token| {
                 cli.token = token;
@@ -4292,6 +4311,7 @@ pub const PackageManager = struct {
         var needs_new_lockfile = load_lockfile_result != .ok;
 
         var had_any_diffs = false;
+        manager.progress = std.Progress{};
 
         var package_json_contents = manager.root_package_json_file.readToEndAlloc(ctx.allocator, std.math.maxInt(usize)) catch |err| {
             Output.prettyErrorln("<r><red>{s} reading package.json<r> :(", .{@errorName(err)});
@@ -4381,7 +4401,8 @@ pub const PackageManager = struct {
                         mapping,
                     );
 
-                    had_any_diffs = manager.summary.add + manager.summary.remove + manager.summary.update > 0;
+                    const sum = manager.summary.add + manager.summary.remove + manager.summary.update;
+                    had_any_diffs = sum > 0;
 
                     // If you changed packages, we will copy over the new package from the new lockfile
                     const new_dependencies = new_root.dependencies.get(lockfile.buffers.dependencies.items);
@@ -4495,6 +4516,7 @@ pub const PackageManager = struct {
         // Anything that needs to be downloaded from an update needs to be scheduled here
         {
             const count = manager.network_resolve_batch.len + manager.network_tarball_batch.len;
+
             manager.pending_tasks += @truncate(u32, count);
             manager.total_tasks += @truncate(u32, count);
             manager.network_resolve_batch.push(manager.network_tarball_batch);
@@ -4503,8 +4525,22 @@ pub const PackageManager = struct {
             manager.network_resolve_batch = .{};
         }
 
-        while (manager.pending_tasks > 0) {
-            try manager.runTasks();
+        if (manager.pending_tasks > 0) {
+            manager.downloads_node = try manager.progress.start("Downloading from npm", 0);
+            manager.downloads_node.?.setEstimatedTotalItems(manager.total_tasks + manager.extracted_count);
+            manager.downloads_node.?.setCompletedItems(manager.total_tasks - manager.pending_tasks);
+            manager.downloads_node.?.activate();
+            manager.progress.refresh();
+
+            while (manager.pending_tasks > 0) {
+                try manager.runTasks();
+            }
+            manager.downloads_node.?.setEstimatedTotalItems(manager.downloads_node.?.unprotected_estimated_total_items);
+            manager.downloads_node.?.setCompletedItems(manager.downloads_node.?.unprotected_estimated_total_items);
+            manager.downloads_node.?.end();
+            manager.progress.refresh();
+            manager.progress.root.end();
+            manager.progress = .{};
         }
 
         if (Output.enable_ansi_colors) {
@@ -4517,31 +4553,45 @@ pub const PackageManager = struct {
             Output.flush();
             std.os.exit(1);
         }
-        var progress = std.Progress{};
 
         if (had_any_diffs or needs_new_lockfile) {
-            manager.lockfile = try manager.lockfile.clean(&manager.summary.deduped, &progress, &manager.options);
+            manager.lockfile = try manager.lockfile.clean(&manager.summary.deduped, &manager.options);
         }
 
-        const install_summary = if (manager.options.do.install_packages)
-            try manager.lockfile.installDirty(
+        if (manager.options.do.save_lockfile) {
+            var node = try manager.progress.start("Saving lockfile", 0);
+            node.activate();
+
+            manager.progress.refresh();
+            manager.lockfile.saveToDisk(manager.options.save_lockfile_path);
+            node.end();
+            manager.progress.refresh();
+            manager.progress.root.end();
+            manager.progress = .{};
+        }
+
+        var install_summary = PackageInstall.Summary{};
+        if (manager.options.do.install_packages) {
+            install_summary = try manager.lockfile.installDirty(
                 manager.cache_directory,
-                &progress,
+                &manager.progress,
                 &manager.thread_pool,
                 &manager.options,
-            )
-        else
-            PackageInstall.Summary{};
-
-        if (manager.options.do.save_lockfile)
-            manager.lockfile.saveToDisk(manager.options.save_lockfile_path);
+            );
+        }
 
         if (needs_new_lockfile) {
             manager.summary.add = @truncate(u32, manager.lockfile.packages.len);
         }
 
         if (manager.options.do.save_yarn_lock) {
+            var node = try manager.progress.start("Saving yarn.lock", 0);
+            manager.progress.refresh();
             try manager.writeYarnLock();
+            node.completeOne();
+            manager.progress.refresh();
+            manager.progress.root.end();
+            manager.progress = .{};
         }
 
         Output.prettyln("   <green>+{d}<r> add | <cyan>{d}<r> update | <r><red>-{d}<r> remove | {d} installed | {d} deduped | {d} skipped | {d} failed", .{

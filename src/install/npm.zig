@@ -907,8 +907,9 @@ pub const PackageManifest = struct {
         var prerelease_versions = all_prerelease_versions;
 
         var extern_strings = all_extern_strings;
-        string_builder.cap += 1;
+        string_builder.cap += string_builder.cap % 64;
         string_builder.cap *= 2;
+
         try string_builder.allocate(allocator);
 
         var string_buf: string = "";

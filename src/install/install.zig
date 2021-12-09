@@ -62,7 +62,7 @@ pub fn initializeStore() void {
 
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
-const NetworkQueue = std.fifo.LinearFifo(*NetworkTask, .Dynamic);
+const NetworkQueue = std.fifo.LinearFifo(*NetworkTask, .{ .Static = 32 });
 const Semver = @import("./semver.zig");
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
@@ -201,8 +201,9 @@ const NetworkTask = struct {
         extract: ExtractTarball,
     },
 
-    pub fn notify(http: *AsyncHTTP) void {
+    pub fn notify(http: *AsyncHTTP, sender: *AsyncHTTP.HTTPSender) void {
         PackageManager.instance.network_channel.writeItem(@fieldParentPtr(NetworkTask, "http", http)) catch {};
+        sender.onFinish();
     }
 
     const default_headers_buf: string = "Acceptapplication/vnd.npm.install-v1+json";
@@ -526,203 +527,6 @@ pub const Lockfile = struct {
         }
 
         return new;
-    }
-
-    pub fn installDirty(
-        new: *Lockfile,
-        cache_dir: std.fs.Dir,
-        progress: *Progress,
-        threadpool: *ThreadPool,
-        options: *const PackageManager.Options,
-        comptime log_level: PackageManager.Options.LogLevel,
-    ) !PackageInstall.Summary {
-        var node: *Progress.Node = undefined;
-
-        if (comptime log_level.showProgress()) {
-            node = try progress.start(PackageManager.ProgressStrings.install(), new.packages.len);
-        }
-
-        defer {
-            if (comptime log_level.showProgress()) {
-                progress.root.end();
-                progress.* = .{};
-            }
-        }
-
-        new.unique_packages.unset(0);
-        var toplevel_node_modules = new.unique_packages.iterator(.{});
-
-        // If there was already a valid lockfile and so we did not resolve, i.e. there was zero network activity
-        // the packages could still not be in the cache dir
-        // this would be a common scenario in a CI environment
-        // or if you just cloned a repo
-        // we want to check lazily though
-        // no need to download packages you've already installed!!
-
-        var skip_verify = false;
-        var node_modules_folder = std.fs.cwd().openDirZ("node_modules", .{ .iterate = true }) catch brk: {
-            skip_verify = true;
-            std.fs.cwd().makeDirZ("node_modules") catch |err| {
-                Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating <b>node_modules<r> folder", .{@errorName(err)});
-                Output.flush();
-                Global.crash();
-            };
-            break :brk std.fs.cwd().openDirZ("node_modules", .{ .iterate = true }) catch |err| {
-                Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> opening <b>node_modules<r> folder", .{@errorName(err)});
-                Output.flush();
-                Global.crash();
-            };
-        };
-        var skip_delete = skip_verify;
-        const force_install = options.enable.force_install;
-        if (options.enable.force_install) {
-            skip_verify = true;
-            skip_delete = false;
-        }
-        var summary = PackageInstall.Summary{};
-        {
-            const toplevel_count = new.unique_packages.count();
-            var packages_missing_from_cache = try std.DynamicBitSetUnmanaged.initEmpty(new.packages.len, new.allocator);
-
-            var parts = new.packages.slice();
-            var metas: []Lockfile.Package.Meta = parts.items(.meta);
-            var names: []String = parts.items(.name);
-            var resolutions: []Resolution = parts.items(.resolution);
-            var destination_dir_subpath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-
-            // When it's a Good Idea, run the install in single-threaded
-            // From benchmarking, apfs clonefile() is ~6x faster than copyfile() on macOS
-            // Running it in parallel is the same or slower.
-            // However, copyfile() is about 30% faster if run in paralell
-            // On Linux, the story here will be similar but with io_uring.
-            // We will have to support versions of Linux that do not have io_uring support
-            // so in that case, we will still need to support copy_file_range()
-            // git installs will always need to run in paralell, and tarball installs probably should too
-            run_install: {
-                var ran: usize = 0;
-                if (PackageInstall.supported_method.isSync()) {
-                    sync_install: {
-                        while (toplevel_node_modules.next()) |package_id| {
-                            const meta = &metas[package_id];
-
-                            if (meta.isDisabled()) {
-                                if (comptime log_level.showProgress()) node.completeOne();
-                                ran += 1;
-                                continue;
-                            }
-                            const buf = new.buffers.string_bytes.items;
-                            const name = names[package_id].slice(buf);
-                            const resolution = resolutions[package_id];
-                            std.mem.copy(u8, &destination_dir_subpath_buf, name);
-                            destination_dir_subpath_buf[name.len] = 0;
-                            var destination_dir_subpath: [:0]u8 = destination_dir_subpath_buf[0..name.len :0];
-                            var resolution_buf: [512]u8 = undefined;
-                            var resolution_label = try std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(buf)});
-                            switch (resolution.tag) {
-                                .npm => {
-                                    var installer = PackageInstall{
-                                        .cache_dir = cache_dir,
-                                        .progress = progress,
-                                        .expected_file_count = meta.file_count,
-                                        .cache_dir_subpath = PackageManager.cachedNPMPackageFolderName(name, resolution.value.npm),
-                                        .destination_dir = node_modules_folder,
-                                        .destination_dir_subpath = destination_dir_subpath,
-                                        .destination_dir_subpath_buf = &destination_dir_subpath_buf,
-                                        .allocator = new.allocator,
-                                        .package_name = name,
-                                        .package_version = resolution_label,
-                                    };
-
-                                    const needs_install = force_install or skip_verify or !installer.verify();
-                                    summary.skipped += @as(u32, @boolToInt(!needs_install));
-
-                                    if (needs_install) {
-                                        const result = installer.install(skip_delete);
-                                        switch (result) {
-                                            .success => summary.success += 1,
-                                            .fail => |cause| {
-                                                if (cause.isPackageMissingFromCache()) {
-                                                    packages_missing_from_cache.set(package_id);
-                                                } else {
-                                                    Output.prettyErrorln(
-                                                        "<r><red>error<r>: <b><red>{s}<r> installing <b>{s}<r>",
-                                                        .{ @errorName(cause.err), names[package_id].slice(buf) },
-                                                    );
-                                                    summary.fail += 1;
-                                                }
-                                            },
-                                            else => {},
-                                        }
-                                    }
-                                },
-                                else => {},
-                            }
-                            if (!PackageInstall.supported_method.isSync()) break :sync_install;
-                            if (comptime log_level.showProgress()) node.completeOne();
-                        }
-                        break :run_install;
-                    }
-                }
-
-                var install_context = try new.allocator.create(PackageInstall.Context);
-                install_context.* = .{
-                    .cache_dir = cache_dir,
-                    .progress = progress,
-                    .metas = metas,
-                    .names = names,
-                    .resolutions = resolutions,
-                    .string_buf = new.buffers.string_bytes.items,
-                    .allocator = new.allocator,
-                };
-                install_context.channel = PackageInstall.Task.Channel.init();
-
-                var tasks = try new.allocator.alloc(PackageInstall.Task, toplevel_count - ran);
-                var task_i: usize = 0;
-                var batch = ThreadPool.Batch{};
-                var remaining_count = task_i;
-                while (toplevel_node_modules.next()) |package_id| {
-                    const meta = &metas[package_id];
-                    if (meta.isDisabled()) {
-                        if (comptime log_level.showProgress()) node.completeOne();
-                        continue;
-                    }
-
-                    tasks[task_i] = PackageInstall.Task{
-                        .package_id = @truncate(PackageID, package_id),
-                        .destination_dir = node_modules_folder,
-                        .ctx = install_context,
-                    };
-                    batch.push(ThreadPool.Batch.from(&tasks[task_i].task));
-                    task_i += 1;
-                }
-
-                threadpool.schedule(batch);
-
-                while (remaining_count > 0) {
-                    while (install_context.channel.tryReadItem() catch null) |item_| {
-                        var install_task: *PackageInstall.Task = item_;
-                        defer remaining_count -= 1;
-                        switch (install_task.result) {
-                            .pending => unreachable,
-                            .skip => summary.skipped += 1,
-                            .success => summary.success += 1,
-                            .fail => |cause| {
-                                Output.prettyErrorln(
-                                    "<r><red>error<r>: <b><red>{s}<r> installing <b>{s}<r>",
-                                    .{ @errorName(cause.err), install_task.ctx.names[install_task.package_id] },
-                                );
-                                summary.fail += 1;
-                            },
-                        }
-                    }
-                    if (comptime log_level.showProgress()) node.completeOne();
-
-                    std.atomic.spinLoopHint();
-                }
-            }
-        }
-
-        return summary;
     }
 
     const PendingResolution = struct {
@@ -3178,33 +2982,7 @@ pub const PackageManager = struct {
 
             // Do we need to download the tarball?
             .extract => {
-                const task_id = Task.Id.forNPMPackage(Task.Tag.extract, this.lockfile.str(package.name), package.resolution.value.npm);
-                const dedupe_entry = try this.network_dedupe_map.getOrPut(this.allocator, task_id);
-
-                // Assert that we don't end up downloading the tarball twice.
-                std.debug.assert(!dedupe_entry.found_existing);
-                var network_task = this.getNetworkTask();
-                network_task.* = NetworkTask{
-                    .task_id = task_id,
-                    .callback = undefined,
-                    .allocator = this.allocator,
-                };
-
-                try network_task.forTarball(
-                    this.allocator,
-                    ExtractTarball{
-                        .name = if (name.len() >= strings.StringOrTinyString.Max)
-                            strings.StringOrTinyString.init(try FileSystem.FilenameStore.instance.append(@TypeOf(this.lockfile.str(name)), this.lockfile.str(name)))
-                        else
-                            strings.StringOrTinyString.init(this.lockfile.str(name)),
-                        .resolution = package.resolution,
-                        .cache_dir = this.cache_directory_path,
-                        .registry = this.registry.url.href,
-                        .package_id = package.meta.id,
-                        .extracted_file_count = find_result.package.file_count,
-                        .integrity = package.meta.integrity,
-                    },
-                );
+                var network_task = try this.generateNetworkTaskForTarball(package);
 
                 return ResolvedPackageResult{
                     .package = package,
@@ -3216,6 +2994,45 @@ pub const PackageManager = struct {
         }
 
         return ResolvedPackageResult{ .package = package };
+    }
+
+    pub fn generateNetworkTaskForTarball(this: *PackageManager, package: Lockfile.Package) !*NetworkTask {
+        const task_id = Task.Id.forNPMPackage(Task.Tag.extract, this.lockfile.str(package.name), package.resolution.value.npm);
+        const dedupe_entry = try this.network_dedupe_map.getOrPut(this.allocator, task_id);
+
+        // Assert that we don't end up downloading the tarball twice.
+        std.debug.assert(!dedupe_entry.found_existing);
+        var network_task = this.getNetworkTask();
+
+        network_task.* = NetworkTask{
+            .task_id = task_id,
+            .callback = undefined,
+            .allocator = this.allocator,
+        };
+
+        try network_task.forTarball(
+            this.allocator,
+            ExtractTarball{
+                .name = if (package.name.len() >= strings.StringOrTinyString.Max)
+                    strings.StringOrTinyString.init(
+                        try FileSystem.FilenameStore.instance.append(
+                            @TypeOf(this.lockfile.str(package.name)),
+                            this.lockfile.str(package.name),
+                        ),
+                    )
+                else
+                    strings.StringOrTinyString.init(this.lockfile.str(package.name)),
+
+                .resolution = package.resolution,
+                .cache_dir = this.cache_directory_path,
+                .registry = this.registry.url.href,
+                .package_id = package.meta.id,
+                .extracted_file_count = package.meta.file_count,
+                .integrity = package.meta.integrity,
+            },
+        );
+
+        return network_task;
     }
 
     pub fn fetchVersionsForPackageName(
@@ -3263,7 +3080,7 @@ pub const PackageManager = struct {
                 .allocator = this.allocator,
             };
             try network_task.forManifest(name, this.allocator, this.registry.url, loaded_manifest);
-            try this.network_task_fifo.writeItem(network_task);
+            this.enqueueNetworkTask(network_task);
         }
 
         var manifest_entry_parse = try this.task_queue.getOrPutContext(this.allocator, task_id, .{});
@@ -3273,6 +3090,14 @@ pub const PackageManager = struct {
 
         try manifest_entry_parse.value_ptr.append(this.allocator, TaskCallbackContext{ .request_id = id });
         return null;
+    }
+
+    fn enqueueNetworkTask(this: *PackageManager, task: *NetworkTask) void {
+        if (this.network_task_fifo.writableLength() == 0) {
+            this.flushNetworkQueue();
+        }
+
+        this.network_task_fifo.writeItemAssumeCapacity(task);
     }
 
     pub fn getOrPutResolvedPackage(
@@ -3499,7 +3324,7 @@ pub const PackageManager = struct {
                                 var meta: *Lockfile.Package.Meta = &this.lockfile.packages.items(.meta)[result.package.meta.id];
                                 if (meta.preinstall_state == .extract) {
                                     meta.preinstall_state = .extracting;
-                                    try this.network_task_fifo.writeItem(network_task);
+                                    this.enqueueNetworkTask(network_task);
                                 }
                             }
                         } else {
@@ -3553,7 +3378,7 @@ pub const PackageManager = struct {
                                     .allocator = this.allocator,
                                 };
                                 try network_task.forManifest(this.lockfile.str(name), this.allocator, this.registry.url, loaded_manifest);
-                                try this.network_task_fifo.writeItem(network_task);
+                                this.enqueueNetworkTask(network_task);
                             }
 
                             var manifest_entry_parse = try this.task_queue.getOrPutContext(this.allocator, task_id, .{});
@@ -3605,6 +3430,18 @@ pub const PackageManager = struct {
         this.doFlushDependencyQueue();
         this.doFlushDependencyQueue();
         this.flushNetworkQueue();
+    }
+
+    pub fn scheduleNetworkTasks(manager: *PackageManager) usize {
+        const count = manager.network_resolve_batch.len + manager.network_tarball_batch.len;
+
+        manager.pending_tasks += @truncate(u32, count);
+        manager.total_tasks += @truncate(u32, count);
+        manager.network_resolve_batch.push(manager.network_tarball_batch);
+        NetworkThread.global.pool.schedule(manager.network_resolve_batch);
+        manager.network_tarball_batch = .{};
+        manager.network_resolve_batch = .{};
+        return count;
     }
 
     pub fn enqueueDependencyList(
@@ -3682,8 +3519,11 @@ pub const PackageManager = struct {
 
     fn runTasks(
         manager: *PackageManager,
+        comptime ExtractCompletionContext: type,
+        extract_ctx: ExtractCompletionContext,
+        comptime callback_fn: anytype,
         comptime log_level: Options.LogLevel,
-    ) !void {
+    ) anyerror!void {
         var batch = ThreadPool.Batch{};
         var has_updated_this_run = false;
         while (manager.network_channel.tryReadItem() catch null) |task_| {
@@ -3884,8 +3724,13 @@ pub const PackageManager = struct {
                         Output.flush();
                         continue;
                     }
+                    const package_id = task.request.extract.tarball.package_id;
                     manager.extracted_count += 1;
-                    manager.lockfile.packages.items(.meta)[task.request.extract.tarball.package_id].preinstall_state = .done;
+                    manager.lockfile.packages.items(.meta)[package_id].preinstall_state = .done;
+
+                    if (comptime ExtractCompletionContext != void) {
+                        callback_fn(extract_ctx, package_id, comptime log_level);
+                    }
 
                     if (comptime log_level.showProgress()) {
                         if (!has_updated_this_run) {
@@ -3911,13 +3756,16 @@ pub const PackageManager = struct {
             manager.network_resolve_batch = .{};
 
             if (comptime log_level.showProgress()) {
-                const completed_items = manager.total_tasks - manager.pending_tasks;
-                if (completed_items != manager.downloads_node.?.unprotected_completed_items or has_updated_this_run) {
-                    manager.downloads_node.?.setCompletedItems(completed_items);
-                    manager.downloads_node.?.setEstimatedTotalItems(manager.total_tasks);
-                    manager.downloads_node.?.activate();
-                    manager.progress.maybeRefresh();
+                if (comptime ExtractCompletionContext == void) {
+                    const completed_items = manager.total_tasks - manager.pending_tasks;
+                    if (completed_items != manager.downloads_node.?.unprotected_completed_items or has_updated_this_run) {
+                        manager.downloads_node.?.setCompletedItems(completed_items);
+                        manager.downloads_node.?.setEstimatedTotalItems(manager.total_tasks);
+                    }
                 }
+
+                manager.downloads_node.?.activate();
+                manager.progress.maybeRefresh();
             }
         }
     }
@@ -4126,17 +3974,17 @@ pub const PackageManager = struct {
 
     const ProgressStrings = struct {
         pub const download_no_emoji_ = "Resolving";
-        const download_no_emoji: string = download_no_emoji_;
+        const download_no_emoji: string = download_no_emoji_ ++ "\n";
         const download_with_emoji: string = download_emoji ++ download_no_emoji_;
         pub const download_emoji: string = "  🔍 ";
 
         pub const extract_no_emoji_ = "Resolving & extracting";
-        const extract_no_emoji: string = extract_no_emoji_;
+        const extract_no_emoji: string = extract_no_emoji_ ++ "\n";
         const extract_with_emoji: string = extract_emoji ++ extract_no_emoji_;
         pub const extract_emoji: string = "  🚚 ";
 
         pub const install_no_emoji_ = "Installing";
-        const install_no_emoji: string = install_no_emoji_;
+        const install_no_emoji: string = install_no_emoji_ ++ "\n";
         const install_with_emoji: string = install_emoji ++ install_no_emoji_;
         pub const install_emoji: string = "  📦 ";
 
@@ -4270,7 +4118,7 @@ pub const PackageManager = struct {
         // var node = progress.start(name: []const u8, estimated_total_items: usize)
         manager.* = PackageManager{
             .options = options,
-            .network_task_fifo = NetworkQueue.init(ctx.allocator),
+            .network_task_fifo = NetworkQueue.init(),
             .cache_directory = cache_directory,
             .env_loader = env_loader,
             .allocator = ctx.allocator,
@@ -4498,73 +4346,6 @@ pub const PackageManager = struct {
         missing_version: bool = false,
         e_string: ?*JSAst.E.String = null,
     };
-    const UpdateHandler = struct {
-        this: *PackageManager,
-        updates: []UpdateRequest,
-        pending: usize = 0,
-
-        pub fn handle(this: *UpdateHandler, manifest: Npm.PackageManifest, id: PackageID) void {
-            const req = this.updates[id];
-            var updates = this.updates;
-
-            switch (req.version.tag) {
-                Dependency.Version.Tag.npm => {
-                    const matching_version = manifest.findBestVersion(req.version.value.npm) orelse {
-                        Output.prettyErrorln("<r><red>error:<r> No version <b>\"{s}\"<r> found for package <b>{s}<r>", .{
-                            req.version_buf,
-                            req.name,
-                        });
-                        Global.crash();
-                    };
-                    updates[id].resolution_string_buf = manifest.string_buf;
-                    updates[id].resolved_version = Resolution{
-                        .tag = .npm,
-                        .value = Resolution.Value{ .npm = matching_version.version },
-                    };
-                    this.pending -= 1;
-                },
-                Dependency.Version.Tag.dist_tag => {
-                    const matching_version = manifest.findByDistTag(req.version_buf) orelse {
-                        Output.prettyErrorln("<r><red>error:<r> Tag <b>\"{s}\"<r> not found for package <b>\"{s}\"<r>", .{
-                            req.version_buf,
-                            req.name,
-                        });
-                        Global.crash();
-                    };
-
-                    updates[id].resolution_string_buf = manifest.string_buf;
-                    updates[id].resolved_version = Resolution{
-                        .tag = .npm,
-                        .value = Resolution.Value{ .npm = matching_version.version },
-                    };
-                    this.pending -= 1;
-                },
-                .uninitialized => {
-                    const matching_version = manifest.findByDistTag("latest") orelse {
-                        Output.prettyErrorln("<r><red>error:<r> Tag <b>\"{s}\"<r> not found for package <b>\"{s}\"<r>", .{
-                            "latest",
-                            req.name,
-                        });
-                        Global.crash();
-                    };
-
-                    updates[id].resolution_string_buf = manifest.string_buf;
-                    updates[id].resolved_version = Resolution{
-                        .tag = .npm,
-                        .value = Resolution.Value{ .npm = matching_version.version },
-                    };
-                    this.pending -= 1;
-                },
-                else => {
-                    Output.prettyErrorln("<r><red>error:<r> Unsupported dependency <b>\"{s}\"<r> for package <b>\"{s}\"<r>", .{
-                        req.version_buf,
-                        req.name,
-                    });
-                    Global.crash();
-                },
-            }
-        }
-    };
 
     fn updatePackageJSONAndInstall(
         ctx: Command.Context,
@@ -4683,161 +4464,14 @@ pub const PackageManager = struct {
                 need_to_get_versions_from_npm = true;
                 request.missing_version = true;
             } else {
-                request.missing_version = true;
-
                 const sliced = SlicedString.init(request.version_buf, request.version_buf);
                 request.version = Dependency.parse(ctx.allocator, request.version_buf, &sliced, ctx.log) orelse Dependency.Version{};
-
-                if (request.version.tag == .uninitialized or request.version.tag == .dist_tag) {}
             }
 
             update_requests.append(request) catch break;
         }
 
         var updates: []UpdateRequest = update_requests.slice();
-
-        // if we're just removing
-        // we don't care about getting versions from npm
-        if (op != .remove) {
-            var pending_versions = update_requests.len;
-            var update_handler = UpdateHandler{
-                .this = manager,
-                .updates = updates,
-                .pending = pending_versions,
-            };
-
-            if (need_to_get_versions_from_npm) {
-                for (updates) |req, request_id| {
-                    const id = @truncate(PackageID, request_id);
-                    if (manager.fetchVersionsForPackageName(req.name, req.version, id) catch null) |manifest| {
-                        update_handler.handle(manifest, id);
-                    }
-                }
-
-                manager.flushNetworkQueue();
-
-                const download_count = manager.network_resolve_batch.len + manager.network_tarball_batch.len;
-
-                // Anything that needs to be downloaded from an update needs to be scheduled here
-                {
-                    manager.pending_tasks += @truncate(u32, download_count);
-                    manager.total_tasks += @truncate(u32, download_count);
-                    manager.network_resolve_batch.push(manager.network_tarball_batch);
-                    NetworkThread.global.pool.schedule(manager.network_resolve_batch);
-                    manager.network_tarball_batch = .{};
-                    manager.network_resolve_batch = .{};
-                }
-
-                if (manager.pending_tasks > 0) {
-                    if (comptime log_level.showProgress()) {
-                        manager.downloads_node = try manager.progress.start(
-                            ProgressStrings.download(),
-                            manager.total_tasks,
-                        );
-                        manager.downloads_node.?.activate();
-                        manager.progress.refresh();
-                    }
-                    defer {
-                        if (comptime log_level.showProgress()) {
-                            manager.progress.root.end();
-                            manager.progress = .{};
-                        }
-                    }
-
-                    while (manager.pending_tasks > 0) {
-                        while (manager.network_channel.tryReadItem() catch null) |task_| {
-                            var task: *NetworkTask = task_;
-                            defer manager.pending_tasks -= 1;
-
-                            switch (task.callback) {
-                                .package_manifest => |manifest_req| {
-                                    const name = manifest_req.name;
-                                    const response = task.http.response orelse {
-                                        Output.prettyErrorln("Failed to download package manifest for package {s}", .{name});
-                                        Output.flush();
-                                        Global.crash();
-                                    };
-
-                                    if (response.status_code > 399) {
-                                        Output.prettyErrorln(
-                                            "<r><red><b>GET<r><red> {s}<d> - {d}<r>",
-                                            .{
-                                                name.slice(),
-                                                response.status_code,
-                                            },
-                                        );
-                                        Output.flush();
-                                        Global.crash();
-                                    }
-
-                                    if (PackageManager.verbose_install) {
-                                        Output.prettyError("    ", .{});
-                                        Output.printElapsed(@floatCast(f64, @intToFloat(f128, task.http.elapsed) / std.time.ns_per_ms));
-                                        Output.prettyError(" <d>Downloaded <r><green>{s}<r> versions\n", .{name.slice()});
-                                        Output.flush();
-                                    }
-
-                                    var manifest_: ?Npm.PackageManifest = null;
-                                    if (response.status_code == 304) {
-                                        // The HTTP request was cached
-                                        manifest_ = manifest_req.loaded_manifest;
-                                    }
-
-                                    if (manifest_ == null) {
-                                        const package_version_response = try Npm.Registry.getPackageMetadata(
-                                            ctx.allocator,
-                                            response,
-                                            task.response_buffer.toOwnedSliceLeaky(),
-                                            ctx.log,
-                                            name.slice(),
-                                            manifest_req.loaded_manifest,
-                                        );
-                                        switch (package_version_response) {
-                                            .cached => |cached| {
-                                                manifest_ = cached;
-                                            },
-                                            .fresh => |fresh| {
-                                                manifest_ = fresh;
-                                            },
-                                            else => {
-                                                @panic("Unexpected response from getPackageMetadata");
-                                            },
-                                        }
-                                    }
-                                    if (manifest_) |manifest| {
-                                        var entry = try manager.manifests.getOrPut(manager.allocator, manifest.pkg.name.hash);
-                                        entry.value_ptr.* = manifest;
-
-                                        if (response.status_code == 304) {
-                                            entry.value_ptr.*.pkg.public_max_age = @truncate(u32, @intCast(u64, @maximum(0, std.time.timestamp()))) + 300;
-                                            {
-                                                var tmpdir = Fs.FileSystem.instance.tmpdir();
-                                                Npm.PackageManifest.Serializer.save(entry.value_ptr, tmpdir, PackageManager.instance.cache_directory) catch {};
-                                            }
-                                        }
-
-                                        const task_id = Task.Id.forManifest(
-                                            Task.Tag.package_manifest,
-                                            manifest.name(),
-                                        );
-                                        var pending = manager.task_queue.get(task_id).?;
-                                        defer _ = manager.task_queue.remove(task_id);
-                                        for (pending.items) |item| {
-                                            update_handler.handle(manifest, item.request_id);
-                                        }
-                                        manager.downloads_node.?.completeOne();
-                                        continue;
-                                    }
-                                },
-                                else => unreachable,
-                            }
-                        }
-                    }
-                }
-            }
-
-            // update_e_string_values[i] = JSAst.E.String{.utf8 = };
-        }
 
         if (ctx.log.errors > 0) {
             if (comptime log_level != .silent) {
@@ -4932,6 +4566,7 @@ pub const PackageManager = struct {
                                         if (dependencies[i].key.?.data.e_string.eql(string, update.name)) {
                                             if (new_len > 1) {
                                                 dependencies[i] = dependencies[new_len - 1];
+                                                new_len -= 1;
                                             } else {
                                                 new_len = 0;
                                             }
@@ -4944,8 +4579,21 @@ pub const PackageManager = struct {
                                 const changed = new_len != dependencies.len;
                                 if (changed) {
                                     query.expr.data.e_object.properties = query.expr.data.e_object.properties[0..new_len];
-                                    var obj = query.expr.data.e_object;
-                                    obj.alphabetizeProperties();
+
+                                    // If the dependencies list is now empty, remove it from the package.json
+                                    // since we're swapRemove, we have to re-sort it
+                                    if (query.expr.data.e_object.properties.len == 0) {
+                                        var arraylist = std.ArrayListUnmanaged(JSAst.G.Property){
+                                            .items = current_package_json.data.e_object.properties,
+                                            .capacity = current_package_json.data.e_object.properties.len,
+                                        };
+                                        _ = arraylist.swapRemove(query.i);
+                                        current_package_json.data.e_object.properties = arraylist.items;
+                                        current_package_json.data.e_object.packageJSONSort();
+                                    } else {
+                                        var obj = query.expr.data.e_object;
+                                        obj.alphabetizeProperties();
+                                    }
                                 }
                             }
                         }
@@ -5091,13 +4739,13 @@ pub const PackageManager = struct {
                     dependencies_object.data.e_object.packageJSONSort();
                 }
 
-                for (updates) |update, j| {
+                for (updates) |*update, j| {
                     var str = update.e_string.?;
-                    // let the user type an exact version
-                    if (update.version.tag == .npm and update.version.value.npm.isExact()) {
-                        str.utf8 = try std.fmt.allocPrint(ctx.allocator, "{}", .{update.resolved_version.fmt(update.resolved_version_buf)});
+
+                    if (update.version.tag == .uninitialized) {
+                        str.utf8 = latest;
                     } else {
-                        str.utf8 = try std.fmt.allocPrint(ctx.allocator, "^{}", .{update.resolved_version.fmt(update.resolved_version_buf)});
+                        str.utf8 = update.version.literal.slice(update.version_buf);
                     }
                 }
             },
@@ -5152,6 +4800,288 @@ pub const PackageManager = struct {
             .default_no_progress => try installWithManager(ctx, manager, package_json_contents, .default_no_progress),
             .verbose_no_progress => try installWithManager(ctx, manager, package_json_contents, .verbose_no_progress),
         }
+    }
+
+    const PackageInstaller = struct {
+        manager: *PackageManager,
+        lockfile: *Lockfile,
+        progress: *std.Progress,
+        node_modules_folder: std.fs.Dir,
+        skip_verify: bool,
+        skip_delete: bool,
+        force_install: bool,
+        summary: *PackageInstall.Summary,
+        metas: []Lockfile.Package.Meta,
+        names: []String,
+        resolutions: []Resolution,
+        node: *Progress.Node,
+        destination_dir_subpath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
+        ran: usize = 0,
+        install_count: usize = 0,
+
+        pub fn installPackage(
+            this: *PackageInstaller,
+            package_id: PackageID,
+            comptime log_level: Options.LogLevel,
+        ) void {
+            const meta = &this.metas[package_id];
+
+            if (meta.isDisabled()) {
+                this.ran += 1;
+                if (comptime log_level.showProgress()) {
+                    this.node.completeOne();
+                }
+                return;
+            }
+
+            const buf = this.lockfile.buffers.string_bytes.items;
+            const name = this.names[package_id].slice(buf);
+            const resolution = this.resolutions[package_id];
+            std.mem.copy(u8, &this.destination_dir_subpath_buf, name);
+            this.destination_dir_subpath_buf[name.len] = 0;
+            var destination_dir_subpath: [:0]u8 = this.destination_dir_subpath_buf[0..name.len :0];
+            var resolution_buf: [512]u8 = undefined;
+            var resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(buf)}) catch unreachable;
+            switch (resolution.tag) {
+                .npm => {
+                    var installer = PackageInstall{
+                        .cache_dir = this.manager.cache_directory,
+                        .progress = this.progress,
+                        .expected_file_count = meta.file_count,
+                        .cache_dir_subpath = PackageManager.cachedNPMPackageFolderName(name, resolution.value.npm),
+                        .destination_dir = this.node_modules_folder,
+                        .destination_dir_subpath = destination_dir_subpath,
+                        .destination_dir_subpath_buf = &this.destination_dir_subpath_buf,
+                        .allocator = this.lockfile.allocator,
+                        .package_name = name,
+                        .package_version = resolution_label,
+                    };
+
+                    const needs_install = this.force_install or this.skip_verify or !installer.verify();
+                    this.summary.skipped += @as(u32, @boolToInt(!needs_install));
+
+                    if (needs_install) {
+                        const result = installer.install(this.skip_delete);
+                        switch (result) {
+                            .success => {
+                                this.summary.success += 1;
+                                if (comptime log_level.showProgress()) {
+                                    this.node.completeOne();
+                                }
+                            },
+                            .fail => |cause| {
+                                if (cause.isPackageMissingFromCache()) {
+                                    var task = this.manager.generateNetworkTaskForTarball(this.lockfile.packages.get(package_id)) catch unreachable;
+                                    task.schedule(&this.manager.network_tarball_batch);
+                                    if (this.manager.network_tarball_batch.len > 6) {
+                                        _ = this.manager.scheduleNetworkTasks();
+                                    }
+                                } else {
+                                    Output.prettyErrorln(
+                                        "<r><red>error<r>: <b><red>{s}<r> installing <b>{s}<r>",
+                                        .{ @errorName(cause.err), this.names[package_id].slice(buf) },
+                                    );
+                                    this.summary.fail += 1;
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+    };
+
+    pub fn installPackages(
+        this: *PackageManager,
+        lockfile: *Lockfile,
+        comptime log_level: PackageManager.Options.LogLevel,
+    ) !PackageInstall.Summary {
+        var root_node: *Progress.Node = undefined;
+        var download_node: Progress.Node = undefined;
+        var install_node: Progress.Node = undefined;
+        const options = &this.options;
+        var progress = &this.progress;
+
+        if (comptime log_level.showProgress()) {
+            root_node = try progress.start("", 0);
+            download_node = root_node.start(ProgressStrings.download(), 0);
+
+            install_node = root_node.start(ProgressStrings.install(), lockfile.packages.len);
+            this.downloads_node = &download_node;
+        }
+
+        defer {
+            if (comptime log_level.showProgress()) {
+                progress.root.end();
+                progress.* = .{};
+            }
+        }
+        const cache_dir = this.cache_directory;
+
+        lockfile.unique_packages.unset(0);
+        var toplevel_node_modules = lockfile.unique_packages.iterator(.{});
+
+        // If there was already a valid lockfile and so we did not resolve, i.e. there was zero network activity
+        // the packages could still not be in the cache dir
+        // this would be a common scenario in a CI environment
+        // or if you just cloned a repo
+        // we want to check lazily though
+        // no need to download packages you've already installed!!
+
+        var skip_verify = false;
+        var node_modules_folder = std.fs.cwd().openDirZ("node_modules", .{ .iterate = true }) catch brk: {
+            skip_verify = true;
+            std.fs.cwd().makeDirZ("node_modules") catch |err| {
+                Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating <b>node_modules<r> folder", .{@errorName(err)});
+                Output.flush();
+                Global.crash();
+            };
+            break :brk std.fs.cwd().openDirZ("node_modules", .{ .iterate = true }) catch |err| {
+                Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> opening <b>node_modules<r> folder", .{@errorName(err)});
+                Output.flush();
+                Global.crash();
+            };
+        };
+        var skip_delete = skip_verify;
+        const force_install = options.enable.force_install;
+        if (options.enable.force_install) {
+            skip_verify = true;
+            skip_delete = false;
+        }
+        var summary = PackageInstall.Summary{};
+
+        {
+            const toplevel_count = lockfile.unique_packages.count();
+
+            var parts = lockfile.packages.slice();
+            var metas = parts.items(.meta);
+            var names = parts.items(.name);
+            var resolutions = parts.items(.resolution);
+            var installer = PackageInstaller{
+                .manager = this,
+                .metas = metas,
+                .names = names,
+                .resolutions = resolutions,
+                .lockfile = lockfile,
+                .node = &install_node,
+                .node_modules_folder = node_modules_folder,
+                .progress = progress,
+                .skip_verify = skip_verify,
+                .skip_delete = skip_delete,
+                .summary = &summary,
+                .force_install = force_install,
+                .install_count = toplevel_count,
+            };
+
+            const pending_task_offset = this.total_tasks;
+
+            // When it's a Good Idea, run the install in single-threaded
+            // From benchmarking, apfs clonefile() is ~6x faster than copyfile() on macOS
+            // Running it in parallel is the same or slower.
+            // However, copyfile() is about 30% faster if run in paralell
+            // On Linux, the story here will be similar but with io_uring.
+            // We will have to support versions of Linux that do not have io_uring support
+            // so in that case, we will still need to support copy_file_range()
+            // git installs will always need to run in paralell, and tarball installs probably should too
+            run_install: {
+                var ran: usize = 0;
+                if (PackageInstall.supported_method.isSync()) {
+                    sync_install: {
+                        while (toplevel_node_modules.next()) |package_id| {
+                            installer.installPackage(@truncate(PackageID, package_id), log_level);
+                            if (!PackageInstall.supported_method.isSync()) break :sync_install;
+                            if (this.pending_tasks > 16) {
+                                try this.runTasks(
+                                    *PackageInstaller,
+                                    &installer,
+                                    PackageInstaller.installPackage,
+                                    log_level,
+                                );
+                            }
+                        }
+
+                        if (this.pending_tasks > 0) {
+                            while (this.pending_tasks > 0) {
+                                try this.runTasks(
+                                    *PackageInstaller,
+                                    &installer,
+                                    PackageInstaller.installPackage,
+                                    log_level,
+                                );
+                            }
+                        }
+
+                        break :run_install;
+                    }
+                }
+
+                var install_context = try lockfile.allocator.create(PackageInstall.Context);
+                install_context.* = .{
+                    .cache_dir = cache_dir,
+                    .progress = progress,
+                    .metas = metas,
+                    .names = names,
+                    .resolutions = resolutions,
+                    .string_buf = lockfile.buffers.string_bytes.items,
+                    .allocator = lockfile.allocator,
+                };
+                install_context.channel = PackageInstall.Task.Channel.init();
+
+                var tasks = try lockfile.allocator.alloc(PackageInstall.Task, toplevel_count - ran);
+                var task_i: usize = 0;
+                var batch = ThreadPool.Batch{};
+                var remaining_count = task_i;
+                while (toplevel_node_modules.next()) |package_id| {
+                    const meta = &metas[package_id];
+                    if (meta.isDisabled()) {
+                        if (comptime log_level.showProgress()) {
+                            install_node.completeOne();
+                            install_node.setEstimatedTotalItems(installer.install_count);
+                        }
+                        continue;
+                    }
+
+                    tasks[task_i] = PackageInstall.Task{
+                        .package_id = @truncate(PackageID, package_id),
+                        .destination_dir = node_modules_folder,
+                        .ctx = install_context,
+                    };
+                    batch.push(ThreadPool.Batch.from(&tasks[task_i].task));
+                    task_i += 1;
+                }
+
+                this.thread_pool.schedule(batch);
+
+                while (remaining_count > 0) {
+                    while (install_context.channel.tryReadItem() catch null) |item_| {
+                        var install_task: *PackageInstall.Task = item_;
+                        defer remaining_count -= 1;
+                        switch (install_task.result) {
+                            .pending => unreachable,
+                            .skip => summary.skipped += 1,
+                            .success => summary.success += 1,
+                            .fail => |cause| {
+                                Output.prettyErrorln(
+                                    "<r><red>error<r>: <b><red>{s}<r> installing <b>{s}<r>",
+                                    .{ @errorName(cause.err), install_task.ctx.names[install_task.package_id] },
+                                );
+                                summary.fail += 1;
+                            },
+                        }
+                    }
+                    if (comptime log_level.showProgress()) {
+                        install_node.completeOne();
+                        install_node.setEstimatedTotalItems(installer.install_count);
+                    }
+
+                    std.atomic.spinLoopHint();
+                }
+            }
+        }
+
+        return summary;
     }
 
     fn installWithManager(
@@ -5372,16 +5302,7 @@ pub const PackageManager = struct {
         manager.flushDependencyQueue();
 
         // Anything that needs to be downloaded from an update needs to be scheduled here
-        {
-            const count = manager.network_resolve_batch.len + manager.network_tarball_batch.len;
-
-            manager.pending_tasks += @truncate(u32, count);
-            manager.total_tasks += @truncate(u32, count);
-            manager.network_resolve_batch.push(manager.network_tarball_batch);
-            NetworkThread.global.pool.schedule(manager.network_resolve_batch);
-            manager.network_tarball_batch = .{};
-            manager.network_resolve_batch = .{};
-        }
+        _ = manager.scheduleNetworkTasks();
 
         if (manager.pending_tasks > 0) {
             if (comptime log_level.showProgress()) {
@@ -5394,7 +5315,7 @@ pub const PackageManager = struct {
             }
 
             while (manager.pending_tasks > 0) {
-                try manager.runTasks(log_level);
+                try manager.runTasks(void, void{}, null, log_level);
             }
 
             if (comptime log_level.showProgress()) {
@@ -5403,6 +5324,7 @@ pub const PackageManager = struct {
                 manager.progress.refresh();
                 manager.progress.root.end();
                 manager.progress = .{};
+                manager.downloads_node = null;
             }
         }
 
@@ -5441,11 +5363,8 @@ pub const PackageManager = struct {
 
         var install_summary = PackageInstall.Summary{};
         if (manager.options.do.install_packages) {
-            install_summary = try manager.lockfile.installDirty(
-                manager.cache_directory,
-                &manager.progress,
-                &manager.thread_pool,
-                &manager.options,
+            install_summary = try manager.installPackages(
+                manager.lockfile,
                 log_level,
             );
         }

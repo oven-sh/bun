@@ -222,6 +222,7 @@ pub fn main() anyerror!void {
         };
         ctx.http.callback = HTTP.HTTPChannelContext.callback;
         ctx.http.schedule(default_allocator, &batch);
+        
     }
     NetworkThread.global.pool.schedule(batch);
 

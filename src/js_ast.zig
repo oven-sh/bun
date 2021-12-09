@@ -2020,7 +2020,7 @@ pub const Expr = struct {
     pub fn isEmpty(expr: *Expr) bool {
         return std.meta.activeTag(expr.data) == .e_missing;
     }
-    pub const Query = struct { expr: Expr, loc: logger.Loc };
+    pub const Query = struct { expr: Expr, loc: logger.Loc, i: u32 = 0 };
 
     pub fn getArray(exp: *const Expr) *E.Array {
         return exp.data.e_array;
@@ -2145,13 +2145,17 @@ pub const Expr = struct {
         const obj = expr.data.e_object;
         if (@ptrToInt(obj.properties.ptr) == 0) return null;
 
-        for (obj.properties) |prop| {
+        for (obj.properties) |prop, i| {
             const value = prop.value orelse continue;
             const key = prop.key orelse continue;
             if (std.meta.activeTag(key.data) != .e_string) continue;
             const key_str = key.data.e_string;
             if (key_str.eql(string, name)) {
-                return Query{ .expr = value, .loc = key.loc };
+                return Query{
+                    .expr = value,
+                    .loc = key.loc,
+                    .i = @truncate(u32, i),
+                };
             }
         }
 

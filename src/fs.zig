@@ -499,9 +499,13 @@ pub const FileSystem = struct {
         };
 
         pub var tmpdir_path: []const u8 = undefined;
+        pub var tmpdir_path_set = false;
         pub fn openTmpDir(fs: *const RealFS) !std.fs.Dir {
-            var tmpdir_base = std.os.getenv("TMPDIR") orelse PLATFORM_TMP_DIR;
-            tmpdir_path = try std.fs.realpath(tmpdir_base, &tmpdir_buf);
+            if (!tmpdir_path_set) {
+                tmpdir_path = std.os.getenv("TMPDIR") orelse PLATFORM_TMP_DIR;
+                tmpdir_path_set = true;
+            }
+
             return try std.fs.openDirAbsolute(tmpdir_path, .{ .access_sub_paths = true, .iterate = true });
         }
 

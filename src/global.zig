@@ -24,6 +24,14 @@ pub const Output = struct {
     var stderr_stream: Source.StreamType = undefined;
     var stdout_stream: Source.StreamType = undefined;
     var stdout_stream_set = false;
+
+    pub var terminal_size: std.os.winsize = .{
+        .ws_row = 0,
+        .ws_col = 0,
+        .ws_xpixel = 0,
+        .ws_ypixel = 0,
+    };
+
     pub const Source = struct {
         pub const StreamType: type = brk: {
             if (isWasm) {
@@ -83,6 +91,10 @@ pub const Output = struct {
 
                 is_stdout_piped = !_source.stream.isTty();
                 is_stderr_piped = !_source.error_stream.isTty();
+
+                if (!is_stderr_piped) {
+                    // _ = std.c.ioctl(source.error_stream.handle, std.os.TIOCGWINSZ, &terminal_size);
+                }
 
                 stdout_stream = _source.stream;
                 stderr_stream = _source.error_stream;
@@ -152,15 +164,36 @@ pub const Output = struct {
         }
     }
 
-    pub fn printElapsed(elapsed: f64) void {
+    inline fn printElapsedToWithCtx(elapsed: f64, comptime printerFn: anytype, comptime has_ctx: bool, ctx: anytype) void {
         switch (elapsed) {
             0...1500 => {
-                Output.prettyError("<r><d>[<b>{d:>.2}ms<r><d>]<r>", .{elapsed});
+                const fmt = "<r><d>[<b>{d:>.2}ms<r><d>]<r>";
+                const args = .{elapsed};
+                if (comptime has_ctx) {
+                    printerFn(ctx, fmt, args);
+                } else {
+                    printerFn(fmt, args);
+                }
             },
             else => {
-                Output.prettyError("<r><d>[<b>{d:>.2}s<r><d>]<r>", .{elapsed / 1000.0});
+                const fmt = "<r><d>[<b>{d:>.2}s<r><d>]<r>";
+                const args = .{elapsed / 1000.0};
+
+                if (comptime has_ctx) {
+                    printerFn(ctx, fmt, args);
+                } else {
+                    printerFn(fmt, args);
+                }
             },
         }
+    }
+
+    pub fn printElapsedTo(elapsed: f64, comptime printerFn: anytype, ctx: anytype) void {
+        printElapsedToWithCtx(elapsed, printerFn, true, ctx);
+    }
+
+    pub fn printElapsed(elapsed: f64) void {
+        printElapsedToWithCtx(elapsed, Output.prettyError, false, void{});
     }
 
     pub fn printStartEnd(start: i128, end: i128) void {

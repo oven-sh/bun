@@ -531,14 +531,22 @@ pub const Lockfile = struct {
     pub fn installDirty(
         new: *Lockfile,
         cache_dir: std.fs.Dir,
-        progress: *std.Progress,
+        progress: *Progress,
         threadpool: *ThreadPool,
         options: *const PackageManager.Options,
+        comptime log_level: PackageManager.Options.LogLevel,
     ) !PackageInstall.Summary {
-        var node = try progress.start(PackageManager.ProgressStrings.install(), new.packages.len);
+        var node: *Progress.Node = undefined;
+
+        if (comptime log_level.showProgress()) {
+            node = try progress.start(PackageManager.ProgressStrings.install(), new.packages.len);
+        }
+
         defer {
-            progress.root.end();
-            progress.* = .{};
+            if (comptime log_level.showProgress()) {
+                progress.root.end();
+                progress.* = .{};
+            }
         }
 
         new.unique_packages.unset(0);
@@ -598,7 +606,7 @@ pub const Lockfile = struct {
                             const meta = &metas[package_id];
 
                             if (meta.isDisabled()) {
-                                node.completeOne();
+                                if (comptime log_level.showProgress()) node.completeOne();
                                 ran += 1;
                                 continue;
                             }
@@ -650,7 +658,7 @@ pub const Lockfile = struct {
                                 else => {},
                             }
                             if (!PackageInstall.supported_method.isSync()) break :sync_install;
-                            node.completeOne();
+                            if (comptime log_level.showProgress()) node.completeOne();
                         }
                         break :run_install;
                     }
@@ -675,7 +683,7 @@ pub const Lockfile = struct {
                 while (toplevel_node_modules.next()) |package_id| {
                     const meta = &metas[package_id];
                     if (meta.isDisabled()) {
-                        node.completeOne();
+                        if (comptime log_level.showProgress()) node.completeOne();
                         continue;
                     }
 
@@ -707,7 +715,7 @@ pub const Lockfile = struct {
                             },
                         }
                     }
-                    node.completeOne();
+                    if (comptime log_level.showProgress()) node.completeOne();
 
                     std.atomic.spinLoopHint();
                 }
@@ -2579,7 +2587,7 @@ const PackageInstall = struct {
 
     allocator: *std.mem.Allocator,
 
-    progress: *std.Progress,
+    progress: *Progress,
 
     package_name: string,
     package_version: string,
@@ -2595,7 +2603,7 @@ const PackageInstall = struct {
         string_buf: []const u8,
         channel: PackageInstall.Task.Channel = undefined,
         skip_verify: bool = false,
-        progress: *std.Progress = undefined,
+        progress: *Progress = undefined,
         cache_dir: std.fs.Dir = undefined,
         allocator: *std.mem.Allocator,
     };
@@ -2854,8 +2862,8 @@ const PackageInstall = struct {
             pub fn copy(
                 destination_dir_: std.fs.Dir,
                 walker: *Walker,
-                node_: *std.Progress.Node,
-                progress_: *std.Progress,
+                node_: *Progress.Node,
+                progress_: *Progress,
             ) !u32 {
                 var real_file_count: u32 = 0;
                 while (try walker.next()) |entry| {
@@ -2954,7 +2962,7 @@ const PackageInstall = struct {
 };
 
 const Resolution = @import("./resolution.zig").Resolution;
-
+const Progress = std.Progress;
 const TaggedPointer = @import("../tagged_pointer.zig");
 const TaskCallbackContext = union(Tag) {
     dependency: PackageID,
@@ -2995,8 +3003,10 @@ pub const PackageManager = struct {
     default_features: Features = Features{},
     summary: Lockfile.Package.Diff.Summary = Lockfile.Package.Diff.Summary{},
     env: *DotEnv.Loader,
-    progress: std.Progress = .{},
-    downloads_node: ?*std.Progress.Node = null,
+    progress: Progress = .{},
+    downloads_node: ?*Progress.Node = null,
+    progress_name_buf: [768]u8 = undefined,
+    progress_name_buf_dynamic: []u8 = &[_]u8{},
 
     root_package_json_file: std.fs.File,
     root_dependency_list: Lockfile.DependencySlice = .{},
@@ -3033,6 +3043,28 @@ pub const PackageManager = struct {
         IdentityContext(u32),
         80,
     );
+
+    pub fn setNodeName(
+        this: *PackageManager,
+        node: *Progress.Node,
+        name: string,
+        emoji: string,
+        comptime is_first: bool,
+    ) void {
+        if (Output.isEmojiEnabled()) {
+            if (is_first) {
+                std.mem.copy(u8, &this.progress_name_buf, emoji);
+                std.mem.copy(u8, this.progress_name_buf[emoji.len..], name);
+                node.name = this.progress_name_buf[0 .. emoji.len + name.len];
+            } else {
+                std.mem.copy(u8, this.progress_name_buf[emoji.len..], name);
+                node.name = this.progress_name_buf[0 .. emoji.len + name.len];
+            }
+        } else {
+            std.mem.copy(u8, &this.progress_name_buf, name);
+            node.name = this.progress_name_buf[0..name.len];
+        }
+    }
 
     var cached_package_folder_name_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
@@ -3650,9 +3682,10 @@ pub const PackageManager = struct {
 
     fn runTasks(
         manager: *PackageManager,
+        comptime log_level: Options.LogLevel,
     ) !void {
         var batch = ThreadPool.Batch{};
-
+        var has_updated_this_run = false;
         while (manager.network_channel.tryReadItem() catch null) |task_| {
             var task: *NetworkTask = task_;
             manager.pending_tasks -= 1;
@@ -3660,25 +3693,39 @@ pub const PackageManager = struct {
             switch (task.callback) {
                 .package_manifest => |manifest_req| {
                     const name = manifest_req.name;
+                    if (comptime log_level.showProgress()) {
+                        if (!has_updated_this_run) {
+                            manager.setNodeName(manager.downloads_node.?, name.slice(), ProgressStrings.download_emoji, true);
+                            has_updated_this_run = true;
+                        }
+                    }
                     const response = task.http.response orelse {
-                        Output.prettyErrorln("Failed to download package manifest for package {s}", .{name});
-                        Output.flush();
+                        if (comptime log_level != .silent) {
+                            Output.prettyErrorln("Failed to download package manifest for package {s}", .{name});
+                            Output.flush();
+                        }
                         continue;
                     };
 
                     if (response.status_code > 399) {
-                        Output.prettyErrorln(
-                            "<r><red><b>GET<r><red> {s}<d> - {d}<r>",
-                            .{
-                                name.slice(),
+                        if (comptime log_level != .silent) {
+                            const fmt = "<r><red><b>GET<r><red> {s}<d> - {d}<r>\n";
+                            const args = .{
+                                task.http.client.url.href,
                                 response.status_code,
-                            },
-                        );
-                        Output.flush();
+                            };
+
+                            if (comptime log_level.showProgress()) {
+                                Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
+                            } else {
+                                Output.prettyErrorln(fmt, args);
+                                Output.flush();
+                            }
+                        }
                         continue;
                     }
 
-                    if (PackageManager.verbose_install) {
+                    if (comptime log_level.isVerbose()) {
                         Output.prettyError("    ", .{});
                         Output.printElapsed(@floatCast(f64, @intToFloat(f128, task.http.elapsed) / std.time.ns_per_ms));
                         Output.prettyError(" <d>Downloaded <r><green>{s}<r> versions\n", .{name.slice()});
@@ -3725,28 +3772,53 @@ pub const PackageManager = struct {
                 },
                 .extract => |extract| {
                     const response = task.http.response orelse {
-                        Output.prettyErrorln("Failed to download package tarball for package {s}", .{extract.name});
-                        Output.flush();
+                        const fmt = "Failed to download package tarball for package {s}\n";
+                        const args = .{extract.name};
+
+                        if (comptime log_level != .silent) {
+                            if (comptime log_level.showProgress()) {
+                                Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
+                            } else {
+                                Output.prettyErrorln(fmt, args);
+                                Output.flush();
+                            }
+                        }
                         continue;
                     };
 
                     if (response.status_code > 399) {
-                        Output.prettyErrorln(
-                            "<r><red><b>GET<r><red> {s}<d>  - {d}<r>",
-                            .{
-                                task.http.url.href,
+                        if (comptime log_level != .silent) {
+                            const fmt = "<r><red><b>GET<r><red> {s}<d> - {d}<r>\n";
+                            const args = .{
+                                task.http.client.url.href,
                                 response.status_code,
-                            },
-                        );
-                        Output.flush();
+                            };
+
+                            if (comptime log_level.showProgress()) {
+                                Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
+                            } else {
+                                Output.prettyErrorln(
+                                    fmt,
+                                    args,
+                                );
+                                Output.flush();
+                            }
+                        }
                         continue;
                     }
 
-                    if (PackageManager.verbose_install) {
+                    if (comptime log_level.isVerbose()) {
                         Output.prettyError("    ", .{});
                         Output.printElapsed(@floatCast(f64, @intToFloat(f128, task.http.elapsed) / std.time.ns_per_ms));
                         Output.prettyError(" <d>Downloaded <r><green>{s}<r> tarball\n", .{extract.name.slice()});
                         Output.flush();
+                    }
+
+                    if (comptime log_level.showProgress()) {
+                        if (!has_updated_this_run) {
+                            manager.setNodeName(manager.downloads_node.?, extract.name.slice(), ProgressStrings.extract_emoji, true);
+                            has_updated_this_run = true;
+                        }
                     }
 
                     batch.push(ThreadPool.Batch.from(manager.enqueueExtractNPMPackage(extract, task)));
@@ -3769,8 +3841,10 @@ pub const PackageManager = struct {
             switch (task.tag) {
                 .package_manifest => {
                     if (task.status == .fail) {
-                        Output.prettyErrorln("Failed to parse package manifest for {s}", .{task.request.package_manifest.name.slice()});
-                        Output.flush();
+                        if (comptime log_level != .silent) {
+                            Output.prettyErrorln("Failed to parse package manifest for {s}", .{task.request.package_manifest.name.slice()});
+                            Output.flush();
+                        }
                         continue;
                     }
                     const manifest = task.data.package_manifest;
@@ -3794,6 +3868,13 @@ pub const PackageManager = struct {
 
                         dependency_list.deinit(manager.allocator);
                     }
+
+                    if (comptime log_level.showProgress()) {
+                        if (!has_updated_this_run) {
+                            manager.setNodeName(manager.downloads_node.?, manifest.name(), ProgressStrings.download_emoji, true);
+                            has_updated_this_run = true;
+                        }
+                    }
                 },
                 .extract => {
                     if (task.status == .fail) {
@@ -3805,6 +3886,13 @@ pub const PackageManager = struct {
                     }
                     manager.extracted_count += 1;
                     manager.lockfile.packages.items(.meta)[task.request.extract.tarball.package_id].preinstall_state = .done;
+
+                    if (comptime log_level.showProgress()) {
+                        if (!has_updated_this_run) {
+                            manager.setNodeName(manager.downloads_node.?, task.request.extract.tarball.name.slice(), ProgressStrings.extract_emoji, true);
+                            has_updated_this_run = true;
+                        }
+                    }
                 },
             }
         }
@@ -3822,22 +3910,21 @@ pub const PackageManager = struct {
             manager.network_tarball_batch = .{};
             manager.network_resolve_batch = .{};
 
-            const completed_items = manager.total_tasks - manager.pending_tasks;
-            if (completed_items != manager.downloads_node.?.unprotected_completed_items) {
-                if (manager.extracted_count > 0) {
-                    manager.downloads_node.?.name = ProgressStrings.extract();
+            if (comptime log_level.showProgress()) {
+                const completed_items = manager.total_tasks - manager.pending_tasks;
+                if (completed_items != manager.downloads_node.?.unprotected_completed_items or has_updated_this_run) {
+                    manager.downloads_node.?.setCompletedItems(completed_items);
+                    manager.downloads_node.?.setEstimatedTotalItems(manager.total_tasks);
+                    manager.downloads_node.?.activate();
+                    manager.progress.maybeRefresh();
                 }
-
-                manager.downloads_node.?.setCompletedItems(completed_items);
-                manager.downloads_node.?.setEstimatedTotalItems(manager.total_tasks);
-                manager.downloads_node.?.activate();
-                manager.progress.refresh();
             }
         }
     }
 
     pub const Options = struct {
-        verbose: bool = false,
+        log_level: LogLevel = LogLevel.default,
+
         lockfile_path: stringZ = Lockfile.default_filename,
         save_lockfile_path: stringZ = Lockfile.default_filename,
         scope: Npm.Registry.Scope = .{
@@ -3853,6 +3940,27 @@ pub const PackageManager = struct {
         positionals: []const string = &[_]string{},
         update: Update = Update{},
         dry_run: bool = false,
+
+        pub const LogLevel = enum {
+            default,
+            verbose,
+            silent,
+            default_no_progress,
+            verbose_no_progress,
+
+            pub inline fn isVerbose(this: LogLevel) bool {
+                return return switch (this) {
+                    .verbose_no_progress, .verbose => true,
+                    else => false,
+                };
+            }
+            pub inline fn showProgress(this: LogLevel) bool {
+                return switch (this) {
+                    .default, .verbose => true,
+                    else => false,
+                };
+            }
+        };
 
         pub const Update = struct {
             development: bool = false,
@@ -3970,8 +4078,11 @@ pub const PackageManager = struct {
                 }
 
                 if (cli.verbose) {
-                    this.verbose = true;
-                    PackageManager.verbose_install = this.verbose;
+                    this.log_level = .verbose;
+                    PackageManager.verbose_install = true;
+                } else if (cli.silent) {
+                    this.log_level = .silent;
+                    PackageManager.verbose_install = false;
                 }
 
                 if (cli.yarn) {
@@ -4014,36 +4125,40 @@ pub const PackageManager = struct {
     };
 
     const ProgressStrings = struct {
-        const download_no_emoji_ = "Resolving";
+        pub const download_no_emoji_ = "Resolving";
         const download_no_emoji: string = download_no_emoji_;
-        const download_emoji: string = "  🔍 " ++ download_no_emoji_;
+        const download_with_emoji: string = download_emoji ++ download_no_emoji_;
+        pub const download_emoji: string = "  🔍 ";
 
-        const extract_no_emoji_ = "Resolving & extracting";
+        pub const extract_no_emoji_ = "Resolving & extracting";
         const extract_no_emoji: string = extract_no_emoji_;
-        const extract_emoji: string = "  🚚 " ++ extract_no_emoji_;
+        const extract_with_emoji: string = extract_emoji ++ extract_no_emoji_;
+        pub const extract_emoji: string = "  🚚 ";
 
-        const install_no_emoji_ = "Installing";
+        pub const install_no_emoji_ = "Installing";
         const install_no_emoji: string = install_no_emoji_;
-        const install_emoji: string = "  📦 " ++ install_no_emoji_;
+        const install_with_emoji: string = install_emoji ++ install_no_emoji_;
+        pub const install_emoji: string = "  📦 ";
 
-        const save_no_emoji_ = "Saving lockfile";
+        pub const save_no_emoji_ = "Saving lockfile";
         const save_no_emoji: string = save_no_emoji_;
-        const save_emoji: string = "  🔒 " ++ save_no_emoji_;
+        const save_with_emoji: string = save_emoji ++ save_no_emoji_;
+        pub const save_emoji: string = "  🔒 ";
 
         pub inline fn download() string {
-            return if (Output.isEmojiEnabled()) download_emoji else download_no_emoji;
+            return if (Output.isEmojiEnabled()) download_with_emoji else download_no_emoji;
         }
 
         pub inline fn save() string {
-            return if (Output.isEmojiEnabled()) save_emoji else save_no_emoji;
+            return if (Output.isEmojiEnabled()) save_with_emoji else save_no_emoji;
         }
 
         pub inline fn extract() string {
-            return if (Output.isEmojiEnabled()) extract_emoji else extract_no_emoji;
+            return if (Output.isEmojiEnabled()) extract_with_emoji else extract_no_emoji;
         }
 
         pub inline fn install() string {
-            return if (Output.isEmojiEnabled()) install_emoji else install_no_emoji;
+            return if (Output.isEmojiEnabled()) install_with_emoji else install_no_emoji;
         }
     };
 
@@ -4151,7 +4266,7 @@ pub const PackageManager = struct {
         }
 
         var manager = &instance;
-        // var progress = std.Progress{};
+        // var progress = Progress{};
         // var node = progress.start(name: []const u8, estimated_total_items: usize)
         manager.* = PackageManager{
             .options = options,
@@ -4208,17 +4323,12 @@ pub const PackageManager = struct {
     pub inline fn add(
         ctx: Command.Context,
     ) !void {
-        Output.prettyErrorln("<r><b>bun add <r><d>v" ++ Global.package_json_version ++ "<r>\n", .{});
-        Output.flush();
         try updatePackageJSONAndInstall(ctx, .add, &add_params);
     }
 
     pub inline fn remove(
         ctx: Command.Context,
     ) !void {
-        Output.prettyErrorln("<r><b>bun remove <r><d>v" ++ Global.package_json_version ++ "<r>\n", .{});
-        Output.flush();
-
         try updatePackageJSONAndInstall(ctx, .remove, &remove_params);
     }
 
@@ -4485,6 +4595,26 @@ pub const PackageManager = struct {
             unreachable;
         };
 
+        if (manager.options.log_level != .silent) {
+            Output.prettyErrorln("<r><b>bun " ++ @tagName(op) ++ " <r><d>v" ++ Global.package_json_version ++ "<r>\n", .{});
+            Output.flush();
+        }
+
+        switch (manager.options.log_level) {
+            .default => try updatePackageJSONAndInstallWithManager(ctx, manager, op, .default),
+            .verbose => try updatePackageJSONAndInstallWithManager(ctx, manager, op, .verbose),
+            .silent => try updatePackageJSONAndInstallWithManager(ctx, manager, op, .silent),
+            .default_no_progress => try updatePackageJSONAndInstallWithManager(ctx, manager, op, .default_no_progress),
+            .verbose_no_progress => try updatePackageJSONAndInstallWithManager(ctx, manager, op, .verbose_no_progress),
+        }
+    }
+
+    fn updatePackageJSONAndInstallWithManager(
+        ctx: Command.Context,
+        manager: *PackageManager,
+        comptime op: Lockfile.Package.Diff.Op,
+        comptime log_level: Options.LogLevel,
+    ) !void {
         var update_requests = try std.BoundedArray(UpdateRequest, 64).init(0);
         var need_to_get_versions_from_npm = false;
 
@@ -4599,17 +4729,20 @@ pub const PackageManager = struct {
                 }
 
                 if (manager.pending_tasks > 0) {
-                    manager.downloads_node = try manager.progress.start(
-                        ProgressStrings.download(),
-                        manager.total_tasks,
-                    );
-                    defer {
-                        manager.progress.root.end();
-                        manager.progress = .{};
+                    if (comptime log_level.showProgress()) {
+                        manager.downloads_node = try manager.progress.start(
+                            ProgressStrings.download(),
+                            manager.total_tasks,
+                        );
+                        manager.downloads_node.?.activate();
+                        manager.progress.refresh();
                     }
-
-                    manager.downloads_node.?.activate();
-                    manager.progress.refresh();
+                    defer {
+                        if (comptime log_level.showProgress()) {
+                            manager.progress.root.end();
+                            manager.progress = .{};
+                        }
+                    }
 
                     while (manager.pending_tasks > 0) {
                         while (manager.network_channel.tryReadItem() catch null) |task_| {
@@ -4707,10 +4840,12 @@ pub const PackageManager = struct {
         }
 
         if (ctx.log.errors > 0) {
-            if (Output.enable_ansi_colors) {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+            if (comptime log_level != .silent) {
+                if (Output.enable_ansi_colors) {
+                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                } else {
+                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                }
             }
 
             Output.flush();
@@ -4952,8 +5087,8 @@ pub const PackageManager = struct {
                         current_package_json = JSAst.Expr.init(JSAst.E.Object, JSAst.E.Object{ .properties = root_properties }, logger.Loc.Empty);
                     }
 
-                    dependencies_object.data.e_object.packageJSONSort();
                     dependencies_object.data.e_object.properties = new_dependencies;
+                    dependencies_object.data.e_object.packageJSONSort();
                 }
 
                 for (updates) |update, j| {
@@ -4978,7 +5113,7 @@ pub const PackageManager = struct {
         };
 
         var new_package_json_source = package_json_writer.ctx.buffer.toOwnedSliceLeaky().ptr[0 .. written + 1];
-        try installWithManager(ctx, manager, new_package_json_source);
+        try installWithManager(ctx, manager, new_package_json_source, log_level);
 
         if (!manager.options.dry_run) {
             // Now that we've run the install step
@@ -4995,28 +5130,35 @@ pub const PackageManager = struct {
     pub inline fn install(
         ctx: Command.Context,
     ) !void {
-        Output.prettyErrorln("<r><b>bun install <r><d>v" ++ Global.package_json_version ++ "<r>\n", .{});
-        Output.flush();
-
         var manager = try PackageManager.init(ctx, null, &install_params);
 
-        var package_json_contents = manager.root_package_json_file.readToEndAlloc(ctx.allocator, std.math.maxInt(usize)) catch |err| {
-            Output.prettyErrorln("<r><red>{s} reading package.json<r> :(", .{@errorName(err)});
+        if (manager.options.log_level != .silent) {
+            Output.prettyErrorln("<r><b>bun install <r><d>v" ++ Global.package_json_version ++ "<r>\n", .{});
             Output.flush();
+        }
+
+        var package_json_contents = manager.root_package_json_file.readToEndAlloc(ctx.allocator, std.math.maxInt(usize)) catch |err| {
+            if (manager.options.log_level != .silent) {
+                Output.prettyErrorln("<r><red>{s} reading package.json<r> :(", .{@errorName(err)});
+                Output.flush();
+            }
             return;
         };
 
-        try installWithManager(
-            ctx,
-            manager,
-            package_json_contents,
-        );
+        switch (manager.options.log_level) {
+            .default => try installWithManager(ctx, manager, package_json_contents, .default),
+            .verbose => try installWithManager(ctx, manager, package_json_contents, .verbose),
+            .silent => try installWithManager(ctx, manager, package_json_contents, .silent),
+            .default_no_progress => try installWithManager(ctx, manager, package_json_contents, .default_no_progress),
+            .verbose_no_progress => try installWithManager(ctx, manager, package_json_contents, .verbose_no_progress),
+        }
     }
 
     fn installWithManager(
         ctx: Command.Context,
         manager: *PackageManager,
         package_json_contents: string,
+        comptime log_level: Options.LogLevel,
     ) !void {
         var load_lockfile_result: Lockfile.LoadFromDiskResult = if (manager.options.do.load_lockfile)
             manager.lockfile.loadFromDisk(
@@ -5032,7 +5174,7 @@ pub const PackageManager = struct {
         var needs_new_lockfile = load_lockfile_result != .ok;
 
         var had_any_diffs = false;
-        manager.progress = std.Progress{};
+        manager.progress = .{};
 
         // Step 2. Parse the package.json file
         //
@@ -5242,21 +5384,26 @@ pub const PackageManager = struct {
         }
 
         if (manager.pending_tasks > 0) {
-            manager.downloads_node = try manager.progress.start(ProgressStrings.download(), 0);
-            manager.downloads_node.?.setEstimatedTotalItems(manager.total_tasks + manager.extracted_count);
-            manager.downloads_node.?.setCompletedItems(manager.total_tasks - manager.pending_tasks);
-            manager.downloads_node.?.activate();
-            manager.progress.refresh();
+            if (comptime log_level.showProgress()) {
+                manager.downloads_node = try manager.progress.start(ProgressStrings.download(), 0);
+                manager.setNodeName(manager.downloads_node.?, ProgressStrings.download_no_emoji_, ProgressStrings.download_emoji, true);
+                manager.downloads_node.?.setEstimatedTotalItems(manager.total_tasks + manager.extracted_count);
+                manager.downloads_node.?.setCompletedItems(manager.total_tasks - manager.pending_tasks);
+                manager.downloads_node.?.activate();
+                manager.progress.refresh();
+            }
 
             while (manager.pending_tasks > 0) {
-                try manager.runTasks();
+                try manager.runTasks(log_level);
             }
-            manager.downloads_node.?.setEstimatedTotalItems(manager.downloads_node.?.unprotected_estimated_total_items);
-            manager.downloads_node.?.setCompletedItems(manager.downloads_node.?.unprotected_estimated_total_items);
-            manager.downloads_node.?.end();
-            manager.progress.refresh();
-            manager.progress.root.end();
-            manager.progress = .{};
+
+            if (comptime log_level.showProgress()) {
+                manager.downloads_node.?.setEstimatedTotalItems(manager.downloads_node.?.unprotected_estimated_total_items);
+                manager.downloads_node.?.setCompletedItems(manager.downloads_node.?.unprotected_estimated_total_items);
+                manager.progress.refresh();
+                manager.progress.root.end();
+                manager.progress = .{};
+            }
         }
 
         if (Output.enable_ansi_colors) {
@@ -5275,15 +5422,21 @@ pub const PackageManager = struct {
         }
 
         if (manager.options.do.save_lockfile) {
-            var node = try manager.progress.start(ProgressStrings.save(), 0);
-            node.activate();
+            var node: *Progress.Node = undefined;
 
-            manager.progress.refresh();
+            if (comptime log_level.showProgress()) {
+                node = try manager.progress.start(ProgressStrings.save(), 0);
+                node.activate();
+
+                manager.progress.refresh();
+            }
             manager.lockfile.saveToDisk(manager.options.save_lockfile_path);
-            node.end();
-            manager.progress.refresh();
-            manager.progress.root.end();
-            manager.progress = .{};
+            if (comptime log_level.showProgress()) {
+                node.end();
+                manager.progress.refresh();
+                manager.progress.root.end();
+                manager.progress = .{};
+            }
         }
 
         var install_summary = PackageInstall.Summary{};
@@ -5293,6 +5446,7 @@ pub const PackageManager = struct {
                 &manager.progress,
                 &manager.thread_pool,
                 &manager.options,
+                log_level,
             );
         }
 
@@ -5301,13 +5455,19 @@ pub const PackageManager = struct {
         }
 
         if (manager.options.do.save_yarn_lock) {
-            var node = try manager.progress.start("Saving yarn.lock", 0);
-            manager.progress.refresh();
+            var node: *Progress.Node = undefined;
+            if (comptime log_level.showProgress()) {
+                node = try manager.progress.start("Saving yarn.lock", 0);
+                manager.progress.refresh();
+            }
+
             try manager.writeYarnLock();
-            node.completeOne();
-            manager.progress.refresh();
-            manager.progress.root.end();
-            manager.progress = .{};
+            if (comptime log_level.showProgress()) {
+                node.completeOne();
+                manager.progress.refresh();
+                manager.progress.root.end();
+                manager.progress = .{};
+            }
         }
 
         Output.prettyln("   <green>+{d}<r> add | <cyan>{d}<r> update | <r><red>-{d}<r> remove | {d} installed | {d} deduped | {d} skipped | {d} failed", .{

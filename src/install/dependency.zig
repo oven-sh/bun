@@ -49,7 +49,9 @@ behavior: Behavior = Behavior.uninitialized,
 
 /// Sorting order for dependencies is:
 /// 1. [`dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`]
-/// 2. name
+/// 2. name ASC
+/// "name" must be ASC so that later, when we rebuild the lockfile
+/// we insert it back in reverse order without an extra sorting pass
 pub fn isLessThan(string_buf: []const u8, lhs: Dependency, rhs: Dependency) bool {
     const behavior = lhs.behavior.cmp(rhs.behavior);
     if (behavior != .eq) {
@@ -535,7 +537,7 @@ pub const Behavior = enum(u8) {
     pub const peer: u8 = 1 << 4;
 
     pub inline fn isOptional(this: Behavior) bool {
-        return (@enumToInt(this) & Behavior.optional) != 0;
+        return (@enumToInt(this) & Behavior.optional) != 0 and (@enumToInt(this) & Behavior.peer) == 0;
     }
 
     pub inline fn isDev(this: Behavior) bool {
@@ -548,6 +550,10 @@ pub const Behavior = enum(u8) {
 
     pub inline fn isNormal(this: Behavior) bool {
         return (@enumToInt(this) & Behavior.normal) != 0;
+    }
+
+    pub inline fn setOptional(this: Behavior, value: bool) Behavior {
+        return @intToEnum(Behavior, @enumToInt(this) | (@as(u8, @boolToInt(value))) << 2);
     }
 
     pub inline fn cmp(lhs: Behavior, rhs: Behavior) std.math.Order {

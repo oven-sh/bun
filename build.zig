@@ -32,6 +32,28 @@ pub fn addPicoHTTP(step: *std.build.LibExeObjStep, comptime with_obj: bool) void
     // homebrew-provided icu4c
 }
 
+fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: *std.mem.Allocator, target: anytype) !void {
+    var platform_label = if (target.isDarwin())
+        "darwin"
+    else
+        "linux";
+
+    step.addPackage(.{
+        .name = "io",
+        .path = .{ .path = try std.fmt.allocPrint(allocator, "src/io/io_{s}.zig", .{platform_label}) },
+    });
+
+    step.addPackage(.{
+        .name = "strings",
+        .path = .{ .path = "src/string_immutable.zig" },
+    });
+
+    step.addPackage(.{
+        .name = "clap",
+        .path = .{ .path = "src/deps/zig-clap/clap.zig" },
+    });
+}
+
 fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
     var file = std.fs.cwd().openFile(filepath, .{ .read = true }) catch |err| {
         const linux_only = "\nOn Linux, you'll need to compile libiconv manually and copy the .a file into src/deps.";
@@ -153,10 +175,6 @@ pub fn build(b: *std.build.Builder) !void {
     // exe.setLibCFile("libc.txt");
     exe.linkLibC();
     // exe.linkLibCpp();
-    exe.addPackage(.{
-        .name = "clap",
-        .path = .{ .path = "src/deps/zig-clap/clap.zig" },
-    });
 
     exe.setOutputDir(output_dir);
     var cwd_dir = std.fs.cwd();
@@ -266,6 +284,7 @@ pub fn build(b: *std.build.Builder) !void {
                     step,
                     true,
                 );
+                try addInternalPackages(step, b.allocator, target);
 
                 step.addObjectFile(panicIfNotFound("src/deps/libJavaScriptCore.a"));
                 step.addObjectFile(panicIfNotFound("src/deps/libWTF.a"));
@@ -316,23 +335,12 @@ pub fn build(b: *std.build.Builder) !void {
             var obj = b.addObject(bun_executable_name, exe.root_src.?.path);
             obj.setTarget(target);
             addPicoHTTP(obj, false);
-            obj.addPackage(.{
-                .name = "clap",
-                .path = .{ .path = "src/deps/zig-clap/clap.zig" },
-            });
 
-            var platform_label = if (target.isDarwin())
-                "darwin"
-            else
-                "linux";
-            obj.addPackage(.{
-                .name = "io",
-                .path = .{ .path = try std.fmt.allocPrint(b.allocator, "src/io/io_{s}.zig", .{platform_label}) },
-            });
-            exe.addPackage(.{
-                .name = "io",
-                .path = .{ .path = try std.fmt.allocPrint(b.allocator, "src/io/io_{s}.zig", .{platform_label}) },
-            });
+            try addInternalPackages(
+                obj,
+                b.allocator,
+                target,
+            );
 
             {
                 obj_step.dependOn(&b.addLog(

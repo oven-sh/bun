@@ -341,6 +341,7 @@ pub const PackageVersion = extern struct {
     optional_dependencies: ExternalStringMap = ExternalStringMap{},
 
     /// `"peerDependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#peerdependencies)
+    /// if `optional_peer_dependencies_len` is > 0, then instead of alphabetical, the first N items are optional
     peer_dependencies: ExternalStringMap = ExternalStringMap{},
 
     /// `"devDependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#devdependencies)
@@ -355,7 +356,8 @@ pub const PackageVersion = extern struct {
     engines: ExternalStringMap = ExternalStringMap{},
 
     /// `"peerDependenciesMeta"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#peerdependenciesmeta)
-    optional_peer_dependencies: ExternalStringMap = ExternalStringMap{},
+    /// if `optional_peer_dependencies_len` is > 0, then instead of alphabetical, the first N items of `peer_dependencies` are optional
+    optional_peer_dependencies_len: u32 = 0,
 
     man_dir: ExternalString = ExternalString{},
 
@@ -705,6 +707,9 @@ pub const PackageManifest = struct {
     threadlocal var external_string_maps_: ExternalStringMapDeduper = undefined;
     threadlocal var external_string_maps_loaded: bool = false;
 
+    threadlocal var optional_peer_dep_names_: std.ArrayList(u64) = undefined;
+    threadlocal var optional_peer_dep_names_loaded: bool = false;
+
     /// This parses [Abbreviated metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-metadata-format)
     pub fn parse(
         allocator: *std.mem.Allocator,
@@ -740,13 +745,21 @@ pub const PackageManifest = struct {
             external_string_maps_loaded = true;
         }
 
+        if (!optional_peer_dep_names_loaded) {
+            optional_peer_dep_names_ = std.ArrayList(u64).init(default_allocator);
+            optional_peer_dep_names_loaded = true;
+        }
+
         var string_pool = string_pool_;
         string_pool.clearRetainingCapacity();
         var external_string_maps = external_string_maps_;
         external_string_maps.clearRetainingCapacity();
+        var optional_peer_dep_names = optional_peer_dep_names_;
+        optional_peer_dep_names.clearRetainingCapacity();
 
         defer string_pool_ = string_pool;
         defer external_string_maps_ = external_string_maps;
+        defer optional_peer_dep_names_ = optional_peer_dep_names;
 
         var string_builder = String.Builder{
             .string_pool = string_pool,
@@ -1093,6 +1106,8 @@ pub const PackageManifest = struct {
                         }
                     }
 
+                    var peer_dependency_len: usize = 0;
+
                     inline for (dependency_groups) |pair| {
                         if (prop.value.?.asProperty(comptime pair.prop)) |versioned_deps| {
                             const items = versioned_deps.expr.data.e_object.properties;
@@ -1104,7 +1119,30 @@ pub const PackageManifest = struct {
                             var name_hasher = std.hash.Wyhash.init(0);
                             var version_hasher = std.hash.Wyhash.init(0);
 
+                            const is_peer = comptime strings.eqlComptime(pair.prop, "peerDependencies");
+
+                            if (comptime is_peer) {
+                                optional_peer_dep_names.clearRetainingCapacity();
+
+                                if (prop.value.?.asProperty("peerDependenciesMeta")) |meta| {
+                                    if (meta.expr.data == .e_object) {
+                                        const meta_props = meta.expr.data.e_object.properties;
+                                        try optional_peer_dep_names.ensureUnusedCapacity(meta_props.len);
+                                        for (meta_props) |meta_prop| {
+                                            if (meta_prop.value.?.asProperty("optional")) |optional| {
+                                                if (optional.expr.data != .e_boolean or !optional.expr.data.e_boolean.value) {
+                                                    continue;
+                                                }
+
+                                                optional_peer_dep_names.appendAssumeCapacity(String.Builder.stringHash(meta_prop.key.?.asString(allocator) orelse unreachable));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             var i: usize = 0;
+
                             for (items) |item| {
                                 const name_str = item.key.?.asString(allocator) orelse if (comptime Environment.allow_assert) unreachable else continue;
                                 const version_str = item.value.?.asString(allocator) orelse if (comptime Environment.allow_assert) unreachable else continue;
@@ -1112,10 +1150,36 @@ pub const PackageManifest = struct {
                                 this_names[i] = string_builder.append(ExternalString, name_str);
                                 this_versions[i] = string_builder.append(ExternalString, version_str);
 
-                                const names_hash_bytes = @bitCast([8]u8, this_names[i].hash);
-                                name_hasher.update(&names_hash_bytes);
-                                const versions_hash_bytes = @bitCast([8]u8, this_versions[i].hash);
-                                version_hasher.update(&versions_hash_bytes);
+                                if (comptime is_peer) {
+                                    if (std.mem.indexOfScalar(u64, optional_peer_dep_names.items, this_names[i].hash) != null) {
+                                        // For optional peer dependencies, we store a length instead of a whole separate array
+                                        // To make that work, we have to move optional peer dependencies to the front of the array
+                                        //
+                                        if (peer_dependency_len != i) {
+                                            const current_name = this_names[i];
+                                            this_names[i] = this_names[peer_dependency_len];
+                                            this_names[peer_dependency_len] = current_name;
+
+                                            const current_version = this_versions[i];
+                                            this_versions[i] = this_versions[peer_dependency_len];
+                                            this_versions[peer_dependency_len] = current_version;
+
+                                            peer_dependency_len += 1;
+                                        }
+                                    }
+
+                                    if (optional_peer_dep_names.items.len == 0) {
+                                        const names_hash_bytes = @bitCast([8]u8, this_names[i].hash);
+                                        name_hasher.update(&names_hash_bytes);
+                                        const versions_hash_bytes = @bitCast([8]u8, this_versions[i].hash);
+                                        version_hasher.update(&versions_hash_bytes);
+                                    }
+                                } else {
+                                    const names_hash_bytes = @bitCast([8]u8, this_names[i].hash);
+                                    name_hasher.update(&names_hash_bytes);
+                                    const versions_hash_bytes = @bitCast([8]u8, this_versions[i].hash);
+                                    version_hasher.update(&versions_hash_bytes);
+                                }
 
                                 i += 1;
                             }
@@ -1126,6 +1190,19 @@ pub const PackageManifest = struct {
                             var version_list = ExternalStringList.init(version_extern_strings, this_versions);
 
                             if (count > 0) {
+                                if (comptime is_peer) {
+                                    if (optional_peer_dep_names.items.len > 0) {
+                                        for (this_names[0..count]) |byte_str| {
+                                            const bytes = @bitCast([8]u8, byte_str.hash);
+                                            name_hasher.update(&bytes);
+                                        }
+
+                                        for (this_versions[0..count]) |byte_str| {
+                                            const bytes = @bitCast([8]u8, byte_str.hash);
+                                            version_hasher.update(&bytes);
+                                        }
+                                    }
+                                }
                                 const name_map_hash = name_hasher.final();
                                 const version_map_hash = version_hasher.final();
 
@@ -1152,6 +1229,10 @@ pub const PackageManifest = struct {
                                 .name = name_list,
                                 .value = version_list,
                             };
+
+                            if (comptime is_peer) {
+                                package_version.optional_peer_dependencies_len = @truncate(u32, peer_dependency_len);
+                            }
 
                             if (comptime Environment.allow_assert) {
                                 const dependencies_list = @field(package_version, pair.field);

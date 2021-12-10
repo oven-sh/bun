@@ -107,10 +107,28 @@ pub const String = extern struct {
         }
     }
 
+    pub const Pointer = extern struct {
+        off: u32 = 0,
+        len: u32 = 0,
+
+        pub inline fn init(
+            buf: string,
+            in: string,
+        ) Pointer {
+            std.debug.assert(@ptrToInt(buf.ptr) <= @ptrToInt(in.ptr) and ((@ptrToInt(in.ptr) + in.len) <= (@ptrToInt(buf.ptr) + buf.len)));
+
+            return Pointer{
+                .off = @truncate(u32, @ptrToInt(in.ptr) - @ptrToInt(buf.ptr)),
+                .len = @truncate(u32, in.len),
+            };
+        }
+    };
+
     pub inline fn ptr(this: String) Pointer {
         return @bitCast(Pointer, @as(u64, @truncate(u63, @bitCast(u64, this))));
     }
 
+    // String must be a pointer because we reference it as a slice. It will become a dead pointer if it is copied.
     pub fn slice(this: *const String, buf: string) string {
         switch (this.bytes[max_inline_len - 1] & 128) {
             0 => {
@@ -253,23 +271,6 @@ pub const String = extern struct {
                 },
                 else => @compileError("Invalid type passed to StringBuilder"),
             }
-        }
-    };
-
-    pub const Pointer = extern struct {
-        off: u32 = 0,
-        len: u32 = 0,
-
-        pub inline fn init(
-            buf: string,
-            in: string,
-        ) Pointer {
-            std.debug.assert(@ptrToInt(buf.ptr) <= @ptrToInt(in.ptr) and ((@ptrToInt(in.ptr) + in.len) <= (@ptrToInt(buf.ptr) + buf.len)));
-
-            return Pointer{
-                .off = @truncate(u32, @ptrToInt(in.ptr) - @ptrToInt(buf.ptr)),
-                .len = @truncate(u32, in.len),
-            };
         }
     };
 

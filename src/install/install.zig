@@ -339,7 +339,7 @@ pub const Features = struct {
     optional_dependencies: bool = false,
     dev_dependencies: bool = false,
     scripts: bool = false,
-    peer_dependencies: bool = false,
+    peer_dependencies: bool = true,
     is_main: bool = false,
 
     check_for_duplicate_dependencies: bool = false,
@@ -485,49 +485,66 @@ pub const Lockfile = struct {
         try new.packages.ensureTotalCapacity(old.allocator, old.packages.len);
         try new.buffers.preallocate(old.buffers, old.allocator);
 
+        const InstallOrder = struct {
+            parent: PackageID,
+            children: PackageIDSlice,
+        };
+
         old.scratch.dependency_list_queue.head = 0;
 
         // Step 1. Recreate the lockfile with only the packages that are still alive
         const root = old.rootPackage() orelse return error.NoPackage;
 
-        var slices = old.packages.slice();
         var package_id_mapping = try old.allocator.alloc(PackageID, old.packages.len);
         std.mem.set(
             PackageID,
             package_id_mapping,
             invalid_package_id,
         );
-        var clone_queue_ = PendingResolutions.init(old.allocator);
-        var clone_queue = &clone_queue_;
-        try clone_queue.ensureUnusedCapacity(root.dependencies.len);
+        var clone_queue_ = PendingResolutions.init();
+        var cloner = Cloner{
+            .old = old,
+            .lockfile = new,
+            .mapping = package_id_mapping,
+            .clone_queue = clone_queue_,
+        };
+        // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
 
-        var duplicate_resolutions_bitset = try std.DynamicBitSetUnmanaged.initEmpty(old.buffers.resolutions.items.len, old.allocator);
-        var duplicate_resolutions_bitset_ptr = &duplicate_resolutions_bitset;
-        _ = try root.clone(old, new, package_id_mapping, clone_queue, duplicate_resolutions_bitset_ptr);
-
-        while (clone_queue.readItem()) |to_clone_| {
-            const to_clone: PendingResolution = to_clone_;
-
-            const mapping = package_id_mapping[to_clone.old_resolution];
-            if (mapping < max_package_id) {
-                new.buffers.resolutions.items[to_clone.resolve_id] = package_id_mapping[to_clone.old_resolution];
-
-                continue;
-            }
-
-            const old_package = old.packages.get(to_clone.old_resolution);
-
-            new.buffers.resolutions.items[to_clone.resolve_id] = try old_package.clone(
-                old,
-                new,
-                package_id_mapping,
-                clone_queue,
-                duplicate_resolutions_bitset_ptr,
-            );
-        }
+        _ = try root.clone(old, new, package_id_mapping, &cloner);
+        try cloner.flush();
 
         return new;
     }
+
+    const Cloner = struct {
+        clone_queue: PendingResolutions,
+        lockfile: *Lockfile,
+        old: *Lockfile,
+        mapping: []PackageID,
+
+        pub fn flush(this: *Cloner) anyerror!void {
+            const max_package_id = this.old.packages.len;
+            while (this.clone_queue.readItem()) |to_clone_| {
+                const to_clone: PendingResolution = to_clone_;
+
+                const mapping = this.mapping[to_clone.old_resolution];
+                if (mapping < max_package_id) {
+                    this.lockfile.buffers.resolutions.items[to_clone.resolve_id] = this.mapping[to_clone.old_resolution];
+
+                    continue;
+                }
+
+                const old_package = this.old.packages.get(to_clone.old_resolution);
+
+                this.lockfile.buffers.resolutions.items[to_clone.resolve_id] = try old_package.clone(
+                    this.old,
+                    this.lockfile,
+                    this.mapping,
+                    this,
+                );
+            }
+        }
+    };
 
     const PendingResolution = struct {
         old_resolution: PackageID,
@@ -535,7 +552,7 @@ pub const Lockfile = struct {
         parent: PackageID,
     };
 
-    const PendingResolutions = std.fifo.LinearFifo(PendingResolution, .Dynamic);
+    const PendingResolutions = std.fifo.LinearFifo(PendingResolution, .{ .Static = 32 });
 
     pub const Printer = struct {
         lockfile: *Lockfile,
@@ -656,6 +673,60 @@ pub const Lockfile = struct {
                 },
             }
         }
+
+        pub const Tree = struct {
+            pub fn print(
+                this: *Printer,
+                comptime Writer: type,
+                writer: Writer,
+                comptime enable_ansi_colors: bool,
+            ) !void {
+                var lockfile = this.lockfile;
+
+                const IDDepthPair = struct {
+                    depth: u16 = 0,
+                    id: PackageID,
+                };
+
+                var visited = try std.DynamicBitSetUnmanaged.initEmpty(this.lockfile.packages.len, this.lockfile.allocator);
+
+                var slice = this.lockfile.packages.slice();
+                const names: []const String = slice.items(.name);
+                const resolved: []const Resolution = slice.items(.resolution);
+                const metas: []const Lockfile.Package.Meta = slice.items(.meta);
+                if (names.len == 0) return;
+                const dependency_lists = slice.items(.dependencies);
+                const resolutions_list = slice.items(.resolutions);
+                const resolutions_buffer = this.lockfile.buffers.resolutions.items;
+                const dependencies_buffer = this.lockfile.buffers.dependencies.items;
+                const package_count = @truncate(PackageID, names.len);
+                const string_buf = this.lockfile.buffers.string_bytes.items;
+
+                const root = this.lockfile.rootPackage() orelse return;
+                visited.set(0);
+
+                for (names) |name, package_id| {
+                    const package_name = name.slice(string_buf);
+
+                    const dependency_list = dependency_lists[package_id];
+
+                    try writer.print(
+                        comptime Output.prettyFmt(" <r><b>{s}<r><d>@<b>{}<r><d> ({d} dependencies)<r>\n", enable_ansi_colors),
+                        .{
+                            package_name,
+                            resolved[package_id].fmt(string_buf),
+                            dependency_list.len,
+                        },
+                    );
+
+                    if (visited.isSet(package_id)) {
+                        continue;
+                    }
+
+                    visited.set(package_id);
+                }
+            }
+        };
 
         pub const Yarn = struct {
             pub fn print(
@@ -944,10 +1015,12 @@ pub const Lockfile = struct {
     pub fn getPackageID(
         this: *Lockfile,
         name_hash: u64,
+        // if it's a peer dependency
+        version: ?Dependency.Version,
         resolution: Resolution,
     ) ?PackageID {
         const entry = this.package_index.get(name_hash) orelse return null;
-        const resolutions = this.packages.items(.resolution);
+        const resolutions: []const Resolution = this.packages.items(.resolution);
         switch (entry) {
             .PackageID => |id| {
                 if (comptime Environment.isDebug or Environment.isTest) {
@@ -961,10 +1034,23 @@ pub const Lockfile = struct {
                     this.buffers.string_bytes.items,
                 )) {
                     return id;
+                } else if (version) |version_| {
+                    switch (version_.tag) {
+                        .npm => {
+                            // is it a peerDependency satisfied by a parent package?
+                            if (version_.value.npm.satisfies(resolutions[id].value.npm)) {
+                                return id;
+                            }
+                        },
+                        else => return null,
+                    }
                 }
             },
             .PackageIDMultiple => |multi_| {
                 const multi = std.mem.span(multi_);
+
+                const can_satisfy = version != null and version.?.tag == .npm;
+
                 for (multi) |id| {
                     if (comptime Environment.isDebug or Environment.isTest) {
                         std.debug.assert(id != invalid_package_id);
@@ -973,6 +1059,10 @@ pub const Lockfile = struct {
                     if (id == invalid_package_id - 1) return null;
 
                     if (resolutions[id].eql(resolution, this.buffers.string_bytes.items, this.buffers.string_bytes.items)) {
+                        return id;
+                    }
+
+                    if (can_satisfy and version.?.value.npm.satisfies(resolutions[id].value.npm)) {
                         return id;
                     }
                 }
@@ -1045,8 +1135,8 @@ pub const Lockfile = struct {
     pub fn appendPackageWithID(this: *Lockfile, package_: Lockfile.Package, id: PackageID) !Lockfile.Package {
         defer {
             if (comptime Environment.isDebug) {
-                std.debug.assert(this.getPackageID(package_.name_hash, package_.resolution) != null);
-                std.debug.assert(this.getPackageID(package_.name_hash, package_.resolution).? == id);
+                std.debug.assert(this.getPackageID(package_.name_hash, null, package_.resolution) != null);
+                std.debug.assert(this.getPackageID(package_.name_hash, null, package_.resolution).? == id);
             }
         }
         var package = package_;
@@ -1227,10 +1317,18 @@ pub const Lockfile = struct {
 
     const DependencySlice = ExternalSlice(Dependency);
     const PackageIDSlice = ExternalSlice(PackageID);
+    const NodeModulesFolderSlice = ExternalSlice(NodeModulesFolder);
+
     const PackageIDList = std.ArrayListUnmanaged(PackageID);
     const DependencyList = std.ArrayListUnmanaged(Dependency);
     const StringBuffer = std.ArrayListUnmanaged(u8);
     const SmallExternalStringBuffer = std.ArrayListUnmanaged(String);
+
+    const NodeModulesFolder = extern struct {
+        in: PackageID = 0,
+        packages: PackageIDSlice = PackageIDSlice{},
+        children: NodeModulesFolderSlice = NodeModulesFolderSlice{},
+    };
 
     pub const Package = extern struct {
         const DependencyGroup = struct {
@@ -1267,8 +1365,7 @@ pub const Lockfile = struct {
             old: *Lockfile,
             new: *Lockfile,
             package_id_mapping: []PackageID,
-            clone_queue: *PendingResolutions,
-            duplicate_resolutions_bitset: *std.DynamicBitSetUnmanaged,
+            cloner: *Cloner,
         ) !PackageID {
             const old_string_buf = old.buffers.string_bytes.items;
             var builder_ = new.stringBuilder();
@@ -1280,6 +1377,7 @@ pub const Lockfile = struct {
 
             const old_dependencies: []const Dependency = this.dependencies.get(old.buffers.dependencies.items);
             const old_resolutions: []const PackageID = this.resolutions.get(old.buffers.resolutions.items);
+
             for (old_dependencies) |dependency, i| {
                 dependency.count(old_string_buf, *Lockfile.StringBuilder, builder);
             }
@@ -1292,7 +1390,7 @@ pub const Lockfile = struct {
 
             const prev_len = @truncate(u32, new.buffers.dependencies.items.len);
             const end = prev_len + @truncate(u32, old_dependencies.len);
-            const max_package_id = @truncate(u32, old.packages.len);
+            const max_package_id = @truncate(PackageID, old.packages.len);
 
             new.buffers.dependencies.items = new.buffers.dependencies.items.ptr[0..end];
             new.buffers.resolutions.items = new.buffers.resolutions.items.ptr[0..end];
@@ -1333,29 +1431,32 @@ pub const Lockfile = struct {
                     *Lockfile.StringBuilder,
                     builder,
                 );
-
-                const old_resolution = old_resolutions[i];
-                if (old_resolution < max_package_id) {
-                    const mapped = package_id_mapping[old_resolution];
-                    const resolve_id = new_package.resolutions.off + @truncate(u32, i);
-
-                    if (!old.unique_packages.isSet(old_resolution)) duplicate_resolutions_bitset.set(resolve_id);
-
-                    if (mapped < max_package_id) {
-                        resolutions[i] = mapped;
-                    } else {
-                        try clone_queue.writeItem(
-                            PendingResolution{
-                                .old_resolution = old_resolution,
-                                .parent = new_package.meta.id,
-                                .resolve_id = resolve_id,
-                            },
-                        );
-                    }
-                }
             }
 
             builder.clamp();
+
+            for (old_resolutions) |old_resolution, i| {
+                if (old_resolution >= max_package_id) continue;
+
+                if (cloner.clone_queue.writableLength() == 0) {
+                    try cloner.flush();
+                }
+
+                const mapped = package_id_mapping[old_resolution];
+                const resolve_id = new_package.resolutions.off + @intCast(PackageID, i);
+
+                if (mapped < max_package_id) {
+                    resolutions[i] = mapped;
+                } else {
+                    cloner.clone_queue.writeItemAssumeCapacity(
+                        PendingResolution{
+                            .old_resolution = old_resolution,
+                            .parent = new_package.meta.id,
+                            .resolve_id = resolve_id,
+                        },
+                    );
+                }
+            }
 
             return new_package.meta.id;
         }
@@ -1466,16 +1567,21 @@ pub const Lockfile = struct {
                     const version_strings = map.value.get(manifest.external_strings_for_versions);
 
                     if (comptime Environment.isDebug) std.debug.assert(keys.len == version_strings.len);
+                    const is_peer = comptime strings.eqlComptime(group.field, "peer_dependencies");
 
                     for (keys) |key, i| {
                         const version_string_ = version_strings[i];
                         const name: ExternalString = string_builder.appendWithHash(ExternalString, key.slice(string_buf), key.hash);
                         const dep_version = string_builder.appendWithHash(String, version_string_.slice(string_buf), version_string_.hash);
                         const sliced = dep_version.sliced(lockfile.buffers.string_bytes.items);
+
                         const dependency = Dependency{
                             .name = name.value,
                             .name_hash = name.hash,
-                            .behavior = group.behavior,
+                            .behavior = if (comptime is_peer)
+                                group.behavior.setOptional(package_version.optional_peer_dependencies_len > i)
+                            else
+                                group.behavior,
                             .version = Dependency.parse(
                                 allocator,
                                 sliced.slice,
@@ -1983,6 +2089,8 @@ pub const Lockfile = struct {
         resolutions: PackageIDList = PackageIDList{},
         dependencies: DependencyList = DependencyList{},
         extern_strings: SmallExternalStringBuffer = SmallExternalStringBuffer{},
+        // node_modules_folders: NodeModulesFolderList = NodeModulesFolderList{},
+        // node_modules_package_ids: PackageIDList = PackageIDList{},
         string_bytes: StringBuffer = StringBuffer{},
 
         pub fn preallocate(this: *Buffers, that: Buffers, allocator: *std.mem.Allocator) !void {
@@ -2941,15 +3049,20 @@ pub const PackageManager = struct {
         name: String,
         version: Dependency.Version,
         dependency_id: PackageID,
+        is_peer: bool,
         manifest: *const Npm.PackageManifest,
         find_result: Npm.PackageManifest.FindResult,
     ) !?ResolvedPackageResult {
 
         // Was this package already allocated? Let's reuse the existing one.
-        if (this.lockfile.getPackageID(name_hash, .{
-            .tag = .npm,
-            .value = .{ .npm = find_result.version },
-        })) |id| {
+        if (this.lockfile.getPackageID(
+            name_hash,
+            version,
+            .{
+                .tag = .npm,
+                .value = .{ .npm = find_result.version },
+            },
+        )) |id| {
             return ResolvedPackageResult{
                 .package = this.lockfile.packages.get(id),
                 .is_first_time = false,
@@ -3105,6 +3218,7 @@ pub const PackageManager = struct {
         name_hash: PackageNameHash,
         name: String,
         version: Dependency.Version,
+        is_peer: bool,
         dependency_id: PackageID,
         resolution: PackageID,
     ) !?ResolvedPackageResult {
@@ -3126,7 +3240,7 @@ pub const PackageManager = struct {
                     else => unreachable,
                 };
 
-                return try getOrPutResolvedPackageWithFindResult(this, name_hash, name, version, dependency_id, manifest, find_result);
+                return try getOrPutResolvedPackageWithFindResult(this, name_hash, name, version, dependency_id, is_peer, manifest, find_result);
             },
 
             else => return null,
@@ -3259,7 +3373,14 @@ pub const PackageManager = struct {
         switch (dependency.version.tag) {
             .npm, .dist_tag => {
                 retry_from_manifests_ptr: while (true) {
-                    var resolve_result_ = this.getOrPutResolvedPackage(name_hash, name, version, id, resolution);
+                    var resolve_result_ = this.getOrPutResolvedPackage(
+                        name_hash,
+                        name,
+                        version,
+                        dependency.behavior.isPeer(),
+                        id,
+                        resolution,
+                    );
 
                     retry_with_new_resolve_result: while (true) {
                         const resolve_result = resolve_result_ catch |err| {
@@ -3327,7 +3448,7 @@ pub const PackageManager = struct {
                                     this.enqueueNetworkTask(network_task);
                                 }
                             }
-                        } else {
+                        } else if (!dependency.behavior.isPeer()) {
                             const task_id = Task.Id.forManifest(Task.Tag.package_manifest, this.lockfile.str(name));
                             var network_entry = try this.network_dedupe_map.getOrPutContext(this.allocator, task_id, .{});
                             if (!network_entry.found_existing) {
@@ -3349,6 +3470,7 @@ pub const PackageManager = struct {
                                                     name,
                                                     version,
                                                     id,
+                                                    dependency.behavior.isPeer(),
                                                     &loaded_manifest.?,
                                                     find_result,
                                                 ) catch null) |new_resolve_result| {
@@ -4921,7 +5043,6 @@ pub const PackageManager = struct {
         const cache_dir = this.cache_directory;
 
         lockfile.unique_packages.unset(0);
-        var toplevel_node_modules = lockfile.unique_packages.iterator(.{});
 
         // If there was already a valid lockfile and so we did not resolve, i.e. there was zero network activity
         // the packages could still not be in the cache dir
@@ -4953,12 +5074,29 @@ pub const PackageManager = struct {
         var summary = PackageInstall.Summary{};
 
         {
-            const toplevel_count = lockfile.unique_packages.count();
-
             var parts = lockfile.packages.slice();
             var metas = parts.items(.meta);
             var names = parts.items(.name);
+            var dependency_lists = parts.items(.dependencies);
+            var dependencies = lockfile.buffers.dependencies.items;
+            var resolutions_buffer = lockfile.buffers.resolutions.items;
+            var resolution_lists = parts.items(.resolutions);
             var resolutions = parts.items(.resolution);
+
+            const pending_task_offset = this.total_tasks;
+            const root_dependency_list = dependency_lists[0];
+            const root_resolution_list = resolution_lists[0];
+
+            var toplevel_packages = try lockfile.unique_packages.clone(this.allocator);
+            const max_package_id = @truncate(PackageID, names.len);
+            for (root_resolution_list.get(resolutions_buffer)) |package_id| {
+                if (package_id > max_package_id) continue;
+                toplevel_packages.set(package_id);
+            }
+
+            const toplevel_count = toplevel_packages.count();
+            var toplevel_node_modules = toplevel_packages.iterator(.{});
+
             var installer = PackageInstaller{
                 .manager = this,
                 .metas = metas,
@@ -4974,8 +5112,6 @@ pub const PackageManager = struct {
                 .force_install = force_install,
                 .install_count = toplevel_count,
             };
-
-            const pending_task_offset = this.total_tasks;
 
             // When it's a Good Idea, run the install in single-threaded
             // From benchmarking, apfs clonefile() is ~6x faster than copyfile() on macOS
@@ -5386,6 +5522,18 @@ pub const PackageManager = struct {
                 manager.progress.refresh();
                 manager.progress.root.end();
                 manager.progress = .{};
+            }
+        }
+
+        if (manager.options.log_level != .silent) {
+            var printer = Lockfile.Printer{
+                .lockfile = manager.lockfile,
+                .options = manager.options,
+            };
+            if (Output.enable_ansi_colors) {
+                try Lockfile.Printer.Tree.print(&printer, Output.WriterType, Output.writer(), true);
+            } else {
+                try Lockfile.Printer.Tree.print(&printer, Output.WriterType, Output.writer(), false);
             }
         }
 

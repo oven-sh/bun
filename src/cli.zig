@@ -40,6 +40,7 @@ const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
 const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
 const AddCommand = @import("./cli/add_command.zig").AddCommand;
 const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
+const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
 const InstallCompletionsCommand = @import("./cli/install_completions_command.zig").InstallCompletionsCommand;
 const ShellCompletions = @import("./cli/shell_completions.zig");
 
@@ -490,6 +491,7 @@ const HelpCommand = struct {
             \\> <r> <b><green>install<r>                         Install dependencies for a package.json <d>(bun i)<r>
             \\> <r> <b><blue>add     <r><d>  {s:<16}<r>      Add a dependency to package.json <d>(bun a)<r>
             \\> <r> remove  <r><d>  {s:<16}<r>      Remove a dependency from package.json <d>(bun rm)<r>
+            \\> <r> pm  <r>                                               More package manager-related subcommands
             \\
             \\> <r> <b><blue>upgrade <r>                        Get the latest version of Bun
             \\> <r> <b><d>completions<r>                     Install shell completions for tab-completion
@@ -615,6 +617,8 @@ pub const Command = struct {
             RootCommandMatcher.case("i"), RootCommandMatcher.case("install") => .InstallCommand,
             RootCommandMatcher.case("c"), RootCommandMatcher.case("create") => .CreateCommand,
 
+            RootCommandMatcher.case("pm") => .PackageManagerCommand,
+
             RootCommandMatcher.case("add"), RootCommandMatcher.case("update"), RootCommandMatcher.case("a") => .AddCommand,
             RootCommandMatcher.case("remove"), RootCommandMatcher.case("rm") => .RemoveCommand,
 
@@ -692,6 +696,12 @@ pub const Command = struct {
                 const ctx = try Command.Context.create(allocator, log, .RemoveCommand);
 
                 try RemoveCommand.exec(ctx);
+                return;
+            },
+            .PackageManagerCommand => {
+                const ctx = try Command.Context.create(allocator, log, .PackageManagerCommand);
+
+                try PackageManagerCommand.exec(ctx);
                 return;
             },
             .GetCompletionsCommand => {
@@ -834,12 +844,14 @@ pub const Command = struct {
         InstallCompletionsCommand,
         RunCommand,
         UpgradeCommand,
+        PackageManagerCommand,
 
         pub const uses_global_options: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(true, .{
             .CreateCommand = false,
             .InstallCommand = false,
             .AddCommand = false,
             .RemoveCommand = false,
+            .PackageManagerCommand = false,
         });
     };
 };

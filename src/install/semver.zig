@@ -1200,7 +1200,7 @@ pub const Query = struct {
                     };
                 },
                 .tilda => {
-                    if (version.minor == 0 or this.wildcard == .minor or this.wildcard == .major) {
+                    if (this.wildcard == .minor or this.wildcard == .major) {
                         return Range.initWildcard(version, .minor);
                     }
 

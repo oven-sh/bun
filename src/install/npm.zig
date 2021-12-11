@@ -1189,18 +1189,57 @@ pub const PackageManifest = struct {
                             var name_list = ExternalStringList.init(all_extern_strings, this_names);
                             var version_list = ExternalStringList.init(version_extern_strings, this_versions);
 
+                            if (comptime is_peer) {
+                                package_version.optional_peer_dependencies_len = @truncate(u32, peer_dependency_len);
+                            }
+
                             if (count > 0) {
                                 if (comptime is_peer) {
                                     if (optional_peer_dep_names.items.len > 0) {
+                                        var optional_peer_deps_name_buf = [_]u8{
+                                            '$',
+                                            'o',
+                                            'p',
+                                            't',
+                                            'i',
+                                            'o',
+                                            'n',
+                                            'a',
+                                            'l',
+                                            'P',
+                                            'e',
+                                            'e',
+                                            'r',
+                                            'D',
+                                            'e',
+                                            'p',
+                                            's',
+                                            ':',
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                        };
+
+                                        std.mem.writeIntNative(
+                                            u32,
+                                            optional_peer_deps_name_buf[optional_peer_deps_name_buf.len - 4 ..][0..4],
+                                            package_version.optional_peer_dependencies_len,
+                                        );
+
                                         for (this_names[0..count]) |byte_str| {
                                             const bytes = @bitCast([8]u8, byte_str.hash);
                                             name_hasher.update(&bytes);
                                         }
 
+                                        name_hasher.update(&optional_peer_deps_name_buf);
+
                                         for (this_versions[0..count]) |byte_str| {
                                             const bytes = @bitCast([8]u8, byte_str.hash);
                                             version_hasher.update(&bytes);
                                         }
+
+                                        version_hasher.update(&optional_peer_deps_name_buf);
                                     }
                                 }
                                 const name_map_hash = name_hasher.final();
@@ -1229,10 +1268,6 @@ pub const PackageManifest = struct {
                                 .name = name_list,
                                 .value = version_list,
                             };
-
-                            if (comptime is_peer) {
-                                package_version.optional_peer_dependencies_len = @truncate(u32, peer_dependency_len);
-                            }
 
                             if (comptime Environment.allow_assert) {
                                 const dependencies_list = @field(package_version, pair.field);

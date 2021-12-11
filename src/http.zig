@@ -186,6 +186,23 @@ pub const RequestContext = struct {
             }
         }
 
+        this.appendHeader("Content-Type", MimeType.html.value);
+
+        var link_stack_buf: [2048]u8 = undefined;
+
+        var remaining: []u8 = link_stack_buf[0..];
+
+        if (this.bundler.options.node_modules_bundle_url.len > 0) {
+            add_preload: {
+                const node_modules_preload_header_value = std.fmt.bufPrint(remaining, "<{s}>; rel=modulepreload", .{
+                    this.bundler.options.node_modules_bundle_url,
+                }) catch break :add_preload;
+
+                this.appendHeader("Link", node_modules_preload_header_value);
+                remaining = remaining[node_modules_preload_header_value.len..];
+            }
+        }
+
         if (this.matched_route) |match| {
             if (match.params.len > 0) {
                 params.keys = match.params.items(.name);
@@ -194,6 +211,30 @@ pub const RequestContext = struct {
 
             if (this.bundler.router.?.routeIndexByHash(match.hash)) |ind| {
                 route_index = @intCast(i32, ind);
+            }
+
+            module_preload: {
+                if (strings.hasPrefix(match.file_path, Fs.FileSystem.instance.top_level_dir)) {
+                    var stream = std.io.fixedBufferStream(remaining);
+                    var writer = stream.writer();
+                    writer.writeAll("<") catch break :module_preload;
+                    writer.writeAll(std.mem.trimRight(u8, this.bundler.options.origin.href, "/")) catch break :module_preload;
+                    writer.writeAll("/") catch break :module_preload;
+
+                    if (this.bundler.options.routes.asset_prefix_path.len > 0) {
+                        writer.writeAll(std.mem.trim(u8, this.bundler.options.routes.asset_prefix_path, "/")) catch break :module_preload;
+                    }
+
+                    writer.writeAll(match.file_path[Fs.FileSystem.instance.top_level_dir.len..]) catch break :module_preload;
+
+                    writer.writeAll(">; rel=modulepreload") catch break :module_preload;
+
+                    this.appendHeader(
+                        "Link",
+                        remaining[0..stream.pos],
+                    );
+                    remaining = remaining[stream.pos..];
+                }
             }
         }
 
@@ -214,6 +255,7 @@ pub const RequestContext = struct {
                 .build = try log.toAPI(allocator),
             },
         };
+        defer allocator.free(fallback_container.message.?);
 
         defer this.done();
 
@@ -226,7 +268,7 @@ pub const RequestContext = struct {
         const route_name = if (route_index > -1) this.matched_route.?.name else this.url.pathname;
         if (comptime fmt.len > 0) Output.prettyErrorln(fmt, args);
         Output.flush();
-        this.appendHeader("Content-Type", MimeType.html.value);
+
         var bb = std.ArrayList(u8).init(allocator);
         defer bb.deinit();
         var bb_writer = bb.writer();

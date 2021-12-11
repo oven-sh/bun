@@ -15,6 +15,32 @@ pub const String = extern struct {
         big,
     };
 
+    pub inline fn fmt(self: *const String, buf: []const u8) Formatter {
+        return Formatter{
+            .buf = buf,
+            .str = self,
+        };
+    }
+
+    pub const Formatter = struct {
+        str: *const String,
+        buf: string,
+
+        pub fn format(formatter: Formatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            const str = formatter.str;
+            try writer.writeAll(str.slice(formatter.buf));
+        }
+    };
+
+    pub inline fn order(
+        lhs: *const String,
+        rhs: *const String,
+        lhs_buf: []const u8,
+        rhs_buf: []const u8,
+    ) std.math.Order {
+        return std.math.order(lhs.slice(lhs_buf), rhs.slice(rhs_buf));
+    }
+
     pub inline fn canInline(buf: []const u8) bool {
         return switch (buf.len) {
             0...max_inline_len - 1 => true,
@@ -318,6 +344,16 @@ pub const ExternalString = extern struct {
     value: String = String{},
     hash: u64 = 0,
 
+    pub inline fn fmt(this: *const ExternalString, buf: []const u8) String.Formatter {
+        return this.value.fmt(buf);
+    }
+
+    pub fn order(lhs: *const ExternalString, rhs: *const ExternalString, lhs_buf: []const u8, rhs_buf: []const u8) std.math.Order {
+        if (lhs.hash == rhs.hash and lhs.hash > 0) return .eq;
+
+        return lhs.value.order(&rhs.value, lhs_buf, rhs_buf);
+    }
+
     /// ExternalString but without the hash
     pub inline fn from(in: string) ExternalString {
         return ExternalString{
@@ -496,7 +532,10 @@ pub const Version = extern struct {
         }
     };
 
-    pub fn order(lhs: Version, rhs: Version) std.math.Order {
+    pub fn orderWithoutTag(
+        lhs: Version,
+        rhs: Version,
+    ) std.math.Order {
         if (lhs.major < rhs.major) return .lt;
         if (lhs.major > rhs.major) return .gt;
         if (lhs.minor < rhs.minor) return .lt;
@@ -504,12 +543,37 @@ pub const Version = extern struct {
         if (lhs.patch < rhs.patch) return .lt;
         if (lhs.patch > rhs.patch) return .gt;
 
+        if (lhs.tag.hasPre() != rhs.tag.hasPre())
+            return if (lhs.tag.hasPre()) .lt else .gt;
+
+        if (lhs.tag.hasBuild() != rhs.tag.hasBuild())
+            return if (lhs.tag.hasBuild()) .gt else .lt;
+
         return .eq;
+    }
+
+    pub fn order(
+        lhs: Version,
+        rhs: Version,
+        lhs_buf: []const u8,
+        rhs_buf: []const u8,
+    ) std.math.Order {
+        const order_without_tag = orderWithoutTag(lhs, rhs);
+        if (order_without_tag != .eq) return order_without_tag;
+
+        return lhs.tag.order(rhs.tag, lhs_buf, rhs_buf);
     }
 
     pub const Tag = extern struct {
         pre: ExternalString = ExternalString{},
         build: ExternalString = ExternalString{},
+
+        pub fn order(lhs: Tag, rhs: Tag, lhs_buf: []const u8, rhs_buf: []const u8) std.math.Order {
+            const pre_order = lhs.pre.order(&rhs.pre, lhs_buf, rhs_buf);
+            if (pre_order != .eq) return pre_order;
+
+            return lhs.build.order(&rhs.build, lhs_buf, rhs_buf);
+        }
 
         pub fn cloneInto(this: Tag, slice: []const u8, buf: *[]u8) Tag {
             var pre: String = this.pre.value;
@@ -992,7 +1056,7 @@ pub const Range = struct {
         }
 
         pub fn satisfies(this: Comparator, version: Version) bool {
-            const order = version.order(this.version);
+            const order = version.orderWithoutTag(this.version);
 
             return switch (order) {
                 .eq => switch (this.op) {

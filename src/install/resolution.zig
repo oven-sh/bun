@@ -12,6 +12,32 @@ pub const Resolution = extern struct {
     tag: Tag = Tag.uninitialized,
     value: Value = Value{ .uninitialized = .{} },
 
+    pub fn order(
+        lhs: *const Resolution,
+        rhs: *const Resolution,
+        lhs_buf: []const u8,
+        rhs_buf: []const u8,
+    ) std.math.Order {
+        if (lhs.tag != rhs.tag) {
+            return std.math.order(@enumToInt(lhs.tag), @enumToInt(rhs.tag));
+        }
+
+        return switch (lhs.tag) {
+            .npm => lhs.value.npm.order(rhs.value.npm, lhs_buf, rhs_buf),
+            .local_tarball => lhs.value.local_tarball.order(&rhs.value.local_tarball, lhs_buf, rhs_buf),
+            .git_ssh => lhs.value.git_ssh.order(&rhs.value.git_ssh, lhs_buf, rhs_buf),
+            .git_http => lhs.value.git_http.order(&rhs.value.git_http, lhs_buf, rhs_buf),
+            .folder => lhs.value.folder.order(&rhs.value.folder, lhs_buf, rhs_buf),
+            .remote_tarball => lhs.value.remote_tarball.order(&rhs.value.remote_tarball, lhs_buf, rhs_buf),
+            .workspace => lhs.value.workspace.order(&rhs.value.workspace, lhs_buf, rhs_buf),
+            .symlink => lhs.value.symlink.order(&rhs.value.symlink, lhs_buf, rhs_buf),
+            .single_file_module => lhs.value.single_file_module.order(&rhs.value.single_file_module, lhs_buf, rhs_buf),
+            .github => lhs.value.github.order(&rhs.value.github, lhs_buf, rhs_buf),
+            .gitlab => lhs.value.gitlab.order(&rhs.value.gitlab, lhs_buf, rhs_buf),
+            else => .eq,
+        };
+    }
+
     pub fn count(this: *const Resolution, buf: []const u8, comptime Builder: type, builder: Builder) void {
         switch (this.tag) {
             .npm => this.value.npm.count(buf, Builder, builder),

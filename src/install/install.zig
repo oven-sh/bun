@@ -37,6 +37,7 @@ const Integrity = @import("./integrity.zig").Integrity;
 const clap = @import("clap");
 const ExtractTarball = @import("./extract_tarball.zig");
 const Npm = @import("./npm.zig");
+const Bitset = @import("./bit_set.zig").DynamicBitSetUnmanaged;
 
 threadlocal var initialized_store = false;
 
@@ -92,11 +93,12 @@ pub fn ExternalSliceAligned(comptime Type: type, comptime alignment_: ?u29) type
         len: u32 = 0,
 
         pub inline fn get(this: Slice, in: []const Type) []const Type {
-            return in[this.off..@minimum(in.len, this.off + this.len)];
+            // it should be impossible to address this out of bounds due to the minimum here
+            return in.ptr[this.off..@minimum(in.len, this.off + this.len)];
         }
 
         pub inline fn mut(this: Slice, in: []Type) []Type {
-            return in[this.off..@minimum(in.len, this.off + this.len)];
+            return in.ptr[this.off..@minimum(in.len, this.off + this.len)];
         }
 
         pub fn init(buf: []const Type, in: []const Type) Slice {
@@ -344,7 +346,13 @@ pub const Features = struct {
 
     check_for_duplicate_dependencies: bool = false,
 
-    pub const npm = Features{};
+    pub const npm = Features{
+        .optional_dependencies = true,
+    };
+
+    pub const npm_manifest = Features{
+        .optional_dependencies = true,
+    };
 };
 
 pub const PreinstallState = enum(u8) {
@@ -367,7 +375,7 @@ pub const Lockfile = struct {
     /// name -> PackageID || [*]PackageID
     /// Not for iterating.
     package_index: PackageIndex.Map,
-    unique_packages: std.DynamicBitSetUnmanaged,
+    unique_packages: Bitset,
     string_pool: StringPool,
     allocator: *std.mem.Allocator,
     scratch: Scratch = Scratch{},
@@ -440,9 +448,11 @@ pub const Lockfile = struct {
         // When you really only wanted one.
         // Since _typically_ the issue is that Semver ranges with "^" or "~" say "choose latest", we end up with latest
         if (options.enable.deduplicate_packages) {
-            var resolutions = old.buffers.resolutions.items;
-            var dependencies: []Dependency = old.buffers.dependencies.items;
+            var resolutions: []PackageID = old.buffers.resolutions.items;
+            const dependencies: []const Dependency = old.buffers.dependencies.items;
             const package_resolutions: []const Resolution = old.packages.items(.resolution);
+            const string_buf = old.buffers.string_bytes.items;
+
             for (resolutions) |resolved_package_id, dep_i| {
                 if (resolved_package_id < max_package_id and !old.unique_packages.isSet(resolved_package_id)) {
                     const dependency = dependencies[dep_i];
@@ -458,7 +468,7 @@ pub const Lockfile = struct {
                                 if (resolved_package_id == id or id >= max_package_id) continue;
                                 const package_resolution = package_resolutions[id];
                                 if (package_resolution.tag != .npm) continue;
-                                if (package_resolution.value.npm.order(chosen_version) == .lt and
+                                if (package_resolution.value.npm.order(chosen_version, string_buf, string_buf) == .lt and
                                     dependency.version.value.npm.satisfies(package_resolution.value.npm))
                                 {
                                     chosen_id = id;
@@ -501,7 +511,8 @@ pub const Lockfile = struct {
             package_id_mapping,
             invalid_package_id,
         );
-        var clone_queue_ = PendingResolutions.init();
+        var clone_queue_ = PendingResolutions.init(old.allocator);
+        new.unique_packages = try Bitset.initEmpty(old.unique_packages.bit_length, old.allocator);
         var cloner = Cloner{
             .old = old,
             .lockfile = new,
@@ -509,7 +520,6 @@ pub const Lockfile = struct {
             .clone_queue = clone_queue_,
         };
         // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
-
         _ = try root.clone(old, new, package_id_mapping, &cloner);
         try cloner.flush();
 
@@ -524,13 +534,12 @@ pub const Lockfile = struct {
 
         pub fn flush(this: *Cloner) anyerror!void {
             const max_package_id = this.old.packages.len;
-            while (this.clone_queue.readItem()) |to_clone_| {
+            while (this.clone_queue.popOrNull()) |to_clone_| {
                 const to_clone: PendingResolution = to_clone_;
 
                 const mapping = this.mapping[to_clone.old_resolution];
                 if (mapping < max_package_id) {
                     this.lockfile.buffers.resolutions.items[to_clone.resolve_id] = this.mapping[to_clone.old_resolution];
-
                     continue;
                 }
 
@@ -552,7 +561,7 @@ pub const Lockfile = struct {
         parent: PackageID,
     };
 
-    const PendingResolutions = std.fifo.LinearFifo(PendingResolution, .{ .Static = 32 });
+    const PendingResolutions = std.ArrayList(PendingResolution);
 
     pub const Printer = struct {
         lockfile: *Lockfile,
@@ -688,7 +697,7 @@ pub const Lockfile = struct {
                     id: PackageID,
                 };
 
-                var visited = try std.DynamicBitSetUnmanaged.initEmpty(this.lockfile.packages.len, this.lockfile.allocator);
+                var visited = try Bitset.initEmpty(this.lockfile.packages.len, this.lockfile.allocator);
 
                 var slice = this.lockfile.packages.slice();
                 const names: []const String = slice.items(.name);
@@ -704,26 +713,24 @@ pub const Lockfile = struct {
 
                 const root = this.lockfile.rootPackage() orelse return;
                 visited.set(0);
+                const end = @truncate(PackageID, names.len);
+                for (resolutions_list) |list| {
+                    for (list.get(resolutions_buffer)) |package_id| {
+                        if (package_id >= end) continue;
+                        const name = names[package_id];
+                        const package_name = name.slice(string_buf);
 
-                for (names) |name, package_id| {
-                    const package_name = name.slice(string_buf);
+                        const dependency_list = dependency_lists[package_id];
 
-                    const dependency_list = dependency_lists[package_id];
-
-                    try writer.print(
-                        comptime Output.prettyFmt(" <r><b>{s}<r><d>@<b>{}<r><d> ({d} dependencies)<r>\n", enable_ansi_colors),
-                        .{
-                            package_name,
-                            resolved[package_id].fmt(string_buf),
-                            dependency_list.len,
-                        },
-                    );
-
-                    if (visited.isSet(package_id)) {
-                        continue;
+                        try writer.print(
+                            comptime Output.prettyFmt(" <r><b>{s}<r><d>@<b>{}<r><d> ({d} dependencies)<r>\n", enable_ansi_colors),
+                            .{
+                                package_name,
+                                resolved[package_id].fmt(string_buf),
+                                dependency_list.len,
+                            },
+                        );
                     }
-
-                    visited.set(package_id);
                 }
             }
         };
@@ -1005,7 +1012,7 @@ pub const Lockfile = struct {
             .packages = Lockfile.Package.List{},
             .buffers = Buffers{},
             .package_index = PackageIndex.Map.initContext(allocator, .{}),
-            .unique_packages = try std.DynamicBitSetUnmanaged.initFull(0, allocator),
+            .unique_packages = try Bitset.initFull(0, allocator),
             .string_pool = StringPool.init(allocator),
             .allocator = allocator,
             .scratch = Scratch.init(allocator),
@@ -1352,8 +1359,8 @@ pub const Lockfile = struct {
             resolutions: []const Resolution,
 
             pub fn isAlphabetical(ctx: Alphabetizer, lhs: PackageID, rhs: PackageID) bool {
-                return switch (std.mem.order(u8, ctx.names[lhs].slice(ctx.buf), ctx.names[rhs].slice(ctx.buf))) {
-                    .eq => lhs < rhs,
+                return switch (ctx.names[lhs].order(&ctx.names[rhs], ctx.buf, ctx.buf)) {
+                    .eq => ctx.resolutions[lhs].order(&ctx.resolutions[rhs], ctx.buf, ctx.buf) == .lt,
                     .lt => true,
                     .gt => false,
                 };
@@ -1438,17 +1445,13 @@ pub const Lockfile = struct {
             for (old_resolutions) |old_resolution, i| {
                 if (old_resolution >= max_package_id) continue;
 
-                if (cloner.clone_queue.writableLength() == 0) {
-                    try cloner.flush();
-                }
-
                 const mapped = package_id_mapping[old_resolution];
                 const resolve_id = new_package.resolutions.off + @intCast(PackageID, i);
 
                 if (mapped < max_package_id) {
                     resolutions[i] = mapped;
                 } else {
-                    cloner.clone_queue.writeItemAssumeCapacity(
+                    try cloner.clone_queue.append(
                         PendingResolution{
                             .old_resolution = old_resolution,
                             .parent = new_package.meta.id,
@@ -2408,7 +2411,7 @@ pub const Lockfile = struct {
 
             {
                 lockfile.package_index = PackageIndex.Map.initContext(allocator, .{});
-                lockfile.unique_packages = try std.DynamicBitSetUnmanaged.initFull(lockfile.packages.len, allocator);
+                lockfile.unique_packages = try Bitset.initFull(lockfile.packages.len, allocator);
                 lockfile.string_pool = StringPool.initContext(allocator, .{});
                 try lockfile.package_index.ensureTotalCapacity(@truncate(u32, lockfile.packages.len));
                 var slice = lockfile.packages.slice();
@@ -3101,7 +3104,7 @@ pub const PackageManager = struct {
         name: String,
         version: Dependency.Version,
         dependency_id: PackageID,
-        is_peer: bool,
+        behavior: Behavior,
         manifest: *const Npm.PackageManifest,
         find_result: Npm.PackageManifest.FindResult,
     ) !?ResolvedPackageResult {
@@ -3109,7 +3112,7 @@ pub const PackageManager = struct {
         // Was this package already allocated? Let's reuse the existing one.
         if (this.lockfile.getPackageID(
             name_hash,
-            version,
+            if (behavior.isPeer()) version else null,
             .{
                 .tag = .npm,
                 .value = .{ .npm = find_result.version },
@@ -3121,7 +3124,8 @@ pub const PackageManager = struct {
             };
         }
 
-        var package = try Lockfile.Package.fromNPM(
+        var package =
+            try Lockfile.Package.fromNPM(
             this.allocator,
             this.lockfile,
             this.log,
@@ -3131,6 +3135,11 @@ pub const PackageManager = struct {
             manifest.string_buf,
             Features.npm,
         );
+
+        if (!behavior.isEnabled(this.options.omit.toFeatures())) {
+            package.meta.preinstall_state = .done;
+        }
+
         const preinstall = package.determinePreinstallState(this.lockfile, this);
 
         // appendPackage sets the PackageID on the package
@@ -3270,7 +3279,7 @@ pub const PackageManager = struct {
         name_hash: PackageNameHash,
         name: String,
         version: Dependency.Version,
-        is_peer: bool,
+        behavior: Behavior,
         dependency_id: PackageID,
         resolution: PackageID,
     ) !?ResolvedPackageResult {
@@ -3292,7 +3301,7 @@ pub const PackageManager = struct {
                     else => unreachable,
                 };
 
-                return try getOrPutResolvedPackageWithFindResult(this, name_hash, name, version, dependency_id, is_peer, manifest, find_result);
+                return try getOrPutResolvedPackageWithFindResult(this, name_hash, name, version, dependency_id, behavior, manifest, find_result);
             },
 
             else => return null,
@@ -3416,12 +3425,6 @@ pub const PackageManager = struct {
             }
         }
 
-        if (comptime is_main) {
-            if (!this.options.enable.install_dev_dependencies and dependency.behavior.isDev()) {
-                return;
-            }
-        }
-
         switch (dependency.version.tag) {
             .npm, .dist_tag => {
                 retry_from_manifests_ptr: while (true) {
@@ -3429,7 +3432,7 @@ pub const PackageManager = struct {
                         name_hash,
                         name,
                         version,
-                        dependency.behavior.isPeer(),
+                        dependency.behavior,
                         id,
                         resolution,
                     );
@@ -3473,7 +3476,6 @@ pub const PackageManager = struct {
                         };
 
                         if (resolve_result) |result| {
-                            if (result.package.isDisabled()) return;
 
                             // First time?
                             if (result.is_first_time) {
@@ -3522,7 +3524,7 @@ pub const PackageManager = struct {
                                                     name,
                                                     version,
                                                     id,
-                                                    dependency.behavior.isPeer(),
+                                                    dependency.behavior,
                                                     &loaded_manifest.?,
                                                     find_result,
                                                 ) catch null) |new_resolve_result| {
@@ -3962,6 +3964,7 @@ pub const PackageManager = struct {
         positionals: []const string = &[_]string{},
         update: Update = Update{},
         dry_run: bool = false,
+        omit: CommandLineArguments.Omit = .{},
 
         pub const LogLevel = enum {
             default,
@@ -4098,6 +4101,10 @@ pub const PackageManager = struct {
                 if (cli.no_dedupe) {
                     this.enable.deduplicate_packages = false;
                 }
+
+                this.omit.dev = cli.omit.dev or this.omit.dev;
+                this.omit.optional = cli.omit.optional or this.omit.optional;
+                this.omit.peer = cli.omit.peer or this.omit.peer;
 
                 if (cli.verbose) {
                     this.log_level = .verbose;
@@ -4371,6 +4378,7 @@ pub const PackageManager = struct {
         clap.parseParam("--verbose                         Excessively verbose logging") catch unreachable,
         clap.parseParam("--cwd <STR>                       Set a specific cwd") catch unreachable,
         clap.parseParam("--backend <STR>                   Platform-specific optimizations for installing dependencies. For macOS, \"clonefile\" (default), \"copyfile\"") catch unreachable,
+        clap.parseParam("--omit <STR>...                   Skip installing dependencies of a certain type. \"dev\", \"optional\", or \"peer\"") catch unreachable,
         clap.parseParam("--help                            Print this help menu") catch unreachable,
     };
 
@@ -4411,6 +4419,23 @@ pub const PackageManager = struct {
         development: bool = false,
         optional: bool = false,
 
+        no_optional: bool = false,
+        omit: Omit = Omit{},
+
+        const Omit = struct {
+            dev: bool = false,
+            optional: bool = false,
+            peer: bool = false,
+
+            pub inline fn toFeatures(this: Omit) Features {
+                return Features{
+                    .dev_dependencies = this.dev,
+                    .optional_dependencies = this.optional,
+                    .peer_dependencies = this.peer,
+                };
+            }
+        };
+
         pub fn parse(
             allocator: *std.mem.Allocator,
             comptime params: []const ParamType,
@@ -4450,6 +4475,20 @@ pub const PackageManager = struct {
             if (comptime params.len == add_params.len) {
                 cli.development = args.flag("--development");
                 cli.optional = args.flag("--optional");
+            }
+
+            for (args.options("--omit")) |omit| {
+                if (strings.eqlComptime(omit, "dev")) {
+                    cli.omit.dev = true;
+                } else if (strings.eqlComptime(omit, "optional")) {
+                    cli.omit.optional = true;
+                } else if (strings.eqlComptime(omit, "peer")) {
+                    cli.omit.peer = true;
+                } else {
+                    Output.prettyErrorln("<b>error<r><d>:<r> Invalid argument <b>\"--omit\"<r> must be one of <cyan>\"dev\"<r>, <cyan>\"optional\"<r>, or <cyan>\"peer\"<r>. ", .{});
+                    Output.flush();
+                    std.os.exit(1);
+                }
             }
 
             if (args.option("--token")) |token| {
@@ -4990,7 +5029,6 @@ pub const PackageManager = struct {
         resolutions: []Resolution,
         node: *Progress.Node,
         destination_dir_subpath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
-        ran: usize = 0,
         install_count: usize = 0,
 
         pub fn installPackage(
@@ -5001,7 +5039,7 @@ pub const PackageManager = struct {
             const meta = &this.metas[package_id];
 
             if (meta.isDisabled()) {
-                this.ran += 1;
+                this.summary.skipped += 1;
                 if (comptime log_level.showProgress()) {
                     this.node.completeOne();
                 }
@@ -5129,25 +5167,89 @@ pub const PackageManager = struct {
             var parts = lockfile.packages.slice();
             var metas = parts.items(.meta);
             var names = parts.items(.name);
-            var dependency_lists = parts.items(.dependencies);
+            var dependency_lists: []const Lockfile.DependencySlice = parts.items(.dependencies);
             var dependencies = lockfile.buffers.dependencies.items;
-            var resolutions_buffer = lockfile.buffers.resolutions.items;
-            var resolution_lists = parts.items(.resolutions);
+            const resolutions_buffer: []const PackageID = lockfile.buffers.resolutions.items;
+            const resolution_lists: []const Lockfile.PackageIDSlice = parts.items(.resolutions);
             var resolutions = parts.items(.resolution);
 
             const pending_task_offset = this.total_tasks;
             const root_dependency_list = dependency_lists[0];
             const root_resolution_list = resolution_lists[0];
 
-            var toplevel_packages = try lockfile.unique_packages.clone(this.allocator);
-            const max_package_id = @truncate(PackageID, names.len);
-            for (root_resolution_list.get(resolutions_buffer)) |package_id| {
-                if (package_id > max_package_id) continue;
-                toplevel_packages.set(package_id);
+            var non_unique_packages = lockfile.unique_packages;
+            non_unique_packages.toggleAll();
+
+            defer {
+                non_unique_packages.toggleAll();
+                lockfile.unique_packages = non_unique_packages;
             }
 
-            const toplevel_count = toplevel_packages.count();
-            var toplevel_node_modules = toplevel_packages.iterator(.{});
+            var hoisted = try Bitset.initEmpty(non_unique_packages.bit_length, lockfile.allocator);
+
+            {
+                const resolutions_lists = parts.items(.resolutions);
+
+                const end = @truncate(PackageID, lockfile.packages.len);
+
+                // Packages with 0 dependencies are edges in the graph
+                // so they're hoisted to the top, as long as they're not a duplicate package version
+                {
+                    var package_id: PackageID = 1;
+                    while (package_id < end) : (package_id += 1) {
+                        const list = resolutions_lists[package_id];
+                        if (list.len == 0) {
+                            hoisted.set(package_id);
+
+                            continue;
+                        }
+                    }
+
+                    hoisted.setExclude(non_unique_packages);
+                }
+
+                // Top-level dependencies are always installed at the root
+                for (resolutions_lists[0].get(resolutions_buffer)) |package_id| {
+                    if (package_id >= end) continue;
+                    hoisted.set(package_id);
+                }
+
+                {
+                    var has_update = true;
+
+                    var retry = try Bitset.initFull(non_unique_packages.bit_length, lockfile.allocator);
+
+                    while (has_update) {
+                        retry.setExclude(hoisted);
+
+                        var to_retry = retry.iterator(.{ .kind = .set });
+
+                        has_update = false;
+
+                        // Packages where all dependencies are hoisted can themselves become hoisted
+                        // Once no more packages can be hoisted, we're done with finding top-level packages
+                        outer: while (to_retry.next()) |package_id_| {
+                            const list = resolutions_lists[package_id_];
+
+                            for (list.get(resolutions_buffer)) |package_id| {
+                                if (package_id >= end) continue;
+                                if (!hoisted.isSet(package_id)) {
+                                    retry.set(package_id);
+                                    continue :outer;
+                                }
+                            }
+
+                            if (non_unique_packages.isSet(package_id_)) continue;
+                            hoisted.set(package_id_);
+                            has_update = true;
+                        }
+                    }
+                }
+            }
+            const max_package_id = @truncate(PackageID, names.len);
+
+            const toplevel_count = hoisted.count();
+            var toplevel_node_modules = hoisted.iterator(.{});
 
             var installer = PackageInstaller{
                 .manager = this,
@@ -5174,7 +5276,6 @@ pub const PackageManager = struct {
             // so in that case, we will still need to support copy_file_range()
             // git installs will always need to run in paralell, and tarball installs probably should too
             run_install: {
-                var ran: usize = 0;
                 if (PackageInstall.supported_method.isSync()) {
                     sync_install: {
                         while (toplevel_node_modules.next()) |package_id| {
@@ -5216,6 +5317,7 @@ pub const PackageManager = struct {
                     .allocator = lockfile.allocator,
                 };
                 install_context.channel = PackageInstall.Task.Channel.init();
+                var ran: usize = summary.skipped + summary.success + summary.fail;
 
                 var tasks = try lockfile.allocator.alloc(PackageInstall.Task, toplevel_count - ran);
                 var task_i: usize = 0;
@@ -5349,6 +5451,7 @@ pub const PackageManager = struct {
                                 .optional_dependencies = true,
                                 .dev_dependencies = true,
                                 .is_main = true,
+                                .check_for_duplicate_dependencies = true,
                             },
                         );
                     } else {
@@ -5362,6 +5465,7 @@ pub const PackageManager = struct {
                                 .optional_dependencies = true,
                                 .dev_dependencies = false,
                                 .is_main = true,
+                                .check_for_duplicate_dependencies = true,
                             },
                         );
                     }
@@ -5461,6 +5565,7 @@ pub const PackageManager = struct {
                         .optional_dependencies = true,
                         .dev_dependencies = true,
                         .is_main = true,
+                        .check_for_duplicate_dependencies = true,
                     },
                 );
             } else {
@@ -5474,6 +5579,7 @@ pub const PackageManager = struct {
                         .optional_dependencies = true,
                         .dev_dependencies = false,
                         .is_main = true,
+                        .check_for_duplicate_dependencies = true,
                     },
                 );
             }

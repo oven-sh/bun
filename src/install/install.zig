@@ -1322,14 +1322,14 @@ pub const Lockfile = struct {
         _,
     };
 
-    const DependencySlice = ExternalSlice(Dependency);
-    const PackageIDSlice = ExternalSlice(PackageID);
-    const NodeModulesFolderSlice = ExternalSlice(NodeModulesFolder);
+    pub const DependencySlice = ExternalSlice(Dependency);
+    pub const PackageIDSlice = ExternalSlice(PackageID);
+    pub const NodeModulesFolderSlice = ExternalSlice(NodeModulesFolder);
 
-    const PackageIDList = std.ArrayListUnmanaged(PackageID);
-    const DependencyList = std.ArrayListUnmanaged(Dependency);
-    const StringBuffer = std.ArrayListUnmanaged(u8);
-    const SmallExternalStringBuffer = std.ArrayListUnmanaged(String);
+    pub const PackageIDList = std.ArrayListUnmanaged(PackageID);
+    pub const DependencyList = std.ArrayListUnmanaged(Dependency);
+    pub const StringBuffer = std.ArrayListUnmanaged(u8);
+    pub const SmallExternalStringBuffer = std.ArrayListUnmanaged(String);
 
     const NodeModulesFolder = extern struct {
         in: PackageID = 0,
@@ -3695,9 +3695,11 @@ pub const PackageManager = struct {
 
     fn runTasks(
         manager: *PackageManager,
+
         comptime ExtractCompletionContext: type,
         extract_ctx: ExtractCompletionContext,
         comptime callback_fn: anytype,
+        
         comptime log_level: Options.LogLevel,
     ) anyerror!void {
         var batch = ThreadPool.Batch{};

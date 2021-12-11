@@ -1557,7 +1557,8 @@ pub const Lockfile = struct {
                 const total_len = dependencies_list.items.len + total_dependencies_count;
                 std.debug.assert(dependencies_list.items.len == resolutions_list.items.len);
 
-                var dependencies = dependencies_list.items.ptr[dependencies_list.items.len..total_len];
+                var dependencies: []Dependency = dependencies_list.items.ptr[dependencies_list.items.len..total_len];
+                var start_dependencies = dependencies;
 
                 const off = @truncate(u32, dependencies_list.items.len);
 
@@ -1568,9 +1569,23 @@ pub const Lockfile = struct {
 
                     if (comptime Environment.isDebug) std.debug.assert(keys.len == version_strings.len);
                     const is_peer = comptime strings.eqlComptime(group.field, "peer_dependencies");
+                    var i: usize = 0;
 
-                    for (keys) |key, i| {
+                    list: while (i < keys.len) {
+                        const key = keys[i];
                         const version_string_ = version_strings[i];
+
+                        // Duplicate peer & dev dependencies are promoted to whichever appeared first
+                        // In practice, npm validates this so it shouldn't happen
+                        if (comptime group.behavior.isPeer() or group.behavior.isDev()) {
+                            for (start_dependencies[0 .. total_dependencies_count - dependencies.len]) |dependency, j| {
+                                if (dependency.name_hash == key.hash) {
+                                    i += 1;
+                                    continue :list;
+                                }
+                            }
+                        }
+
                         const name: ExternalString = string_builder.appendWithHash(ExternalString, key.slice(string_buf), key.hash);
                         const dep_version = string_builder.appendWithHash(String, version_string_.slice(string_buf), version_string_.hash);
                         const sliced = dep_version.sliced(lockfile.buffers.string_bytes.items);
@@ -1590,10 +1605,25 @@ pub const Lockfile = struct {
                             ) orelse Dependency.Version{},
                         };
 
+                        // If a dependency appears in both "dependencies" and "optionalDependencies", it is considered optional!
+                        if (comptime group.behavior.isOptional()) {
+                            for (start_dependencies[0 .. total_dependencies_count - dependencies.len]) |dep, j| {
+                                if (dep.name_hash == key.hash) {
+                                    // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#optionaldependencies
+                                    // > Entries in optionalDependencies will override entries of the same name in dependencies, so it's usually best to only put in one place.
+                                    start_dependencies[j] = dep;
+
+                                    i += 1;
+                                    continue :list;
+                                }
+                            }
+                        }
+
                         package.meta.npm_dependency_count += @as(u32, @boolToInt(dependency.version.tag.isNPM()));
 
                         dependencies[0] = dependency;
                         dependencies = dependencies[1..];
+                        i += 1;
                     }
                 }
 
@@ -1849,6 +1879,7 @@ pub const Lockfile = struct {
                 };
             }
 
+            // It is allowed for duplicate dependencies to exist in optionalDependencies and regular dependencies
             if (comptime features.check_for_duplicate_dependencies) {
                 lockfile.scratch.duplicate_checker_map.clearRetainingCapacity();
                 try lockfile.scratch.duplicate_checker_map.ensureTotalCapacity(total_dependencies_count);
@@ -1857,33 +1888,15 @@ pub const Lockfile = struct {
             inline for (dependency_groups) |group| {
                 if (json.asProperty(group.prop)) |dependencies_q| {
                     if (dependencies_q.expr.data == .e_object) {
-                        for (dependencies_q.expr.data.e_object.properties) |item| {
+                        const dependency_props: []const JSAst.G.Property = dependencies_q.expr.data.e_object.properties;
+                        var i: usize = 0;
+                        outer: while (i < dependency_props.len) {
+                            const item = dependency_props[i];
+
                             const name_ = item.key.?.asString(allocator) orelse "";
                             const version_ = item.value.?.asString(allocator) orelse "";
 
                             const external_name = string_builder.append(ExternalString, name_);
-
-                            if (comptime features.check_for_duplicate_dependencies) {
-                                var entry = lockfile.scratch.duplicate_checker_map.getOrPutAssumeCapacity(external_name.hash);
-                                if (entry.found_existing) {
-                                    var notes = try allocator.alloc(logger.Data, 1);
-                                    notes[0] = logger.Data{
-                                        .text = try std.fmt.allocPrint(lockfile.allocator, "\"{s}\" was originally specified here", .{name_}),
-                                        .location = logger.Location.init_or_nil(&source, source.rangeOfString(entry.value_ptr.*)),
-                                    };
-
-                                    try log.addRangeErrorFmtWithNotes(
-                                        &source,
-                                        source.rangeOfString(item.key.?.loc),
-                                        lockfile.allocator,
-                                        notes,
-                                        "Duplicate dependency: \"{s}\"",
-                                        .{name_},
-                                    );
-                                }
-
-                                entry.value_ptr.* = dependencies_q.loc;
-                            }
 
                             const external_version = string_builder.append(String, version_);
 
@@ -1897,14 +1910,53 @@ pub const Lockfile = struct {
                                 &sliced,
                                 log,
                             ) orelse Dependency.Version{};
-                            dependencies[0] = Dependency{
+                            const this_dep = Dependency{
                                 .behavior = group.behavior,
                                 .name = external_name.value,
                                 .name_hash = external_name.hash,
                                 .version = dependency_version,
                             };
+
+                            if (comptime features.check_for_duplicate_dependencies) {
+                                var entry = lockfile.scratch.duplicate_checker_map.getOrPutAssumeCapacity(external_name.hash);
+                                if (entry.found_existing) {
+                                    // duplicate dependencies are allowed in optionalDependencies
+                                    if (comptime group.behavior.isOptional()) {
+                                        for (package_dependencies[0 .. package_dependencies.len - dependencies.len]) |package_dep, j| {
+                                            if (package_dep.name_hash == this_dep.name_hash) {
+                                                package_dependencies[j] = this_dep;
+                                                break;
+                                            }
+                                        }
+
+                                        i += 1;
+                                        continue :outer;
+                                    } else {
+                                        var notes = try allocator.alloc(logger.Data, 1);
+
+                                        notes[0] = logger.Data{
+                                            .text = try std.fmt.allocPrint(lockfile.allocator, "\"{s}\" originally specified here", .{name_}),
+                                            .location = logger.Location.init_or_nil(&source, source.rangeOfString(entry.value_ptr.*)),
+                                        };
+
+                                        try log.addRangeErrorFmtWithNotes(
+                                            &source,
+                                            source.rangeOfString(item.key.?.loc),
+                                            lockfile.allocator,
+                                            notes,
+                                            "Duplicate dependency: \"{s}\" specified in package.json",
+                                            .{name_},
+                                        );
+                                    }
+                                }
+
+                                entry.value_ptr.* = item.value.?.loc;
+                            }
+
+                            dependencies[0] = this_dep;
                             package.meta.npm_dependency_count += @as(u32, @boolToInt(dependency_version.tag.isNPM()));
                             dependencies = dependencies[1..];
+                            i += 1;
                         }
                     }
                 }

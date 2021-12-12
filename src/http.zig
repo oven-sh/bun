@@ -1877,6 +1877,12 @@ pub const RequestContext = struct {
                             return;
                         }
 
+                        // Failed experiment: inject "Link" tags for each import path
+                        // Browsers ignore this header when it's coming from a script import.
+                        // In Chrome, the header appears in the Network tab but doesn't seem to do anything
+                        // In Firefox,the header does not appear in the Network tab.
+                        // Safari was not tested
+
                         if (FeatureFlags.strong_etags_for_built_files) {
                             // Always cache css & json files, even big ones
                             // css is especially important because we want to try and skip having the browser parse it whenever we can

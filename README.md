@@ -18,6 +18,12 @@ All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for develo
 curl -fsSL https://bun.sh/install | bash
 ```
 
+### Nix
+
+There is a `default.nix` file bundled with Bun's source. This could eventually be brought to Nixpkgs, but for now, you can run and install it like any other nix package.
+
+Before using it, change `bun_install` on line 11 to wherever you'd like Bun to store it's cache.
+
 ## Benchmarks
 
 **CSS**: [Bun is 14x faster](./bench/hot-module-reloading/css-stress-test) than Next.js at hot reloading CSS. TODO: compare Vite

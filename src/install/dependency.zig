@@ -247,6 +247,12 @@ pub const Version = struct {
                 // npm package
                 '=', '>', '<', '0'...'9', '^', '*', '~', '|' => return Tag.npm,
 
+                'n' => {
+                    if (dependency.len > 4 and strings.eqlComptimeIgnoreLen(dependency[0..4], "npm:")) {
+                        return Tag.npm;
+                    }
+                },
+
                 // MIGHT be semver, might not be.
                 'x', 'X' => {
                     if (dependency.len == 1) {
@@ -381,17 +387,17 @@ pub const Version = struct {
                     return .dist_tag;
                 },
 
-                else => {
-                    if (isTarball(dependency))
-                        return .tarball;
-
-                    if (isGitHubRepoPath(dependency)) {
-                        return .github;
-                    }
-
-                    return .dist_tag;
-                },
+                else => {},
             }
+
+            if (isTarball(dependency))
+                return .tarball;
+
+            if (isGitHubRepoPath(dependency)) {
+                return .github;
+            }
+
+            return .dist_tag;
         }
     };
 
@@ -432,13 +438,19 @@ pub fn eqlResolved(a: Dependency, b: Dependency) bool {
 }
 
 pub fn parse(allocator: *std.mem.Allocator, dependency_: string, sliced: *const SlicedString, log: *logger.Log) ?Version {
-    const dependency = std.mem.trimLeft(u8, dependency_, " \t\n\r");
+    var dependency = std.mem.trimLeft(u8, dependency_, " \t\n\r");
 
     if (dependency.len == 0) return null;
+    const tag = Version.Tag.infer(dependency);
+
+    if (tag == .npm and dependency.len > 4 and strings.eqlComptimeIgnoreLen(dependency[0..4], "npm:")) {
+        dependency = dependency[4..];
+    }
+
     return parseWithTag(
         allocator,
         dependency,
-        Version.Tag.infer(dependency),
+        tag,
         sliced,
         log,
     );

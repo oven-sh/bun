@@ -920,7 +920,7 @@ pub const PackageManifest = struct {
         var prerelease_versions = all_prerelease_versions;
 
         var extern_strings = all_extern_strings;
-        string_builder.cap += string_builder.cap % 64;
+        string_builder.cap += (string_builder.cap % 64) + 64;
         string_builder.cap *= 2;
 
         try string_builder.allocate(allocator);
@@ -1193,55 +1193,10 @@ pub const PackageManifest = struct {
                                 package_version.optional_peer_dependencies_len = @truncate(u32, peer_dependency_len);
                             }
 
-                            if (count > 0) {
-                                if (comptime is_peer) {
-                                    if (optional_peer_dep_names.items.len > 0) {
-                                        var optional_peer_deps_name_buf = [_]u8{
-                                            '$',
-                                            'o',
-                                            'p',
-                                            't',
-                                            'i',
-                                            'o',
-                                            'n',
-                                            'a',
-                                            'l',
-                                            'P',
-                                            'e',
-                                            'e',
-                                            'r',
-                                            'D',
-                                            'e',
-                                            'p',
-                                            's',
-                                            ':',
-                                            0,
-                                            0,
-                                            0,
-                                            0,
-                                        };
-
-                                        std.mem.writeIntNative(
-                                            u32,
-                                            optional_peer_deps_name_buf[optional_peer_deps_name_buf.len - 4 ..][0..4],
-                                            package_version.optional_peer_dependencies_len,
-                                        );
-
-                                        for (this_names[0..count]) |byte_str| {
-                                            const bytes = @bitCast([8]u8, byte_str.hash);
-                                            name_hasher.update(&bytes);
-                                        }
-
-                                        name_hasher.update(&optional_peer_deps_name_buf);
-
-                                        for (this_versions[0..count]) |byte_str| {
-                                            const bytes = @bitCast([8]u8, byte_str.hash);
-                                            version_hasher.update(&bytes);
-                                        }
-
-                                        version_hasher.update(&optional_peer_deps_name_buf);
-                                    }
-                                }
+                            if (count > 0 and
+                                ((comptime !is_peer) or
+                                optional_peer_dep_names.items.len == 0))
+                            {
                                 const name_map_hash = name_hasher.final();
                                 const version_map_hash = version_hasher.final();
 
@@ -1264,6 +1219,13 @@ pub const PackageManifest = struct {
                                 }
                             }
 
+                            if (comptime is_peer) {
+                                if (optional_peer_dep_names.items.len > 0) {
+                                    dependency_names = dependency_names[count..];
+                                    dependency_values = dependency_values[count..];
+                                }
+                            }
+
                             @field(package_version, pair.field) = ExternalStringMap{
                                 .name = name_list,
                                 .value = version_list,
@@ -1281,18 +1243,37 @@ pub const PackageManifest = struct {
                                 std.debug.assert(std.meta.eql(dependencies_list.value.get(version_extern_strings), this_versions));
                                 var j: usize = 0;
                                 const name_dependencies = dependencies_list.name.get(all_extern_strings);
-                                while (j < name_dependencies.len) : (j += 1) {
-                                    const dep_name = name_dependencies[j];
-                                    std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_names[j].slice(string_buf)));
-                                    std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].key.?.asString(allocator).?));
-                                }
 
-                                j = 0;
-                                while (j < dependencies_list.value.len) : (j += 1) {
-                                    const dep_name = dependencies_list.value.get(version_extern_strings)[j];
+                                if (comptime is_peer) {
+                                    if (optional_peer_dep_names.items.len == 0) {
+                                        while (j < name_dependencies.len) : (j += 1) {
+                                            const dep_name = name_dependencies[j];
+                                            std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_names[j].slice(string_buf)));
+                                            std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].key.?.asString(allocator).?));
+                                        }
 
-                                    std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_versions[j].slice(string_buf)));
-                                    std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].value.?.asString(allocator).?));
+                                        j = 0;
+                                        while (j < dependencies_list.value.len) : (j += 1) {
+                                            const dep_name = dependencies_list.value.get(version_extern_strings)[j];
+
+                                            std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_versions[j].slice(string_buf)));
+                                            std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].value.?.asString(allocator).?));
+                                        }
+                                    }
+                                } else {
+                                    while (j < name_dependencies.len) : (j += 1) {
+                                        const dep_name = name_dependencies[j];
+                                        std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_names[j].slice(string_buf)));
+                                        std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].key.?.asString(allocator).?));
+                                    }
+
+                                    j = 0;
+                                    while (j < dependencies_list.value.len) : (j += 1) {
+                                        const dep_name = dependencies_list.value.get(version_extern_strings)[j];
+
+                                        std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_versions[j].slice(string_buf)));
+                                        std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].value.?.asString(allocator).?));
+                                    }
                                 }
                             }
                         }

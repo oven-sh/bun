@@ -428,6 +428,252 @@ pub const Lockfile = struct {
         summary: PackageInstall.Summary,
     };
 
+    pub const Tree = extern struct {
+        id: Id = invalid_id,
+        package_id: PackageID = invalid_package_id,
+
+        parent: Id = invalid_id,
+        packages: Lockfile.PackageIDSlice = Lockfile.PackageIDSlice{},
+
+        pub const Slice = ExternalSlice(Tree);
+        pub const List = std.ArrayListUnmanaged(Tree);
+        pub const Id = u32;
+        const invalid_id: Id = std.math.maxInt(Id);
+        const dependency_loop = invalid_id - 1;
+        const hoisted = invalid_id - 2;
+        const error_id = hoisted;
+
+        const SubtreeError = error{ OutOfMemory, DependencyLoop };
+
+        const NodeModulesFolder = struct {
+            relative_path: stringZ,
+            in: PackageID,
+            packages: []const PackageID,
+        };
+
+        pub const Iterator = struct {
+            trees: []const Tree,
+            package_ids: []const PackageID,
+            names: []const String,
+            tree_id: Id = 0,
+            path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
+            path_buf_len: usize = 0,
+            last_parent: Id = invalid_id,
+            string_buf: string,
+
+            // max number of node_modules folders
+            depth_stack: [(std.fs.MAX_PATH_BYTES / "node_modules".len) + 1]Id = undefined,
+
+            pub fn init(
+                trees: []const Tree,
+                package_ids: []const PackageID,
+                names: []const String,
+                string_buf: string,
+            ) Iterator {
+                return Tree.Iterator{
+                    .trees = trees,
+                    .package_ids = package_ids,
+                    .names = names,
+                    .tree_id = 0,
+                    .path_buf = undefined,
+                    .path_buf_len = 0,
+                    .last_parent = invalid_id,
+                    .string_buf = string_buf,
+                };
+            }
+
+            pub fn nextNodeModulesFolder(this: *Iterator) ?NodeModulesFolder {
+                if (this.tree_id >= this.trees.len) return null;
+
+                while (this.trees[this.tree_id].packages.len == 0) {
+                    this.tree_id += 1;
+                    if (this.tree_id >= this.trees.len) return null;
+                }
+
+                const tree = this.trees[this.tree_id];
+                const string_buf = this.string_buf;
+
+                {
+
+                    // For now, the dumb way
+                    this.path_buf[0.."node_modules".len].* = "node_modules".*;
+                    var parent_id = tree.id;
+                    var path_written: usize = "node_modules".len;
+                    this.depth_stack[0] = 0;
+
+                    if (tree.id > 0) {
+                        var depth_buf_len: usize = 1;
+                        while (parent_id > 0 and parent_id < @intCast(Id, this.trees.len)) {
+                            this.depth_stack[depth_buf_len] = parent_id;
+                            parent_id = this.trees[parent_id].parent;
+                            depth_buf_len += 1;
+                        }
+                        depth_buf_len -= 1;
+                        while (depth_buf_len > 0) : (depth_buf_len -= 1) {
+                            this.path_buf[path_written] = std.fs.path.sep;
+                            path_written += 1;
+
+                            const tree_id = this.depth_stack[depth_buf_len];
+
+                            const name = this.names[this.trees[tree_id].package_id].slice(string_buf);
+                            std.mem.copy(u8, this.path_buf[path_written..], name);
+                            path_written += name.len;
+
+                            this.path_buf[path_written..][0.."/node_modules".len].* = (std.fs.path.sep_str ++ "node_modules").*;
+                            path_written += "/node_modules".len;
+                        }
+                    }
+                    this.path_buf[path_written] = 0;
+                    this.path_buf_len = path_written;
+                }
+
+                this.tree_id += 1;
+                var relative_path: [:0]u8 = this.path_buf[0..this.path_buf_len :0];
+                return NodeModulesFolder{
+                    .relative_path = relative_path,
+                    .in = tree.package_id,
+                    .packages = tree.packages.get(this.package_ids),
+                };
+            }
+        };
+
+        const Builder = struct {
+            allocator: *std.mem.Allocator,
+            name_hashes: []const PackageNameHash,
+            list: ArrayList = ArrayList{},
+            resolutions: []const PackageID,
+            resolution_lists: []const Lockfile.PackageIDSlice,
+            queue: Lockfile.TreeFiller,
+
+            pub const Entry = struct {
+                tree: Tree,
+                packages: Lockfile.PackageIDList,
+            };
+
+            pub const ArrayList = std.MultiArrayList(Entry);
+
+            /// Flatten the multi-dimensional ArrayList of package IDs into a single easily serializable array
+            pub fn clean(this: *Builder) ![]PackageID {
+                const end = @truncate(Id, this.list.len);
+                var i: Id = 0;
+                var total_packages_count: u32 = 0;
+
+                var slice = this.list.slice();
+                var trees = this.list.items(.tree);
+                var packages = this.list.items(.packages);
+
+                // TODO: can we cull empty trees here?
+                while (i < end) : (i += 1) {
+                    total_packages_count += trees[i].packages.len;
+                }
+
+                var package_ids = try this.allocator.alloc(PackageID, total_packages_count);
+                var next = PackageIDSlice{};
+
+                for (trees) |tree, id| {
+                    if (tree.packages.len > 0) {
+                        var child = packages[id];
+                        const len = @truncate(PackageID, child.items.len);
+                        next.off += next.len;
+                        next.len = len;
+                        trees[id].packages = next;
+                        std.mem.copy(PackageID, package_ids[next.off..][0..next.len], child.items);
+                        child.deinit(this.allocator);
+                    }
+                }
+                this.queue.deinit();
+
+                return package_ids;
+            }
+        };
+
+        pub fn processSubtree(
+            this: *Tree,
+            package_id: PackageID,
+            builder: *Builder,
+        ) SubtreeError!void {
+            try builder.list.append(builder.allocator, .{
+                .tree = Tree{
+                    .parent = this.id,
+                    .id = @truncate(Id, builder.list.len),
+                    .package_id = package_id,
+                },
+                .packages = .{},
+            });
+
+            var list_slice = builder.list.slice();
+            var trees = list_slice.items(.tree);
+            var package_lists = list_slice.items(.packages);
+            var next: *Tree = &trees[builder.list.len - 1];
+
+            const resolutions: []const PackageID = builder.resolution_lists[package_id].get(builder.resolutions);
+            if (resolutions.len == 0) {
+                return;
+            }
+
+            const max_package_id = builder.name_hashes.len;
+
+            for (resolutions) |pid| {
+                if (pid >= max_package_id) continue;
+
+                const destination = next.addDependency(pid, builder.name_hashes, package_lists, trees, builder.allocator);
+                switch (destination) {
+                    Tree.dependency_loop => return error.DependencyLoop,
+                    Tree.hoisted => continue,
+                    else => {},
+                }
+
+                if (builder.resolution_lists[pid].len > 0) {
+                    try builder.queue.writeItem([2]PackageID{ pid, destination });
+                }
+            }
+        }
+
+        // todo: use error type when it no longer takes up extra stack space
+        pub fn addDependency(
+            this: *Tree,
+            package_id: PackageID,
+            name_hashes: []const PackageNameHash,
+            lists: []Lockfile.PackageIDList,
+            trees: []Tree,
+            allocator: *std.mem.Allocator,
+        ) Id {
+            const this_packages = this.packages.get(lists[this.id].items);
+            const name_hash = name_hashes[package_id];
+
+            for (this_packages) |pid, slot| {
+                if (name_hashes[pid] == name_hash) {
+                    if (pid != package_id) {
+                        return dependency_loop;
+                    }
+
+                    return hoisted;
+                }
+            }
+
+            if (this.parent < error_id) {
+                const id = trees[this.parent].addDependency(
+                    package_id,
+                    name_hashes,
+                    lists,
+                    trees,
+                    allocator,
+                );
+                switch (id) {
+                    // If there is a dependency loop, we've reached the highest point
+                    // Therefore, we resolve the dependency loop by appending to ourself
+                    Tree.dependency_loop => {},
+                    Tree.hoisted => return hoisted,
+                    else => return id,
+                }
+            }
+
+            lists[this.id].append(allocator, package_id) catch unreachable;
+            this.packages.len += 1;
+            return this.id;
+        }
+    };
+
     pub fn clean(old: *Lockfile, deduped: *u32, options: *const PackageManager.Options) !*Lockfile {
 
         // We will only shrink the number of packages here.
@@ -526,11 +772,15 @@ pub const Lockfile = struct {
         return new;
     }
 
+    pub const TreeFiller = std.fifo.LinearFifo([2]PackageID, .Dynamic);
+
     const Cloner = struct {
         clone_queue: PendingResolutions,
         lockfile: *Lockfile,
         old: *Lockfile,
         mapping: []PackageID,
+        trees: Tree.List = Tree.List{},
+        trees_count: u32 = 1,
 
         pub fn flush(this: *Cloner) anyerror!void {
             const max_package_id = this.old.packages.len;
@@ -551,6 +801,112 @@ pub const Lockfile = struct {
                     this.mapping,
                     this,
                 );
+            }
+
+            try this.hoist();
+        }
+
+        fn hoist(this: *Cloner) anyerror!void {
+            const max = @truncate(PackageID, this.lockfile.packages.len);
+            if (max == 0) return;
+            var allocator = this.lockfile.allocator;
+
+            var tree_list = Tree.Builder.ArrayList{};
+
+            var slice = this.lockfile.packages.slice();
+            const unique_packages = this.lockfile.unique_packages;
+
+            var resolutions_lists: []const PackageIDSlice = slice.items(.resolutions);
+            const name_hashes: []const PackageNameHash = slice.items(.name_hash);
+            const resolutions_buffer: []const PackageID = this.lockfile.buffers.resolutions.items;
+            // populate the root of the tree with:
+            // - packages where only one version exists in the tree and they have no dependencies
+            // - dependencies from package.json
+            // Dependencies from package.json must always be put into the tree
+
+            var root_packages_count: u32 = resolutions_lists[0].len;
+            for (resolutions_lists[1..]) |list, package_id| {
+                if (list.len > 0 or !unique_packages.isSet(package_id + 1)) continue;
+                root_packages_count += 1;
+            }
+
+            var root_package_list = try PackageIDList.initCapacity(allocator, root_packages_count);
+            const root_resolutions: []const PackageID = resolutions_lists[0].get(resolutions_buffer);
+
+            try tree_list.ensureTotalCapacity(allocator, root_packages_count);
+            tree_list.len = root_packages_count;
+
+            for (resolutions_lists[1..]) |list, package_id_| {
+                const package_id = @intCast(PackageID, package_id_ + 1);
+                if (list.len > 0 or
+                    !unique_packages.isSet(package_id) or
+                    std.mem.indexOfScalar(PackageID, root_package_list.items, package_id) != null)
+                    continue;
+                root_package_list.appendAssumeCapacity(package_id);
+            }
+
+            var tree_filler_queue: TreeFiller = TreeFiller.init(allocator);
+            try tree_filler_queue.ensureUnusedCapacity(root_resolutions.len);
+
+            var possible_duplicates_len = root_package_list.items.len;
+            for (root_resolutions) |package_id| {
+                if (package_id >= max) continue;
+                if (std.mem.indexOfScalar(PackageID, root_package_list.items[0..possible_duplicates_len], package_id) != null) continue;
+
+                root_package_list.appendAssumeCapacity(package_id);
+            }
+            {
+                var sliced = tree_list.slice();
+                var trees = sliced.items(.tree);
+                var packages = sliced.items(.packages);
+                trees[0] = .{
+                    .parent = Tree.invalid_id,
+                    .id = 0,
+                    .packages = .{
+                        .len = @truncate(PackageID, root_package_list.items.len),
+                    },
+                };
+                packages[0] = root_package_list;
+
+                std.mem.set(PackageIDList, packages[1..], PackageIDList{});
+                std.mem.set(Tree, trees[1..], Tree{});
+            }
+
+            var builder = Tree.Builder{
+                .name_hashes = name_hashes,
+                .list = tree_list,
+                .queue = tree_filler_queue,
+                .resolution_lists = resolutions_lists,
+                .resolutions = resolutions_buffer,
+                .allocator = allocator,
+            };
+            var builder_ = &builder;
+
+            for (root_resolutions) |package_id| {
+                if (package_id >= max) continue;
+
+                try builder.list.items(.tree)[0].processSubtree(
+                    package_id,
+                    builder_,
+                );
+            }
+
+            // This goes breadth-first
+            while (builder.queue.readItem()) |pids| {
+                try builder.list.items(.tree)[pids[1]].processSubtree(pids[0], builder_);
+            }
+
+            var tree_packages = try builder.clean();
+            this.lockfile.buffers.hoisted_packages = Lockfile.PackageIDList{
+                .items = tree_packages,
+                .capacity = tree_packages.len,
+            };
+            {
+                const final = builder.list.items(.tree);
+                this.lockfile.buffers.trees = Tree.List{
+                    .items = final,
+                    .capacity = final.len,
+                };
             }
         }
     };
@@ -714,9 +1070,25 @@ pub const Lockfile = struct {
                 const root = this.lockfile.rootPackage() orelse return;
                 visited.set(0);
                 const end = @truncate(PackageID, names.len);
-                for (resolutions_list) |list| {
-                    for (list.get(resolutions_buffer)) |package_id| {
-                        if (package_id >= end) continue;
+
+                for (resolutions_list) |list, parent_id| {
+                    for (list.get(resolutions_buffer)) |package_id, j| {
+                        if (package_id >= end) {
+                            const failed_dep: Dependency = dependency_lists[parent_id].get(dependencies_buffer)[j];
+                            if (failed_dep.behavior.isOptional() or failed_dep.behavior.isPeer() or (failed_dep.behavior.isDev() and parent_id > 0)) continue;
+
+                            try writer.print(
+                                comptime Output.prettyFmt(
+                                    "<r><red>ERROR<r><d>:<r> <b>{s}<r><d>@<b>{}<r><d> failed to resolve\n",
+                                    enable_ansi_colors,
+                                ),
+                                .{
+                                    failed_dep.name.slice(string_buf),
+                                    failed_dep.version.literal.fmt(string_buf),
+                                },
+                            );
+                            continue;
+                        }
                         const name = names[package_id];
                         const package_name = name.slice(string_buf);
 
@@ -1331,12 +1703,6 @@ pub const Lockfile = struct {
     pub const StringBuffer = std.ArrayListUnmanaged(u8);
     pub const SmallExternalStringBuffer = std.ArrayListUnmanaged(String);
 
-    const NodeModulesFolder = extern struct {
-        in: PackageID = 0,
-        packages: PackageIDSlice = PackageIDSlice{},
-        children: NodeModulesFolderSlice = NodeModulesFolderSlice{},
-    };
-
     pub const Package = extern struct {
         const DependencyGroup = struct {
             prop: string,
@@ -1441,6 +1807,8 @@ pub const Lockfile = struct {
             }
 
             builder.clamp();
+
+            cloner.trees_count += @as(u32, @boolToInt(old_resolutions.len > 0));
 
             for (old_resolutions) |old_resolution, i| {
                 if (old_resolution >= max_package_id) continue;
@@ -2140,7 +2508,8 @@ pub const Lockfile = struct {
     };
 
     const Buffers = struct {
-        sorted_ids: PackageIDList = PackageIDList{},
+        trees: Tree.List = Tree.List{},
+        hoisted_packages: PackageIDList = PackageIDList{},
         resolutions: PackageIDList = PackageIDList{},
         dependencies: DependencyList = DependencyList{},
         extern_strings: SmallExternalStringBuffer = SmallExternalStringBuffer{},
@@ -2149,7 +2518,7 @@ pub const Lockfile = struct {
         string_bytes: StringBuffer = StringBuffer{},
 
         pub fn preallocate(this: *Buffers, that: Buffers, allocator: *std.mem.Allocator) !void {
-            try this.sorted_ids.ensureTotalCapacity(allocator, that.sorted_ids.items.len);
+            try this.trees.ensureTotalCapacity(allocator, that.trees.items.len);
             try this.resolutions.ensureTotalCapacity(allocator, that.resolutions.items.len);
             try this.dependencies.ensureTotalCapacity(allocator, that.dependencies.items.len);
             try this.extern_strings.ensureTotalCapacity(allocator, that.extern_strings.items.len);
@@ -3118,6 +3487,7 @@ pub const PackageManager = struct {
                 .value = .{ .npm = find_result.version },
             },
         )) |id| {
+            this.lockfile.buffers.resolutions.items[dependency_id] = id;
             return ResolvedPackageResult{
                 .package = this.lockfile.packages.get(id),
                 .is_first_time = false,
@@ -3695,11 +4065,9 @@ pub const PackageManager = struct {
 
     fn runTasks(
         manager: *PackageManager,
-
         comptime ExtractCompletionContext: type,
         extract_ctx: ExtractCompletionContext,
         comptime callback_fn: anytype,
-        
         comptime log_level: Options.LogLevel,
     ) anyerror!void {
         var batch = ThreadPool.Batch{};
@@ -5174,84 +5542,14 @@ pub const PackageManager = struct {
             const resolutions_buffer: []const PackageID = lockfile.buffers.resolutions.items;
             const resolution_lists: []const Lockfile.PackageIDSlice = parts.items(.resolutions);
             var resolutions = parts.items(.resolution);
-
+            const end = @truncate(PackageID, names.len);
             const pending_task_offset = this.total_tasks;
-            const root_dependency_list = dependency_lists[0];
-            const root_resolution_list = resolution_lists[0];
-
-            var non_unique_packages = lockfile.unique_packages;
-            non_unique_packages.toggleAll();
-
-            defer {
-                non_unique_packages.toggleAll();
-                lockfile.unique_packages = non_unique_packages;
-            }
-
-            var hoisted = try Bitset.initEmpty(non_unique_packages.bit_length, lockfile.allocator);
-
-            {
-                const resolutions_lists = parts.items(.resolutions);
-
-                const end = @truncate(PackageID, lockfile.packages.len);
-
-                // Packages with 0 dependencies are edges in the graph
-                // so they're hoisted to the top, as long as they're not a duplicate package version
-                {
-                    var package_id: PackageID = 1;
-                    while (package_id < end) : (package_id += 1) {
-                        const list = resolutions_lists[package_id];
-                        if (list.len == 0) {
-                            hoisted.set(package_id);
-
-                            continue;
-                        }
-                    }
-
-                    hoisted.setExclude(non_unique_packages);
-                }
-
-                // Top-level dependencies are always installed at the root
-                for (resolutions_lists[0].get(resolutions_buffer)) |package_id| {
-                    if (package_id >= end) continue;
-                    hoisted.set(package_id);
-                }
-
-                {
-                    var has_update = true;
-
-                    var retry = try Bitset.initFull(non_unique_packages.bit_length, lockfile.allocator);
-
-                    while (has_update) {
-                        retry.setExclude(hoisted);
-
-                        var to_retry = retry.iterator(.{ .kind = .set });
-
-                        has_update = false;
-
-                        // Packages where all dependencies are hoisted can themselves become hoisted
-                        // Once no more packages can be hoisted, we're done with finding top-level packages
-                        outer: while (to_retry.next()) |package_id_| {
-                            const list = resolutions_lists[package_id_];
-
-                            for (list.get(resolutions_buffer)) |package_id| {
-                                if (package_id >= end) continue;
-                                if (!hoisted.isSet(package_id)) {
-                                    retry.set(package_id);
-                                    continue :outer;
-                                }
-                            }
-
-                            if (non_unique_packages.isSet(package_id_)) continue;
-                            hoisted.set(package_id_);
-                            has_update = true;
-                        }
-                    }
-                }
-            }
-            const max_package_id = @truncate(PackageID, names.len);
-
-            const toplevel_count = hoisted.count();
-            var toplevel_node_modules = hoisted.iterator(.{});
+            var iterator = Lockfile.Tree.Iterator.init(
+                lockfile.buffers.trees.items,
+                lockfile.buffers.hoisted_packages.items,
+                names,
+                lockfile.buffers.string_bytes.items,
+            );
 
             var installer = PackageInstaller{
                 .manager = this,
@@ -5266,7 +5564,7 @@ pub const PackageManager = struct {
                 .skip_delete = skip_delete,
                 .summary = &summary,
                 .force_install = force_install,
-                .install_count = toplevel_count,
+                .install_count = lockfile.buffers.hoisted_packages.items.len,
             };
 
             // When it's a Good Idea, run the install in single-threaded
@@ -5280,17 +5578,36 @@ pub const PackageManager = struct {
             run_install: {
                 if (PackageInstall.supported_method.isSync()) {
                     sync_install: {
-                        while (toplevel_node_modules.next()) |package_id| {
-                            installer.installPackage(@truncate(PackageID, package_id), log_level);
-                            if (!PackageInstall.supported_method.isSync()) break :sync_install;
-                            if (this.pending_tasks > 16) {
-                                try this.runTasks(
-                                    *PackageInstaller,
-                                    &installer,
-                                    PackageInstaller.installPackage,
-                                    log_level,
-                                );
+                        const cwd = std.fs.cwd();
+                        var prev_packages: []const PackageID = &[_]PackageID{};
+                        while (iterator.nextNodeModulesFolder()) |node_modules| {
+                            try cwd.makePath(std.mem.span(node_modules.relative_path));
+                            var folder = try cwd.openDirZ(node_modules.relative_path, .{
+                                .iterate = true,
+                            });
+                            defer folder.close();
+                            installer.node_modules_folder = folder;
+
+                            for (node_modules.packages) |package_id| {
+                                installer.installPackage(@truncate(PackageID, package_id), log_level);
+                                if (!PackageInstall.supported_method.isSync()) break :sync_install;
+                                if (this.pending_tasks > 16) {
+                                    try this.runTasks(
+                                        *PackageInstaller,
+                                        &installer,
+                                        PackageInstaller.installPackage,
+                                        log_level,
+                                    );
+                                }
                             }
+                            prev_packages = node_modules.packages;
+
+                            try this.runTasks(
+                                *PackageInstaller,
+                                &installer,
+                                PackageInstaller.installPackage,
+                                log_level,
+                            );
                         }
 
                         if (this.pending_tasks > 0) {
@@ -5308,69 +5625,69 @@ pub const PackageManager = struct {
                     }
                 }
 
-                var install_context = try lockfile.allocator.create(PackageInstall.Context);
-                install_context.* = .{
-                    .cache_dir = cache_dir,
-                    .progress = progress,
-                    .metas = metas,
-                    .names = names,
-                    .resolutions = resolutions,
-                    .string_buf = lockfile.buffers.string_bytes.items,
-                    .allocator = lockfile.allocator,
-                };
-                install_context.channel = PackageInstall.Task.Channel.init();
-                var ran: usize = summary.skipped + summary.success + summary.fail;
+                // var install_context = try lockfile.allocator.create(PackageInstall.Context);
+                // install_context.* = .{
+                //     .cache_dir = cache_dir,
+                //     .progress = progress,
+                //     .metas = metas,
+                //     .names = names,
+                //     .resolutions = resolutions,
+                //     .string_buf = lockfile.buffers.string_bytes.items,
+                //     .allocator = lockfile.allocator,
+                // };
+                // install_context.channel = PackageInstall.Task.Channel.init();
+                // var ran: usize = summary.skipped + summary.success + summary.fail;
 
-                var tasks = try lockfile.allocator.alloc(PackageInstall.Task, toplevel_count - ran);
-                var task_i: usize = 0;
-                var batch = ThreadPool.Batch{};
-                var remaining_count = task_i;
-                while (toplevel_node_modules.next()) |package_id| {
-                    const meta = &metas[package_id];
-                    if (meta.isDisabled()) {
-                        if (comptime log_level.showProgress()) {
-                            install_node.completeOne();
-                            install_node.setEstimatedTotalItems(installer.install_count);
-                        }
-                        continue;
-                    }
+                // var tasks = try lockfile.allocator.alloc(PackageInstall.Task, toplevel_count - ran);
+                // var task_i: usize = 0;
+                // var batch = ThreadPool.Batch{};
+                // var remaining_count = task_i;
+                // while (toplevel_node_modules.next()) |package_id| {
+                //     const meta = &metas[package_id];
+                //     if (meta.isDisabled()) {
+                //         if (comptime log_level.showProgress()) {
+                //             install_node.completeOne();
+                //             install_node.setEstimatedTotalItems(installer.install_count);
+                //         }
+                //         continue;
+                //     }
 
-                    tasks[task_i] = PackageInstall.Task{
-                        .package_id = @truncate(PackageID, package_id),
-                        .destination_dir = node_modules_folder,
-                        .ctx = install_context,
-                    };
-                    batch.push(ThreadPool.Batch.from(&tasks[task_i].task));
-                    task_i += 1;
-                }
+                //     tasks[task_i] = PackageInstall.Task{
+                //         .package_id = @truncate(PackageID, package_id),
+                //         .destination_dir = node_modules_folder,
+                //         .ctx = install_context,
+                //     };
+                //     batch.push(ThreadPool.Batch.from(&tasks[task_i].task));
+                //     task_i += 1;
+                // }
 
-                this.thread_pool.schedule(batch);
+                // this.thread_pool.schedule(batch);
 
-                while (remaining_count > 0) {
-                    while (install_context.channel.tryReadItem() catch null) |item_| {
-                        var install_task: *PackageInstall.Task = item_;
-                        defer remaining_count -= 1;
-                        switch (install_task.result) {
-                            .pending => unreachable,
-                            .skip => summary.skipped += 1,
-                            .success => summary.success += 1,
-                            .fail => |cause| {
-                                Output.prettyErrorln(
-                                    "<r><red>error<r>: <b><red>{s}<r> installing <b>{s}<r>",
-                                    .{ @errorName(cause.err), install_task.ctx.names[install_task.package_id] },
-                                );
-                                summary.fail += 1;
-                            },
-                        }
-                    }
-                    if (comptime log_level.showProgress()) {
-                        install_node.completeOne();
-                        install_node.setEstimatedTotalItems(installer.install_count);
-                    }
+                // while (remaining_count > 0) {
+                //     while (install_context.channel.tryReadItem() catch null) |item_| {
+                //         var install_task: *PackageInstall.Task = item_;
+                //         defer remaining_count -= 1;
+                //         switch (install_task.result) {
+                //             .pending => unreachable,
+                //             .skip => summary.skipped += 1,
+                //             .success => summary.success += 1,
+                //             .fail => |cause| {
+                //                 Output.prettyErrorln(
+                //                     "<r><red>error<r>: <b><red>{s}<r> installing <b>{s}<r>",
+                //                     .{ @errorName(cause.err), install_task.ctx.names[install_task.package_id] },
+                //                 );
+                //                 summary.fail += 1;
+                //             },
+                //         }
+                //     }
+                //     if (comptime log_level.showProgress()) {
+                //         install_node.completeOne();
+                //         install_node.setEstimatedTotalItems(installer.install_count);
+                //     }
 
-                    std.atomic.spinLoopHint();
-                }
+                //     std.atomic.spinLoopHint();
             }
+            // }
         }
 
         return summary;

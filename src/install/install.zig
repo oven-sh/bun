@@ -542,6 +542,7 @@ pub const Lockfile = struct {
             name_hashes: []const PackageNameHash,
             list: ArrayList = ArrayList{},
             resolutions: []const PackageID,
+            dependencies: []const Dependency,
             resolution_lists: []const Lockfile.PackageIDSlice,
             queue: Lockfile.TreeFiller,
 
@@ -606,15 +607,17 @@ pub const Lockfile = struct {
             var package_lists = list_slice.items(.packages);
             var next: *Tree = &trees[builder.list.len - 1];
 
-            const resolutions: []const PackageID = builder.resolution_lists[package_id].get(builder.resolutions);
+            const resolution_list = builder.resolution_lists[package_id];
+            const resolutions: []const PackageID = resolution_list.get(builder.resolutions);
             if (resolutions.len == 0) {
                 return;
             }
+            const dependencies: []const Dependency = builder.dependencies[resolution_list.off .. resolution_list.off + resolution_list.len];
 
             const max_package_id = builder.name_hashes.len;
 
-            for (resolutions) |pid| {
-                if (pid >= max_package_id) continue;
+            for (resolutions) |pid, j| {
+                if (pid >= max_package_id or dependencies[j].behavior.isPeer()) continue;
 
                 const destination = next.addDependency(pid, builder.name_hashes, package_lists, trees, builder.allocator);
                 switch (destination) {
@@ -693,44 +696,29 @@ pub const Lockfile = struct {
         // Now you have two copies of React.
         // When you really only wanted one.
         // Since _typically_ the issue is that Semver ranges with "^" or "~" say "choose latest", we end up with latest
-        if (options.enable.deduplicate_packages) {
-            var resolutions: []PackageID = old.buffers.resolutions.items;
-            const dependencies: []const Dependency = old.buffers.dependencies.items;
-            const package_resolutions: []const Resolution = old.packages.items(.resolution);
-            const string_buf = old.buffers.string_bytes.items;
+        // if (options.enable.deduplicate_packages) {
+        //     var resolutions: []PackageID = old.buffers.resolutions.items;
+        //     const dependencies: []const Dependency = old.buffers.dependencies.items;
+        //     const package_resolutions: []const Resolution = old.packages.items(.resolution);
+        //     const string_buf = old.buffers.string_bytes.items;
 
-            for (resolutions) |resolved_package_id, dep_i| {
-                if (resolved_package_id < max_package_id and !old.unique_packages.isSet(resolved_package_id)) {
-                    const dependency = dependencies[dep_i];
-                    if (dependency.version.tag == .npm) {
-                        const original_resolution = package_resolutions[resolved_package_id];
-                        if (original_resolution.tag != .npm) continue;
-                        var chosen_version = original_resolution.value.npm;
-                        var chosen_id = resolved_package_id;
-                        if (old.package_index.get(dependency.name_hash)) |entry| {
-                            const package_ids = std.mem.span(entry.PackageIDMultiple);
+        //     const root_resolution = @as(usize, old.packages.items(.resolutions)[0].len);
 
-                            for (package_ids) |id| {
-                                if (resolved_package_id == id or id >= max_package_id) continue;
-                                const package_resolution = package_resolutions[id];
-                                if (package_resolution.tag != .npm) continue;
-                                if (package_resolution.value.npm.order(chosen_version, string_buf, string_buf) == .lt and
-                                    dependency.version.value.npm.satisfies(package_resolution.value.npm))
-                                {
-                                    chosen_id = id;
-                                    chosen_version = package_resolution.value.npm;
-                                }
-                            }
+        //     const DedupeMap = std.ArrayHashMap(PackageNameHash, std.ArrayListUnmanaged([2]PackageID), ArrayIdentityContext(PackageNameHash), false);
+        //     var dedupe_map = DedupeMap.initContext(allocator, .{});
+        //     try dedupe_map.ensureTotalCapacity(old.unique_packages.count());
 
-                            if (chosen_id != resolved_package_id) {
-                                resolutions[dep_i] = chosen_id;
-                                deduped.* = deduped.* + 1;
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        //     for (resolutions) |resolved_package_id, dep_i| {
+        //         if (resolved_package_id < max_package_id and !old.unique_packages.isSet(resolved_package_id)) {
+        //             const dependency = dependencies[dep_i];
+        //             if (dependency.version.tag == .npm) {
+        //                 var dedupe_entry = try dedupe_map.getOrPut(dependency.name_hash);
+        //                 if (!dedupe_entry.found_existing) dedupe_entry.value_ptr.* = .{};
+        //                 try dedupe_entry.value_ptr.append(allocator, [2]PackageID{ dep_i, resolved_package_id });
+        //             }
+        //         }
+        //     }
+        // }
 
         var new = try old.allocator.create(Lockfile);
         try new.initEmpty(
@@ -879,6 +867,7 @@ pub const Lockfile = struct {
                 .resolution_lists = resolutions_lists,
                 .resolutions = resolutions_buffer,
                 .allocator = allocator,
+                .dependencies = this.lockfile.buffers.dependencies.items,
             };
             var builder_ = &builder;
 
@@ -2539,7 +2528,7 @@ pub const Lockfile = struct {
                 .capacity = 0,
             };
 
-            stream.pos += Aligner.skipAmount(PointerType, stream.pos);
+            stream.pos += Aligner.skipAmount([*]PointerType, stream.pos);
             const start = stream.pos;
             stream.pos += byte_len;
 
@@ -2567,7 +2556,7 @@ pub const Lockfile = struct {
                     .size = @sizeOf(field_info.field_type),
                     .name = field_info.name,
                     .alignment = if (@sizeOf(field_info.field_type) == 0) 1 else field_info.alignment,
-                    .field_type = field_info.field_type,
+                    .field_type = field_info.field_type.Slice,
                 };
             }
             const Sort = struct {
@@ -2598,7 +2587,7 @@ pub const Lockfile = struct {
             try writer.writeIntLittle(u64, bytes.len);
 
             if (bytes.len > 0) {
-                _ = try Aligner.write(std.meta.Child(ArrayList), Writer, writer, try stream.getPos());
+                _ = try Aligner.write([*]std.meta.Child(ArrayList), Writer, writer, try stream.getPos());
 
                 try writer.writeAll(bytes);
             }
@@ -2676,7 +2665,9 @@ pub const Lockfile = struct {
         pub fn load(stream: *Stream, allocator: *std.mem.Allocator, log: *logger.Log) !Buffers {
             var this = Buffers{};
             var external_dependency_list: []Dependency.External = &[_]Dependency.External{};
-            inline for (sizes.types) |Type, i| {
+            inline for (sizes.names) |name, i| {
+                const Type = @TypeOf(@field(this, name));
+
                 var pos: usize = 0;
                 if (comptime Environment.isDebug) {
                     pos = try stream.getPos();
@@ -3010,6 +3001,12 @@ const PackageInstall = struct {
 
     pub const Method = enum {
         clonefile,
+        clonefile_each_dir,
+
+        // Slow!
+        hardlink,
+
+        // Slowest if single-threaded
         copyfile,
 
         copy_file_range,
@@ -3019,11 +3016,14 @@ const PackageInstall = struct {
 
         pub const macOS = BackendSupport.initDefault(false, .{
             .clonefile = true,
+            .clonefile_each_dir = true,
+            .hardlink = true,
             .copyfile = true,
         });
 
         pub const linux = BackendSupport.initDefault(false, .{
             .io_uring = true,
+            .hardlink = true,
             .copy_file_range = true,
         });
 
@@ -3036,7 +3036,7 @@ const PackageInstall = struct {
 
         pub inline fn isSync(this: Method) bool {
             return switch (this) {
-                .clonefile => true,
+                .hardlink, .clonefile_each_dir, .clonefile => true,
                 else => false,
             };
         }
@@ -3142,6 +3142,84 @@ const PackageInstall = struct {
         Method.clonefile
     else
         Method.copy_file_range;
+
+    fn installWithClonefileEachDir(this: *PackageInstall) !Result {
+        const Walker = @import("../walker_skippable.zig");
+
+        var cached_package_dir = this.cache_dir.openDirZ(this.cache_dir_subpath, .{
+            .iterate = true,
+        }) catch |err| return Result{
+            .fail = .{ .err = err, .step = .opening_cache_dir },
+        };
+        defer cached_package_dir.close();
+        var walker_ = Walker.walk(
+            cached_package_dir,
+            this.allocator,
+            &[_]string{},
+            &[_]string{},
+        ) catch |err| return Result{
+            .fail = .{ .err = err, .step = .opening_cache_dir },
+        };
+        defer walker_.deinit();
+        var node = this.progress.start(this.package_name, @maximum(this.expected_file_count, 1)) catch unreachable;
+        defer node.completeOne();
+
+        const FileCopier = struct {
+            pub fn copy(
+                destination_dir_: std.fs.Dir,
+                walker: *Walker,
+                node_: *Progress.Node,
+                progress_: *Progress,
+            ) !u32 {
+                var real_file_count: u32 = 0;
+                var stackpath: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                while (try walker.next()) |entry| {
+                    switch (entry.kind) {
+                        .Directory => std.os.mkdirat(destination_dir_.fd, entry.path, 0o755) catch {},
+                        .File => {
+                            std.mem.copy(u8, &stackpath, entry.path);
+                            stackpath[entry.path.len] = 0;
+                            var path: [:0]u8 = stackpath[0..entry.path.len :0];
+                            var basename: [:0]u8 = stackpath[entry.path.len - entry.basename.len .. entry.path.len :0];
+                            switch (C.clonefileat(
+                                entry.dir.fd,
+                                basename,
+                                destination_dir_.fd,
+                                path,
+                                0,
+                            )) {
+                                0 => void{},
+                                else => |errno| switch (std.os.errno(errno)) {
+                                    .OPNOTSUPP => return error.NotSupported,
+                                    .NOENT => return error.FileNotFound,
+                                    else => return error.Unexpected,
+                                },
+                            }
+                            defer node_.completeOne();
+                            real_file_count += 1;
+                        },
+                        else => {},
+                    }
+                }
+
+                return real_file_count;
+            }
+        };
+
+        var subdir = this.destination_dir.makeOpenPath(std.mem.span(this.destination_dir_subpath), .{ .iterate = true }) catch |err| return Result{
+            .fail = .{ .err = err, .step = .opening_cache_dir },
+        };
+
+        defer subdir.close();
+
+        this.file_count = FileCopier.copy(subdir, &walker_, node, this.progress) catch |err| return Result{
+            .fail = .{ .err = err, .step = .copying_files },
+        };
+
+        return Result{
+            .success = void{},
+        };
+    }
 
     // https://www.unix.com/man-page/mojave/2/fclonefileat/
     fn installWithClonefile(this: *const PackageInstall) CloneFileError!void {
@@ -3261,6 +3339,67 @@ const PackageInstall = struct {
         };
     }
 
+    fn installWithHardlink(this: *PackageInstall) !Result {
+        const Walker = @import("../walker_skippable.zig");
+
+        var cached_package_dir = this.cache_dir.openDirZ(this.cache_dir_subpath, .{
+            .iterate = true,
+        }) catch |err| return Result{
+            .fail = .{ .err = err, .step = .opening_cache_dir },
+        };
+        defer cached_package_dir.close();
+        var walker_ = Walker.walk(
+            cached_package_dir,
+            this.allocator,
+            &[_]string{},
+            &[_]string{},
+        ) catch |err| return Result{
+            .fail = .{ .err = err, .step = .opening_cache_dir },
+        };
+        defer walker_.deinit();
+        var node = this.progress.start(this.package_name, @maximum(this.expected_file_count, 1)) catch unreachable;
+        defer node.completeOne();
+
+        const FileCopier = struct {
+            pub fn copy(
+                destination_dir_: std.fs.Dir,
+                walker: *Walker,
+                node_: *Progress.Node,
+                progress_: *Progress,
+            ) !u32 {
+                var real_file_count: u32 = 0;
+                while (try walker.next()) |entry| {
+                    switch (entry.kind) {
+                        .Directory => std.os.mkdirat(destination_dir_.fd, entry.path, 0o755) catch {},
+                        .File => {
+                            try std.os.linkat(entry.dir.fd, entry.basename, destination_dir_.fd, entry.path, 0);
+                            real_file_count += 1;
+                        },
+                        else => {},
+                    }
+
+                    defer node_.completeOne();
+                }
+
+                return real_file_count;
+            }
+        };
+
+        var subdir = this.destination_dir.makeOpenPath(std.mem.span(this.destination_dir_subpath), .{ .iterate = true }) catch |err| return Result{
+            .fail = .{ .err = err, .step = .opening_cache_dir },
+        };
+
+        defer subdir.close();
+
+        this.file_count = FileCopier.copy(subdir, &walker_, node, this.progress) catch |err| return Result{
+            .fail = .{ .err = err, .step = .copying_files },
+        };
+
+        return Result{
+            .success = void{},
+        };
+    }
+
     pub fn install(this: *PackageInstall, skip_delete: bool) Result {
 
         // If this fails, we don't care.
@@ -3268,32 +3407,66 @@ const PackageInstall = struct {
         if (!skip_delete) this.destination_dir.deleteTree(std.mem.span(this.destination_dir_subpath)) catch {};
 
         if (comptime Environment.isMac) {
-            if (supported_method == .clonefile) {
-                // First, attempt to use clonefile
-                // if that fails due to ENOTSUP, mark it as unsupported and then fall back to copyfile
-                this.installWithClonefile() catch |err| {
-                    switch (err) {
-                        error.NotSupported => {
-                            supported_method = .copyfile;
-                        },
-                        error.FileNotFound => return Result{
-                            .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
-                        },
-                        else => return Result{
-                            .fail = .{ .err = err, .step = .copying_files },
-                        },
-                    }
-
-                    return this.installWithCopyfile();
-                };
-
-                return Result{ .success = .{} };
+            switch (supported_method) {
+                .clonefile => {
+                    // First, attempt to use clonefile
+                    // if that fails due to ENOTSUP, mark it as unsupported and then fall back to copyfile
+                    this.installWithClonefile() catch |err| {
+                        switch (err) {
+                            error.NotSupported => {
+                                supported_method = .copyfile;
+                            },
+                            error.FileNotFound => return Result{
+                                .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
+                            },
+                            else => return Result{
+                                .fail = .{ .err = err, .step = .copying_files },
+                            },
+                        }
+                    };
+                },
+                .clonefile_each_dir => {
+                    return this.installWithClonefileEachDir() catch |err| {
+                        switch (err) {
+                            error.NotSupported => {
+                                supported_method = .copyfile;
+                            },
+                            error.FileNotFound => return Result{
+                                .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
+                            },
+                            else => return Result{
+                                .fail = .{ .err = err, .step = .copying_files },
+                            },
+                        }
+                    };
+                },
+                .hardlink => {
+                    return this.installWithHardlink() catch |err| {
+                        switch (err) {
+                            error.NotSupported => {
+                                supported_method = .copyfile;
+                            },
+                            error.FileNotFound => return Result{
+                                .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
+                            },
+                            else => return Result{
+                                .fail = .{ .err = err, .step = .copying_files },
+                            },
+                        }
+                    };
+                },
+                else => {},
             }
+
+            if (supported_method != .copyfile) return Result{
+                .success = void{},
+            };
+
+            return this.installWithCopyfile();
         }
 
         // TODO: linux io_uring
 
-        return this.installWithCopyfile();
     }
 };
 
@@ -3343,6 +3516,7 @@ pub const PackageManager = struct {
     downloads_node: ?*Progress.Node = null,
     progress_name_buf: [768]u8 = undefined,
     progress_name_buf_dynamic: []u8 = &[_]u8{},
+    cpu_count: u32 = 0,
 
     root_package_json_file: std.fs.File,
     root_dependency_list: Lockfile.DependencySlice = .{},
@@ -3526,7 +3700,7 @@ pub const PackageManager = struct {
 
             // Do we need to download the tarball?
             .extract => {
-                var network_task = try this.generateNetworkTaskForTarball(package);
+                var network_task = (try this.generateNetworkTaskForTarball(package)).?;
 
                 return ResolvedPackageResult{
                     .package = package,
@@ -3540,12 +3714,11 @@ pub const PackageManager = struct {
         return ResolvedPackageResult{ .package = package };
     }
 
-    pub fn generateNetworkTaskForTarball(this: *PackageManager, package: Lockfile.Package) !*NetworkTask {
+    pub fn generateNetworkTaskForTarball(this: *PackageManager, package: Lockfile.Package) !?*NetworkTask {
         const task_id = Task.Id.forNPMPackage(Task.Tag.extract, this.lockfile.str(package.name), package.resolution.value.npm);
         const dedupe_entry = try this.network_dedupe_map.getOrPut(this.allocator, task_id);
+        if (dedupe_entry.found_existing) return null;
 
-        // Assert that we don't end up downloading the tarball twice.
-        std.debug.assert(!dedupe_entry.found_existing);
         var network_task = this.getNetworkTask();
 
         network_task.* = NetworkTask{
@@ -4445,9 +4618,9 @@ pub const PackageManager = struct {
                 PackageInstall.supported_method = .copyfile;
             }
 
-            if (env_loader.map.get("BUN_CONFIG_NO_DEDUPLICATE") != null) {
-                this.enable.deduplicate_packages = false;
-            }
+            // if (env_loader.map.get("BUN_CONFIG_NO_DEDUPLICATE") != null) {
+            //     this.enable.deduplicate_packages = false;
+            // }
 
             this.do.save_lockfile = strings.eqlComptime((env_loader.map.get("BUN_CONFIG_SKIP_SAVE_LOCKFILE") orelse "0"), "0");
             this.do.load_lockfile = strings.eqlComptime((env_loader.map.get("BUN_CONFIG_SKIP_LOAD_LOCKFILE") orelse "0"), "0");
@@ -4468,9 +4641,9 @@ pub const PackageManager = struct {
                     this.enable.manifest_cache_control = false;
                 }
 
-                if (cli.no_dedupe) {
-                    this.enable.deduplicate_packages = false;
-                }
+                // if (cli.no_dedupe) {
+                //     this.enable.deduplicate_packages = false;
+                // }
 
                 this.omit.dev = cli.omit.dev or this.omit.dev;
                 this.omit.optional = cli.omit.optional or this.omit.optional;
@@ -4486,6 +4659,10 @@ pub const PackageManager = struct {
 
                 if (cli.yarn) {
                     this.do.save_yarn_lock = true;
+                }
+
+                if (cli.backend) |backend| {
+                    PackageInstall.supported_method = backend;
                 }
 
                 if (cli.positionals.len > 0) {
@@ -4517,7 +4694,11 @@ pub const PackageManager = struct {
             manifest_cache: bool = true,
             manifest_cache_control: bool = true,
             cache: bool = true,
-            deduplicate_packages: bool = true,
+
+            /// Disabled because it doesn't actually reduce the number of packages we end up installing
+            /// Probably need to be a little smarter
+            deduplicate_packages: bool = false,
+
             install_dev_dependencies: bool = true,
             force_install: bool = false,
         };
@@ -4676,6 +4857,7 @@ pub const PackageManager = struct {
             .log = ctx.log,
             .root_dir = &entries_option.entries,
             .env = env_loader,
+            .cpu_count = cpu_count,
             .thread_pool = ThreadPool.init(.{
                 .max_threads = cpu_count,
             }),
@@ -4742,7 +4924,7 @@ pub const PackageManager = struct {
         clap.parseParam("--lockfile <STR>                  Store & load a lockfile at a specific filepath") catch unreachable,
         clap.parseParam("-f, --force                       Always request the latest versions from the registry & reinstall all dependenices") catch unreachable,
         clap.parseParam("--cache-dir <STR>                 Store & load cached data from a specific directory path") catch unreachable,
-        clap.parseParam("--no-dedupe                       Disable automatic downgrading of dependencies that would otherwise cause unnecessary duplicate package versions ($BUN_CONFIG_NO_DEDUPLICATE)") catch unreachable,
+        // clap.parseParam("--no-dedupe                       Disable automatic downgrading of dependencies that would otherwise cause unnecessary duplicate package versions ($BUN_CONFIG_NO_DEDUPLICATE)") catch unreachable,
         clap.parseParam("--no-cache                        Ignore manifest cache entirely") catch unreachable,
         clap.parseParam("--silent                          Don't log anything") catch unreachable,
         clap.parseParam("--verbose                         Excessively verbose logging") catch unreachable,
@@ -4837,7 +5019,7 @@ pub const PackageManager = struct {
             cli.no_save = args.flag("--no-save");
             cli.dry_run = args.flag("--dry-run");
             cli.force = args.flag("--force");
-            cli.no_dedupe = args.flag("--no-dedupe");
+            // cli.no_dedupe = args.flag("--no-dedupe");
             cli.no_cache = args.flag("--no-cache");
             cli.silent = args.flag("--silent");
             cli.verbose = args.flag("--verbose");
@@ -4895,6 +5077,10 @@ pub const PackageManager = struct {
                 if (args.option("--backend")) |backend_| {
                     if (strings.eqlComptime(backend_, "clonefile")) {
                         break :brk PackageInstall.Method.clonefile;
+                    } else if (strings.eqlComptime(backend_, "clonefile_each_dir")) {
+                        break :brk PackageInstall.Method.clonefile_each_dir;
+                    } else if (strings.eqlComptime(backend_, "hardlink")) {
+                        break :brk PackageInstall.Method.hardlink;
                     } else if (strings.eqlComptime(backend_, "copyfile")) {
                         break :brk PackageInstall.Method.copyfile;
                     } else if (strings.eqlComptime(backend_, "io_uring")) {
@@ -5397,15 +5583,23 @@ pub const PackageManager = struct {
         metas: []Lockfile.Package.Meta,
         names: []String,
         resolutions: []Resolution,
+        trees: []const Lockfile.Tree,
         node: *Progress.Node,
         destination_dir_subpath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
         install_count: usize = 0,
+
+        pub const Context = struct {
+            package_id: PackageID,
+            tree_id: Lockfile.Tree.Id,
+        };
 
         pub fn installPackage(
             this: *PackageInstaller,
             package_id: PackageID,
             comptime log_level: Options.LogLevel,
         ) void {
+            // const package_id = ctx.package_id;
+            // const tree = ctx.trees[ctx.tree_id];
             const meta = &this.metas[package_id];
 
             if (meta.isDisabled()) {
@@ -5453,10 +5647,11 @@ pub const PackageManager = struct {
                             },
                             .fail => |cause| {
                                 if (cause.isPackageMissingFromCache()) {
-                                    var task = this.manager.generateNetworkTaskForTarball(this.lockfile.packages.get(package_id)) catch unreachable;
-                                    task.schedule(&this.manager.network_tarball_batch);
-                                    if (this.manager.network_tarball_batch.len > 6) {
-                                        _ = this.manager.scheduleNetworkTasks();
+                                    if (this.manager.generateNetworkTaskForTarball(this.lockfile.packages.get(package_id)) catch unreachable) |task| {
+                                        task.schedule(&this.manager.network_tarball_batch);
+                                        if (this.manager.network_tarball_batch.len > 6) {
+                                            _ = this.manager.scheduleNetworkTasks();
+                                        }
                                     }
                                 } else {
                                     Output.prettyErrorln(
@@ -5565,6 +5760,7 @@ pub const PackageManager = struct {
                 .summary = &summary,
                 .force_install = force_install,
                 .install_count = lockfile.buffers.hoisted_packages.items.len,
+                .trees = lockfile.buffers.trees.items,
             };
 
             // When it's a Good Idea, run the install in single-threaded

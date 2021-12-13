@@ -437,7 +437,7 @@ pub fn eqlResolved(a: Dependency, b: Dependency) bool {
     return @as(Dependency.Version.Tag, a.version) == @as(Dependency.Version.Tag, b.version) and a.resolution == b.resolution;
 }
 
-pub fn parse(allocator: *std.mem.Allocator, dependency_: string, sliced: *const SlicedString, log: *logger.Log) ?Version {
+pub fn parse(allocator: *std.mem.Allocator, dependency_: string, sliced: *const SlicedString, log: ?*logger.Log) ?Version {
     var dependency = std.mem.trimLeft(u8, dependency_, " \t\n\r");
 
     if (dependency.len == 0) return null;

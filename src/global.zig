@@ -196,9 +196,18 @@ pub const Output = struct {
         printElapsedToWithCtx(elapsed, Output.prettyError, false, void{});
     }
 
+    pub fn printElapsedStdout(elapsed: f64) void {
+        printElapsedToWithCtx(elapsed, Output.pretty, false, void{});
+    }
+
     pub fn printStartEnd(start: i128, end: i128) void {
         const elapsed = @divTrunc(end - start, @as(i128, std.time.ns_per_ms));
         printElapsed(@intToFloat(f64, elapsed));
+    }
+
+    pub fn printStartEndStdout(start: i128, end: i128) void {
+        const elapsed = @divTrunc(end - start, @as(i128, std.time.ns_per_ms));
+        printElapsedStdout(@intToFloat(f64, elapsed));
     }
 
     pub fn printTimer(timer: *std.time.Timer) void {

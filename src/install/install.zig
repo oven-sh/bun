@@ -685,6 +685,60 @@ pub const Lockfile = struct {
         // never grow
         const max_package_id = old.packages.len;
 
+        if (updates.len > 0) {
+            var root_deps: []Dependency = old.packages.items(.dependencies)[0].mut(old.buffers.dependencies.items);
+            const old_resolutions: []const PackageID = old.packages.items(.resolutions)[0].get(old.buffers.resolutions.items);
+            const resolutions_of_yore: []const Resolution = old.packages.items(.resolution);
+            const old_names = old.packages.items(.name);
+            var string_builder = old.stringBuilder();
+            for (updates) |update| {
+                if (update.version.tag == .uninitialized) {
+                    for (root_deps) |dep, i| {
+                        if (dep.name_hash == String.Builder.stringHash(update.name)) {
+                            const old_resolution = old_resolutions[i];
+                            if (old_resolution > old.packages.len) continue;
+                            const res = resolutions_of_yore[old_resolution];
+                            const len = std.fmt.count("^{}", .{res.value.npm.fmt(old.buffers.string_bytes.items)});
+                            if (len >= String.max_inline_len) {
+                                string_builder.cap += len;
+                            }
+                        }
+                    }
+                }
+            }
+
+            try string_builder.allocate();
+            defer string_builder.clamp();
+            var full_buf = string_builder.ptr.?[0 .. string_builder.cap + old.buffers.string_bytes.items.len];
+            var temp_buf: [513]u8 = undefined;
+
+            for (updates) |update, update_i| {
+                if (update.version.tag == .uninitialized) {
+                    // prevent the deduping logic
+                    updates[update_i].e_string = null;
+
+                    for (root_deps) |dep, i| {
+                        if (dep.name_hash == String.Builder.stringHash(update.name)) {
+                            const old_resolution = old_resolutions[i];
+                            if (old_resolution > old.packages.len) continue;
+                            const res = resolutions_of_yore[old_resolution];
+                            var buf = std.fmt.bufPrint(&temp_buf, "^{}", .{res.value.npm.fmt(old.buffers.string_bytes.items)}) catch break;
+                            const external_version = string_builder.append(ExternalString, buf);
+                            const sliced = external_version.value.sliced(
+                                old.buffers.string_bytes.items,
+                            );
+                            root_deps[i].version = Dependency.parse(
+                                old.allocator,
+                                sliced.slice,
+                                &sliced,
+                                null,
+                            ) orelse Dependency.Version{};
+                        }
+                    }
+                }
+            }
+        }
+
         // Deduplication works like this
         // Go through *already* resolved package versions
         // Ask, do any of those versions happen to match a lower version?
@@ -761,63 +815,6 @@ pub const Lockfile = struct {
         // When you run `"bun add react"
         // This is where we update it in the lockfile from "latest" to "^17.0.2"
 
-        if (updates.len > 0) {
-            var root_deps: []Dependency = new.packages.items(.dependencies)[0].mut(new.buffers.dependencies.items);
-            const old_root_deps: []const Dependency = old.packages.items(.dependencies)[0].get(old.buffers.dependencies.items);
-            const old_resolutions: []const PackageID = old.packages.items(.resolutions)[0].get(old.buffers.resolutions.items);
-            const resolutions_of_yore: []const Resolution = old.packages.items(.resolution);
-            const old_names = old.packages.items(.name);
-            var string_builder = new.stringBuilder();
-            for (updates) |update| {
-                if (update.version.tag == .uninitialized) {
-                    for (root_deps) |dep, i| {
-                        if (dep.name_hash == String.Builder.stringHash(update.name)) {
-                            const old_resolution = old_resolutions[i];
-                            if (old_resolution > old.packages.len) continue;
-                            const res = resolutions_of_yore[old_resolution];
-                            const len = std.fmt.count("^{}", .{res.value.npm.fmt(old.buffers.string_bytes.items)});
-                            if (len > String.max_inline_len) {
-                                string_builder.cap += len;
-                            }
-                        }
-                    }
-                }
-            }
-
-            try string_builder.allocate();
-            defer string_builder.clamp();
-            var full_buf = string_builder.ptr.?[0 .. string_builder.cap + new.buffers.string_bytes.items.len];
-            var temp_buf: [513]u8 = undefined;
-
-            for (updates) |update, update_i| {
-                if (update.version.tag == .uninitialized) {
-                    // prevent the deduping logic
-                    updates[update_i].e_string = null;
-
-                    for (root_deps) |dep, i| {
-                        if (dep.name_hash == String.Builder.stringHash(update.name)) {
-                            const old_resolution = old_resolutions[i];
-                            if (old_resolution > old.packages.len) continue;
-                            const res = resolutions_of_yore[old_resolution];
-                            var buf = std.fmt.bufPrint(&temp_buf, "^{}", .{res.value.npm.fmt(old.buffers.string_bytes.items)}) catch break;
-                            const external_version = string_builder.append(ExternalString, buf);
-                            const sliced = external_version.value.sliced(
-                                new.buffers.string_bytes.items,
-                            );
-
-                            updates[update_i].missing_version = true;
-                            updates[update_i].version = Dependency.parse(
-                                old.allocator,
-                                sliced.slice,
-                                &sliced,
-                                null,
-                            ) orelse Dependency.Version{};
-                        }
-                    }
-                }
-            }
-        }
-
         try cloner.flush();
 
         // Don't allow invalid memory to happen
@@ -828,12 +825,14 @@ pub const Lockfile = struct {
             const new_resolutions: []const PackageID = res_list.get(new.buffers.resolutions.items);
 
             for (updates) |update, update_i| {
-                if (update.missing_version) {
+                if (update.version.tag == .uninitialized) {
                     for (root_deps) |dep, i| {
                         if (dep.name_hash == String.Builder.stringHash(update.name)) {
                             if (new_resolutions[i] > new.packages.len) continue;
                             updates[update_i].version_buf = new.buffers.string_bytes.items;
+                            updates[update_i].version = dep.version;
                             updates[update_i].resolved_version_buf = new.buffers.string_bytes.items;
+                            updates[update_i].missing_version = true;
                         }
                     }
                 }
@@ -2033,6 +2032,8 @@ pub const Lockfile = struct {
                 std.debug.assert(dependencies_list.items.len == resolutions_list.items.len);
 
                 var dependencies: []Dependency = dependencies_list.items.ptr[dependencies_list.items.len..total_len];
+                std.mem.set(Dependency, dependencies, Dependency{});
+
                 var start_dependencies = dependencies;
 
                 const off = @truncate(u32, dependencies_list.items.len);
@@ -3655,6 +3656,8 @@ pub const PackageManager = struct {
     progress_name_buf_dynamic: []u8 = &[_]u8{},
     cpu_count: u32 = 0,
     package_json_updates: []UpdateRequest = &[_]UpdateRequest{},
+
+    to_remove: []const UpdateRequest = &[_]UpdateRequest{},
 
     root_package_json_file: std.fs.File,
     root_dependency_list: Lockfile.DependencySlice = .{},
@@ -5738,6 +5741,7 @@ pub const PackageManager = struct {
                     std.os.exit(1);
                     return;
                 }
+                manager.to_remove = updates;
             },
             .add, .update => {
                 try PackageJSONEditor.edit(ctx.allocator, updates, &current_package_json, dependency_list);
@@ -5765,6 +5769,7 @@ pub const PackageManager = struct {
         // But, turns out that's slower in any case where more than one package has to be resolved (most of the time!)
         // Concurrent network requests are faster than doing one and then waiting until the next batch
         var new_package_json_source = package_json_writer.ctx.buffer.toOwnedSliceLeaky().ptr[0 .. written + 1];
+
         try installWithManager(ctx, manager, new_package_json_source, log_level);
 
         if (op == .update or op == .add) {
@@ -5802,6 +5807,54 @@ pub const PackageManager = struct {
             try manager.root_package_json_file.pwriteAll(new_package_json_source, 0);
             std.os.ftruncate(manager.root_package_json_file.handle, written + 1) catch {};
             manager.root_package_json_file.close();
+
+            if (op == .remove) {
+                var cwd = std.fs.cwd();
+                // This is not exactly correct
+                var node_modules_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                std.mem.copy(u8, &node_modules_buf, "node_modules" ++ std.fs.path.sep_str);
+                var offset_buf: []u8 = node_modules_buf["node_modules/".len..];
+                const name_hashes = manager.lockfile.packages.items(.name_hash);
+                for (updates) |update| {
+                    // If the package no longer exists in the updated lockfile, delete the directory
+                    // This is not thorough.
+                    // It does not handle nested dependencies
+                    // This is a quick & dirty cleanup intended for when deleting top-level dependencies
+                    if (std.mem.indexOfScalar(PackageNameHash, name_hashes, String.Builder.stringHash(update.name)) == null) {
+                        std.mem.copy(u8, offset_buf, update.name);
+                        cwd.deleteTree(node_modules_buf[0 .. "node_modules/".len + update.name.len]) catch {};
+                    }
+                }
+
+                // This is where we clean dangling symlinks
+                // This could be slow if there are a lot of symlinks
+                if (cwd.openDirZ("node_modules/.bin", .{
+                    .iterate = true,
+                })) |node_modules_bin_| {
+                    var node_modules_bin: std.fs.Dir = node_modules_bin_;
+                    var iter: std.fs.Dir.Iterator = node_modules_bin.iterate();
+                    iterator: while (iter.next() catch null) |entry| {
+                        switch (entry.kind) {
+                            std.fs.Dir.Entry.Kind.SymLink => {
+                                if (std.fs.path.extension(entry.name).len == 0) {
+                                    // any symlinks which we are unable to open are assumed to be dangling
+                                    // note that using access won't work here, because access doesn't resolve symlinks
+                                    std.mem.copy(u8, &node_modules_buf, entry.name);
+                                    node_modules_buf[entry.name.len] = 0;
+                                    var buf: [:0]u8 = node_modules_buf[0..entry.name.len :0];
+                                    var file = node_modules_bin.openFileZ(buf, .{ .read = true }) catch |err| {
+                                        node_modules_bin.deleteFileZ(buf) catch {};
+                                        continue :iterator;
+                                    };
+
+                                    file.close();
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+                } else |_| {}
+            }
         }
     }
 
@@ -5926,8 +5979,10 @@ pub const PackageManager = struct {
                         const result = installer.install(this.skip_delete);
                         switch (result) {
                             .success => {
-                                this.summary.success += 1;
+                                const is_duplicate = this.successfully_installed.isSet(package_id);
+                                this.summary.success += @as(u32, @boolToInt(!is_duplicate));
                                 this.successfully_installed.set(package_id);
+
                                 if (comptime log_level.showProgress()) {
                                     this.node.completeOne();
                                 }
@@ -6476,11 +6531,15 @@ pub const PackageManager = struct {
                         try manager.lockfile.buffers.dependencies.ensureUnusedCapacity(manager.lockfile.allocator, len);
                         try manager.lockfile.buffers.resolutions.ensureUnusedCapacity(manager.lockfile.allocator, len);
 
-                        var old_dependencies = old_dependencies_list.get(manager.lockfile.buffers.dependencies.items);
                         var old_resolutions = old_resolutions_list.get(manager.lockfile.buffers.resolutions.items);
 
                         var dependencies = manager.lockfile.buffers.dependencies.items.ptr[off .. off + len];
                         var resolutions = manager.lockfile.buffers.resolutions.items.ptr[off .. off + len];
+
+                        // It is too easy to accidentally undefined memory
+                        std.mem.set(PackageID, resolutions, invalid_package_id);
+                        std.mem.set(Dependency, dependencies, Dependency{});
+
                         manager.lockfile.buffers.dependencies.items = manager.lockfile.buffers.dependencies.items.ptr[0 .. off + len];
                         manager.lockfile.buffers.resolutions.items = manager.lockfile.buffers.resolutions.items.ptr[0 .. off + len];
 
@@ -6648,7 +6707,7 @@ pub const PackageManager = struct {
             }
         }
 
-        if (manager.options.log_level != .silent) {
+        if (comptime log_level != .silent) {
             var printer = Lockfile.Printer{
                 .lockfile = manager.lockfile,
                 .options = manager.options,
@@ -6659,17 +6718,55 @@ pub const PackageManager = struct {
             } else {
                 try Lockfile.Printer.Tree.print(&printer, Output.WriterType, Output.writer(), false);
             }
-        }
 
-        Output.prettyln("   <green>+{d}<r> add | <cyan>{d}<r> update | <r><red>-{d}<r> remove | {d} installed | {d} deduped | {d} skipped | {d} failed", .{
-            manager.summary.add,
-            manager.summary.update,
-            manager.summary.remove,
-            install_summary.success,
-            manager.summary.deduped,
-            install_summary.skipped,
-            install_summary.fail,
-        });
+            if (install_summary.success > 0) {
+                Output.pretty("\n <green>{d}<r> packages<r> installed ", .{install_summary.success});
+                Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
+                Output.pretty("<r>\n", .{});
+
+                if (manager.summary.update > 0) {
+                    Output.pretty("  Updated: <cyan>{d}<r>\n", .{manager.summary.update});
+                }
+
+                if (manager.summary.remove > 0) {
+                    Output.pretty("  Removed: <cyan>{d}<r>\n", .{manager.summary.remove});
+                }
+            } else if (manager.summary.remove > 0) {
+                if (manager.to_remove.len > 0) {
+                    for (manager.to_remove) |update| {
+                        Output.prettyln(" <r><red>-<r> {s}", .{update.name});
+                    }
+                }
+
+                Output.pretty("\n <r><b>{d}<r> packages removed ", .{manager.summary.remove});
+                Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
+                Output.pretty("<r>\n", .{});
+            } else if (install_summary.skipped > 0 and install_summary.fail == 0) {
+                Output.pretty("\n", .{});
+
+                const count = @truncate(PackageID, manager.lockfile.packages.len);
+                if (count != install_summary.skipped) {
+                    Output.pretty("Checked <green>{d} installs<r> across {d} packages <d>(no changes)<r> ", .{
+                        install_summary.skipped,
+                        count,
+                    });
+                    Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
+                    Output.pretty("<r>\n", .{});
+                } else {
+                    Output.pretty("<r> Done! Checked <green>{d} packages<r> <d>(no changes)<r> ", .{
+                        install_summary.skipped,
+                    });
+                    Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
+                    Output.pretty("<r>\n", .{});
+                }
+            } else if (manager.summary.update > 0) {
+                Output.prettyln("  Updated: <cyan>{d}<r>\n", .{manager.summary.update});
+            }
+
+            if (install_summary.fail > 0) {
+                Output.prettyln("<r> Failed to install <red><b>{d}<r> packages", .{install_summary.fail});
+            }
+        }
         Output.flush();
     }
 };

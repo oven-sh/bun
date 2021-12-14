@@ -1680,6 +1680,8 @@ pub const Lockfile = struct {
         }
 
         pub fn clamp(this: *StringBuilder) void {
+            std.debug.assert(this.cap >= this.len);
+
             const excess = this.cap - this.len;
 
             if (excess > 0)
@@ -4192,11 +4194,12 @@ pub const PackageManager = struct {
                                 }
                             }
                         } else if (!dependency.behavior.isPeer()) {
-                            const task_id = Task.Id.forManifest(Task.Tag.package_manifest, this.lockfile.str(name));
+                            const name_str = this.lockfile.str(name);
+                            const task_id = Task.Id.forManifest(Task.Tag.package_manifest, name_str);
                             var network_entry = try this.network_dedupe_map.getOrPutContext(this.allocator, task_id, .{});
                             if (!network_entry.found_existing) {
                                 if (this.options.enable.manifest_cache) {
-                                    if (Npm.PackageManifest.Serializer.load(this.allocator, this.cache_directory, this.lockfile.str(name)) catch null) |manifest_| {
+                                    if (Npm.PackageManifest.Serializer.load(this.allocator, this.cache_directory, name_str) catch null) |manifest_| {
                                         const manifest: Npm.PackageManifest = manifest_;
                                         loaded_manifest = manifest;
 

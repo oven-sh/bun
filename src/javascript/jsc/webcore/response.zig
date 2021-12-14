@@ -5,7 +5,8 @@ const http = @import("../../../http.zig");
 usingnamespace @import("../javascript.zig");
 usingnamespace @import("../bindings/bindings.zig");
 const ZigURL = @import("../../../query_string_map.zig").URL;
-const HTTPClient = @import("../../../http_client.zig");
+const HTTPClient = @import("http");
+const NetworkThread = @import("network_thread");
 const Method = @import("../../../http/method.zig").Method;
 
 const picohttp = @import("picohttp");
@@ -411,6 +412,27 @@ pub const Fetch = struct {
     );
 
     const fetch_error_cant_fetch_same_origin = "fetch to same-origin on the server is not supported yet - sorry! (it would just hang forever)";
+
+    pub const FetchTasklet = struct {
+        promise: *JSPromise = undefined,
+        http: HTTPClient.AsyncHTTP = undefined,
+        status: Status = Status.pending,
+        javascript_vm: *VirtualMachine = undefined,
+
+        pub const Status = enum(u8) {
+            pending,
+            running,
+            done,
+        };
+
+        pub fn callback(http_: *HTTPClient.AsyncHTTP, sender: *HTTPClient.AsyncHTTP.HTTPSender) void {
+            var task: *FetchTasklet = @fieldParentPtr(FetchTasklet, "http", http_);
+            @atomicStore(Status.done, &task.status, Status.done, .Monotonic);
+            task.javascript_vm.pending_tasks.fetchAdd(.Monotonic, 1);
+            sender.release();
+        }
+    };
+
     pub fn call(
         this: void,
         ctx: js.JSContextRef,
@@ -446,9 +468,10 @@ pub const Fetch = struct {
 
         defer getAllocator(ctx).free(url_str);
 
-        var http_client = HTTPClient.init(getAllocator(ctx), .GET, ZigURL.parse(url_str), .{}, "");
+        NetworkThread.init() catch @panic("Failed to start network thread");
+        const url = ZigURL.parse(url_str);
 
-        if (http_client.url.origin.len > 0 and strings.eql(http_client.url.origin, VirtualMachine.vm.bundler.options.origin.origin)) {
+        if (url.origin.len > 0 and strings.eql(url.origin, VirtualMachine.vm.bundler.options.origin.origin)) {
             const fetch_error = fetch_error_cant_fetch_same_origin;
             return JSPromise.rejectedPromiseValue(VirtualMachine.vm.global, ZigString.init(fetch_error).toErrorInstance(VirtualMachine.vm.global)).asRef();
         }

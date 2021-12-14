@@ -727,6 +727,11 @@ pub const Module = struct {
     reload_pending: bool = false,
 };
 
+const FetchTasklet = Fetch.FetchTasklet;
+pub const Task = TaggedPointerUnion(.{
+    FetchTasklet,
+});
+
 // If you read JavascriptCore/API/JSVirtualMachine.mm - https://github.com/WebKit/WebKit/blob/acff93fb303baa670c055cb24c2bad08691a01a0/Source/JavaScriptCore/API/JSVirtualMachine.mm#L101
 // We can see that it's sort of like std.mem.Allocator but for JSGlobalContextRef, to support Automatic Reference Counting
 // Its unavailable on Linux
@@ -761,6 +766,8 @@ pub const VirtualMachine = struct {
     has_any_macro_remappings: bool = false,
 
     origin_timer: std.time.Timer = undefined,
+
+    ready_tasks_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
 
     pub const MacroMap = std.AutoArrayHashMap(i32, js.JSObjectRef);
 

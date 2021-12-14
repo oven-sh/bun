@@ -1154,7 +1154,7 @@ pub const Lockfile = struct {
 
                         const fmt = comptime brk: {
                             if (enable_ansi_colors) {
-                                break :brk Output.prettyFmt("<r> 💾 <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
+                                break :brk Output.prettyFmt("<r> <green>+<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
                             } else {
                                 break :brk Output.prettyFmt("<r> + {s}<r><d>@{}<r>\n", enable_ansi_colors);
                             }

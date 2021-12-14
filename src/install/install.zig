@@ -994,6 +994,7 @@ pub const Lockfile = struct {
     pub const Printer = struct {
         lockfile: *Lockfile,
         options: PackageManager.Options,
+        successfully_installed: ?std.DynamicBitSetUnmanaged = null,
 
         pub const Format = enum { yarn };
 
@@ -1143,6 +1144,46 @@ pub const Lockfile = struct {
                 visited.set(0);
                 const end = @truncate(PackageID, names.len);
 
+                if (this.successfully_installed) |installed| {
+                    for (resolutions_list[0].get(resolutions_buffer)) |package_id| {
+                        if (package_id > end or !installed.isSet(package_id)) continue;
+
+                        const package_name = names[package_id].slice(string_buf);
+
+                        const dependency_list = dependency_lists[package_id];
+
+                        const fmt = comptime brk: {
+                            if (enable_ansi_colors) {
+                                break :brk Output.prettyFmt("<r> 💾 <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
+                            } else {
+                                break :brk Output.prettyFmt("<r> + {s}<r><d>@{}<r>\n", enable_ansi_colors);
+                            }
+                        };
+
+                        try writer.print(
+                            fmt,
+                            .{
+                                package_name,
+                                resolved[package_id].fmt(string_buf),
+                            },
+                        );
+                    }
+                } else {
+                    for (names) |name, package_id| {
+                        const package_name = name.slice(string_buf);
+
+                        const dependency_list = dependency_lists[package_id];
+
+                        try writer.print(
+                            comptime Output.prettyFmt(" <r><b>{s}<r><d>@<b>{}<r>\n", enable_ansi_colors),
+                            .{
+                                package_name,
+                                resolved[package_id].fmt(string_buf),
+                            },
+                        );
+                    }
+                }
+
                 for (resolutions_list) |list, parent_id| {
                     for (list.get(resolutions_buffer)) |package_id, j| {
                         if (package_id >= end) {
@@ -1161,19 +1202,6 @@ pub const Lockfile = struct {
                             );
                             continue;
                         }
-                        const name = names[package_id];
-                        const package_name = name.slice(string_buf);
-
-                        const dependency_list = dependency_lists[package_id];
-
-                        try writer.print(
-                            comptime Output.prettyFmt(" <r><b>{s}<r><d>@<b>{}<r><d> ({d} dependencies)<r>\n", enable_ansi_colors),
-                            .{
-                                package_name,
-                                resolved[package_id].fmt(string_buf),
-                                dependency_list.len,
-                            },
-                        );
                     }
                 }
             }
@@ -3098,6 +3126,7 @@ const PackageInstall = struct {
         fail: u32 = 0,
         success: u32 = 0,
         skipped: u32 = 0,
+        successfully_installed: ?std.DynamicBitSetUnmanaged = null,
     };
 
     pub const Method = enum {
@@ -5825,6 +5854,7 @@ pub const PackageManager = struct {
         has_created_bin: bool = false,
         destination_dir_subpath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
         install_count: usize = 0,
+        successfully_installed: std.DynamicBitSetUnmanaged,
 
         // For linking native binaries, we only want to link after we've installed the companion dependencies
         // We don't want to introduce dependent callbacks like that for every single package
@@ -5897,6 +5927,7 @@ pub const PackageManager = struct {
                         switch (result) {
                             .success => {
                                 this.summary.success += 1;
+                                this.successfully_installed.set(package_id);
                                 if (comptime log_level.showProgress()) {
                                     this.node.completeOne();
                                 }
@@ -6105,6 +6136,7 @@ pub const PackageManager = struct {
                 .summary = &summary,
                 .force_install = force_install,
                 .install_count = lockfile.buffers.hoisted_packages.items.len,
+                .successfully_installed = try std.DynamicBitSetUnmanaged.initEmpty(lockfile.packages.len, this.allocator),
             };
 
             // When it's a Good Idea, run the install in single-threaded
@@ -6227,6 +6259,7 @@ pub const PackageManager = struct {
             }
             // }
 
+            summary.successfully_installed = installer.successfully_installed;
             outer: for (installer.platform_binlinks.items) |deferred| {
                 const package_id = deferred.package_id;
                 const folder = deferred.node_modules_folder;
@@ -6565,7 +6598,7 @@ pub const PackageManager = struct {
             std.os.exit(1);
         }
 
-        if (had_any_diffs or needs_new_lockfile) {
+        if (had_any_diffs or needs_new_lockfile or manager.package_json_updates.len > 0) {
             manager.lockfile = try manager.lockfile.clean(&manager.summary.deduped, manager.package_json_updates, &manager.options);
         }
 
@@ -6619,6 +6652,7 @@ pub const PackageManager = struct {
             var printer = Lockfile.Printer{
                 .lockfile = manager.lockfile,
                 .options = manager.options,
+                .successfully_installed = install_summary.successfully_installed,
             };
             if (Output.enable_ansi_colors) {
                 try Lockfile.Printer.Tree.print(&printer, Output.WriterType, Output.writer(), true);

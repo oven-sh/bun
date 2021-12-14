@@ -201,6 +201,7 @@ const NetworkTask = struct {
             name: strings.StringOrTinyString,
         },
         extract: ExtractTarball,
+        binlink: void,
     },
 
     pub fn notify(http: *AsyncHTTP, sender: *AsyncHTTP.HTTPSender) void {
@@ -1972,6 +1973,8 @@ pub const Lockfile = struct {
                         string_builder.count(version_strings[i].slice(string_buf));
                     }
                 }
+
+                package_version.bin.count(string_buf, @TypeOf(&string_builder), &string_builder);
             }
 
             try string_builder.allocate();
@@ -2070,6 +2073,8 @@ pub const Lockfile = struct {
                         i += 1;
                     }
                 }
+
+                package.bin = package_version.bin.clone(string_buf, @TypeOf(&string_builder), &string_builder);
 
                 package.meta.arch = package_version.cpu;
                 package.meta.os = package_version.os;
@@ -2179,6 +2184,13 @@ pub const Lockfile = struct {
         pub fn determinePreinstallState(this: *Lockfile.Package, lockfile: *Lockfile, manager: *PackageManager) PreinstallState {
             switch (this.meta.preinstall_state) {
                 .unknown => {
+                    // Do not automatically start downloading packages which are disabled
+                    // i.e. don't download all of esbuild's versions or SWCs
+                    if (this.isDisabled()) {
+                        this.meta.preinstall_state = .done;
+                        return .done;
+                    }
+
                     const folder_path = PackageManager.cachedNPMPackageFolderName(this.name.slice(lockfile.buffers.string_bytes.items), this.resolution.value.npm);
                     if (manager.isFolderInCache(folder_path)) {
                         this.meta.preinstall_state = .done;
@@ -2888,6 +2900,11 @@ const Task = struct {
             return @as(u64, @truncate(u63, hasher.final())) | @as(u64, 1 << 63);
         }
 
+        pub fn forBinLink(package_id: PackageID) u64 {
+            const hash = std.hash.Wyhash.hash(0, std.mem.asBytes(&package_id));
+            return @as(u64, @truncate(u62, hash)) | @as(u64, 1 << 62) | @as(u64, 1 << 63);
+        }
+
         pub fn forManifest(
             tag: Task.Tag,
             name: string,
@@ -2952,12 +2969,14 @@ const Task = struct {
                 this.status = Status.success;
                 PackageManager.instance.resolve_tasks.writeItem(this.*) catch unreachable;
             },
+            .binlink => {},
         }
     }
 
     pub const Tag = enum(u2) {
         package_manifest = 1,
         extract = 2,
+        binlink = 3,
         // install = 3,
     };
 
@@ -2970,6 +2989,7 @@ const Task = struct {
     pub const Data = union {
         package_manifest: Npm.PackageManifest,
         extract: string,
+        binlink: bool,
     };
 
     pub const Request = union {
@@ -2983,6 +3003,7 @@ const Task = struct {
             network: *NetworkTask,
             tarball: ExtractTarball,
         },
+        binlink: Bin.Linker,
         // install: PackageInstall,
     };
 };
@@ -4475,6 +4496,7 @@ pub const PackageManager = struct {
 
                     batch.push(ThreadPool.Batch.from(manager.enqueueExtractNPMPackage(extract, task)));
                 },
+                .binlink => {},
             }
         }
 
@@ -4551,6 +4573,7 @@ pub const PackageManager = struct {
                         }
                     }
                 },
+                .binlink => {},
             }
         }
 
@@ -4601,6 +4624,36 @@ pub const PackageManager = struct {
         update: Update = Update{},
         dry_run: bool = false,
         omit: CommandLineArguments.Omit = .{},
+
+        allowed_install_scripts: []const PackageNameHash = &default_allowed_install_scripts,
+
+        // The idea here is:
+        // 1. package has a platform-specific binary to install
+        // 2. To prevent downloading & installing incompatible versions, they stick the "real" one in optionalDependencies
+        // 3. The real one we want to link is in another package
+        // 4. Therefore, we remap the "bin" specified in the real package
+        //    to the target package which is the one which is:
+        //      1. In optionalDepenencies
+        //      2. Has a platform and/or os specified, which evaluates to not disabled
+        native_bin_link_allowlist: []const PackageNameHash = &default_native_bin_link_allowlist,
+
+        const default_native_bin_link_allowlist = [_]PackageNameHash{
+            String.Builder.stringHash("esbuild"),
+            String.Builder.stringHash("turbo"),
+        };
+
+        const install_scripts_package_count = 5;
+        const default_allowed_install_scripts: [install_scripts_package_count]PackageNameHash = brk: {
+            const names = std.mem.span(@embedFile("install-scripts-allowlist.txt"));
+            var hashes: [install_scripts_package_count]PackageNameHash = undefined;
+            var splitter = std.mem.split(u8, names, "\n");
+            var i: usize = 0;
+            while (splitter.next()) |item| {
+                hashes[i] = String.Builder.stringHash(item);
+                i += 1;
+            }
+            break :brk hashes;
+        };
 
         pub const LogLevel = enum {
             default,
@@ -4711,6 +4764,26 @@ pub const PackageManager = struct {
                 PackageInstall.supported_method = .copyfile;
             }
 
+            if (env_loader.map.get("BUN_CONFIG_YARN_LOCKFILE") != null) {
+                this.do.save_yarn_lock = true;
+            }
+
+            if (env_loader.map.get("BUN_CONFIG_LINK_NATIVE_BINS")) |native_packages| {
+                const len = std.mem.count(u8, native_packages, " ");
+                if (len > 0) {
+                    var all = try allocator.alloc(PackageNameHash, this.native_bin_link_allowlist.len + len);
+                    std.mem.copy(PackageNameHash, all, this.native_bin_link_allowlist);
+                    var remain = all[this.native_bin_link_allowlist.len..];
+                    var splitter = std.mem.split(u8, native_packages, " ");
+                    var i: usize = 0;
+                    while (splitter.next()) |name| {
+                        remain[i] = String.Builder.stringHash(name);
+                        i += 1;
+                    }
+                    this.native_bin_link_allowlist = all;
+                }
+            }
+
             // if (env_loader.map.get("BUN_CONFIG_NO_DEDUPLICATE") != null) {
             //     this.enable.deduplicate_packages = false;
             // }
@@ -4752,6 +4825,16 @@ pub const PackageManager = struct {
 
                 if (cli.yarn) {
                     this.do.save_yarn_lock = true;
+                }
+
+                if (cli.link_native_bins.len > 0) {
+                    var all = try allocator.alloc(PackageNameHash, this.native_bin_link_allowlist.len + cli.link_native_bins.len);
+                    std.mem.copy(PackageNameHash, all, this.native_bin_link_allowlist);
+                    var remain = all[this.native_bin_link_allowlist.len..];
+                    for (cli.link_native_bins) |name, i| {
+                        remain[i] = String.Builder.stringHash(name);
+                    }
+                    this.native_bin_link_allowlist = all;
                 }
 
                 if (cli.backend) |backend| {
@@ -5175,6 +5258,9 @@ pub const PackageManager = struct {
         clap.parseParam("--cwd <STR>                       Set a specific cwd") catch unreachable,
         clap.parseParam("--backend <STR>                   Platform-specific optimizations for installing dependencies. For macOS, \"clonefile\" (default), \"copyfile\"") catch unreachable,
         clap.parseParam("--omit <STR>...                   Skip installing dependencies of a certain type. \"dev\", \"optional\", or \"peer\"") catch unreachable,
+
+        clap.parseParam("--link-native-bins <STR>...       Link \"bin\" from a matching platform-specific \"optionalDependencies\" instead. Default: esbuild, turbo") catch unreachable,
+
         clap.parseParam("--help                            Print this help menu") catch unreachable,
     };
 
@@ -5211,6 +5297,8 @@ pub const PackageManager = struct {
         no_cache: bool = false,
         silent: bool = false,
         verbose: bool = false,
+
+        link_native_bins: []const string = &[_]string{},
 
         development: bool = false,
         optional: bool = false,
@@ -5267,6 +5355,8 @@ pub const PackageManager = struct {
             cli.no_cache = args.flag("--no-cache");
             cli.silent = args.flag("--silent");
             cli.verbose = args.flag("--verbose");
+
+            cli.link_native_bins = args.options("--link-native-bins");
 
             if (comptime params.len == add_params.len) {
                 cli.development = args.flag("--development");
@@ -5724,14 +5814,27 @@ pub const PackageManager = struct {
         skip_verify: bool,
         skip_delete: bool,
         force_install: bool,
+        root_node_modules_folder: std.fs.Dir,
         summary: *PackageInstall.Summary,
-        metas: []Lockfile.Package.Meta,
-        names: []String,
+        options: *const PackageManager.Options,
+        metas: []const Lockfile.Package.Meta,
+        names: []const String,
+        bins: []const Bin,
         resolutions: []Resolution,
-        trees: []const Lockfile.Tree,
         node: *Progress.Node,
+        has_created_bin: bool = false,
         destination_dir_subpath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
         install_count: usize = 0,
+
+        // For linking native binaries, we only want to link after we've installed the companion dependencies
+        // We don't want to introduce dependent callbacks like that for every single package
+        // Since this will only be a handful, it's fine to just say "run this at the end"
+        platform_binlinks: std.ArrayListUnmanaged(DeferredBinLink) = std.ArrayListUnmanaged(DeferredBinLink){},
+
+        pub const DeferredBinLink = struct {
+            package_id: PackageID,
+            node_modules_folder: std.fs.Dir,
+        };
 
         pub fn installEnqueuedPackages(
             this: *PackageInstaller,
@@ -5796,6 +5899,56 @@ pub const PackageManager = struct {
                                 this.summary.success += 1;
                                 if (comptime log_level.showProgress()) {
                                     this.node.completeOne();
+                                }
+
+                                const bin = this.bins[package_id];
+                                if (bin.tag != .none) {
+                                    if (!this.has_created_bin) {
+                                        this.node_modules_folder.makeDirZ(".bin") catch {};
+                                        Bin.Linker.umask = C.umask(0);
+                                        this.has_created_bin = true;
+                                    }
+
+                                    const bin_task_id = Task.Id.forBinLink(package_id);
+                                    var task_queue = this.manager.task_queue.getOrPut(this.manager.allocator, bin_task_id) catch unreachable;
+                                    if (!task_queue.found_existing) {
+                                        run_bin_link: {
+                                            if (std.mem.indexOfScalar(PackageNameHash, this.options.native_bin_link_allowlist, String.Builder.stringHash(name)) != null) {
+                                                this.platform_binlinks.append(this.lockfile.allocator, .{
+                                                    .package_id = package_id,
+                                                    .node_modules_folder = this.node_modules_folder,
+                                                }) catch unreachable;
+                                                break :run_bin_link;
+                                            }
+
+                                            var bin_linker = Bin.Linker{
+                                                .bin = bin,
+                                                .package_installed_node_modules = this.node_modules_folder.fd,
+                                                .root_node_modules_folder = this.root_node_modules_folder.fd,
+                                                .package_name = strings.StringOrTinyString.init(name),
+                                                .string_buf = buf,
+                                            };
+
+                                            bin_linker.link();
+
+                                            if (comptime log_level != .silent) {
+                                                if (bin_linker.err) |err| {
+                                                    const fmt = "\n<r><red>error:<r> linking <b>{s}<r>: {s}\n";
+                                                    const args = .{ name, @errorName(err) };
+
+                                                    if (comptime log_level.showProgress()) {
+                                                        if (Output.enable_ansi_colors) {
+                                                            this.progress.log(comptime Output.prettyFmt(fmt, true), args);
+                                                        } else {
+                                                            this.progress.log(comptime Output.prettyFmt(fmt, false), args);
+                                                        }
+                                                    } else {
+                                                        Output.prettyErrorln(fmt, args);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             },
                             .fail => |cause| {
@@ -5937,7 +6090,10 @@ pub const PackageManager = struct {
 
             var installer = PackageInstaller{
                 .manager = this,
+                .options = &this.options,
                 .metas = metas,
+                .bins = parts.items(.bin),
+                .root_node_modules_folder = node_modules_folder,
                 .names = names,
                 .resolutions = resolutions,
                 .lockfile = lockfile,
@@ -5949,7 +6105,6 @@ pub const PackageManager = struct {
                 .summary = &summary,
                 .force_install = force_install,
                 .install_count = lockfile.buffers.hoisted_packages.items.len,
-                .trees = lockfile.buffers.trees.items,
             };
 
             // When it's a Good Idea, run the install in single-threaded
@@ -6071,6 +6226,79 @@ pub const PackageManager = struct {
                 //     std.atomic.spinLoopHint();
             }
             // }
+
+            outer: for (installer.platform_binlinks.items) |deferred| {
+                const package_id = deferred.package_id;
+                const folder = deferred.node_modules_folder;
+
+                const package_dependencies: []const Dependency = dependency_lists[package_id].get(dependencies);
+                const package_resolutions: []const PackageID = resolution_lists[package_id].get(resolutions_buffer);
+                const original_bin: Bin = installer.bins[package_id];
+
+                for (package_dependencies) |dependency, i| {
+                    const resolved_id = package_resolutions[i];
+                    if (resolved_id >= names.len) continue;
+                    const meta: Lockfile.Package.Meta = metas[resolved_id];
+
+                    // This is specifically for platform-specific binaries
+                    if (meta.os == .all and meta.arch == .all) continue;
+
+                    // Don't attempt to link incompatible binaries
+                    if (meta.isDisabled()) continue;
+
+                    const name: string = installer.names[resolved_id].slice(lockfile.buffers.string_bytes.items);
+
+                    if (!installer.has_created_bin) {
+                        node_modules_folder.makeDirZ(".bin") catch {};
+                        Bin.Linker.umask = C.umask(0);
+                        installer.has_created_bin = true;
+                    }
+
+                    var bin_linker = Bin.Linker{
+                        .bin = original_bin,
+                        .package_installed_node_modules = folder.fd,
+                        .root_node_modules_folder = node_modules_folder.fd,
+                        .package_name = strings.StringOrTinyString.init(name),
+                        .string_buf = lockfile.buffers.string_bytes.items,
+                    };
+
+                    bin_linker.link();
+
+                    if (comptime log_level != .silent) {
+                        if (bin_linker.err) |err| {
+                            const fmt = "\n<r><red>error:<r> linking <b>{s}<r>: {s}\n";
+                            const args = .{ name, @errorName(err) };
+
+                            if (comptime log_level.showProgress()) {
+                                if (Output.enable_ansi_colors) {
+                                    this.progress.log(comptime Output.prettyFmt(fmt, true), args);
+                                } else {
+                                    this.progress.log(comptime Output.prettyFmt(fmt, false), args);
+                                }
+                            } else {
+                                Output.prettyErrorln(fmt, args);
+                            }
+                        }
+                    }
+
+                    continue :outer;
+                }
+
+                if (comptime log_level != .silent) {
+                    const fmt = "\n<r><yellow>warn:<r> no compatible binaries found for <b>{s}<r>\n";
+                    const args = .{names[package_id]};
+
+                    if (comptime log_level.showProgress()) {
+                        if (Output.enable_ansi_colors) {
+                            this.progress.log(comptime Output.prettyFmt(fmt, true), args);
+                        } else {
+                            this.progress.log(comptime Output.prettyFmt(fmt, false), args);
+                        }
+                    } else {
+                        Output.prettyErrorln(fmt, args);
+                    }
+                }
+            }
         }
 
         return summary;

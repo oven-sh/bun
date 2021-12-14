@@ -549,7 +549,7 @@ pub const Behavior = enum(u8) {
     pub const peer: u8 = 1 << 4;
 
     pub inline fn isOptional(this: Behavior) bool {
-        return (@enumToInt(this) & Behavior.optional) != 0 and (@enumToInt(this) & Behavior.peer) == 0;
+        return (@enumToInt(this) & Behavior.optional) != 0 and !this.isPeer();
     }
 
     pub inline fn isDev(this: Behavior) bool {

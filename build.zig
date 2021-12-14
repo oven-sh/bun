@@ -52,6 +52,16 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: *std.mem.Alloc
         .name = "clap",
         .path = .{ .path = "src/deps/zig-clap/clap.zig" },
     });
+
+    step.addPackage(.{
+        .name = "http",
+        .path = .{ .path = "src/http/http_client_async.zig" },
+    });
+
+    step.addPackage(.{
+        .name = "network_thread",
+        .path = .{ .path = "src/http/network_thread.zig" },
+    });
 }
 
 fn panicIfNotFound(comptime filepath: []const u8) []const u8 {

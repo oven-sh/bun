@@ -63,6 +63,8 @@ pub const MutableString = struct {
 
         if (!iterator.next(&cursor)) return "_";
 
+        const JSLexerTables = @import("./js_lexer_tables.zig");
+
         // Common case: no gap necessary. No allocation necessary.
         needs_gap = !js_lexer.isIdentifierStart(cursor.c);
         if (!needs_gap) {
@@ -74,6 +76,10 @@ pub const MutableString = struct {
                     break;
                 }
             }
+        }
+
+        if (!needs_gap and str.len >= 3 and str.len <= 10) {
+            return JSLexerTables.StrictModeReservedWordsRemap.get(str) orelse str;
         }
 
         if (needs_gap) {

@@ -20,6 +20,8 @@ const ScopeOrderList = std.ArrayListUnmanaged(?ScopeOrder);
 
 const JSXFactoryName = "JSX";
 const JSXAutomaticName = "jsx_module";
+// kept as a static reference
+const exports_string_name: string = "exports";
 const MacroRefs = std.AutoArrayHashMap(Ref, u32);
 
 // If we are currently in a hoisted child of the module scope, relocate these
@@ -437,124 +439,77 @@ pub const ImportScanner = struct {
                         }
                     }
 
-                    if (p.options.trim_unused_imports) {
-                        if (st.star_name_loc != null or did_remove_star_loc) {
-                            // -- Original Comment --
-                            // If we're bundling a star import and the namespace is only ever
-                            // used for property accesses, then convert each unique property to
-                            // a clause item in the import statement and remove the star import.
-                            // That will cause the bundler to bundle them more efficiently when
-                            // both this module and the imported module are in the same group.
-                            //
-                            // Before:
-                            //
-                            //   import * as ns from 'foo'
-                            //   console.log(ns.a, ns.b)
-                            //
-                            // After:
-                            //
-                            //   import {a, b} from 'foo'
-                            //   console.log(a, b)
-                            //
-                            // This is not done if the namespace itself is used, because in that
-                            // case the code for the namespace will have to be generated. This is
-                            // determined by the symbol count because the parser only counts the
-                            // star import as used if it was used for something other than a
-                            // property access:
-                            //
-                            //   import * as ns from 'foo'
-                            //   console.log(ns, ns.a, ns.b)
-                            //
-                            // -- Original Comment --
+                    if (st.star_name_loc != null or did_remove_star_loc) {
+                        // -- Original Comment --
+                        // If we're bundling a star import and the namespace is only ever
+                        // used for property accesses, then convert each unique property to
+                        // a clause item in the import statement and remove the star import.
+                        // That will cause the bundler to bundle them more efficiently when
+                        // both this module and the imported module are in the same group.
+                        //
+                        // Before:
+                        //
+                        //   import * as ns from 'foo'
+                        //   console.log(ns.a, ns.b)
+                        //
+                        // After:
+                        //
+                        //   import {a, b} from 'foo'
+                        //   console.log(a, b)
+                        //
+                        // This is not done if the namespace itself is used, because in that
+                        // case the code for the namespace will have to be generated. This is
+                        // determined by the symbol count because the parser only counts the
+                        // star import as used if it was used for something other than a
+                        // property access:
+                        //
+                        //   import * as ns from 'foo'
+                        //   console.log(ns, ns.a, ns.b)
+                        //
+                        // -- Original Comment --
 
-                            // jarred: we don't use the same grouping mechanism as esbuild
-                            // but, we do this anyway.
-                            // The reasons why are:
-                            // * It makes static analysis for other tools simpler.
-                            // * I imagine browsers may someday do some optimizations
-                            // when it's "easier" to know only certain modules are used
-                            // For example, if you're importing a component from a design system
-                            // it's really stupid to import all 1,000 components from that design system
-                            // when you just want <Button />
-                            const namespace_ref = st.namespace_ref;
-                            const convert_star_to_clause = !p.options.enable_bundling and !p.options.can_import_from_bundle and p.symbols.items[namespace_ref.inner_index].use_count_estimate == 0;
+                        // jarred: we don't use the same grouping mechanism as esbuild
+                        // but, we do this anyway.
+                        // The reasons why are:
+                        // * It makes static analysis for other tools simpler.
+                        // * I imagine browsers may someday do some optimizations
+                        // when it's "easier" to know only certain modules are used
+                        // For example, if you're importing a component from a design system
+                        // it's really stupid to import all 1,000 components from that design system
+                        // when you just want <Button />
+                        const namespace_ref = st.namespace_ref;
+                        const convert_star_to_clause = !p.options.enable_bundling and !p.options.can_import_from_bundle and p.symbols.items[namespace_ref.inner_index].use_count_estimate == 0;
 
-                            if (convert_star_to_clause and !keep_unused_imports) {
-                                st.star_name_loc = null;
-                            }
+                        if (convert_star_to_clause and !keep_unused_imports) {
+                            st.star_name_loc = null;
+                        }
 
-                            // "import_items_for_namespace" has property accesses off the namespace
-                            if (p.import_items_for_namespace.getPtr(namespace_ref)) |import_items| {
-                                var count = import_items.count();
-                                if (count > 0) {
-                                    // Sort keys for determinism
-                                    var sorted: []string = try p.allocator.alloc(string, count);
-                                    var iter = import_items.iterator();
-                                    var i: usize = 0;
-                                    while (iter.next()) |item| {
-                                        sorted[i] = item.key_ptr.*;
-                                        i += 1;
-                                    }
-                                    strings.sortAsc(sorted);
+                        const default_name: string = if (st.default_name != null)
+                            p.loadNameFromRef(st.default_name.?.ref.?)
+                        else
+                            "";
 
-                                    defer p.allocator.free(sorted);
-                                    if (convert_star_to_clause) {
-                                        // Create an import clause for these items. Named imports will be
-                                        // automatically created later on since there is now a clause.
-                                        var items = try p.allocator.alloc(js_ast.ClauseItem, count);
-                                        try p.declared_symbols.ensureUnusedCapacity(count);
-                                        i = 0;
-                                        for (sorted) |alias| {
-                                            const name: LocRef = import_items.get(alias) orelse unreachable;
-                                            const original_name = p.symbols.items[name.ref.?.inner_index].original_name;
-                                            items[i] = js_ast.ClauseItem{
-                                                .alias = alias,
-                                                .alias_loc = name.loc,
-                                                .name = name,
-                                                .original_name = original_name,
-                                            };
-                                            p.declared_symbols.appendAssumeCapacity(js_ast.DeclaredSymbol{
-                                                .ref = name.ref.?,
-                                                .is_top_level = true,
-                                            });
+                        for (st.items) |item| {
+                            const is_default = strings.eqlComptime(item.alias, "default");
+                            record.contains_default_alias = record.contains_default_alias or is_default;
 
-                                            i += 1;
-                                        }
+                            const name: LocRef = item.name;
+                            const name_ref = name.ref.?;
 
-                                        if (st.items.len > 0) {
-                                            p.panic("The syntax \"import {{x}}, * as y from 'path'\" isn't valid", .{});
-                                        }
+                            try p.named_imports.put(name_ref, js_ast.NamedImport{
+                                .alias = item.alias,
+                                .alias_loc = name.loc,
+                                .namespace_ref = st.namespace_ref,
+                                .import_record_index = st.import_record_index,
+                            });
 
-                                        st.items = items;
-                                    } else {
-                                        // If we aren't converting this star import to a clause, still
-                                        // create named imports for these property accesses. This will
-                                        // cause missing imports to generate useful warnings.
-                                        //
-                                        // It will also improve bundling efficiency for internal imports
-                                        // by still converting property accesses off the namespace into
-                                        // bare identifiers even if the namespace is still needed.
-
-                                        for (sorted) |alias| {
-                                            const name: LocRef = import_items.get(alias) orelse unreachable;
-                                            const name_ref = name.ref.?;
-
-                                            try p.named_imports.put(name_ref, js_ast.NamedImport{
-                                                .alias = alias,
-                                                .alias_loc = name.loc,
-                                                .namespace_ref = st.namespace_ref,
-                                                .import_record_index = st.import_record_index,
-                                            });
-
-                                            record.contains_default_alias = record.contains_default_alias or strings.eqlComptime(alias, "default");
-
-                                            // Make sure the printer prints this as a property access
-                                            var symbol: *Symbol = &p.symbols.items[name_ref.inner_index];
-                                            symbol.namespace_alias = G.NamespaceAlias{ .namespace_ref = st.namespace_ref, .alias = alias };
-                                        }
-                                    }
-                                }
-                            }
+                            // Make sure the printer prints this as a property access
+                            var symbol: *Symbol = &p.symbols.items[name_ref.inner_index];
+                            symbol.namespace_alias = G.NamespaceAlias{
+                                .namespace_ref = st.namespace_ref,
+                                .alias = item.original_name,
+                                .import_record_index = st.import_record_index,
+                            };
                         }
                     }
 
@@ -2002,11 +1957,8 @@ pub const Parser = struct {
         // The problem with our scan pass approach is type-only imports.
         // We don't have accurate symbol counts.
         // So we don't have a good way to distuingish between a type-only import and not.
-        switch (comptime ParserType) {
-            TSXImportScanner, TypeScriptImportScanner => {
-                p.parse_pass_symbol_uses = &scan_pass.used_symbols;
-            },
-            else => {},
+        if (comptime ParserType.parser_features.typescript) {
+            p.parse_pass_symbol_uses = &scan_pass.used_symbols;
         }
 
         // Parse the file in the first pass, but do not bind symbols
@@ -2020,31 +1972,28 @@ pub const Parser = struct {
         _ = try p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts);
 
         //
-        switch (comptime ParserType) {
-            TSXImportScanner, TypeScriptImportScanner => {
-                for (scan_pass.import_records.items) |*import_record| {
-                    // Mark everything as unused
-                    // Except:
-                    // - export * as ns from 'foo';
-                    // - export * from 'foo';
-                    // - import 'foo';
-                    // - import("foo")
-                    // - require("foo")
-                    import_record.is_unused = import_record.is_unused or
-                        (import_record.kind == .stmt and
-                        !import_record.was_originally_bare_import and
-                        !import_record.calls_run_time_re_export_fn);
-                }
+        if (comptime ParserType.parser_features.typescript) {
+            for (scan_pass.import_records.items) |*import_record| {
+                // Mark everything as unused
+                // Except:
+                // - export * as ns from 'foo';
+                // - export * from 'foo';
+                // - import 'foo';
+                // - import("foo")
+                // - require("foo")
+                import_record.is_unused = import_record.is_unused or
+                    (import_record.kind == .stmt and
+                    !import_record.was_originally_bare_import and
+                    !import_record.calls_run_time_re_export_fn);
+            }
 
-                var iter = scan_pass.used_symbols.iterator();
-                while (iter.next()) |entry| {
-                    const val = entry.value_ptr;
-                    if (val.used) {
-                        scan_pass.import_records.items[val.import_record_index].is_unused = false;
-                    }
+            var iter = scan_pass.used_symbols.iterator();
+            while (iter.next()) |entry| {
+                const val = entry.value_ptr;
+                if (val.used) {
+                    scan_pass.import_records.items[val.import_record_index].is_unused = false;
                 }
-            },
-            else => {},
+            }
         }
 
         // Symbol use counts are unavailable
@@ -2269,7 +2218,7 @@ pub const Parser = struct {
                     declared_symbols[declared_symbols_i] = .{ .ref = automatic_namespace_ref, .is_top_level = true };
                     declared_symbols_i += 1;
 
-                    const automatic_identifier = p.e(E.Identifier{ .ref = automatic_namespace_ref }, loc);
+                    const automatic_identifier = p.e(E.ImportIdentifier{ .ref = automatic_namespace_ref }, loc);
                     const dot_call_target = brk: {
                         if (p.options.can_import_from_bundle or p.options.enable_bundling) {
                             break :brk automatic_identifier;
@@ -2374,7 +2323,7 @@ pub const Parser = struct {
                 }
 
                 if (jsx_classic_symbol.use_count_estimate > 0) {
-                    const classic_identifier = p.e(E.Identifier{ .ref = classic_namespace_ref }, loc);
+                    const classic_identifier = p.e(E.ImportIdentifier{ .ref = classic_namespace_ref }, loc);
 
                     const dot_call_target = brk: {
                         // var react = $aopaSD123();
@@ -2905,7 +2854,7 @@ pub fn NewParser(
         const NamedImportsType = if (only_scan_imports_and_do_not_visit) *js_ast.Ast.NamedImports else js_ast.Ast.NamedImports;
         const NeedsJSXType = if (only_scan_imports_and_do_not_visit) bool else void;
         const ParsePassSymbolUsageType = if (only_scan_imports_and_do_not_visit and is_typescript_enabled) *ScanPassResult.ParsePassSymbolUsageMap else void;
-
+        pub const parser_features = js_parser_features;
         const P = @This();
         pub const jsx_transform_type: JSXTransformType = js_parser_jsx;
         macro: MacroState = undefined,
@@ -3248,8 +3197,7 @@ pub fn NewParser(
 
                     const args = p.allocator.alloc(Expr, 1) catch unreachable;
                     args[0] = p.e(
-                        E.Identifier{
-                            .can_be_removed_if_unused = true,
+                        E.ImportIdentifier{
                             .ref = namespace_ref,
                         },
                         arg.loc,
@@ -6268,6 +6216,8 @@ pub fn NewParser(
                         @intCast(u16, @boolToInt(stmt.default_name != null)) +
                         @intCast(u16, @boolToInt(stmt.star_name_loc != null));
 
+                    try item_refs.ensureUnusedCapacity(total_count);
+
                     // Link the default item to the namespace
                     if (stmt.default_name) |*name_loc| {
                         const name = p.loadNameFromRef(name_loc.ref orelse unreachable);
@@ -6300,10 +6250,11 @@ pub fn NewParser(
                                 remap_count += 1;
                             }
                         }
+
+                        item_refs.putAssumeCapacity(name, name_loc.*);
                     }
 
                     if (stmt.items.len > 0) {
-                        try item_refs.ensureCapacity(@intCast(u32, stmt.items.len));
                         for (stmt.items) |*item| {
                             const name = p.loadNameFromRef(item.name.ref orelse unreachable);
                             const ref = try p.declareSymbol(.import, item.name.loc, name);
@@ -9672,9 +9623,8 @@ pub fn NewParser(
 
                 const record_id = p.addImportRecord(.stmt, this.loc, import_data.path);
                 var record: *ImportRecord = &p.import_records.items[record_id];
-
+                record.was_injected_by_macro = true;
                 p.macro.imports.ensureUnusedCapacity(import_data.import.items.len) catch unreachable;
-
                 var import = import_data.import;
                 import.import_record_index = record_id;
 
@@ -9697,10 +9647,9 @@ pub fn NewParser(
                     p.macro.imports.putAssumeCapacity(js_ast.Macro.JSNode.SymbolMap.generateImportHash(import_hash_name, import_data.path), name_ref);
 
                     // Ensure we don't accidentally think this is an export from
-                    clause.original_name = "";
                 }
 
-                p.macro.prepend_stmts.append(p.s(import, this.loc)) catch unreachable;
+                p.macro.prepend_stmts.append(p.visitSingleStmt(p.s(import, this.loc), StmtsKind.none)) catch unreachable;
             }
         };
 
@@ -11340,6 +11289,7 @@ pub fn NewParser(
                                 if (p.macro.refs.get(ref)) |import_record_id| {
                                     const name = p.symbols.items[ref.inner_index].original_name;
                                     const record = &p.import_records.items[import_record_id];
+                                    const prepend_offset = p.macro.prepend_stmts.items.len;
                                     // We must visit it to convert inline_identifiers and record usage
                                     const macro_result = (p.options.macro_context.call(
                                         record.path.text,
@@ -11353,6 +11303,7 @@ pub fn NewParser(
                                         MacroVisitor,
                                         MacroVisitor{ .p = p, .loc = expr.loc },
                                     ) catch return expr);
+
                                     if (macro_result.data != .e_template) {
                                         return p.visitExpr(macro_result);
                                     }
@@ -11367,16 +11318,18 @@ pub fn NewParser(
                         p.panic("Internal error: missing identifier from macro: {d}", .{id});
                     };
 
-                    const ident = E.ImportIdentifier{
-                        .was_originally_identifier = false,
-                        .ref = ref,
-                    };
-
                     if (!p.is_control_flow_dead) {
                         p.recordUsage(ref);
                     }
 
-                    return p.e(ident, expr.loc);
+                    return p.e(
+                        E.ImportIdentifier{
+                            .was_originally_identifier = false,
+                            .was_from_macro = true,
+                            .ref = ref,
+                        },
+                        expr.loc,
+                    );
                 },
 
                 .e_binary => |e_| {
@@ -12618,7 +12571,7 @@ pub fn NewParser(
         }
 
         fn jsxStringsToMemberExpressionAutomatic(p: *P, loc: logger.Loc, is_static: bool) Expr {
-            return p.jsxStringsToMemberExpression(loc, if (is_static and !p.options.jsx.development) p.jsxs_runtime.ref else p.jsx_runtime.ref);
+            return p.jsxStringsToMemberExpression(loc, if (is_static) p.jsxs_runtime.ref else p.jsx_runtime.ref);
         }
 
         fn maybeRelocateVarsToTopLevel(p: *P, decls: []G.Decl, mode: RelocateVars.Mode) RelocateVars {
@@ -12859,7 +12812,7 @@ pub fn NewParser(
                             // When bundling, replace ExportDefault with __exportDefault(exportsRef, expr);
                             if (p.options.enable_bundling) {
                                 var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                export_default_args[0] = p.e(E.Identifier{ .ref = p.exports_ref }, expr.loc);
+                                export_default_args[0] = p.@"module.exports"(expr.loc);
                                 export_default_args[1] = data.value.expr;
                                 stmts.append(p.s(S.SExpr{ .value = p.callRuntime(expr.loc, "__exportDefault", export_default_args) }, expr.loc)) catch unreachable;
                                 return;
@@ -12882,7 +12835,7 @@ pub fn NewParser(
 
                                     if (p.options.enable_bundling) {
                                         var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                        export_default_args[0] = p.e(E.Identifier{ .ref = p.exports_ref }, s2.loc);
+                                        export_default_args[0] = p.@"module.exports"(s2.loc);
 
                                         if (had_name) {
                                             export_default_args[1] = p.e(E.Identifier{ .ref = func.func.name.?.ref.? }, s2.loc);
@@ -12910,7 +12863,7 @@ pub fn NewParser(
 
                                     if (p.options.enable_bundling) {
                                         var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                        export_default_args[0] = p.e(E.Identifier{ .ref = p.exports_ref }, s2.loc);
+                                        export_default_args[0] = p.@"module.exports"(s2.loc);
 
                                         const class_name_ref = brk: {
                                             if (class.class.class_name) |class_name_ref| {
@@ -12943,7 +12896,7 @@ pub fn NewParser(
                 .s_export_equals => |data| {
                     if (p.options.enable_bundling) {
                         var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
-                        export_default_args[0] = p.e(E.Identifier{ .ref = p.exports_ref }, stmt.loc);
+                        export_default_args[0] = p.@"module.exports"(stmt.loc);
                         export_default_args[1] = data.value;
 
                         stmts.append(p.s(S.SExpr{ .value = p.callRuntime(stmt.loc, "__exportDefault", export_default_args) }, stmt.loc)) catch unreachable;
@@ -14363,6 +14316,10 @@ pub fn NewParser(
             }
         }
 
+        pub inline fn @"module.exports"(p: *P, loc: logger.Loc) Expr {
+            return p.e(E.Dot{ .name = exports_string_name, .name_loc = loc, .target = p.e(E.Identifier{ .ref = p.module_ref }, loc) }, loc);
+        }
+
         // This assumes that the open parenthesis has already been parsed by the caller
         pub fn parseParenExpr(p: *P, loc: logger.Loc, level: Level, opts: ParenExprOpts) anyerror!Expr {
             var items_list = List(Expr).init(p.allocator);
@@ -15107,10 +15064,14 @@ pub fn NewParser(
                 update_function_args[0] = G.Arg{ .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty) };
 
                 while (named_exports_iter.next()) |named_export| {
+                    const named_export_value = named_export.value_ptr.*;
+
                     // Do not try to HMR export {foo} from 'bar';
-                    if (named_imports.get(named_export.value_ptr.ref)) |named_import| {
+                    if (named_imports.get(named_export_value.ref)) |named_import| {
                         if (named_import.is_exported) continue;
                     }
+
+                    const named_export_symbol: Symbol = p.symbols.items[named_export_value.ref.inner_index];
 
                     var export_name_string = export_name_string_remainder[0 .. named_export.key_ptr.len + "$$hmr_".len];
                     export_name_string_remainder = export_name_string_remainder[export_name_string.len..];
@@ -15121,15 +15082,23 @@ pub fn NewParser(
 
                     var body_stmts = export_all_function_body_stmts[named_export_i .. named_export_i + 1];
                     body_stmts[0] = p.s(
-                        S.Return{ .value = p.e(E.Identifier{
-                            .ref = named_export.value_ptr.ref,
-                        }, logger.Loc.Empty) },
+                        // was this originally a named import?
+                        // preserve the identifier
+                        S.Return{ .value = if (named_export_symbol.namespace_alias != null)
+                            p.e(E.ImportIdentifier{
+                                .ref = named_export_value.ref,
+                                .was_originally_identifier = true,
+                            }, logger.Loc.Empty)
+                        else
+                            p.e(E.Identifier{
+                                .ref = named_export_value.ref,
+                            }, logger.Loc.Empty) },
                         logger.Loc.Empty,
                     );
                     export_clauses[named_export_i] = js_ast.ClauseItem{
                         .original_name = "",
                         .alias = named_export.key_ptr.*,
-                        .alias_loc = named_export.value_ptr.alias_loc,
+                        .alias_loc = named_export_value.alias_loc,
                         .name = .{ .ref = name_ref, .loc = logger.Loc.Empty },
                     };
 

@@ -417,6 +417,7 @@ pub const G = struct {
     pub const NamespaceAlias = struct {
         namespace_ref: Ref,
         alias: string,
+        import_record_index: u32 = std.math.maxInt(u32),
     };
 
     pub const ExportStarAlias = struct {
@@ -974,6 +975,8 @@ pub const E = struct {
         // false, this could potentially have been a member access expression such
         // as "ns.foo" off of an imported namespace object.
         was_originally_identifier: bool = false,
+
+        was_from_macro: bool = false,
     };
 
     // This is similar to EIdentifier but it represents class-private fields and

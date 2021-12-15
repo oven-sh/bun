@@ -203,6 +203,18 @@ pub const StrictModeReservedWords = std.ComptimeStringMap(bool, .{
     .{ "yield", true },
 });
 
+pub const StrictModeReservedWordsRemap = std.ComptimeStringMap(string, .{
+    .{ "implements", "_implements" },
+    .{ "interface", "_interface" },
+    .{ "let", "_let" },
+    .{ "package", "_package" },
+    .{ "private", "_private" },
+    .{ "protected", "_protected" },
+    .{ "public", "_public" },
+    .{ "static", "_static" },
+    .{ "yield", "_yield" },
+});
+
 pub const PropertyModifierKeyword = enum {
     p_abstract,
     p_async,

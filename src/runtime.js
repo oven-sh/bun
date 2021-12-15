@@ -54,83 +54,81 @@ export var __toModule = (module) => {
 var tagSymbol = Symbol("CommonJSTransformed");
 var cjsRequireSymbol = Symbol("CommonJS");
 export var __commonJS = (cb, name) => {
-  var mod = {};
+  var mod;
   var has_run = false;
 
   const requireFunction = function load() {
     if (has_run) {
       return mod.exports;
     }
+
     has_run = true;
-
-    mod = { exports: {} };
-
-    cb(mod, mod.exports);
+    cb(((mod = { exports: {} }), mod), mod.exports);
 
     const kind = typeof mod.exports;
+    // if (
+    //   (kind === "function" || kind === "object") &&
+    //   "__esModule" in mod.exports &&
+    //   !mod.exports[tagSymbol]
+    // ) {
+    //   if (!("default" in mod.exports)) {
+    //     Object.defineProperty(mod.exports, "default", {
+    //       get() {
+    //         return mod.exports;
+    //       },
+    //       set(v) {
+    //         mod.exports = v;
+    //       },
+    //       enumerable: true,
+    //       configurable: true,
+    //     });
+    //   }
+    // } else if (
+    //   kind === "object" &&
+    //   "default" in mod.exports &&
+    //   !mod.exports[tagSymbol] &&
+    //   Object.keys(mod.exports).length === 1
+    // ) {
+    //   // if mod.exports.default === true this won't work because we can't define a property on a boolean
+    //   if (
+    //     typeof mod.exports.default === "object" ||
+    //     typeof mod.exports.default === "function"
+    //   ) {
+    //     mod.exports = mod.exports.default;
+
+    //     Object.defineProperty(mod.exports, "default", {
+    //       get() {
+    //         return mod.exports;
+    //       },
+    //       set(v) {
+    //         mod.exports = v;
+    //       },
+    //       enumerable: true,
+    //       configurable: true,
+    //     });
+    //   }
+
+    //   // If it's a namespace export without .default, pretend .default is the same as mod.exports
+    // } else if (
+    //   (kind === "function" || kind === "object") &&
+    //   !("default" in mod.exports) &&
+    //   Object.isExtensible(mod.exports)
+    // ) {
+    //   var defaultValue = mod.exports;
+    //   Object.defineProperty(mod.exports, "default", {
+    //     get() {
+    //       return defaultValue;
+    //     },
+    //     set(value) {
+    //       defaultValue = value;
+    //     },
+    //     enumerable: true,
+    //     configurable: true,
+    //   });
+    // }
+
     if (
-      (kind === "function" || kind === "object") &&
-      "__esModule" in mod.exports &&
-      !mod.exports[tagSymbol]
-    ) {
-      if (!("default" in mod.exports)) {
-        Object.defineProperty(mod.exports, "default", {
-          get() {
-            return mod.exports;
-          },
-          set(v) {
-            mod.exports = v;
-          },
-          enumerable: true,
-          configurable: true,
-        });
-      }
-    } else if (
-      kind === "object" &&
-      "default" in mod.exports &&
-      !mod.exports[tagSymbol] &&
-      Object.keys(mod.exports).length === 1
-    ) {
-      // if mod.exports.default === true this won't work because we can't define a property on a boolean
-      if (
-        typeof mod.exports.default === "object" ||
-        typeof mod.exports.default === "function"
-      ) {
-        mod.exports = mod.exports.default;
-
-        Object.defineProperty(mod.exports, "default", {
-          get() {
-            return mod.exports;
-          },
-          set(v) {
-            mod.exports = v;
-          },
-          enumerable: true,
-          configurable: true,
-        });
-      }
-
-      // If it's a namespace export without .default, pretend .default is the same as mod.exports
-    } else if (
-      (kind === "function" || kind === "object") &&
-      !("default" in mod.exports) &&
-      Object.isExtensible(mod.exports)
-    ) {
-      var defaultValue = mod.exports;
-      Object.defineProperty(mod.exports, "default", {
-        get() {
-          return defaultValue;
-        },
-        set(value) {
-          defaultValue = value;
-        },
-        enumerable: true,
-        configurable: true,
-      });
-    }
-
-    if (
-      kind === "object" &&
+      (kind === "object" || kind === "function") &&
       !mod.exports[tagSymbol] &&
       Object.isExtensible(mod.exports)
     ) {

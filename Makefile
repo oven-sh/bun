@@ -438,6 +438,8 @@ s2n-mac:
 	CC=$(CC) CXX=$(CXX) cmake --build ./build -j$(CPUS); \
 	CC=$(CC) CXX=$(CXX) CTEST_PARALLEL_LEVEL=$(CPUS) ninja -C build
 	cp $(DEPS_DIR)/s2n-tls/build/lib/libs2n.a $(DEPS_DIR)/libs2n.a
+
+libcrypto-old:
 	unlink $(DEPS_DIR)/libcrypto.a || echo "";
 	ln $(LIBCRYPTO_STATIC_LIB) $(DEPS_DIR)/libcrypto.a || echo "";
 

@@ -3518,7 +3518,7 @@ pub fn NewPrinter(
                 return;
             }
 
-            p.printSymbol(p.options.runtime_imports.__require.?);
+            p.printSymbol(p.options.runtime_imports.__require.?.ref);
             // d is for default
             p.print(".d(");
             p.printLoadFromBundle(require.import_record_index);

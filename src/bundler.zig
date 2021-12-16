@@ -3586,8 +3586,13 @@ pub const MacroEntryPoint = struct {
         const code = try std.fmt.bufPrint(
             entry.code_buffer[macro_label.len..],
             \\//Auto-generated file
-            \\import * as Macros from '{s}{s}';
-            \\
+            \\var Macros;
+            \\try {{
+            \\  Macros = await import('{s}{s}');
+            \\}} catch (err) {{
+            \\   console.error("Error importing macro");
+            \\   throw err;
+            \\}}
             \\if (!('{s}' in Macros)) {{
             \\  throw new Error("Macro '{s}' not found in '{s}{s}'");
             \\}}

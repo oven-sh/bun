@@ -37,7 +37,7 @@ const Op = js_ast.Op;
 const Scope = js_ast.Scope;
 const locModuleScope = logger.Loc.Empty;
 
-const LEXER_DEBUGGER_WORKAROUND = isDebug;
+const LEXER_DEBUGGER_WORKAROUND = false;
 
 const HashMapPool = struct {
     const HashMap = std.HashMap(u64, void, IdentityContext, 80);

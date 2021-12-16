@@ -18,6 +18,8 @@ enclosing_browser_scope: Index = allocators.NotFound,
 package_json_for_browser_field: ?*const PackageJSON = null,
 enclosing_tsconfig_json: ?*const TSConfigJSON = null,
 
+/// package.json used for bundling
+/// it's the deepest one in the hierarchy with a "name" field
 enclosing_package_json: ?*PackageJSON = null,
 
 abs_path: string = "",

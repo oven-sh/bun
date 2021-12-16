@@ -707,6 +707,10 @@ pub const Resolver = struct {
         var iter = result.path_pair.iter();
         while (iter.next()) |path| {
             var dir: *DirInfo = (r.readDirInfo(path.name.dir) catch continue) orelse continue;
+            if (result.package_json) |existing| {
+                if (existing.name.len == 0) result.package_json = null;
+            }
+
             result.package_json = result.package_json orelse dir.enclosing_package_json;
 
             if (dir.enclosing_tsconfig_json) |tsconfig| {
@@ -2570,7 +2574,14 @@ pub const Resolver = struct {
             info.enclosing_browser_scope = parent.?.enclosing_browser_scope;
             info.package_json_for_browser_field = parent.?.package_json_for_browser_field;
             info.enclosing_tsconfig_json = parent.?.enclosing_tsconfig_json;
-            info.enclosing_package_json = parent.?.package_json orelse parent.?.enclosing_package_json;
+
+            if (parent.?.package_json) |parent_package_json| {
+                if (parent_package_json.name.len > 0) {
+                    info.enclosing_package_json = parent_package_json;
+                }
+            }
+
+            info.enclosing_package_json = info.enclosing_package_json orelse parent.?.enclosing_package_json;
 
             // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
             if (!r.opts.preserve_symlinks) {
@@ -2612,7 +2623,9 @@ pub const Resolver = struct {
                         info.enclosing_browser_scope = result.index;
                         info.package_json_for_browser_field = pkg;
                     }
-                    info.enclosing_package_json = pkg;
+
+                    if (pkg.name.len > 0)
+                        info.enclosing_package_json = pkg;
 
                     if (r.debug_logs) |*logs| {
                         logs.addNoteFmt("Resolved package.json in \"{s}\"", .{

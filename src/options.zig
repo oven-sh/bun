@@ -431,7 +431,16 @@ pub const Platform = enum {
         };
     }
 
-    const MAIN_FIELD_NAMES = [_]string{ "browser", "module", "main" };
+    const MAIN_FIELD_NAMES = [_]string{
+        "browser",
+        "module",
+
+        "main",
+
+        // https://github.com/jsforum/jsforum/issues/5
+        // Older packages might use jsnext:main in place of module
+        "jsnext:main",
+    };
     pub const DefaultMainFields: std.EnumArray(Platform, []const string) = brk: {
         var array = std.EnumArray(Platform, []const string).initUndefined();
 
@@ -461,7 +470,7 @@ pub const Platform = enum {
         // This is deliberate because the presence of the "browser" field is a
         // good signal that the "module" field may have non-browser stuff in it,
         // which will crash or fail to be bundled when targeting the browser.
-        var listc = [_]string{ MAIN_FIELD_NAMES[0], MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[2] };
+        var listc = [_]string{ MAIN_FIELD_NAMES[0], MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[3], MAIN_FIELD_NAMES[2] };
         array.set(Platform.browser, &listc);
         array.set(Platform.bun, &listc);
 
@@ -953,6 +962,7 @@ pub const BundleOptions = struct {
     external: ExternalModules = ExternalModules{},
     entry_points: []const string,
     extension_order: []const string = &Defaults.ExtensionOrder,
+    esm_extension_order: []const string = &Defaults.ModuleExtensionOrder,
     out_extensions: std.StringHashMap(string),
     import_path_format: ImportPathFormat = ImportPathFormat.relative,
     framework: ?Framework = null,
@@ -1023,7 +1033,23 @@ pub const BundleOptions = struct {
             ".tsx",
             ".ts",
             ".jsx",
+            ".cts",
+            ".cjs",
             ".js",
+            ".mjs",
+            ".mts",
+            ".json",
+        };
+
+        pub const ModuleExtensionOrder = [_]string{
+            ".tsx",
+            ".jsx",
+            ".mts",
+            ".ts",
+            ".mjs",
+            ".js",
+            ".cts",
+            ".cjs",
             ".json",
         };
 

@@ -24,6 +24,15 @@ const fooUTF16 = css`
     after
 
 `;
+
+const templateLiteralWhichDefinesAFunction = ((...args) =>
+  args[args.length - 1]().toString())`
+    before
+    🙃 ${() => true}
+    after
+
+`;
+
 export function test() {
   for (let foo of [fooNoBracesUT16, fooNoBracesUTF8, fooUTF16, fooUTF8]) {
     console.assert(
@@ -32,6 +41,11 @@ export function test() {
     );
     console.assert(foo.includes("after"), `Expected ${foo} to include "after"`);
   }
+
+  console.assert(
+    templateLiteralWhichDefinesAFunction.includes("true"),
+    "Expected fooFunction to include 'true'"
+  );
 
   return testDone(import.meta.url);
 }

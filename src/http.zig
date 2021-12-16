@@ -225,7 +225,11 @@ pub const RequestContext = struct {
                         writer.writeAll(std.mem.trim(u8, this.bundler.options.routes.asset_prefix_path, "/")) catch break :module_preload;
                     }
 
-                    writer.writeAll(match.file_path[Fs.FileSystem.instance.top_level_dir.len..]) catch break :module_preload;
+                    // include that trailing slash
+                    // this should never overflow because the directory will be "/" if it's a root
+                    if (comptime Environment.isDebug) std.debug.assert(Fs.FileSystem.instance.top_level_dir.len > 0);
+
+                    writer.writeAll(match.file_path[Fs.FileSystem.instance.top_level_dir.len - 1 ..]) catch break :module_preload;
 
                     writer.writeAll(">; rel=modulepreload") catch break :module_preload;
 

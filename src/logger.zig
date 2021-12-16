@@ -858,10 +858,37 @@ pub const Log = struct {
 
     pub fn printForLogLevelWithEnableAnsiColors(self: *Log, to: anytype, comptime enable_ansi_colors: bool) !void {
         var printed = false;
-        for (self.msgs.items) |msg| {
-            if (msg.kind.shouldPrint(self.level)) {
-                try msg.writeFormat(to, enable_ansi_colors);
-                printed = true;
+
+        if (self.warnings > 0 and self.errors > 0) {
+            // Print warnings at the top
+            // errors at the bottom
+            // This is so if you're reading from a terminal
+            // and there are a bunch of warnings
+            // You can more easily see where the errors are
+
+            for (self.msgs.items) |msg| {
+                if (msg.kind != .err) {
+                    if (msg.kind.shouldPrint(self.level)) {
+                        try msg.writeFormat(to, enable_ansi_colors);
+                        printed = true;
+                    }
+                }
+            }
+
+            for (self.msgs.items) |msg| {
+                if (msg.kind == .err) {
+                    if (msg.kind.shouldPrint(self.level)) {
+                        try msg.writeFormat(to, enable_ansi_colors);
+                        printed = true;
+                    }
+                }
+            }
+        } else {
+            for (self.msgs.items) |msg| {
+                if (msg.kind.shouldPrint(self.level)) {
+                    try msg.writeFormat(to, enable_ansi_colors);
+                    printed = true;
+                }
             }
         }
 

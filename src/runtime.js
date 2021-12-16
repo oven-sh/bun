@@ -66,66 +66,6 @@ export var __commonJS = (cb, name) => {
     cb(((mod = { exports: {} }), mod), mod.exports);
 
     const kind = typeof mod.exports;
-    // if (
-    //   (kind === "function" || kind === "object") &&
-    //   "__esModule" in mod.exports &&
-    //   !mod.exports[tagSymbol]
-    // ) {
-    //   if (!("default" in mod.exports)) {
-    //     Object.defineProperty(mod.exports, "default", {
-    //       get() {
-    //         return mod.exports;
-    //       },
-    //       set(v) {
-    //         mod.exports = v;
-    //       },
-    //       enumerable: true,
-    //       configurable: true,
-    //     });
-    //   }
-    // } else if (
-    //   kind === "object" &&
-    //   "default" in mod.exports &&
-    //   !mod.exports[tagSymbol] &&
-    //   Object.keys(mod.exports).length === 1
-    // ) {
-    //   // if mod.exports.default === true this won't work because we can't define a property on a boolean
-    //   if (
-    //     typeof mod.exports.default === "object" ||
-    //     typeof mod.exports.default === "function"
-    //   ) {
-    //     mod.exports = mod.exports.default;
-
-    //     Object.defineProperty(mod.exports, "default", {
-    //       get() {
-    //         return mod.exports;
-    //       },
-    //       set(v) {
-    //         mod.exports = v;
-    //       },
-    //       enumerable: true,
-    //       configurable: true,
-    //     });
-    //   }
-
-    //   // If it's a namespace export without .default, pretend .default is the same as mod.exports
-    // } else if (
-    //   (kind === "function" || kind === "object") &&
-    //   !("default" in mod.exports) &&
-    //   Object.isExtensible(mod.exports)
-    // ) {
-    //   var defaultValue = mod.exports;
-    //   Object.defineProperty(mod.exports, "default", {
-    //     get() {
-    //       return defaultValue;
-    //     },
-    //     set(value) {
-    //       defaultValue = value;
-    //     },
-    //     enumerable: true,
-    //     configurable: true,
-    //   });
-    // }
 
     if (
       (kind === "object" || kind === "function") &&
@@ -137,6 +77,22 @@ export var __commonJS = (cb, name) => {
         enumerable: false,
         configurable: false,
       });
+
+      if (!("default" in mod.exports)) {
+        Object.defineProperty(mod.exports, "default", {
+          get() {
+            return mod.exports;
+          },
+          set(v) {
+            if (v === mod.exports) return;
+            mod.exports = v;
+            return true;
+          },
+          // enumerable: false is important here
+          enumerable: false,
+          configurable: true,
+        });
+      }
     }
 
     return mod.exports;
@@ -150,21 +106,22 @@ export var __cJS2eSM = __commonJS;
 
 export var __internalIsCommonJSNamespace = (namespace) =>
   typeof namespace === "object" &&
-  "default" in namespace &&
-  namespace.default[cjsRequireSymbol];
+  (("default" in namespace && namespace.default[cjsRequireSymbol]) ||
+    namespace[cjsRequireSymbol]);
 
+// require()
 export var __require = (namespace) => {
-  const namespaceType = typeof namespace;
-  if (namespaceType === "function" && namespace[cjsRequireSymbol])
-    return namespace();
-
-  if (
-    namespaceType === "object" &&
-    "default" in namespace &&
-    namespace.default[cjsRequireSymbol]
-  )
+  if (__internalIsCommonJSNamespace(namespace)) {
     return namespace.default();
+  }
 
+  return namespace;
+};
+
+// require().default
+// this currently does nothing
+// get rid of this wrapper once we're more confident we do not need special handling for default
+__require.d = (namespace) => {
   return namespace;
 };
 

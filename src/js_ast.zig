@@ -406,6 +406,8 @@ pub const ClauseItem = struct {
     // We need to preserve both aliases in case the symbol is renamed. In this
     // example, "foo" is "OriginalName" and "bar" is "Alias".
     original_name: string,
+
+    pub const default_alias: string = "default";
 };
 
 pub const G = struct {
@@ -417,6 +419,9 @@ pub const G = struct {
     pub const NamespaceAlias = struct {
         namespace_ref: Ref,
         alias: string,
+
+        was_originally_property_access: bool = false,
+
         import_record_index: u32 = std.math.maxInt(u32),
     };
 
@@ -725,7 +730,7 @@ pub const Symbol = struct {
         symbols_for_source: [][]Symbol,
 
         pub fn get(self: *Map, ref: Ref) ?*Symbol {
-            if (Ref.isSourceIndexNull(ref.source_index)) {
+            if (Ref.isSourceIndexNull(ref.source_index) or ref.is_source_contents_slice) {
                 return null;
             }
 
@@ -739,6 +744,14 @@ pub const Symbol = struct {
 
         pub fn initList(list: [][]Symbol) Map {
             return Map{ .symbols_for_source = list };
+        }
+
+        pub fn getWithLink(symbols: *Map, ref: Ref) ?*Symbol {
+            var symbol: *Symbol = symbols.get(ref) orelse return null;
+            if (symbol.link) |link| {
+                return symbols.get(link) orelse symbol;
+            }
+            return symbol;
         }
 
         pub fn follow(symbols: *Map, ref: Ref) Ref {
@@ -975,8 +988,6 @@ pub const E = struct {
         // false, this could potentially have been a member access expression such
         // as "ns.foo" off of an imported namespace object.
         was_originally_identifier: bool = false,
-
-        was_from_macro: bool = false,
     };
 
     // This is similar to EIdentifier but it represents class-private fields and
@@ -6315,7 +6326,7 @@ pub const Macro = struct {
 
                         if (has_default) {
                             import.import.items[import_item_i] = ClauseItem{
-                                .alias = "default",
+                                .alias = ClauseItem.default_alias,
                                 .name = .{ .loc = writer.loc, .ref = Ref.None },
                                 .original_name = import_default_name,
                                 .alias_loc = writer.loc,

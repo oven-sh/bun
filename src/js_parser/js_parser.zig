@@ -439,78 +439,47 @@ pub const ImportScanner = struct {
                         }
                     }
 
-                    if (st.star_name_loc != null or did_remove_star_loc) {
-                        // -- Original Comment --
-                        // If we're bundling a star import and the namespace is only ever
-                        // used for property accesses, then convert each unique property to
-                        // a clause item in the import statement and remove the star import.
-                        // That will cause the bundler to bundle them more efficiently when
-                        // both this module and the imported module are in the same group.
-                        //
-                        // Before:
-                        //
-                        //   import * as ns from 'foo'
-                        //   console.log(ns.a, ns.b)
-                        //
-                        // After:
-                        //
-                        //   import {a, b} from 'foo'
-                        //   console.log(a, b)
-                        //
-                        // This is not done if the namespace itself is used, because in that
-                        // case the code for the namespace will have to be generated. This is
-                        // determined by the symbol count because the parser only counts the
-                        // star import as used if it was used for something other than a
-                        // property access:
-                        //
-                        //   import * as ns from 'foo'
-                        //   console.log(ns, ns.a, ns.b)
-                        //
-                        // -- Original Comment --
+                    const namespace_ref = st.namespace_ref;
+                    const convert_star_to_clause = !p.options.enable_bundling and !p.options.can_import_from_bundle and p.symbols.items[namespace_ref.inner_index].use_count_estimate == 0;
 
-                        // jarred: we don't use the same grouping mechanism as esbuild
-                        // but, we do this anyway.
-                        // The reasons why are:
-                        // * It makes static analysis for other tools simpler.
-                        // * I imagine browsers may someday do some optimizations
-                        // when it's "easier" to know only certain modules are used
-                        // For example, if you're importing a component from a design system
-                        // it's really stupid to import all 1,000 components from that design system
-                        // when you just want <Button />
-                        const namespace_ref = st.namespace_ref;
-                        const convert_star_to_clause = !p.options.enable_bundling and !p.options.can_import_from_bundle and p.symbols.items[namespace_ref.inner_index].use_count_estimate == 0;
+                    if (convert_star_to_clause and !keep_unused_imports) {
+                        st.star_name_loc = null;
+                    }
 
-                        if (convert_star_to_clause and !keep_unused_imports) {
-                            st.star_name_loc = null;
-                        }
+                    record.contains_default_alias = record.contains_default_alias or st.default_name != null;
 
-                        const default_name: string = if (st.default_name != null)
-                            p.loadNameFromRef(st.default_name.?.ref.?)
-                        else
-                            "";
+                    const existing_items: ImportItemForNamespaceMap = p.import_items_for_namespace.get(namespace_ref) orelse
+                        ImportItemForNamespaceMap.init(p.allocator);
 
-                        for (st.items) |item| {
-                            const is_default = strings.eqlComptime(item.alias, "default");
-                            record.contains_default_alias = record.contains_default_alias or is_default;
+                    // ESM requires live bindings
+                    // CommonJS does not require live bindings
+                    // We load ESM in browsers & in Bun.js
+                    // We have to simulate live bindings for cases where the code is bundled
+                    // We do not know at this stage whether or not the import statement is bundled
+                    // This keeps track of the `namespace_alias` incase, at printing time, we determine that we should print it with the namespace
+                    for (st.items) |item| {
+                        const is_default = strings.eqlComptime(item.alias, "default");
+                        record.contains_default_alias = record.contains_default_alias or is_default;
 
-                            const name: LocRef = item.name;
-                            const name_ref = name.ref.?;
+                        const name: LocRef = item.name;
+                        const name_ref = name.ref.?;
 
-                            try p.named_imports.put(name_ref, js_ast.NamedImport{
-                                .alias = item.alias,
-                                .alias_loc = name.loc,
-                                .namespace_ref = st.namespace_ref,
-                                .import_record_index = st.import_record_index,
-                            });
+                        try p.named_imports.put(name_ref, js_ast.NamedImport{
+                            .alias = item.alias,
+                            .alias_loc = name.loc,
+                            .namespace_ref = st.namespace_ref,
+                            .import_record_index = st.import_record_index,
+                        });
 
-                            // Make sure the printer prints this as a property access
-                            var symbol: *Symbol = &p.symbols.items[name_ref.inner_index];
-                            symbol.namespace_alias = G.NamespaceAlias{
-                                .namespace_ref = st.namespace_ref,
-                                .alias = item.original_name,
-                                .import_record_index = st.import_record_index,
-                            };
-                        }
+                        // Make sure the printer prints this as a property access
+                        var symbol: *Symbol = &p.symbols.items[name_ref.inner_index];
+
+                        symbol.namespace_alias = G.NamespaceAlias{
+                            .namespace_ref = st.namespace_ref,
+                            .alias = item.alias,
+                            .import_record_index = st.import_record_index,
+                            .was_originally_property_access = st.star_name_loc != null and existing_items.contains(symbol.original_name),
+                        };
                     }
 
                     try p.import_records_for_current_part.append(st.import_record_index);
@@ -518,18 +487,8 @@ pub const ImportScanner = struct {
                     if (st.star_name_loc != null) {
                         record.contains_import_star = true;
                     }
-
-                    if (st.default_name != null) {
-                        record.contains_default_alias = true;
-                    } else {
-                        for (st.items) |item| {
-                            if (strings.eqlComptime(item.alias, "default")) {
-                                record.contains_default_alias = true;
-                                break;
-                            }
-                        }
-                    }
                 },
+
                 .s_function => |st| {
                     if (st.func.flags.is_export) {
                         if (st.func.name) |name| {
@@ -3626,7 +3585,6 @@ pub fn NewParser(
 
             const namespace_ref = try p.newSymbol(.other, namespace_identifier);
             try p.module_scope.generated.append(namespace_ref);
-
             for (imports) |alias, i| {
                 const ref = symbols.get(alias) orelse unreachable;
                 const alias_name = if (@TypeOf(symbols) == RuntimeImports) RuntimeImports.all[alias] else alias;
@@ -6182,6 +6140,7 @@ pub fn NewParser(
                     var remap_count: u16 = 0;
                     if (stmt.star_name_loc) |star| {
                         const name = p.loadNameFromRef(stmt.namespace_ref);
+
                         stmt.namespace_ref = try p.declareSymbol(.import, star, name);
                         if (comptime ParsePassSymbolUsageType != void) {
                             if (!is_macro) {
@@ -6257,9 +6216,11 @@ pub fn NewParser(
                     if (stmt.items.len > 0) {
                         for (stmt.items) |*item| {
                             const name = p.loadNameFromRef(item.name.ref orelse unreachable);
+
                             const ref = try p.declareSymbol(.import, item.name.loc, name);
                             p.checkForNonBMPCodePoint(item.alias_loc, item.alias);
                             try p.is_import_item.put(ref, true);
+
                             item.name.ref = ref;
                             item_refs.putAssumeCapacity(item.alias, LocRef{ .loc = item.name.loc, .ref = ref });
 
@@ -7692,10 +7653,9 @@ pub fn NewParser(
             var entry = try scope.members.getOrPut(name);
             if (entry.found_existing) {
                 const existing = entry.entry.value;
+                var symbol: *Symbol = &p.symbols.items[@intCast(usize, existing.ref.inner_index)];
 
                 if (comptime !is_generated) {
-                    var symbol: *Symbol = &p.symbols.items[@intCast(usize, existing.ref.inner_index)];
-
                     switch (p.canMergeSymbols(scope, symbol.kind, kind)) {
                         .forbidden => {
                             const r = js_lexer.rangeOfIdentifier(p.source, loc);
@@ -7723,6 +7683,11 @@ pub fn NewParser(
                         // else => unreachable,
                     }
                 } else {
+                    // Ensure that EImportIdentifier is created for the symbol in handleIdentifier
+                    if (symbol.kind == .import and kind != .import) {
+                        try p.is_import_item.put(ref, true);
+                    }
+
                     p.symbols.items[ref.inner_index].link = existing.ref;
                 }
             }
@@ -9635,9 +9600,10 @@ pub fn NewParser(
                 for (import.items) |*clause| {
                     const import_hash_name = clause.original_name;
 
-                    if (strings.eqlComptime(clause.alias, "default") and strings.eqlComptime(clause.original_name, "default")) {
+                    if (strings.eqlComptime(clause.alias, "default")) {
                         var non_unique_name = record.path.name.nonUniqueNameString(p.allocator) catch unreachable;
                         clause.original_name = std.fmt.allocPrint(p.allocator, "{s}_default", .{non_unique_name}) catch unreachable;
+                        record.contains_default_alias = true;
                     }
                     const name_ref = p.declareSymbol(.import, this.loc, clause.original_name) catch unreachable;
                     clause.name = LocRef{ .loc = this.loc, .ref = name_ref };
@@ -9649,7 +9615,7 @@ pub fn NewParser(
                     // Ensure we don't accidentally think this is an export from
                 }
 
-                p.macro.prepend_stmts.append(p.visitSingleStmt(p.s(import, this.loc), StmtsKind.none)) catch unreachable;
+                p.macro.prepend_stmts.append(p.s(import, this.loc)) catch unreachable;
             }
         };
 
@@ -11325,7 +11291,6 @@ pub fn NewParser(
                     return p.e(
                         E.ImportIdentifier{
                             .was_originally_identifier = false,
-                            .was_from_macro = true,
                             .ref = ref,
                         },
                         expr.loc,
@@ -12571,7 +12536,10 @@ pub fn NewParser(
         }
 
         fn jsxStringsToMemberExpressionAutomatic(p: *P, loc: logger.Loc, is_static: bool) Expr {
-            return p.jsxStringsToMemberExpression(loc, if (is_static) p.jsxs_runtime.ref else p.jsx_runtime.ref);
+            return p.jsxStringsToMemberExpression(loc, if (is_static and !p.options.jsx.development)
+                p.jsxs_runtime.ref
+            else
+                p.jsx_runtime.ref);
         }
 
         fn maybeRelocateVarsToTopLevel(p: *P, decls: []G.Decl, mode: RelocateVars.Mode) RelocateVars {
@@ -12790,17 +12758,19 @@ pub fn NewParser(
                             data.value.expr = p.visitExpr(expr);
 
                             // // Optionally preserve the name
-                            data.value.expr = p.maybeKeepExprSymbolName(data.value.expr, "default", was_anonymous_named_expr);
+                            data.value.expr = p.maybeKeepExprSymbolName(data.value.expr, js_ast.ClauseItem.default_alias, was_anonymous_named_expr);
 
                             // Discard type-only export default statements
                             if (is_typescript_enabled) {
                                 switch (expr.data) {
                                     .e_identifier => |ident| {
-                                        const symbol = p.symbols.items[ident.ref.inner_index];
-                                        if (symbol.kind == .unbound) {
-                                            if (p.local_type_names.get(symbol.original_name)) |local_type| {
-                                                if (local_type) {
-                                                    return;
+                                        if (!ident.ref.is_source_contents_slice) {
+                                            const symbol = p.symbols.items[ident.ref.inner_index];
+                                            if (symbol.kind == .unbound) {
+                                                if (p.local_type_names.get(symbol.original_name)) |local_type| {
+                                                    if (local_type) {
+                                                        return;
+                                                    }
                                                 }
                                             }
                                         }
@@ -12828,7 +12798,7 @@ pub fn NewParser(
                                         name = p.loadNameFromRef(func_loc.ref.?);
                                     } else {
                                         func.func.name = data.default_name;
-                                        name = "default";
+                                        name = js_ast.ClauseItem.default_alias;
                                     }
 
                                     func.func = p.visitFunc(func.func, func.func.open_parens_loc);
@@ -12906,17 +12876,7 @@ pub fn NewParser(
                     // "module.exports = value"
                     stmts.append(
                         Expr.assignStmt(
-                            p.e(
-                                E.Dot{
-                                    .target = p.e(
-                                        E.Identifier{
-                                            .ref = p.module_ref,
-                                        },
-                                        stmt.loc,
-                                    ),
-                                    .name = "exports",
-                                    .name_loc = stmt.loc,
-                                },
+                            p.@"module.exports"(
                                 stmt.loc,
                             ),
                             p.visitExpr(data.value),

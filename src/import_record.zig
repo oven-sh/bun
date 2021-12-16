@@ -17,16 +17,16 @@ pub const ImportKind = enum(u8) {
     // An "import()" expression with a string argument
     dynamic,
 
-    // A call to "require.resolve()"
+    /// A call to "require.resolve()"
     require_resolve,
 
-    // A CSS "@import" rule
+    /// A CSS "@import" rule
     at,
 
-    // A CSS "@import" rule with import conditions
+    /// A CSS "@import" rule with import conditions
     at_conditional,
 
-    // A CSS "url(...)" token
+    /// A CSS "url(...)" token
     url,
 
     internal,

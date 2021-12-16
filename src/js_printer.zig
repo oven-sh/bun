@@ -46,6 +46,7 @@ const assert = std.debug.assert;
 
 threadlocal var imported_module_ids_list: std.ArrayList(u32) = undefined;
 threadlocal var imported_module_ids_list_unset: bool = true;
+const ImportRecord = importRecord.ImportRecord;
 
 fn notimpl() void {
     Global.panic("Not implemented yet!", .{});
@@ -1561,34 +1562,33 @@ pub fn NewPrinter(
                     }
                 },
                 .e_import_identifier => |e| {
-                    if (e.ref.is_source_contents_slice or e.was_from_macro) {
-                        p.printSymbol(e.ref);
-                        return;
-                    }
                     // Potentially use a property access instead of an identifier
                     var didPrint = false;
 
-                    if (p.symbols.get(e.ref)) |symbol| {
+                    if (p.symbols.getWithLink(e.ref)) |symbol| {
                         if (symbol.import_item_status == .missing) {
                             p.printUndefined(level);
                             didPrint = true;
                         } else if (symbol.namespace_alias) |namespace| {
-                            var wrap = false;
-                            didPrint = true;
+                            const import_record = p.import_records[namespace.import_record_index];
+                            if ((comptime is_inside_bundle) or import_record.is_bundled or namespace.was_originally_property_access) {
+                                var wrap = false;
+                                didPrint = true;
 
-                            if (p.call_target) |target| {
-                                wrap = e.was_originally_identifier and (target == .e_identifier and
-                                    target.e_identifier.ref.eql(expr.data.e_import_identifier.ref));
-                            }
+                                if (p.call_target) |target| {
+                                    wrap = e.was_originally_identifier and (target == .e_identifier and
+                                        target.e_identifier.ref.eql(expr.data.e_import_identifier.ref));
+                                }
 
-                            if (wrap) {
-                                p.print("(0, ");
-                            }
+                                if (wrap) {
+                                    p.print("(0, ");
+                                }
 
-                            p.printNamespaceAlias(namespace);
+                                p.printNamespaceAlias(import_record, namespace);
 
-                            if (wrap) {
-                                p.print(")");
+                                if (wrap) {
+                                    p.print(")");
+                                }
                             }
                         }
                     }
@@ -1863,9 +1863,7 @@ pub fn NewPrinter(
             }
         }
 
-        pub fn printNamespaceAlias(p: *Printer, namespace: G.NamespaceAlias) void {
-            const import_record = &p.import_records[namespace.import_record_index];
-
+        pub fn printNamespaceAlias(p: *Printer, import_record: ImportRecord, namespace: G.NamespaceAlias) void {
             if (import_record.module_id > 0 and !import_record.contains_import_star) {
                 p.print("$");
                 p.printModuleId(import_record.module_id);
@@ -2410,7 +2408,7 @@ pub fn NewPrinter(
                             // this is still necessary for JSON
                             if (is_inside_bundle) {
                                 p.printModuleExportSymbol();
-                                p.print(".default = ");
+                                p.print(" = ");
                             }
 
                             // Functions and classes must be wrapped to avoid confusion with their statement forms
@@ -2431,7 +2429,7 @@ pub fn NewPrinter(
                                             // p.print(" = ");
                                         } else {
                                             p.printModuleExportSymbol();
-                                            p.print(".default = ");
+                                            p.print(" = ");
                                         }
                                     }
 
@@ -2475,7 +2473,7 @@ pub fn NewPrinter(
                                             // p.print(" = ");
                                         } else {
                                             p.printModuleExportSymbol();
-                                            p.print(".default = ");
+                                            p.print(" = ");
                                         }
                                     }
 
@@ -2589,17 +2587,33 @@ pub fn NewPrinter(
                                 p.print(", {");
                                 const last = s.items.len - 1;
                                 for (s.items) |item, i| {
-                                    const name = p.renamer.nameForSymbol(item.name.ref.?);
-                                    p.printClauseAlias(item.alias);
-                                    if (comptime is_inside_bundle) {
-                                        p.print(":");
-                                        p.printSpace();
-                                        p.print("() => ");
-                                        p.printIdentifier(name);
-                                    } else if (!strings.eql(name, item.alias)) {
-                                        p.print(":");
-                                        p.printSpace();
-                                        p.printIdentifier(name);
+                                    const symbol = p.symbols.getWithLink(item.name.ref.?).?;
+                                    const name = symbol.original_name;
+                                    var did_print = false;
+
+                                    if (symbol.namespace_alias) |namespace| {
+                                        const import_record = p.import_records[namespace.import_record_index];
+                                        if (import_record.is_bundled or (comptime is_inside_bundle) or namespace.was_originally_property_access) {
+                                            p.printIdentifier(name);
+                                            p.print(": () => ");
+                                            p.printNamespaceAlias(import_record, namespace);
+                                            did_print = true;
+                                        }
+                                    }
+
+                                    if (!did_print) {
+                                        p.printClauseAlias(item.alias);
+                                        if (comptime is_inside_bundle) {
+                                            p.print(":");
+                                            p.printSpace();
+                                            p.print("() => ");
+
+                                            p.printIdentifier(name);
+                                        } else if (!strings.eql(name, item.alias)) {
+                                            p.print(":");
+                                            p.printSpace();
+                                            p.printIdentifier(name);
+                                        }
                                     }
 
                                     if (i < last) {
@@ -2644,11 +2658,11 @@ pub fn NewPrinter(
                                 if (p.symbols.get(item.name.ref.?)) |symbol| {
                                     if (symbol.namespace_alias) |namespace| {
                                         const import_record = p.import_records[namespace.import_record_index];
-                                        if (import_record.is_bundled) {
+                                        if (import_record.is_bundled or (comptime is_inside_bundle) or namespace.was_originally_property_access) {
                                             p.print("var ");
                                             p.printSymbol(item.name.ref.?);
-                                            p.print("= ");
-                                            p.printNamespaceAlias(namespace);
+                                            p.print(" = ");
+                                            p.printNamespaceAlias(import_record, namespace);
                                             p.printSemicolonAfterStatement();
                                             _ = array.swapRemove(i);
 
@@ -3457,29 +3471,6 @@ pub fn NewPrinter(
                     p.printSemicolonAfterStatement();
                 },
             }
-
-            const items = s.items;
-            if (items.len > 0 and !is_disabled) {
-                for (items) |item| {
-                    const ref = item.name.ref.?;
-                    const symbol = p.symbols.get(ref) orelse continue;
-
-                    p.printIndent();
-                    p.print("var ");
-                    p.printSymbol(ref);
-                    p.print(" = ");
-                    if (!import_record.contains_import_star) {
-                        p.print("$");
-                        p.printModuleId(module_id);
-                    } else {
-                        p.printSymbol(s.namespace_ref);
-                    }
-                    p.print(".");
-                    p.printSymbol(ref);
-
-                    p.printSemicolonAfterStatement();
-                }
-            }
         }
         pub fn printLoadFromBundle(p: *Printer, import_record_index: u32) void {
             if (bun) {
@@ -3527,7 +3518,11 @@ pub fn NewPrinter(
                 return;
             }
 
+            p.printSymbol(p.options.runtime_imports.__require.?);
+            // d is for default
+            p.print(".d(");
             p.printLoadFromBundle(require.import_record_index);
+            p.print(")");
         }
 
         pub fn printBundledRexport(p: *Printer, name: string, import_record_index: u32) void {

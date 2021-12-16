@@ -11327,10 +11327,6 @@ pub fn NewParser(
                 },
 
                 .e_template => |e_| {
-                    for (e_.parts) |*part| {
-                        part.value = p.visitExpr(part.value);
-                    }
-
                     if (e_.tag) |tag| {
                         e_.tag = p.visitExpr(tag);
 
@@ -11359,6 +11355,10 @@ pub fn NewParser(
                                 }
                             }
                         }
+                    }
+
+                    for (e_.parts) |*part| {
+                        part.value = p.visitExpr(part.value);
                     }
                 },
 

@@ -516,6 +516,7 @@ identifier-cache:
 tag: 
 	git tag $(BUN_BUILD_TAG)
 	git push --tags
+	cd ../bun-releases-for-updater && echo $(BUN_BUILD_TAG) > bumper && git add bumper && git commit -m "Update latest release" && git tag $(BUN_BUILD_TAG) && git push
 
 prepare-release: tag release-create
 

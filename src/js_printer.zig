@@ -3518,7 +3518,14 @@ pub fn NewPrinter(
                 return;
             }
 
-            p.printSymbol(p.options.runtime_imports.__require.?.ref);
+            // the require symbol may not exist in bundled code
+            // it is included at the top of the file.
+            if (comptime is_inside_bundle) {
+                p.print("__require");
+            } else {
+                p.printSymbol(p.options.runtime_imports.__require.?.ref);
+            }
+
             // d is for default
             p.print(".d(");
             p.printLoadFromBundle(require.import_record_index);

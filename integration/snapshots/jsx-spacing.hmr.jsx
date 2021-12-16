@@ -1,18 +1,18 @@
 import {
 __HMRClient as Bun
-} from "http://localhost:8080/__runtime.js";
+} from "http://localhost:3000/__runtime.js";
 import {
 __require as require
-} from "http://localhost:8080/__runtime.js";
+} from "http://localhost:3000/__runtime.js";
 import {
 __HMRModule as HMR
-} from "http://localhost:8080/__runtime.js";
-import * as JSX from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
+} from "http://localhost:3000/__runtime.js";
+import * as JSX from "http://localhost:3000/node_modules/react/jsx-dev-runtime.js";
 var jsx = require(JSX).jsxDEV;
 
-import * as $1f6f0e67 from "http://localhost:8080/node_modules/react-dom/server.browser.js";
+import * as $1f6f0e67 from "http://localhost:3000/node_modules/react-dom/server.browser.js";
 var ReactDOM = require($1f6f0e67);
-Bun.activate(false);
+Bun.activate(true);
 
 var hmr = new HMR(3614189736, "jsx-spacing.jsx"), exports = hmr.exports;
 (hmr._load = function() {

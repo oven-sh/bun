@@ -1,18 +1,18 @@
 import {
 __HMRClient as Bun
-} from "http://localhost:8080/__runtime.js";
+} from "http://localhost:3000/__runtime.js";
 import {
 __require as require
-} from "http://localhost:8080/__runtime.js";
+} from "http://localhost:3000/__runtime.js";
 import {
 __HMRModule as HMR
-} from "http://localhost:8080/__runtime.js";
-import * as JSX from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
-import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
+} from "http://localhost:3000/__runtime.js";
+import * as JSX from "http://localhost:3000/node_modules/react/jsx-dev-runtime.js";
+import * as $bbcd215f from "http://localhost:3000/node_modules/react/index.js";
 var JSXClassic = require($bbcd215f);
 var jsx = require(JSX).jsxDEV, JSXFrag = require(JSXClassic).Fragment;
 
-Bun.activate(false);
+Bun.activate(true);
 var hmr = new HMR(2482749838, "string-escapes.js"), exports = hmr.exports;
 (hmr._load = function() {
   var tab = "\t";

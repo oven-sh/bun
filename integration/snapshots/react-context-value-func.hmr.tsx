@@ -1,18 +1,18 @@
 import {
 __HMRClient as Bun
-} from "http://localhost:8080/__runtime.js";
+} from "http://localhost:3000/__runtime.js";
 import {
 __require as require
-} from "http://localhost:8080/__runtime.js";
+} from "http://localhost:3000/__runtime.js";
 import {
 __HMRModule as HMR
-} from "http://localhost:8080/__runtime.js";
-import * as JSX from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
+} from "http://localhost:3000/__runtime.js";
+import * as JSX from "http://localhost:3000/node_modules/react/jsx-dev-runtime.js";
 var jsx = require(JSX).jsxDEV;
 
-import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
+import * as $bbcd215f from "http://localhost:3000/node_modules/react/index.js";
 var { default: React} = require($bbcd215f);
-Bun.activate(false);
+Bun.activate(true);
 
 var hmr = new HMR(3514348331, "react-context-value-func.tsx"), exports = hmr.exports;
 (hmr._load = function() {

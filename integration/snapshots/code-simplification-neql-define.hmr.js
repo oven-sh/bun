@@ -1,10 +1,10 @@
 import {
 __HMRModule as HMR
-} from "http://localhost:8080/__runtime.js";
+} from "http://localhost:3000/__runtime.js";
 import {
 __HMRClient as Bun
-} from "http://localhost:8080/__runtime.js";
-Bun.activate(false);
+} from "http://localhost:3000/__runtime.js";
+Bun.activate(true);
 
 var hmr = new HMR(726376257, "code-simplification-neql-define.js"), exports = hmr.exports;
 (hmr._load = function() {

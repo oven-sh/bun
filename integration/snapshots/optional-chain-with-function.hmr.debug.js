@@ -13,9 +13,9 @@ var hmr = new HMR(3608848620, "optional-chain-with-function.js"), exports = hmr.
       const multipleSecondaryValues = undefined;
       const ratings = ["123"];
       var bar = multipleSecondaryValues?.map((value) => false);
-      bar = (bar?.multipleSecondaryValues)?.map((value) => false);
-      bar = (bar?.bar?.multipleSecondaryValues)?.map((value) => false);
-      bar = ({}?.bar?.multipleSecondaryValues)?.map((value) => false);
+      bar = bar?.multipleSecondaryValues?.map((value) => false);
+      bar = bar?.bar?.multipleSecondaryValues?.map((value) => false);
+      bar = {}?.bar?.multipleSecondaryValues?.map((value) => false);
     } catch (e) {
       throw e;
     }

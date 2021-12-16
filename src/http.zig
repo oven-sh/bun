@@ -2121,7 +2121,25 @@ pub const RequestContext = struct {
             id = id[0..colon];
         }
 
-        const blob = (JavaScriptHandler.javascript_vm orelse return try ctx.sendNotFound()).blobs.get(id) orelse return try ctx.sendNotFound();
+        const Blob = @import("./blob.zig");
+
+        const blob: Blob = brk: {
+            // It could be a blob either for macros or for JS thread
+            if (JavaScriptHandler.javascript_vm) |vm| {
+                if (vm.blobs.get(id)) |blob| {
+                    break :brk blob;
+                }
+            }
+
+            if (JavaScript.VirtualMachine.vm_loaded) {
+                if (JavaScript.VirtualMachine.vm.blobs.get(id)) |blob| {
+                    break :brk blob;
+                }
+            }
+
+            return try ctx.sendNotFound();
+        };
+
         if (blob.len == 0) {
             try ctx.sendNoContent();
             return;

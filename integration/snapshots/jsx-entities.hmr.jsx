@@ -1,20 +1,20 @@
 import {
 __HMRClient as Bun
-} from "http://localhost:3000/__runtime.js";
+} from "http://localhost:8080/__runtime.js";
 import {
 __require as require
-} from "http://localhost:3000/__runtime.js";
+} from "http://localhost:8080/__runtime.js";
 import {
 __HMRModule as HMR
-} from "http://localhost:3000/__runtime.js";
-import * as JSX from "http://localhost:3000/node_modules/react/jsx-dev-runtime.js";
-import * as $bbcd215f from "http://localhost:3000/node_modules/react/index.js";
+} from "http://localhost:8080/__runtime.js";
+import * as JSX from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
+import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
 var JSXClassic = require($bbcd215f);
 var jsx = require(JSX).jsxDEV, JSXFrag = require(JSXClassic).Fragment;
 
-import * as $1f6f0e67 from "http://localhost:3000/node_modules/react-dom/server.browser.js";
+import * as $1f6f0e67 from "http://localhost:8080/node_modules/react-dom/server.browser.js";
 var ReactDOM = require($1f6f0e67);
-Bun.activate(true);
+Bun.activate(false);
 
 var hmr = new HMR(817082122, "jsx-entities.jsx"), exports = hmr.exports;
 (hmr._load = function() {

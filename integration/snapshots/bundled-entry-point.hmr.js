@@ -1,14 +1,14 @@
 import {
 __require as require
-} from "http://localhost:3000/__runtime.js";
+} from "http://localhost:8080/__runtime.js";
 import {
 __HMRModule as HMR
-} from "http://localhost:3000/__runtime.js";
+} from "http://localhost:8080/__runtime.js";
 import {
 __HMRClient as Bun
-} from "http://localhost:3000/__runtime.js";
-import * as $bbcd215f from "http://localhost:3000/node_modules/react/index.js";
-Bun.activate(true);
+} from "http://localhost:8080/__runtime.js";
+import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
+Bun.activate(false);
 
 var hmr = new HMR(3012834585, "bundled-entry-point.js"), exports = hmr.exports;
 (hmr._load = function() {

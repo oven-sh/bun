@@ -1,22 +1,22 @@
 import {
 __HMRClient as Bun
-} from "http://localhost:3000/__runtime.js";
+} from "http://localhost:8080/__runtime.js";
 import {
 __require as require
-} from "http://localhost:3000/__runtime.js";
+} from "http://localhost:8080/__runtime.js";
 import {
 __HMRModule as HMR
-} from "http://localhost:3000/__runtime.js";
-import * as JSX from "http://localhost:3000/node_modules/react/jsx-dev-runtime.js";
+} from "http://localhost:8080/__runtime.js";
+import * as JSX from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
 var jsx = require(JSX).jsxDEV;
 
-import * as $d4051a2e from "http://localhost:3000/node_modules/styled-components/dist/styled-components.browser.esm.js";
+import * as $d4051a2e from "http://localhost:8080/node_modules/styled-components/dist/styled-components.browser.esm.js";
 var { default: styled} = require($d4051a2e);
-import * as $bbcd215f from "http://localhost:3000/node_modules/react/index.js";
+import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
 var { default: React} = require($bbcd215f);
-import * as $5b3cea55 from "http://localhost:3000/node_modules/react-dom/index.js";
+import * as $5b3cea55 from "http://localhost:8080/node_modules/react-dom/index.js";
 var { default: ReactDOM} = require($5b3cea55);
-Bun.activate(true);
+Bun.activate(false);
 
 var hmr = new HMR(1290604342, "styledcomponents-output.js"), exports = hmr.exports;
 (hmr._load = function() {

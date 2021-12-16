@@ -1448,21 +1448,21 @@ pub const VirtualMachine = struct {
         var promise: *JSInternalPromise = undefined;
         // We first import the node_modules bundle. This prevents any potential TDZ issues.
         // The contents of the node_modules bundle are lazy, so hopefully this should be pretty quick.
-        if (this.node_modules != null) {
-            promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.init(std.mem.span(bun_file_import_path)));
+        // if (this.node_modules != null) {
+        //     promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.init(std.mem.span(bun_file_import_path)));
 
-            this.global.vm().drainMicrotasks();
+        //     this.global.vm().drainMicrotasks();
 
-            while (promise.status(this.global.vm()) == JSPromise.Status.Pending) {
-                this.global.vm().drainMicrotasks();
-            }
+        //     while (promise.status(this.global.vm()) == JSPromise.Status.Pending) {
+        //         this.global.vm().drainMicrotasks();
+        //     }
 
-            if (promise.status(this.global.vm()) == JSPromise.Status.Rejected) {
-                return promise;
-            }
+        //     if (promise.status(this.global.vm()) == JSPromise.Status.Rejected) {
+        //         return promise;
+        //     }
 
-            _ = promise.result(this.global.vm());
-        }
+        //     _ = promise.result(this.global.vm());
+        // }
 
         promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.init(entry_point.source.path.text));
 

@@ -591,6 +591,8 @@ pub const Resolver = struct {
     }
 
     pub fn resolve(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind) !Result {
+        const original_order = r.extension_order;
+        defer r.extension_order = original_order;
         r.extension_order = switch (kind) {
             .url, .at_conditional, .at => std.mem.span(&options.BundleOptions.Defaults.CSSExtensionOrder),
             .entry_point, .stmt, .dynamic => r.opts.esm_extension_order,

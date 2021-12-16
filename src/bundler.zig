@@ -482,7 +482,7 @@ pub const Bundler = struct {
                     }
 
                     while (generator.queue.next()) |item| {
-                        try generator.processFile(worker, item);
+                        try generator.processFile(worker, generator.bundler, item);
                     }
 
                     generator.estimated_input_lines_of_code = worker.data.estimated_input_lines_of_code;
@@ -593,6 +593,9 @@ pub const Bundler = struct {
                     this.data.log.* = logger.Log.init(this.generator.allocator);
                     this.data.shared_buffer = try MutableString.init(this.generator.allocator, 0);
                     this.data.scan_pass_result = js_parser.ScanPassResult.init(this.generator.allocator);
+                    var bundler = this.generator.bundler.*;
+                    var bundler_ptr = &bundler;
+                    bundler_ptr.linker.resolver = &bundler_ptr.resolver;
 
                     defer {
                         {
@@ -613,7 +616,7 @@ pub const Bundler = struct {
                                 _ = this.generator.pool.completed_count.fetchAdd(1, .Release);
                             }
 
-                            try this.generator.processFile(this, item);
+                            try this.generator.processFile(this, bundler_ptr, item);
                         }
                     }
                 }
@@ -1441,7 +1444,7 @@ pub const Bundler = struct {
         threadlocal var json_e_call: js_ast.E.Call = undefined;
         threadlocal var json_e_identifier: js_ast.E.Identifier = undefined;
         threadlocal var json_call_args: [1]js_ast.Expr = undefined;
-        pub fn processFile(this: *GenerateNodeModuleBundle, worker: *ThreadPool.Worker, _resolve: _resolver.Result) !void {
+        pub fn processFile(this: *GenerateNodeModuleBundle, worker: *ThreadPool.Worker, bundler: *Bundler, _resolve: _resolver.Result) !void {
             const resolve = _resolve;
             if (resolve.is_external) return;
 
@@ -1457,7 +1460,7 @@ pub const Bundler = struct {
             var file_path = (resolve.pathConst() orelse unreachable).*;
             const source_dir = file_path.sourceDir();
             const loader = this.bundler.options.loader(file_path.name.ext);
-            var bundler = this.bundler;
+
             defer scan_pass_result.reset();
             defer shared_buffer.reset();
             defer this.bundler.resetStore();

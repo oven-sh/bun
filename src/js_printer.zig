@@ -824,114 +824,62 @@ pub fn NewPrinter(
             }
         }
 
+        pub fn printRequireError(p: *Printer, text: string) void {
+            p.print("(() => { throw (new Error(`Cannot require module '");
+            p.printQuotedUTF8(text, false);
+            p.print("'`)); } )()");
+        }
+
         pub fn printRequireOrImportExpr(p: *Printer, import_record_index: u32, leading_interior_comments: []G.Comment, _level: Level, flags: ExprFlag) void {
             var level = _level;
             assert(p.import_records.len > import_record_index);
             const record = p.import_records[import_record_index];
 
-            if (level.gte(.new) or flags.forbid_call) {
-                p.print("(");
-                defer p.print(")");
-                level = .lowest;
-            }
-
-            if (true or !p.options.transform_imports or std.mem.indexOfScalar(
+            const is_external = std.mem.indexOfScalar(
                 u32,
                 p.options.externals,
                 import_record_index,
-            ) != null) {
-                // External "require()"
-                if (record.kind != .dynamic) {
+            ) != null;
 
-                    // First, we will assert to make detecting this case a little clearer for us in development.
-                    if (std.builtin.mode == std.builtin.Mode.Debug) {
-                        // Global.panic("Internal error: {s} is an external require, which should never happen.", .{record});
-                    }
+            // External "require()"
+            if (record.kind != .dynamic) {
+                p.printSpaceBeforeIdentifier();
 
-                    p.printSpaceBeforeIdentifier();
-
-                    p.printSymbol(p.options.require_ref.?);
-                    p.print("(");
-                    p.printQuotedUTF8(record.path.text, true);
-                    p.print(")");
+                if (record.path.is_disabled and record.handles_import_errors and !is_external) {
+                    p.printRequireError(record.path.text);
                     return;
                 }
 
-                // External import()
-                if (leading_interior_comments.len > 0) {
-                    p.printNewline();
-                    p.options.indent += 1;
-                    for (leading_interior_comments) |comment| {
-                        p.printIndentedComment(comment.text);
-                    }
-                    p.printIndent();
-                }
-                p.addSourceMapping(record.range.loc);
-
-                p.print("import(");
+                p.printSymbol(p.options.require_ref.?);
+                p.print("(");
                 p.printQuotedUTF8(record.path.text, true);
                 p.print(")");
-
-                if (leading_interior_comments.len > 0) {
-                    p.printNewline();
-                    p.options.unindent();
-                    p.printIndent();
-                }
-
                 return;
             }
 
-            var meta = p.linker.?.requireOrImportMetaForSource(record.source_index);
-
-            // Don't need the namespace object if the result is unused anyway
-            if (flags.expr_result_is_unused) {
-                meta.exports_ref = Ref.None;
-            }
-
-            // Internal "import()" of async ESM
-            if (record.kind == .dynamic and meta.is_wrapper_async) {
-                p.printSymbol(meta.wrapper_ref);
-                p.print("()");
-
-                if (!meta.exports_ref.isNull()) {
-                    _ = p.printDotThenPrefix();
-                    p.printSymbol(meta.exports_ref);
-                    p.printDotThenSuffix();
+            // External import()
+            if (leading_interior_comments.len > 0) {
+                p.printNewline();
+                p.options.indent += 1;
+                for (leading_interior_comments) |comment| {
+                    p.printIndentedComment(comment.text);
                 }
-                return;
+                p.printIndent();
+            }
+            p.addSourceMapping(record.range.loc);
+
+            // Allow it to fail at runtime, if it should
+            p.print("import(");
+            p.printQuotedUTF8(record.path.text, true);
+            p.print(")");
+
+            if (leading_interior_comments.len > 0) {
+                p.printNewline();
+                p.options.unindent();
+                p.printIndent();
             }
 
-            // Internal "require()" or "import()"
-            if (record.kind == .dynamic) {
-                p.printSpaceBeforeIdentifier();
-                p.print("Promise.resolve()");
-                level = p.printDotThenPrefix();
-                defer p.printDotThenSuffix();
-            }
-
-            // Make sure the comma operator is propertly wrapped
-            if (!meta.exports_ref.isNull() and level.gte(.comma)) {
-                p.print("(");
-                defer p.print(")");
-            }
-
-            // Wrap this with a call to "__toModule()" if this is a CommonJS file
-            if (record.wrap_with_to_module) {
-                p.printSymbol(p.options.to_module_ref);
-                p.print("(");
-                defer p.print(")");
-            }
-
-            // Call the wrapper
-            p.printSymbol(meta.wrapper_ref);
-            p.print("()");
-
-            // Return the namespace object if this is an ESM file
-            if (!meta.exports_ref.isNull()) {
-                p.print(",");
-                p.printSpace();
-                p.printSymbol(meta.exports_ref);
-            }
+            return;
         }
 
         // noop for now
@@ -1093,6 +1041,7 @@ pub fn NewPrinter(
                         p.printIndent();
                         p.printBundledRequire(e);
                         p.printSemicolonIfNeeded();
+                        return;
                     }
 
                     if (!rewrite_esm_to_cjs or !p.import_records[e.import_record_index].is_bundled) {
@@ -1589,6 +1538,9 @@ pub fn NewPrinter(
                                 if (wrap) {
                                     p.print(")");
                                 }
+                            } else if (import_record.was_originally_require and import_record.path.is_disabled) {
+                                p.printRequireError(import_record.path.text);
+                                didPrint = true;
                             }
                         }
                     }
@@ -3222,6 +3174,10 @@ pub fn NewPrinter(
                         }
 
                         p.printBundledImport(record, s, stmt);
+                        return;
+                    }
+
+                    if (record.handles_import_errors and record.path.is_disabled and record.kind.isCommonJS()) {
                         return;
                     }
 

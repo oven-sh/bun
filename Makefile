@@ -246,7 +246,7 @@ ICU_FLAGS :=
 
 # TODO: find a way to make this more resilient
 # Ideally, we could just look up the linker search paths
-LIB_ICU_PATH ?= /usr/lib/x86_64-linux-gnu
+LIB_ICU_PATH ?= $(DEPS_DIR)
 
 ifeq ($(OS_NAME),linux)
 	ICU_FLAGS += $(LIB_ICU_PATH)/libicuuc.a $(LIB_ICU_PATH)/libicudata.a $(LIB_ICU_PATH)/libicui18n.a

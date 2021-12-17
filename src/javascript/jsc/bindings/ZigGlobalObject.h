@@ -10,10 +10,10 @@ class Identifier;
 } // namespace JSC
 
 #include "ZigConsoleClient.h"
+#include <JavaScriptCore/CatchScope.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSTypeInfo.h>
 #include <JavaScriptCore/Structure.h>
-
 namespace Zig {
 
 class GlobalObject : public JSC::JSGlobalObject {
@@ -45,6 +45,7 @@ class GlobalObject : public JSC::JSGlobalObject {
 
   static void reportUncaughtExceptionAtEventLoop(JSGlobalObject *, JSC::Exception *);
 
+  static void queueMicrotaskToEventLoop(JSC::JSGlobalObject &global, Ref<JSC::Microtask> &&task);
   static JSC::JSInternalPromise *moduleLoaderImportModule(JSGlobalObject *, JSC::JSModuleLoader *,
                                                           JSC::JSString *moduleNameValue,
                                                           JSC::JSValue parameters,
@@ -67,6 +68,31 @@ class GlobalObject : public JSC::JSGlobalObject {
     private:
   GlobalObject(JSC::VM &vm, JSC::Structure *structure)
     : JSC::JSGlobalObject(vm, structure, &s_globalObjectMethodTable) {}
+};
+
+class JSMicrotaskCallback : public RefCounted<JSMicrotaskCallback> {
+    public:
+  static Ref<JSMicrotaskCallback> create(JSC::JSGlobalObject &globalObject,
+                                         Ref<JSC::Microtask> &&task) {
+    return adoptRef(*new JSMicrotaskCallback(globalObject, WTFMove(task)));
+  }
+
+  void call() {
+    auto protectedThis{makeRef(*this)};
+    JSC::VM &vm = m_globalObject->vm();
+    JSC::JSLockHolder lock(vm);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto task = &m_task.get();
+    task->run(m_globalObject.get());
+    scope.assertNoExceptionExceptTermination();
+  }
+
+    private:
+  JSMicrotaskCallback(JSC::JSGlobalObject &globalObject, Ref<JSC::Microtask> &&task)
+    : m_globalObject{globalObject.vm(), &globalObject}, m_task{WTFMove(task)} {}
+
+  JSC::Strong<JSC::JSGlobalObject> m_globalObject;
+  Ref<JSC::Microtask> m_task;
 };
 
 } // namespace Zig

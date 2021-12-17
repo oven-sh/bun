@@ -109,6 +109,13 @@ pub const ZigGlobalObject = extern struct {
         return @call(.{ .modifier = .always_inline }, Interface.onCrash, .{});
     }
 
+    pub fn queueMicrotaskToEventLoop(global: *JSGlobalObject, microtask: *Microtask) callconv(.C) void {
+        if (comptime is_bindgen) {
+            unreachable;
+        }
+        return @call(.{ .modifier = .always_inline }, Interface.queueMicrotaskToEventLoop, .{ global, microtask });
+    }
+
     pub const Export = shim.exportFunctions(
         .{
             .@"import" = import,
@@ -119,6 +126,7 @@ pub const ZigGlobalObject = extern struct {
             .@"reportUncaughtException" = reportUncaughtException,
             .@"createImportMetaProperties" = createImportMetaProperties,
             .@"onCrash" = onCrash,
+            .@"queueMicrotaskToEventLoop" = queueMicrotaskToEventLoop,
         },
     );
 
@@ -132,6 +140,7 @@ pub const ZigGlobalObject = extern struct {
         @export(reportUncaughtException, .{ .name = Export[4].symbol_name });
         @export(createImportMetaProperties, .{ .name = Export[5].symbol_name });
         @export(onCrash, .{ .name = Export[6].symbol_name });
+        @export(queueMicrotaskToEventLoop, .{ .name = Export[7].symbol_name });
     }
 };
 

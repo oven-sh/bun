@@ -1552,6 +1552,7 @@ pub fn castObj(obj: js.JSObjectRef, comptime Type: type) *Type {
 const JSNode = @import("../../js_ast.zig").Macro.JSNode;
 const LazyPropertiesObject = @import("../../js_ast.zig").Macro.LazyPropertiesObject;
 const ModuleNamespace = @import("../../js_ast.zig").Macro.ModuleNamespace;
+const FetchTaskletContext = Fetch.FetchTasklet.FetchTaskletContext;
 pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     ResolveError,
     BuildError,
@@ -1564,6 +1565,7 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     JSNode,
     LazyPropertiesObject,
     ModuleNamespace,
+    FetchTaskletContext,
 });
 
 pub inline fn GetJSPrivateData(comptime Type: type, ref: js.JSObjectRef) ?*Type {

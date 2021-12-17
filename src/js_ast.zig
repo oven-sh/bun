@@ -7101,7 +7101,7 @@ pub const Macro = struct {
             js.JSValueProtect(macro.vm.global.ref(), result.asRef());
             defer js.JSValueUnprotect(macro.vm.global.ref(), result.asRef());
             var promise = JSC.JSPromise.resolvedPromise(macro.vm.global, result);
-            macro.vm.global.vm().drainMicrotasks();
+            _ = macro.vm.tick();
 
             if (promise.status(macro.vm.global.vm()) == .Rejected) {
                 macro.vm.defaultErrorHandler(promise.result(macro.vm.global.vm()), null);

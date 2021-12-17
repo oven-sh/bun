@@ -48,6 +48,8 @@ pub const JSC__JSPromise = bJSC__JSPromise;
 
 pub const JSC__SetIteratorPrototype = struct_JSC__SetIteratorPrototype;
 pub const JSC__SourceCode = bJSC__SourceCode;
+
+pub const Zig__JSMicrotaskCallback = struct_Zig__JSMicrotaskCallback;
 pub const JSC__JSCell = bJSC__JSCell;
 
 pub const JSC__BigIntPrototype = struct_JSC__BigIntPrototype;

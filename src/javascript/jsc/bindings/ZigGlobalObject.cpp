@@ -5,7 +5,7 @@
 #include <JavaScriptCore/AggregateError.h>
 #include <JavaScriptCore/BytecodeIndex.h>
 #include <JavaScriptCore/CallFrameInlines.h>
-#include <JavaScriptCore/CatchScope.h>
+
 #include <JavaScriptCore/ClassInfo.h>
 #include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/CodeCache.h>
@@ -27,6 +27,7 @@
 #include <JavaScriptCore/JSCast.h>
 #include <JavaScriptCore/JSClassRef.h>
 // #include <JavaScriptCore/JSContextInternal.h>
+#include <JavaScriptCore/CatchScope.h>
 #include <JavaScriptCore/JSInternalPromise.h>
 #include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/JSMap.h>
@@ -50,6 +51,7 @@
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/VMEntryScope.h>
 #include <JavaScriptCore/WasmFaultSignalHandler.h>
+#include <wtf/Gigacage.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/URL.h>
 #include <wtf/text/ExternalStringImpl.h>
@@ -57,8 +59,6 @@
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>
-
-#include <wtf/Gigacage.h>
 
 #include <cstdlib>
 #include <exception>
@@ -130,7 +130,7 @@ const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
   &supportsRichSourceInfo,
   &shouldInterruptScript,
   &javaScriptRuntimeFlags,
-  nullptr,                                 // queueTaskToEventLoop
+  &queueMicrotaskToEventLoop,              // queueTaskToEventLoop
   nullptr,                                 // &shouldInterruptScriptBeforeTimeout,
   &moduleLoaderImportModule,               // moduleLoaderImportModule
   &moduleLoaderResolve,                    // moduleLoaderResolve
@@ -452,6 +452,13 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject *globalObject,
                                                          scriptFetcher, sentValue, resumeMode);
 
   return result;
+}
+
+void GlobalObject::queueMicrotaskToEventLoop(JSC::JSGlobalObject &global,
+                                             Ref<JSC::Microtask> &&task) {
+
+  Zig__GlobalObject__queueMicrotaskToEventLoop(
+    &global, &JSMicrotaskCallback::create(global, WTFMove(task)).leakRef());
 }
 
 } // namespace Zig

@@ -31,7 +31,9 @@ pub fn importRoute(
     exception: js.ExceptionRef,
 ) js.JSObjectRef {
     const prom = JSModuleLoader.loadAndEvaluateModule(VirtualMachine.vm.global, ZigString.init(this.route.file_path));
-    VirtualMachine.vm.global.vm().drainMicrotasks();
+
+    VirtualMachine.vm.tick();
+
     return prom.result(VirtualMachine.vm.global.vm()).asRef();
 }
 

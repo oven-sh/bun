@@ -31,6 +31,13 @@ pub const ImportKind = enum(u8) {
 
     internal,
 
+    pub inline fn isCommonJS(this: ImportKind) bool {
+        return switch (this) {
+            .require, .require_resolve => true,
+            else => false,
+        };
+    }
+
     pub fn jsonStringify(self: @This(), options: anytype, writer: anytype) !void {
         return try std.json.stringify(@tagName(self), options, writer);
     }

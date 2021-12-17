@@ -331,7 +331,11 @@ pub const Linker = struct {
                     } else |err| {
                         switch (err) {
                             error.ModuleNotFound => {
-                                if (import_record.handles_import_errors) continue;
+                                if (import_record.handles_import_errors) {
+                                    import_record.path.is_disabled = true;
+                                    continue;
+                                }
+
                                 had_resolve_errors = true;
 
                                 if (import_record.path.text.len > 0 and Resolver.isPackagePath(import_record.path.text)) {

@@ -15427,7 +15427,10 @@ pub fn NewParser(
             this.require_transposer = @TypeOf(this.require_transposer).init(this);
             this.require_resolve_transposer = @TypeOf(this.require_resolve_transposer).init(this);
 
-            if (opts.features.top_level_await) this.fn_or_arrow_data_parse.allow_await = .allow_expr;
+            if (opts.features.top_level_await) {
+                this.fn_or_arrow_data_parse.allow_await = .allow_expr;
+                this.fn_or_arrow_data_parse.is_top_level = true;
+            }
         }
     };
 }

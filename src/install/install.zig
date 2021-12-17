@@ -30,9 +30,9 @@ const Lock = @import("../lock.zig").Lock;
 var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 var path_buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 const URL = @import("../query_string_map.zig").URL;
-const NetworkThread = @import("../http/network_thread.zig");
-const AsyncHTTP = @import("../http/http_client_async.zig").AsyncHTTP;
-const HTTPChannel = @import("../http/http_client_async.zig").HTTPChannel;
+const NetworkThread = @import("network_thread");
+const AsyncHTTP = @import("http").AsyncHTTP;
+const HTTPChannel = @import("http").HTTPChannel;
 const Integrity = @import("./integrity.zig").Integrity;
 const clap = @import("clap");
 const ExtractTarball = @import("./extract_tarball.zig");
@@ -3626,7 +3626,7 @@ const TaskCallbackList = std.ArrayListUnmanaged(TaskCallbackContext);
 const TaskDependencyQueue = std.HashMapUnmanaged(u64, TaskCallbackList, IdentityContext(u64), 80);
 const TaskChannel = sync.Channel(Task, .{ .Static = 4096 });
 const NetworkChannel = sync.Channel(*NetworkTask, .{ .Static = 8192 });
-const ThreadPool = @import("../thread_pool.zig");
+const ThreadPool = @import("thread_pool");
 const PackageManifestMap = std.HashMapUnmanaged(PackageNameHash, Npm.PackageManifest, IdentityContext(PackageNameHash), 80);
 
 pub const CacheLevel = struct {

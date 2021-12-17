@@ -1159,7 +1159,7 @@ pub const RequestContext = struct {
                     handler.handleJSError(.configure_defines, err) catch {};
                     return;
                 };
-
+                
                 var entry_point = boot;
                 if (!std.fs.path.isAbsolute(entry_point)) {
                     const resolved_entry_point = vm.bundler.resolver.resolve(
@@ -1270,6 +1270,7 @@ pub const RequestContext = struct {
                 __arena = std.heap.ArenaAllocator.init(vm.allocator);
                 JavaScript.VirtualMachine.vm.arena = &__arena;
                 JavaScript.VirtualMachine.vm.has_loaded = true;
+                JavaScript.VirtualMachine.vm.tick();
                 defer {
                     JavaScript.VirtualMachine.vm.flush();
                     std.debug.assert(
@@ -1285,6 +1286,7 @@ pub const RequestContext = struct {
                 }
 
                 var handler: *JavaScriptHandler = try channel.readItem();
+                JavaScript.VirtualMachine.vm.tick();
 
                 JavaScript.VirtualMachine.vm.preflush();
 
@@ -1295,6 +1297,7 @@ pub const RequestContext = struct {
                     thread,
                     HandlerThread.handleFetchEventError,
                 ) catch |err| {};
+                JavaScript.VirtualMachine.vm.tick();
             }
         }
 

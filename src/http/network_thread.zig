@@ -1,5 +1,6 @@
-const ThreadPool = @import("../thread_pool.zig");
-const Batch = ThreadPool.Batch;
+const ThreadPool = @import("thread_pool");
+pub const Batch = ThreadPool.Batch;
+pub const Task = ThreadPool.Task;
 const std = @import("std");
 const AsyncIO = @import("io");
 

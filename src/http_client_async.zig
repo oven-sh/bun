@@ -1,21 +1,21 @@
-const picohttp = @import("../deps/picohttp.zig");
-usingnamespace @import("../global.zig");
+const picohttp = @import("picohttp");
+usingnamespace @import("./global.zig");
 const std = @import("std");
-const Headers = @import("../javascript/jsc/webcore/response.zig").Headers;
-const URL = @import("../query_string_map.zig").URL;
-const Method = @import("../http/method.zig").Method;
-const Api = @import("../api/schema.zig").Api;
-const Lock = @import("../lock.zig").Lock;
+const Headers = @import("./javascript/jsc/webcore/response.zig").Headers;
+const URL = @import("./query_string_map.zig").URL;
+const Method = @import("./http/method.zig").Method;
+const Api = @import("./api/schema.zig").Api;
+const Lock = @import("./lock.zig").Lock;
 const HTTPClient = @This();
 const SOCKET_FLAGS = os.SOCK_CLOEXEC;
-// const S2n = @import("../s2n.zig");
-const Zlib = @import("../zlib.zig");
-const StringBuilder = @import("../string_builder.zig");
+// const S2n = @import("./s2n.zig");
+const Zlib = @import("./zlib.zig");
+const StringBuilder = @import("./string_builder.zig");
 const AsyncIO = @import("io");
-const ThreadPool = @import("../thread_pool.zig");
+const ThreadPool = @import("thread_pool");
 const boring = @import("boringssl");
 
-const NetworkThread = @import("./network_thread.zig");
+const NetworkThread = @import("network_thread");
 
 const extremely_verbose = false;
 
@@ -198,7 +198,7 @@ pub const HeaderBuilder = struct {
     }
 };
 
-pub const HTTPChannel = @import("../sync.zig").Channel(*AsyncHTTP, .{ .Static = 1000 });
+pub const HTTPChannel = @import("./sync.zig").Channel(*AsyncHTTP, .{ .Static = 1000 });
 
 pub const HTTPChannelContext = struct {
     http: AsyncHTTP = undefined,

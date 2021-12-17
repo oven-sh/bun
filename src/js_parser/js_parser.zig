@@ -467,7 +467,7 @@ pub const ImportScanner = struct {
                         try p.named_imports.put(name_ref, js_ast.NamedImport{
                             .alias = item.alias,
                             .alias_loc = name.loc,
-                            .namespace_ref = st.namespace_ref,
+                            .namespace_ref = namespace_ref,
                             .import_record_index = st.import_record_index,
                         });
 
@@ -475,7 +475,7 @@ pub const ImportScanner = struct {
                         var symbol: *Symbol = &p.symbols.items[name_ref.inner_index];
 
                         symbol.namespace_alias = G.NamespaceAlias{
-                            .namespace_ref = st.namespace_ref,
+                            .namespace_ref = namespace_ref,
                             .alias = item.alias,
                             .import_record_index = st.import_record_index,
                             .was_originally_property_access = st.star_name_loc != null and existing_items.contains(symbol.original_name),
@@ -486,6 +486,16 @@ pub const ImportScanner = struct {
 
                     if (st.star_name_loc != null) {
                         record.contains_import_star = true;
+                    }
+
+                    if (record.was_originally_require) {
+                        var symbol = &p.symbols.items[namespace_ref.inner_index];
+                        symbol.namespace_alias = G.NamespaceAlias{
+                            .namespace_ref = namespace_ref,
+                            .alias = "",
+                            .import_record_index = st.import_record_index,
+                            .was_originally_property_access = false,
+                        };
                     }
                 },
 

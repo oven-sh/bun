@@ -187,7 +187,7 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = src/deps/mimalloc/libmimalloc.a \
 		src/deps/libssl.a \
 		src/deps/picohttpparser.o \
 
-ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) src/deps/libcrypto.a
+ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) src/deps/libcrypto.boring.a
 
 PLATFORM_LINKER_FLAGS =
 
@@ -224,7 +224,7 @@ boringssl-build:
 
 boringssl-copy:
 	cp $(DEPS_DIR)/boringssl/build/ssl/libssl.a $(DEPS_DIR)/libssl.a
-	cp $(DEPS_DIR)/boringssl/build/crypto/libcrypto.a $(DEPS_DIR)/libcrypto.a
+	cp $(DEPS_DIR)/boringssl/build/crypto/libcrypto.a $(DEPS_DIR)/libcrypto.boring.a
 
 boringssl: boringssl-build boringssl-copy
 
@@ -316,7 +316,7 @@ fetch:
 		src/deps/mimalloc/libmimalloc.a \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
-		src/deps/libcrypto.a \
+		src/deps/libcrypto.boring.a \
 		src/deps/libssl.a \
 		src/deps/picohttpparser.o
 
@@ -326,7 +326,7 @@ fetch-debug:
 		src/deps/mimalloc/libmimalloc.a \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
-		src/deps/libcrypto.a \
+		src/deps/libcrypto.boring.a \
 		src/deps/libssl.a \
 		src/deps/picohttpparser.o
 
@@ -339,7 +339,7 @@ httpbench-debug:
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
 		src/deps/libssl.a \
-		src/deps/libcrypto.a \
+		src/deps/libcrypto.boring.a \
 		src/deps/picohttpparser.o \
 		$(LIBCRYPTO_STATIC_LIB)
 
@@ -351,7 +351,7 @@ httpbench-release:
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
 		src/deps/libssl.a \
-		src/deps/libcrypto.a \
+		src/deps/libcrypto.boring.a \
 		src/deps/picohttpparser.o \
 		$(LIBCRYPTO_STATIC_LIB)
 

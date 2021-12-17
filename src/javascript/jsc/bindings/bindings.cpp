@@ -23,6 +23,7 @@
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSSet.h>
 #include <JavaScriptCore/JSString.h>
+#include <JavaScriptCore/Microtask.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/ParserError.h>
 #include <JavaScriptCore/ScriptExecutable.h>
@@ -37,6 +38,7 @@
 #include <wtf/text/WTFString.h>
 
 extern "C" {
+
 JSC__JSValue
 JSC__JSObject__create(JSC__JSGlobalObject *globalObject, size_t initialCapacity, void *arg2,
                       void (*ArgFn3)(void *arg0, JSC__JSObject *arg1, JSC__JSGlobalObject *arg2)) {
@@ -282,6 +284,10 @@ bWTF__String JSC__JSString__value(JSC__JSString *arg0, JSC__JSGlobalObject *arg1
 // JSC__JSGlobalObject* arg1, JSC__JSModuleRecord* arg2) {
 //     arg2->depen
 // }
+
+void Microtask__run(void *microtask, void *global) {
+  reinterpret_cast<Zig::JSMicrotaskCallback *>(microtask)->call();
+}
 
 bool JSC__JSModuleLoader__checkSyntax(JSC__JSGlobalObject *arg0, const JSC__SourceCode *arg1,
                                       bool arg2) {

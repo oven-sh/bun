@@ -15145,6 +15145,8 @@ pub fn NewParser(
 
                 toplevel_stmts_i += 1;
 
+                const is_async = !p.top_level_await_keyword.isEmpty();
+
                 var func = p.e(
                     E.Function{
                         .func = .{
@@ -15153,32 +15155,37 @@ pub fn NewParser(
                             .open_parens_loc = logger.Loc.Empty,
                             .flags = .{
                                 .print_as_iife = true,
+                                .is_async = is_async,
                             },
                         },
                     },
                     logger.Loc.Empty,
                 );
 
+                const call_load = p.e(
+                    E.Call{
+                        .target = Expr.assign(
+                            p.e(
+                                E.Dot{
+                                    .name = "_load",
+                                    .target = hmr_module_ident,
+                                    .name_loc = logger.Loc.Empty,
+                                },
+                                logger.Loc.Empty,
+                            ),
+                            func,
+                            p.allocator,
+                        ),
+                    },
+                    logger.Loc.Empty,
+                );
                 // (__hmrModule._load = function())()
                 toplevel_stmts[toplevel_stmts_i] = p.s(
                     S.SExpr{
-                        .value = p.e(
-                            E.Call{
-                                .target = Expr.assign(
-                                    p.e(
-                                        E.Dot{
-                                            .name = "_load",
-                                            .target = hmr_module_ident,
-                                            .name_loc = logger.Loc.Empty,
-                                        },
-                                        logger.Loc.Empty,
-                                    ),
-                                    func,
-                                    p.allocator,
-                                ),
-                            },
-                            logger.Loc.Empty,
-                        ),
+                        .value = if (is_async)
+                            p.e(E.Await{ .value = call_load }, logger.Loc.Empty)
+                        else
+                            call_load,
                     },
                     logger.Loc.Empty,
                 );

@@ -899,7 +899,7 @@ To successfully run `zig build`, you will need to install a patched version of Z
 
 Bun also statically links these libraries:
 
-- `libicu`, which can be found here: https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE
+- `libicu` 66.1, which can be found here: https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE
 - [`picohttp`](https://github.com/h2o/picohttpparser), which is dual-licensed under the Perl License or the MIT License
 - [`mimalloc`](https://github.com/microsoft/mimalloc), which is MIT licensed
 - [`zlib-cloudflare`](https://github.com/cloudflare/zlib), which is zlib licensed
@@ -978,7 +978,7 @@ You'll want to make sure `zig` is in `$PATH`. The `zig` binary wil be in the sam
 
 ### Build bun
 
-If you're building on an Apple Silicon device, you'll need to do is ensure you have set an environment variable `CODESIGN_IDENTITY`.  You can find the correct value by visiting `Keychain Access` and looking under your `login` profile for `Certificates`.  The name would usually look like `Apple Development: user@example.com (WDYABC123)`
+If you're building on an Apple Silicon device, you'll need to do is ensure you have set an environment variable `CODESIGN_IDENTITY`. You can find the correct value by visiting `Keychain Access` and looking under your `login` profile for `Certificates`. The name would usually look like `Apple Development: user@example.com (WDYABC123)`
 
 If you're not familiar with the process, there's a guide [here](https://ioscodesigning.com/generating-code-signing-files/#generate-a-code-signing-certificate-using-xcode)
 
@@ -1006,7 +1006,6 @@ Then
 cd ../../
 make test-dev-all
 ```
-
 
 ### Troubleshooting
 

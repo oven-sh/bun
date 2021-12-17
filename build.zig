@@ -1,21 +1,16 @@
 const std = @import("std");
 const resolve_path = @import("./src/resolver/resolve_path.zig");
-pub fn addPicoHTTP(step: *std.build.LibExeObjStep, comptime with_obj: bool) void {
-    const picohttp = step.addPackage(.{
-        .name = "picohttp",
-        .path = .{ .path = "src/deps/picohttp.zig" },
-    });
 
+fn pkgPath(comptime out: []const u8) std.build.FileSource {
+    const outpath = comptime std.fs.path.dirname(@src().file).? ++ std.fs.path.sep_str ++ out;
+    return .{ .path = outpath };
+}
+pub fn addPicoHTTP(step: *std.build.LibExeObjStep, comptime with_obj: bool) void {
     step.addIncludeDir("src/deps");
 
     if (with_obj) {
         step.addObjectFile("src/deps/picohttpparser.o");
     }
-
-    const boringssl = step.addPackage(.{
-        .name = "boringssl",
-        .path = .{ .path = "src/deps/boringssl.zig" },
-    });
 
     step.addIncludeDir("src/deps");
 
@@ -33,35 +28,71 @@ pub fn addPicoHTTP(step: *std.build.LibExeObjStep, comptime with_obj: bool) void
 }
 
 fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: *std.mem.Allocator, target: anytype) !void {
-    var platform_label = if (target.isDarwin())
-        "darwin"
-    else
-        "linux";
+    var boringssl: std.build.Pkg = .{
+        .name = "boringssl",
+        .path = pkgPath("src/deps/boringssl.zig"),
+    };
 
-    step.addPackage(.{
+    var thread_pool: std.build.Pkg = .{
+        .name = "thread_pool",
+        .path = pkgPath("src/thread_pool.zig"),
+    };
+
+    var picohttp: std.build.Pkg = .{
+        .name = "picohttp",
+        .path = pkgPath("src/deps/picohttp.zig"),
+    };
+
+    var io_darwin: std.build.Pkg = .{
         .name = "io",
-        .path = .{ .path = try std.fmt.allocPrint(allocator, "src/io/io_{s}.zig", .{platform_label}) },
-    });
+        .path = pkgPath("src/io/io_darwin.zig"),
+    };
+    var io_linux: std.build.Pkg = .{
+        .name = "io",
+        .path = pkgPath("src/io/io_linux.zig"),
+    };
 
-    step.addPackage(.{
+    var io = if (target.isDarwin())
+        io_darwin
+    else
+        io_linux;
+
+    var strings: std.build.Pkg = .{
         .name = "strings",
-        .path = .{ .path = "src/string_immutable.zig" },
-    });
+        .path = pkgPath("src/string_immutable.zig"),
+    };
 
-    step.addPackage(.{
+    var clap: std.build.Pkg = .{
         .name = "clap",
-        .path = .{ .path = "src/deps/zig-clap/clap.zig" },
-    });
+        .path = pkgPath("src/deps/zig-clap/clap.zig"),
+    };
 
-    step.addPackage(.{
+    var http: std.build.Pkg = .{
         .name = "http",
-        .path = .{ .path = "src/http/http_client_async.zig" },
-    });
+        .path = pkgPath("src/http_client_async.zig"),
+    };
 
-    step.addPackage(.{
+    var network_thread: std.build.Pkg = .{
         .name = "network_thread",
-        .path = .{ .path = "src/http/network_thread.zig" },
-    });
+        .path = pkgPath("src/http/network_thread.zig"),
+    };
+
+    network_thread.dependencies = &.{
+        io,
+        thread_pool,
+    };
+    http.dependencies = &.{ io, network_thread, strings, boringssl, picohttp };
+
+    thread_pool.dependencies = &.{ io, http };
+    http.dependencies = &.{ io, network_thread, thread_pool, strings, boringssl, picohttp };
+
+    step.addPackage(thread_pool);
+    step.addPackage(picohttp);
+    step.addPackage(io);
+    step.addPackage(strings);
+    step.addPackage(clap);
+    step.addPackage(http);
+    step.addPackage(network_thread);
 }
 
 fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
@@ -266,9 +297,9 @@ pub fn build(b: *std.build.Builder) !void {
         //     if (target.getOsTag() == .macos) "-DUSE_CF_RETAIN_PTR=1" else "",
         // };
         const headers_step = b.step("headers-obj", "JSC headers Step #1");
-        var headers_obj: *std.build.LibExeObjStep = b.addObject("headers", "src/javascript/jsc/bindings/bindings-generator.zig");
-        headers_obj.setMainPkgPath(javascript.main_pkg_path.?);
-        headers_step.dependOn(&headers_obj.step);
+        var headers_obj: *std.build.LibExeObjStep = b.addObject("headers", "src/bindgen.zig");
+        headers_obj.setMainPkgPath(exe.main_pkg_path.?);
+        defer headers_step.dependOn(&headers_obj.step);
 
         {
             b.default_step.dependOn(&b.addLog(
@@ -382,10 +413,9 @@ pub fn build(b: *std.build.Builder) !void {
 
         {
             headers_obj.setTarget(target);
-            headers_obj.addPackage(.{
-                .name = "clap",
-                .path = .{ .path = "src/deps/zig-clap/clap.zig" },
-            });
+
+            try addInternalPackages(headers_obj, b.allocator, target);
+            addPicoHTTP(headers_obj, false);
 
             headers_obj.setOutputDir(output_dir);
             headers_obj.setBuildMode(mode);

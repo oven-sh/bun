@@ -2636,7 +2636,7 @@ pub const Bundler = struct {
                 }
 
                 // we'll just always enable top-level await
-                // this is incorrect for Node.js files which are modules
+                // this is incorrect for Node.js files which are CommonJS modules
                 opts.features.top_level_await = true;
 
                 opts.macro_context = &bundler.macro_context.?;

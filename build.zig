@@ -94,7 +94,7 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: *std.mem.Alloc
     step.addPackage(http);
     step.addPackage(network_thread);
 }
-
+var output_dir: []const u8 = "";
 fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
     var file = std.fs.cwd().openFile(filepath, .{ .read = true }) catch |err| {
         const linux_only = "\nOn Linux, you'll need to compile libiconv manually and copy the .a file into src/deps.";
@@ -107,6 +107,7 @@ fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
 }
 
 var x64 = "x64";
+var mode: std.builtin.Mode = undefined;
 pub fn build(b: *std.build.Builder) !void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
@@ -115,7 +116,7 @@ pub fn build(b: *std.build.Builder) !void {
     var target = b.standardTargetOptions(.{});
     // Standard release options allow the person running `zig build` to select
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
-    const mode = b.standardReleaseOptions();
+     mode = b.standardReleaseOptions();
 
     var cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     const cwd: []const u8 = b.pathFromRoot(".");
@@ -156,7 +157,7 @@ pub fn build(b: *std.build.Builder) !void {
     var triplet = triplet_buf[0 .. osname.len + cpuArchName.len + 1];
 
     const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{s}{s}", .{ bin_label, triplet });
-    const output_dir = b.pathFromRoot(output_dir_base);
+    output_dir = b.pathFromRoot(output_dir_base);
     const bun_executable_name = if (mode == std.builtin.Mode.Debug) "bun-debug" else "bun";
 
     if (target.getOsTag() == .wasi) {
@@ -296,10 +297,7 @@ pub fn build(b: *std.build.Builder) !void {
         //     if (target.getOsTag() == .macos) "-DUSE_FOUNDATION=1" else "",
         //     if (target.getOsTag() == .macos) "-DUSE_CF_RETAIN_PTR=1" else "",
         // };
-        const headers_step = b.step("headers-obj", "JSC headers Step #1");
-        var headers_obj: *std.build.LibExeObjStep = b.addObject("headers", "src/bindgen.zig");
-        headers_obj.setMainPkgPath(exe.main_pkg_path.?);
-        defer headers_step.dependOn(&headers_obj.step);
+  
 
         {
             b.default_step.dependOn(&b.addLog(
@@ -371,6 +369,8 @@ pub fn build(b: *std.build.Builder) !void {
             }
         }
 
+
+
         {
             var obj_step = b.step("obj", "Build Bun as a .o file");
             var obj = b.addObject(bun_executable_name, exe.root_src.?.path);
@@ -412,22 +412,31 @@ pub fn build(b: *std.build.Builder) !void {
         }
 
         {
-            headers_obj.setTarget(target);
+            const headers_step = b.step("headers-obj", "Build JavaScriptCore headers");
+            var headers_obj: *std.build.LibExeObjStep = b.addObject("headers", "src/bindgen.zig");
+            defer headers_step.dependOn(&headers_obj.step);
+            try configureObjectStep(headers_obj, target, exe.main_pkg_path.?);
+        }
 
-            try addInternalPackages(headers_obj, b.allocator, target);
-            addPicoHTTP(headers_obj, false);
+        {
+            const headers_step = b.step("httpbench-obj", "Build HTTPBench tool (object files)");
+            var headers_obj: *std.build.LibExeObjStep = b.addObject("httpbench", "misctools/http_bench.zig");
+            defer headers_step.dependOn(&headers_obj.step);
+            try configureObjectStep(headers_obj, target, exe.main_pkg_path.?);
+        }
 
-            headers_obj.setOutputDir(output_dir);
-            headers_obj.setBuildMode(mode);
-            headers_obj.linkLibC();
-            headers_obj.linkLibCpp();
-            headers_obj.bundle_compiler_rt = true;
+        {
+            const headers_step = b.step("fetch-obj", "Build fetch (object files)");
+            var headers_obj: *std.build.LibExeObjStep = b.addObject("fetch", "misctools/fetch.zig");
+            defer headers_step.dependOn(&headers_obj.step);
+            try configureObjectStep(headers_obj, target, exe.main_pkg_path.?);
+        }
 
-            if (target.getOsTag() == .linux) {
-                // obj.want_lto = tar;
-                headers_obj.link_emit_relocs = true;
-                headers_obj.link_function_sections = true;
-            }
+        {
+            const headers_step = b.step("tgz-obj", "Build tgz (object files)");
+            var headers_obj: *std.build.LibExeObjStep = b.addObject("tgz", "misctools/tgz.zig");
+            defer headers_step.dependOn(&headers_obj.step);
+            try configureObjectStep(headers_obj, target, exe.main_pkg_path.?);
         }
     } else {
         b.default_step.dependOn(&exe.step);
@@ -470,3 +479,23 @@ pub fn build(b: *std.build.Builder) !void {
 }
 
 pub var original_make_fn: ?fn (step: *std.build.Step) anyerror!void = null;
+
+pub fn configureObjectStep(obj: *std.build.LibExeObjStep, target: anytype, main_pkg_path: []const u8) !void {
+    obj.setMainPkgPath(main_pkg_path);
+    obj.setTarget(target);
+
+    try addInternalPackages(obj, std.heap.page_allocator, target);
+    addPicoHTTP(obj, false);
+
+    obj.setOutputDir(output_dir);
+    obj.setBuildMode(mode);
+    obj.linkLibC();
+    obj.linkLibCpp();
+    obj.bundle_compiler_rt = true;
+
+    if (target.getOsTag() == .linux) {
+        // obj.want_lto = tar;
+        obj.link_emit_relocs = true;
+        obj.link_function_sections = true;
+    }
+}

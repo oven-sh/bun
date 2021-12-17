@@ -95,7 +95,7 @@ DEFAULT_LINKER_FLAGS =
 JSC_BUILD_STEPS :=
 ifeq ($(OS_NAME),linux)
 	JSC_BUILD_STEPS += jsc-check
-DEFAULT_LINKER_FLAGS= -lcrypto -pthread -ldl 
+DEFAULT_LINKER_FLAGS= -pthread -ldl 
 endif
 ifeq ($(OS_NAME),darwin)
 	JSC_BUILD_STEPS += jsc-build-mac jsc-copy-headers
@@ -220,7 +220,7 @@ bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release
 vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive 
 
 boringssl-build:
-	cd $(DEPS_DIR)/boringssl && mkdir -p build && cd build && cmake -GNinja .. && ninja 
+	cd $(DEPS_DIR)/boringssl && mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=Release -GNinja .. && ninja 
 
 boringssl-copy:
 	cp $(DEPS_DIR)/boringssl/build/ssl/libssl.a $(DEPS_DIR)/libssl.a
@@ -333,9 +333,8 @@ fetch-debug:
 
 
 httpbench-debug:
-	cd misctools; $(ZIG) build-obj ./http_bench.zig -fcompiler-rt -lc --main-pkg-path ../ --pkg-begin io ../$(IO_FILE) --pkg-end $(BORINGSSL_PACKAGE)
-	$(CXX) ./misctools/http_bench.o -g -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc  \
-		src/deps/mimalloc/libmimalloc.a \
+	$(ZIG) build httpbench-obj
+	$(CXX) $(DEBUG_PACKAGE_DIR)/httpbench.o -g -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc  \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
 		src/deps/libssl.a \

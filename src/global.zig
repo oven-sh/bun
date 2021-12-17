@@ -1,7 +1,8 @@
 const std = @import("std");
 pub const Environment = @import("env.zig");
 
-const use_mimalloc = !Environment.isTest and Environment.isNative;
+const use_mimalloc = false;
+
 
 pub const default_allocator: *std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator

@@ -168,8 +168,8 @@ pub const Arguments = struct {
     }
 };
 
-const NetworkThread = @import("../src/http/network_thread.zig");
-const HTTP = @import("../src/http/http_client_async.zig");
+const NetworkThread = @import("network_thread");
+const HTTP = @import("http");
 
 var stdout_: std.fs.File = undefined;
 var stderr_: std.fs.File = undefined;

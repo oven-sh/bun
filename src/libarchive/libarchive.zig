@@ -3,6 +3,7 @@
 const lib = @import("./libarchive-bindings.zig");
 usingnamespace @import("../global.zig");
 const std = @import("std");
+const Hop = @import("../hop/hop.zig").Library;
 const struct_archive = lib.struct_archive;
 pub const Seek = enum(c_int) {
     set = std.os.SEEK_SET,
@@ -520,6 +521,104 @@ pub const Archive = struct {
                 },
             }
         }
+    }
+
+    pub fn convertToHop(
+        hop: *Hop.Builder,
+        file_buffer: []const u8,
+        ctx: ?*Archive.Context,
+        comptime FilePathAppender: type,
+        appender: FilePathAppender,
+        comptime depth_to_skip: usize,
+        comptime close_handles: bool,
+        comptime log: bool,
+    ) !u32 {
+        var entry: *lib.archive_entry = undefined;
+        var ext: *lib.archive = undefined;
+
+        const flags = @enumToInt(Flags.Extract.time) | @enumToInt(Flags.Extract.perm) | @enumToInt(Flags.Extract.acl) | @enumToInt(Flags.Extract.fflags);
+        var stream: BufferReadStream = undefined;
+        stream.init(file_buffer);
+        defer stream.deinit();
+        _ = stream.openRead();
+        var archive = stream.archive;
+        var count: u32 = 0;
+
+        loop: while (true) {
+            const r = @intToEnum(Status, lib.archive_read_next_header(archive, &entry));
+
+            switch (r) {
+                Status.eof => break :loop,
+                Status.failed, Status.fatal, Status.retry => return error.Fail,
+                else => {
+                    var pathname: [:0]const u8 = std.mem.sliceTo(lib.archive_entry_pathname(entry).?, 0);
+                    var tokenizer = std.mem.tokenize(u8, std.mem.span(pathname), std.fs.path.sep_str);
+                    comptime var depth_i: usize = 0;
+
+                    inline while (depth_i < depth_to_skip) : (depth_i += 1) {
+                        if (tokenizer.next() == null) continue :loop;
+                    }
+
+                    var pathname_ = tokenizer.rest();
+                    pathname = @intToPtr([*]const u8, @ptrToInt(pathname_.ptr))[0..pathname_.len :0];
+
+                    const mask = lib.archive_entry_filetype(entry);
+                    const size = @intCast(usize, std.math.max(lib.archive_entry_size(entry), 0));
+                    if (size > 0) {
+                        const slice = std.mem.span(pathname);
+
+                        if (comptime log) {
+                            Output.prettyln(" {s}", .{pathname});
+                        }
+
+                        const file = dir.createFileZ(pathname, .{ .truncate = true }) catch |err| brk: {
+                            switch (err) {
+                                error.FileNotFound => {
+                                    try dir.makePath(std.fs.path.dirname(slice) orelse return err);
+                                    break :brk try dir.createFileZ(pathname, .{ .truncate = true });
+                                },
+                                else => {
+                                    return err;
+                                },
+                            }
+                        };
+                        count += 1;
+
+                        _ = C.fchmod(file.handle, lib.archive_entry_perm(entry));
+
+                        if (ctx) |ctx_| {
+                            const hash: u64 = if (ctx_.pluckers.len > 0)
+                                std.hash.Wyhash.hash(0, slice)
+                            else
+                                @as(u64, 0);
+
+                            if (comptime FilePathAppender != void) {
+                                var result = ctx.?.all_files.getOrPutAdapted(hash, Context.U64Context{}) catch unreachable;
+                                if (!result.found_existing) {
+                                    result.value_ptr.* = (try appender.appendMutable(@TypeOf(slice), slice)).ptr;
+                                }
+                            }
+
+                            for (ctx_.pluckers) |*plucker_| {
+                                if (plucker_.filename_hash == hash) {
+                                    try plucker_.contents.inflate(size);
+                                    plucker_.contents.list.expandToCapacity();
+                                    var read = lib.archive_read_data(archive, plucker_.contents.list.items.ptr, size);
+                                    try plucker_.contents.inflate(@intCast(usize, read));
+                                    plucker_.found = read > 0;
+                                    plucker_.fd = file.handle;
+                                    continue :loop;
+                                }
+                            }
+                        }
+
+                        _ = lib.archive_read_data_into_fd(archive, file.handle);
+                    }
+                },
+            }
+        }
+
+        return count;
     }
 
     pub fn extractToDisk(

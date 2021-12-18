@@ -255,6 +255,25 @@ tgz-debug:
 		src/deps/picohttpparser.o
 	rm -rf $(DEBUG_PACKAGE_DIR)/tgz.o
 
+hop:
+	$(ZIG) build hop-obj -Drelease-fast
+	$(CXX) $(PACKAGE_DIR)/hop.o -g -o ./misctools/hop $(DEFAULT_LINKER_FLAGS) -lc  \
+		src/deps/zlib/libz.a \
+		src/deps/libarchive.a \
+		src/deps/libssl.a \
+		src/deps/libcrypto.boring.a \
+		src/deps/picohttpparser.o -O3
+	rm -rf $(PACKAGE_DIR)/hop.o
+
+hop-debug:
+	$(ZIG) build hop-obj
+	$(CXX) $(DEBUG_PACKAGE_DIR)/hop.o -g -o $(DEBUG_PACKAGE_DIR)/hop $(DEFAULT_LINKER_FLAGS) -lc  \
+		src/deps/zlib/libz.a \
+		src/deps/libarchive.a \
+		src/deps/libssl.a \
+		src/deps/libcrypto.boring.a \
+		src/deps/picohttpparser.o
+
 vendor: require init-submodules vendor-without-check 
 
 zlib: 

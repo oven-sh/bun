@@ -523,6 +523,49 @@ pub const Archive = struct {
         }
     }
 
+    const SeekableBufferedWriter = struct {
+        pos: u64 = 0,
+        buf: [std.mem.page_size]u8 = undefined,
+        len: usize = 0,
+        fd: std.os.fd_t = 0,
+
+        pub fn flush(this: *SeekableBufferedWriter) !usize {
+            const end = this.len + this.pos;
+            var off: usize = this.pos;
+            const initial = this.pos;
+            defer this.pos = off;
+            var slice = this.buf[0..this.len];
+            while (slice.len > 0) {
+                const written = try std.os.pwrite(this.fd, slice, off);
+                slice = slice[written..];
+                off += written;
+            }
+            this.len = 0;
+            return off - initial;
+        }
+
+        pub fn write(this: *SeekableBufferedWriter, buf: []const u8) !usize {
+            if (this.buf.len - this.len < 32) {
+                _ = try this.flush();
+            }
+            var queue = buf;
+            while (queue.len > 0) {
+                var to_write = @minimum(this.buf.len - this.len, queue.len);
+                if (to_write == 0 and this.len > 0) {
+                    _ = try this.flush();
+                    to_write = @minimum(this.buf.len - this.len, queue.len);
+                }
+
+                var remainder = queue[0..to_write];
+                queue = queue[remainder.len..];
+                @memcpy(this.buf[this.len..].ptr, remainder.ptr, remainder.len);
+                this.len += remainder.len;
+            }
+
+            return buf.len;
+        }
+    };
+
     pub fn convertToHop(
         hop: *Hop.Builder,
         file_buffer: []const u8,
@@ -530,7 +573,6 @@ pub const Archive = struct {
         comptime FilePathAppender: type,
         appender: FilePathAppender,
         comptime depth_to_skip: usize,
-        comptime close_handles: bool,
         comptime log: bool,
     ) !u32 {
         var entry: *lib.archive_entry = undefined;
@@ -543,6 +585,18 @@ pub const Archive = struct {
         _ = stream.openRead();
         var archive = stream.archive;
         var count: u32 = 0;
+
+        var chunk_remain: usize = 0;
+        var chunk_offset: isize = 0;
+        var chunk_output_offset: isize = 0;
+        var chunk_size: usize = 0;
+        var chunk_buf: ?[*]u8 = null;
+        const handle = hop.destination.handle;
+
+        var writer = SeekableBufferedWriter{
+            .pos = try hop.destination.getPos(),
+            .fd = hop.destination.handle,
+        };
 
         loop: while (true) {
             const r = @intToEnum(Status, lib.archive_read_next_header(archive, &entry));
@@ -559,64 +613,82 @@ pub const Archive = struct {
                         if (tokenizer.next() == null) continue :loop;
                     }
 
-                    var pathname_ = tokenizer.rest();
-                    pathname = @intToPtr([*]const u8, @ptrToInt(pathname_.ptr))[0..pathname_.len :0];
+                    const Kind = std.fs.Dir.Entry.Kind;
+                    const entry_kind: Kind = switch (lib.archive_entry_filetype(entry)) {
+                        std.os.S_IFDIR => Kind.Directory,
+                        std.os.S_IFREG => Kind.File,
+                        else => continue :loop,
+                    };
 
-                    const mask = lib.archive_entry_filetype(entry);
-                    const size = @intCast(usize, std.math.max(lib.archive_entry_size(entry), 0));
-                    if (size > 0) {
-                        const slice = std.mem.span(pathname);
+                    var pathname_ = tokenizer.rest();
+
+                    count += 1;
+                    const mode = @truncate(u32, lib.archive_entry_perm(entry));
+                    const slice = std.mem.span(pathname);
+                    const name = hop.appendMetadata(pathname_) catch unreachable;
+
+                    if (entry_kind == .Directory) {
+                        hop.directories.append(hop.allocator, .{
+                            .name = name,
+                            .name_hash = @truncate(u32, std.hash.Wyhash.hash(0, pathname_)),
+                            .chmod = mode,
+                        }) catch unreachable;
 
                         if (comptime log) {
-                            Output.prettyln(" {s}", .{pathname});
+                            Output.prettyErrorln("Dir: {s}", .{
+                                pathname_,
+                            });
                         }
-
-                        const file = dir.createFileZ(pathname, .{ .truncate = true }) catch |err| brk: {
-                            switch (err) {
-                                error.FileNotFound => {
-                                    try dir.makePath(std.fs.path.dirname(slice) orelse return err);
-                                    break :brk try dir.createFileZ(pathname, .{ .truncate = true });
-                                },
-                                else => {
-                                    return err;
-                                },
-                            }
+                    } else {
+                        var data = Hop.StringPointer{
+                            .off = @truncate(u32, writer.pos),
                         };
-                        count += 1;
 
-                        _ = C.fchmod(file.handle, lib.archive_entry_perm(entry));
+                        chunk_offset = 0;
+                        chunk_output_offset = 0;
+                        const size = lib.archive_entry_size(entry);
 
-                        if (ctx) |ctx_| {
-                            const hash: u64 = if (ctx_.pluckers.len > 0)
-                                std.hash.Wyhash.hash(0, slice)
-                            else
-                                @as(u64, 0);
+                        var data_block_status: c_int = lib.archive_read_data_block(archive, @ptrCast([*c]*const c_void, &chunk_buf), &chunk_size, &chunk_offset);
 
-                            if (comptime FilePathAppender != void) {
-                                var result = ctx.?.all_files.getOrPutAdapted(hash, Context.U64Context{}) catch unreachable;
-                                if (!result.found_existing) {
-                                    result.value_ptr.* = (try appender.appendMutable(@TypeOf(slice), slice)).ptr;
-                                }
+                        while (data_block_status == lib.ARCHIVE_OK) : (data_block_status = lib.archive_read_data_block(archive, @ptrCast([*c]*const c_void, &chunk_buf), &chunk_size, &chunk_offset)) {
+                            if (chunk_offset > chunk_output_offset) {
+                                writer.pos = @intCast(usize, @intCast(isize, writer.pos) + chunk_offset - chunk_output_offset);
                             }
 
-                            for (ctx_.pluckers) |*plucker_| {
-                                if (plucker_.filename_hash == hash) {
-                                    try plucker_.contents.inflate(size);
-                                    plucker_.contents.list.expandToCapacity();
-                                    var read = lib.archive_read_data(archive, plucker_.contents.list.items.ptr, size);
-                                    try plucker_.contents.inflate(@intCast(usize, read));
-                                    plucker_.found = read > 0;
-                                    plucker_.fd = file.handle;
-                                    continue :loop;
-                                }
+                            while (chunk_size > 0) {
+                                const remain = size - chunk_output_offset;
+                                chunk_size = @minimum(@intCast(usize, remain), chunk_size);
+                                // const written = try std.os.pwrite(handle, chunk_buf.?[0..chunk_size], writer.pos);
+                                // writer.pos += written;
+                                const written = try writer.write(chunk_buf.?[0..chunk_size]);
+                                chunk_buf.? += written;
+                                chunk_size -= written;
+                                chunk_output_offset += @intCast(i64, written);
                             }
                         }
 
-                        _ = lib.archive_read_data_into_fd(archive, file.handle);
+                        data.len = @intCast(u32, size);
+                        _ = try writer.flush();
+
+                        if (comptime log) {
+                            Output.prettyErrorln("File: {s} - [{d}, {d}]", .{ pathname_, data.off, data.len });
+                        }
+
+                        hop.files.append(
+                            hop.allocator,
+                            Hop.File{
+                                .name = name,
+                                .name_hash = @truncate(u32, std.hash.Wyhash.hash(0, pathname_)),
+                                .chmod = mode,
+                                .data = data,
+                            },
+                        ) catch unreachable;
                     }
                 },
             }
         }
+
+        try hop.destination.seekTo(writer.pos);
 
         return count;
     }
@@ -676,7 +748,7 @@ pub const Archive = struct {
                     pathname = @intToPtr([*]const u8, @ptrToInt(pathname_.ptr))[0..pathname_.len :0];
 
                     const mask = lib.archive_entry_filetype(entry);
-                    const size = @intCast(usize, std.math.max(lib.archive_entry_size(entry), 0));
+                    const size = @intCast(usize, @maximum(lib.archive_entry_size(entry), 0));
                     if (size > 0) {
                         const slice = std.mem.span(pathname);
 

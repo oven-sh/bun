@@ -2,6 +2,7 @@ const std = @import("std");
 const C = @import("../c.zig");
 const Schema = @import("./schema.zig");
 const Hop = Schema.Hop;
+const Environment = @import("../env.zig");
 
 const string = []const u8;
 
@@ -24,9 +25,10 @@ pub fn sortDesc(in: []string) void {
     std.sort.sort([]const u8, in, {}, cmpStringsDesc);
 }
 
-const Library = struct {
+pub const Library = struct {
     pub const magic_bytes = "#!/usr/bin/env hop\n\n";
     const Header = [magic_bytes.len + 5]u8;
+    pub usingnamespace Schema.Hop;
 
     archive: Hop.Archive,
     allocator: *std.mem.Allocator,
@@ -36,6 +38,7 @@ const Library = struct {
     pub const Builder = struct {
         allocator: *std.mem.Allocator,
         files: std.ArrayListUnmanaged(Hop.File),
+        directories: std.ArrayListUnmanaged(Hop.Directory),
         metadata_bytes: std.ArrayListUnmanaged(u8),
         destination: std.fs.File = undefined,
 
@@ -43,6 +46,7 @@ const Library = struct {
             return Builder{
                 .allocator = allocator,
                 .metadata_bytes = .{},
+                .directories = .{},
                 .files = std.ArrayListUnmanaged(Hop.File){},
             };
         }
@@ -62,14 +66,31 @@ const Library = struct {
             }
         };
 
+        const DirSorter = struct {
+            metadata: []const u8,
+            pub fn sortByName(this: DirSorter, lhs: Hop.Directory, rhs: Hop.Directory) bool {
+                return std.mem.order(u8, this.metadata[lhs.name.off..][0..lhs.name.len], this.metadata[rhs.name.off..][0..rhs.name.len]) == .lt;
+            }
+        };
+
         pub fn done(this: *Builder) !Hop.Archive {
             const metadata_offset = @truncate(u32, try this.destination.getPos());
 
-            var sorter = FileSorter{
-                .metadata = this.metadata_bytes.items,
-            };
+            {
+                var sorter = FileSorter{
+                    .metadata = this.metadata_bytes.items,
+                };
 
-            std.sort.sort(Hop.File, this.files.items, sorter, FileSorter.sortByName);
+                std.sort.sort(Hop.File, this.files.items, sorter, FileSorter.sortByName);
+            }
+
+            {
+                var sorter = DirSorter{
+                    .metadata = this.metadata_bytes.items,
+                };
+
+                std.sort.sort(Hop.Directory, this.directories.items, sorter, DirSorter.sortByName);
+            }
 
             var name_hashes = try this.allocator.alloc(u32, this.files.items.len);
 
@@ -80,6 +101,7 @@ const Library = struct {
             var archive = Hop.Archive{
                 .version = 1,
                 .files = this.files.items,
+                .directories = this.directories.items,
                 .name_hashes = name_hashes,
                 .content_offset = metadata_offset,
                 .metadata = this.metadata_bytes.items,
@@ -132,11 +154,17 @@ const Library = struct {
             const written = try std.os.copy_file_range(in.handle, 0, this.destination.handle, off_in, stat.size, 0);
             try this.destination.seekTo(off_in + written);
             const end = try this.destination.getPos();
-            try this.appendFileMetadata(name, off_in, end, stat);
+            try this.appendFileMetadataFromDisk(name, off_in, end, stat);
             try this.destination.writeAll(&[_]u8{0});
         }
 
-        pub fn appendFileMetadata(this: *Builder, name_buf: []const u8, start_pos: u64, end_pos: u64, stat: std.fs.File.Stat) !void {
+        pub fn appendDirectoryFromDisk(this: *Builder, name: []const u8, in: std.fs.Dir) !void {
+            var stat = try std.os.fstatat(in.fd, name, 0);
+
+            try this.appendDirMetadataFromDisk(name, stat);
+        }
+
+        pub fn appendFileMetadataFromDisk(this: *Builder, name_buf: []const u8, start_pos: u64, end_pos: u64, stat: std.fs.File.Stat) !void {
             const name = try this.appendMetadata(name_buf);
             try this.files.append(
                 this.allocator,
@@ -151,15 +179,48 @@ const Library = struct {
             );
         }
 
+        pub fn appendDirMetadataFromDisk(this: *Builder, name_buf: []const u8, stat: std.fs.File.Stat) !void {
+            const name = try this.appendMetadata(name_buf);
+            try this.directories.append(
+                this.allocator,
+                Hop.Directory{
+                    .name = name,
+                    .name_hash = @truncate(u32, std.hash.Wyhash.hash(0, name_buf)),
+                    .chmod = @truncate(u32, stat.mode),
+                },
+            );
+        }
+
+        pub fn appendFileMetadata(this: *Builder, name_buf: []const u8, meta: Hop.File) !void {
+            const name = try this.appendMetadata(name_buf);
+            try this.files.append(
+                this.allocator,
+                Hop.File{
+                    .name = name,
+                    .name_hash = @truncate(u32, std.hash.Wyhash.hash(0, name_buf)),
+                    .data = meta.data,
+                    .chmod = meta.chmod,
+                    .mtime = meta.mtime,
+                    .ctime = meta.ctime,
+                },
+            );
+        }
+
         pub fn appendDirectoryRecursively(this: *Builder, dir: std.fs.Dir) !void {
             var walker = try dir.walk(this.allocator);
             defer walker.deinit();
             while (try walker.next()) |entry_| {
                 const entry: std.fs.Dir.Walker.WalkerEntry = entry_;
 
-                if (entry.kind != .File) continue;
-
-                try this.appendContentFromDisk(entry.path, try entry.dir.openFile(entry.basename, .{ .read = true }));
+                switch (entry.kind) {
+                    .Directory => {
+                        try this.appendDirectoryFromDisk(entry.path, entry.basename, entry.dir);
+                    },
+                    .File => {
+                        try this.appendContentFromDisk(entry.path, try entry.dir.openFile(entry.basename, .{ .read = true }));
+                    },
+                    else => {},
+                }
             }
         }
     };
@@ -182,7 +243,36 @@ const Library = struct {
                 };
             };
 
-            const written = try std.os.copy_file_range(this.fd.?, file.data.off, out.handle, 0, file.data.len, 0);
+            if (file.data.len > std.mem.page_size) {
+                if (comptime Environment.isLinux) {
+                    _ = std.os.system.fallocate(out.handle, 0, 0, @intCast(i64, file.data.len));
+                } else if (comptime Environment.isMac) {
+                    try C.preallocate_file(
+                        out.handle,
+                        @intCast(std.os.off_t, 0),
+                        @intCast(std.os.off_t, file.data.len),
+                    );
+                }
+            }
+
+            var remain: usize = file.data.len;
+            var written: usize = 0;
+            var in_off: usize = file.data.off;
+
+            while (remain > 0) {
+                const wrote = try std.os.copy_file_range(
+                    this.fd.?,
+                    in_off,
+                    out.handle,
+                    written,
+                    remain,
+                    0,
+                );
+                in_off += wrote;
+                remain -= wrote;
+                written += wrote;
+            }
+
             if (verbose) {
                 std.log.info("Extracted file: {s} ({d} bytes)\n", .{ name_slice, written });
             }

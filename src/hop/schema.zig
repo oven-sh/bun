@@ -397,6 +397,35 @@ pub const Hop = struct {
         }
     };
 
+    pub const Directory = packed struct {
+        /// name
+        name: StringPointer,
+
+        /// name_hash
+        name_hash: u32 = 0,
+
+        /// chmod
+        chmod: u32 = 0,
+
+        pub fn decode(reader: anytype) anyerror!Directory {
+            var this = Directory{
+                .name = StringPointer{},
+            };
+
+            this.name = try reader.readValue(StringPointer);
+            this.name_hash = try reader.readValue(u32);
+            this.chmod = try reader.readValue(u32);
+
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeValue(@TypeOf(this.name), this.name);
+            try writer.writeInt(this.name_hash);
+            try writer.writeInt(this.chmod);
+        }
+    };
+
     pub const Archive = struct {
         /// version
         version: ?u32 = null,
@@ -406,6 +435,9 @@ pub const Hop = struct {
 
         /// files
         files: []align(1) const File,
+
+        /// files
+        directories: []align(1) const Directory,
 
         /// name_hashes
         name_hashes: []align(1) const u32,
@@ -432,9 +464,12 @@ pub const Hop = struct {
                         this.files = try reader.readArray(File);
                     },
                     4 => {
-                        this.name_hashes = try reader.readArray(u32);
+                        this.directories = try reader.readArray(Directory);
                     },
                     5 => {
+                        this.name_hashes = try reader.readArray(u32);
+                    },
+                    6 => {
                         this.metadata = try reader.readArray(u8);
                     },
                     else => {
@@ -458,12 +493,16 @@ pub const Hop = struct {
                 try writer.writeFieldID(3);
                 try writer.writeArray(File, this.files);
             }
-            if (this.name_hashes.len > 0) {
+            if (this.directories.len > 0) {
                 try writer.writeFieldID(4);
+                try writer.writeArray(Directory, this.directories);
+            }
+            if (this.name_hashes.len > 0) {
+                try writer.writeFieldID(5);
                 try writer.writeArray(u32, this.name_hashes);
             }
             if (this.metadata.len > 0) {
-                try writer.writeFieldID(5);
+                try writer.writeFieldID(6);
                 try writer.writeArray(u8, this.metadata);
             }
             try writer.endMessage();

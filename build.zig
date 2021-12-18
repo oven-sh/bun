@@ -116,7 +116,7 @@ pub fn build(b: *std.build.Builder) !void {
     var target = b.standardTargetOptions(.{});
     // Standard release options allow the person running `zig build` to select
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
-     mode = b.standardReleaseOptions();
+    mode = b.standardReleaseOptions();
 
     var cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     const cwd: []const u8 = b.pathFromRoot(".");
@@ -297,7 +297,6 @@ pub fn build(b: *std.build.Builder) !void {
         //     if (target.getOsTag() == .macos) "-DUSE_FOUNDATION=1" else "",
         //     if (target.getOsTag() == .macos) "-DUSE_CF_RETAIN_PTR=1" else "",
         // };
-  
 
         {
             b.default_step.dependOn(&b.addLog(
@@ -369,8 +368,6 @@ pub fn build(b: *std.build.Builder) !void {
             }
         }
 
-
-
         {
             var obj_step = b.step("obj", "Build Bun as a .o file");
             var obj = b.addObject(bun_executable_name, exe.root_src.?.path);
@@ -435,6 +432,13 @@ pub fn build(b: *std.build.Builder) !void {
         {
             const headers_step = b.step("tgz-obj", "Build tgz (object files)");
             var headers_obj: *std.build.LibExeObjStep = b.addObject("tgz", "misctools/tgz.zig");
+            defer headers_step.dependOn(&headers_obj.step);
+            try configureObjectStep(headers_obj, target, exe.main_pkg_path.?);
+        }
+
+        {
+            const headers_step = b.step("hop-obj", "Build hop (object files)");
+            var headers_obj: *std.build.LibExeObjStep = b.addObject("hop", "misctools/hop.zig");
             defer headers_step.dependOn(&headers_obj.step);
             try configureObjectStep(headers_obj, target, exe.main_pkg_path.?);
         }

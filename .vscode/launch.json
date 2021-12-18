@@ -22,6 +22,24 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "hop",
+      "program": "hop",
+      "args": ["swc-linux-arm64-musl-12.0.3.tgz"],
+      "cwd": "/Users/jarred/Downloads/hop-test",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "hop extract",
+      "program": "hop",
+      "args": ["swc-linux-arm64-musl-12.0.3.hop"],
+      "cwd": "/Users/jarred/Downloads/hop-test",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "fetch debug #2",
       "program": "${workspaceFolder}/misctools/fetch",
       "args": ["https://registry.npmjs.org/react", "--verbose"],

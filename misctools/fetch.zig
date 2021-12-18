@@ -2,15 +2,14 @@ const std = @import("std");
 usingnamespace @import("../src/global.zig");
 const clap = @import("../src/deps/zig-clap/clap.zig");
 
-const HTTPClient = @import("../src/http/http_client_async.zig");
 const URL = @import("../src/query_string_map.zig").URL;
 const Headers = @import("../src/javascript/jsc/webcore/response.zig").Headers;
 const Method = @import("../src/http/method.zig").Method;
 const ColonListType = @import("../src/cli/colon_list_type.zig").ColonListType;
 const HeadersTuple = ColonListType(string, noop_resolver);
 const path_handler = @import("../src/resolver/resolve_path.zig");
-const NetworkThread = @import("../src/http/network_thread.zig");
-const HTTP = @import("../src/http/http_client_async.zig");
+const NetworkThread = @import("network_thread");
+const HTTP = @import("http");
 fn noop_resolver(in: string) !string {
     return in;
 }
@@ -195,9 +194,12 @@ pub fn main() anyerror!void {
         ),
     };
     ctx.http.callback = HTTP.HTTPChannelContext.callback;
-    ctx.http.schedule(default_allocator);
+    var batch = NetworkThread.Batch{};
+    ctx.http.schedule(default_allocator, &batch);
     ctx.http.client.verbose = args.verbose;
+
     ctx.http.verbose = args.verbose;
+    NetworkThread.global.pool.schedule(batch);
 
     while (true) {
         while (channel.tryReadItem() catch null) |http| {

@@ -53,10 +53,8 @@ LIBICONV_PATH ?= $(BREW_PREFIX_PATH)/opt/libiconv/lib/libiconv.a
 
 OPENSSL_LINUX_DIR = $(DEPS_DIR)/openssl/openssl-OpenSSL_1_1_1l
 
-LIBCRYPTO_PREFIX_DIR = $(BREW_PREFIX_PATH)/opt/openssl@1.1
 
 ifeq ($(OS_NAME),linux)
-LIBCRYPTO_STATIC_LIB = 
 LIBICONV_PATH = $(DEPS_DIR)/libiconv.a
 endif
 
@@ -238,10 +236,24 @@ libarchive:
 	cp ./.libs/libarchive.a $(DEPS_DIR)/libarchive.a;
 
 tgz:
-	$(ZIG) build-exe -Drelease-fast --main-pkg-path $(shell pwd) ./misctools/tgz.zig $(DEPS_DIR)/zlib/libz.a $(DEPS_DIR)/libarchive.a  $(LIBICONV_PATH) -lc 
+	$(ZIG) build tgz-obj -Drelease-fast
+	$(CXX) $(PACKAGE_DIR)/tgz.o -g -o ./misctools/tgz $(DEFAULT_LINKER_FLAGS) -lc  \
+		src/deps/zlib/libz.a \
+		src/deps/libarchive.a \
+		src/deps/libssl.a \
+		src/deps/libcrypto.boring.a \
+		src/deps/picohttpparser.o
+	rm -rf $(PACKAGE_DIR)/tgz.o
 
 tgz-debug:
-	$(ZIG) build-exe --main-pkg-path $(shell pwd) ./misctools/tgz.zig $(DEPS_DIR)/zlib/libz.a $(DEPS_DIR)/libarchive.a  $(LIBICONV_PATH) -lc 
+	$(ZIG) build tgz-obj
+	$(CXX) $(DEBUG_PACKAGE_DIR)/tgz.o -g -o ./misctools/tgz $(DEFAULT_LINKER_FLAGS) -lc  \
+		src/deps/zlib/libz.a \
+		src/deps/libarchive.a \
+		src/deps/libssl.a \
+		src/deps/libcrypto.boring.a \
+		src/deps/picohttpparser.o
+	rm -rf $(DEBUG_PACKAGE_DIR)/tgz.o
 
 vendor: require init-submodules vendor-without-check 
 
@@ -257,7 +269,6 @@ require:
 	@which glibtoolize > /dev/null || (echo -e "ERROR: libtool is required. Install on mac with:\n\n    brew install libtool"; exit 1)
 	@which ninja > /dev/null || (echo -e "ERROR: Ninja is required. Install on mac with:\n\n    brew install ninja"; exit 1)
 	@stat $(LIBICONV_PATH) >/dev/null 2>&1 || (echo -e "ERROR: libiconv is required. Please run:\n\n    brew install libiconv"; exit 1)
-	@stat $(LIBCRYPTO_STATIC_LIB) >/dev/null 2>&1 || (echo -e "ERROR: OpenSSL 1.1 is required. Please run:\n\n    brew install openssl@1.1"; exit 1)
 	@echo "You have the dependencies installed! Woo"
 
 init-submodules:
@@ -311,25 +322,24 @@ generate-install-script:
 	@esbuild --log-level=error --define:BUN_VERSION="\"$(PACKAGE_JSON_VERSION)\"" --define:process.env.NODE_ENV="\"production\"" --platform=node  --format=cjs $(PACKAGES_REALPATH)/bun/install.ts > $(PACKAGES_REALPATH)/bun/install.js
 
 fetch:
-	cd misctools; $(ZIG) build-obj -Drelease-fast ./fetch.zig -fcompiler-rt -lc --main-pkg-path ../ $(BORINGSSL_PACKAGE)  --pkg-begin io ../$(IO_FILE) --pkg-end
-	$(CXX) ./misctools/fetch.o -g -O3 -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc \
-		src/deps/mimalloc/libmimalloc.a \
+	$(ZIG) build -Drelease-fast fetch-obj
+	$(CXX) $(PACKAGE_DIR)/fetch.o -g -O3 -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc  \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
-		src/deps/libcrypto.boring.a \
 		src/deps/libssl.a \
+		src/deps/libcrypto.boring.a \
 		src/deps/picohttpparser.o
-
+	rm -rf $(PACKAGE_DIR)/fetch.o
+	
 fetch-debug:
-	cd misctools; $(ZIG) build-obj ./fetch.zig -fcompiler-rt -lc --main-pkg-path ../ $(BORINGSSL_PACKAGE)  --pkg-begin io ../$(IO_FILE) --pkg-end
-	$(CXX) ./misctools/fetch.o -g -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc  \
-		src/deps/mimalloc/libmimalloc.a \
+	$(ZIG) build fetch-obj
+	$(CXX) $(DEBUG_PACKAGE_DIR)/fetch.o -g -O3 -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc  \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
-		src/deps/libcrypto.boring.a \
 		src/deps/libssl.a \
+		src/deps/libcrypto.boring.a \
 		src/deps/picohttpparser.o
-
+	rm -rf $(DEBUG_PACKAGE_DIR)/fetch.o
 
 
 httpbench-debug:
@@ -340,26 +350,25 @@ httpbench-debug:
 		src/deps/libssl.a \
 		src/deps/libcrypto.boring.a \
 		src/deps/picohttpparser.o \
-		$(LIBCRYPTO_STATIC_LIB)
+	rm -rf $(DEBUG_PACKAGE_DIR)/httpbench.o
 
 
 httpbench-release:
-	cd misctools; $(ZIG) build-obj -Drelease-fast ./http_bench.zig -fcompiler-rt -lc --main-pkg-path ../ --pkg-begin io ../$(IO_FILE) --pkg-end $(BORINGSSL_PACKAGE)
-	$(CXX) ./misctools/http_bench.o -O3 -g -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc  \
-		src/deps/mimalloc/libmimalloc.a \
+	$(ZIG) build -Drelease-fast httpbench-obj
+	$(CXX) $(PACKAGE_DIR)/httpbench.o -g -O3 -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc  \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
 		src/deps/libssl.a \
 		src/deps/libcrypto.boring.a \
-		src/deps/picohttpparser.o \
-		$(LIBCRYPTO_STATIC_LIB)
+		src/deps/picohttpparser.o
+	rm -rf $(PACKAGE_DIR)/httpbench.o
 
 bun-codesign-debug:
 bun-codesign-release-local:
 
 
 ifeq ($(OS_NAME),darwin)
-s2n: s2n-mac
+
 
 
 # Hardened runtime will not work with debugging
@@ -575,7 +584,7 @@ clean: clean-bindings
 	rm src/deps/*.a src/deps/*.o
 	(cd src/deps/mimalloc && make clean) || echo "";
 	(cd src/deps/libarchive && make clean) || echo "";
-	(cd src/deps/s2n-tls && make clean) || echo "";
+	(cd src/deps/boringssl && make clean) || echo "";
 	(cd src/deps/picohttp && make clean) || echo "";
 	(cd src/deps/zlib && make clean) || echo "";
 
@@ -744,7 +753,6 @@ build-unit:
 	-lc -lc++ \
 	--cache-dir /tmp/zig-cache-bun-$(testname)-$(basename $(lastword $(testfilter))) \
 	-fallow-shlib-undefined \
-	-L$(LIBCRYPTO_PREFIX_DIR)/lib \
 	$(ARCHIVE_FILES) $(ICU_FLAGS) && \
 	cp zig-out/bin/$(testname) $(testbinpath)
 

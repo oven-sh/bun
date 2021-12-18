@@ -5,7 +5,6 @@ const Hop = Schema.Hop;
 
 const string = []const u8;
 
-
 pub fn cmpStringsAsc(ctx: void, a: string, b: string) bool {
     return std.mem.order(u8, a, b) == .lt;
 }

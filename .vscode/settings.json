@@ -32,6 +32,7 @@
     "src/deps/libarchive": true,
     "src/deps/mimalloc": true,
     "src/deps/s2n-tls": true,
+    "src/deps/boringssl": true,
     "src/deps/openssl": true,
     "src/deps/zlib": true,
     "integration/snippets/package-json-exports/_node_modules_copy": true

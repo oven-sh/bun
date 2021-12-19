@@ -15,9 +15,9 @@ pub fn addPicoHTTP(step: *std.build.LibExeObjStep, comptime with_obj: bool) void
     step.addIncludeDir("src/deps");
 
     if (with_obj) {
-        step.addObjectFile("src/deps/picohttpparser.o");
-        step.addObjectFile("src/deps/libssl.a");
-        step.addObjectFile("src/deps/libcrypto.a");
+        step.addObjectFile(panicIfNotFound("src/deps/picohttpparser.o"));
+        step.addObjectFile(panicIfNotFound("src/deps/libssl.a"));
+        step.addObjectFile(panicIfNotFound("src/deps/libcrypto.a"));
     }
 
     // step.add("/Users/jarred/Code/WebKit/WebKitBuild/Release/lib/libWTF.a");
@@ -329,7 +329,6 @@ pub fn build(b: *std.build.Builder) !void {
                 step.addObjectFile(panicIfNotFound("src/deps/libcrypto.a"));
                 step.addObjectFile(panicIfNotFound("src/deps/libbmalloc.a"));
                 step.addObjectFile(panicIfNotFound("src/deps/libarchive.a"));
-                step.addObjectFile(panicIfNotFound("src/deps/libs2n.a"));
                 step.addObjectFile(panicIfNotFound("src/deps/zlib/libz.a"));
                 step.addObjectFile(panicIfNotFound("src/deps/mimalloc/libmimalloc.a"));
                 step.addLibPath("src/deps/mimalloc");

@@ -1663,7 +1663,7 @@ pub const Bundler = struct {
                                                                 &source,
                                                                 import_record.range,
                                                                 this.allocator,
-                                                                "Could not resolve: \"{s}\". Maybe you need to \"npm install\" (or yarn/pnpm)?",
+                                                                "Could not resolve: \"{s}\". Maybe you need to \"bun install\"?",
                                                                 .{import_record.path.text},
                                                                 import_record.kind,
                                                             );
@@ -2088,7 +2088,7 @@ pub const Bundler = struct {
                                                             &source,
                                                             import_record.range,
                                                             this.allocator,
-                                                            "Could not resolve: \"{s}\". Maybe you need to \"npm install\" (or yarn/pnpm)?",
+                                                            "Could not resolve: \"{s}\". Maybe you need to \"bun install\"?",
                                                             .{import_record.path.text},
                                                             import_record.kind,
                                                         );

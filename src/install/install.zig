@@ -5550,6 +5550,8 @@ pub const PackageManager = struct {
                         \\  bun add {s}
                         \\  bun add {s}
                         \\
+                        \\<d>Shorthand: <b>bun a<r>
+                        \\
                     , .{ examples_to_print[0], examples_to_print[1], examples_to_print[2] });
                     Output.flush();
                     std.os.exit(0);
@@ -5565,13 +5567,15 @@ pub const PackageManager = struct {
                         \\
                         \\<r><b>Usage:<r>
                         \\
-                        \\  bun remove <r><cyan>package-name<r>
-                        \\  bun remove <r><cyan>package-name a-second-package<r>
+                        \\  bun remove <r><red>package-name<r>
+                        \\  bun remove <r><red>package-name a-second-package<r>
                         \\
                         \\<r><b>Examples:<r>
                         \\
                         \\  bun remove {s} {s}
                         \\  bun remove {s}
+                        \\
+                        \\<d>Shorthand: <b>bun rm<r>
                         \\
                     , .{
                         examples_to_print[0],

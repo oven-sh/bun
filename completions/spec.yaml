@@ -102,6 +102,122 @@ subcommands:
       - &port name: port
         type: int
         summary: Port number
+  install:
+    summary: Install packages from package.json
+    options:
+      - name: registry
+        type: string
+        summary: "Change default registry (default: $BUN_CONFIG_REGISTRY || $npm_config_registry)"
+      - name: token
+        type: string
+        summary: "Authentication token used for npm registry requests (default: $npm_config_token)"
+      - y -- "Write a yarn.lock file (yarn v1)"
+      - yarn -- "Write a yarn.lock file (yarn v1)"
+      - production -- "Don't install devDependencies"
+      - p -- "Don't install devDependencies"
+      - no-save --
+      - dry-run -- "Don't install anything"
+      - force -- "Always request the latest versions from the registry & reinstall all dependenices"
+      - name: lockfile
+        type: string
+        summary: "Store & load a lockfile at a specific filepath"
+      - name: cache-dir
+        type: string
+        summary: "Store & load cached data from a specific directory path"
+      - no-cache -- "Ignore manifest cache entirely"
+      - silent -- "Don't output anything"
+      - verbose -- "Excessively verbose logging"
+      - name: cwd
+        type: string
+        summary: "Set a specific cwd"
+      - name: backend
+        summary: "Platform-specific optimizations for installing dependencies"
+        type: string
+        enum: ["clonefile", "copyfile", "hardlink", "clonefile_each_dir"]
+      - name: link-native-bins
+        summary: 'Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo'
+  add:
+    summary: Add a dependency to package.json
+    options:
+      - name: registry
+        type: string
+        summary: "Change default registry (default: $BUN_CONFIG_REGISTRY || $npm_config_registry)"
+      - name: token
+        type: string
+        summary: "Authentication token used for npm registry requests (default: $npm_config_token)"
+      - y -- "Write a yarn.lock file (yarn v1)"
+      - yarn -- "Write a yarn.lock file (yarn v1)"
+      - production -- "Don't install devDependencies"
+      - optional -- "Add dependency to optionalDependencies"
+      - development -- "Add dependency to devDependencies"
+      - d -- "Add dependency to devDependencies"
+
+      - p -- "Don't install devDependencies"
+      - no-save --
+      - dry-run -- "Don't install anything"
+      - force -- "Always request the latest versions from the registry & reinstall all dependenices"
+      - name: lockfile
+        type: string
+        summary: "Store & load a lockfile at a specific filepath"
+      - name: cache-dir
+        type: string
+        summary: "Store & load cached data from a specific directory path"
+      - no-cache -- "Ignore manifest cache entirely"
+      - silent -- "Don't output anything"
+      - verbose -- "Excessively verbose logging"
+      - name: cwd
+        type: string
+        summary: "Set a specific cwd"
+      - name: backend
+        summary: "Platform-specific optimizations for installing dependencies"
+        type: string
+        enum: ["clonefile", "copyfile", "hardlink", "clonefile_each_dir"]
+      - name: link-native-bins
+        summary: 'Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo'
+    parameters:
+      - name: package
+        multiple: true
+        type: string
+        required: true
+  remove:
+    summary: Remove a dependency from package.json
+    options:
+      - name: registry
+        type: string
+        summary: "Change default registry (default: $BUN_CONFIG_REGISTRY || $npm_config_registry)"
+      - name: token
+        type: string
+        summary: "Authentication token used for npm registry requests (default: $npm_config_token)"
+      - y -- "Write a yarn.lock file (yarn v1)"
+      - yarn -- "Write a yarn.lock file (yarn v1)"
+      - production -- "Don't install devDependencies"
+      - p -- "Don't install devDependencies"
+      - no-save --
+      - dry-run -- "Don't install anything"
+      - force -- "Always request the latest versions from the registry & reinstall all dependenices"
+      - name: lockfile
+        type: string
+        summary: "Store & load a lockfile at a specific filepath"
+      - name: cache-dir
+        type: string
+        summary: "Store & load cached data from a specific directory path"
+      - no-cache -- "Ignore manifest cache entirely"
+      - silent -- "Don't output anything"
+      - verbose -- "Excessively verbose logging"
+      - name: cwd
+        type: string
+        summary: "Set a specific cwd"
+      - name: backend
+        summary: "Platform-specific optimizations for installing dependencies"
+        type: string
+        enum: ["clonefile", "copyfile", "hardlink", "clonefile_each_dir"]
+      - name: link-native-bins
+        summary: 'Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo'
+    parameters:
+      - name: package
+        multiple: true
+        type: string
+        required: true
 
 parameters:
   - name: sasdasdds

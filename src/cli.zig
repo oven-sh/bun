@@ -475,6 +475,7 @@ const HelpCommand = struct {
         "wrangler@beta",
         "@compiled/react",
         "@remix-run/dev",
+        "contentlayer",
     };
 
     pub fn printWithReason(comptime reason: Reason) void {
@@ -491,7 +492,7 @@ const HelpCommand = struct {
             \\> <r> <b><green>install<r>                         Install dependencies for a package.json <d>(bun i)<r>
             \\> <r> <b><blue>add     <r><d>  {s:<16}<r>      Add a dependency to package.json <d>(bun a)<r>
             \\> <r> remove  <r><d>  {s:<16}<r>      Remove a dependency from package.json <d>(bun rm)<r>
-            \\> <r> pm  <r>                                               More package manager-related subcommands
+            \\> <r> pm  <r>                               More package manager-related subcommands
             \\
             \\> <r> <b><blue>upgrade <r>                        Get the latest version of Bun
             \\> <r> <b><d>completions<r>                     Install shell completions for tab-completion

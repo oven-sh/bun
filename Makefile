@@ -38,8 +38,8 @@ ZIG ?= $(shell which zig || echo -e "error: Missing zig. Please make sure zig is
 # We must use the same compiler version for the JavaScriptCore bindings and JavaScriptCore
 # If we don't do this, strange memory allocation failures occur.
 # This is easier to happen than you'd expect.
-CC = $(shell which clang-12 || which clang)
-CXX = $(shell which clang++-12 || which clang++)
+CC = $(realpath $(shell which clang-12 || which clang))
+CXX = $(realpath $(shell which clang++-12 || which clang++))
 
 # macOS sed is different
 SED = $(shell which gsed || which sed)
@@ -174,7 +174,7 @@ CLANG_FLAGS = $(INCLUDE_DIRS) \
 # It has something to do with ICU
 ifeq ($(OS_NAME), darwin)
 CLANG_FLAGS += -DDU_DISABLE_RENAMING=1 \
-		-mmacosx-version-min=10.11
+		-mmacosx-version-min=10.11 -lstdc++
 endif
 
 
@@ -219,7 +219,7 @@ bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release
 vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive 
 
 boringssl-build:
-	cd $(DEPS_DIR)/boringssl && mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=Release -GNinja .. && ninja 
+	cd $(DEPS_DIR)/boringssl && mkdir -p build && cd build && cmake -DCMAKE_C_COMPILER=$(CC) -DCMAKE_CXX_COMPILER=$(CXX) -DCMAKE_BUILD_TYPE=Release -GNinja .. && ninja 
 
 boringssl-copy:
 	cp $(DEPS_DIR)/boringssl/build/ssl/libssl.a $(DEPS_DIR)/libssl.a

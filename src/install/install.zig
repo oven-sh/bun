@@ -3155,7 +3155,6 @@ const PackageInstall = struct {
         });
 
         pub const linux = BackendSupport.initDefault(false, .{
-            .io_uring = true,
             .hardlink = true,
             .copyfile = true,
         });
@@ -5443,10 +5442,6 @@ pub const PackageManager = struct {
                         break :brk PackageInstall.Method.hardlink;
                     } else if (strings.eqlComptime(backend_, "copyfile")) {
                         break :brk PackageInstall.Method.copyfile;
-                    } else if (strings.eqlComptime(backend_, "io_uring")) {
-                        break :brk PackageInstall.Method.io_uring;
-                    } else if (strings.eqlComptime(backend_, "copy_file_range")) {
-                        break :brk PackageInstall.Method.copy_file_range;
                     }
                 }
                 break :brk null;

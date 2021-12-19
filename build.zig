@@ -435,13 +435,6 @@ pub fn build(b: *std.build.Builder) !void {
             defer headers_step.dependOn(&headers_obj.step);
             try configureObjectStep(headers_obj, target, exe.main_pkg_path.?);
         }
-
-        {
-            const headers_step = b.step("hop-obj", "Build hop (object files)");
-            var headers_obj: *std.build.LibExeObjStep = b.addObject("hop", "misctools/hop.zig");
-            defer headers_step.dependOn(&headers_obj.step);
-            try configureObjectStep(headers_obj, target, exe.main_pkg_path.?);
-        }
     } else {
         b.default_step.dependOn(&exe.step);
     }

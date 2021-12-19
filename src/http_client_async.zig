@@ -200,6 +200,11 @@ pub const HeaderBuilder = struct {
 
 pub const HTTPChannel = @import("./sync.zig").Channel(*AsyncHTTP, .{ .Static = 1000 });
 
+// 32 pointers much cheaper than 1000 pointers
+const SingleHTTPChannel = @import("./sync.zig").Channel(*AsyncHTTP, .{ .Static = 32 });
+var send_sync_channel: SingleHTTPChannel = undefined;
+var send_sync_channel_loaded: bool = false;
+
 pub const HTTPChannelContext = struct {
     http: AsyncHTTP = undefined,
     channel: *HTTPChannel,
@@ -285,6 +290,37 @@ pub const AsyncHTTP = struct {
         var sender = HTTPSender.get(this, allocator);
         this.state.store(.scheduled, .Monotonic);
         batch.push(ThreadPool.Batch.from(&sender.task));
+    }
+
+    fn sendSyncCallback(this: *AsyncHTTP, sender: *HTTPSender) void {
+        send_sync_channel.writeItem(this) catch unreachable;
+        sender.release();
+    }
+
+    pub fn sendSync(this: *AsyncHTTP) anyerror!picohttp.Response {
+        if (!send_sync_channel_loaded) {
+            send_sync_channel_loaded = true;
+            send_sync_channel = SingleHTTPChannel.init();
+        }
+
+        this.callback = sendSyncCallback;
+        var batch = NetworkThread.Batch{};
+        this.schedule(this.allocator, &batch);
+        NetworkThread.global.pool.schedule(batch);
+        while (true) {
+            var async_http: *AsyncHTTP = (send_sync_channel.tryReadItem() catch unreachable) orelse {
+                std.atomic.spinLoopHint();
+                std.time.sleep(std.time.ns_per_us * 100);
+                continue;
+            };
+            if (async_http.err) |err| {
+                return err;
+            }
+
+            return async_http.response.?;
+        }
+
+        unreachable;
     }
 
     var http_sender_head: std.atomic.Atomic(?*HTTPSender) = std.atomic.Atomic(?*HTTPSender).init(null);

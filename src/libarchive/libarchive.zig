@@ -3,7 +3,6 @@
 const lib = @import("./libarchive-bindings.zig");
 usingnamespace @import("../global.zig");
 const std = @import("std");
-const Hop = @import("../hop/hop.zig").Library;
 const struct_archive = lib.struct_archive;
 pub const Seek = enum(c_int) {
     set = std.os.SEEK_SET,

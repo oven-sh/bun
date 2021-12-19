@@ -245,7 +245,19 @@ pub const Version = struct {
         pub fn infer(dependency: string) Tag {
             switch (dependency[0]) {
                 // npm package
-                '=', '>', '<', '0'...'9', '^', '*', '~', '|' => return Tag.npm,
+                '=', '>', '<', '0'...'9', '^', '*', '|' => return Tag.npm,
+
+                '.' => return Tag.folder,
+
+                '~' => {
+
+                    // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#local-paths
+                    if (dependency.len > 1 and dependency[1] == '/') {
+                        return Tag.folder;
+                    }
+
+                    return Tag.npm;
+                },
 
                 'n' => {
                     if (dependency.len > 4 and strings.eqlComptimeIgnoreLen(dependency[0..4], "npm:")) {
@@ -339,14 +351,14 @@ pub const Version = struct {
                     return .dist_tag;
                 },
 
-                // file://
+                // file:
                 'f' => {
                     if (isTarball(dependency))
                         return .tarball;
 
                     if (strings.eqlComptime(
-                        dependency[0..@minimum("file://".len, dependency.len)],
-                        "file://",
+                        dependency[0..@minimum("file:".len, dependency.len)],
+                        "file:",
                     )) {
                         return .folder;
                     }
@@ -364,8 +376,8 @@ pub const Version = struct {
                         return .tarball;
 
                     if (strings.eqlComptime(
-                        dependency[0..@minimum("link://".len, dependency.len)],
-                        "link://",
+                        dependency[0..@minimum("link:".len, dependency.len)],
+                        "link:",
                     )) {
                         return .symlink;
                     }
@@ -497,13 +509,13 @@ pub fn parseWithTag(
             };
         },
         .tarball => {
-            if (strings.contains(dependency, "://")) {
-                if (strings.startsWith(dependency, "file://")) {
+            if (strings.indexOf(dependency, "://")) |protocol| {
+                if (strings.eqlComptime(dependency[0..protocol], "file")) {
                     return Version{
                         .tag = .tarball,
                         .value = .{ .tarball = URI{ .local = sliced.sub(dependency[7..]).value() } },
                     };
-                } else if (strings.startsWith(dependency, "https://") or strings.startsWith(dependency, "http://")) {
+                } else if (strings.eqlComptime(dependency[0..protocol], "http") or strings.eqlComptime(dependency[0..protocol], "https")) {
                     return Version{
                         .tag = .tarball,
                         .value = .{ .tarball = URI{ .remote = sliced.sub(dependency).value() } },

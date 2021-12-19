@@ -246,6 +246,9 @@ pub const Resolution = extern struct {
         gitlab: Repository,
 
         workspace: String,
+
+        /// global link
+        /// not implemented yet
         symlink: String,
 
         single_file_module: String,

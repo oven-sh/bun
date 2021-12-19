@@ -344,8 +344,19 @@ pub const Features = struct {
     scripts: bool = false,
     peer_dependencies: bool = true,
     is_main: bool = false,
+    dependencies: bool = true,
 
     check_for_duplicate_dependencies: bool = false,
+
+    // When it's a folder, we do not parse any of the dependencies
+    pub const folder = Features{
+        .optional_dependencies = false,
+        .dev_dependencies = false,
+        .scripts = false,
+        .peer_dependencies = false,
+        .is_main = false,
+        .dependencies = false,
+    };
 
     pub const npm = Features{
         .optional_dependencies = true,
@@ -1143,6 +1154,8 @@ pub const Lockfile = struct {
                 visited.set(0);
                 const end = @truncate(PackageID, names.len);
 
+                var any_failed = false;
+
                 if (this.successfully_installed) |installed| {
                     for (resolutions_list[0].get(resolutions_buffer)) |package_id| {
                         if (package_id > end or !installed.isSet(package_id)) continue;
@@ -1199,10 +1212,14 @@ pub const Lockfile = struct {
                                     failed_dep.version.literal.fmt(string_buf),
                                 },
                             );
+                            // track this so we can log each failure instead of just the first
+                            any_failed = true;
                             continue;
                         }
                     }
                 }
+
+                if (any_failed) std.os.exit(1);
             }
         };
 
@@ -1952,16 +1969,17 @@ pub const Lockfile = struct {
 
             const dependency_groups = comptime brk: {
                 var out_groups: [
-                    1 +
+                    @as(usize, @boolToInt(features.dependencies)) +
                         @as(usize, @boolToInt(features.dev_dependencies)) +
                         @as(usize, @boolToInt(features.optional_dependencies)) +
                         @as(usize, @boolToInt(features.peer_dependencies))
                 ]DependencyGroup = undefined;
                 var out_group_i: usize = 0;
 
-                out_groups[out_group_i] = DependencyGroup.dependencies;
-                out_group_i += 1;
-
+                if (features.dependencies) {
+                    out_groups[out_group_i] = DependencyGroup.dependencies;
+                    out_group_i += 1;
+                }
                 if (features.dev_dependencies) {
                     out_groups[out_group_i] = DependencyGroup.dev;
                     out_group_i += 1;
@@ -2235,12 +2253,25 @@ pub const Lockfile = struct {
             return hasher.final();
         }
 
+        pub fn parseMain(
+            lockfile: *Lockfile,
+            package: *Lockfile.Package,
+            allocator: *std.mem.Allocator,
+            log: *logger.Log,
+            source: logger.Source,
+            comptime features: Features,
+        ) !void {
+            return try parse(lockfile, package, allocator, log, source, void, void{}, features);
+        }
+
         pub fn parse(
             lockfile: *Lockfile,
             package: *Lockfile.Package,
             allocator: *std.mem.Allocator,
             log: *logger.Log,
             source: logger.Source,
+            comptime ResolverContext: type,
+            resolver: ResolverContext,
             comptime features: Features,
         ) !void {
             initializeStore();
@@ -2275,20 +2306,27 @@ pub const Lockfile = struct {
                 }
             }
 
+            if (comptime ResolverContext != void) {
+                resolver.count(*Lockfile.StringBuilder, &string_builder, json);
+            }
+
             const dependency_groups = comptime brk: {
                 var out_groups: [
-                    2 +
+                    @as(usize, @boolToInt(features.dependencies)) +
+                        @as(usize, @boolToInt(features.dev_dependencies)) +
                         @as(usize, @boolToInt(features.optional_dependencies)) +
                         @as(usize, @boolToInt(features.peer_dependencies))
                 ]DependencyGroup = undefined;
                 var out_group_i: usize = 0;
+                if (features.dependencies) {
+                    out_groups[out_group_i] = DependencyGroup.dependencies;
+                    out_group_i += 1;
+                }
 
-                out_groups[out_group_i] = DependencyGroup.dependencies;
-                out_group_i += 1;
-
-                out_groups[out_group_i] = DependencyGroup.dev;
-                out_group_i += 1;
-
+                if (features.dev_dependencies) {
+                    out_groups[out_group_i] = DependencyGroup.dev;
+                    out_group_i += 1;
+                }
                 if (features.optional_dependencies) {
                     out_groups[out_group_i] = DependencyGroup.optional;
                     out_group_i += 1;
@@ -2335,22 +2373,8 @@ pub const Lockfile = struct {
             }
 
             if (comptime !features.is_main) {
-                if (json.asProperty("version")) |version_q| {
-                    if (version_q.expr.asString(allocator)) |version_str_| {
-                        const version_str: String = string_builder.append(String, version_str_);
-                        const sliced_string: SlicedString = version_str.sliced(string_buf.allocatedSlice());
-
-                        const semver_version = Semver.Version.parse(sliced_string, allocator);
-
-                        if (semver_version.valid) {
-                            package.resolution = .{
-                                .tag = .npm,
-                                .value = .{ .npm = semver_version.version },
-                            };
-                        } else {
-                            log.addErrorFmt(null, logger.Loc.Empty, allocator, "invalid version \"{s}\"", .{version_str}) catch unreachable;
-                        }
-                    }
+                if (comptime ResolverContext != void) {
+                    package.resolution = try resolver.resolve(*Lockfile.StringBuilder, &string_builder, json);
                 }
             } else {
                 package.resolution = .{
@@ -3652,6 +3676,7 @@ pub const PackageManager = struct {
     thread_pool: ThreadPool,
 
     manifests: PackageManifestMap = PackageManifestMap{},
+    folders: FolderResolution.Map = FolderResolution.Map{},
     resolved_package_index: PackageIndex = PackageIndex{},
 
     task_queue: TaskDependencyQueue = .{},
@@ -3948,6 +3973,109 @@ pub const PackageManager = struct {
         this.network_task_fifo.writeItemAssumeCapacity(task);
     }
 
+    pub const FolderResolution = union(Tag) {
+        package_id: PackageID,
+        err: anyerror,
+
+        pub const Tag = enum { package_id, err };
+
+        pub const Map = std.HashMapUnmanaged(u64, FolderResolution, IdentityContext(u64), 80);
+
+        pub fn normalize(path: string) string {
+            return FileSystem.instance.normalize(path);
+        }
+
+        pub fn hash(normalized_path: string) u64 {
+            return std.hash.Wyhash.hash(0, normalized_path);
+        }
+
+        pub const Resolver = struct {
+            folder_path: string,
+
+            pub fn resolve(this: Resolver, comptime Builder: type, builder: Builder, json: JSAst.Expr) !Resolution {
+                return Resolution{
+                    .tag = .folder,
+                    .value = .{
+                        .folder = builder.append(String, this.folder_path),
+                    },
+                };
+            }
+
+            pub fn count(this: Resolver, comptime Builder: type, builder: Builder, json: JSAst.Expr) void {
+                builder.count(this.folder_path);
+            }
+        };
+
+        pub fn getOrPut(non_normalized_path: string, manager: *PackageManager) FolderResolution {
+
+            // We consider it valid if there is a package.json in the folder
+            const normalized = std.mem.trimRight(u8, normalize(non_normalized_path), std.fs.path.sep_str);
+            var joined: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            var rel_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            var abs: string = "";
+            var rel: string = "";
+            if (strings.startsWithChar(normalized, '.')) {
+                var tempcat: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+
+                std.mem.copy(u8, &tempcat, normalized);
+                tempcat[normalized.len] = std.fs.path.sep;
+                std.mem.copy(u8, tempcat[normalized.len + 1 ..], "package.json");
+                var parts = [_]string{ FileSystem.instance.top_level_dir, tempcat[0 .. normalized.len + 1 + "package.json".len] };
+                abs = FileSystem.instance.absBuf(&parts, &joined);
+                rel = FileSystem.instance.relative(FileSystem.instance.top_level_dir, abs[0 .. abs.len - "/package.json".len]);
+            } else {
+                std.mem.copy(u8, &joined, normalized);
+                joined[normalized.len] = std.fs.path.sep;
+                joined[normalized.len + 1 ..][0.."package.json".len].* = "package.json".*;
+                abs = joined[0 .. normalized.len + 1 + "package.json".len];
+                // We store the folder name without package.json
+                rel = abs[0 .. abs.len - "/package.json".len];
+            }
+
+            var entry = manager.folders.getOrPut(manager.allocator, hash(abs)) catch unreachable;
+            if (entry.found_existing) return entry.value_ptr.*;
+
+            joined[abs.len] = 0;
+            var joinedZ: [:0]u8 = joined[0..abs.len :0];
+
+            var package_json: std.fs.File = std.fs.cwd().openFileZ(joinedZ, .{ .read = true }) catch |err| {
+                entry.value_ptr.* = .{ .err = err };
+                return entry.value_ptr.*;
+            };
+            var package = Lockfile.Package{};
+            var body = Npm.Registry.BodyPool.get(manager.allocator);
+
+            defer Npm.Registry.BodyPool.release(body);
+            const initial_errors_count = manager.log.errors;
+            const len = package_json.getEndPos() catch |err| {
+                entry.value_ptr.* = .{ .err = err };
+                return entry.value_ptr.*;
+            };
+
+            body.data.reset();
+            body.data.inflate(@maximum(len, 2048)) catch unreachable;
+            body.data.list.expandToCapacity();
+            const source_buf = package_json.readAll(body.data.list.items) catch |err| {
+                entry.value_ptr.* = .{ .err = err };
+                return entry.value_ptr.*;
+            };
+            var resolver = Resolver{
+                .folder_path = rel,
+            };
+            const source = logger.Source.initPathString(abs, body.data.list.items[0..source_buf]);
+
+            Lockfile.Package.parse(manager.lockfile, &package, manager.allocator, manager.log, source, Resolver, resolver, Features.folder) catch |err| {
+                // Folders are considered dependency-less
+                entry.value_ptr.* = .{ .err = err };
+                return entry.value_ptr.*;
+            };
+
+            package = manager.lockfile.appendPackage(package) catch unreachable;
+            entry.value_ptr.* = .{ .package_id = package.meta.id };
+            return FolderResolution{ .package_id = package.meta.id };
+        }
+    };
+
     pub fn getOrPutResolvedPackage(
         this: *PackageManager,
         name_hash: PackageNameHash,
@@ -3976,6 +4104,18 @@ pub const PackageManager = struct {
                 };
 
                 return try getOrPutResolvedPackageWithFindResult(this, name_hash, name, version, dependency_id, behavior, manifest, find_result);
+            },
+
+            .folder => {
+                const res = FolderResolution.getOrPut(name.slice(this.lockfile.buffers.string_bytes.items), this);
+
+                switch (res) {
+                    .err => |err| return err,
+                    .package_id => |package_id| {
+                        this.lockfile.buffers.resolutions.items[dependency_id] = package_id;
+                        return ResolvedPackageResult{ .package = this.lockfile.packages.get(res.package_id) };
+                    },
+                }
             },
 
             else => return null,
@@ -4100,7 +4240,7 @@ pub const PackageManager = struct {
         }
 
         switch (dependency.version.tag) {
-            .npm, .dist_tag => {
+            .folder, .npm, .dist_tag => {
                 retry_from_manifests_ptr: while (true) {
                     var resolve_result_ = this.getOrPutResolvedPackage(
                         name_hash,
@@ -4176,7 +4316,7 @@ pub const PackageManager = struct {
                                     this.enqueueNetworkTask(network_task);
                                 }
                             }
-                        } else if (!dependency.behavior.isPeer()) {
+                        } else if (!dependency.behavior.isPeer() and dependency.version.tag.isNPM()) {
                             const name_str = this.lockfile.str(name);
                             const task_id = Task.Id.forManifest(Task.Tag.package_manifest, name_str);
                             var network_entry = try this.network_dedupe_map.getOrPutContext(this.allocator, task_id, .{});
@@ -6119,6 +6259,41 @@ pub const PackageManager = struct {
                         }
                     }
                 },
+                // TODO: support folder links higher than node_modules folder
+                .folder => {
+                    var folder_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                    std.mem.copy(u8, &folder_buf, "../" ++ std.fs.path.sep_str);
+                    std.mem.copy(u8, folder_buf["../".len..], name);
+                    folder_buf["../".len + name.len] = 0;
+                    var folderZ: [:0]u8 = folder_buf[0 .. "../".len + name.len :0];
+
+                    const needs_install = this.force_install or this.skip_verify or brk: {
+                        std.mem.copy(u8, this.destination_dir_subpath_buf[name.len..], std.fs.path.sep_str ++ "package.json");
+                        this.destination_dir_subpath_buf[name.len + "/package.json".len] = 0;
+                        var package_json_path = this.destination_dir_subpath_buf[0 .. name.len + "/package.json".len :0];
+                        defer this.destination_dir_subpath_buf[name.len] = 0;
+                        const file = this.node_modules_folder.openFileZ(package_json_path, .{ .read = true }) catch break :brk true;
+                        file.close();
+
+                        break :brk false;
+                    };
+                    this.summary.skipped += @as(u32, @boolToInt(!needs_install));
+
+                    if (needs_install) {
+                        if (!this.skip_delete) this.node_modules_folder.deleteFileZ(destination_dir_subpath) catch {};
+
+                        std.os.symlinkatZ(folderZ, this.node_modules_folder.fd, destination_dir_subpath) catch |err| {
+                            Output.prettyErrorln(
+                                "<r><red>error<r>: <b><red>{s}<r> installing <b>{s}<r>",
+                                .{ err, this.names[package_id].slice(buf) },
+                            );
+                            this.summary.fail += 1;
+                            return;
+                        };
+                        this.summary.success += 1;
+                        this.successfully_installed.set(package_id);
+                    }
+                },
                 else => {},
             }
         }
@@ -6449,7 +6624,7 @@ pub const PackageManager = struct {
                     try lockfile.initEmpty(ctx.allocator);
                     var new_root: Lockfile.Package = undefined;
                     if (manager.options.enable.install_dev_dependencies) {
-                        try Lockfile.Package.parse(
+                        try Lockfile.Package.parseMain(
                             &lockfile,
                             &new_root,
                             ctx.allocator,
@@ -6464,7 +6639,7 @@ pub const PackageManager = struct {
                             },
                         );
                     } else {
-                        try Lockfile.Package.parse(
+                        try Lockfile.Package.parseMain(
                             &lockfile,
                             &new_root,
                             ctx.allocator,
@@ -6569,7 +6744,7 @@ pub const PackageManager = struct {
             try manager.lockfile.initEmpty(ctx.allocator);
 
             if (manager.options.enable.install_dev_dependencies) {
-                try Lockfile.Package.parse(
+                try Lockfile.Package.parseMain(
                     manager.lockfile,
                     &root,
                     ctx.allocator,
@@ -6584,7 +6759,7 @@ pub const PackageManager = struct {
                     },
                 );
             } else {
-                try Lockfile.Package.parse(
+                try Lockfile.Package.parseMain(
                     manager.lockfile,
                     &root,
                     ctx.allocator,

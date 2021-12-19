@@ -536,5 +536,3 @@ struct WebsocketMessageManifestFailure {
   Loader loader;
   Log log;
 }
-
-

@@ -266,7 +266,10 @@ pub const BufferReadStream = struct {
 
     pub fn deinit(this: *BufferReadStream) void {
         _ = lib.archive_read_close(this.archive);
-        _ = lib.archive_read_free(this.archive);
+        // don't free it if we never actually read it
+        // if (this.reading) {
+        //     _ = lib.archive_read_free(this.archive);
+        // }
     }
 
     pub fn openRead(this: *BufferReadStream) c_int {
@@ -278,14 +281,14 @@ pub const BufferReadStream = struct {
         // // lib.archive_read_set_switch_callback(this.archive, this.archive_s);
         // _ = lib.archive_read_set_callback_data(this.archive, this);
 
-        this.reading = true;
-
         _ = lib.archive_read_support_format_tar(this.archive);
         _ = lib.archive_read_support_format_gnutar(this.archive);
-        _ = lib.archive_read_support_filter_gzip(this.archive);
-        _ = lib.archive_read_support_filter_none(this.archive);
+        _ = lib.archive_read_support_compression_gzip(this.archive);
+        // _ = lib.archive_read_support_filter_none(this.archive);
 
         const rc = lib.archive_read_open_memory(this.archive, this.buf.ptr, this.buf.len);
+
+        this.reading = rc > -1;
 
         // _ = lib.archive_read_support_compression_all(this.archive);
 
@@ -540,7 +543,7 @@ pub const Archive = struct {
         var archive = stream.archive;
         var count: u32 = 0;
 
-        const dir: std.fs.Dir = brk: {
+        var dir: std.fs.Dir = brk: {
             const cwd = std.fs.cwd();
             cwd.makePath(
                 root,
@@ -574,7 +577,7 @@ pub const Archive = struct {
                     pathname = @intToPtr([*]const u8, @ptrToInt(pathname_.ptr))[0..pathname_.len :0];
 
                     const mask = lib.archive_entry_filetype(entry);
-                    const size = @intCast(usize, std.math.max(lib.archive_entry_size(entry), 0));
+                    const size = @intCast(usize, @maximum(lib.archive_entry_size(entry), 0));
                     if (size > 0) {
                         const slice = std.mem.span(pathname);
 

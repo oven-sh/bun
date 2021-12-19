@@ -1,15 +1,23 @@
 const std = @import("std");
 const resolve_path = @import("./src/resolver/resolve_path.zig");
-pub fn addPicoHTTP(step: *std.build.LibExeObjStep, comptime with_obj: bool) void {
-    const picohttp = step.addPackage(.{
-        .name = "picohttp",
-        .path = .{ .path = "src/deps/picohttp.zig" },
-    });
 
+fn pkgPath(comptime out: []const u8) std.build.FileSource {
+    const outpath = comptime std.fs.path.dirname(@src().file).? ++ std.fs.path.sep_str ++ out;
+    return .{ .path = outpath };
+}
+pub fn addPicoHTTP(step: *std.build.LibExeObjStep, comptime with_obj: bool) void {
     step.addIncludeDir("src/deps");
 
     if (with_obj) {
         step.addObjectFile("src/deps/picohttpparser.o");
+    }
+
+    step.addIncludeDir("src/deps");
+
+    if (with_obj) {
+        step.addObjectFile(panicIfNotFound("src/deps/picohttpparser.o"));
+        step.addObjectFile(panicIfNotFound("src/deps/libssl.a"));
+        step.addObjectFile(panicIfNotFound("src/deps/libcrypto.a"));
     }
 
     // step.add("/Users/jarred/Code/WebKit/WebKitBuild/Release/lib/libWTF.a");
@@ -19,6 +27,74 @@ pub fn addPicoHTTP(step: *std.build.LibExeObjStep, comptime with_obj: bool) void
     // homebrew-provided icu4c
 }
 
+fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: *std.mem.Allocator, target: anytype) !void {
+    var boringssl: std.build.Pkg = .{
+        .name = "boringssl",
+        .path = pkgPath("src/deps/boringssl.zig"),
+    };
+
+    var thread_pool: std.build.Pkg = .{
+        .name = "thread_pool",
+        .path = pkgPath("src/thread_pool.zig"),
+    };
+
+    var picohttp: std.build.Pkg = .{
+        .name = "picohttp",
+        .path = pkgPath("src/deps/picohttp.zig"),
+    };
+
+    var io_darwin: std.build.Pkg = .{
+        .name = "io",
+        .path = pkgPath("src/io/io_darwin.zig"),
+    };
+    var io_linux: std.build.Pkg = .{
+        .name = "io",
+        .path = pkgPath("src/io/io_linux.zig"),
+    };
+
+    var io = if (target.isDarwin())
+        io_darwin
+    else
+        io_linux;
+
+    var strings: std.build.Pkg = .{
+        .name = "strings",
+        .path = pkgPath("src/string_immutable.zig"),
+    };
+
+    var clap: std.build.Pkg = .{
+        .name = "clap",
+        .path = pkgPath("src/deps/zig-clap/clap.zig"),
+    };
+
+    var http: std.build.Pkg = .{
+        .name = "http",
+        .path = pkgPath("src/http_client_async.zig"),
+    };
+
+    var network_thread: std.build.Pkg = .{
+        .name = "network_thread",
+        .path = pkgPath("src/http/network_thread.zig"),
+    };
+
+    network_thread.dependencies = &.{
+        io,
+        thread_pool,
+    };
+    http.dependencies = &.{ io, network_thread, strings, boringssl, picohttp };
+
+    thread_pool.dependencies = &.{ io, http };
+    http.dependencies = &.{ io, network_thread, thread_pool, strings, boringssl, picohttp };
+
+    step.addPackage(thread_pool);
+    step.addPackage(picohttp);
+    step.addPackage(io);
+    step.addPackage(strings);
+    step.addPackage(clap);
+    step.addPackage(http);
+    step.addPackage(network_thread);
+}
+var output_dir: []const u8 = "";
 fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
     var file = std.fs.cwd().openFile(filepath, .{ .read = true }) catch |err| {
         const linux_only = "\nOn Linux, you'll need to compile libiconv manually and copy the .a file into src/deps.";
@@ -31,6 +107,7 @@ fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
 }
 
 var x64 = "x64";
+var mode: std.builtin.Mode = undefined;
 pub fn build(b: *std.build.Builder) !void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
@@ -39,7 +116,7 @@ pub fn build(b: *std.build.Builder) !void {
     var target = b.standardTargetOptions(.{});
     // Standard release options allow the person running `zig build` to select
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
-    const mode = b.standardReleaseOptions();
+    mode = b.standardReleaseOptions();
 
     var cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     const cwd: []const u8 = b.pathFromRoot(".");
@@ -80,7 +157,7 @@ pub fn build(b: *std.build.Builder) !void {
     var triplet = triplet_buf[0 .. osname.len + cpuArchName.len + 1];
 
     const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{s}{s}", .{ bin_label, triplet });
-    const output_dir = b.pathFromRoot(output_dir_base);
+    output_dir = b.pathFromRoot(output_dir_base);
     const bun_executable_name = if (mode == std.builtin.Mode.Debug) "bun-debug" else "bun";
 
     if (target.getOsTag() == .wasi) {
@@ -140,10 +217,6 @@ pub fn build(b: *std.build.Builder) !void {
     // exe.setLibCFile("libc.txt");
     exe.linkLibC();
     // exe.linkLibCpp();
-    exe.addPackage(.{
-        .name = "clap",
-        .path = .{ .path = "src/deps/zig-clap/clap.zig" },
-    });
 
     exe.setOutputDir(output_dir);
     var cwd_dir = std.fs.cwd();
@@ -224,10 +297,6 @@ pub fn build(b: *std.build.Builder) !void {
         //     if (target.getOsTag() == .macos) "-DUSE_FOUNDATION=1" else "",
         //     if (target.getOsTag() == .macos) "-DUSE_CF_RETAIN_PTR=1" else "",
         // };
-        const headers_step = b.step("headers-obj", "JSC headers Step #1");
-        var headers_obj: *std.build.LibExeObjStep = b.addObject("headers", "src/javascript/jsc/bindings/bindings-generator.zig");
-        headers_obj.setMainPkgPath(javascript.main_pkg_path.?);
-        headers_step.dependOn(&headers_obj.step);
 
         {
             b.default_step.dependOn(&b.addLog(
@@ -253,13 +322,13 @@ pub fn build(b: *std.build.Builder) !void {
                     step,
                     true,
                 );
+                try addInternalPackages(step, b.allocator, target);
 
                 step.addObjectFile(panicIfNotFound("src/deps/libJavaScriptCore.a"));
                 step.addObjectFile(panicIfNotFound("src/deps/libWTF.a"));
                 step.addObjectFile(panicIfNotFound("src/deps/libcrypto.a"));
                 step.addObjectFile(panicIfNotFound("src/deps/libbmalloc.a"));
                 step.addObjectFile(panicIfNotFound("src/deps/libarchive.a"));
-                step.addObjectFile(panicIfNotFound("src/deps/libs2n.a"));
                 step.addObjectFile(panicIfNotFound("src/deps/zlib/libz.a"));
                 step.addObjectFile(panicIfNotFound("src/deps/mimalloc/libmimalloc.a"));
                 step.addLibPath("src/deps/mimalloc");
@@ -303,10 +372,12 @@ pub fn build(b: *std.build.Builder) !void {
             var obj = b.addObject(bun_executable_name, exe.root_src.?.path);
             obj.setTarget(target);
             addPicoHTTP(obj, false);
-            obj.addPackage(.{
-                .name = "clap",
-                .path = .{ .path = "src/deps/zig-clap/clap.zig" },
-            });
+
+            try addInternalPackages(
+                obj,
+                b.allocator,
+                target,
+            );
 
             {
                 obj_step.dependOn(&b.addLog(
@@ -337,23 +408,31 @@ pub fn build(b: *std.build.Builder) !void {
         }
 
         {
-            headers_obj.setTarget(target);
-            headers_obj.addPackage(.{
-                .name = "clap",
-                .path = .{ .path = "src/deps/zig-clap/clap.zig" },
-            });
+            const headers_step = b.step("headers-obj", "Build JavaScriptCore headers");
+            var headers_obj: *std.build.LibExeObjStep = b.addObject("headers", "src/bindgen.zig");
+            defer headers_step.dependOn(&headers_obj.step);
+            try configureObjectStep(headers_obj, target, exe.main_pkg_path.?);
+        }
 
-            headers_obj.setOutputDir(output_dir);
-            headers_obj.setBuildMode(mode);
-            headers_obj.linkLibC();
-            headers_obj.linkLibCpp();
-            headers_obj.bundle_compiler_rt = true;
+        {
+            const headers_step = b.step("httpbench-obj", "Build HTTPBench tool (object files)");
+            var headers_obj: *std.build.LibExeObjStep = b.addObject("httpbench", "misctools/http_bench.zig");
+            defer headers_step.dependOn(&headers_obj.step);
+            try configureObjectStep(headers_obj, target, exe.main_pkg_path.?);
+        }
 
-            if (target.getOsTag() == .linux) {
-                // obj.want_lto = tar;
-                headers_obj.link_emit_relocs = true;
-                headers_obj.link_function_sections = true;
-            }
+        {
+            const headers_step = b.step("fetch-obj", "Build fetch (object files)");
+            var headers_obj: *std.build.LibExeObjStep = b.addObject("fetch", "misctools/fetch.zig");
+            defer headers_step.dependOn(&headers_obj.step);
+            try configureObjectStep(headers_obj, target, exe.main_pkg_path.?);
+        }
+
+        {
+            const headers_step = b.step("tgz-obj", "Build tgz (object files)");
+            var headers_obj: *std.build.LibExeObjStep = b.addObject("tgz", "misctools/tgz.zig");
+            defer headers_step.dependOn(&headers_obj.step);
+            try configureObjectStep(headers_obj, target, exe.main_pkg_path.?);
         }
     } else {
         b.default_step.dependOn(&exe.step);
@@ -384,6 +463,7 @@ pub fn build(b: *std.build.Builder) !void {
     typings_cmd.step.dependOn(&typings_exe.step);
 
     typings_exe.linkLibC();
+
     typings_exe.linkLibCpp();
     typings_exe.setMainPkgPath(cwd);
 
@@ -395,3 +475,23 @@ pub fn build(b: *std.build.Builder) !void {
 }
 
 pub var original_make_fn: ?fn (step: *std.build.Step) anyerror!void = null;
+
+pub fn configureObjectStep(obj: *std.build.LibExeObjStep, target: anytype, main_pkg_path: []const u8) !void {
+    obj.setMainPkgPath(main_pkg_path);
+    obj.setTarget(target);
+
+    try addInternalPackages(obj, std.heap.page_allocator, target);
+    addPicoHTTP(obj, false);
+
+    obj.setOutputDir(output_dir);
+    obj.setBuildMode(mode);
+    obj.linkLibC();
+    obj.linkLibCpp();
+    obj.bundle_compiler_rt = true;
+
+    if (target.getOsTag() == .linux) {
+        // obj.want_lto = tar;
+        obj.link_emit_relocs = true;
+        obj.link_function_sections = true;
+    }
+}

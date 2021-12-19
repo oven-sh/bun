@@ -499,9 +499,13 @@ pub const FileSystem = struct {
         };
 
         pub var tmpdir_path: []const u8 = undefined;
+        pub var tmpdir_path_set = false;
         pub fn openTmpDir(fs: *const RealFS) !std.fs.Dir {
-            var tmpdir_base = std.os.getenv("TMPDIR") orelse PLATFORM_TMP_DIR;
-            tmpdir_path = try std.fs.realpath(tmpdir_base, &tmpdir_buf);
+            if (!tmpdir_path_set) {
+                tmpdir_path = std.os.getenv("TMPDIR") orelse PLATFORM_TMP_DIR;
+                tmpdir_path_set = true;
+            }
+
             return try std.fs.openDirAbsolute(tmpdir_path, .{ .access_sub_paths = true, .iterate = true });
         }
 
@@ -998,10 +1002,11 @@ pub const FileSystem = struct {
         // doNotCacheEntries bool
     };
 
-    pub const Implementation = switch (build_target) {
-        .wasi, .native => RealFS,
-        .wasm => WasmFS,
-    };
+    pub const Implementation = RealFS;
+    // pub const Implementation = switch (build_target) {
+    // .wasi, .native => RealFS,
+    //     .wasm => WasmFS,
+    // };
 };
 
 pub const Directory = struct { path: Path, contents: []string };
@@ -1260,5 +1265,3 @@ test "PathName.init" {
     try std.testing.expectEqualStrings(res.base, "file");
     try std.testing.expectEqualStrings(res.ext, ".ext");
 }
-
-test {}

@@ -445,6 +445,7 @@ pub const PackageJSON = struct {
         dirname_fd: StoredFileDescriptorType,
         comptime generate_hash: bool,
         comptime include_scripts: bool,
+        
     ) ?PackageJSON {
 
         // TODO: remove this extra copy

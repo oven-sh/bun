@@ -4,9 +4,54 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "HTTP bench",
+      "program": "${workspaceFolder}/misctools/http_bench",
+      "args": ["https://registry.npmjs.org/next", "--count=1"],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "fetch debug",
       "program": "${workspaceFolder}/misctools/fetch",
-      "args": ["https://api.github.com/repos/hanford/trends/tarball"],
+      "args": ["https://api.github.com/repos/hanford/trends/tarball", "--verbose"],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "hop",
+      "program": "hop",
+      "args": ["swc-linux-arm64-musl-12.0.3.tgz"],
+      "cwd": "/Users/jarred/Downloads/hop-test",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "hop extract",
+      "program": "hop",
+      "args": ["swc-linux-arm64-musl-12.0.3.hop"],
+      "cwd": "/Users/jarred/Downloads/hop-test",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "fetch debug #2",
+      "program": "${workspaceFolder}/misctools/fetch",
+      "args": ["https://registry.npmjs.org/react", "--verbose"],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "fetch debug #3",
+      "program": "${workspaceFolder}/misctools/fetch",
+      "args": ["http://example.com/", "--verbose"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"
     },
@@ -185,7 +230,7 @@
       "request": "launch",
       "name": "Dazzle serve",
       "program": "bun-debug",
-      "args": ["--origin=http://localhost:5000", "--disable-hmr"],
+      "args": ["--origin=http://localhost:5001", "--disable-bun.js", "--disable-hmr"],
       "cwd": "/Users/jarred/Build/lattice/apps/dazzle",
       "console": "internalConsole"
     },
@@ -317,6 +362,65 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "Install",
+      "program": "bun-debug",
+      "args": ["install", "--backend=clonefile"],
+      "cwd": "/Users/jarred/Build/athena",
+      "env": {
+
+        "BUN_CONFIG_NO_DEDUPLICATE": "1"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Install #2",
+      "program": "bun-debug",
+      "args": ["add", "typescript"],
+      "cwd": "/tmp/wow-such-npm",
+      "env": {
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Add",
+      "program": "bun-debug",
+      "args": ["add", "react"],
+      "cwd": "/tmp/wow-such-npm",
+      "env": {
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Remove",
+      "program": "bun-debug",
+      "args": ["remove", "foo"],
+      "cwd": "/Users/jarred/Build/athena.yarn",
+      "env": {
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Print Lockfile",
+      "program": "bun-debug",
+      "args": ["./bun.lockb"],
+      "cwd": "/tmp/wow-such-npm",
+      "env": {
+        "BUN_CONFIG_SKIP_SAVE_LOCKFILE": "1"
+      
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "Integration Test Dev (no hmr)",
       "program": "bun-debug",
       "args": ["--disable-hmr"],
@@ -328,15 +432,6 @@
       "request": "launch",
       "name": "Fixtures Dev",
       "program": "a",
-      "args": ["dev"],
-      "cwd": "${workspaceFolder}/src/test/fixtures",
-      "console": "internalConsole"
-    },
-    {
-      "type": "cppvsdbg",
-      "request": "launch",
-      "name": "Fixtures Rel",
-      "program": "${workspaceFolder}/build/macos-x86_64/bun",
       "args": ["dev"],
       "cwd": "${workspaceFolder}/src/test/fixtures",
       "console": "internalConsole"
@@ -435,15 +530,7 @@
       "cwd": "${workspaceFolder}/src/test/fixtures",
       "console": "internalConsole"
     },
-    {
-      "name": "esbuild",
-      "type": "go",
-      "request": "launch",
-      "mode": "debug",
-      "program": "/Users/jarred/Code/esbuild/cmd/esbuild",
-      "cwd": "/Users/jarred/Code/bun/src/test/fixtures",
-      "args": ["--bundle", "--outfile=out.esbuild.js", "await.ts"]
-    },
+ 
 
     // {
     //   "type": "lldb",

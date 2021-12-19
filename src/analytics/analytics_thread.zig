@@ -2,7 +2,8 @@ usingnamespace @import("../global.zig");
 
 const sync = @import("../sync.zig");
 const std = @import("std");
-const HTTPClient = @import("../http_client.zig");
+const HTTP = @import("http");
+const NetworkThread = @import("network_thread");
 const URL = @import("../query_string_map.zig").URL;
 const Fs = @import("../fs.zig");
 const Analytics = @import("./analytics_schema.zig").analytics;
@@ -349,11 +350,24 @@ fn readloop() anyerror!void {
     defer Output.flush();
     thread.setName("Analytics") catch {};
 
-    var event_list = EventList.init();
-    event_list.client.verbose = FeatureFlags.verbose_analytics;
-    event_list.client.header_entries.append(default_allocator, header_entry) catch unreachable;
-    event_list.client.header_buf = headers_buf;
+    var event_list = try default_allocator.create(EventList);
+    event_list.* = EventList.init();
 
+    var headers_entries: Headers.Entries = Headers.Entries{};
+    headers_entries.append(default_allocator, header_entry) catch unreachable;
+    event_list.async_http = HTTP.AsyncHTTP.init(
+        default_allocator,
+        .POST,
+        URL.parse(Environment.analytics_url),
+        headers_entries,
+        headers_buf,
+        &event_list.out_buffer,
+        &event_list.in_buffer,
+        std.time.ns_per_ms * 10000,
+    ) catch return;
+
+    event_list.async_http.client.verbose = FeatureFlags.verbose_analytics;
+    NetworkThread.init() catch unreachable;
     // everybody's random should be random
     while (true) {
         // Wait for the next event by blocking
@@ -372,24 +386,18 @@ fn readloop() anyerror!void {
 pub const EventList = struct {
     header: Analytics.EventListHeader,
     events: std.ArrayList(Event),
-    client: HTTPClient,
+    async_http: HTTP.AsyncHTTP,
 
     out_buffer: MutableString,
-    in_buffer: std.ArrayList(u8),
+    in_buffer: MutableString,
 
     pub fn init() EventList {
         random = std.rand.DefaultPrng.init(@intCast(u64, std.time.milliTimestamp()));
         return EventList{
             .header = GenerateHeader.generate(),
             .events = std.ArrayList(Event).init(default_allocator),
-            .in_buffer = std.ArrayList(u8).init(default_allocator),
-            .client = HTTPClient.init(
-                default_allocator,
-                .POST,
-                URL.parse(Environment.analytics_url),
-                Headers.Entries{},
-                "",
-            ),
+            .in_buffer = MutableString.init(default_allocator, 1024) catch unreachable,
+            .async_http = undefined,
             .out_buffer = MutableString.init(default_allocator, 0) catch unreachable,
         };
     }
@@ -408,9 +416,9 @@ pub const EventList = struct {
     pub var is_stuck = false;
     var stuck_count: u8 = 0;
     fn _flush(this: *EventList) !void {
-        this.in_buffer.clearRetainingCapacity();
+        this.in_buffer.reset();
 
-        const AnalyticsWriter = Writer(*std.ArrayList(u8).Writer);
+        const AnalyticsWriter = Writer(*MutableString.Writer);
 
         var in_buffer = &this.in_buffer;
         var buffer_writer = in_buffer.writer();
@@ -456,7 +464,7 @@ pub const EventList = struct {
 
         var retry_remaining: usize = 10;
         retry: while (retry_remaining > 0) {
-            const response = this.client.send(this.in_buffer.items, &this.out_buffer) catch |err| {
+            const response = this.async_http.sendSync() catch |err| {
                 if (FeatureFlags.verbose_analytics) {
                     Output.prettyErrorln("[Analytics] failed due to error {s} ({d} retries remain)", .{ @errorName(err), retry_remaining });
                 }
@@ -490,7 +498,7 @@ pub const EventList = struct {
         stuck_count *= @intCast(u8, @boolToInt(retry_remaining == 0));
         disabled = disabled or stuck_count > 4;
 
-        this.in_buffer.clearRetainingCapacity();
+        this.in_buffer.reset();
         this.out_buffer.reset();
 
         if (comptime FeatureFlags.verbose_analytics) {

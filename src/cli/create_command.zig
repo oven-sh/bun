@@ -21,7 +21,8 @@ const bundler = @import("../bundler.zig");
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const fs = @import("../fs.zig");
 const URL = @import("../query_string_map.zig").URL;
-const HTTPClient = @import("../http_client.zig");
+const HTTP = @import("http");
+const NetworkThread = @import("network_thread");
 const ParseJSON = @import("../json_parser.zig").ParseJSON;
 const Archive = @import("../libarchive/libarchive.zig").Archive;
 const Zlib = @import("../zlib.zig");
@@ -186,9 +187,6 @@ const CreateOptions = struct {
 
     const params = [_]clap.Param(clap.Help){
         clap.parseParam("--help                     Print this menu") catch unreachable,
-        clap.parseParam("--npm                      Use npm for tasks & install") catch unreachable,
-        clap.parseParam("--yarn                     Use yarn for tasks & install") catch unreachable,
-        clap.parseParam("--pnpm                     Use pnpm for tasks & install") catch unreachable,
         clap.parseParam("--force                    Overwrite existing files") catch unreachable,
         clap.parseParam("--no-install               Don't install node_modules") catch unreachable,
         clap.parseParam("--no-git                   Don't create a git repository") catch unreachable,
@@ -232,18 +230,6 @@ const CreateOptions = struct {
             opts.positionals = opts.positionals[1..];
         }
 
-        if (args.flag("--npm")) {
-            opts.npm_client = NPMClient.Tag.npm;
-        }
-
-        if (args.flag("--yarn")) {
-            opts.npm_client = NPMClient.Tag.yarn;
-        }
-
-        if (args.flag("--pnpm")) {
-            opts.npm_client = NPMClient.Tag.pnpm;
-        }
-
         opts.skip_package_json = args.flag("--no-package-json");
 
         opts.verbose = args.flag("--verbose");
@@ -259,10 +245,9 @@ const CreateOptions = struct {
 const BUN_CREATE_DIR = ".bun-create";
 var home_dir_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 pub const CreateCommand = struct {
-    var client: HTTPClient = undefined;
-
     pub fn exec(ctx: Command.Context, positionals_: []const []const u8) !void {
         Global.configureAllocator(.{ .long_running = false });
+        try NetworkThread.init();
 
         var create_options = try CreateOptions.parse(ctx, false);
         const positionals = create_options.positionals;
@@ -785,11 +770,8 @@ pub const CreateCommand = struct {
                         .{ "@parcel/core", void{} },
                         .{ "@swc/cli", void{} },
                         .{ "@swc/core", void{} },
-                        .{ "@vitejs/plugin-react", void{} },
                         .{ "@webpack/cli", void{} },
                         .{ "react-scripts", void{} },
-                        .{ "swc", void{} },
-                        .{ "vite", void{} },
                         .{ "webpack-cli", void{} },
                         .{ "webpack", void{} },
 
@@ -1504,22 +1486,10 @@ pub const CreateCommand = struct {
         }
 
         if (!create_options.skip_install) {
-            if (env_loader.map.get("NPM_CLIENT")) |npm_client_bin| {
-                npm_client_ = NPMClient{ .tag = .npm, .bin = npm_client_bin };
-            } else if (PATH.len > 0) {
-                var realpath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-
-                if (create_options.npm_client) |tag| {
-                    if (which(&realpath_buf, PATH, destination, @tagName(tag))) |bin| {
-                        npm_client_ = NPMClient{ .tag = tag, .bin = try ctx.allocator.dupe(u8, bin) };
-                    }
-                } else if (try NPMClient.detect(ctx.allocator, &realpath_buf, PATH, destination, true)) |npmclient| {
-                    npm_client_ = NPMClient{
-                        .bin = try ctx.allocator.dupe(u8, npmclient.bin),
-                        .tag = npmclient.tag,
-                    };
-                }
-            }
+            npm_client_ = NPMClient{
+                .tag = .bun,
+                .bin = try std.fs.selfExePathAlloc(ctx.allocator),
+            };
         }
 
         if (npm_client_ != null and preinstall_tasks.items.len > 0) {
@@ -1530,13 +1500,7 @@ pub const CreateCommand = struct {
 
         if (npm_client_) |npm_client| {
             const start_time = std.time.nanoTimestamp();
-            const install_args_ = [_]string{ npm_client.bin, "install", "--loglevel=error", "--no-fund", "--no-audit" };
-            const len: usize = switch (npm_client.tag) {
-                .npm => install_args_.len,
-                else => 2,
-            };
-
-            const install_args = install_args_[0..len];
+            const install_args = &[_]string{ npm_client.bin, "install" };
             Output.flush();
             Output.pretty("\n<r><d>$ <b><cyan>{s}<r><d> install", .{@tagName(npm_client.tag)});
             var writer = Output.writer();
@@ -1568,8 +1532,6 @@ pub const CreateCommand = struct {
             var term = try process.spawnAndWait();
 
             _ = process.kill() catch undefined;
-        } else if (!create_options.skip_install) {
-            progress.log("Failed to detect npm client. Tried pnpm, yarn, and npm.\n", .{});
         }
 
         if (postinstall_tasks.items.len > 0) {
@@ -1709,43 +1671,6 @@ const Commands = .{
 };
 const picohttp = @import("picohttp");
 
-const PackageDownloadThread = struct {
-    thread: std.Thread,
-    client: HTTPClient,
-    tarball_url: string,
-    allocator: *std.mem.Allocator,
-    buffer: MutableString,
-    done: std.atomic.Atomic(u32),
-    response: picohttp.Response = undefined,
-
-    pub fn threadHandler(this: *PackageDownloadThread) !void {
-        this.done.store(0, .Release);
-        this.response = try this.client.send("", &this.buffer);
-        this.done.store(1, .Release);
-        Futex.wake(&this.done, 1);
-    }
-
-    pub fn spawn(allocator: *std.mem.Allocator, tarball_url: string, progress_node: *std.Progress.Node) !*PackageDownloadThread {
-        var download = try allocator.create(PackageDownloadThread);
-        download.* = PackageDownloadThread{
-            .allocator = allocator,
-            .client = HTTPClient.init(allocator, .GET, URL.parse(tarball_url), .{}, ""),
-            .tarball_url = tarball_url,
-            .buffer = try MutableString.init(allocator, 1024),
-            .done = std.atomic.Atomic(u32).init(0),
-            .thread = undefined,
-        };
-
-        if (Output.enable_ansi_colors) {
-            download.client.progress_node = progress_node;
-        }
-
-        download.thread = try std.Thread.spawn(.{}, threadHandler, .{download});
-
-        return download;
-    }
-};
-
 pub const DownloadedExample = struct {
     tarball_bytes: MutableString,
     example: Example,
@@ -1764,7 +1689,6 @@ pub const Example = struct {
         local_folder,
     };
 
-    var client: HTTPClient = undefined;
     const examples_url: string = "https://registry.npmjs.org/bun-examples-all/latest";
     var url: URL = undefined;
     pub const timeout: u32 = 6000;
@@ -1873,7 +1797,6 @@ pub const Example = struct {
         var owner_i = std.mem.indexOfScalar(u8, name, '/').?;
         var owner = name[0..owner_i];
         var repository = name[owner_i + 1 ..];
-        var mutable = try MutableString.init(ctx.allocator, 8096);
 
         if (std.mem.indexOfScalar(u8, repository, '/')) |i| {
             repository = repository[0..i];
@@ -1919,17 +1842,16 @@ pub const Example = struct {
             }
         }
 
-        client = HTTPClient.init(
-            ctx.allocator,
-            .GET,
-            api_url,
-            header_entries,
-            headers_buf,
-        );
-        client.timeout = timeout;
-        client.progress_node = progress;
+        var mutable = try ctx.allocator.create(MutableString);
+        mutable.* = try MutableString.init(ctx.allocator, 8096);
 
-        var response = try client.send("", &mutable);
+        var request_body = try MutableString.init(ctx.allocator, 0);
+
+        // ensure very stable memory address
+        var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
+        async_http.* = try HTTP.AsyncHTTP.init(ctx.allocator, .GET, api_url, header_entries, headers_buf, mutable, &request_body, 60 * std.time.ns_per_min);
+        async_http.client.progress_node = progress;
+        const response = try async_http.sendSync();
 
         switch (response.status_code) {
             404 => return error.GitHubRepositoryNotFound,
@@ -1977,7 +1899,7 @@ pub const Example = struct {
             Global.crash();
         }
 
-        return mutable;
+        return mutable.*;
     }
 
     pub fn fetch(ctx: Command.Context, name: string, refresher: *std.Progress, progress: *std.Progress.Node) !MutableString {
@@ -1986,13 +1908,17 @@ pub const Example = struct {
 
         const example_start = std.time.nanoTimestamp();
         var url_buf: [1024]u8 = undefined;
-        var mutable = try MutableString.init(ctx.allocator, 2048);
+        var mutable = try ctx.allocator.create(MutableString);
+        mutable.* = try MutableString.init(ctx.allocator, 2048);
 
+        var request_body = try MutableString.init(ctx.allocator, 0);
         url = URL.parse(try std.fmt.bufPrint(&url_buf, "https://registry.npmjs.org/@bun-examples/{s}/latest", .{name}));
-        client = HTTPClient.init(ctx.allocator, .GET, url, .{}, "");
-        client.timeout = timeout;
-        client.progress_node = progress;
-        var response = try client.send("", &mutable);
+
+        // ensure very stable memory address
+        var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
+        async_http.* = try HTTP.AsyncHTTP.init(ctx.allocator, .GET, url, .{}, "", mutable, &request_body, 60 * std.time.ns_per_min);
+        async_http.client.progress_node = progress;
+        var response = try async_http.sendSync();
 
         switch (response.status_code) {
             404 => return error.ExampleNotFound,
@@ -2044,7 +1970,7 @@ pub const Example = struct {
                 if (q.expr.asProperty("tarball")) |p| {
                     if (p.expr.asString(ctx.allocator)) |s| {
                         if (s.len > 0 and (strings.startsWith(s, "https://") or strings.startsWith(s, "http://"))) {
-                            break :brk s;
+                            break :brk ctx.allocator.dupe(u8, s) catch unreachable;
                         }
                     }
                 }
@@ -2061,40 +1987,48 @@ pub const Example = struct {
         progress.name = "Downloading tarball";
         refresher.refresh();
 
-        var thread: *PackageDownloadThread = try PackageDownloadThread.spawn(ctx.allocator, tarball_url, progress);
+        // reuse mutable buffer
+        // safe because the only thing we care about is the tarball url
+        mutable.reset();
+
+        // ensure very stable memory address
+        async_http.* = try HTTP.AsyncHTTP.init(ctx.allocator, .GET, URL.parse(tarball_url), .{}, "", mutable, &request_body, 60 * std.time.ns_per_min);
+        async_http.client.progress_node = progress;
+
         refresher.maybeRefresh();
 
-        while (thread.done.load(.Acquire) == 0) {
-            Futex.wait(&thread.done, 1, std.time.ns_per_ms * 10000) catch {};
-        }
+        response = try async_http.sendSync();
 
         refresher.maybeRefresh();
 
-        if (thread.response.status_code != 200) {
+        if (response.status_code != 200) {
             progress.end();
             refresher.refresh();
-            Output.prettyErrorln("Error fetching tarball: <r><red>{d}<r>", .{thread.response.status_code});
+            Output.prettyErrorln("Error fetching tarball: <r><red>{d}<r>", .{response.status_code});
             Output.flush();
             std.os.exit(1);
         }
 
         refresher.refresh();
-        thread.thread.join();
 
-        return thread.buffer;
+        return mutable.*;
     }
 
     pub fn fetchAll(ctx: Command.Context, progress_node: ?*std.Progress.Node) ![]Example {
         url = URL.parse(examples_url);
-        client = HTTPClient.init(ctx.allocator, .GET, url, .{}, "");
-        client.timeout = timeout;
+
+        var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
+        var request_body = try MutableString.init(ctx.allocator, 0);
+        var mutable = try ctx.allocator.create(MutableString);
+        mutable.* = try MutableString.init(ctx.allocator, 2048);
+
+        async_http.* = try HTTP.AsyncHTTP.init(ctx.allocator, .GET, url, .{}, "", mutable, &request_body, 60 * std.time.ns_per_min);
 
         if (Output.enable_ansi_colors) {
-            client.progress_node = progress_node;
+            async_http.client.progress_node = progress_node;
         }
 
-        var mutable: MutableString = try MutableString.init(ctx.allocator, 1024);
-        var response = client.send("", &mutable) catch |err| {
+        const response = async_http.sendSync() catch |err| {
             switch (err) {
                 error.WouldBlock => {
                     Output.prettyErrorln("Request timed out while trying to fetch examples list. Please try again", .{});

@@ -20,6 +20,7 @@ const resolve_path = @import("./resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("./javascript/jsc/config.zig").configureTransformOptionsForBun;
 const clap = @import("clap");
 
+const Install = @import("./install/install.zig");
 const bundler = @import("bundler.zig");
 const DotEnv = @import("./env_loader.zig");
 
@@ -36,8 +37,13 @@ const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
 const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
 const RunCommand = @import("./cli/run_command.zig").RunCommand;
 const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
+const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
+const AddCommand = @import("./cli/add_command.zig").AddCommand;
+const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
+const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
 const InstallCompletionsCommand = @import("./cli/install_completions_command.zig").InstallCompletionsCommand;
 const ShellCompletions = @import("./cli/shell_completions.zig");
+
 var start_time: i128 = undefined;
 
 pub const Cli = struct {
@@ -150,11 +156,6 @@ pub const Arguments = struct {
         clap.parseParam("-u, --origin <STR>                Rewrite import URLs to start with --origin. Default: \"\"") catch unreachable,
         clap.parseParam("-p, --port <STR>                      Port to serve Bun's dev server on. Default: \"3000\"") catch unreachable,
         clap.parseParam("--silent                          Don't repeat the command for bun run") catch unreachable,
-
-        // clap.parseParam("-o, --outdir <STR>                Save output to directory (default: \"out\" if none provided and multiple entry points passed)") catch unreachable,
-        // clap.parseParam("-r, --resolve <STR>               Determine import/require behavior. \"disable\" ignores. \"dev\" bundles node_modules and builds everything else as independent entry points") catch unreachable,
-        // clap.parseParam("-r, --resolve <STR>               Determine import/require behavior. \"disable\" ignores. \"dev\" bundles node_modules and builds everything else as independent entry points") catch unreachable,
-
         clap.parseParam("<POS>...                          ") catch unreachable,
     };
 
@@ -454,45 +455,69 @@ const HelpCommand = struct {
         invalid_command,
     };
 
+    // someone will get mad at me for this
+    pub const packages_to_remove_filler = [_]string{
+        "moment",
+        "underscore",
+        "jquery",
+        "backbone",
+        "redux",
+        "browserify",
+        "webpack",
+        "babel-core",
+    };
+
+    pub const packages_to_add_filler = [_]string{
+        "astro",
+        "react",
+        "next@^12",
+        "tailwindcss",
+        "wrangler@beta",
+        "@compiled/react",
+        "@remix-run/dev",
+    };
+
     pub fn printWithReason(comptime reason: Reason) void {
         var cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         const cwd = std.os.getcwd(&cwd_buf) catch unreachable;
         const dirname = std.fs.path.basename(cwd);
-        if (FeatureFlags.dev_only) {
-            const fmt =
-                \\> <r> <b><green>dev     <r><d>  ./a.ts ./b.jsx<r>        Start a Bun Dev Server
-                \\> <r> <b><magenta>bun     <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
-                \\> <r> <b><green>run     <r><d>  test        <r>          Run a package.json script or executable<r>
-                \\> <r> <b><cyan>create    <r><d>next ./app<r>            Start a new project from a template <d>(shorthand: c)<r>
-                \\> <r> <b><blue>upgrade <r>                        Get the latest version of Bun
-                \\> <r> <b><d>completions<r>                     Install shell completions for tab-completion
-                \\> <r> <b><d>discord <r>                        Open Bun's Discord server
-                \\> <r> <b><d>help      <r>                      Print this help menu
-                \\
-            ;
 
-            switch (reason) {
-                .explicit => Output.pretty("<r><b><magenta>Bun<r>: a fast bundler, transpiler and task runner for web software.\n\n" ++ fmt, .{}),
-                .invalid_command => Output.prettyError("<r><red>Uh-oh<r> not sure what to do with that command.\n\n" ++ fmt, .{}),
-            }
-        } else {
-            const fmt =
-                \\> <r> <b><white>init<r>                           Setup Bun in \"{s}\"
-                \\> <r> <b><green>dev    <r><d>  ./a.ts ./b.jsx<r>        Start a Bun Dev Server
-                \\<d>*<r> <b><cyan>build  <r><d>  ./a.ts ./b.jsx<r>        Make JavaScript-like code runnable & bundle CSS
-                \\> <r> <b><cyan>create<r><d> next  ./app<r>        Start a new project from a template<r>
-                \\> <r> <b><magenta>bun    <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
-                \\> <r> <green>run    <r><d>  ./a.ts        <r>        Run a JavaScript-like file with Bun.js
-                \\> <r> <b><blue>discord<r>                           Open Bun's Discord server
-                \\> <r> <b><blue>upgrade <r>                        Get the latest version of Bun
-                \\> <r> <b><d>help      <r>                        Print this help menu
-                \\
-            ;
+        const fmt =
+            \\> <r> <b><green>dev     <r><d>  ./a.ts ./b.jsx<r>        Start a Bun Dev Server
+            \\> <r> <b><magenta>bun     <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
+            \\
+            \\> <r> <b><cyan>create    <r><d>next ./app<r>            Start a new project from a template <d>(bun c)<r>
+            \\> <r> <b><magenta>run     <r><d>  test        <r>          Run a package.json script or executable<r>
+            \\> <r> <b><green>install<r>                         Install dependencies for a package.json <d>(bun i)<r>
+            \\> <r> <b><blue>add     <r><d>  {s:<16}<r>      Add a dependency to package.json <d>(bun a)<r>
+            \\> <r> remove  <r><d>  {s:<16}<r>      Remove a dependency from package.json <d>(bun rm)<r>
+            \\> <r> pm  <r>                                               More package manager-related subcommands
+            \\
+            \\> <r> <b><blue>upgrade <r>                        Get the latest version of Bun
+            \\> <r> <b><d>completions<r>                     Install shell completions for tab-completion
+            \\> <r> <b><d>discord <r>                        Open Bun's Discord server
+            \\> <r> <b><d>help      <r>                      Print this help menu
+            \\
+        ;
 
-            switch (reason) {
-                .explicit => Output.pretty("<r><b><magenta>Bun<r>: a fast bundler, transpiler and task runner for web software.\n\n" ++ fmt, .{dirname}),
-                .invalid_command => Output.prettyError("<r><red>Uh-oh<r> not sure what to do with that command.\n\n" ++ fmt, .{dirname}),
-            }
+        var rand = std.rand.DefaultPrng.init(@intCast(u64, @maximum(std.time.milliTimestamp(), 0)));
+        const package_add_i = rand.random.uintAtMost(usize, packages_to_add_filler.len - 1);
+        const package_remove_i = rand.random.uintAtMost(usize, packages_to_remove_filler.len - 1);
+
+        const args = .{
+            packages_to_add_filler[package_add_i],
+            packages_to_remove_filler[package_remove_i],
+        };
+
+        switch (reason) {
+            .explicit => Output.pretty(
+                "<r><b><magenta>Bun<r>: a fast bundler, transpiler, JavaScript Runtime and package manager for web software.\n\n" ++ fmt,
+                args,
+            ),
+            .invalid_command => Output.prettyError(
+                "<r><red>Uh-oh<r> not sure what to do with that command.\n\n" ++ fmt,
+                args,
+            ),
         }
 
         Output.flush();
@@ -556,7 +581,7 @@ pub const Command = struct {
                 .allocator = allocator,
             };
 
-            if (comptime command != Command.Tag.CreateCommand) {
+            if (comptime Command.Tag.uses_global_options.get(command)) {
                 ctx.args = try Arguments.parse(allocator, &ctx, command);
             }
 
@@ -581,42 +606,39 @@ pub const Command = struct {
         const first_arg_name = std.mem.span(next_arg);
         const RootCommandMatcher = strings.ExactSizeMatcher(16);
 
-        if (comptime FeatureFlags.dev_only) {
-            return switch (RootCommandMatcher.match(first_arg_name)) {
-                RootCommandMatcher.case("init") => .InitCommand,
-                RootCommandMatcher.case("bun") => .BunCommand,
-                RootCommandMatcher.case("discord") => .DiscordCommand,
-                RootCommandMatcher.case("upgrade") => .UpgradeCommand,
-                RootCommandMatcher.case("completions") => .InstallCompletionsCommand,
-                RootCommandMatcher.case("getcompletes") => .GetCompletionsCommand,
-                RootCommandMatcher.case("c"), RootCommandMatcher.case("create") => .CreateCommand,
+        return switch (RootCommandMatcher.match(first_arg_name)) {
+            RootCommandMatcher.case("init") => .InitCommand,
+            RootCommandMatcher.case("bun") => .BunCommand,
+            RootCommandMatcher.case("discord") => .DiscordCommand,
+            RootCommandMatcher.case("upgrade") => .UpgradeCommand,
+            RootCommandMatcher.case("completions") => .InstallCompletionsCommand,
+            RootCommandMatcher.case("getcompletes") => .GetCompletionsCommand,
 
-                RootCommandMatcher.case("b"), RootCommandMatcher.case("build") => .BuildCommand,
-                RootCommandMatcher.case("r"), RootCommandMatcher.case("run") => .RunCommand,
-                RootCommandMatcher.case("d"), RootCommandMatcher.case("dev") => .DevCommand,
+            RootCommandMatcher.case("i"), RootCommandMatcher.case("install") => .InstallCommand,
+            RootCommandMatcher.case("c"), RootCommandMatcher.case("create") => .CreateCommand,
 
-                RootCommandMatcher.case("help") => .HelpCommand,
-                else => .AutoCommand,
-            };
-        } else {
-            return switch (RootCommandMatcher.match(first_arg_name)) {
-                RootCommandMatcher.case("init") => .InitCommand,
-                RootCommandMatcher.case("bun") => .BunCommand,
-                RootCommandMatcher.case("discord") => .DiscordCommand,
-                RootCommandMatcher.case("d"), RootCommandMatcher.case("dev") => .DevCommand,
-                RootCommandMatcher.case("c"), RootCommandMatcher.case("create") => .CreateCommand,
-                RootCommandMatcher.case("upgrade") => .UpgradeCommand,
+            RootCommandMatcher.case("pm") => .PackageManagerCommand,
 
-                RootCommandMatcher.case("help") => .HelpCommand,
-                else => .AutoCommand,
-            };
-        }
+            RootCommandMatcher.case("add"), RootCommandMatcher.case("update"), RootCommandMatcher.case("a") => .AddCommand,
+            RootCommandMatcher.case("remove"), RootCommandMatcher.case("rm") => .RemoveCommand,
+
+            RootCommandMatcher.case("b"), RootCommandMatcher.case("build") => .BuildCommand,
+            RootCommandMatcher.case("run") => .RunCommand,
+            RootCommandMatcher.case("d"), RootCommandMatcher.case("dev") => .DevCommand,
+
+            RootCommandMatcher.case("help") => .HelpCommand,
+            else => .AutoCommand,
+        };
     }
 
     const default_completions_list = [_]string{
         // "build",
+        "install",
+        "add",
+        "remove",
         "run",
         "dev",
+        "install",
         "create",
         "bun",
         "upgrade",
@@ -656,6 +678,30 @@ pub const Command = struct {
             },
             .InstallCompletionsCommand => {
                 try InstallCompletionsCommand.exec(allocator);
+                return;
+            },
+            .InstallCommand => {
+                const ctx = try Command.Context.create(allocator, log, .InstallCommand);
+
+                try InstallCommand.exec(ctx);
+                return;
+            },
+            .AddCommand => {
+                const ctx = try Command.Context.create(allocator, log, .AddCommand);
+
+                try AddCommand.exec(ctx);
+                return;
+            },
+            .RemoveCommand => {
+                const ctx = try Command.Context.create(allocator, log, .RemoveCommand);
+
+                try RemoveCommand.exec(ctx);
+                return;
+            },
+            .PackageManagerCommand => {
+                const ctx = try Command.Context.create(allocator, log, .PackageManagerCommand);
+
+                try PackageManagerCommand.exec(ctx);
                 return;
             },
             .GetCompletionsCommand => {
@@ -746,11 +792,24 @@ pub const Command = struct {
                     }
                 };
 
-                if (ctx.args.entry_points.len == 1 and
-                    std.mem.endsWith(u8, ctx.args.entry_points[0], ".bun"))
-                {
-                    try PrintBundleCommand.exec(ctx);
-                    return;
+                // KEYWORDS: open file argv argv0
+                if (ctx.args.entry_points.len == 1) {
+                    const extension = std.fs.path.extension(ctx.args.entry_points[0]);
+
+                    if (strings.eqlComptime(extension, ".bun")) {
+                        try PrintBundleCommand.exec(ctx);
+                        return;
+                    }
+
+                    if (strings.eqlComptime(extension, ".lockb")) {
+                        try Install.Lockfile.Printer.print(
+                            ctx.allocator,
+                            ctx.log,
+                            ctx.args.entry_points[0],
+                            .yarn,
+                        );
+                        return;
+                    }
                 }
 
                 if (ctx.positionals.len > 0 and (std.fs.path.extension(ctx.positionals[0]).len == 0)) {
@@ -770,17 +829,29 @@ pub const Command = struct {
     }
 
     pub const Tag = enum {
-        InitCommand,
+        AutoCommand,
+        BuildCommand,
         BunCommand,
+        CreateCommand,
         DevCommand,
         DiscordCommand,
-        BuildCommand,
-        RunCommand,
-        AutoCommand,
-        HelpCommand,
-        CreateCommand,
-        UpgradeCommand,
-        InstallCompletionsCommand,
         GetCompletionsCommand,
+        HelpCommand,
+        InitCommand,
+        InstallCommand,
+        AddCommand,
+        RemoveCommand,
+        InstallCompletionsCommand,
+        RunCommand,
+        UpgradeCommand,
+        PackageManagerCommand,
+
+        pub const uses_global_options: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(true, .{
+            .CreateCommand = false,
+            .InstallCommand = false,
+            .AddCommand = false,
+            .RemoveCommand = false,
+            .PackageManagerCommand = false,
+        });
     };
 };

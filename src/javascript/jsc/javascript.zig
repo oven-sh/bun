@@ -727,6 +727,13 @@ pub const Module = struct {
     reload_pending: bool = false,
 };
 
+const FetchTasklet = Fetch.FetchTasklet;
+const TaggedPointerUnion = @import("../../tagged_pointer.zig").TaggedPointerUnion;
+pub const Task = TaggedPointerUnion(.{
+    FetchTasklet,
+    Microtask,
+});
+
 // If you read JavascriptCore/API/JSVirtualMachine.mm - https://github.com/WebKit/WebKit/blob/acff93fb303baa670c055cb24c2bad08691a01a0/Source/JavaScriptCore/API/JSVirtualMachine.mm#L101
 // We can see that it's sort of like std.mem.Allocator but for JSGlobalContextRef, to support Automatic Reference Counting
 // Its unavailable on Linux
@@ -761,6 +768,52 @@ pub const VirtualMachine = struct {
     has_any_macro_remappings: bool = false,
 
     origin_timer: std.time.Timer = undefined,
+
+    ready_tasks_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
+    pending_tasks_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
+    microtasks_queue: std.ArrayList(Task) = std.ArrayList(Task).init(default_allocator),
+
+    pub fn enqueueTask(this: *VirtualMachine, task: Task) !void {
+        _ = this.pending_tasks_count.fetchAdd(1, .Monotonic);
+        try this.microtasks_queue.append(task);
+    }
+
+    pub fn tick(this: *VirtualMachine) void {
+        this.global.vm().drainMicrotasks();
+        _ = this.eventLoopTick();
+    }
+
+    // 👶👶👶 event loop 👶👶👶
+    pub fn eventLoopTick(this: *VirtualMachine) u32 {
+        var finished: u32 = 0;
+        var i: usize = 0;
+        while (i < this.microtasks_queue.items.len) {
+            var task: Task = this.microtasks_queue.items[i];
+            switch (task.tag()) {
+                .Microtask => {
+                    var micro: *Microtask = task.get(Microtask).?;
+                    _ = this.microtasks_queue.swapRemove(i);
+                    micro.run(this.global);
+
+                    finished += 1;
+                    continue;
+                },
+                .FetchTasklet => {
+                    var fetch_task: *Fetch.FetchTasklet = task.get(Fetch.FetchTasklet).?;
+                    if (fetch_task.status == .done) {
+                        _ = this.ready_tasks_count.fetchSub(1, .Monotonic);
+                        _ = this.microtasks_queue.swapRemove(i);
+                        fetch_task.onDone();
+                        finished += 1;
+                        continue;
+                    }
+                },
+                else => unreachable,
+            }
+            i += 1;
+        }
+        return finished;
+    }
 
     pub const MacroMap = std.AutoArrayHashMap(i32, js.JSObjectRef);
 
@@ -1212,7 +1265,15 @@ pub const VirtualMachine = struct {
 
         ret.path = result_path.text;
     }
+    pub fn queueMicrotaskToEventLoop(
+        global: *JSGlobalObject,
+        microtask: *Microtask,
+    ) void {
+        std.debug.assert(VirtualMachine.vm_loaded);
+        std.debug.assert(VirtualMachine.vm.global == global);
 
+        vm.enqueueTask(Task.init(microtask)) catch unreachable;
+    }
     pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) void {
         var result = ResolveFunctionResult{ .path = "", .result = null };
 
@@ -1411,10 +1472,10 @@ pub const VirtualMachine = struct {
         if (this.node_modules != null) {
             promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.init(std.mem.span(bun_file_import_path)));
 
-            this.global.vm().drainMicrotasks();
+            this.tick();
 
             while (promise.status(this.global.vm()) == JSPromise.Status.Pending) {
-                this.global.vm().drainMicrotasks();
+                this.tick();
             }
 
             if (promise.status(this.global.vm()) == JSPromise.Status.Rejected) {
@@ -1426,10 +1487,10 @@ pub const VirtualMachine = struct {
 
         promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.init(std.mem.span(main_file_name)));
 
-        this.global.vm().drainMicrotasks();
+        this.tick();
 
         while (promise.status(this.global.vm()) == JSPromise.Status.Pending) {
-            this.global.vm().drainMicrotasks();
+            this.tick();
         }
 
         return promise;
@@ -1446,30 +1507,13 @@ pub const VirtualMachine = struct {
         var entry_point = entry_point_entry.value_ptr.*;
 
         var promise: *JSInternalPromise = undefined;
-        // We first import the node_modules bundle. This prevents any potential TDZ issues.
-        // The contents of the node_modules bundle are lazy, so hopefully this should be pretty quick.
-        // if (this.node_modules != null) {
-        //     promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.init(std.mem.span(bun_file_import_path)));
-
-        //     this.global.vm().drainMicrotasks();
-
-        //     while (promise.status(this.global.vm()) == JSPromise.Status.Pending) {
-        //         this.global.vm().drainMicrotasks();
-        //     }
-
-        //     if (promise.status(this.global.vm()) == JSPromise.Status.Rejected) {
-        //         return promise;
-        //     }
-
-        //     _ = promise.result(this.global.vm());
-        // }
 
         promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.init(entry_point.source.path.text));
 
-        this.global.vm().drainMicrotasks();
+        this.tick();
 
         while (promise.status(this.global.vm()) == JSPromise.Status.Pending) {
-            this.global.vm().drainMicrotasks();
+            this.tick();
         }
 
         return promise;
@@ -1907,7 +1951,7 @@ pub const EventListenerMixin = struct {
 
             var result = js.JSObjectCallAsFunctionReturnValue(vm.global.ref(), listener_ref, null, 1, &fetch_args);
             var promise = JSPromise.resolvedPromise(vm.global, result);
-            vm.global.vm().drainMicrotasks();
+            vm.tick();
 
             if (fetch_event.rejected) return;
 
@@ -1918,7 +1962,7 @@ pub const EventListenerMixin = struct {
                 _ = promise.result(vm.global.vm());
             }
 
-            vm.global.vm().drainMicrotasks();
+            vm.tick();
 
             if (fetch_event.request_context.has_called_done) {
                 break;

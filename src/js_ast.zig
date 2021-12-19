@@ -1058,6 +1058,16 @@ pub const E = struct {
     pub const Number = struct {
         value: f64,
 
+        pub inline fn toU64(self: Number) u64 {
+            @setRuntimeSafety(false);
+            return @floatToInt(u64, @maximum(@trunc(self.value), 0));
+        }
+
+        pub inline fn toU32(self: Number) u32 {
+            @setRuntimeSafety(false);
+            return @floatToInt(u32, @maximum(@trunc(self.value), 0));
+        }
+
         pub fn jsonStringify(self: *const Number, opts: anytype, o: anytype) !void {
             return try std.json.stringify(self.value, opts, o);
         }
@@ -1078,6 +1088,65 @@ pub const E = struct {
         comma_after_spread: ?logger.Loc = null,
         is_single_line: bool = false,
         is_parenthesized: bool = false,
+
+        pub fn alphabetizeProperties(this: *Object) void {
+            std.sort.sort(G.Property, this.properties, void{}, Sorter.isLessThan);
+        }
+
+        pub fn packageJSONSort(this: *Object) void {
+            std.sort.sort(G.Property, this.properties, void{}, PackageJSONSort.Fields.isLessThan);
+        }
+
+        const PackageJSONSort = struct {
+            const Fields = struct {
+                const name: u8 = 0;
+                const version: u8 = 1;
+                const main: u8 = 2;
+                const module: u8 = 3;
+                const dependencies: u8 = 3;
+                const devDependencies: u8 = 4;
+                const optionalDependencies: u8 = 5;
+                const peerDependencies: u8 = 6;
+                const exports: u8 = 7;
+
+                pub const Map = std.ComptimeStringMap(u8, .{
+                    .{ "name", name },
+                    .{ "version", version },
+                    .{ "main", main },
+                    .{ "module", module },
+                    .{ "dependencies", dependencies },
+                    .{ "devDependencies", devDependencies },
+                    .{ "optionalDependencies", optionalDependencies },
+                    .{ "peerDependencies", peerDependencies },
+                    .{ "exports", exports },
+                });
+
+                pub fn isLessThan(ctx: void, lhs: G.Property, rhs: G.Property) bool {
+                    var lhs_key_size: u8 = 8;
+                    var rhs_key_size: u8 = 8;
+
+                    if (lhs.key != null and lhs.key.?.data == .e_string) {
+                        lhs_key_size = Map.get(lhs.key.?.data.e_string.utf8) orelse 8;
+                    }
+
+                    if (rhs.key != null and rhs.key.?.data == .e_string) {
+                        rhs_key_size = Map.get(rhs.key.?.data.e_string.utf8) orelse 8;
+                    }
+
+                    return switch (std.math.order(lhs_key_size, rhs_key_size)) {
+                        .lt => true,
+                        .gt => false,
+                        .eq => strings.cmpStringsAsc(ctx, lhs.key.?.data.e_string.utf8, rhs.key.?.data.e_string.utf8),
+                    };
+                }
+            };
+        };
+
+        const Sorter = struct {
+            pub fn isLessThan(ctx: void, lhs: G.Property, rhs: G.Property) bool {
+                return strings.cmpStringsAsc(ctx, lhs.key.?.data.e_string.utf8, rhs.key.?.data.e_string.utf8);
+            }
+        };
     };
 
     pub const Spread = struct { value: ExprNodeIndex };
@@ -1110,16 +1179,20 @@ pub const E = struct {
             }
         }
 
+        pub inline fn len(s: *const String) usize {
+            return @maximum(s.utf8.len, s.value.len);
+        }
+
         pub inline fn isUTF8(s: *const String) bool {
-            return @maximum(s.utf8.len, s.value.len) == s.utf8.len;
+            return s.len() == s.utf8.len;
         }
 
         pub inline fn isBlank(s: *const String) bool {
-            return @maximum(s.utf8.len, s.value.len) == 0;
+            return s.len() == 0;
         }
 
         pub inline fn isPresent(s: *const String) bool {
-            return @maximum(s.utf8.len, s.value.len) > 0;
+            return s.len() > 0;
         }
 
         pub fn eql(s: *const String, comptime _t: type, other: anytype) bool {
@@ -1947,7 +2020,7 @@ pub const Expr = struct {
     pub fn isEmpty(expr: *Expr) bool {
         return std.meta.activeTag(expr.data) == .e_missing;
     }
-    pub const Query = struct { expr: Expr, loc: logger.Loc };
+    pub const Query = struct { expr: Expr, loc: logger.Loc, i: u32 = 0 };
 
     pub fn getArray(exp: *const Expr) *E.Array {
         return exp.data.e_array;
@@ -2072,13 +2145,17 @@ pub const Expr = struct {
         const obj = expr.data.e_object;
         if (@ptrToInt(obj.properties.ptr) == 0) return null;
 
-        for (obj.properties) |prop| {
+        for (obj.properties) |prop, i| {
             const value = prop.value orelse continue;
             const key = prop.key orelse continue;
             if (std.meta.activeTag(key.data) != .e_string) continue;
             const key_str = key.data.e_string;
             if (key_str.eql(string, name)) {
-                return Query{ .expr = value, .loc = key.loc };
+                return Query{
+                    .expr = value,
+                    .loc = key.loc,
+                    .i = @truncate(u32, i),
+                };
             }
         }
 
@@ -2106,7 +2183,7 @@ pub const Expr = struct {
         return ArrayIterator{ .array = array, .index = 0 };
     }
 
-    pub fn asString(expr: *const Expr, allocator: *std.mem.Allocator) ?string {
+    pub inline fn asString(expr: *const Expr, allocator: *std.mem.Allocator) ?string {
         if (std.meta.activeTag(expr.data) != .e_string) return null;
 
         const key_str = expr.data.e_string;
@@ -7024,7 +7101,7 @@ pub const Macro = struct {
             js.JSValueProtect(macro.vm.global.ref(), result.asRef());
             defer js.JSValueUnprotect(macro.vm.global.ref(), result.asRef());
             var promise = JSC.JSPromise.resolvedPromise(macro.vm.global, result);
-            macro.vm.global.vm().drainMicrotasks();
+            _ = macro.vm.tick();
 
             if (promise.status(macro.vm.global.vm()) == .Rejected) {
                 macro.vm.defaultErrorHandler(promise.result(macro.vm.global.vm()), null);

@@ -2,14 +2,14 @@ const std = @import("std");
 usingnamespace @import("../src/global.zig");
 const clap = @import("../src/deps/zig-clap/clap.zig");
 
-const HTTPClient = @import("../src/http_client.zig");
 const URL = @import("../src/query_string_map.zig").URL;
 const Headers = @import("../src/javascript/jsc/webcore/response.zig").Headers;
 const Method = @import("../src/http/method.zig").Method;
 const ColonListType = @import("../src/cli/colon_list_type.zig").ColonListType;
 const HeadersTuple = ColonListType(string, noop_resolver);
 const path_handler = @import("../src/resolver/resolve_path.zig");
-
+const NetworkThread = @import("network_thread");
+const HTTP = @import("http");
 fn noop_resolver(in: string) !string {
     return in;
 }
@@ -162,24 +162,67 @@ pub fn main() anyerror!void {
     defer Output.flush();
 
     var args = try Arguments.parse(default_allocator);
-    var client = HTTPClient.init(default_allocator, args.method, args.url, args.headers, args.headers_buf);
-    client.verbose = args.verbose;
-    client.disable_shutdown = args.turbo;
 
     var body_out_str = try MutableString.init(default_allocator, 1024);
-    var response = try client.send(args.body, &body_out_str);
+    var body_in_str = try MutableString.init(default_allocator, args.body.len);
+    body_in_str.appendAssumeCapacity(args.body);
+    var channel = try default_allocator.create(HTTP.HTTPChannel);
+    channel.* = HTTP.HTTPChannel.init();
 
-    switch (response.status_code) {
-        200, 302 => {},
-        else => {
-            if (!client.verbose) {
-                Output.prettyErrorln("{}", .{response});
+    var response_body_string = try default_allocator.create(MutableString);
+    response_body_string.* = body_out_str;
+    var request_body_string = try default_allocator.create(MutableString);
+    request_body_string.* = body_in_str;
+
+    try channel.buffer.ensureCapacity(1);
+
+    try NetworkThread.init();
+
+    var ctx = try default_allocator.create(HTTP.HTTPChannelContext);
+    ctx.* = .{
+        .channel = channel,
+        .http = try HTTP.AsyncHTTP.init(
+            default_allocator,
+            args.method,
+            args.url,
+            args.headers,
+            args.headers_buf,
+            response_body_string,
+            request_body_string,
+
+            0,
+        ),
+    };
+    ctx.http.callback = HTTP.HTTPChannelContext.callback;
+    var batch = NetworkThread.Batch{};
+    ctx.http.schedule(default_allocator, &batch);
+    ctx.http.client.verbose = args.verbose;
+
+    ctx.http.verbose = args.verbose;
+    NetworkThread.global.pool.schedule(batch);
+
+    while (true) {
+        while (channel.tryReadItem() catch null) |http| {
+            var response = http.response orelse {
+                Output.printErrorln("<r><red>error<r><d>:<r> <b>HTTP response missing<r>", .{});
+                Output.flush();
+                std.os.exit(1);
+            };
+
+            switch (response.status_code) {
+                200, 302 => {},
+                else => {
+                    if (args.verbose) {
+                        Output.prettyErrorln("{}", .{response});
+                    }
+                },
             }
-        },
-    }
 
-    Output.flush();
-    Output.disableBuffering();
-    try Output.writer().writeAll(body_out_str.list.items);
-    Output.enableBuffering();
+            Output.flush();
+            Output.disableBuffering();
+            try Output.writer().writeAll(response_body_string.list.items);
+            Output.enableBuffering();
+            return;
+        }
+    }
 }

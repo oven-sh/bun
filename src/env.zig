@@ -22,5 +22,7 @@ pub const isRelease = std.builtin.Mode.Debug != std.builtin.mode and !isTest;
 pub const isTest = std.builtin.is_test;
 pub const isLinux = std.Target.current.os.tag == .linux;
 pub const isAarch64 = std.Target.current.cpu.arch.isAARCH64();
-
+pub const isX86 = std.Target.current.cpu.arch.isX86();
+pub const isX64 = std.Target.current.cpu.arch == .x86_64;
+pub const allow_assert = isDebug or isTest;
 pub const analytics_url = if (isDebug) "http://localhost:4000/events" else "http://i.bun.sh/events";

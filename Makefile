@@ -38,6 +38,8 @@ ZIG ?= $(shell which zig || echo -e "error: Missing zig. Please make sure zig is
 # We must use the same compiler version for the JavaScriptCore bindings and JavaScriptCore
 # If we don't do this, strange memory allocation failures occur.
 # This is easier to happen than you'd expect.
+# Using realpath here causes issues because clang uses clang++ as a symlink 
+# so if that's resolved, it won't build for C++
 CC = $(shell which clang-12 || which clang)
 CXX = $(shell which clang++-12 || which clang++)
 
@@ -53,35 +55,10 @@ LIBICONV_PATH ?= $(BREW_PREFIX_PATH)/opt/libiconv/lib/libiconv.a
 
 OPENSSL_LINUX_DIR = $(DEPS_DIR)/openssl/openssl-OpenSSL_1_1_1l
 
-LIBCRYPTO_PREFIX_DIR = $(BREW_PREFIX_PATH)/opt/openssl@1.1
-LIBCRYPTO_STATIC_LIB ?= $(LIBCRYPTO_PREFIX_DIR)/lib/libcrypto.a
-LIBCRYPTO_INCLUDE_DIR = $(LIBCRYPTO_PREFIX_DIR)/include
 
 ifeq ($(OS_NAME),linux)
-LIBCRYPTO_STATIC_LIB = 
 LIBICONV_PATH = $(DEPS_DIR)/libiconv.a
 endif
-
-
-
-# Linux needs to have libcrypto 1.1.1 installed
-# download-openssl-linux:
-# 	mkdir -p $(DEPS_DIR)/openssl
-# 	wget https://github.com/openssl/openssl/archive/refs/tags/OpenSSL_1_1_1l.zip
-# 	unzip -o OpenSSL_1_1_1l.zip -d $(DEPS_DIR)/openssl
-# 	rm OpenSSL_1_1_1l.zip
-
-# build-openssl-linux:
-# 	cd $(OPENSSL_LINUX_DIR); \
-# 		./config -d -fPIC \
-# 			no-md2 no-rc5 no-rfc3779 no-sctp no-ssl-trace no-zlib     \
-# 			no-hw no-mdc2 no-seed no-idea enable-ec_nistp_64_gcc_128 no-camellia \
-# 			no-bf no-ripemd no-dsa no-ssl2 no-ssl3 no-capieng                  \
-# 			-DSSL_FORBID_ENULL -DOPENSSL_NO_DTLS1 -DOPENSSL_NO_HEARTBEATS; \
-# 		make -j $(CPUS) depend; \
-# 		make -j $(CPUS); \
-# 		make -j $(CPUS) install_sw; \
-# 		cp libcrypto.a $(DEPS_DIR)/libcrypto.a
 
 build-iconv-linux:
 	cd src/deps/libiconv/libiconv-1.16; ./configure --enable-static; make -j 12; cp ./lib/.libs/libiconv.a $(DEPS_DIR)/libiconv.a
@@ -90,9 +67,6 @@ BUN_TMP_DIR := /tmp/make-bun
 BUN_DEPLOY_DIR = /tmp/bun-v$(PACKAGE_JSON_VERSION)/$(PACKAGE_NAME)
 
 DEFAULT_USE_BMALLOC := 1
-# ifeq ($(OS_NAME),linux)
-# 	DEFAULT_USE_BMALLOC = 0
-# endif
 
 USE_BMALLOC ?= DEFAULT_USE_BMALLOC
 
@@ -121,7 +95,7 @@ DEFAULT_LINKER_FLAGS =
 JSC_BUILD_STEPS :=
 ifeq ($(OS_NAME),linux)
 	JSC_BUILD_STEPS += jsc-check
-DEFAULT_LINKER_FLAGS= -lcrypto -pthread -ldl 
+DEFAULT_LINKER_FLAGS= -pthread -ldl 
 endif
 ifeq ($(OS_NAME),darwin)
 	JSC_BUILD_STEPS += jsc-build-mac jsc-copy-headers
@@ -131,84 +105,6 @@ endif
 STRIP ?= $(shell which llvm-strip || which llvm-strip-12 || echo "Missing llvm-strip. Please pass it in the STRIP environment var"; exit 1;)
 
 HOMEBREW_PREFIX ?= $(BREW_PREFIX_PATH)
-
-s2n-ubuntu-deps:
-	# https://github.com/aws/s2n-tls/blob/main/codebuild/spec/buildspec_ubuntu.yml#L50
-	sudo apt-get install -y --no-install-recommends indent \
-		iproute2 \
-		kwstyle \
-		lcov \
-		libssl-dev \
-		m4 \
-		make \
-		net-tools \
-		nettle-bin \
-		nettle-dev \
-		pkg-config \
-		psmisc \
-		python3-pip \
-		shellcheck \
-		sudo \
-		tcpdump \
-		unzip \
-		valgrind \
-		zlib1g-dev \
-		zlib \
-		cmake \
-		tox \
-		libtool \
-		ninja-build
-
-s2n-linux:
-	cd $(DEPS_DIR)/s2n-tls; \
-	make clean; \
-	rm -rf build; \
-	CC=$(CC) CXX=$(CXX) cmake . -Bbuild -GNinja \
-		-DCMAKE_BUILD_TYPE=Release \
-		-DBUILD_SHARED_LIBS=OFF \
-		-DBENCHMARK=0; \
-	CC=$(CC) CXX=$(CXX) cmake --build ./build -j$(CPUS); \
-	CC=$(CC) CXX=$(CXX) CTEST_PARALLEL_LEVEL=$(CPUS) ninja -C build;
-	cp $(DEPS_DIR)/s2n-tls/build/lib/libs2n.a $(DEPS_DIR)/libs2n.a
-
-s2n-linux-debug:
-	# https://github.com/aws/s2n-tls/blob/main/codebuild/spec/buildspec_ubuntu.yml#L50
-	sudo apt-get install -y --no-install-recommends indent \
-		iproute2 \
-		kwstyle \
-		lcov \
-		libssl-dev \
-		m4 \
-		make \
-		net-tools \
-		nettle-bin \
-		nettle-dev \
-		pkg-config \
-		psmisc \
-		python3-pip \
-		shellcheck \
-		sudo \
-		tcpdump \
-		unzip \
-		valgrind \
-		zlib1g-dev \
-		zlibc \
-		cmake \
-		tox \
-		libtool \
-		ninja-build
-
-	cd $(DEPS_DIR)/s2n-tls; \
-	make clean; \
-	rm -rf build; \
-	CC=$(CC) CXX=$(CXX) cmake . -Bbuild -GNinja \
-		-DCMAKE_BUILD_TYPE=Debug \
-		-DBUILD_SHARED_LIBS=OFF \
-		-DBENCHMARK=0; \
-	CC=$(CC) CXX=$(CXX) cmake --build ./build -j$(CPUS); \
-	CC=$(CC) CXX=$(CXX) CTEST_PARALLEL_LEVEL=$(CPUS) ninja -C build;
-	cp $(DEPS_DIR)/s2n-tls/build/lib/libs2n.a $(DEPS_DIR)/libs2n.a
-
 
 SRC_DIR := src/javascript/jsc/bindings
 OBJ_DIR := src/javascript/jsc/bindings-obj
@@ -258,7 +154,8 @@ ICU_FLAGS += -l icucore \
 	-I$(MACOS_ICU_INCLUDE)
 endif
 
-		
+
+BORINGSSL_PACKAGE = --pkg-begin boringssl $(DEPS_DIR)/boringssl.zig --pkg-end
 
 CLANG_FLAGS = $(INCLUDE_DIRS) \
 		-std=gnu++17 \
@@ -279,7 +176,7 @@ CLANG_FLAGS = $(INCLUDE_DIRS) \
 # It has something to do with ICU
 ifeq ($(OS_NAME), darwin)
 CLANG_FLAGS += -DDU_DISABLE_RENAMING=1 \
-		-mmacosx-version-min=10.11
+		-mmacosx-version-min=10.11 -lstdc++
 endif
 
 
@@ -287,10 +184,10 @@ endif
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO = src/deps/mimalloc/libmimalloc.a \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
-		src/deps/libs2n.a \
+		src/deps/libssl.a \
 		src/deps/picohttpparser.o \
 
-ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) src/deps/libcrypto.a
+ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) src/deps/libcrypto.boring.a
 
 PLATFORM_LINKER_FLAGS =
 
@@ -303,7 +200,8 @@ PLATFORM_LINKER_FLAGS = -lstdc++fs \
 		-Wl,-z,notext \
 		-ffunction-sections \
 		-fdata-sections \
-		-Wl,--gc-sections
+		-Wl,--gc-sections \
+		-fuse-ld=lld
 endif
 
 
@@ -320,8 +218,16 @@ BUN_LLD_FLAGS = $(OBJ_FILES) \
 bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local
 
 
-vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib s2n libarchive 
+vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive 
 
+boringssl-build:
+	cd $(DEPS_DIR)/boringssl && mkdir -p build && cd build && cmake -DCMAKE_C_COMPILER=$(CC) -DCMAKE_CXX_COMPILER=$(CXX) -DCMAKE_BUILD_TYPE=Release -GNinja .. && ninja 
+
+boringssl-copy:
+	cp $(DEPS_DIR)/boringssl/build/ssl/libssl.a $(DEPS_DIR)/libssl.a
+	cp $(DEPS_DIR)/boringssl/build/crypto/libcrypto.a $(DEPS_DIR)/libcrypto.boring.a
+
+boringssl: boringssl-build boringssl-copy
 
 libarchive:
 	cd src/deps/libarchive; \
@@ -333,10 +239,24 @@ libarchive:
 	cp ./.libs/libarchive.a $(DEPS_DIR)/libarchive.a;
 
 tgz:
-	$(ZIG) build-exe -Drelease-fast --main-pkg-path $(shell pwd) ./misctools/tgz.zig $(DEPS_DIR)/zlib/libz.a $(DEPS_DIR)/libarchive.a  $(LIBICONV_PATH) -lc 
+	$(ZIG) build tgz-obj -Drelease-fast
+	$(CXX) $(PACKAGE_DIR)/tgz.o -g -o ./misctools/tgz $(DEFAULT_LINKER_FLAGS) -lc  \
+		src/deps/zlib/libz.a \
+		src/deps/libarchive.a \
+		src/deps/libssl.a \
+		src/deps/libcrypto.boring.a \
+		src/deps/picohttpparser.o
+	rm -rf $(PACKAGE_DIR)/tgz.o
 
 tgz-debug:
-	$(ZIG) build-exe --main-pkg-path $(shell pwd) ./misctools/tgz.zig $(DEPS_DIR)/zlib/libz.a $(DEPS_DIR)/libarchive.a  $(LIBICONV_PATH) -lc 
+	$(ZIG) build tgz-obj
+	$(CXX) $(DEBUG_PACKAGE_DIR)/tgz.o -g -o ./misctools/tgz $(DEFAULT_LINKER_FLAGS) -lc  \
+		src/deps/zlib/libz.a \
+		src/deps/libarchive.a \
+		src/deps/libssl.a \
+		src/deps/libcrypto.boring.a \
+		src/deps/picohttpparser.o
+	rm -rf $(DEBUG_PACKAGE_DIR)/tgz.o
 
 vendor: require init-submodules vendor-without-check 
 
@@ -352,7 +272,6 @@ require:
 	@which glibtoolize > /dev/null || (echo -e "ERROR: libtool is required. Install on mac with:\n\n    brew install libtool"; exit 1)
 	@which ninja > /dev/null || (echo -e "ERROR: Ninja is required. Install on mac with:\n\n    brew install ninja"; exit 1)
 	@stat $(LIBICONV_PATH) >/dev/null 2>&1 || (echo -e "ERROR: libiconv is required. Please run:\n\n    brew install libiconv"; exit 1)
-	@stat $(LIBCRYPTO_STATIC_LIB) >/dev/null 2>&1 || (echo -e "ERROR: OpenSSL 1.1 is required. Please run:\n\n    brew install openssl@1.1"; exit 1)
 	@echo "You have the dependencies installed! Woo"
 
 init-submodules:
@@ -406,68 +325,53 @@ generate-install-script:
 	@esbuild --log-level=error --define:BUN_VERSION="\"$(PACKAGE_JSON_VERSION)\"" --define:process.env.NODE_ENV="\"production\"" --platform=node  --format=cjs $(PACKAGES_REALPATH)/bun/install.ts > $(PACKAGES_REALPATH)/bun/install.js
 
 fetch:
-	cd misctools; $(ZIG) build-obj -Drelease-fast ./fetch.zig -fcompiler-rt -lc --main-pkg-path ../
-	$(CXX) ./misctools/fetch.o -g -O3 -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc \
-		src/deps/mimalloc/libmimalloc.a \
+	$(ZIG) build -Drelease-fast fetch-obj
+	$(CXX) $(PACKAGE_DIR)/fetch.o -g -O3 -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc  \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
-		src/deps/libs2n.a \
-		src/deps/picohttpparser.o \
-		$(LIBCRYPTO_STATIC_LIB)
-
+		src/deps/libssl.a \
+		src/deps/libcrypto.boring.a \
+		src/deps/picohttpparser.o
+	rm -rf $(PACKAGE_DIR)/fetch.o
+	
 fetch-debug:
-	cd misctools; $(ZIG) build-obj ./fetch.zig -fcompiler-rt -lc --main-pkg-path ../
-	$(CXX) ./misctools/fetch.o -g -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc  \
-		src/deps/mimalloc/libmimalloc.a \
+	$(ZIG) build fetch-obj
+	$(CXX) $(DEBUG_PACKAGE_DIR)/fetch.o -g -O3 -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc  \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
-		src/deps/libs2n.a \
+		src/deps/libssl.a \
+		src/deps/libcrypto.boring.a \
+		src/deps/picohttpparser.o
+	rm -rf $(DEBUG_PACKAGE_DIR)/fetch.o
+
+
+httpbench-debug:
+	$(ZIG) build httpbench-obj
+	$(CXX) $(DEBUG_PACKAGE_DIR)/httpbench.o -g -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc  \
+		src/deps/zlib/libz.a \
+		src/deps/libarchive.a \
+		src/deps/libssl.a \
+		src/deps/libcrypto.boring.a \
 		src/deps/picohttpparser.o \
-		$(LIBCRYPTO_STATIC_LIB)
+	rm -rf $(DEBUG_PACKAGE_DIR)/httpbench.o
 
-s2n-mac:
-	cd $(DEPS_DIR)/s2n-tls; \
-	make clean; \
-	CC=$(CC) CXX=$(CXX) cmake . -Bbuild -GNinja \
-		-DCMAKE_BUILD_TYPE=Release \
-		-DBUILD_SHARED_LIBS=OFF \
-		-DLibCrypto_INCLUDE_DIR=$(LIBCRYPTO_INCLUDE_DIR) \
-		-DLibCrypto_STATIC_LIBRARY=$(LIBCRYPTO_STATIC_LIB) \
-		-DLibCrypto_LIBRARY=$(LIBCRYPTO_STATIC_LIB) \
-		-DCMAKE_PREFIX_PATH=$(LIBCRYPTO_PREFIX_DIR); \
-	CC=$(CC) CXX=$(CXX) cmake --build ./build -j$(CPUS); \
-	CC=$(CC) CXX=$(CXX) CTEST_PARALLEL_LEVEL=$(CPUS) ninja -C build
-	cp $(DEPS_DIR)/s2n-tls/build/lib/libs2n.a $(DEPS_DIR)/libs2n.a
 
-libcrypto-old:
-	unlink $(DEPS_DIR)/libcrypto.a || echo "";
-	ln $(LIBCRYPTO_STATIC_LIB) $(DEPS_DIR)/libcrypto.a || echo "";
-
-s2n-mac-debug:
-	cd $(DEPS_DIR)/s2n-tls; \
-	make clean; \
-	CC=$(CC) CXX=$(CXX) cmake . -Bbuild -GNinja \
-		-DCMAKE_BUILD_TYPE=Debug \
-		-DBUILD_SHARED_LIBS=OFF \
-		-DLibCrypto_INCLUDE_DIR=$(LIBCRYPTO_INCLUDE_DIR) \
-		-DLibCrypto_STATIC_LIBRARY=$(LIBCRYPTO_STATIC_LIB) \
-		-DLibCrypto_LIBRARY=$(LIBCRYPTO_STATIC_LIB) \
-		-DCMAKE_PREFIX_PATH=$(LIBCRYPTO_PREFIX_DIR); \
-	CC=$(CC) CXX=$(CXX) cmake --build ./build -j$(CPUS); \
-	CC=$(CC) CXX=$(CXX) CTEST_PARALLEL_LEVEL=$(CPUS) ninja -C build test
-	cp $(DEPS_DIR)/s2n-tls/build/lib/libs2n.a $(DEPS_DIR)/libs2n.a
-	unlink $(DEPS_DIR)/libcrypto.a || echo "";
-	ln $(LIBCRYPTO_STATIC_LIB) $(DEPS_DIR)/libcrypto.a || echo "";
-
-libcrypto_path:
-	@echo ${LIBCRYPTO_STATIC_LIB}
+httpbench-release:
+	$(ZIG) build -Drelease-fast httpbench-obj
+	$(CXX) $(PACKAGE_DIR)/httpbench.o -g -O3 -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc  \
+		src/deps/zlib/libz.a \
+		src/deps/libarchive.a \
+		src/deps/libssl.a \
+		src/deps/libcrypto.boring.a \
+		src/deps/picohttpparser.o
+	rm -rf $(PACKAGE_DIR)/httpbench.o
 
 bun-codesign-debug:
 bun-codesign-release-local:
 
 
 ifeq ($(OS_NAME),darwin)
-s2n: s2n-mac
+
 
 
 # Hardened runtime will not work with debugging
@@ -683,7 +587,7 @@ clean: clean-bindings
 	rm src/deps/*.a src/deps/*.o
 	(cd src/deps/mimalloc && make clean) || echo "";
 	(cd src/deps/libarchive && make clean) || echo "";
-	(cd src/deps/s2n-tls && make clean) || echo "";
+	(cd src/deps/boringssl && make clean) || echo "";
 	(cd src/deps/picohttp && make clean) || echo "";
 	(cd src/deps/zlib && make clean) || echo "";
 
@@ -826,12 +730,23 @@ endif
 
 endif
 
+IO_FILE = 
+
+ifeq ($(OS_NAME),linux)
+IO_FILE = "src/io/io_linux.zig"
+endif
+
+ifeq ($(OS_NAME),darwin)
+IO_FILE = "src/io/io_darwin.zig"
+endif
+
 build-unit:
 	@rm -rf zig-out/bin/$(testname)
 	@mkdir -p zig-out/bin
 	zig test $(realpath $(testpath)) \
 	$(testfilterflag) \
 	--pkg-begin picohttp $(DEPS_DIR)/picohttp.zig --pkg-end \
+	--pkg-begin io	$(IO_FILE) --pkg-end \
 	--pkg-begin clap $(DEPS_DIR)/zig-clap/clap.zig --pkg-end \
 	--main-pkg-path $(shell pwd) \
 	--test-no-exec \
@@ -841,9 +756,7 @@ build-unit:
 	-lc -lc++ \
 	--cache-dir /tmp/zig-cache-bun-$(testname)-$(basename $(lastword $(testfilter))) \
 	-fallow-shlib-undefined \
-	-L$(LIBCRYPTO_PREFIX_DIR)/lib \
-	-lcrypto -lssl \
-	$(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) $(ICU_FLAGS) && \
+	$(ARCHIVE_FILES) $(ICU_FLAGS) && \
 	cp zig-out/bin/$(testname) $(testbinpath)
 
 run-unit:

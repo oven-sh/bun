@@ -97,4 +97,5 @@ const JSErrorCode JSErrorCodeUserErrorCode = 254;
 extern "C" ZigErrorCode Zig_ErrorCodeParserError;
 
 extern "C" void ZigString__free(const unsigned char *ptr, size_t len, void *allocator);
+extern "C" void Microtask__run(void *ptr, void *global);
 #endif

@@ -174,7 +174,7 @@ pub extern "c" fn JSObjectMakeArray(ctx: JSContextRef, argumentCount: usize, arg
 pub extern "c" fn JSObjectMakeDate(ctx: JSContextRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: ExceptionRef) JSObjectRef;
 pub extern "c" fn JSObjectMakeError(ctx: JSContextRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: ExceptionRef) JSObjectRef;
 pub extern "c" fn JSObjectMakeRegExp(ctx: JSContextRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: ExceptionRef) JSObjectRef;
-pub extern "c" fn JSObjectMakeDeferredPromise(ctx: JSContextRef, resolve: [*c]JSObjectRef, reject: [*c]JSObjectRef, exception: ExceptionRef) JSObjectRef;
+pub extern "c" fn JSObjectMakeDeferredPromise(ctx: JSContextRef, resolve: ?*JSObjectRef, reject: ?*JSObjectRef, exception: ExceptionRef) JSObjectRef;
 pub extern "c" fn JSObjectMakeFunction(ctx: JSContextRef, name: JSStringRef, parameterCount: c_uint, parameterNames: [*c]const JSStringRef, body: JSStringRef, sourceURL: JSStringRef, startingLineNumber: c_int, exception: ExceptionRef) JSObjectRef;
 pub extern "c" fn JSObjectGetPrototype(ctx: JSContextRef, object: JSObjectRef) JSValueRef;
 pub extern "c" fn JSObjectSetPrototype(ctx: JSContextRef, object: JSObjectRef, value: JSValueRef) void;

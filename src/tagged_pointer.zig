@@ -4,7 +4,7 @@ usingnamespace @import("./global.zig");
 const TagSize = u15;
 const AddressableSize = u49;
 
-const TaggedPointer = packed struct {
+pub const TaggedPointer = packed struct {
     _ptr: AddressableSize,
     data: TagSize,
 

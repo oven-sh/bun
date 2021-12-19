@@ -5,8 +5,12 @@ const http = @import("../../../http.zig");
 usingnamespace @import("../javascript.zig");
 usingnamespace @import("../bindings/bindings.zig");
 const ZigURL = @import("../../../query_string_map.zig").URL;
-const HTTPClient = @import("../../../http_client.zig");
+const HTTPClient = @import("http");
+const NetworkThread = @import("network_thread");
+
 const Method = @import("../../../http/method.zig").Method;
+
+const ObjectPool = @import("../../../pool.zig").ObjectPool;
 
 const picohttp = @import("picohttp");
 pub const Response = struct {
@@ -411,6 +415,207 @@ pub const Fetch = struct {
     );
 
     const fetch_error_cant_fetch_same_origin = "fetch to same-origin on the server is not supported yet - sorry! (it would just hang forever)";
+
+    pub const FetchTasklet = struct {
+        promise: *JSInternalPromise = undefined,
+        http: HTTPClient.AsyncHTTP = undefined,
+        status: Status = Status.pending,
+        javascript_vm: *VirtualMachine = undefined,
+        global_this: *JSGlobalObject = undefined,
+
+        empty_request_body: MutableString = undefined,
+        pooled_body: *BodyPool.Node = undefined,
+        this_object: js.JSObjectRef = null,
+        resolve: js.JSObjectRef = null,
+        reject: js.JSObjectRef = null,
+        context: FetchTaskletContext = undefined,
+
+        const Pool = ObjectPool(FetchTasklet, init);
+        const BodyPool = ObjectPool(MutableString, MutableString.init2048);
+        pub const FetchTaskletContext = struct {
+            tasklet: *FetchTasklet,
+        };
+
+        pub fn init(allocator: *std.mem.Allocator) anyerror!FetchTasklet {
+            return FetchTasklet{};
+        }
+
+        pub const Status = enum(u8) {
+            pending,
+            running,
+            done,
+        };
+
+        pub fn onDone(this: *FetchTasklet) void {
+            var args = [1]js.JSValueRef{undefined};
+
+            var callback_object = switch (this.http.state.load(.Monotonic)) {
+                .success => this.resolve,
+                .fail => this.reject,
+                else => unreachable,
+            };
+
+            args[0] = switch (this.http.state.load(.Monotonic)) {
+                .success => this.onResolve().asObjectRef(),
+                .fail => this.onReject().asObjectRef(),
+                else => unreachable,
+            };
+
+            _ = js.JSObjectCallAsFunction(this.global_this.ref(), callback_object, null, 1, &args, null);
+
+            this.release();
+        }
+
+        pub fn reset(this: *FetchTasklet) void {}
+
+        pub fn release(this: *FetchTasklet) void {
+            js.JSValueUnprotect(this.global_this.ref(), this.resolve);
+            js.JSValueUnprotect(this.global_this.ref(), this.reject);
+            js.JSValueUnprotect(this.global_this.ref(), this.this_object);
+
+            this.global_this = undefined;
+            this.javascript_vm = undefined;
+            this.promise = undefined;
+            this.status = Status.pending;
+            var pooled = this.pooled_body;
+            BodyPool.release(pooled);
+            this.pooled_body = undefined;
+            this.http = undefined;
+            this.this_object = null;
+            this.resolve = null;
+            this.reject = null;
+            Pool.release(@fieldParentPtr(Pool.Node, "data", this));
+        }
+
+        pub const FetchResolver = struct {
+            pub fn call(
+                ctx: js.JSContextRef,
+                function: js.JSObjectRef,
+                thisObject: js.JSObjectRef,
+                arguments_len: usize,
+                arguments: [*c]const js.JSValueRef,
+                exception: js.ExceptionRef,
+            ) callconv(.C) js.JSObjectRef {
+                return JSPrivateDataPtr.from(js.JSObjectGetPrivate(arguments[0]))
+                    .get(FetchTaskletContext).?.tasklet.onResolve().asObjectRef();
+                //  return  js.JSObjectGetPrivate(arguments[0]).? .tasklet.onResolve().asObjectRef();
+            }
+        };
+
+        pub const FetchRejecter = struct {
+            pub fn call(
+                ctx: js.JSContextRef,
+                function: js.JSObjectRef,
+                thisObject: js.JSObjectRef,
+                arguments_len: usize,
+                arguments: [*c]const js.JSValueRef,
+                exception: js.ExceptionRef,
+            ) callconv(.C) js.JSObjectRef {
+                return JSPrivateDataPtr.from(js.JSObjectGetPrivate(arguments[0]))
+                    .get(FetchTaskletContext).?.tasklet.onReject().asObjectRef();
+            }
+        };
+
+        pub fn onReject(this: *FetchTasklet) JSValue {
+            const fetch_error = std.fmt.allocPrint(
+                default_allocator,
+                "Fetch error: {s}\nURL: \"{s}\"",
+                .{
+                    @errorName(this.http.err orelse error.HTTPFail),
+                    this.http.url.href,
+                },
+            ) catch unreachable;
+            return ZigString.init(fetch_error).toErrorInstance(this.global_this);
+        }
+
+        pub fn onResolve(this: *FetchTasklet) JSValue {
+            var allocator = default_allocator;
+            var http_response = this.http.response.?;
+            var response_headers = Headers.fromPicoHeaders(allocator, http_response.headers) catch unreachable;
+            response_headers.guard = .immutable;
+            var response = allocator.create(Response) catch unreachable;
+            var duped = allocator.dupe(u8, this.http.response_buffer.toOwnedSlice()) catch unreachable;
+
+            response.* = Response{
+                .allocator = allocator,
+                .status_text = allocator.dupe(u8, http_response.status) catch unreachable,
+                .body = .{
+                    .init = .{
+                        .headers = response_headers,
+                        .status_code = @truncate(u16, http_response.status_code),
+                    },
+                    .value = .{
+                        .Unconsumed = 0,
+                    },
+                    .ptr = duped.ptr,
+                    .len = duped.len,
+                    .ptr_allocator = allocator,
+                },
+            };
+            return JSValue.fromRef(Response.Class.make(@ptrCast(js.JSContextRef, this.global_this), response));
+        }
+
+        pub fn get(
+            allocator: *std.mem.Allocator,
+            method: Method,
+            url: ZigURL,
+            headers: Headers.Entries,
+            headers_buf: string,
+            request_body: ?*MutableString,
+            timeout: usize,
+        ) !*FetchTasklet.Pool.Node {
+            var linked_list = FetchTasklet.Pool.get(allocator);
+            linked_list.data.javascript_vm = VirtualMachine.vm;
+            linked_list.data.empty_request_body = MutableString.init(allocator, 0) catch unreachable;
+            linked_list.data.pooled_body = BodyPool.get(allocator);
+            linked_list.data.http = try HTTPClient.AsyncHTTP.init(
+                allocator,
+                method,
+                url,
+                headers,
+                headers_buf,
+                &linked_list.data.pooled_body.data,
+                request_body orelse &linked_list.data.empty_request_body,
+
+                timeout,
+            );
+            linked_list.data.context = .{ .tasklet = &linked_list.data };
+
+            return linked_list;
+        }
+
+        pub fn queue(
+            allocator: *std.mem.Allocator,
+            global: *JSGlobalObject,
+            method: Method,
+            url: ZigURL,
+            headers: Headers.Entries,
+            headers_buf: string,
+            request_body: ?*MutableString,
+            timeout: usize,
+        ) !*FetchTasklet.Pool.Node {
+            var node = try get(allocator, method, url, headers, headers_buf, request_body, timeout);
+            node.data.promise = JSInternalPromise.create(global);
+
+            node.data.global_this = global;
+            node.data.http.callback = callback;
+            var batch = NetworkThread.Batch{};
+            node.data.http.schedule(allocator, &batch);
+            NetworkThread.global.pool.schedule(batch);
+
+            try VirtualMachine.vm.enqueueTask(Task.init(&node.data));
+            return node;
+        }
+
+        pub fn callback(http_: *HTTPClient.AsyncHTTP, sender: *HTTPClient.AsyncHTTP.HTTPSender) void {
+            var task: *FetchTasklet = @fieldParentPtr(FetchTasklet, "http", http_);
+            @atomicStore(Status, &task.status, Status.done, .Monotonic);
+            _ = task.javascript_vm.ready_tasks_count.fetchAdd(1, .Monotonic);
+            _ = task.javascript_vm.pending_tasks_count.fetchSub(1, .Monotonic);
+            sender.release();
+        }
+    };
+
     pub fn call(
         this: void,
         ctx: js.JSContextRef,
@@ -444,17 +649,17 @@ pub const Fetch = struct {
             url_str = getAllocator(ctx).dupe(u8, url_str) catch unreachable;
         }
 
-        defer getAllocator(ctx).free(url_str);
+        NetworkThread.init() catch @panic("Failed to start network thread");
+        const url = ZigURL.parse(url_str);
 
-        var http_client = HTTPClient.init(getAllocator(ctx), .GET, ZigURL.parse(url_str), .{}, "");
-
-        if (http_client.url.origin.len > 0 and strings.eql(http_client.url.origin, VirtualMachine.vm.bundler.options.origin.origin)) {
+        if (url.origin.len > 0 and strings.eql(url.origin, VirtualMachine.vm.bundler.options.origin.origin)) {
             const fetch_error = fetch_error_cant_fetch_same_origin;
             return JSPromise.rejectedPromiseValue(VirtualMachine.vm.global, ZigString.init(fetch_error).toErrorInstance(VirtualMachine.vm.global)).asRef();
         }
 
         var headers: ?Headers = null;
         var body: string = "";
+        var method = Method.GET;
 
         if (arguments.len >= 2 and js.JSValueIsObject(ctx, arguments[1])) {
             var array = js.JSObjectCopyPropertyNames(ctx, arguments[1]);
@@ -501,7 +706,7 @@ pub const Fetch = struct {
                                 defer js.JSStringRelease(string_ref);
                                 var method_name_buf: [16]u8 = undefined;
                                 var method_name = method_name_buf[0..js.JSStringGetUTF8CString(string_ref, &method_name_buf, method_name_buf.len)];
-                                http_client.method = Method.which(method_name) orelse http_client.method;
+                                method = Method.which(method_name) orelse method;
                             }
                         }
                     },
@@ -510,56 +715,39 @@ pub const Fetch = struct {
             }
         }
 
+        var header_entries: Headers.Entries = .{};
+        var header_buf: string = "";
+
         if (headers) |head| {
-            http_client.header_entries = head.entries;
-            http_client.header_buf = head.buf.items;
+            header_entries = head.entries;
+            header_buf = head.buf.items;
         }
+        var resolve = js.JSObjectMakeFunctionWithCallback(ctx, null, Fetch.FetchTasklet.FetchResolver.call);
+        var reject = js.JSObjectMakeFunctionWithCallback(ctx, null, Fetch.FetchTasklet.FetchRejecter.call);
 
-        if (fetch_body_string_loaded) {
-            fetch_body_string.reset();
-        } else {
-            fetch_body_string = MutableString.init(VirtualMachine.vm.allocator, 0) catch unreachable;
-            fetch_body_string_loaded = true;
-        }
+        js.JSValueProtect(ctx, resolve);
+        js.JSValueProtect(ctx, reject);
 
-        var http_response = http_client.send(body, &fetch_body_string) catch |err| {
-            const fetch_error = std.fmt.allocPrint(
-                getAllocator(ctx),
-                "Fetch error: {s}\nURL: \"{s}\"",
-                .{
-                    @errorName(err),
-                    url_str,
-                },
-            ) catch unreachable;
-            return JSPromise.rejectedPromiseValue(VirtualMachine.vm.global, ZigString.init(fetch_error).toErrorInstance(VirtualMachine.vm.global)).asRef();
-        };
-
-        var response_headers = Headers.fromPicoHeaders(getAllocator(ctx), http_response.headers) catch unreachable;
-        response_headers.guard = .immutable;
-        var response = getAllocator(ctx).create(Response) catch unreachable;
-        var allocator = getAllocator(ctx);
-        var duped = allocator.dupeZ(u8, fetch_body_string.list.items) catch unreachable;
-        response.* = Response{
-            .allocator = allocator,
-            .status_text = allocator.dupe(u8, http_response.status) catch unreachable,
-            .body = .{
-                .init = .{
-                    .headers = response_headers,
-                    .status_code = @truncate(u16, http_response.status_code),
-                },
-                .value = .{
-                    .Unconsumed = 0,
-                },
-                .ptr = duped.ptr,
-                .len = duped.len,
-                .ptr_allocator = allocator,
-            },
-        };
-
-        return JSPromise.resolvedPromiseValue(
+        // var resolve = FetchTasklet.FetchResolver.Class.make(ctx: js.JSContextRef, ptr: *ZigType)
+        var queued = FetchTasklet.queue(
+            default_allocator,
             VirtualMachine.vm.global,
-            JSValue.fromRef(Response.Class.make(ctx, response)),
-        ).asRef();
+            method,
+            url,
+            header_entries,
+            header_buf,
+            null,
+            std.time.ns_per_hour,
+        ) catch unreachable;
+        queued.data.this_object = js.JSObjectMake(ctx, null, JSPrivateDataPtr.init(&queued.data.context).ptr());
+        js.JSValueProtect(ctx, queued.data.this_object);
+
+        var promise = js.JSObjectMakeDeferredPromise(ctx, &resolve, &reject, exception);
+        queued.data.reject = reject;
+        queued.data.resolve = resolve;
+
+        return promise;
+        // queued.data.promise.create(globalThis: *JSGlobalObject)
     }
 };
 
@@ -1488,6 +1676,7 @@ pub const FetchEvent = struct {
     response: ?*Response = null,
     request_context: *http.RequestContext,
     request: Request,
+    pending_promise: ?*JSInternalPromise = null,
 
     onPromiseRejectionCtx: *c_void = undefined,
     onPromiseRejectionHandler: ?fn (ctx: *c_void, err: anyerror, fetch_event: *FetchEvent, value: JSValue) void = null,
@@ -1566,47 +1755,56 @@ pub const FetchEvent = struct {
         if (this.request_context.has_called_done) return js.JSValueMakeUndefined(ctx);
 
         // A Response or a Promise that resolves to a Response. Otherwise, a network error is returned to Fetch.
-        if (arguments.len == 0 or !Response.Class.loaded) {
+        if (arguments.len == 0 or !Response.Class.loaded or !js.JSValueIsObject(ctx, arguments[0])) {
             JSError(getAllocator(ctx), "event.respondWith() must be a Response or a Promise<Response>.", .{}, ctx, exception);
             this.request_context.sendInternalError(error.respondWithWasEmpty) catch {};
             return js.JSValueMakeUndefined(ctx);
         }
 
-        var resolved = JSInternalPromise.resolvedPromise(VirtualMachine.vm.global, JSValue.fromRef(arguments[0]));
+        var arg = arguments[0];
 
-        var status = resolved.status(VirtualMachine.vm.global.vm());
-
-        if (status == .Pending) {
-            VirtualMachine.vm.global.vm().drainMicrotasks();
+        if (!js.JSValueIsObjectOfClass(ctx, arg, Response.Class.ref)) {
+            this.pending_promise = this.pending_promise orelse JSInternalPromise.resolvedPromise(VirtualMachine.vm.global, JSValue.fromRef(arguments[0]));
         }
 
-        status = resolved.status(VirtualMachine.vm.global.vm());
+        if (this.pending_promise) |promise| {
+            var status = promise.status(VirtualMachine.vm.global.vm());
 
-        switch (status) {
-            .Fulfilled => {},
-            else => {
-                this.rejected = true;
-                this.onPromiseRejectionHandler.?(
-                    this.onPromiseRejectionCtx,
-                    error.PromiseRejection,
-                    this,
-                    resolved.result(VirtualMachine.vm.global.vm()),
-                );
-                return js.JSValueMakeUndefined(ctx);
-            },
+            if (status == .Pending) {
+                VirtualMachine.vm.tick();
+                status = promise.status(VirtualMachine.vm.global.vm());
+            }
+
+            switch (status) {
+                .Fulfilled => {},
+                else => {
+                    this.rejected = true;
+                    this.pending_promise = null;
+                    this.onPromiseRejectionHandler.?(
+                        this.onPromiseRejectionCtx,
+                        error.PromiseRejection,
+                        this,
+                        promise.result(VirtualMachine.vm.global.vm()),
+                    );
+                    return js.JSValueMakeUndefined(ctx);
+                },
+            }
+
+            arg = promise.result(VirtualMachine.vm.global.vm()).asRef();
         }
-
-        var arg = resolved.result(VirtualMachine.vm.global.vm()).asObjectRef();
 
         if (!js.JSValueIsObjectOfClass(ctx, arg, Response.Class.ref)) {
             this.rejected = true;
+            this.pending_promise = null;
             JSError(getAllocator(ctx), "event.respondWith() must be a Response or a Promise<Response>.", .{}, ctx, exception);
             this.onPromiseRejectionHandler.?(this.onPromiseRejectionCtx, error.RespondWithInvalidType, this, JSValue.fromRef(exception.*));
+
             return js.JSValueMakeUndefined(ctx);
         }
 
         var response: *Response = GetJSPrivateData(Response, arg) orelse {
             this.rejected = true;
+            this.pending_promise = null;
             JSError(getAllocator(ctx), "event.respondWith()'s Response object was invalid. This may be an internal error.", .{}, ctx, exception);
             this.onPromiseRejectionHandler.?(this.onPromiseRejectionCtx, error.RespondWithInvalidTypeInternal, this, JSValue.fromRef(exception.*));
             return js.JSValueMakeUndefined(ctx);
@@ -1627,6 +1825,7 @@ pub const FetchEvent = struct {
             }
         }
 
+        defer this.pending_promise = null;
         var needs_mime_type = true;
         var content_length: ?usize = null;
         if (response.body.init.headers) |*headers| {

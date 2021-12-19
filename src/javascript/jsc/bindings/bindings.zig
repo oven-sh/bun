@@ -314,6 +314,12 @@ pub fn NewGlobalObject(comptime Type: type) type {
             return JSValue.jsUndefined();
         }
 
+        pub fn queueMicrotaskToEventLoop(global: *JSGlobalObject, microtask: *Microtask) callconv(.C) void {
+            if (comptime @hasDecl(Type, "queueMicrotaskToEventLoop")) {
+                @call(.{ .modifier = .always_inline }, Type.queueMicrotaskToEventLoop, .{ global, microtask });
+            }
+        }
+
         pub fn onCrash() callconv(.C) void {
             if (comptime @hasDecl(Type, "onCrash")) {
                 return @call(.{ .modifier = .always_inline }, Type.onCrash, .{});
@@ -1502,6 +1508,20 @@ pub const JSValue = enum(i64) {
     }
 
     pub const Extern = [_][]const u8{ "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "get", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
+};
+
+extern "c" fn Microtask__run(*Microtask, *JSGlobalObject) void;
+
+pub const Microtask = opaque {
+    pub const name = "Zig::JSMicrotaskCallback";
+
+    pub fn run(this: *Microtask, global_object: *JSGlobalObject) void {
+        if (comptime is_bindgen) {
+            return;
+        }
+
+        return Microtask__run(this, global_object);
+    }
 };
 
 pub const PropertyName = extern struct {

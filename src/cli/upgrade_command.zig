@@ -21,18 +21,18 @@ const bundler = @import("../bundler.zig");
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const fs = @import("../fs.zig");
 const URL = @import("../query_string_map.zig").URL;
-const HTTPClient = @import("../http_client.zig");
+const HTTP = @import("http");
 const ParseJSON = @import("../json_parser.zig").ParseJSON;
 const Archive = @import("../libarchive/libarchive.zig").Archive;
 const Zlib = @import("../zlib.zig");
 const JSPrinter = @import("../js_printer.zig");
 const DotEnv = @import("../env_loader.zig");
-const NPMClient = @import("../which_npm_client.zig").NPMClient;
 const which = @import("../which.zig").which;
 const clap = @import("clap");
 const Lock = @import("../lock.zig").Lock;
 const Headers = @import("../javascript/jsc/webcore/response.zig").Headers;
 const CopyFile = @import("../copy_file.zig");
+const NetworkThread = @import("network_thread");
 
 pub var initialized_store = false;
 pub fn initializeStore() void {
@@ -83,6 +83,7 @@ pub const UpgradeCheckerThread = struct {
         std.time.sleep(std.time.ns_per_ms * delay);
 
         Output.Source.configureThread();
+        NetworkThread.init() catch unreachable;
 
         const version = (try UpgradeCommand.getLatestVersion(default_allocator, env_loader, undefined, undefined, true)) orelse return;
 
@@ -145,18 +146,6 @@ pub const UpgradeCommand = struct {
             ),
         );
 
-        var client = HTTPClient.init(
-            allocator,
-            .GET,
-            api_url,
-            header_entries,
-            headers_buf,
-        );
-        client.timeout = timeout;
-        if (!silent) {
-            client.progress_node = progress;
-        }
-
         if (env_loader.map.get("GITHUB_ACCESS_TOKEN")) |access_token| {
             if (access_token.len > 0) {
                 headers_buf = try std.fmt.allocPrint(allocator, default_github_headers ++ "Access-TokenBearer {s}", .{access_token});
@@ -177,7 +166,13 @@ pub const UpgradeCommand = struct {
         }
 
         var metadata_body = try MutableString.init(allocator, 2048);
-        var response = try client.send("", &metadata_body);
+        var request_body = try MutableString.init(allocator, 0);
+
+        // ensure very stable memory address
+        var async_http: *HTTP.AsyncHTTP = allocator.create(HTTP.AsyncHTTP) catch unreachable;
+        async_http.* = try HTTP.AsyncHTTP.init(allocator, .GET, api_url, header_entries, headers_buf, &metadata_body, &request_body, 60 * std.time.ns_per_min);
+        if (!silent) async_http.client.progress_node = progress;
+        const response = try async_http.sendSync();
 
         switch (response.status_code) {
             404 => return error.HTTP404,
@@ -326,6 +321,8 @@ pub const UpgradeCommand = struct {
     const exe_subpath = Version.folder_name ++ std.fs.path.sep_str ++ "bun";
 
     pub fn exec(ctx: Command.Context) !void {
+        try NetworkThread.init();
+
         var filesystem = try fs.FileSystem.init1(ctx.allocator, null);
         var env_loader: DotEnv.Loader = brk: {
             var map = try ctx.allocator.create(DotEnv.Map);
@@ -375,21 +372,24 @@ pub const UpgradeCommand = struct {
             var refresher = std.Progress{};
             var progress = try refresher.start("Downloading", version.size);
             refresher.refresh();
+            var async_http = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
+            var zip_file_buffer = try ctx.allocator.create(MutableString);
+            zip_file_buffer.* = try MutableString.init(ctx.allocator, @maximum(version.size, 1024));
+            var request_buffer = try MutableString.init(ctx.allocator, 0);
 
-            var client = HTTPClient.init(
+            async_http.* = try HTTP.AsyncHTTP.init(
                 ctx.allocator,
                 .GET,
                 URL.parse(version.zip_url),
                 .{},
                 "",
+                zip_file_buffer,
+                &request_buffer,
+                timeout,
             );
-            client.timeout = timeout;
-            client.progress_node = progress;
-            var zip_file_buffer = try MutableString.init(ctx.allocator, @maximum(version.size, 1024));
-            var response = try client.send(
-                "",
-                &zip_file_buffer,
-            );
+            async_http.client.timeout = timeout;
+            async_http.client.progress_node = progress;
+            const response = try async_http.sendSync();
 
             switch (response.status_code) {
                 404 => return error.HTTP404,
@@ -400,7 +400,7 @@ pub const UpgradeCommand = struct {
                 else => return error.HTTPError,
             }
 
-            var bytes = zip_file_buffer.toOwnedSliceLeaky();
+            const bytes = zip_file_buffer.toOwnedSliceLeaky();
 
             progress.end();
             refresher.refresh();

@@ -68,11 +68,10 @@ pub const Run = struct {
 
     pub fn start(this: *Run) !void {
         var promise = try this.vm.loadEntryPoint(this.entry_path);
-
-        this.vm.global.vm().drainMicrotasks();
+        this.vm.tick();
 
         while (promise.status(this.vm.global.vm()) == .Pending) {
-            this.vm.global.vm().drainMicrotasks();
+            this.vm.tick();
         }
 
         if (promise.status(this.vm.global.vm()) == .Rejected) {

@@ -1,7 +1,7 @@
 const std = @import("std");
 pub const Environment = @import("env.zig");
 
-const use_mimalloc = !Environment.isTest and Environment.isNative;
+const use_mimalloc = !Environment.isTest;
 
 pub const default_allocator: *std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
@@ -24,6 +24,14 @@ pub const Output = struct {
     var stderr_stream: Source.StreamType = undefined;
     var stdout_stream: Source.StreamType = undefined;
     var stdout_stream_set = false;
+
+    pub var terminal_size: std.os.winsize = .{
+        .ws_row = 0,
+        .ws_col = 0,
+        .ws_xpixel = 0,
+        .ws_ypixel = 0,
+    };
+
     pub const Source = struct {
         pub const StreamType: type = brk: {
             if (isWasm) {
@@ -48,7 +56,16 @@ pub const Output = struct {
             stream: StreamType,
             err: StreamType,
         ) Source {
+            if (comptime Environment.isDebug) {
+                if (comptime use_mimalloc) {
+                    if (!source_set) {
+                        const Mimalloc = @import("./allocators/mimalloc.zig");
+                        Mimalloc.mi_option_set(.show_errors, 1);
+                    }
+                }
+            }
             source_set = true;
+
             return Source{
                 .stream = stream,
                 .error_stream = err,
@@ -58,6 +75,7 @@ pub const Output = struct {
         }
 
         pub fn configureThread() void {
+            if (source_set) return;
             std.debug.assert(stdout_stream_set);
             source = Source.init(stdout_stream, stderr_stream);
         }
@@ -73,6 +91,10 @@ pub const Output = struct {
 
                 is_stdout_piped = !_source.stream.isTty();
                 is_stderr_piped = !_source.error_stream.isTty();
+
+                if (!is_stderr_piped) {
+                    // _ = std.c.ioctl(source.error_stream.handle, std.os.TIOCGWINSZ, &terminal_size);
+                }
 
                 stdout_stream = _source.stream;
                 stderr_stream = _source.error_stream;
@@ -108,6 +130,14 @@ pub const Output = struct {
         enable_buffering = false;
     }
 
+    pub fn panic(comptime fmt: string, args: anytype) noreturn {
+        if (Output.isEmojiEnabled()) {
+            std.debug.panic(comptime Output.prettyFmt(fmt, true), args);
+        } else {
+            std.debug.panic(comptime Output.prettyFmt(fmt, false), args);
+        }
+    }
+
     pub const WriterType: type = @typeInfo(std.meta.declarationInfo(Source.StreamType, "writer").data.Fn.fn_type).Fn.return_type.?;
 
     pub fn errorWriter() WriterType {
@@ -134,20 +164,50 @@ pub const Output = struct {
         }
     }
 
-    pub fn printElapsed(elapsed: f64) void {
+    inline fn printElapsedToWithCtx(elapsed: f64, comptime printerFn: anytype, comptime has_ctx: bool, ctx: anytype) void {
         switch (elapsed) {
             0...1500 => {
-                Output.prettyError("<r><d>[<b>{d:>.2}ms<r><d>]<r>", .{elapsed});
+                const fmt = "<r><d>[<b>{d:>.2}ms<r><d>]<r>";
+                const args = .{elapsed};
+                if (comptime has_ctx) {
+                    printerFn(ctx, fmt, args);
+                } else {
+                    printerFn(fmt, args);
+                }
             },
             else => {
-                Output.prettyError("<r><d>[<b>{d:>.2}s<r><d>]<r>", .{elapsed / 1000.0});
+                const fmt = "<r><d>[<b>{d:>.2}s<r><d>]<r>";
+                const args = .{elapsed / 1000.0};
+
+                if (comptime has_ctx) {
+                    printerFn(ctx, fmt, args);
+                } else {
+                    printerFn(fmt, args);
+                }
             },
         }
+    }
+
+    pub fn printElapsedTo(elapsed: f64, comptime printerFn: anytype, ctx: anytype) void {
+        printElapsedToWithCtx(elapsed, printerFn, true, ctx);
+    }
+
+    pub fn printElapsed(elapsed: f64) void {
+        printElapsedToWithCtx(elapsed, Output.prettyError, false, void{});
+    }
+
+    pub fn printElapsedStdout(elapsed: f64) void {
+        printElapsedToWithCtx(elapsed, Output.pretty, false, void{});
     }
 
     pub fn printStartEnd(start: i128, end: i128) void {
         const elapsed = @divTrunc(end - start, @as(i128, std.time.ns_per_ms));
         printElapsed(@intToFloat(f64, elapsed));
+    }
+
+    pub fn printStartEndStdout(start: i128, end: i128) void {
+        const elapsed = @divTrunc(end - start, @as(i128, std.time.ns_per_ms));
+        printElapsedStdout(@intToFloat(f64, elapsed));
     }
 
     pub fn printTimer(timer: *std.time.Timer) void {
@@ -326,6 +386,14 @@ pub const Output = struct {
         }
     }
 
+    pub fn prettyWithPrinterFn(comptime fmt: string, args: anytype, comptime printFn: anytype, ctx: anytype) void {
+        if (enable_ansi_colors) {
+            printFn(ctx, comptime prettyFmt(fmt, true), args);
+        } else {
+            printFn(ctx, comptime prettyFmt(fmt, false), args);
+        }
+    }
+
     pub fn pretty(comptime fmt: string, args: anytype) void {
         prettyWithPrinter(fmt, args, print, .Error);
     }
@@ -413,6 +481,13 @@ pub const Global = struct {
         verbose: bool = false,
         long_running: bool = false,
     };
+
+    pub inline fn mimalloc_cleanup() void {
+        if (comptime use_mimalloc) {
+            const Mimalloc = @import("./allocators/mimalloc.zig");
+            Mimalloc.mi_collect(false);
+        }
+    }
 
     // Enabling huge pages slows down Bun by 8x or so
     // Keeping this code for:

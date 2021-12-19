@@ -255,10 +255,12 @@ pub const Bundler = struct {
             }
         }
 
-        if (this.env.map.get("CI")) |IS_CI| {
-            if (strings.eqlComptime(IS_CI, "true")) {
-                Analytics.is_ci = true;
-            }
+        if (this.env.map.get("CI") orelse
+            this.env.map.get("TDDIUM") orelse
+            this.env.map.get("JENKINS_URL") orelse
+            this.env.map.get("bamboo.buildKey")) |IS_CI|
+        {
+            Analytics.is_ci = true;
         }
 
         Analytics.disabled = Analytics.disabled or this.env.map.get("HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET") != null;

@@ -3138,14 +3138,12 @@ const PackageInstall = struct {
         // Slower than clonefile
         clonefile_each_dir,
 
-        // Slow!
+        // On macOS, slow.
+        // On Linux, fast.
         hardlink,
 
         // Slowest if single-threaded
         copyfile,
-
-        copy_file_range,
-        io_uring,
 
         const BackendSupport = std.EnumArray(Method, bool);
 
@@ -3159,7 +3157,7 @@ const PackageInstall = struct {
         pub const linux = BackendSupport.initDefault(false, .{
             .io_uring = true,
             .hardlink = true,
-            .copy_file_range = true,
+            .copyfile = true,
         });
 
         pub inline fn isSupported(this: Method) bool {
@@ -3167,13 +3165,6 @@ const PackageInstall = struct {
             if (comptime Environment.isLinux) return linux.get(this);
 
             return false;
-        }
-
-        pub inline fn isSync(this: Method) bool {
-            return switch (this) {
-                .hardlink, .clonefile_each_dir, .clonefile => true,
-                else => false,
-            };
         }
     };
 
@@ -3538,9 +3529,9 @@ const PackageInstall = struct {
         // we'll catch it the next error
         if (!skip_delete) this.destination_dir.deleteTree(std.mem.span(this.destination_dir_subpath)) catch {};
 
-        if (comptime Environment.isMac) {
-            switch (supported_method) {
-                .clonefile => {
+        switch (supported_method) {
+            .clonefile => {
+                if (comptime Environment.isMac) {
                     // First, attempt to use clonefile
                     // if that fails due to ENOTSUP, mark it as unsupported and then fall back to copyfile
                     if (this.installWithClonefile()) |result| {
@@ -3558,8 +3549,10 @@ const PackageInstall = struct {
                             },
                         }
                     }
-                },
-                .clonefile_each_dir => {
+                }
+            },
+            .clonefile_each_dir => {
+                if (comptime Environment.isMac) {
                     if (this.installWithClonefileEachDir()) |result| {
                         return result;
                     } else |err| {
@@ -3575,36 +3568,34 @@ const PackageInstall = struct {
                             },
                         }
                     }
-                },
-                .hardlink => {
-                    if (this.installWithHardlink()) |result| {
-                        return result;
-                    } else |err| {
-                        switch (err) {
-                            error.NotSupported => {
-                                supported_method = .copyfile;
-                            },
-                            error.FileNotFound => return Result{
-                                .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
-                            },
-                            else => return Result{
-                                .fail = .{ .err = err, .step = .copying_files },
-                            },
-                        }
+                }
+            },
+            .hardlink => {
+                if (this.installWithHardlink()) |result| {
+                    return result;
+                } else |err| {
+                    switch (err) {
+                        error.NotSupported => {
+                            supported_method = .copyfile;
+                        },
+                        error.FileNotFound => return Result{
+                            .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
+                        },
+                        else => return Result{
+                            .fail = .{ .err = err, .step = .copying_files },
+                        },
                     }
-                },
-                else => {},
-            }
-
-            if (supported_method != .copyfile) return Result{
-                .success = void{},
-            };
-
-            return this.installWithCopyfile();
+                }
+            },
+            else => {},
         }
 
-        // TODO: linux io_uring
+        if (supported_method != .copyfile) return Result{
+            .success = void{},
+        };
 
+        // TODO: linux io_uring
+        return this.installWithCopyfile();
     }
 };
 
@@ -5922,6 +5913,7 @@ pub const PackageManager = struct {
             node_modules_folder: std.fs.Dir,
         };
 
+        /// Install versions of a package which are waiting on a network request
         pub fn installEnqueuedPackages(
             this: *PackageInstaller,
             package_id: PackageID,
@@ -6197,125 +6189,64 @@ pub const PackageManager = struct {
                 .successfully_installed = try std.DynamicBitSetUnmanaged.initEmpty(lockfile.packages.len, this.allocator),
             };
 
-            // When it's a Good Idea, run the install in single-threaded
-            // From benchmarking, apfs clonefile() is ~6x faster than copyfile() on macOS
-            // Running it in parallel is the same or slower.
-            // However, copyfile() is about 30% faster if run in paralell
-            // On Linux, the story here will be similar but with io_uring.
-            // We will have to support versions of Linux that do not have io_uring support
-            // so in that case, we will still need to support copy_file_range()
-            // git installs will always need to run in paralell, and tarball installs probably should too
-            run_install: {
-                if (PackageInstall.supported_method.isSync()) {
-                    sync_install: {
-                        const cwd = std.fs.cwd();
-                        while (iterator.nextNodeModulesFolder()) |node_modules| {
-                            try cwd.makePath(std.mem.span(node_modules.relative_path));
-                            // We deliberately do not close this folder.
-                            // If the package hasn't been downloaded, we will need to install it later
-                            // We use this file descriptor to know where to put it.
-                            var folder = try cwd.openDirZ(node_modules.relative_path, .{
-                                .iterate = true,
-                            });
+            const cwd = std.fs.cwd();
+            while (iterator.nextNodeModulesFolder()) |node_modules| {
+                try cwd.makePath(std.mem.span(node_modules.relative_path));
+                // We deliberately do not close this folder.
+                // If the package hasn't been downloaded, we will need to install it later
+                // We use this file descriptor to know where to put it.
+                var folder = try cwd.openDirZ(node_modules.relative_path, .{
+                    .iterate = true,
+                });
 
-                            installer.node_modules_folder = folder;
+                installer.node_modules_folder = folder;
 
-                            for (node_modules.packages) |package_id| {
-                                installer.installPackage(@truncate(PackageID, package_id), log_level);
-                                if (!PackageInstall.supported_method.isSync()) break :sync_install;
-                                if (this.pending_tasks > 16) {
-                                    try this.runTasks(
-                                        *PackageInstaller,
-                                        &installer,
-                                        PackageInstaller.installEnqueuedPackages,
-                                        log_level,
-                                    );
-                                }
-                            }
+                var remaining = node_modules.packages;
 
-                            try this.runTasks(
-                                *PackageInstaller,
-                                &installer,
-                                PackageInstaller.installEnqueuedPackages,
-                                log_level,
-                            );
-                        }
+                // cache line is 64 bytes on ARM64 and x64
+                // PackageIDs are 4 bytes
+                // Hence, we can fit up to 64 / 4 = 16 package IDs in a cache line
+                const unroll_count = comptime 64 / @sizeOf(PackageID);
 
-                        while (this.pending_tasks > 0) {
-                            try this.runTasks(
-                                *PackageInstaller,
-                                &installer,
-                                PackageInstaller.installEnqueuedPackages,
-                                log_level,
-                            );
-                        }
-                        break :run_install;
+                while (remaining.len > unroll_count) {
+                    comptime var i: usize = 0;
+                    inline while (i < unroll_count) : (i += 1) {
+                        installer.installPackage(remaining[i], comptime log_level);
+                    }
+                    remaining = remaining[unroll_count..];
+
+                    // We want to minimize how often we call this function
+                    // That's part of why we unroll this loop
+                    if (this.pending_tasks > 0) {
+                        try this.runTasks(
+                            *PackageInstaller,
+                            &installer,
+                            PackageInstaller.installEnqueuedPackages,
+                            log_level,
+                        );
                     }
                 }
 
-                // var install_context = try lockfile.allocator.create(PackageInstall.Context);
-                // install_context.* = .{
-                //     .cache_dir = cache_dir,
-                //     .progress = progress,
-                //     .metas = metas,
-                //     .names = names,
-                //     .resolutions = resolutions,
-                //     .string_buf = lockfile.buffers.string_bytes.items,
-                //     .allocator = lockfile.allocator,
-                // };
-                // install_context.channel = PackageInstall.Task.Channel.init();
-                // var ran: usize = summary.skipped + summary.success + summary.fail;
+                for (remaining) |package_id| {
+                    installer.installPackage(@truncate(PackageID, package_id), log_level);
+                }
 
-                // var tasks = try lockfile.allocator.alloc(PackageInstall.Task, toplevel_count - ran);
-                // var task_i: usize = 0;
-                // var batch = ThreadPool.Batch{};
-                // var remaining_count = task_i;
-                // while (toplevel_node_modules.next()) |package_id| {
-                //     const meta = &metas[package_id];
-                //     if (meta.isDisabled()) {
-                //         if (comptime log_level.showProgress()) {
-                //             install_node.completeOne();
-                //             install_node.setEstimatedTotalItems(installer.install_count);
-                //         }
-                //         continue;
-                //     }
-
-                //     tasks[task_i] = PackageInstall.Task{
-                //         .package_id = @truncate(PackageID, package_id),
-                //         .destination_dir = node_modules_folder,
-                //         .ctx = install_context,
-                //     };
-                //     batch.push(ThreadPool.Batch.from(&tasks[task_i].task));
-                //     task_i += 1;
-                // }
-
-                // this.thread_pool.schedule(batch);
-
-                // while (remaining_count > 0) {
-                //     while (install_context.channel.tryReadItem() catch null) |item_| {
-                //         var install_task: *PackageInstall.Task = item_;
-                //         defer remaining_count -= 1;
-                //         switch (install_task.result) {
-                //             .pending => unreachable,
-                //             .skip => summary.skipped += 1,
-                //             .success => summary.success += 1,
-                //             .fail => |cause| {
-                //                 Output.prettyErrorln(
-                //                     "<r><red>error<r>: <b><red>{s}<r> installing <b>{s}<r>",
-                //                     .{ @errorName(cause.err), install_task.ctx.names[install_task.package_id] },
-                //                 );
-                //                 summary.fail += 1;
-                //             },
-                //         }
-                //     }
-                //     if (comptime log_level.showProgress()) {
-                //         install_node.completeOne();
-                //         install_node.setEstimatedTotalItems(installer.install_count);
-                //     }
-
-                //     std.atomic.spinLoopHint();
+                try this.runTasks(
+                    *PackageInstaller,
+                    &installer,
+                    PackageInstaller.installEnqueuedPackages,
+                    log_level,
+                );
             }
-            // }
+
+            while (this.pending_tasks > 0) {
+                try this.runTasks(
+                    *PackageInstaller,
+                    &installer,
+                    PackageInstaller.installEnqueuedPackages,
+                    log_level,
+                );
+            }
 
             summary.successfully_installed = installer.successfully_installed;
             outer: for (installer.platform_binlinks.items) |deferred| {

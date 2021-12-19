@@ -198,7 +198,8 @@ PLATFORM_LINKER_FLAGS = -lstdc++fs \
 		-Wl,-z,notext \
 		-ffunction-sections \
 		-fdata-sections \
-		-Wl,--gc-sections
+		-Wl,--gc-sections \
+		-fuse-ld=lld
 endif
 
 
@@ -258,11 +259,8 @@ tgz-debug:
 hop:
 	$(ZIG) build hop-obj -Drelease-fast
 	$(CXX) $(PACKAGE_DIR)/hop.o -g -o ./misctools/hop $(DEFAULT_LINKER_FLAGS) -lc  \
-		src/deps/zlib/libz.a \
-		src/deps/libarchive.a \
-		src/deps/libssl.a \
-		src/deps/libcrypto.boring.a \
-		src/deps/picohttpparser.o -O3
+		$(ARCHIVE_FILES_WITHOUT_LIBCRYPTO)
+		$(PLATFORM_LINKER_FLAGS)
 	rm -rf $(PACKAGE_DIR)/hop.o
 
 hop-debug:

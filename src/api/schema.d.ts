@@ -256,22 +256,6 @@ export const WebsocketCommandKindKeys = {
   2: "manifest",
   manifest: "manifest",
 };
-export enum NPMPackageDataKind {
-  tarball = 1,
-  http = 2,
-  symlink = 3,
-  workspace = 4,
-}
-export const NPMPackageDataKindKeys = {
-  1: "tarball",
-  tarball: "tarball",
-  2: "http",
-  http: "http",
-  3: "symlink",
-  symlink: "symlink",
-  4: "workspace",
-  workspace: "workspace",
-};
 export interface StackFrame {
   function_name: string;
   file: string;
@@ -624,58 +608,6 @@ export interface WebsocketMessageManifestFailure {
   log: Log;
 }
 
-export interface SemverQualifier {
-  pre?: string;
-  build?: string;
-}
-
-export interface Semver {
-  major: uint32;
-  minor: uint32;
-  patch: uint32;
-  raw: StringPointer;
-  qualifiers: SemverQualifier[];
-}
-
-export interface NPMPackageData {
-  kind: NPMPackageDataKind;
-  value: StringPointer;
-  integrity: StringPointer;
-  destination: StringPointer;
-}
-
-export interface NPMPackage {
-  id: uint32;
-  name: StringPointer;
-  version: StringPointer;
-  resolution: Semver;
-  data: NPMPackageData;
-  dependencies_hash: uint32;
-  dev_dependencies_hash: uint32;
-  peer_dependencies_hash: uint32;
-  optional_dependencies_hash: uint32;
-  dependencies: DependencyResolution[];
-}
-
-export interface DependencyResolution {
-  version: Semver;
-  package: uint32;
-  required: boolean;
-  optional: boolean;
-  peer: boolean;
-  dev: boolean;
-}
-
-export interface Lockfile {
-  version?: string;
-  registry?: string;
-  root?: uint32;
-  hashes?: Uint32Array;
-  name_hashes?: Uint32Array;
-  packages?: NPMPackage[];
-  blob?: Uint8Array;
-}
-
 export declare function encodeStackFrame(
   message: StackFrame,
   bb: ByteBuffer
@@ -965,33 +897,3 @@ export declare function encodeWebsocketMessageManifestFailure(
 export declare function decodeWebsocketMessageManifestFailure(
   buffer: ByteBuffer
 ): WebsocketMessageManifestFailure;
-export declare function encodeSemverQualifier(
-  message: SemverQualifier,
-  bb: ByteBuffer
-): void;
-export declare function decodeSemverQualifier(
-  buffer: ByteBuffer
-): SemverQualifier;
-export declare function encodeSemver(message: Semver, bb: ByteBuffer): void;
-export declare function decodeSemver(buffer: ByteBuffer): Semver;
-export declare function encodeNPMPackageData(
-  message: NPMPackageData,
-  bb: ByteBuffer
-): void;
-export declare function decodeNPMPackageData(
-  buffer: ByteBuffer
-): NPMPackageData;
-export declare function encodeNPMPackage(
-  message: NPMPackage,
-  bb: ByteBuffer
-): void;
-export declare function decodeNPMPackage(buffer: ByteBuffer): NPMPackage;
-export declare function encodeDependencyResolution(
-  message: DependencyResolution,
-  bb: ByteBuffer
-): void;
-export declare function decodeDependencyResolution(
-  buffer: ByteBuffer
-): DependencyResolution;
-export declare function encodeLockfile(message: Lockfile, bb: ByteBuffer): void;
-export declare function decodeLockfile(buffer: ByteBuffer): Lockfile;

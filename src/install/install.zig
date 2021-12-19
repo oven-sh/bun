@@ -5276,15 +5276,15 @@ pub const PackageManager = struct {
         clap.parseParam("--lockfile <STR>                  Store & load a lockfile at a specific filepath") catch unreachable,
         clap.parseParam("-f, --force                       Always request the latest versions from the registry & reinstall all dependenices") catch unreachable,
         clap.parseParam("--cache-dir <STR>                 Store & load cached data from a specific directory path") catch unreachable,
-        // clap.parseParam("--no-dedupe                       Disable automatic downgrading of dependencies that would otherwise cause unnecessary duplicate package versions ($BUN_CONFIG_NO_DEDUPLICATE)") catch unreachable,
         clap.parseParam("--no-cache                        Ignore manifest cache entirely") catch unreachable,
         clap.parseParam("--silent                          Don't log anything") catch unreachable,
         clap.parseParam("--verbose                         Excessively verbose logging") catch unreachable,
         clap.parseParam("--cwd <STR>                       Set a specific cwd") catch unreachable,
         clap.parseParam("--backend <STR>                   Platform-specific optimizations for installing dependencies. For macOS, \"clonefile\" (default), \"copyfile\"") catch unreachable,
-        clap.parseParam("--omit <STR>...                   Skip installing dependencies of a certain type. \"dev\", \"optional\", or \"peer\"") catch unreachable,
-
         clap.parseParam("--link-native-bins <STR>...       Link \"bin\" from a matching platform-specific \"optionalDependencies\" instead. Default: esbuild, turbo") catch unreachable,
+
+        // clap.parseParam("--omit <STR>...                   Skip installing dependencies of a certain type. \"dev\", \"optional\", or \"peer\"") catch unreachable,
+        // clap.parseParam("--no-dedupe                       Disable automatic downgrading of dependencies that would otherwise cause unnecessary duplicate package versions ($BUN_CONFIG_NO_DEDUPLICATE)") catch unreachable,
 
         clap.parseParam("--help                            Print this help menu") catch unreachable,
     };
@@ -5388,19 +5388,19 @@ pub const PackageManager = struct {
                 cli.optional = args.flag("--optional");
             }
 
-            for (args.options("--omit")) |omit| {
-                if (strings.eqlComptime(omit, "dev")) {
-                    cli.omit.dev = true;
-                } else if (strings.eqlComptime(omit, "optional")) {
-                    cli.omit.optional = true;
-                } else if (strings.eqlComptime(omit, "peer")) {
-                    cli.omit.peer = true;
-                } else {
-                    Output.prettyErrorln("<b>error<r><d>:<r> Invalid argument <b>\"--omit\"<r> must be one of <cyan>\"dev\"<r>, <cyan>\"optional\"<r>, or <cyan>\"peer\"<r>. ", .{});
-                    Output.flush();
-                    std.os.exit(1);
-                }
-            }
+            // for (args.options("--omit")) |omit| {
+            //     if (strings.eqlComptime(omit, "dev")) {
+            //         cli.omit.dev = true;
+            //     } else if (strings.eqlComptime(omit, "optional")) {
+            //         cli.omit.optional = true;
+            //     } else if (strings.eqlComptime(omit, "peer")) {
+            //         cli.omit.peer = true;
+            //     } else {
+            //         Output.prettyErrorln("<b>error<r><d>:<r> Invalid argument <b>\"--omit\"<r> must be one of <cyan>\"dev\"<r>, <cyan>\"optional\"<r>, or <cyan>\"peer\"<r>. ", .{});
+            //         Output.flush();
+            //         std.os.exit(1);
+            //     }
+            // }
 
             if (args.option("--token")) |token| {
                 cli.token = token;

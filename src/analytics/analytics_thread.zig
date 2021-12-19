@@ -367,7 +367,7 @@ fn readloop() anyerror!void {
     ) catch return;
 
     event_list.async_http.client.verbose = FeatureFlags.verbose_analytics;
-
+    NetworkThread.init() catch unreachable;
     // everybody's random should be random
     while (true) {
         // Wait for the next event by blocking

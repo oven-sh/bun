@@ -6401,6 +6401,7 @@ pub const PackageManager = struct {
                                 .dev_dependencies = true,
                                 .is_main = true,
                                 .check_for_duplicate_dependencies = true,
+                                .peer_dependencies = false,
                             },
                         );
                     } else {
@@ -6415,6 +6416,7 @@ pub const PackageManager = struct {
                                 .dev_dependencies = false,
                                 .is_main = true,
                                 .check_for_duplicate_dependencies = true,
+                                .peer_dependencies = false,
                             },
                         );
                     }
@@ -6519,6 +6521,7 @@ pub const PackageManager = struct {
                         .dev_dependencies = true,
                         .is_main = true,
                         .check_for_duplicate_dependencies = true,
+                        .peer_dependencies = false,
                     },
                 );
             } else {
@@ -6533,6 +6536,7 @@ pub const PackageManager = struct {
                         .dev_dependencies = false,
                         .is_main = true,
                         .check_for_duplicate_dependencies = true,
+                        .peer_dependencies = false,
                     },
                 );
             }

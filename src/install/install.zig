@@ -4107,7 +4107,7 @@ pub const PackageManager = struct {
             },
 
             .folder => {
-                const res = FolderResolution.getOrPut(name.slice(this.lockfile.buffers.string_bytes.items), this);
+                const res = FolderResolution.getOrPut(version.value.folder.slice(this.lockfile.buffers.string_bytes.items), this);
 
                 switch (res) {
                     .err => |err| return err,
@@ -6259,7 +6259,8 @@ pub const PackageManager = struct {
                         }
                     }
                 },
-                // TODO: support folder links higher than node_modules folder
+                // TODO: support folder links deeper than node_modules folder
+                // if node_modules/foo/package.json has a folder:, then this will not create a valid symlink
                 .folder => {
                     var folder_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
                     std.mem.copy(u8, &folder_buf, "../" ++ std.fs.path.sep_str);

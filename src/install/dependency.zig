@@ -539,7 +539,12 @@ pub fn parseWithTag(
         .folder => {
             if (strings.indexOf(dependency, ":")) |protocol| {
                 if (strings.eqlComptime(dependency[0..protocol], "file")) {
-                    return Version{ .literal = sliced.value(), .value = .{ .folder = sliced.sub(dependency[4..]).value() }, .tag = .folder };
+                    if (dependency.len <= protocol) {
+                        if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "file: dependency missing a path", .{dependency}) catch unreachable;
+                        return null;
+                    }
+                    
+                    return Version{ .literal = sliced.value(), .value = .{ .folder = sliced.sub(dependency[protocol + 1 ..]).value() }, .tag = .folder };
                 }
 
                 if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "Unsupported protocol {s}", .{dependency}) catch unreachable;

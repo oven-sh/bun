@@ -369,7 +369,6 @@ _bun() {
                 '1: :->cmd1' \
                 '--version[Show version and exit]' \
                 '-V[Show version and exit]' \
-                '--cwd[Change directory]:cwd' \
                 '--help[Show command help]' \
                 '-h[Show command help]' \
                 '--registry[Change default registry (default: \$BUN_CONFIG_REGISTRY || \$npm_config_registry)]:registry' \
@@ -401,7 +400,6 @@ _bun() {
                 '*: :->package' \
                 '--version[Show version and exit]' \
                 '-V[Show version and exit]' \
-                '--cwd[Change directory]:cwd' \
                 '--help[Show command help]' \
                 '-h[Show command help]' \
                 '--registry[Change default registry (default: \$BUN_CONFIG_REGISTRY || \$npm_config_registry)]:registry' \
@@ -418,7 +416,6 @@ _bun() {
                 '--no-cache[Ignore manifest cache entirely]' \
                 '--silent[Don'"'"'t output anything]' \
                 '--verbose[Excessively verbose logging]' \
-                '--cwd[Set a specific cwd]:cwd' \
                 '--backend[Platform-specific optimizations for installing dependencies]:backend:("clonefile" "copyfile" "hardlink" "clonefile_each_dir")' \
                 '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' &&
                 ret=0

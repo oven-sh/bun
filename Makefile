@@ -38,8 +38,10 @@ ZIG ?= $(shell which zig || echo -e "error: Missing zig. Please make sure zig is
 # We must use the same compiler version for the JavaScriptCore bindings and JavaScriptCore
 # If we don't do this, strange memory allocation failures occur.
 # This is easier to happen than you'd expect.
-CC = $(realpath $(shell which clang-12 || which clang))
-CXX = $(realpath $(shell which clang++-12 || which clang++))
+# Using realpath here causes issues because clang uses clang++ as a symlink 
+# so if that's resolved, it won't build for C++
+CC = $(shell which clang-12 || which clang)
+CXX = $(shell which clang++-12 || which clang++)
 
 # macOS sed is different
 SED = $(shell which gsed || which sed)

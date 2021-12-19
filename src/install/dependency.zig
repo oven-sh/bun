@@ -277,6 +277,15 @@ pub const Version = struct {
                     ) or strings.eqlComptime(
                         dependency[0..@minimum("git+ssh".len, dependency.len)],
                         "git+ssh",
+                    ) or strings.eqlComptime(
+                        dependency[0..@minimum("git+file".len, dependency.len)],
+                        "git+file",
+                    ) or strings.eqlComptime(
+                        dependency[0..@minimum("git+http".len, dependency.len)],
+                        "git+http",
+                    ) or strings.eqlComptime(
+                        dependency[0..@minimum("git+https".len, dependency.len)],
+                        "git+https",
                     )) {
                         return .git;
                     }
@@ -516,9 +525,9 @@ pub fn parseWithTag(
             };
         },
         .folder => {
-            if (strings.contains(dependency, "://")) {
-                if (strings.startsWith(dependency, "file://")) {
-                    return Version{ .value = .{ .folder = sliced.sub(dependency[7..]).value() }, .tag = .folder };
+            if (strings.indexOf(dependency, ":")) |protocol| {
+                if (strings.eqlComptime(dependency[0..protocol], "file")) {
+                    return Version{ .literal = sliced.value(), .value = .{ .folder = sliced.sub(dependency[4..]).value() }, .tag = .folder };
                 }
 
                 if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "Unsupported protocol {s}", .{dependency}) catch unreachable;

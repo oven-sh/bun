@@ -23,7 +23,7 @@ const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
 const NewBunQueue = @import("../bun_queue.zig").NewBunQueue;
-const HTTPClient = @import("../http_client.zig");
+const HeaderBuilder = @import("http").HeaderBuilder;
 const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
 const Lock = @import("../lock.zig").Lock;
@@ -225,7 +225,7 @@ const NetworkTask = struct {
             etag = manifest.pkg.etag.slice(manifest.string_buf);
         }
 
-        var header_builder = HTTPClient.HeaderBuilder{};
+        var header_builder = HeaderBuilder{};
 
         if (etag.len != 0) {
             header_builder.count("If-None-Match", etag);

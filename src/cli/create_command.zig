@@ -245,8 +245,6 @@ const CreateOptions = struct {
 const BUN_CREATE_DIR = ".bun-create";
 var home_dir_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 pub const CreateCommand = struct {
-    var client: HTTPClient = undefined;
-
     pub fn exec(ctx: Command.Context, positionals_: []const []const u8) !void {
         Global.configureAllocator(.{ .long_running = false });
         try NetworkThread.init();

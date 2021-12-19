@@ -21,7 +21,6 @@ const bundler = @import("../bundler.zig");
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const fs = @import("../fs.zig");
 const URL = @import("../query_string_map.zig").URL;
-const HTTPClient = @import("../http_client.zig");
 const ParseJSON = @import("../json_parser.zig").ParseJSON;
 const Archive = @import("../libarchive/libarchive.zig").Archive;
 const Zlib = @import("../zlib.zig");

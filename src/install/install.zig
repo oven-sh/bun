@@ -2130,19 +2130,12 @@ pub const Lockfile = struct {
             }
         }
 
-        pub const Diff = union(Op) {
-            add: Lockfile.Package.Diff.Entry,
-            remove: Lockfile.Package.Diff.Entry,
-            update: struct { in: PackageID, from: Dependency, to: Dependency, from_resolution: PackageID, to_resolution: PackageID },
-
-            pub const Entry = struct { in: PackageID, dependency: Dependency, resolution: PackageID };
+        pub const Diff = struct {
             pub const Op = enum {
                 add,
                 remove,
                 update,
             };
-
-            pub const List = std.fifo.LinearFifo(Diff, .Dynamic);
 
             pub const Summary = struct {
                 add: u32 = 0,
@@ -5529,6 +5522,68 @@ pub const PackageManager = struct {
     ) !void {
         var update_requests = try std.BoundedArray(UpdateRequest, 64).init(0);
         var need_to_get_versions_from_npm = false;
+
+        if (manager.options.positionals.len == 1) {
+            var examples_to_print: [3]string = undefined;
+
+            const off = @intCast(u64, std.time.milliTimestamp());
+
+            switch (op) {
+                .update, .add => {
+                    const filler = @import("../cli.zig").HelpCommand.packages_to_add_filler;
+
+                    examples_to_print[0] = filler[@intCast(usize, (off) % filler.len)];
+                    examples_to_print[1] = filler[@intCast(usize, (off + 1) % filler.len)];
+                    examples_to_print[2] = filler[@intCast(usize, (off + 2) % filler.len)];
+
+                    Output.prettyErrorln(
+                        \\
+                        \\<r><b>Usage:<r>
+                        \\
+                        \\  bun add <r><cyan>package-name@version<r>
+                        \\  bun add <r><cyan>package-name<r>
+                        \\  bun add <r><cyan>package-name a-second-package<r>
+                        \\
+                        \\<r><b>Examples:<r>
+                        \\
+                        \\  bun add {s}
+                        \\  bun add {s}
+                        \\  bun add {s}
+                        \\
+                    , .{ examples_to_print[0], examples_to_print[1], examples_to_print[2] });
+                    Output.flush();
+                    std.os.exit(0);
+                },
+                .remove => {
+                    const filler = @import("../cli.zig").HelpCommand.packages_to_remove_filler;
+
+                    examples_to_print[0] = filler[@intCast(usize, (off) % filler.len)];
+                    examples_to_print[1] = filler[@intCast(usize, (off + 1) % filler.len)];
+                    examples_to_print[2] = filler[@intCast(usize, (off + 2) % filler.len)];
+
+                    Output.prettyErrorln(
+                        \\
+                        \\<r><b>Usage:<r>
+                        \\
+                        \\  bun remove <r><cyan>package-name<r>
+                        \\  bun remove <r><cyan>package-name a-second-package<r>
+                        \\
+                        \\<r><b>Examples:<r>
+                        \\
+                        \\  bun remove {s} {s}
+                        \\  bun remove {s}
+                        \\
+                    , .{
+                        examples_to_print[0],
+                        examples_to_print[1],
+                        examples_to_print[2],
+                    });
+                    Output.flush();
+
+                    std.os.exit(0);
+                },
+            }
+        }
 
         // first one is always either:
         // add

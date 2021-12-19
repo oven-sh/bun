@@ -444,7 +444,7 @@ const AutoCommand = struct {
 const InitCommand = struct {
     pub fn exec(allocator: *std.mem.Allocator) !void {}
 };
-const HelpCommand = struct {
+pub const HelpCommand = struct {
     pub fn exec(allocator: *std.mem.Allocator) !void {
         @setCold(true);
         execWithReason(allocator, .explicit);
@@ -464,7 +464,10 @@ const HelpCommand = struct {
         "redux",
         "browserify",
         "webpack",
+        "left-pad",
+        "is-array",
         "babel-core",
+        "@parcel/core",
     };
 
     pub const packages_to_add_filler = [_]string{

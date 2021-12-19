@@ -3266,7 +3266,7 @@ const PackageInstall = struct {
     var supported_method: Method = if (Environment.isMac)
         Method.clonefile
     else
-        Method.copy_file_range;
+        Method.copyfile;
 
     fn installWithClonefileEachDir(this: *PackageInstall) !Result {
         const Walker = @import("../walker_skippable.zig");

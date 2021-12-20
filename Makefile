@@ -4,7 +4,7 @@ OS_NAME := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 ARCH_NAME_RAW := $(shell uname -m)
 BUN_AUTO_UPDATER_REPO = Jarred-Sumner/bun-releases-for-updater
 
-make-lazy = $(eval $1 = $​$(eval $1 := $(value $(1)))$​$($1))
+MIN_MACOS_VERSION = 10.14
 
 MARCH_NATIVE =
 
@@ -12,6 +12,7 @@ ARCH_NAME :=
 ifeq ($(ARCH_NAME_RAW),arm64)
    ARCH_NAME = aarch64
    BREW_PREFIX_PATH = /opt/homebrew
+   MIN_MACOS_VERSION = 11.0
 else
    ARCH_NAME = x64
    BREW_PREFIX_PATH = /usr/local
@@ -55,9 +56,13 @@ LIBICONV_PATH ?= $(BREW_PREFIX_PATH)/opt/libiconv/lib/libiconv.a
 
 OPENSSL_LINUX_DIR = $(DEPS_DIR)/openssl/openssl-OpenSSL_1_1_1l
 
-
+CMAKE_FLAGS_WITHOUT_RELEASE = -DCMAKE_C_COMPILER=$(CC) -DCMAKE_CXX_COMPILER=$(CXX) -DCMAKE_OSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION) 
+CMAKE_FLAGS = $(CMAKE_FLAGS_WITHOUT_RELEASE) -DCMAKE_BUILD_TYPE=Release
+CFLAGS = $(MACOS_MIN_FLAG)
 ifeq ($(OS_NAME),linux)
 LIBICONV_PATH = $(DEPS_DIR)/libiconv.a
+
+
 endif
 
 build-iconv-linux:
@@ -102,6 +107,10 @@ ifeq ($(OS_NAME),darwin)
 endif
 
 
+MACOSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION)
+MACOS_MIN_FLAG=
+
+
 STRIP ?= $(shell which llvm-strip || which llvm-strip-12 || echo "Missing llvm-strip. Please pass it in the STRIP environment var"; exit 1;)
 
 HOMEBREW_PREFIX ?= $(BREW_PREFIX_PATH)
@@ -127,6 +136,8 @@ ifeq ($(OS_NAME),linux)
 endif
 
 ifeq ($(OS_NAME),darwin)
+MACOS_MIN_FLAG=-mmacosx-version-min=$(MIN_MACOS_VERSION)
+
 	INCLUDE_DIRS += $(MAC_INCLUDE_DIRS)
 endif
 
@@ -176,7 +187,7 @@ CLANG_FLAGS = $(INCLUDE_DIRS) \
 # It has something to do with ICU
 ifeq ($(OS_NAME), darwin)
 CLANG_FLAGS += -DDU_DISABLE_RENAMING=1 \
-		-mmacosx-version-min=10.11 -lstdc++
+		$(MACOS_MIN_FLAG) -lstdc++
 endif
 
 
@@ -221,7 +232,7 @@ bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release
 vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive 
 
 boringssl-build:
-	cd $(DEPS_DIR)/boringssl && mkdir -p build && cd build && cmake -DCMAKE_C_COMPILER=$(CC) -DCMAKE_CXX_COMPILER=$(CXX) -DCMAKE_BUILD_TYPE=Release -GNinja .. && ninja 
+	cd $(DEPS_DIR)/boringssl && mkdir -p build && cd build && cmake $(CMAKE_FLAGS) -GNinja .. && ninja 
 
 boringssl-copy:
 	cp $(DEPS_DIR)/boringssl/build/ssl/libssl.a $(DEPS_DIR)/libssl.a
@@ -234,7 +245,7 @@ libarchive:
 	(make clean || echo ""); \
 	(./build/clean.sh || echo ""); \
 	./build/autogen.sh; \
-	./configure --disable-shared --enable-static  --with-pic  --disable-bsdtar   --disable-bsdcat --disable-rpath --enable-posix-regex-lib  --without-xml2  --without-expat --without-openssl  --without-iconv --without-zlib; \
+	CFLAGS=$(CFLAGS) CC=$(CC) ./configure --disable-shared --enable-static  --with-pic  --disable-bsdtar   --disable-bsdcat --disable-rpath --enable-posix-regex-lib  --without-xml2  --without-expat --without-openssl  --without-iconv --without-zlib; \
 	make -j${CPUS}; \
 	cp ./.libs/libarchive.a $(DEPS_DIR)/libarchive.a;
 
@@ -261,7 +272,7 @@ tgz-debug:
 vendor: require init-submodules vendor-without-check 
 
 zlib: 
-	cd src/deps/zlib; cmake .; make;
+	cd src/deps/zlib; cmake $(CMAKE_FLAGS) .; make CFLAGS=$(CFLAGS);
 
 require:
 	@echo "Checking if the required utilities are available..."
@@ -387,7 +398,7 @@ endif
 
 jsc: jsc-build jsc-bindings
 jsc-build: $(JSC_BUILD_STEPS)
-jsc-bindings: jsc-bindings-headers jsc-bindings-mac
+jsc-bindings: jsc-copy-headers jsc-bindings-headers jsc-bindings-mac
 	
 jsc-bindings-headers:
 	rm -f /tmp/build-jsc-headers src/javascript/jsc/bindings/headers.zig
@@ -566,7 +577,7 @@ jsc-copy-headers:
 	find src/javascript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} src/javascript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/JavaScriptCore/ \;
 
 jsc-build-mac-compile:
-	cd src/javascript/jsc/WebKit && ICU_INCLUDE_DIRS="$(HOMEBREW_PREFIX)opt/icu4c/include" ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo -DUSE_PTHREAD_JIT_PERMISSIONS_API=1"
+	cd src/javascript/jsc/WebKit && ICU_INCLUDE_DIRS="$(HOMEBREW_PREFIX)opt/icu4c/include" ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo -DUSE_PTHREAD_JIT_PERMISSIONS_API=ON $(CMAKE_FLAGS_WITHOUT_RELEASE)"
 
 jsc-build-linux-compile:
 	cd src/javascript/jsc/WebKit && ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo -DUSE_THIN_ARCHIVES=OFF"
@@ -595,7 +606,7 @@ jsc-bindings-mac: $(OBJ_FILES)
 
 
 mimalloc:
-	cd src/deps/mimalloc; cmake .; make; 
+	cd src/deps/mimalloc; cmake $(CMAKE_FLAGS) .; make; 
 
 bun-link-lld-debug:
 	$(CXX) $(BUN_LLD_FLAGS) \
@@ -637,7 +648,7 @@ sizegen:
 	$(BUN_TMP_DIR)/sizegen > src/javascript/jsc/bindings/sizes.zig
 
 picohttp:
-	 $(CC) $(MARCH_NATIVE) -O3 -g -fPIE -c src/deps/picohttpparser/picohttpparser.c -Isrc/deps -o src/deps/picohttpparser.o; cd ../../	
+	 $(CC) $(MARCH_NATIVE) $(MACOS_MIN_FLAG) -O3 -g -fPIE -c src/deps/picohttpparser/picohttpparser.c -Isrc/deps -o src/deps/picohttpparser.o; cd ../../	
 
 analytics:
 	./node_modules/.bin/peechy --schema src/analytics/schema.peechy --zig src/analytics/analytics_schema.zig

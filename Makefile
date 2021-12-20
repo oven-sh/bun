@@ -59,6 +59,12 @@ OPENSSL_LINUX_DIR = $(DEPS_DIR)/openssl/openssl-OpenSSL_1_1_1l
 CMAKE_FLAGS_WITHOUT_RELEASE = -DCMAKE_C_COMPILER=$(CC) -DCMAKE_CXX_COMPILER=$(CXX) -DCMAKE_OSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION) 
 CMAKE_FLAGS = $(CMAKE_FLAGS_WITHOUT_RELEASE) -DCMAKE_BUILD_TYPE=Release
 CFLAGS = $(MACOS_MIN_FLAG)
+
+LIBTOOL=libtoolize
+ifeq ($(OS_NAME),darwin)
+   LIBTOOL=glibtoolize
+endif
+
 ifeq ($(OS_NAME),linux)
 LIBICONV_PATH = $(DEPS_DIR)/libiconv.a
 
@@ -110,6 +116,7 @@ endif
 MACOSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION)
 MACOS_MIN_FLAG=
 
+POSIX_PKG_MANAGER=sudo apt
 
 STRIP ?= $(shell which llvm-strip || which llvm-strip-12 || echo "Missing llvm-strip. Please pass it in the STRIP environment var"; exit 1;)
 
@@ -137,7 +144,7 @@ endif
 
 ifeq ($(OS_NAME),darwin)
 MACOS_MIN_FLAG=-mmacosx-version-min=$(MIN_MACOS_VERSION)
-
+POSIX_PKG_MANAGER=brew
 	INCLUDE_DIRS += $(MAC_INCLUDE_DIRS)
 endif
 
@@ -279,10 +286,10 @@ require:
 	@cmake --version >/dev/null 2>&1 || (echo -e "ERROR: cmake is required."; exit 1)
 	@esbuild --version >/dev/null 2>&1 || (echo -e "ERROR: esbuild is required."; exit 1)
 	@npm --version >/dev/null 2>&1 || (echo -e "ERROR: npm is required."; exit 1)
-	@which aclocal > /dev/null || (echo -e  "ERROR: automake is required. Install on mac with:\n\n    brew install automake"; exit 1)
-	@which glibtoolize > /dev/null || (echo -e "ERROR: libtool is required. Install on mac with:\n\n    brew install libtool"; exit 1)
-	@which ninja > /dev/null || (echo -e "ERROR: Ninja is required. Install on mac with:\n\n    brew install ninja"; exit 1)
-	@stat $(LIBICONV_PATH) >/dev/null 2>&1 || (echo -e "ERROR: libiconv is required. Please run:\n\n    brew install libiconv"; exit 1)
+	@which aclocal > /dev/null || (echo -e  "ERROR: automake is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install automake"; exit 1)
+	@which $(LIBTOOL) > /dev/null || (echo -e "ERROR: libtool is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install libtool"; exit 1)
+	@which ninja > /dev/null || (echo -e "ERROR: Ninja is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install ninja"; exit 1)
+	@stat $(LIBICONV_PATH) >/dev/null 2>&1 || (echo -e "ERROR: libiconv is required. Please run:\n\n    $(POSIX_PKG_MANAGER) install libiconv"; exit 1)
 	@echo "You have the dependencies installed! Woo"
 
 init-submodules:

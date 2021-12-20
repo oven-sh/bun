@@ -6263,10 +6263,11 @@ pub const PackageManager = struct {
                 // if node_modules/foo/package.json has a folder:, then this will not create a valid symlink
                 .folder => {
                     var folder_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                    const folder = resolution.value.folder.slice(buf);
                     std.mem.copy(u8, &folder_buf, "../" ++ std.fs.path.sep_str);
-                    std.mem.copy(u8, folder_buf["../".len..], name);
-                    folder_buf["../".len + name.len] = 0;
-                    var folderZ: [:0]u8 = folder_buf[0 .. "../".len + name.len :0];
+                    std.mem.copy(u8, folder_buf["../".len..], folder);
+                    folder_buf["../".len + folder.len] = 0;
+                    var folderZ: [:0]u8 = folder_buf[0 .. "../".len + folder.len :0];
 
                     const needs_install = this.force_install or this.skip_verify or brk: {
                         std.mem.copy(u8, this.destination_dir_subpath_buf[name.len..], std.fs.path.sep_str ++ "package.json");

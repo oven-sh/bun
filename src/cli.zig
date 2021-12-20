@@ -536,6 +536,8 @@ pub const HelpCommand = struct {
     }
 };
 
+const AddCompletions = @import("./cli/add_completions.zig");
+
 pub const PrintBundleCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         const entry_point = ctx.args.entry_points[0];
@@ -723,7 +725,7 @@ pub const Command = struct {
                         break;
                     }
                 }
-
+                var prefilled_completions: [AddCompletions.biggest_list]string = undefined;
                 var completions = ShellCompletions{};
 
                 if (filter.len == 0) {
@@ -742,8 +744,54 @@ pub const Command = struct {
                     completions = try RunCommand.completions(ctx, null, &reject_list, .bun_js);
                 } else if (strings.eqlComptime(filter[0], "z")) {
                     completions = try RunCommand.completions(ctx, null, &reject_list, .script_and_descriptions);
-                }
+                } else if (strings.eqlComptime(filter[0], "a")) {
+                    const FirstLetter = AddCompletions.FirstLetter;
+                    const index = AddCompletions.index;
 
+                    outer: {
+                        if (filter.len > 1) {
+                            const first_letter: FirstLetter = switch (filter[1][0]) {
+                                'a' => FirstLetter.a,
+                                'b' => FirstLetter.b,
+                                'c' => FirstLetter.c,
+                                'd' => FirstLetter.d,
+                                'e' => FirstLetter.e,
+                                'f' => FirstLetter.f,
+                                'g' => FirstLetter.g,
+                                'h' => FirstLetter.h,
+                                'i' => FirstLetter.i,
+                                'j' => FirstLetter.j,
+                                'k' => FirstLetter.k,
+                                'l' => FirstLetter.l,
+                                'm' => FirstLetter.m,
+                                'n' => FirstLetter.n,
+                                'o' => FirstLetter.o,
+                                'p' => FirstLetter.p,
+                                'q' => FirstLetter.q,
+                                'r' => FirstLetter.r,
+                                's' => FirstLetter.s,
+                                't' => FirstLetter.t,
+                                'u' => FirstLetter.u,
+                                'v' => FirstLetter.v,
+                                'w' => FirstLetter.w,
+                                'x' => FirstLetter.x,
+                                'y' => FirstLetter.y,
+                                'z' => FirstLetter.z,
+                                else => break :outer,
+                            };
+                            const results = index.get(first_letter);
+
+                            var prefilled_i: usize = 0;
+                            for (results) |cur| {
+                                if (cur.len == 0 or !strings.hasPrefix(cur, filter[1])) continue;
+                                prefilled_completions[prefilled_i] = cur;
+                                prefilled_i += 1;
+                                if (prefilled_i >= prefilled_completions.len) break;
+                            }
+                            completions.commands = prefilled_completions[0..prefilled_i];
+                        }
+                    }
+                }
                 completions.print();
 
                 return;

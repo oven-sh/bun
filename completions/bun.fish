@@ -16,6 +16,18 @@ function __fish__get_bun_scripts
 	string trim (string split '\n' (string split '\t' (bun getcompletes z)))
 end
 
+function __fish__get_bun_packages
+	if test (commandline -ct) != ""
+		set -lx SHELL fish
+		string split ' ' (bun getcompletes a (commandline -ct))
+	end
+end
+
+function __history_completions
+	set -l tokens (commandline --current-process --tokenize)
+	history --prefix (commandline) | string replace -r \^$tokens[1]\\s\* "" | string replace -r \^$tokens[2]\\s\* "" | string split ' '
+end
+
 function __fish__get_bun_bun_js_files
 	string split ' ' (bun getcompletes j)
 end
@@ -129,9 +141,9 @@ complete -c bun \
 	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_seen_subcommand_from install add remove;" -l 'cache-dir' -d 'Choose a cache directory (default: $HOME/.bun/install/cache)'
 
 complete -c bun \
-	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_seen_subcommand_from add remove;" -d "Add a folder to package.json"
+	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_seen_subcommand_from add;" -d 'Popular' -a '(__fish__get_bun_packages)'
 
 complete -c bun \
-	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_seen_subcommand_from add;" -F
+	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_seen_subcommand_from add;" -d 'History' -a '(__history_completions)'
 
 complete -c bun --no-files

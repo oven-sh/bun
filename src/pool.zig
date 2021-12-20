@@ -1,23 +1,32 @@
 const std = @import("std");
 
-pub fn ObjectPool(comptime Type: type, comptime Init: (fn (allocator: *std.mem.Allocator) anyerror!Type)) type {
+pub fn ObjectPool(comptime Type: type, comptime Init: (fn (allocator: *std.mem.Allocator) anyerror!Type), comptime threadsafe: bool) type {
     return struct {
         const LinkedList = std.SinglyLinkedList(Type);
-        // mimalloc crashes on realloc across threads
-        threadlocal var list: LinkedList = undefined;
-        threadlocal var loaded: bool = false;
+        const Data = if (threadsafe)
+            struct {
+                pub threadlocal var list: LinkedList = undefined;
+                pub threadlocal var loaded: bool = false;
+            }
+        else
+            struct {
+                pub var list: LinkedList = undefined;
+                pub var loaded: bool = false;
+            };
 
+        const data = Data;
         pub const Node = LinkedList.Node;
-        pub fn get(allocator: *std.mem.Allocator) *Node {
-            if (loaded) {
-                if (list.popFirst()) |node| {
+
+        pub fn get(allocator: *std.mem.Allocator) *LinkedList.Node {
+            if (data.loaded) {
+                if (data.list.popFirst()) |node| {
                     node.data.reset();
                     return node;
                 }
             }
 
-            var new_node = allocator.create(Node) catch unreachable;
-            new_node.* = Node{
+            var new_node = allocator.create(LinkedList.Node) catch unreachable;
+            new_node.* = LinkedList.Node{
                 .data = Init(
                     allocator,
                 ) catch unreachable,
@@ -26,14 +35,14 @@ pub fn ObjectPool(comptime Type: type, comptime Init: (fn (allocator: *std.mem.A
             return new_node;
         }
 
-        pub fn release(node: *Node) void {
-            if (loaded) {
-                list.prepend(node);
+        pub fn release(node: *LinkedList.Node) void {
+            if (data.loaded) {
+                data.list.prepend(node);
                 return;
             }
 
-            list = LinkedList{ .first = node };
-            loaded = true;
+            data.list = LinkedList{ .first = node };
+            data.loaded = true;
         }
     };
 }

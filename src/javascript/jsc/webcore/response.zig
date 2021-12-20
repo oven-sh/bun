@@ -430,8 +430,8 @@ pub const Fetch = struct {
         reject: js.JSObjectRef = null,
         context: FetchTaskletContext = undefined,
 
-        const Pool = ObjectPool(FetchTasklet, init);
-        const BodyPool = ObjectPool(MutableString, MutableString.init2048);
+        const Pool = ObjectPool(FetchTasklet, init, true);
+        const BodyPool = ObjectPool(MutableString, MutableString.init2048, true);
         pub const FetchTaskletContext = struct {
             tasklet: *FetchTasklet,
         };

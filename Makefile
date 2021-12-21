@@ -296,7 +296,6 @@ require:
 	@which aclocal > /dev/null || (echo -e  "ERROR: automake is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install automake"; exit 1)
 	@which $(LIBTOOL) > /dev/null || (echo -e "ERROR: libtool is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install libtool"; exit 1)
 	@which ninja > /dev/null || (echo -e "ERROR: Ninja is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install ninja"; exit 1)
-	@stat $(LIBICONV_PATH) >/dev/null 2>&1 || (echo -e "ERROR: libiconv is required. Please run:\n\n    $(POSIX_PKG_MANAGER) install libiconv"; exit 1)
 	@echo "You have the dependencies installed! Woo"
 
 init-submodules:
@@ -314,7 +313,7 @@ sign-macos-aarch64:
 cls: 
 	@echo "\n\n---\n\n"
 
-release: all-js build-obj jsc-bindings-mac cls bun-link-lld-release release-bin-entitlements
+release: all-js jsc-bindings-mac build-obj cls bun-link-lld-release release-bin-entitlements
 
 jsc-check:
 	@ls $(JSC_BASE_DIR)  >/dev/null 2>&1 || (echo "Failed to access WebKit build. Please compile the WebKit submodule using the Dockerfile at $(shell pwd)/src/javascript/WebKit/Dockerfile and then copy from /output in the Docker container to $(JSC_BASE_DIR). You can override the directory via JSC_BASE_DIR. \n\n 	DOCKER_BUILDKIT=1 docker build -t bun-webkit $(shell pwd)/src/javascript/jsc/WebKit -f $(shell pwd)/src/javascript/jsc/WebKit/Dockerfile --progress=plain\n\n 	docker container create bun-webkit\n\n 	# Get the container ID\n	docker container ls\n\n 	docker cp DOCKER_CONTAINER_ID_YOU_JUST_FOUND:/output $(JSC_BASE_DIR)" && exit 1)	
@@ -446,9 +445,9 @@ bun-codesign-release-local:
 
 endif
 
-jsc: jsc-build jsc-bindings
+jsc: jsc-build jsc-copy-headers jsc-bindings  
 jsc-build: $(JSC_BUILD_STEPS)
-jsc-bindings: jsc-copy-headers jsc-bindings-headers jsc-bindings-mac
+jsc-bindings: jsc-bindings-headers jsc-bindings-mac
 	
 jsc-bindings-headers:
 	rm -f /tmp/build-jsc-headers src/javascript/jsc/bindings/headers.zig

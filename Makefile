@@ -227,7 +227,6 @@ PLATFORM_LINKER_FLAGS = \
 		-ffunction-sections \
 		-fdata-sections \
 		-Wl,--gc-sections \
-		-fuse-ld=lld \
 		-stdlib=libstdc++ \
 		-static-libstdc++ \
 		-static-libgcc \

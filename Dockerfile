@@ -47,7 +47,7 @@ WORKDIR /home/ubuntu
 ARG BUILDARCH
 ENV ARCH "$BUILDARCH"
 
-ENV JSC_BASE_DIR /home/ubuntu/bun-webkit-linux-$ARCH
+
 RUN npm install -g esbuild
 
 RUN wget https://github.com/Jarred-Sumner/zig/releases/download/dec20/zig-linux-$ARCH.zip; \
@@ -55,10 +55,12 @@ RUN wget https://github.com/Jarred-Sumner/zig/releases/download/dec20/zig-linux-
     rm zig-linux-$ARCH.zip;
 
 
+ENV WEBKIT_OUT_DIR /home/ubuntu/bun-webkit
+
 WORKDIR /home/ubuntu
 RUN wget https://github.com/Jarred-Sumner/WebKit/releases/download/Bun-v0/bun-webkit-linux-$ARCH.tar.gz; \
     tar -xzvf bun-webkit-linux-$ARCH.tar.gz; \
-    rm bun-webkit-linux-$ARCH.tar.gz
+    rm bun-webkit-linux-$ARCH.tar.gz && cat $WEBKIT_OUT_DIR/include/cmakeconfig.h > /dev/null
 
 
 
@@ -82,12 +84,11 @@ RUN wget https://github.com/unicode-org/icu/releases/download/release-66-1/icu4c
     cp lib/libicutu.a /home/ubuntu/bun/src/deps && \
     cp lib/libicuuc.a /home/ubuntu/bun/src/deps
 
-
+ENV PATH "/home/ubuntu/zig:$PATH"
+ENV JSC_BASE_DIR $WEBKIT_OUT_DIR
 
 WORKDIR /home/ubuntu/bun
 
-
-ENV PATH "/home/ubuntu/zig:$PATH"
 RUN make api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib libarchive boringssl picohttp
 
 WORKDIR /home/ubuntu/bun

@@ -398,39 +398,7 @@ httpbench-release:
 bun-codesign-debug:
 bun-codesign-release-local:
 
-remove-glibc-version-dependency:
-	patchelf --clear-symbol-version __libc_start_main $(RELEASE_BUN);
-	patchelf --clear-symbol-version pthread_key_create $(RELEASE_BUN);
-	patchelf --clear-symbol-version pthread_once $(RELEASE_BUN);
-	patchelf --clear-symbol-version pthread_setspecific $(RELEASE_BUN);
-	patchelf --clear-symbol-version pthread_getspecific $(RELEASE_BUN);
-	patchelf --clear-symbol-version dlclose $(RELEASE_BUN);
-	patchelf --clear-symbol-version dlopen $(RELEASE_BUN);
-	patchelf --clear-symbol-version dlsym $(RELEASE_BUN);
-	patchelf --clear-symbol-version pthread_attr_getstack $(RELEASE_BUN);
-	patchelf --clear-symbol-version dladdr $(RELEASE_BUN);
-	patchelf --clear-symbol-version pthread_attr_setstacksize $(RELEASE_BUN);
-	patchelf --clear-symbol-version pthread_create $(RELEASE_BUN);
-	patchelf --clear-symbol-version pthread_detach $(RELEASE_BUN);
-	patchelf --clear-symbol-version pthread_join $(RELEASE_BUN);
-	patchelf --clear-symbol-version pthread_kill $(RELEASE_BUN);
-	patchelf --clear-symbol-version pthread_mutex_trylock $(RELEASE_BUN);
-	patchelf --clear-symbol-version pthread_setname_np $(RELEASE_BUN);
-	patchelf --clear-symbol-version pthread_attr_setguardsize $(RELEASE_BUN);
-	patchelf --clear-symbol-version pthread_rwlock_destroy $(RELEASE_BUN);
-	patchelf --clear-symbol-version pthread_rwlock_rdlock $(RELEASE_BUN);
-	patchelf --clear-symbol-version pthread_rwlock_init $(RELEASE_BUN);
-	patchelf --clear-symbol-version pthread_rwlock_unlock $(RELEASE_BUN);
-	patchelf --clear-symbol-version pthread_rwlock_wrlock $(RELEASE_BUN);
-	patchelf --clear-symbol-version __pthread_key_create $(RELEASE_BUN);
-	patchelf --clear-symbol-version fstat $(RELEASE_BUN); 
-	patchelf --clear-symbol-version fstat64 $(RELEASE_BUN); 
-	patchelf --clear-symbol-version lstat $(RELEASE_BUN); 
-	patchelf --clear-symbol-version pthread_getattr_np $(RELEASE_BUN); 
-	patchelf --clear-symbol-version stat $(RELEASE_BUN); 
-	patchelf --clear-symbol-version lstat64 $(RELEASE_BUN); 
-	patchelf --clear-symbol-version pthread_sigmask $(RELEASE_BUN); 
-	patchelf --clear-symbol-version __libc_single_threaded $(RELEASE_BUN); 
+
 	
 check-glibc-version-dependency:
 	@objdump -T $(RELEASE_BUN) | ((grep -qe "GLIBC_2.3[0-9]") && { echo "Glibc 2.3X detected, this will break the binary"; exit 1; }) || true
@@ -544,17 +512,15 @@ release-bin-check-version:
 	test $(shell eval $(BUN_RELEASE_BIN) --version) = $(PACKAGE_JSON_VERSION)
 
 release-bin-check: release-bin-check-version 
-release-bin-patch:
 
 ifeq ($(OS_NAME),linux)
-release-bin-patch: remove-glibc-version-dependency
 
 release-bin-check: release-bin-check-version 
 # force it to run
 	@make -B check-glibc-version-dependency
 endif
 
-release-bin-without-push: release-bin-patch test-all release-bin-check release-bin-generate release-bin-codesign 
+release-bin-without-push: test-all release-bin-check release-bin-generate release-bin-codesign 
 release-bin: release-bin-without-push release-bin-push
 
 

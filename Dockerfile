@@ -44,10 +44,8 @@ ENV CC=clang-12
 ENV CXX=clang++-12
 
 WORKDIR /home/ubuntu
-ARG TARGETPLATFORM
-ARG TARGETARCH
-
-ENV ARCH "$TARGETARCH"
+ARG BUILDARCH
+ENV ARCH "$BUILDARCH"
 
 ENV JSC_BASE_DIR /home/ubuntu/bun-webkit-linux-$ARCH
 RUN npm install -g esbuild

@@ -54,7 +54,7 @@ RUN --mount=type=tmpfs,target=/zig-build \
     rm -rf .git; \
     cd /zig-build; \
     zip -r zig.zip zig; \
-    mv zig.zip /home/ubuntu/
+    mv zig.zip /home/ubuntu/zig.zip
 
 
 

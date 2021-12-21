@@ -42,6 +42,8 @@ RUN update-alternatives --install /usr/bin/ld ld /usr/bin/lld-12 90 && \
 ENV CC=clang-12 
 ENV CXX=clang++-12
 
+RUN mkdir /output;
+
 # Compile zig
 RUN --mount=type=tmpfs,target=/zig-build \
     cd /zig-build && \
@@ -54,7 +56,7 @@ RUN --mount=type=tmpfs,target=/zig-build \
     rm -rf .git; \
     cd /zig-build; \
     zip -r zig.zip zig; \
-    mv zig.zip /home/ubuntu/zig.zip
+    cp zig.zip /output;
 
 
 

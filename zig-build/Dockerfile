@@ -43,6 +43,7 @@ ENV CC=clang-12
 ENV CXX=clang++-12
 
 RUN mkdir /output;
+WORKDIR /output
 
 # Compile zig
 RUN --mount=type=tmpfs,target=/zig-build \

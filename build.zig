@@ -97,7 +97,7 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: *std.mem.Alloc
 var output_dir: []const u8 = "";
 fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
     var file = std.fs.cwd().openFile(filepath, .{ .read = true }) catch |err| {
-        std.debug.panic("error: {s} opening {s}. Please ensure you've downloaded git submodules, and ran `make vendor`, `make jsc`." ++ linux_only, .{ filepath, @errorName(err) });
+        std.debug.panic("error: {s} opening {s}. Please ensure you've downloaded git submodules, and ran `make vendor`, `make jsc`.", .{ filepath, @errorName(err) });
     };
     file.close();
 

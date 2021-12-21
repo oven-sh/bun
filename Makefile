@@ -4,6 +4,7 @@ OS_NAME := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 ARCH_NAME_RAW := $(shell uname -m)
 BUN_AUTO_UPDATER_REPO = Jarred-Sumner/bun-releases-for-updater
 
+# On Linux ARM64, uname -m reports aarch64
 ifeq ($(ARCH_NAME_RAW),aarch64)
 ARCH_NAME_RAW = arm64
 endif

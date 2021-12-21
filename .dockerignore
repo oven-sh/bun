@@ -10,5 +10,7 @@ examples
 
 **/.next
 .git
-src/javascript/jsc/WebKit/WebKitBuild
+src/javascript/jsc/WebKit
 **/CMakeCache.txt
+packages/**/bun
+packages/**/bun-profile

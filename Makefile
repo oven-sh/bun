@@ -4,6 +4,10 @@ OS_NAME := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 ARCH_NAME_RAW := $(shell uname -m)
 BUN_AUTO_UPDATER_REPO = Jarred-Sumner/bun-releases-for-updater
 
+ifeq ($(ARCH_NAME_RAW),aarch64)
+ARCH_NAME_RAW = arm64
+endif
+
 MIN_MACOS_VERSION = 10.14
 
 MARCH_NATIVE =

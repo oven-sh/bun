@@ -33,6 +33,9 @@ BUN_BUILD_TAG = bun-v$(PACKAGE_JSON_VERSION)
 BUN_RELEASE_BIN = $(PACKAGE_DIR)/bun
 PRETTIER ?= $(shell which prettier || echo "./node_modules/.bin/prettier")
 
+WEBKIT_DIR ?= $(realpath src/javascript/jsc/WebKit)
+WEBKIT_RELEASE_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Release
+
 NPM_CLIENT = $(shell which npm)
 ZIG ?= $(shell which zig || echo -e "error: Missing zig. Please make sure zig is in PATH. Or set ZIG=/path/to-zig-executable")
 
@@ -105,7 +108,7 @@ DEFAULT_LINKER_FLAGS =
 
 JSC_BUILD_STEPS :=
 ifeq ($(OS_NAME),linux)
-	JSC_BUILD_STEPS += jsc-check
+	JSC_BUILD_STEPS += jsc-build-linux
 DEFAULT_LINKER_FLAGS= -pthread -ldl 
 endif
 ifeq ($(OS_NAME),darwin)
@@ -126,17 +129,19 @@ SRC_DIR := src/javascript/jsc/bindings
 OBJ_DIR := src/javascript/jsc/bindings-obj
 SRC_FILES := $(wildcard $(SRC_DIR)/*.cpp)
 OBJ_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
-MAC_INCLUDE_DIRS := -Isrc/javascript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders \
-		-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/WTF/Headers \
-		-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/ICU/Headers \
-		-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/ \
+MAC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders \
+		-I$(WEBKIT_RELEASE_DIR)/WTF/Headers \
+		-I$(WEBKIT_RELEASE_DIR)/ICU/Headers \
+		-I$(WEBKIT_RELEASE_DIR)/ \
 		-Isrc/javascript/jsc/bindings/ \
-		-Isrc/javascript/jsc/WebKit/Source/bmalloc 
+		-I$(WEBKIT_DIR)/Source/bmalloc 
 
 LINUX_INCLUDE_DIRS := -I$(JSC_INCLUDE_DIR) \
 					  -Isrc/javascript/jsc/bindings/
 
 INCLUDE_DIRS :=
+
+
 
 ifeq ($(OS_NAME),linux)
 	INCLUDE_DIRS += $(LINUX_INCLUDE_DIRS)
@@ -210,7 +215,7 @@ ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) src/deps/libcrypto.boring.a
 PLATFORM_LINKER_FLAGS =
 
 ifeq ($(OS_NAME), linux)
-PLATFORM_LINKER_FLAGS = -lstdc++fs \
+PLATFORM_LINKER_FLAGS = -lstdc++ \
 		-lc \
 		-Wl,-z,now \
 		-Wl,--as-needed \
@@ -219,7 +224,8 @@ PLATFORM_LINKER_FLAGS = -lstdc++fs \
 		-ffunction-sections \
 		-fdata-sections \
 		-Wl,--gc-sections \
-		-fuse-ld=lld
+		-fuse-ld=lld \
+		-static
 endif
 
 
@@ -581,22 +587,44 @@ test-dev-bunjs:
 test-dev: test-dev-with-hmr
 
 jsc-copy-headers:
-	find src/javascript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} src/javascript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/JavaScriptCore/ \;
+	find $(WEBKIT_RELEASE_DIR)/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/ \;
 
 jsc-build-mac-compile:
-	cd src/javascript/jsc/WebKit && ICU_INCLUDE_DIRS="$(HOMEBREW_PREFIX)opt/icu4c/include" ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo -DUSE_PTHREAD_JIT_PERMISSIONS_API=ON $(CMAKE_FLAGS_WITHOUT_RELEASE)"
+	cd $(WEBKIT_DIR) && ICU_INCLUDE_DIRS="$(HOMEBREW_PREFIX)opt/icu4c/include" ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo -DUSE_PTHREAD_JIT_PERMISSIONS_API=ON $(CMAKE_FLAGS_WITHOUT_RELEASE)"
 
-jsc-build-linux-compile:
-	cd src/javascript/jsc/WebKit && ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo -DUSE_THIN_ARCHIVES=OFF"
+jsc-build-linux-compile-config:
+	mkdir -p $(WEBKIT_RELEASE_DIR)
+	cd $(WEBKIT_RELEASE_DIR) && \
+		cmake \
+			-DPORT="JSCOnly" \
+			-DENABLE_STATIC_JSC=ON \
+			-DCMAKE_BUILD_TYPE=relwithdebuginfo \
+			-DUSE_THIN_ARCHIVES=OFF \
+			-DENABLE_FTL_JIT=ON \
+			-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+			-G Ninja \
+			-DCMAKE_CXX_COMPILER=$(CXX) \
+			-DCMAKE_C_COMPILER=$(CC) \
+			$(WEBKIT_DIR) \
+			$(WEBKIT_RELEASE_DIR)
+
+# If you get "Error: could not load cache"
+# run  rm -rf src/javascript/jsc/WebKit/CMakeCache.txt
+jsc-build-linux-compile-build:
+		mkdir -p $(WEBKIT_RELEASE_DIR)  && \
+		cd $(WEBKIT_RELEASE_DIR)  && \
+	CFLAGS="$CFLAGS -ffat-lto-objects" CXXFLAGS="$CXXFLAGS -ffat-lto-objects" \
+		cmake --build $(WEBKIT_RELEASE_DIR) --config relwithdebuginfo --target jsc
+
 
 jsc-build-mac: jsc-build-mac-compile jsc-build-mac-copy
 
-jsc-build-linux: jsc-build-linux-compile jsc-build-mac-copy
+jsc-build-linux: jsc-build-linux-compile-config jsc-build-linux-compile-build jsc-build-mac-copy
 
 jsc-build-mac-copy:
-	cp src/javascript/jsc/WebKit/WebKitBuild/Release/lib/libJavaScriptCore.a src/deps/libJavaScriptCore.a
-	cp src/javascript/jsc/WebKit/WebKitBuild/Release/lib/libWTF.a src/deps/libWTF.a
-	cp src/javascript/jsc/WebKit/WebKitBuild/Release/lib/libbmalloc.a src/deps/libbmalloc.a
+	cp $(WEBKIT_RELEASE_DIR)/lib/libJavaScriptCore.a src/deps/libJavaScriptCore.a
+	cp $(WEBKIT_RELEASE_DIR)/lib/libWTF.a src/deps/libWTF.a
+	cp $(WEBKIT_RELEASE_DIR)/lib/libbmalloc.a src/deps/libbmalloc.a
 	 
 clean-bindings: 
 	rm -rf $(OBJ_DIR)/*.o
@@ -647,7 +675,7 @@ bun-link-lld-release:
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	$(CXX) -c -o $@ $< \
 		$(CLANG_FLAGS) \
-		-O1 \
+		-O3 \
 		-w
 
 sizegen:

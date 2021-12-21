@@ -49,8 +49,6 @@ Assuming a package.json with a `"clean"` command in `"scripts"`:
 }
 ```
 
-Note: `bun run` is not an npm client, it won't install packages.
-
 ## Using Bun with Next.js
 
 To create a new Next.js app with Bun:

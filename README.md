@@ -94,7 +94,7 @@ Here's what doesn't work yet:
 
 - `getStaticPaths`
 - same-origin `fetch` inside of `getStaticProps` or `getServerSideProps`
-- locales, zones, `assetPrefix` (workaround: change `--origin \"http://localhsot:3000/assetPrefixInhere\"`)
+- locales, zones, `assetPrefix` (workaround: change `--origin \"http://localhost:3000/assetPrefixInhere\"`)
 - `next/image` is polyfilled to a regular `<img src>` tag.
 - `proxy` and anything else in `next.config.js`
 - API routes, middleware (middleware is easier to support though! similar SSR API)

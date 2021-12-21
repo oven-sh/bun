@@ -69,9 +69,7 @@ ifeq ($(OS_NAME),darwin)
 endif
 
 ifeq ($(OS_NAME),linux)
-LIBICONV_PATH = $(DEPS_DIR)/libiconv.a
-
-
+LIBICONV_PATH = 
 endif
 
 build-iconv-linux:
@@ -215,7 +213,7 @@ ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) src/deps/libcrypto.boring.a
 PLATFORM_LINKER_FLAGS =
 
 ifeq ($(OS_NAME), linux)
-PLATFORM_LINKER_FLAGS = -lstdc++ \
+PLATFORM_LINKER_FLAGS = \
 		-lc \
 		-Wl,-z,now \
 		-Wl,--as-needed \
@@ -224,7 +222,11 @@ PLATFORM_LINKER_FLAGS = -lstdc++ \
 		-ffunction-sections \
 		-fdata-sections \
 		-Wl,--gc-sections \
-		-fuse-ld=lld
+		-fuse-ld=lld \
+		-stdlib=libstdc++ \
+		-static-libstdc++ \
+		-static-libgcc \
+		-fPIC
 endif
 
 
@@ -392,6 +394,42 @@ httpbench-release:
 bun-codesign-debug:
 bun-codesign-release-local:
 
+remove-glibc-version-dependency:
+	patchelf --clear-symbol-version __libc_start_main $(RELEASE_BUN);
+	patchelf --clear-symbol-version pthread_key_create $(RELEASE_BUN);
+	patchelf --clear-symbol-version pthread_once $(RELEASE_BUN);
+	patchelf --clear-symbol-version pthread_setspecific $(RELEASE_BUN);
+	patchelf --clear-symbol-version pthread_getspecific $(RELEASE_BUN);
+	patchelf --clear-symbol-version dlclose $(RELEASE_BUN);
+	patchelf --clear-symbol-version dlopen $(RELEASE_BUN);
+	patchelf --clear-symbol-version dlsym $(RELEASE_BUN);
+	patchelf --clear-symbol-version pthread_attr_getstack $(RELEASE_BUN);
+	patchelf --clear-symbol-version dladdr $(RELEASE_BUN);
+	patchelf --clear-symbol-version pthread_attr_setstacksize $(RELEASE_BUN);
+	patchelf --clear-symbol-version pthread_create $(RELEASE_BUN);
+	patchelf --clear-symbol-version pthread_detach $(RELEASE_BUN);
+	patchelf --clear-symbol-version pthread_join $(RELEASE_BUN);
+	patchelf --clear-symbol-version pthread_kill $(RELEASE_BUN);
+	patchelf --clear-symbol-version pthread_mutex_trylock $(RELEASE_BUN);
+	patchelf --clear-symbol-version pthread_setname_np $(RELEASE_BUN);
+	patchelf --clear-symbol-version pthread_attr_setguardsize $(RELEASE_BUN);
+	patchelf --clear-symbol-version pthread_rwlock_destroy $(RELEASE_BUN);
+	patchelf --clear-symbol-version pthread_rwlock_rdlock $(RELEASE_BUN);
+	patchelf --clear-symbol-version pthread_rwlock_init $(RELEASE_BUN);
+	patchelf --clear-symbol-version pthread_rwlock_unlock $(RELEASE_BUN);
+	patchelf --clear-symbol-version pthread_rwlock_wrlock $(RELEASE_BUN);
+	patchelf --clear-symbol-version __pthread_key_create $(RELEASE_BUN);
+	patchelf --clear-symbol-version fstat $(RELEASE_BUN); 
+	patchelf --clear-symbol-version fstat64 $(RELEASE_BUN); 
+	patchelf --clear-symbol-version lstat $(RELEASE_BUN); 
+	patchelf --clear-symbol-version pthread_getattr_np $(RELEASE_BUN); 
+	patchelf --clear-symbol-version stat $(RELEASE_BUN); 
+	patchelf --clear-symbol-version lstat64 $(RELEASE_BUN); 
+	patchelf --clear-symbol-version pthread_sigmask $(RELEASE_BUN); 
+	patchelf --clear-symbol-version __libc_single_threaded $(RELEASE_BUN); 
+	
+check-glibc-version-dependency:
+	@objdump -T $(RELEASE_BUN) | ((grep -qe "GLIBC_2.3[0-9]") && { echo "Glibc 2.3X detected, this will break the binary"; exit 1; }) || true
 
 ifeq ($(OS_NAME),darwin)
 
@@ -498,11 +536,25 @@ release-bin-generate-copy:
 release-bin-generate: release-bin-generate-copy release-bin-generate-zip
 
 
-release-bin-check:
+release-bin-check-version:
 	test $(shell eval $(BUN_RELEASE_BIN) --version) = $(PACKAGE_JSON_VERSION)
 
-release-bin-without-push: test-all release-bin-check release-bin-generate release-bin-codesign
+release-bin-check: release-bin-check-version 
+release-bin-patch:
+
+ifeq ($(OS_NAME),linux)
+release-bin-patch: remove-glibc-version-dependency
+
+release-bin-check: release-bin-check-version 
+# force it to run
+	@make -B check-glibc-version-dependency
+endif
+
+release-bin-without-push: release-bin-patch test-all release-bin-check release-bin-generate release-bin-codesign 
 release-bin: release-bin-without-push release-bin-push
+
+
+
 
 release-bin-push: 
 	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_ZIP)
@@ -666,7 +718,6 @@ bun-link-lld-release:
 		-O3
 	cp $(BUN_RELEASE_BIN) $(BUN_RELEASE_BIN)-profile
 	-$(STRIP) $(BUN_RELEASE_BIN)
-	
 	mv $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
 
 # We do this outside of build.zig for performance reasons
@@ -702,107 +753,6 @@ fmt-all:
 
 unit-tests: generate-unit-tests run-unit-tests
 
-
-
-ifeq (test, $(firstword $(MAKECMDGOALS)))
-testpath := $(firstword $(wordlist 2, $(words $(MAKECMDGOALS)), $(MAKECMDGOALS)))
-testfilter := $(wordlist 3, $(words $(MAKECMDGOALS)), $(MAKECMDGOALS))
-testbinpath := zig-out/bin/test
-testbinpath := $(lastword $(testfilter))
-
-ifeq ($(if $(patsubst /%,,$(testbinpath)),,yes),yes)
-testfilterflag := --test-filter "$(filter-out $(testbinpath), $(testfilter))"
-
-endif
-
-ifneq ($(if $(patsubst /%,,$(testbinpath)),,yes),yes)
-testbinpath := zig-out/bin/test
-ifneq ($(strip $(testfilter)),)
-testfilterflag := --test-filter "$(testfilter)"
-endif
-endif
-
-  testname := $(shell basename $(testpath))
-
-  
-  $(eval $(testname):;@true)
-
-  ifeq ($(words $(testfilter)), 0)
-testfilterflag :=  --test-name-prefix "$(testname): "
-endif
-
-ifeq ($(testfilterflag), undefined)
-testfilterflag :=  --test-name-prefix "$(testname): "
-endif
-
-
-endif
-
-ifeq (build-unit, $(firstword $(MAKECMDGOALS)))
-testpath := $(firstword $(wordlist 2, $(words $(MAKECMDGOALS)), $(MAKECMDGOALS)))
-testfilter := $(wordlist 3, $(words $(MAKECMDGOALS)), $(MAKECMDGOALS))
-testbinpath := zig-out/bin/test
-testbinpath := $(lastword $(testfilter))
-
-ifeq ($(if $(patsubst /%,,$(testbinpath)),,yes),yes)
-testfilterflag := --test-filter "$(filter-out $(testbinpath), $(testfilter))"
-
-endif
-
-ifneq ($(if $(patsubst /%,,$(testbinpath)),,yes),yes)
-testbinpath := zig-out/bin/test
-ifneq ($(strip $(testfilter)),)
-testfilterflag := --test-filter "$(testfilter)"
-endif
-endif
-
-  testname := $(shell basename $(testpath))
-
-  
-$(eval $(testname):;@true)
-$(eval $(testfilter):;@true)
-$(eval $(testpath):;@true)
-
-  ifeq ($(words $(testfilter)), 0)
-testfilterflag :=  --test-name-prefix "$(testname): "
-endif
-
-ifeq ($(testfilterflag), undefined)
-testfilterflag :=  --test-name-prefix "$(testname): "
-endif
-
-
-
-endif
-
-IO_FILE = 
-
-ifeq ($(OS_NAME),linux)
-IO_FILE = "src/io/io_linux.zig"
-endif
-
-ifeq ($(OS_NAME),darwin)
-IO_FILE = "src/io/io_darwin.zig"
-endif
-
-build-unit:
-	@rm -rf zig-out/bin/$(testname)
-	@mkdir -p zig-out/bin
-	zig test $(realpath $(testpath)) \
-	$(testfilterflag) \
-	--pkg-begin picohttp $(DEPS_DIR)/picohttp.zig --pkg-end \
-	--pkg-begin io	$(IO_FILE) --pkg-end \
-	--pkg-begin clap $(DEPS_DIR)/zig-clap/clap.zig --pkg-end \
-	--main-pkg-path $(shell pwd) \
-	--test-no-exec \
-	-fPIC \
-	-femit-bin=zig-out/bin/$(testname) \
-	-fcompiler-rt \
-	-lc -lc++ \
-	--cache-dir /tmp/zig-cache-bun-$(testname)-$(basename $(lastword $(testfilter))) \
-	-fallow-shlib-undefined \
-	$(ARCHIVE_FILES) $(ICU_FLAGS) && \
-	cp zig-out/bin/$(testname) $(testbinpath)
 
 run-unit:
 	@zig-out/bin/$(testname) -- fake

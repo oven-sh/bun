@@ -53,7 +53,7 @@ RUN npm install -g esbuild
 RUN wget https://github.com/Jarred-Sumner/zig/releases/download/dec20/zig-linux-$ARCH.zip; \
     unzip zig-linux-$ARCH.zip; \
     rm zig-linux-$ARCH.zip;
-ENV PATH "/home/ubuntu/zig/build:$PATH"
+
 
 WORKDIR /home/ubuntu
 RUN wget https://github.com/Jarred-Sumner/WebKit/releases/download/Bun-v0/bun-webkit-linux-$ARCH.tar.gz; \
@@ -87,7 +87,7 @@ RUN wget https://github.com/unicode-org/icu/releases/download/release-66-1/icu4c
 WORKDIR /home/ubuntu/bun
 
 
-
+ENV PATH "/home/ubuntu/zig:$PATH"
 RUN make api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib libarchive boringssl picohttp
 
 WORKDIR /home/ubuntu/bun

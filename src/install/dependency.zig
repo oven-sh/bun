@@ -351,6 +351,21 @@ pub const Version = struct {
                     return .dist_tag;
                 },
 
+                // Dependencies can start with v
+                // v1.0.0 is the same as 1.0.0
+                // However, a github repo or a tarball could start with v
+                'v' => {
+                    if (isTarball(dependency)) {
+                        return .tarball;
+                    }
+
+                    if (isGithubRepoPath(dependency)) {
+                        return .github;
+                    }
+
+                    return .npm;
+                },
+
                 // file:
                 'f' => {
                     if (isTarball(dependency))
@@ -466,6 +481,13 @@ pub fn parse(allocator: *std.mem.Allocator, dependency_: string, sliced: *const 
 
     if (tag == .npm and dependency.len > 4 and strings.eqlComptimeIgnoreLen(dependency[0..4], "npm:")) {
         dependency = dependency[4..];
+    }
+
+    // Strip single leading v
+    // v1.0.0 -> 1.0.0
+    // note: "vx" is valid, it becomes "x". "yarn add react@vx" -> "yarn add react@x" -> "yarn add react@17.0.2"
+    if (tag == .npm and dependency.len > 1 and dependency[0] == 'v') {
+        dependency = dependency[1..];
     }
 
     return parseWithTag(

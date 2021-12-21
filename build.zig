@@ -97,8 +97,6 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: *std.mem.Alloc
 var output_dir: []const u8 = "";
 fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
     var file = std.fs.cwd().openFile(filepath, .{ .read = true }) catch |err| {
-        const linux_only = "\nOn Linux, you'll need to compile libiconv manually and copy the .a file into src/deps.";
-
         std.debug.panic("error: {s} opening {s}. Please ensure you've downloaded git submodules, and ran `make vendor`, `make jsc`." ++ linux_only, .{ filepath, @errorName(err) });
     };
     file.close();
@@ -356,7 +354,6 @@ pub fn build(b: *std.build.Builder) !void {
                     step.linkSystemLibrary("icuuc");
                     step.linkSystemLibrary("icudata");
                     step.linkSystemLibrary("icui18n");
-                    step.addObjectFile(panicIfNotFound("src/deps/libiconv.a"));
                 }
 
                 for (bindings_files.items) |binding| {

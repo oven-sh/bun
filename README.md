@@ -24,6 +24,27 @@ curl -fsSL https://bun.sh/install | bash
 
 **JavaScript**: TODO
 
+## Using Bun as a package manager
+
+On Linux, `bun install` tends to install packages 20x - 100x faster than `npm install`. On macOS, it's more like 4x - 80x.
+
+<img src="https://user-images.githubusercontent.com/709451/147004342-571b6123-17a9-49a2-8bfd-dcfc5204047e.png" height=200 />
+
+To install packages from package.json:
+
+```bash
+bun install
+```
+
+To add or remove packages from package.json:
+
+```bash
+bun remove react
+bun add preact
+```
+
+For performance, Bun uses a binary lockfile format called `bun.lockb`. You can print a Yarn v1-style `yarn.lock` file with `bun install --yarn` or just `bun i -y` for short. Bun's install cache lives in `$HOME/.bun/install/cache` and can safely be cleared at any time
+
 ## Using Bun as a task runner
 
 Instead of waiting 170ms for your npm client to start for each task, you wait 6ms for Bun.

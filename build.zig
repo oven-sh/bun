@@ -309,62 +309,6 @@ pub fn build(b: *std.build.Builder) !void {
         b.default_step.dependOn(&exe.step);
 
         {
-            var steps = [_]*std.build.LibExeObjStep{ exe, javascript, typings_exe };
-
-            // const single_threaded = b.option(bool, "single-threaded", "Build single-threaded") orelse false;
-
-            for (steps) |step, i| {
-                step.linkLibC();
-                step.linkLibCpp();
-                addPicoHTTP(
-                    step,
-                    true,
-                );
-                try addInternalPackages(step, b.allocator, target);
-
-                step.addObjectFile(panicIfNotFound("src/deps/libJavaScriptCore.a"));
-                step.addObjectFile(panicIfNotFound("src/deps/libWTF.a"));
-                step.addObjectFile(panicIfNotFound("src/deps/libcrypto.a"));
-                step.addObjectFile(panicIfNotFound("src/deps/libbmalloc.a"));
-                step.addObjectFile(panicIfNotFound("src/deps/libarchive.a"));
-                step.addObjectFile(panicIfNotFound("src/deps/zlib/libz.a"));
-                step.addObjectFile(panicIfNotFound("src/deps/mimalloc/libmimalloc.a"));
-                step.addLibPath("src/deps/mimalloc");
-                step.addIncludeDir("src/deps/mimalloc");
-
-                // step.single_threaded = single_threaded;
-
-                if (target.getOsTag() == .macos) {
-                    const homebrew_prefix = comptime if (std.Target.current.cpu.arch == .aarch64)
-                        "/opt/homebrew/"
-                    else
-                        "/usr/local/";
-
-                    // We must link ICU statically
-                    step.addObjectFile(panicIfNotFound(homebrew_prefix ++ "opt/icu4c/lib/libicudata.a"));
-                    step.addObjectFile(panicIfNotFound(homebrew_prefix ++ "opt/icu4c/lib/libicui18n.a"));
-                    step.addObjectFile(panicIfNotFound(homebrew_prefix ++ "opt/icu4c/lib/libicuuc.a"));
-                    step.addObjectFile(panicIfNotFound(homebrew_prefix ++ "opt/libiconv/lib/libiconv.a"));
-
-                    // icucore is a weird macOS only library
-                    step.linkSystemLibrary("icucore");
-                    step.addLibPath(panicIfNotFound(homebrew_prefix ++ "opt/icu4c/lib"));
-                    step.addIncludeDir(panicIfNotFound(homebrew_prefix ++ "opt/icu4c/include"));
-                } else {
-                    step.linkSystemLibrary("icuuc");
-                    step.linkSystemLibrary("icudata");
-                    step.linkSystemLibrary("icui18n");
-                }
-
-                for (bindings_files.items) |binding| {
-                    step.addObjectFile(
-                        binding,
-                    );
-                }
-            }
-        }
-
-        {
             var obj_step = b.step("obj", "Build Bun as a .o file");
             var obj = b.addObject(bun_executable_name, exe.root_src.?.path);
             obj.setTarget(target);

@@ -30,7 +30,7 @@ if test -t 1; then
 fi
 
 if ! command -v unzip >/dev/null; then
-    echo -e "${Red}error${Color_Off}: unzip is required to install Bun (see: https://github.com/Jarred-Sumner/bun#unzip-is-required)." 1>&2
+    echo -e "\n${Red}error${Color_Off}: unzip is required to install Bun (see: https://github.com/Jarred-Sumner/bun#unzip-is-required)." 1>&2
     exit 1
 fi
 
@@ -162,8 +162,8 @@ else
     echo ""
     echo "Manually add the directory to your \$HOME/.bashrc (or similar)"
     echo ""
-    echo -e "  $BWhiteexport BUN_INSTALL=\"$bun_install\"$Color_Off"
-    echo -e "  $BWhiteexport PATH=\"\$BUN_INSTALL/bin:\$PATH\"$Color_Off"
+    echo -e "  $BWhiteexport export BUN_INSTALL=\"$bun_install\"$Color_Off"
+    echo -e "  $BWhiteexport export PATH=\"\$BUN_INSTALL/bin:\$PATH\"$Color_Off"
 fi
 echo ""
 echo -e "To get started, run"

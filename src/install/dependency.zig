@@ -359,7 +359,7 @@ pub const Version = struct {
                         return .tarball;
                     }
 
-                    if (isGithubRepoPath(dependency)) {
+                    if (isGitHubRepoPath(dependency)) {
                         return .github;
                     }
 

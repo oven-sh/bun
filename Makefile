@@ -224,8 +224,7 @@ PLATFORM_LINKER_FLAGS = -lstdc++ \
 		-ffunction-sections \
 		-fdata-sections \
 		-Wl,--gc-sections \
-		-fuse-ld=lld \
-		-static
+		-fuse-ld=lld
 endif
 
 

@@ -1358,7 +1358,10 @@ pub const Resolver = struct {
             false,
             null,
         );
-        const key_path = Path.init(file);
+        // The file name needs to be persistent because it can have errors
+        // and if those errors need to print the filename 
+        // then it will be undefined memory if we parse another tsconfig.json late
+        const key_path = try Path.init(file).dupeAlloc(r.allocator);
 
         const source = logger.Source.initPathString(key_path.text, entry.contents);
         const file_dir = source.path.sourceDir();
@@ -1366,6 +1369,7 @@ pub const Resolver = struct {
         var result = (try TSConfigJSON.parse(r.allocator, r.log, source, &r.caches.json, r.opts.jsx.development)) orelse return null;
 
         if (result.hasBaseURL()) {
+
             // this might leak
             if (!std.fs.path.isAbsolute(result.base_url)) {
                 const paths = [_]string{ file_dir, result.base_url };

@@ -4430,7 +4430,9 @@ pub const PackageManager = struct {
                     }
                     const response = task.http.response orelse {
                         if (comptime log_level != .silent) {
-                            Output.prettyErrorln("Failed to download package manifest for package {s}", .{name});
+                            Output.prettyErrorln("Failed to download package manifest for package {s}", .{
+                                name.slice(),
+                            });
                             Output.flush();
                         }
                         continue;

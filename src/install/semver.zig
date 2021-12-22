@@ -1295,94 +1295,121 @@ pub const Query = struct {
                 else => {},
             }
 
-            {
-                var _version = version;
-                switch (this.wildcard) {
-                    .major => {
-                        return Range{
-                            .left = .{ .op = .gte, .version = _version },
-                            .right = .{
-                                .op = .lte,
-                                .version = Version{
-                                    .major = std.math.maxInt(u32),
-                                    .minor = std.math.maxInt(u32),
-                                    .patch = std.math.maxInt(u32),
-                                },
-                            },
-                        };
+            return switch (this.wildcard) {
+                .major => Range{
+                    .left = .{ .op = .gte, .version = version },
+                    .right = .{
+                        .op = .lte,
+                        .version = Version{
+                            .major = std.math.maxInt(u32),
+                            .minor = std.math.maxInt(u32),
+                            .patch = std.math.maxInt(u32),
+                        },
                     },
-                    .minor => {
-                        switch (this.tag) {
-                            .lt, .lte => {
-                                return Range{
-                                    .left = .{
-                                        .op = if (this.tag == .lt) .lt else .lte,
-                                        .version = Version{
-                                            .major = version.major,
-                                            .minor = 0,
-                                            .patch = 0,
-                                        },
-                                    },
-                                };
+                },
+                .minor => switch (this.tag) {
+                    .lte => Range{
+                        .left = .{
+                            .op = .lte,
+                            .version = Version{
+                                .major = version.major,
+                                .minor = std.math.maxInt(u32),
+                                .patch = std.math.maxInt(u32),
                             },
-                            else => {
-                                return Range{
-                                    .left = .{
-                                        .op = if (this.tag == .gt) .gt else .gte,
-                                        .version = Version{
-                                            .major = version.major,
-                                            .minor = std.math.maxInt(u32),
-                                            .patch = std.math.maxInt(u32),
-                                        },
-                                    },
-                                };
-                            },
-                        }
+                        },
                     },
-                    .patch => {
-                        switch (this.tag) {
-                            .lt, .lte => {
-                                return Range{
-                                    .left = .{
-                                        .op = if (this.tag == .lt) .lt else .lte,
-                                        .version = Version{
-                                            .major = version.major,
-                                            .minor = version.minor,
-                                            .patch = 0,
-                                        },
-                                    },
-                                };
+                    .lt => Range{
+                        .left = .{
+                            .op = .lt,
+                            .version = Version{
+                                .major = version.major,
+                                .minor = 0,
+                                .patch = 0,
                             },
-                            else => {
-                                return Range{
-                                    .left = .{
-                                        .op = if (this.tag == .gt) .gt else .gte,
-                                        .version = Version{
-                                            .major = version.major,
-                                            .minor = version.minor,
-                                            .patch = std.math.maxInt(u32),
-                                        },
-                                    },
-                                };
-                            },
-                        }
+                        },
                     },
-                    .none => {
-                        return Range{
-                            .left = .{
-                                .op = switch (this.tag) {
-                                    .gt => .gt,
-                                    .gte => .gte,
-                                    .lt => .lt,
-                                    .lte => .lte,
-                                    else => unreachable,
-                                },
-                                .version = version,
+
+                    .gt => Range{
+                        .left = .{
+                            .op = .gt,
+                            .version = Version{
+                                .major = version.major,
+                                .minor = std.math.maxInt(u32),
+                                .patch = std.math.maxInt(u32),
                             },
-                        };
+                        },
                     },
-                }
-            }
+
+                    .gte => Range{
+                        .left = .{
+                            .op = .gte,
+                            .version = Version{
+                                .major = version.major,
+                                .minor = 0,
+                                .patch = 0,
+                            },
+                        },
+                    },
+                    else => unreachable,
+                },
+                .patch => switch (this.tag) {
+                    .lte => Range{
+                        .left = .{
+                            .op = .lte,
+                            .version = Version{
+                                .major = version.major,
+                                .minor = version.minor,
+                                .patch = std.math.maxInt(u32),
+                            },
+                        },
+                    },
+                    .lt => Range{
+                        .left = .{
+                            .op = .lt,
+                            .version = Version{
+                                .major = version.major,
+                                .minor = version.minor,
+                                .patch = 0,
+                            },
+                        },
+                    },
+
+                    .gt => Range{
+                        .left = .{
+                            .op = .gt,
+                            .version = Version{
+                                .major = version.major,
+                                .minor = version.minor,
+                                .patch = std.math.maxInt(u32),
+                            },
+                        },
+                    },
+
+                    .gte => Range{
+                        .left = .{
+                            .op = .gte,
+                            .version = Version{
+                                .major = version.major,
+                                .minor = version.minor,
+                                .patch = 0,
+                            },
+                        },
+                    },
+                    else => unreachable,
+                },
+                .none => Range{
+                    .left = .{
+                        .op = switch (this.tag) {
+                            .gt => .gt,
+                            .gte => .gte,
+                            .lt => .lt,
+                            .lte => .lte,
+                            else => unreachable,
+                        },
+                        .version = version,
+                    },
+                },
+            };
         }
 
         pub const Tag = enum {
@@ -1834,6 +1861,16 @@ test "Range parsing" {
     expect.notRange("~3.0.5", "3.3.0", @src());
 
     expect.range("^1.1.4", "1.1.4", @src());
+
+    expect.range(">=3", "3.5.0", @src());
+    expect.notRange(">=3", "2.999.999", @src());
+    expect.range(">=3", "3.5.1", @src());
+    expect.range(">=3", "4", @src());
+
+    expect.range("<6 >= 5", "5.0.0", @src());
+    expect.notRange("<6 >= 5", "4.0.0", @src());
+    expect.notRange("<6 >= 5", "6.0.0", @src());
+    expect.notRange("<6 >= 5", "6.0.1", @src());
 
     expect.range(">2", "3", @src());
     expect.notRange(">2", "2.1", @src());

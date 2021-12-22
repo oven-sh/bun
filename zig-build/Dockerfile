@@ -18,19 +18,15 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     build-essential \
     git \
     libssl-dev \
-    ruby \
     liblld-12-dev \
     libclang-12-dev \
-    nodejs \
     gcc \
     g++ \
-    npm \
     clang-12 \
     clang-format-12 \
     libc++-12-dev \
     libc++abi-12-dev \
     lld-12 \
-    libicu-dev \
     zip
 
 RUN update-alternatives --install /usr/bin/ld ld /usr/bin/lld-12 90 && \

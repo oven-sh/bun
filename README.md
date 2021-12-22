@@ -528,7 +528,6 @@ Environment variables
 | BUN_CONFIG_SKIP_SAVE_LOCKFILE    | Don't save a lockfile                                         |
 | BUN_CONFIG_SKIP_LOAD_LOCKFILE    | Don't load a lockfile                                         |
 | BUN_CONFIG_SKIP_INSTALL_PACKAGES | Don't install any packages                                    |
-| -------------------------------- | ------------------------------------------------------------- |
 
 What about platform-specific dependencies?
 

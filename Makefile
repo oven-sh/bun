@@ -733,3 +733,7 @@ integration-test-dev:
 
 copy-install:
 	cp src/cli/install.sh ../bun.sh/docs/install.html
+
+copy-to-bun-release-dir:
+	cp -r $(PACKAGE_DIR)/bun $BUN_RELEASE_DIR/bun
+	cp -r $(PACKAGE_DIR)/bun-profile $BUN_RELEASE_DIR/bun-profile

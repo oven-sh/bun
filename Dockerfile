@@ -73,30 +73,30 @@ RUN wget https://github.com/unicode-org/icu/releases/download/release-66-1/icu4c
     ./configure --enable-static --disable-shared && \
     make -j$(nproc) && \
     make install
-    
+
 
 ENV PATH "/home/ubuntu/zig:$PATH"
 ENV JSC_BASE_DIR $WEBKIT_OUT_DIR
 ENV LIB_ICU_PATH /home/ubuntu/icu/source/lib
+ENV BUN_RELEASE_DIR /home/ubuntu/bun-release
 
 WORKDIR /home/ubuntu/bun
 
-RUN mkdir -p /home/ubuntu/bun-release; \
+RUN mkdir -p $BUN_RELEASE_DIR; \
     make \
-        api \
-        analytics \
-        node-fallbacks \
-        runtime_js \
-        fallback_decoder \
-        bun_error \
-        mimalloc \
-        zlib \
-        libarchive \
-        boringssl \
-        picohttp \
-        jsc-bindings-headers \
-        jsc-bindings-mac \
-        identifier-cache \
-        release \
-        test-all && \
-    cp -r $(make release-bin-dir)/* /home/ubuntu/bun-release
+    api \
+    analytics \
+    node-fallbacks \
+    runtime_js \
+    fallback_decoder \
+    bun_error \
+    mimalloc \
+    zlib \
+    libarchive \
+    boringssl \
+    picohttp \
+    jsc-bindings-headers \
+    jsc-bindings-mac \
+    identifier-cache \
+    release \
+    copy-to-bun-release-dir

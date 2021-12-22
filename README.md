@@ -7,6 +7,7 @@ Bun is a new:
 - Development server with 60fps Hot Module Reloading (& WIP support for React Fast Refresh)
 - JavaScript Runtime Environment (powered by JavaScriptCore, what WebKit/Safari uses)
 - Task runner for package.json scripts
+- npm-compatible package manager
 
 All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for development, you only need Bun.
 
@@ -42,8 +43,6 @@ To add or remove packages from package.json:
 bun remove react
 bun add preact
 ```
-
-For performance, Bun uses a binary lockfile format called `bun.lockb`. You can print a Yarn v1-style `yarn.lock` file with `bun install --yarn` or just `bun i -y` for short. Bun's install cache lives in `$HOME/.bun/install/cache` and can safely be cleared at any time
 
 ## Using Bun as a task runner
 
@@ -189,25 +188,31 @@ From there, make sure to import the `dist/tailwind.css` file (or what you chose 
 
 Bun is a project with incredibly large scope, and it's early days.
 
-| Feature                                                                                                                | In             |
-| ---------------------------------------------------------------------------------------------------------------------- | -------------- |
-| ~Symlinks~                                                                                                             | Resolver       |
-| [Finish Fast Refresh](https://github.com/Jarred-Sumner/bun/issues/18)                                                  | JSX Transpiler |
-| Source Maps                                                                                                            | JavaScript     |
-| Source Maps                                                                                                            | CSS            |
-| [Private Class Fields](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Classes/Private_class_fields) | JS Transpiler  |
-| [Import Assertions](https://github.com/tc39/proposal-import-assertions)                                                | JS Transpiler  |
-| [`extends`](https://www.typescriptlang.org/tsconfig#extends) in tsconfig.json                                          | TS Transpiler  |
-| [jsx](https://www.typescriptlang.org/tsconfig)\* in tsconfig.json                                                      | TS Transpiler  |
-| [TypeScript Decorators](https://www.typescriptlang.org/docs/handbook/decorators.html)                                  | TS Transpiler  |
-| `@jsxPragma` comments                                                                                                  | JS Transpiler  |
-| JSX source file name                                                                                                   | JS Transpiler  |
-| Sharing `.bun` files                                                                                                   | Bun            |
-| [Finish fetch](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API)                                             | Bun.js         |
-| [setTimeout](https://developer.mozilla.org/en-US/docs/Web/API/setTimeout)                                              | Bun.js         |
+| Feature                                                                                                                | In              |
+| ---------------------------------------------------------------------------------------------------------------------- | --------------- |
+| ~Symlinks~                                                                                                             | Resolver        |
+| [Finish Fast Refresh](https://github.com/Jarred-Sumner/bun/issues/18)                                                  | JSX Transpiler  |
+| Source Maps                                                                                                            | JavaScript      |
+| Source Maps                                                                                                            | CSS             |
+| [Private Class Fields](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Classes/Private_class_fields) | JS Transpiler   |
+| [Import Assertions](https://github.com/tc39/proposal-import-assertions)                                                | JS Transpiler   |
+| [`extends`](https://www.typescriptlang.org/tsconfig#extends) in tsconfig.json                                          | TS Transpiler   |
+| [jsx](https://www.typescriptlang.org/tsconfig)\* in tsconfig.json                                                      | TS Transpiler   |
+| [TypeScript Decorators](https://www.typescriptlang.org/docs/handbook/decorators.html)                                  | TS Transpiler   |
+| `@jsxPragma` comments                                                                                                  | JS Transpiler   |
+| JSX source file name                                                                                                   | JS Transpiler   |
+| Sharing `.bun` files                                                                                                   | Bun             |
+| [Finish fetch](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API)                                             | Bun.js          |
+| [setTimeout](https://developer.mozilla.org/en-US/docs/Web/API/setTimeout)                                              | Bun.js          |
+| [workspace: dependencies](https://github.com/Jarred-Sumner/bun/issues/83)                                              | Package manager |
+| [git: dependencies](https://github.com/Jarred-Sumner/bun/issues/82)                                                    | Package manager |
+| [github: dependencies](https://github.com/Jarred-Sumner/bun/issues/81)                                                 | Package manager |
+| [link: dependencies](https://github.com/Jarred-Sumner/bun/issues/81)                                                   | Package manager |
+| [global installs](https://github.com/Jarred-Sumner/bun/issues/84)                                                      | Package manager |
 
 <sup>JS Transpiler == JavaScript Transpiler</sup><br/>
 <sup>TS Transpiler == TypeScript Transpiler</sup><br/>
+<sup>Package manager == `bun install`</sup><br/>
 <sup>Bun.js == Bun's JavaScriptCore integration that executes JavaScript. Similar to how Node.js & Deno embed V8.</sup><br/>
 
 ### Limitations & intended usage
@@ -506,6 +511,73 @@ To fix this issue:
 3. Try again, and if that still doesn't fix it, open an issue
 
 # Reference
+
+### `bun install`
+
+`bun install` is a fast package manager & npm client.
+
+Environment variables
+
+| Name                             | Description                                                   |
+| -------------------------------- | ------------------------------------------------------------- |
+| BUN_CONFIG_REGISTRY              | Set an npm registry (default: https://registry.npmjs.org)     |
+| BUN_CONFIG_TOKEN                 | Set an auth token (currently does nothing)                    |
+| BUN_CONFIG_LOCKFILE_SAVE_PATH    | File path to save the lockfile to (default: bun.lockb)        |
+| BUN_CONFIG_YARN_LOCKFILE         | Save a Yarn v1-style yarn.lock                                |
+| BUN_CONFIG_LINK_NATIVE_BINS      | Point `bin` in package.json to a platform-specific dependency |
+| BUN_CONFIG_SKIP_SAVE_LOCKFILE    | Don't save a lockfile                                         |
+| BUN_CONFIG_SKIP_LOAD_LOCKFILE    | Don't load a lockfile                                         |
+| BUN_CONFIG_SKIP_INSTALL_PACKAGES | Don't install any packages                                    |
+| -------------------------------- | ------------------------------------------------------------- |
+
+What about platform-specific dependencies?
+
+Bun stores `cpu` and `os` values from npm in the lockfile along with the resolved packages, but skips mismatched packages at runtime. This means the lockfile won't change between platforms/architectures even if the packages ultimately installed do change. Note that Bun skips downloading & extracting tarballs if the package is not available for the target platform.
+
+What about peer dependencies?
+
+Peer dependencies are handled similarly to yarn. `bun install` does not automatically install peer dependencies and will try to choose an existing dependency.
+
+#### Lockfile
+
+`bun.lockb` is Bun's binary lockfile format.
+
+Why is it binary?
+
+In a word: Performance. Bun's lockfile saves & loads incredibly quickly, and saves a lot more data than what is typically inside lockfiles.
+
+How do I read it?
+
+For now, the easiest thing is to run `bun install -y`. That prints a Yarn v1-style yarn.lock file.
+
+What does the lockfile store?
+
+Packages, metadata for those packages, the hoisted install order, dependencies for each package, what packages those dependencies resolved to, an integrity hash (if available), what each package was resolved to and which version (or equivalent)
+
+Why is it fast?
+
+It uses linear arrays for all data. [Packages](https://github.com/Jarred-Sumner/bun/blob/be03fc273a487ac402f19ad897778d74b6d72963/src/install/install.zig#L1825) are referenced by auto-incrementing integer ID or a hash of the package name. Strings longer than 8 characters are de-duplicated. Prior to saving on disk, the lockfile is garbage-collected & made deterministic by walking the package tree and cloning the packages in dependency order.
+
+#### Cache
+
+To delete the cache:
+
+```bash
+rm -rf ~/.bun/install/cache
+```
+
+##### npm registry metadata
+
+Bun uses a binary format for caching NPM registry responses. This loads much faster than JSON and tends to be smaller on disk.
+You will see these files in `~/.bun/install/cache/*.npm`. The filename pattern is `${hash(packageName)}.npm`. It's a hash so that extra directories don't need to be created for scoped packages
+
+Bun's usage of `Cache-Control` ignores `Age`. This improves performance, but means Bun may be about 5 minutes out of date to receive the the latest package version metadata from npm.
+
+##### Installs
+
+Bun stores installed packages from npm in `~/.bun/install/cache/${name}@${version}`. Note that if the semver version has a `build` or a `pre` tag, it is replaced with a hash of that value instead. This is to reduce chances of errors from long file paths, but unfortunately complicates figuring out where a package was installed on disk
+
+Bun always tries to use the fastest available installation method for the target platform. On macOS, that's `clonefile` and on Linux, that's `hardlink`. You can change which installation method is used with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` fallsback to a platform-specific implementation of copying files.
 
 ### `bun run`
 

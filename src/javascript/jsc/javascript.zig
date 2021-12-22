@@ -1226,7 +1226,7 @@ pub const VirtualMachine = struct {
 
             node_module_checker: {
                 const package_json = result.package_json orelse brk: {
-                    if (vm.bundler.linker.resolver.packageJSONForResolvedNodeModule(&result)) |pkg| {
+                    if (vm.bundler.resolver.packageJSONForResolvedNodeModule(&result)) |pkg| {
                         break :brk pkg;
                     } else {
                         break :node_module_checker;

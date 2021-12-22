@@ -598,7 +598,13 @@ pub const Bundler = struct {
                     this.data.scan_pass_result = js_parser.ScanPassResult.init(this.generator.allocator);
                     var bundler = this.generator.bundler.*;
                     var bundler_ptr = &bundler;
+                    const CacheSet = @import("./cache.zig");
+                    // no funny business mr. cache
+                    bundler_ptr.resolver.caches = CacheSet.Set.init(this.allocator);
                     bundler_ptr.linker.resolver = &bundler_ptr.resolver;
+                    bundler_ptr.log = this.data.log;
+                    bundler_ptr.linker.log = this.data.log;
+                    bundler_ptr.linker.resolver.log = this.data.log;
 
                     defer {
                         {
@@ -886,7 +892,7 @@ pub const Bundler = struct {
                 const entry_points = try router.getEntryPoints();
                 for (entry_points) |entry_point| {
                     const source_dir = bundler.fs.top_level_dir;
-                    const resolved = try bundler.linker.resolver.resolve(source_dir, entry_point, .entry_point);
+                    const resolved = try bundler.resolver.resolve(source_dir, entry_point, .entry_point);
                     try this.enqueueItem(resolved);
                 }
                 this.bundler.resetStore();
@@ -898,7 +904,7 @@ pub const Bundler = struct {
 
                 const entry_point_path = bundler.normalizeEntryPointPath(entry_point);
                 const source_dir = bundler.fs.top_level_dir;
-                const resolved = try bundler.linker.resolver.resolve(source_dir, entry_point, .entry_point);
+                const resolved = try bundler.resolver.resolve(source_dir, entry_point, .entry_point);
                 try this.enqueueItem(resolved);
             }
 
@@ -918,7 +924,7 @@ pub const Bundler = struct {
                     if (bundler.options.platform.isBun()) {
                         if (framework.server.isEnabled()) {
                             Analytics.Features.bunjs = true;
-                            const resolved = try bundler.linker.resolver.resolve(
+                            const resolved = try bundler.resolver.resolve(
                                 bundler.fs.top_level_dir,
                                 framework.server.path,
                                 .entry_point,
@@ -927,7 +933,7 @@ pub const Bundler = struct {
                         }
                     } else {
                         if (framework.client.isEnabled()) {
-                            const resolved = try bundler.linker.resolver.resolve(
+                            const resolved = try bundler.resolver.resolve(
                                 bundler.fs.top_level_dir,
                                 framework.client.path,
                                 .entry_point,
@@ -936,7 +942,7 @@ pub const Bundler = struct {
                         }
 
                         if (framework.fallback.isEnabled()) {
-                            const resolved = try bundler.linker.resolver.resolve(
+                            const resolved = try bundler.resolver.resolve(
                                 bundler.fs.top_level_dir,
                                 framework.fallback.path,
                                 .entry_point,
@@ -1589,7 +1595,7 @@ pub const Bundler = struct {
                                         continue;
                                     }
 
-                                    if (bundler.linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |*_resolved_import| {
+                                    if (bundler.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |*_resolved_import| {
                                         if (_resolved_import.is_external) {
                                             continue;
                                         }
@@ -1980,7 +1986,7 @@ pub const Bundler = struct {
                                     continue;
                                 }
 
-                                if (bundler.linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |*_resolved_import| {
+                                if (bundler.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |*_resolved_import| {
                                     if (_resolved_import.is_external) {
                                         continue;
                                     }

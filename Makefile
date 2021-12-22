@@ -59,6 +59,8 @@ DEPS_DIR = $(shell pwd)/src/deps
 CPUS ?= $(shell nproc)
 USER ?= $(echo $USER)
 
+BUN_RELEASE_DIR ?= $(shell pwd)/../bun-release
+
 OPENSSL_VERSION = OpenSSL_1_1_1l
 LIBICONV_PATH ?= $(BREW_PREFIX_PATH)/opt/libiconv/lib/libiconv.a
 
@@ -735,5 +737,5 @@ copy-install:
 	cp src/cli/install.sh ../bun.sh/docs/install.html
 
 copy-to-bun-release-dir:
-	cp -r $(PACKAGE_DIR)/bun $BUN_RELEASE_DIR/bun
-	cp -r $(PACKAGE_DIR)/bun-profile $BUN_RELEASE_DIR/bun-profile
+	cp -r $(PACKAGE_DIR)/bun $(BUN_RELEASE_DIR)/bun
+	cp -r $(PACKAGE_DIR)/bun-profile $(BUN_RELEASE_DIR)/bun-profile

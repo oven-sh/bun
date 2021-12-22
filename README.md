@@ -529,6 +529,16 @@ Environment variables
 | BUN_CONFIG_SKIP_LOAD_LOCKFILE    | Don't load a lockfile                                         |
 | BUN_CONFIG_SKIP_INSTALL_PACKAGES | Don't install any packages                                    |
 
+Bun always tries to use the fastest available installation method for the target platform. On macOS, that's `clonefile` and on Linux, that's `hardlink`. You can change which installation method is used with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` fallsback to a platform-specific implementation of copying files.
+
+Bun stores installed packages from npm in `~/.bun/install/cache/${name}@${version}`. Note that if the semver version has a `build` or a `pre` tag, it is replaced with a hash of that value instead. This is to reduce chances of errors from long file paths, but unfortunately complicates figuring out where a package was installed on disk.
+
+When the `node_modules` folder exists, before installing, Bun checks if the `"name"` and `"version"` in `package/package.json` in the expected node_modules folder matches the expected `name` and `version`. This is how it determines whether or not it should install. It uses a custom JSON parser which stops parsing as soon as it finds `"name"` and `"version"`.
+
+When a `bun.lockb` doesn't exist or `package.json` has changed dependencies, tarballs are downloaded & extracted eagerly while resolving.
+
+When a `bun.lockb` exists and `package.json` hasn't changed, Bun downloads missing dependencies lazily. If the package with a matching `name` & `version` already exists in the expected location within `node_modules`, Bun won't attempt to download the tarball.
+
 What about platform-specific dependencies?
 
 Bun stores `cpu` and `os` values from npm in the lockfile along with the resolved packages, but skips mismatched packages at runtime. This means the lockfile won't change between platforms/architectures even if the packages ultimately installed do change. Note that Bun skips downloading & extracting tarballs if the package is not available for the target platform.
@@ -571,12 +581,6 @@ Bun uses a binary format for caching NPM registry responses. This loads much fas
 You will see these files in `~/.bun/install/cache/*.npm`. The filename pattern is `${hash(packageName)}.npm`. It's a hash so that extra directories don't need to be created for scoped packages
 
 Bun's usage of `Cache-Control` ignores `Age`. This improves performance, but means Bun may be about 5 minutes out of date to receive the the latest package version metadata from npm.
-
-##### Installs
-
-Bun stores installed packages from npm in `~/.bun/install/cache/${name}@${version}`. Note that if the semver version has a `build` or a `pre` tag, it is replaced with a hash of that value instead. This is to reduce chances of errors from long file paths, but unfortunately complicates figuring out where a package was installed on disk
-
-Bun always tries to use the fastest available installation method for the target platform. On macOS, that's `clonefile` and on Linux, that's `hardlink`. You can change which installation method is used with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` fallsback to a platform-specific implementation of copying files.
 
 ### `bun run`
 

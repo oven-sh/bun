@@ -72,11 +72,11 @@ RUN wget https://github.com/unicode-org/icu/releases/download/release-66-1/icu4c
     cd icu/source && \
     ./configure --enable-static --disable-shared && \
     make -j$(nproc) && \
-    cp lib/libicudata.a /home/ubuntu/bun/src/deps && \
-    cp lib/libicui18n.a /home/ubuntu/bun/src/deps && \
-    cp lib/libicuio.a /home/ubuntu/bun/src/deps && \
-    cp lib/libicutu.a /home/ubuntu/bun/src/deps && \
-    cp lib/libicuuc.a /home/ubuntu/bun/src/deps
+    cp lib/libicudata.a /home/ubuntu/bun/src/deps/libicudata.a && \
+    cp lib/libicui18n.a /home/ubuntu/bun/src/deps/libicui18n.a && \
+    cp lib/libicuio.a /home/ubuntu/bun/src/deps/libicuio.a && \
+    cp lib/libicutu.a /home/ubuntu/bun/src/deps/libicutu.a && \
+    cp lib/libicuuc.a /home/ubuntu/bun/src/deps/libicuuc.a
 
 ENV PATH "/home/ubuntu/zig:$PATH"
 ENV JSC_BASE_DIR $WEBKIT_OUT_DIR
@@ -91,4 +91,4 @@ RUN make jsc-bindings-headers
 RUN make jsc-bindings-mac
 
 RUN make identifier-cache
-RUN make release
+RUN make release test-all

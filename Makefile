@@ -508,7 +508,6 @@ release-bin-generate: release-bin-generate-copy release-bin-generate-zip
 
 release-bin-check-version:
 	test $(shell eval $(BUN_RELEASE_BIN) --version) = $(PACKAGE_JSON_VERSION)
-	test $(shell eval $(BUN_RELEASE_BIN) --dump-limits | jq .stack[0]) >= 1024024
 
 release-bin-check: release-bin-check-version 
 

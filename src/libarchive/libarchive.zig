@@ -596,6 +596,7 @@ pub const Archive = struct {
                                 },
                             }
                         };
+                        defer if (comptime close_handles) file.close();
                         count += 1;
 
                         _ = C.fchmod(file.handle, lib.archive_entry_perm(entry));

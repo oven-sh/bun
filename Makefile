@@ -219,18 +219,15 @@ PLATFORM_LINKER_FLAGS =
 
 ifeq ($(OS_NAME), linux)
 PLATFORM_LINKER_FLAGS = \
+	    -fuse-ld=lld \
 		-lc \
 		-Wl,-z,now \
 		-Wl,--as-needed \
+		-Wl,--gc-sections \
 		-Wl,-z,stack-size=12800000 \
-		-Wl,-z,notext \
 		-ffunction-sections \
 		-fdata-sections \
-		-Wl,--gc-sections \
-		-stdlib=libstdc++ \
-		-static-libstdc++ \
-		-static-libgcc \
-		-fPIC
+		-static-libstdc++
 endif
 
 
@@ -509,6 +506,7 @@ release-bin-generate: release-bin-generate-copy release-bin-generate-zip
 
 release-bin-check-version:
 	test $(shell eval $(BUN_RELEASE_BIN) --version) = $(PACKAGE_JSON_VERSION)
+	test $(shell eval $(BUN_RELEASE_BIN) --dump-limits | jq .stack[0]) >= 1024024
 
 release-bin-check: release-bin-check-version 
 
@@ -522,7 +520,8 @@ endif
 release-bin-without-push: test-all release-bin-check release-bin-generate release-bin-codesign 
 release-bin: release-bin-without-push release-bin-push
 
-
+release-bin-dir:
+	echo $(PACKAGE_DIR)
 
 
 release-bin-push: 

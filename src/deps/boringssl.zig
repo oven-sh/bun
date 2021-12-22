@@ -28,20 +28,6 @@ pub fn initClient() *boring.SSL {
     return ssl;
 }
 
-pub const ReadOnlyBio = struct {
-    bio: *boring.BIO,
-
-    pub fn init(slice: []const u8) ReadOnlyBio {
-        var bio = boring.BIO_new_mem_buf(slice.ptr, @intCast(c_int, slice.len));
-        BIO_set_mem_eof_return(bio, -1);
-        return ReadOnlyBio{ .bio = bio };
-    }
-
-    pub fn deinit(this: *ReadOnlyBio) void {
-        _ = boring.BIO_free(this.bio);
-    }
-};
-
 test "load" {
     load();
 }

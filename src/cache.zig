@@ -213,7 +213,7 @@ pub const Json = struct {
     fn parse(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: *std.mem.Allocator, is_tsconfig: bool, func: anytype) anyerror!?js_ast.Expr {
         var temp_log = logger.Log.init(allocator);
         defer {
-            temp_log.appendTo(log) catch {};
+            temp_log.appendToMaybeRecycled(log, &source) catch {};
         }
         return func(&source, &temp_log, allocator) catch handler: {
             break :handler null;

@@ -268,7 +268,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             return slice_buf_used >= @as(u16, count);
         }
 
-        pub fn exists(self: *Self, value: ValueType) bool {
+        pub fn exists(self: *const Self, value: ValueType) bool {
             return isSliceInBuffer(value, &backing_buf);
         }
 

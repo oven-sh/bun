@@ -539,11 +539,11 @@ When a `bun.lockb` doesn't exist or `package.json` has changed dependencies, tar
 
 When a `bun.lockb` exists and `package.json` hasn't changed, Bun downloads missing dependencies lazily. If the package with a matching `name` & `version` already exists in the expected location within `node_modules`, Bun won't attempt to download the tarball.
 
-What about platform-specific dependencies?
+##### Platform-specific dependencies?
 
-Bun stores `cpu` and `os` values from npm in the lockfile along with the resolved packages, but skips mismatched packages at runtime. This means the lockfile won't change between platforms/architectures even if the packages ultimately installed do change. Note that Bun skips downloading & extracting tarballs if the package is not available for the target platform.
+Bun stores normalized `cpu` and `os` values from npm in the lockfile, along with the resolved packages. It skips downloading, extracting, and installing packages disabled for the current target at runtime. This means the lockfile won't change between platforms/architectures even if the packages ultimately installed do change.
 
-What about peer dependencies?
+##### Peer dependencies?
 
 Peer dependencies are handled similarly to yarn. `bun install` does not automatically install peer dependencies and will try to choose an existing dependency.
 
@@ -551,19 +551,19 @@ Peer dependencies are handled similarly to yarn. `bun install` does not automati
 
 `bun.lockb` is Bun's binary lockfile format.
 
-Why is it binary?
+##### Why is it binary?
 
 In a word: Performance. Bun's lockfile saves & loads incredibly quickly, and saves a lot more data than what is typically inside lockfiles.
 
-How do I read it?
+##### How do I inspect it?
 
 For now, the easiest thing is to run `bun install -y`. That prints a Yarn v1-style yarn.lock file.
 
-What does the lockfile store?
+##### What does the lockfile store?
 
 Packages, metadata for those packages, the hoisted install order, dependencies for each package, what packages those dependencies resolved to, an integrity hash (if available), what each package was resolved to and which version (or equivalent)
 
-Why is it fast?
+##### Why is it fast?
 
 It uses linear arrays for all data. [Packages](https://github.com/Jarred-Sumner/bun/blob/be03fc273a487ac402f19ad897778d74b6d72963/src/install/install.zig#L1825) are referenced by auto-incrementing integer ID or a hash of the package name. Strings longer than 8 characters are de-duplicated. Prior to saving on disk, the lockfile is garbage-collected & made deterministic by walking the package tree and cloning the packages in dependency order.
 

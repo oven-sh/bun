@@ -354,6 +354,7 @@ generate-install-script:
 fetch:
 	$(ZIG) build -Drelease-fast fetch-obj
 	$(CXX) $(PACKAGE_DIR)/fetch.o -g -O3 -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc  \
+		src/deps/mimalloc/libmimalloc.a \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
 		src/deps/libssl.a \
@@ -364,12 +365,12 @@ fetch:
 fetch-debug:
 	$(ZIG) build fetch-obj
 	$(CXX) $(DEBUG_PACKAGE_DIR)/fetch.o -g -O3 -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc  \
+		src/deps/mimalloc/libmimalloc.a \
 		src/deps/zlib/libz.a \
 		src/deps/libarchive.a \
 		src/deps/libssl.a \
 		src/deps/libcrypto.boring.a \
 		src/deps/picohttpparser.o
-	rm -rf $(DEBUG_PACKAGE_DIR)/fetch.o
 
 
 httpbench-debug:
@@ -722,9 +723,100 @@ fmt-all:
 
 unit-tests: generate-unit-tests run-unit-tests
 
+ifeq (test, $(firstword $(MAKECMDGOALS)))
+testpath := $(firstword $(wordlist 2, $(words $(MAKECMDGOALS)), $(MAKECMDGOALS)))
+testfilter := $(wordlist 3, $(words $(MAKECMDGOALS)), $(MAKECMDGOALS))
+testbinpath := zig-out/bin/test
+testbinpath := $(lastword $(testfilter))
+
+ifeq ($(if $(patsubst /%,,$(testbinpath)),,yes),yes)
+testfilterflag := --test-filter "$(filter-out $(testbinpath), $(testfilter))"
+
+endif
+
+ifneq ($(if $(patsubst /%,,$(testbinpath)),,yes),yes)
+testbinpath := zig-out/bin/test
+ifneq ($(strip $(testfilter)),)
+testfilterflag := --test-filter "$(testfilter)"
+endif
+endif
+
+  testname := $(shell basename $(testpath))
+
+  
+  $(eval $(testname):;@true)
+
+  ifeq ($(words $(testfilter)), 0)
+testfilterflag :=  --test-name-prefix "$(testname): "
+endif
+
+ifeq ($(testfilterflag), undefined)
+testfilterflag :=  --test-name-prefix "$(testname): "
+endif
+
+
+endif
+
+ifeq (build-unit, $(firstword $(MAKECMDGOALS)))
+testpath := $(firstword $(wordlist 2, $(words $(MAKECMDGOALS)), $(MAKECMDGOALS)))
+testfilter := $(wordlist 3, $(words $(MAKECMDGOALS)), $(MAKECMDGOALS))
+testbinpath := zig-out/bin/test
+testbinpath := $(lastword $(testfilter))
+
+ifeq ($(if $(patsubst /%,,$(testbinpath)),,yes),yes)
+testfilterflag := --test-filter "$(filter-out $(testbinpath), $(testfilter))"
+
+endif
+
+ifneq ($(if $(patsubst /%,,$(testbinpath)),,yes),yes)
+testbinpath := zig-out/bin/test
+ifneq ($(strip $(testfilter)),)
+testfilterflag := --test-filter "$(testfilter)"
+endif
+endif
+
+  testname := $(shell basename $(testpath))
+
+  
+$(eval $(testname):;@true)
+$(eval $(testfilter):;@true)
+$(eval $(testpath):;@true)
+
+  ifeq ($(words $(testfilter)), 0)
+testfilterflag :=  --test-name-prefix "$(testname): "
+endif
+
+ifeq ($(testfilterflag), undefined)
+testfilterflag :=  --test-name-prefix "$(testname): "
+endif
+
+
+
+endif
+
+build-unit:
+	@rm -rf zig-out/bin/$(testname)
+	@mkdir -p zig-out/bin
+	zig test $(realpath $(testpath)) \
+	$(testfilterflag) \
+	--pkg-begin picohttp $(DEPS_DIR)/picohttp.zig --pkg-end \
+	--pkg-begin clap $(DEPS_DIR)/zig-clap/clap.zig --pkg-end \
+	--main-pkg-path $(shell pwd) \
+	--test-no-exec \
+	-fPIC \
+	-femit-bin=zig-out/bin/$(testname) \
+	-fcompiler-rt \
+	-lc -lc++ \
+	--cache-dir /tmp/zig-cache-bun-$(testname)-$(basename $(lastword $(testfilter))) \
+	-fallow-shlib-undefined \
+	-L$(LIBCRYPTO_PREFIX_DIR)/lib \
+	-lcrypto -lssl \
+	$(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) $(ICU_FLAGS) && \
+	cp zig-out/bin/$(testname) $(testbinpath)
 
 run-unit:
 	@zig-out/bin/$(testname) -- fake
+	
 	
 
 test: build-unit run-unit

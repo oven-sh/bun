@@ -480,6 +480,24 @@ pub const FileSystem = struct {
         return try allocator.dupe(u8, joined);
     }
 
+    pub fn printLimits() void {
+        const LIMITS = [_]std.os.rlimit_resource{ std.os.rlimit_resource.STACK, std.os.rlimit_resource.NOFILE };
+        Output.print("{{\n", .{});
+
+        inline for (LIMITS) |limit_type, i| {
+            const limit = std.os.getrlimit(limit_type) catch return;
+
+            if (i == 0) {
+                Output.print("  \"stack\": [{d}, {d}],\n", .{ limit.cur, limit.max });
+            } else if (i == 1) {
+                Output.print("  \"files\": [{d}, {d}]\n", .{ limit.cur, limit.max });
+            }
+        }
+
+        Output.print("}}\n", .{});
+        Output.flush();
+    }
+
     pub const RealFS = struct {
         entries_mutex: Mutex = Mutex.init(),
         entries: *EntriesOption.Map,

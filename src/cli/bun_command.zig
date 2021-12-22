@@ -114,6 +114,12 @@ pub const BunCommand = struct {
             return;
         }
 
+        if (ctx.debug.dump_limits) {
+            fs.FileSystem.printLimits();
+            std.os.exit(0);
+            return;
+        }
+
         var generated_server = false;
         if (this_bundler.options.framework) |*framework| {
             if (framework.toAPI(allocator, this_bundler.fs.top_level_dir) catch null) |_server_conf| {

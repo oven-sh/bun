@@ -161,6 +161,7 @@ pub const Arguments = struct {
 
     const debug_params = [_]ParamType{
         clap.parseParam("--dump-environment-variables    Dump environment variables from .env and process as JSON and quit. Useful for debugging") catch unreachable,
+        clap.parseParam("--dump-limits                   Dump system limits. Useful for debugging") catch unreachable,
         clap.parseParam("--disable-bun.js                Disable Bun.js from loading in the dev server") catch unreachable,
     };
 
@@ -245,6 +246,7 @@ pub const Arguments = struct {
 
         ctx.debug.dump_environment_variables = args.flag("--dump-environment-variables");
         ctx.debug.fallback_only = args.flag("--disable-bun.js");
+        ctx.debug.dump_limits = args.flag("--dump-limits");
 
         // var output_dir = args.option("--outdir");
         var output_dir: ?string = null;
@@ -565,6 +567,7 @@ pub const PrintBundleCommand = struct {
 pub const Command = struct {
     pub const DebugOptions = struct {
         dump_environment_variables: bool = false,
+        dump_limits: bool = false,
         fallback_only: bool = false,
         silent: bool = false,
     };

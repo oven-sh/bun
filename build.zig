@@ -77,6 +77,8 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: *std.mem.Alloc
         .path = pkgPath("src/http/network_thread.zig"),
     };
 
+    thread_pool.dependencies = &.{ io, http };
+
     network_thread.dependencies = &.{
         io,
         thread_pool,

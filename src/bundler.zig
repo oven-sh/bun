@@ -430,6 +430,7 @@ pub const Bundler = struct {
             },
         };
         Output.flush();
+        var writer = Output.writer();
         std.json.stringify(bundler.env.map.*, opts, Output.writer()) catch unreachable;
         Output.flush();
     }

@@ -1159,7 +1159,7 @@ pub const RequestContext = struct {
                     handler.handleJSError(.configure_defines, err) catch {};
                     return;
                 };
-                
+
                 var entry_point = boot;
                 if (!std.fs.path.isAbsolute(entry_point)) {
                     const resolved_entry_point = vm.bundler.resolver.resolve(
@@ -3053,6 +3053,12 @@ pub const Server = struct {
 
         if (debug.dump_environment_variables) {
             server.bundler.dumpEnvironmentVariables();
+            return;
+        }
+
+        if (debug.dump_limits) {
+            Fs.FileSystem.printLimits();
+            std.os.exit(0);
             return;
         }
 

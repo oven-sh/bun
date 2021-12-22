@@ -42,7 +42,7 @@ if (!USE_EXISTING_PROCESS) {
     });
   });
   process.on("beforeExit", () => {
-    bunProcess?.kill(0);
+    bunProcess && bunProcess.kill(0);
   });
 }
 const isDebug = bunExec.endsWith("-debug");

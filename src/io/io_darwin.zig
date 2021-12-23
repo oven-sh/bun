@@ -31,7 +31,7 @@ completed: FIFO(Completion) = .{},
 io_pending: FIFO(Completion) = .{},
 last_event_fd: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(32),
 
-pub fn init(entries: u12, flags: u32) !IO {
+pub fn init(_: u12, _: u32) !IO {
     const kq = try os.kqueue();
     assert(kq > -1);
     return IO{ .kq = kq };

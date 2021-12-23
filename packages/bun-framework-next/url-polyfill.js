@@ -493,6 +493,35 @@ export class URL {
   toString() {
     return this.href;
   }
+
+  // -- incorrect --
+  get password() {
+    return this._password;
+  }
+
+  set password(val) {
+    this._password = val;
+  }
+
+  get username() {
+    return this._username;
+  }
+
+  set username(val) {
+    this._username = val;
+  }
+  // -- incorrect --
+
+  toJSON() {
+    return this.href;
+  }
+
+  get searchParams() {
+    throw Error("searchParams() is not implemented");
+    // @ts-expect-error
+    return undefined;
+  }
+
   get href() {
     if (this._isInvalid) return this._url;
 
@@ -614,9 +643,9 @@ export class URL {
     return this._scheme + "://" + host;
   }
 
-  createObjectURL(blob) {
+  static createObjectURL(blob) {
     return "blob:not-implemented-yet";
   }
 
-  revokeObjectURL(blob) {}
+  static revokeObjectURL(blob) {}
 }

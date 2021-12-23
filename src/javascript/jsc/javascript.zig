@@ -779,8 +779,13 @@ pub const VirtualMachine = struct {
     }
 
     pub fn tick(this: *VirtualMachine) void {
-        this.global.vm().drainMicrotasks();
-        _ = this.eventLoopTick();
+        while (this.eventLoopTick() > 0) {}
+    }
+
+    pub fn waitForTasks(this: *VirtualMachine) void {
+        while (this.pending_tasks_count.load(.Monotonic) > 0 or this.ready_tasks_count.load(.Monotonic) > 0) {
+            while (this.eventLoopTick() > 0) {}
+        }
     }
 
     // 👶👶👶 event loop 👶👶👶
@@ -793,6 +798,7 @@ pub const VirtualMachine = struct {
                 .Microtask => {
                     var micro: *Microtask = task.get(Microtask).?;
                     _ = this.microtasks_queue.swapRemove(i);
+                    _ = this.pending_tasks_count.fetchSub(1, .Monotonic);
                     micro.run(this.global);
 
                     finished += 1;
@@ -802,6 +808,7 @@ pub const VirtualMachine = struct {
                     var fetch_task: *Fetch.FetchTasklet = task.get(Fetch.FetchTasklet).?;
                     if (fetch_task.status == .done) {
                         _ = this.ready_tasks_count.fetchSub(1, .Monotonic);
+                        _ = this.pending_tasks_count.fetchSub(1, .Monotonic);
                         _ = this.microtasks_queue.swapRemove(i);
                         fetch_task.onDone();
                         finished += 1;
@@ -1951,7 +1958,7 @@ pub const EventListenerMixin = struct {
 
             var result = js.JSObjectCallAsFunctionReturnValue(vm.global.ref(), listener_ref, null, 1, &fetch_args);
             var promise = JSPromise.resolvedPromise(vm.global, result);
-            vm.tick();
+            vm.waitForTasks();
 
             if (fetch_event.rejected) return;
 
@@ -1962,7 +1969,7 @@ pub const EventListenerMixin = struct {
                 _ = promise.result(vm.global.vm());
             }
 
-            vm.tick();
+            vm.waitForTasks();
 
             if (fetch_event.request_context.has_called_done) {
                 break;

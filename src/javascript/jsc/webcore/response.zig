@@ -611,7 +611,6 @@ pub const Fetch = struct {
             var task: *FetchTasklet = @fieldParentPtr(FetchTasklet, "http", http_);
             @atomicStore(Status, &task.status, Status.done, .Monotonic);
             _ = task.javascript_vm.ready_tasks_count.fetchAdd(1, .Monotonic);
-            _ = task.javascript_vm.pending_tasks_count.fetchSub(1, .Monotonic);
             sender.release();
         }
     };

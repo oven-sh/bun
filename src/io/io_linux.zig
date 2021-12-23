@@ -62,8 +62,24 @@ unqueued: FIFO(Completion) = .{},
 /// Completions that are ready to have their callbacks run.
 completed: FIFO(Completion) = .{},
 
-pub fn init(entries: u12, flags: u32) !IO {
-    return IO{ .ring = try IO_Uring.init(entries, flags) };
+pub fn init(entries_: u12, flags: u32) !IO {
+    var ring: IO_Uring = undefined;
+    var entries = entries_;
+    while (true) {
+        ring = IO_Uring.init(entries, flags) catch |err| {
+            if (err == error.SystemResources) {
+                if (entries < 4) return error.SystemResources;
+                entries /= 2;
+                continue;
+            }
+
+            return err;
+        };
+        break;
+    }
+    
+
+    return IO{ .ring = ring };
 }
 
 pub fn deinit(self: *IO) void {

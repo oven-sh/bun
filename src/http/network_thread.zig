@@ -3,6 +3,7 @@ pub const Batch = ThreadPool.Batch;
 pub const Task = ThreadPool.Task;
 const std = @import("std");
 const AsyncIO = @import("io");
+const Output = @import("../global.zig").Output;
 
 const NetworkThread = @This();
 
@@ -70,8 +71,19 @@ pub fn getAddressList(allocator: *std.mem.Allocator, name: []const u8, port: u16
 
 pub fn init() !void {
     if ((global_loaded.swap(1, .Monotonic)) == 1) return;
+    AsyncIO.global = AsyncIO.init(512, 0) catch |err| {
+        Output.prettyErrorln("<r><red>error<r>: Failed to initialize network thread: <red><b>{s}<r>.\nHTTP requests will not work. Please file an issue and run strace().", .{@errorName(err)});
+        Output.flush();
+
+        global = NetworkThread{
+            .pool = ThreadPool.init(.{ .max_threads = 0, .stack_size = 64 * 1024 * 1024 }),
+        };
+        global.pool.max_threads = 0;
+        AsyncIO.global_loaded = true;
+        return;
+    };
+
     AsyncIO.global_loaded = true;
-    AsyncIO.global = try AsyncIO.init(1024, 0);
 
     global = NetworkThread{
         .pool = ThreadPool.init(.{ .max_threads = 1, .stack_size = 64 * 1024 * 1024 }),

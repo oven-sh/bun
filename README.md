@@ -13,6 +13,12 @@ All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for develo
 
 **Bun is experimental software**. Join [Bun’s Discord](https://bun.sh/discord) for help and have a look at [things that don’t work yet](#things-that-dont-work-yet).
 
+## Install
+
+```sh
+curl -fsSL https://bun.sh/install | bash
+```
+
 ## Table of Contents
 
 - [Install](#install)
@@ -46,12 +52,6 @@ All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for develo
   - [MacOS](#macos)
   - [Linux](#linux)
 - [vscode-zig](#vscode-zig)
-
-## Install
-
-```sh
-curl -fsSL https://bun.sh/install | bash
-```
 
 ## Benchmarks
 
@@ -561,7 +561,7 @@ Environment variables
 
 | Name                             | Description                                                   |
 | -------------------------------- | ------------------------------------------------------------- |
-| BUN_CONFIG_REGISTRY              | Set an npm registry (default: <https://registry.npmjs.org>)     |
+| BUN_CONFIG_REGISTRY              | Set an npm registry (default: <https://registry.npmjs.org>)   |
 | BUN_CONFIG_TOKEN                 | Set an auth token (currently does nothing)                    |
 | BUN_CONFIG_LOCKFILE_SAVE_PATH    | File path to save the lockfile to (default: bun.lockb)        |
 | BUN_CONFIG_YARN_LOCKFILE         | Save a Yarn v1-style yarn.lock                                |

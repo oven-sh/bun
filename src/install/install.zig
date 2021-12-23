@@ -4504,7 +4504,7 @@ pub const PackageManager = struct {
                 .extract => |extract| {
                     const response = task.http.response orelse {
                         const fmt = "Failed to download package tarball for package {s}\n";
-                        const args = .{extract.name};
+                        const args = .{extract.name.slice()};
 
                         if (comptime log_level != .silent) {
                             if (comptime log_level.showProgress()) {

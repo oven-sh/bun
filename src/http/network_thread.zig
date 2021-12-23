@@ -71,7 +71,7 @@ pub fn getAddressList(allocator: *std.mem.Allocator, name: []const u8, port: u16
 
 pub fn init() !void {
     if ((global_loaded.swap(1, .Monotonic)) == 1) return;
-    AsyncIO.global = AsyncIO.init(512, 0) catch |err| {
+    AsyncIO.global = AsyncIO.init(1024, 0) catch |err| {
         Output.prettyErrorln("<r><red>error<r>: Failed to initialize network thread: <red><b>{s}<r>.\nHTTP requests will not work. Please file an issue and run strace().", .{@errorName(err)});
         Output.flush();
 

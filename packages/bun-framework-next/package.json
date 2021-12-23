@@ -1,6 +1,6 @@
 {
   "name": "bun-framework-next",
-  "version": "12.0.5",
+  "version": "12.0.6",
   "main": "empty.js",
   "module": "empty.js",
   "description": "Bun compatibility layer for Next.js v12.0.x",
@@ -11,8 +11,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "react-is": "^17.0.2",
-    "url-polyfill": "^1.1.12"
+    "react-is": "^17.0.2"
   },
   "peerDependencies": {
     "next": "^12.0.0"

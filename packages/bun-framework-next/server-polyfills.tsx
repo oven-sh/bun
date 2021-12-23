@@ -1,7 +1,7 @@
 globalThis.global = globalThis;
 
 import { Buffer } from "buffer";
-import { URL } from "url-polyfill";
+import { URL } from "./url-polyfill";
 import { TextEncoder, TextDecoder } from "./text-encoder-polyfill";
 import * as React from "react";
 
@@ -19,8 +19,8 @@ React.Children.only = function (children) {
   return onlyChildPolyfill(children);
 };
 
-globalThis.Buffer = Buffer;
-globalThis.URL = URL;
+globalThis.Buffer ||= Buffer;
+globalThis.URL ||= URL;
 // @ts-expect-error encodeInto is missing in our polyfill
 globalThis.TextEncoder ||= TextEncoder;
 globalThis.TextDecoder ||= TextDecoder;

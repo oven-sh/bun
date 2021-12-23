@@ -17,8 +17,8 @@ if (
 
 let buildId = 0;
 
-var DocumentLoaded = false;
-var DocumentNamespace;
+let DocumentLoaded = false;
+let DocumentNamespace;
 
 import(Bun.routesDir + "_document").then(
   (doc) => {
@@ -37,25 +37,39 @@ import(Bun.routesDir + "_document").then(
 );
 
 addEventListener("fetch", async (event: FetchEvent) => {
-  var route = Bun.match(event);
+  const route = Bun.match(event);
 
   // This imports the currently matched route.
-  const PageNamespace = await import(route.filePath);
+  let PageNamespace: any;
+
+  try {
+    PageNamespace = await import(route.filePath);
+  } catch (exception) {
+    console.error("Error loading page:", route.filePath);
+    throw exception;
+  }
 
   // This returns all .css files that were imported in the line above.
   // It's recursive, so any file that imports a CSS file will be included.
   const pageStylesheets = (Bun.getImportedStyles() as string[]).slice();
 
-  var appRoute;
+  let appRoute: any;
 
   try {
     appRoute = await import(Bun.routesDir + "_app");
   } catch (exception) {
-    appRoute = null;
+    // ResolveError is defined outside of bun-framework-next in ../../src/runtime/errors
+    // @ts-expect-error
+    if (exception && !(exception instanceof ResolveError)) {
+      console.error("Error loading app:", Bun.routesDir + "_app");
+      throw exception;
+    }
   }
+
   const appStylesheets = (Bun.getImportedStyles() as string[]).slice();
-  event.respondWith(
-    render({
+  let response: Response;
+  try {
+    response = await render({
       route,
       PageNamespace,
       appStylesheets,
@@ -66,12 +80,16 @@ addEventListener("fetch", async (event: FetchEvent) => {
       routePaths: Bun.getRouteFiles(),
       routeNames: Bun.getRouteNames(),
       request: event.request,
-    })
-  );
+    });
+  } catch (exception) {
+    console.error("Error rendering route", route.filePath);
+    throw exception;
+  }
+
+  event.respondWith(response);
+
   buildId++;
 });
 
-// typescript isolated modules
+declare let Bun: any;
 export {};
-
-declare var Bun: any;

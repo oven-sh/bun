@@ -68,8 +68,10 @@ pub fn init(entries_: u12, flags: u32) !IO {
     while (true) {
         ring = IO_Uring.init(entries, flags) catch |err| {
             if (err == error.SystemResources) {
-                if (entries < 4) return error.SystemResources;
-                entries /= 2;
+                if (entries <= 8) return error.SystemResources;
+                // We divide by 4 instead of 2
+                // This way, a child process that uses io_uring can still function
+                entries /= 4;
                 continue;
             }
 
@@ -77,7 +79,6 @@ pub fn init(entries_: u12, flags: u32) !IO {
         };
         break;
     }
-    
 
     return IO{ .ring = ring };
 }

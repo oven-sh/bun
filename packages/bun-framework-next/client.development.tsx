@@ -370,7 +370,7 @@ export async function _boot(EntryPointNamespace, isError) {
       reactRoot.render(reactEl);
     }
   } else {
-    if (isError) {
+    if (isError || !domEl.hasChildNodes() || !("hydrate" in ReactDOM)) {
       ReactDOM.render(reactEl, domEl);
     } else {
       ReactDOM.hydrate(reactEl, domEl);

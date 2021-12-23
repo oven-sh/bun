@@ -53,7 +53,7 @@ pub const JSObject = extern struct {
         return cppFn("putRecord", .{ this, global, key, values, values_len });
     }
 
-    pub fn getDirect(this: *JSObject, globalThis: *JSGlobalObject, str: ZigString) JSValue {
+    pub fn getDirect(this: *JSObject, globalThis: *JSGlobalObject, str: *const ZigString) JSValue {
         return cppFn("getDirect", .{
             this,
             globalThis,
@@ -61,7 +61,7 @@ pub const JSObject = extern struct {
         });
     }
 
-    pub fn putDirect(this: *JSObject, globalThis: *JSGlobalObject, prop: ZigString, value: JSValue) void {
+    pub fn putDirect(this: *JSObject, globalThis: *JSGlobalObject, prop: *const ZigString, value: JSValue) void {
         return cppFn("putDirect", .{
             this,
             globalThis,
@@ -118,11 +118,11 @@ pub const ZigString = extern struct {
         return std.mem.trim(u8, this.ptr[0..std.math.min(this.len, 4096)], " \r\n");
     }
 
-    pub fn toValue(this: ZigString, global: *JSGlobalObject) JSValue {
+    pub fn toValue(this: *const ZigString, global: *JSGlobalObject) JSValue {
         return shim.cppFn("toValue", .{ this, global });
     }
 
-    pub fn toValueGC(this: ZigString, global: *JSGlobalObject) JSValue {
+    pub fn toValueGC(this: *const ZigString, global: *JSGlobalObject) JSValue {
         return shim.cppFn("toValueGC", .{ this, global });
     }
 
@@ -366,7 +366,7 @@ pub const JSModuleLoader = extern struct {
         });
     }
 
-    pub fn loadAndEvaluateModule(globalObject: *JSGlobalObject, module_name: ZigString) *JSInternalPromise {
+    pub fn loadAndEvaluateModule(globalObject: *JSGlobalObject, module_name: *const ZigString) *JSInternalPromise {
         return shim.cppFn("loadAndEvaluateModule", .{
             globalObject,
             module_name,
@@ -921,7 +921,7 @@ pub const JSGlobalObject = extern struct {
         return cppFn("asyncGeneratorFunctionPrototype", .{this});
     }
 
-    pub fn createAggregateError(globalObject: *JSGlobalObject, errors: [*]*c_void, errors_len: u16, message: ZigString) JSValue {
+    pub fn createAggregateError(globalObject: *JSGlobalObject, errors: [*]*c_void, errors_len: u16, message: *const ZigString) JSValue {
         return cppFn("createAggregateError", .{ globalObject, errors, errors_len, message });
     }
 

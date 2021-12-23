@@ -236,12 +236,12 @@ JSC__JSValue JSC__JSObject__getIndex(JSC__JSValue jsValue, JSC__JSGlobalObject *
   return JSC::JSValue::encode(JSC::JSValue::decode(jsValue).toObject(arg1)->getIndex(arg1, arg3));
 }
 JSC__JSValue JSC__JSObject__getDirect(JSC__JSObject *arg0, JSC__JSGlobalObject *arg1,
-                                      ZigString arg2) {
-  return JSC::JSValue::encode(arg0->getDirect(arg1->vm(), Zig::toIdentifier(arg2, arg1)));
+                                      const ZigString * arg2) {
+  return JSC::JSValue::encode(arg0->getDirect(arg1->vm(), Zig::toIdentifier(*arg2, arg1)));
 }
-void JSC__JSObject__putDirect(JSC__JSObject *arg0, JSC__JSGlobalObject *arg1, ZigString key,
+void JSC__JSObject__putDirect(JSC__JSObject *arg0, JSC__JSGlobalObject *arg1, const ZigString * key,
                               JSC__JSValue value) {
-  auto prop = Zig::toIdentifier(key, arg1);
+  auto prop = Zig::toIdentifier(*key, arg1);
 
   arg0->putDirect(arg1->vm(), prop, JSC::JSValue::decode(value));
 }
@@ -376,11 +376,11 @@ JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject *globalObject, 
 
 JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject *globalObject,
                                                        void **errors, uint16_t errors_count,
-                                                       ZigString arg3) {
+                                                       const ZigString * arg3) {
   JSC::VM &vm = globalObject->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
 
-  JSC::JSValue message = JSC::JSValue(JSC::jsOwnedString(vm, Zig::toString(arg3)));
+  JSC::JSValue message = JSC::JSValue(JSC::jsOwnedString(vm, Zig::toString(*arg3)));
   JSC::JSValue options = JSC::jsUndefined();
   JSC::JSArray *array = nullptr;
   {
@@ -411,13 +411,13 @@ JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject *glob
 // static JSC::JSNativeStdFunction* rejecterFunction;
 // static bool resolverFunctionInitialized = false;
 
-JSC__JSValue ZigString__toValue(ZigString arg0, JSC__JSGlobalObject *arg1) {
-  return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(arg1->vm(), Zig::toString(arg0))));
+JSC__JSValue ZigString__toValue(const ZigString * arg0, JSC__JSGlobalObject *arg1) {
+  return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(arg1->vm(), Zig::toString(*arg0))));
 }
 
-JSC__JSValue ZigString__toValueGC(ZigString arg0, JSC__JSGlobalObject *arg1) {
+JSC__JSValue ZigString__toValueGC(const ZigString * arg0, JSC__JSGlobalObject *arg1) {
   return JSC::JSValue::encode(
-    JSC::JSValue(JSC::jsMakeNontrivialString(arg1->vm(), Zig::toString(arg0))));
+    JSC::JSValue(JSC::jsMakeNontrivialString(arg1->vm(), Zig::toString(*arg0))));
 }
 
 void JSC__JSValue__toZigString(JSC__JSValue JSValue0, ZigString *arg1, JSC__JSGlobalObject *arg2) {
@@ -447,9 +447,9 @@ static JSC::EncodedJSValue resolverFunctionCallback(JSC::JSGlobalObject *globalO
 }
 
 JSC__JSInternalPromise *
-JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject *globalObject, ZigString arg1) {
+JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject *globalObject, const ZigString * arg1) {
   globalObject->vm().drainMicrotasks();
-  auto name = Zig::toString(arg1);
+  auto name = Zig::toString(*arg1);
   name.impl()->ref();
 
   auto *promise =

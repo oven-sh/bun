@@ -1,16 +1,7 @@
 usingnamespace @import("./headers-replacements.zig");
 pub usingnamespace @import("std").zig.c_builtins;
 pub const ptrdiff_t = c_long;
-pub const wchar_t = c_int;
-pub const __uint16_t = c_ushort;
-pub const __int32_t = c_int;
-pub const __uint32_t = c_uint;
-pub const __int64_t = c_longlong;
-pub const __uint64_t = c_ulonglong;
-pub const __mbstate_t = extern union {
-    __mbstate8: [128]u8,
-    _mbstateL: c_longlong,
-};
+pub const wchar_t = c_uint;
 
 pub const JSC__RegExpPrototype = struct_JSC__RegExpPrototype;
 
@@ -74,13 +65,13 @@ pub const JSC__CallFrame = bJSC__CallFrame;
 pub const JSC__MapIteratorPrototype = struct_JSC__MapIteratorPrototype;
 pub extern fn JSC__JSObject__create(arg0: [*c]JSC__JSGlobalObject, arg1: usize, arg2: ?*c_void, ArgFn3: ?fn (?*c_void, [*c]JSC__JSObject, [*c]JSC__JSGlobalObject) callconv(.C) void) JSC__JSValue;
 pub extern fn JSC__JSObject__getArrayLength(arg0: [*c]JSC__JSObject) usize;
-pub extern fn JSC__JSObject__getDirect(arg0: [*c]JSC__JSObject, arg1: [*c]JSC__JSGlobalObject, arg2: ZigString) JSC__JSValue;
+pub extern fn JSC__JSObject__getDirect(arg0: [*c]JSC__JSObject, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]const ZigString) JSC__JSValue;
 pub extern fn JSC__JSObject__getIndex(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: u32) JSC__JSValue;
-pub extern fn JSC__JSObject__putDirect(arg0: [*c]JSC__JSObject, arg1: [*c]JSC__JSGlobalObject, arg2: ZigString, JSValue3: JSC__JSValue) void;
+pub extern fn JSC__JSObject__putDirect(arg0: [*c]JSC__JSObject, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]const ZigString, JSValue3: JSC__JSValue) void;
 pub extern fn JSC__JSObject__putRecord(arg0: [*c]JSC__JSObject, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]ZigString, arg3: [*c]ZigString, arg4: usize) void;
 pub extern fn ZigString__toErrorInstance(arg0: [*c]const ZigString, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
-pub extern fn ZigString__toValue(arg0: ZigString, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
-pub extern fn ZigString__toValueGC(arg0: ZigString, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
+pub extern fn ZigString__toValue(arg0: [*c]const ZigString, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
+pub extern fn ZigString__toValueGC(arg0: [*c]const ZigString, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSCell__getObject(arg0: [*c]JSC__JSCell) [*c]JSC__JSObject;
 pub extern fn JSC__JSCell__getString(arg0: [*c]JSC__JSCell, arg1: [*c]JSC__JSGlobalObject) bWTF__String;
 pub extern fn JSC__JSCell__getType(arg0: [*c]JSC__JSCell) u8;
@@ -100,7 +91,7 @@ pub extern fn JSC__JSModuleLoader__checkSyntax(arg0: [*c]JSC__JSGlobalObject, ar
 pub extern fn JSC__JSModuleLoader__evaluate(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const u8, arg2: usize, arg3: [*c]const u8, arg4: usize, JSValue5: JSC__JSValue, arg6: [*c]JSC__JSValue) JSC__JSValue;
 pub extern fn JSC__JSModuleLoader__importModule(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const JSC__Identifier) [*c]JSC__JSInternalPromise;
 pub extern fn JSC__JSModuleLoader__linkAndEvaluateModule(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const JSC__Identifier) JSC__JSValue;
-pub extern fn JSC__JSModuleLoader__loadAndEvaluateModule(arg0: [*c]JSC__JSGlobalObject, arg1: ZigString) [*c]JSC__JSInternalPromise;
+pub extern fn JSC__JSModuleLoader__loadAndEvaluateModule(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const ZigString) [*c]JSC__JSInternalPromise;
 pub extern fn JSC__JSModuleLoader__loadAndEvaluateModuleEntryPoint(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const JSC__SourceCode) [*c]JSC__JSInternalPromise;
 pub extern fn JSC__JSModuleRecord__sourceCode(arg0: [*c]JSC__JSModuleRecord) bJSC__SourceCode;
 pub extern fn JSC__JSPromise__isHandled(arg0: [*c]const JSC__JSPromise, arg1: [*c]JSC__VM) bool;
@@ -149,7 +140,7 @@ pub extern fn JSC__JSGlobalObject__asyncGeneratorPrototype(arg0: [*c]JSC__JSGlob
 pub extern fn JSC__JSGlobalObject__asyncIteratorPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__AsyncIteratorPrototype;
 pub extern fn JSC__JSGlobalObject__bigIntPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__BigIntPrototype;
 pub extern fn JSC__JSGlobalObject__booleanPrototype(arg0: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;
-pub extern fn JSC__JSGlobalObject__createAggregateError(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]*c_void, arg2: u16, arg3: ZigString) JSC__JSValue;
+pub extern fn JSC__JSGlobalObject__createAggregateError(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]*c_void, arg2: u16, arg3: [*c]const ZigString) JSC__JSValue;
 pub extern fn JSC__JSGlobalObject__datePrototype(arg0: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__errorPrototype(arg0: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__functionPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__FunctionPrototype;

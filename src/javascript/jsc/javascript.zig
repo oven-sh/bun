@@ -1436,7 +1436,7 @@ pub const VirtualMachine = struct {
                     vm.global.createAggregateError(
                         errors.ptr,
                         @intCast(u16, errors.len),
-                        ZigString.init(std.fmt.allocPrint(vm.bundler.allocator, "{d} errors building \"{s}\"", .{ errors.len, specifier.slice() }) catch unreachable),
+                        &ZigString.init(std.fmt.allocPrint(vm.bundler.allocator, "{d} errors building \"{s}\"", .{ errors.len, specifier.slice() }) catch unreachable),
                     ).asVoid(),
                 );
                 return;
@@ -1477,7 +1477,7 @@ pub const VirtualMachine = struct {
         // We first import the node_modules bundle. This prevents any potential TDZ issues.
         // The contents of the node_modules bundle are lazy, so hopefully this should be pretty quick.
         if (this.node_modules != null) {
-            promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.init(std.mem.span(bun_file_import_path)));
+            promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(std.mem.span(bun_file_import_path)));
 
             this.tick();
 
@@ -1492,7 +1492,7 @@ pub const VirtualMachine = struct {
             _ = promise.result(this.global.vm());
         }
 
-        promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.init(std.mem.span(main_file_name)));
+        promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(std.mem.span(main_file_name)));
 
         this.tick();
 
@@ -1515,7 +1515,7 @@ pub const VirtualMachine = struct {
 
         var promise: *JSInternalPromise = undefined;
 
-        promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.init(entry_point.source.path.text));
+        promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(entry_point.source.path.text));
 
         this.tick();
 

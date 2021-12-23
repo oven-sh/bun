@@ -45,7 +45,6 @@ pub const MimeType = @import("./http/mime_type.zig");
 const Bundler = bundler.Bundler;
 const Websocket = @import("./http/websocket.zig");
 const js_printer = @import("./js_printer.zig");
-const SOCKET_FLAGS = os.SOCK_CLOEXEC;
 const watcher = @import("./watcher.zig");
 threadlocal var req_headers_buf: [100]picohttp.Header = undefined;
 threadlocal var res_headers_buf: [100]picohttp.Header = undefined;
@@ -61,6 +60,11 @@ const ZigURL = @import("./query_string_map.zig").URL;
 const HTTPStatusCode = u10;
 const URLPath = @import("./http/url_path.zig");
 const Method = @import("./http/method.zig").Method;
+
+const SOCKET_FLAGS: u32 = if (Environment.isLinux)
+    os.SOCK_CLOEXEC | os.MSG_NOSIGNAL
+else
+    os.SOCK_CLOEXEC;
 
 pub const RequestContext = struct {
     request: Request,
@@ -2478,7 +2482,16 @@ pub const Server = struct {
     pub fn onTCPConnection(server: *Server, conn: tcp.Connection, comptime features: ConnectionFeatures) void {
         conn.client.setNoDelay(true) catch {};
         conn.client.setQuickACK(true) catch {};
-        conn.client.setLinger(1) catch {};
+
+        if (comptime Environment.isMac) {
+            // Don't crash if the client disconnects.
+            std.os.setsockopt(
+                conn.client.socket.fd,
+                std.os.IPPROTO_TCP,
+                std.os.SO_NOSIGPIPE,
+                mem.asBytes(&@as(u32, @boolToInt(true))),
+            ) catch {};
+        }
 
         server.handleConnection(&conn, comptime features);
     }

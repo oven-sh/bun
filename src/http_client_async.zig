@@ -7,14 +7,17 @@ const Method = @import("./http/method.zig").Method;
 const Api = @import("./api/schema.zig").Api;
 const Lock = @import("./lock.zig").Lock;
 const HTTPClient = @This();
-const SOCKET_FLAGS = os.SOCK_CLOEXEC;
 const Zlib = @import("./zlib.zig");
 const StringBuilder = @import("./string_builder.zig");
 const AsyncIO = @import("io");
 const ThreadPool = @import("thread_pool");
 const boring = @import("boringssl");
-
 const NetworkThread = @import("network_thread");
+
+const SOCKET_FLAGS: u32 = if (Environment.isLinux)
+    os.SOCK_CLOEXEC | os.MSG_NOSIGNAL
+else
+    os.SOCK_CLOEXEC;
 
 const extremely_verbose = false;
 
@@ -656,6 +659,8 @@ const AsyncSocket = struct {
             try_cached_index: {
                 if (address_list.index) |i| {
                     const address = list.addrs[i];
+                    if (address_list.invalidated) continue :outer;
+
                     this.connectToAddress(address) catch |err| {
                         if (err == error.ConnectionRefused) {
                             address_list.index = null;
@@ -669,6 +674,7 @@ const AsyncSocket = struct {
             }
 
             for (list.addrs) |address, i| {
+                if (address_list.invalidated) continue :outer;
                 this.connectToAddress(address) catch |err| {
                     if (err == error.ConnectionRefused) continue;
                     address_list.invalidate();
@@ -677,6 +683,8 @@ const AsyncSocket = struct {
                 address_list.index = @truncate(u32, i);
                 return;
             }
+
+            if (address_list.invalidated) continue :outer;
 
             address_list.invalidate();
             return error.ConnectionRefused;
@@ -1443,9 +1451,19 @@ pub fn connect(
 
     try connector.connect(this.url.hostname, port);
     var client = std.x.net.tcp.Client{ .socket = std.x.os.Socket.from(this.socket.socket.socket) };
-    client.setNoDelay(true) catch {};
     client.setReadBufferSize(BufferPool.len) catch {};
     client.setQuickACK(true) catch {};
+
+    if (comptime Environment.isMac) {
+        // Don't crash if the server disconnects.
+        std.os.setsockopt(
+            client.socket.fd,
+            std.os.IPPROTO_TCP,
+            std.os.SO_NOSIGPIPE,
+            std.mem.asBytes(&@as(u32, @boolToInt(true))),
+        ) catch {};
+    }
+
     this.tcp_client = client;
     if (this.timeout > 0) {
         client.setReadTimeout(@truncate(u32, this.timeout / std.time.ns_per_ms)) catch {};

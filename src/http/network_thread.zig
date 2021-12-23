@@ -18,6 +18,7 @@ const CachedAddressList = struct {
     expire_after: u64,
     key: u64,
     index: ?u32 = null,
+    invalidated: bool = false,
     pub fn hash(name: []const u8, port: u16) u64 {
         var hasher = std.hash.Wyhash.init(0);
         hasher.update(name);
@@ -35,6 +36,7 @@ const CachedAddressList = struct {
     }
 
     pub fn invalidate(this: *CachedAddressList) void {
+        this.invalidated = true;
         this.address_list.deinit();
         _ = address_list_cached.remove(this.key);
     }

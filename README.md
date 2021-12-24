@@ -1070,6 +1070,34 @@ For compatibiltiy reasons, these NPM packages are embedded into Bun’s binary a
 
 Estimated: 30-90 minutes :(
 
+### Linux
+
+Please use the VSCode Remote Container in this repository.
+
+You will need to clone the GitHub repository inside that container, which also requires authenticating with GitHub (until Bun's repository is public). Make sure to login with a Personal Access Token rather than a web browser.
+
+Inside the container, run this:
+
+```bash
+# First time setup
+gh auth login
+gh repo clone Jarred-Sumner/bun . -- --depth=1 --progress -j8
+
+# update all submodules except webkit because webkit takes awhile and it's already compiled for you.
+git -c submodule."src/javascript/jsc/WebKit".update=none submodule update --init --recursive --depth=1 --progress
+
+# Compile bun dependencies (zig is already compiled)
+make devcontainer
+
+# Build Bun for development
+make dev
+
+# Run bun
+bun-debug
+```
+
+This container has Zig, zls, vscode-zig, and more setup automatically for you. It is very similar to my own development environment.
+
 ### MacOS
 
 Install LLVM 12 and homebrew dependencies:
@@ -1151,34 +1179,6 @@ brew install pkg-config
 ```
 
 If you see an error about missing files on `zig build obj`, make sure you built the headers
-
-### Linux
-
-Please use the VSCode Remote Container in this repository.
-
-You will need to clone the GitHub repository inside that container, which also requires authenticating with GitHub (until Bun's repository is public). Make sure to login with a Personal Access Token rather than a web browser.
-
-Inside the container, run this:
-
-```bash
-# First time setup
-gh auth login
-gh repo clone Jarred-Sumner/bun . -- --depth=1 --progress -j8
-
-# update all submodules except webkit because webkit takes awhile and it's already compiled for you.
-git -c submodule."src/javascript/jsc/WebKit".update=none submodule update --init --recursive --depth=1 --progress
-
-# Compile bun dependencies (zig is already compiled)
-make devcontainer
-
-# Build Bun for development
-make dev
-
-# Run bun
-bun-debug
-```
-
-This container has Zig, zls, vscode-zig, and more setup automatically for you. It is very similar to my own development environment.
 
 ## vscode-zig
 

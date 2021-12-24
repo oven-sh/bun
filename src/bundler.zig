@@ -892,7 +892,10 @@ pub const Bundler = struct {
                 const entry_points = try router.getEntryPoints();
                 for (entry_points) |entry_point| {
                     const source_dir = bundler.fs.top_level_dir;
-                    const resolved = try bundler.resolver.resolve(source_dir, entry_point, .entry_point);
+                    const resolved = bundler.resolver.resolve(source_dir, entry_point, .entry_point) catch |err| {
+                        bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} resolving \"{s}\" (entry point)", .{ @errorName(err), entry_point }) catch unreachable;
+                        continue;
+                    };
                     try this.enqueueItem(resolved);
                 }
                 this.bundler.resetStore();
@@ -904,7 +907,10 @@ pub const Bundler = struct {
 
                 const entry_point_path = bundler.normalizeEntryPointPath(entry_point);
                 const source_dir = bundler.fs.top_level_dir;
-                const resolved = try bundler.resolver.resolve(source_dir, entry_point, .entry_point);
+                const resolved = bundler.resolver.resolve(source_dir, entry_point, .entry_point) catch |err| {
+                    bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} resolving \"{s}\" (entry point)", .{ @errorName(err), entry_point }) catch unreachable;
+                    continue;
+                };
                 try this.enqueueItem(resolved);
             }
 

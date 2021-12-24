@@ -19,6 +19,8 @@ const SOCKET_FLAGS: u32 = if (Environment.isLinux)
 else
     os.SOCK_CLOEXEC;
 
+const OPEN_SOCKET_FLAGS = os.SOCK_CLOEXEC;
+
 const extremely_verbose = false;
 
 fn writeRequest(
@@ -615,7 +617,13 @@ const AsyncSocket = struct {
     }
 
     fn connectToAddress(this: *AsyncSocket, address: std.net.Address) ConnectError!void {
-        const sockfd = AsyncIO.openSocket(address.any.family, SOCKET_FLAGS | std.os.SOCK_STREAM, std.os.IPPROTO_TCP) catch return error.ConnectionRefused;
+        const sockfd = AsyncIO.openSocket(address.any.family, OPEN_SOCKET_FLAGS | std.os.SOCK_STREAM, std.os.IPPROTO_TCP) catch |err| {
+            if (extremely_verbose) {
+                Output.prettyErrorln("openSocket error: {s}", .{@errorName(err)});
+            }
+
+            return error.ConnectionRefused;
+        };
 
         this.io.connect(*AsyncSocket, this, on_connect, &this.connect_completion, sockfd, address);
         suspend {

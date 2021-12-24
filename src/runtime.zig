@@ -28,7 +28,7 @@ pub const ErrorCSS = struct {
                 .{
                     .read = true,
                 },
-            ) catch unreachable;
+            ) catch @panic("Missing packages/bun-error/bun-error.css. Please run \"make bun_error\"");
             defer file.close();
             return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
         } else {
@@ -53,7 +53,7 @@ pub const ErrorJS = struct {
                 .{
                     .read = true,
                 },
-            ) catch unreachable;
+            ) catch @panic("Missing " ++ ErrorJSPath ++ ". Please run \"make bun_error\"");
             defer file.close();
             return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
         } else {
@@ -114,7 +114,7 @@ pub const Fallback = struct {
                 env.get("USER").?,
             ) catch unreachable;
             var runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "fallback.out.js" }) catch unreachable;
-            const file = std.fs.openFileAbsolute(runtime_path, .{}) catch unreachable;
+            const file = std.fs.openFileAbsolute(runtime_path, .{}) catch @panic("Missing bun/src/fallback.out.js. " ++ "Please run \"make fallback_decoder\"");
             defer file.close();
             return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
         } else {
@@ -173,7 +173,7 @@ pub const Runtime = struct {
                 env.get("USER").?,
             ) catch unreachable;
             var runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "runtime.out.js" }) catch unreachable;
-            const file = std.fs.openFileAbsolute(runtime_path, .{}) catch unreachable;
+            const file = std.fs.openFileAbsolute(runtime_path, .{}) catch @panic("Missing bun/src/runtime.out.js. " ++ "Please run \"make runtime_js_dev\"");
             defer file.close();
             return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
         } else {

@@ -388,7 +388,7 @@ jsc: jsc-build jsc-copy-headers jsc-bindings
 jsc-build: $(JSC_BUILD_STEPS)
 jsc-bindings: jsc-bindings-headers jsc-bindings-mac
 
-devcontainer: mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks jsc-bindings-headers api analytics bun_error fallback_decoder jsc-bindings-mac dev
+devcontainer: mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks jsc-bindings-headers api analytics bun_error fallback_decoder jsc-bindings-mac dev runtime_js_dev
 
 jsc-bindings-headers:
 	rm -f /tmp/build-jsc-headers src/javascript/jsc/bindings/headers.zig

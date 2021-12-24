@@ -82,8 +82,6 @@ FROM ubuntu-base as build_dependencies
 
 WORKDIR /home/ubuntu/bun
 
-
-
 COPY Makefile /home/ubuntu/bun/Makefile
 COPY src/deps /home/ubuntu/bun/src/deps
 COPY src/js_lexer/identifier_data.zig /home/ubuntu/bun/src/js_lexer/identifier_data.zig
@@ -146,7 +144,7 @@ ENV PATH "/home/ubuntu/zig:$PATH"
 ENV JSC_BASE_DIR $WEBKIT_OUT_DIR
 ENV LIB_ICU_PATH /home/ubuntu/icu/source/lib
 ENV BUN_RELEASE_DIR /home/ubuntu/bun-release
-ENV PATH "/workspaces/bun/packages/debug-bun-linux-x64:/workspaces/bun/packages/debug-bun-linux-aarch64:$PATH"
+ENV PATH "/workspaces/bun/packages/bun-linux-amd64:/workspaces/bun/packages/bun-linux-aarch64:/workspaces/bun/packages/debug-bun-linux-x64:/workspaces/bun/packages/debug-bun-linux-aarch64:$PATH"
 ENV PATH "/home/ubuntu/zls/zig-out/bin:$PATH"
 
 ENV BUN_INSTALL /home/ubuntu/.bun

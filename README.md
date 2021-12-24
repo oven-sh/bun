@@ -1074,7 +1074,7 @@ Estimated: 30-90 minutes :(
 
 The VSCode Remote Container in this repository is the easiest way to get started. It comes with Zig, JavaScriptCore, Zig Language Server, vscode-zig, and more pre-installed on an instance of Ubuntu.
 
-<img src="https://user-images.githubusercontent.com/709451/147319076-c16277be-0aca-4f09-9125-94fc291e06dd.png" />
+<img src="https://user-images.githubusercontent.com/709451/147319227-6446589c-a4d9-480d-bd5b-43037a9e56fd.png" />
 
 You will need to clone the GitHub repository inside that container, which also requires authenticating with GitHub (until Bun's repository is public). Make sure to login with a Personal Access Token rather than a web browser.
 

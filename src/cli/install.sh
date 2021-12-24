@@ -41,6 +41,9 @@ else
     case $(uname -sm) in
     "Darwin x86_64") target="darwin-x64" ;;
     "Darwin arm64") target="darwin-aarch64" ;;
+    "Linux aarch64") target="linux-aarch64" ;;
+    "Linux arm64") target="linux-aarch64" ;;
+    "Linux x86_64") target="linux-x64" ;;
     *) target="linux-x64" ;;
     esac
 fi

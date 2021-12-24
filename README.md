@@ -1154,73 +1154,43 @@ If you see an error about missing files on `zig build obj`, make sure you built 
 
 ### Linux
 
-A Dockerfile with the exact version of Zig used is availble at `Dockerfile.zig`. This installs all the system dependencies you’ll need excluding JavaScriptCore, but doesn’t currently compile Bun in one command. If you’re having trouble compiling Zig, it might be helpful to look at.
+Please use the VSCode Remote Container in this repository.
 
-#### Compile Zig (Linux)
+You will need to clone the GitHub repository inside that container, which also requires authenticating with GitHub (until Bun's repository is public). Make sure to login with a Personal Access Token rather than a web browser.
 
-```bash
-git clone https://github.com/jarred-sumner/zig
-cd zig
-git checkout jarred/zig-sloppy-with-small-structs
-cmake . -DCMAKE_BUILD_TYPE=Release && make -j $(nproc)
-```
-
-#### Compile JavaScriptCore (Linux)
+Inside the container, run this:
 
 ```bash
-# This will take a few minutes, depending on how fast your internet is
-git submodule update --init --recursive --progress --depth=1
+# First time setup
+gh auth login
+gh repo clone Jarred-Sumner/bun . -- --depth=1 --progress -j8
 
-# This will take 10-30 minutes, depending on how many cores your CPU has
-DOCKER_BUILDKIT=1 docker build -t bun-webkit $(pwd)/src/javascript/jsc/WebKit -f $(pwd)/src/javascript/jsc/WebKit/Dockerfile --progress=plain
-docker container create bun-webkit
+# update all submodules except webkit because webkit takes awhile and it's already compiled for you.
+git -c submodule."src/javascript/jsc/WebKit".update=none submodule update --init --recursive --depth=1 --progress
 
-# Find the docker container ID manually. If you know a better way, please submit a PR!
-docker container ls
+# Compile bun dependencies (zig is are already compiled)
+make devcontainer
 
-docker cp DOCKER_CONTAINER_ID_YOU_JUST_FOUND:/output $HOME/webkit-build
+# Build Bun for development
+make dev
+
+# Run bun
+bun-debug
 ```
 
-#### Build Bun (Linux)
-
-```bash
-make vendor dev
-```
-
-#### Verify it worked (Lunux)
-
-First ensure the node dependencies are installed
-
-```bash
-cd integration/snippets
-npm i
-```
-
-Then
-
-```bash
-# if you’re not already in the bun root directory
-cd ../../
-make test-dev-all
-```
-
-Run bun:
-
-```bash
-packages/debug-bun-cli-darwin-x64/bin/bun-debug
-```
+This container has Zig, zls, vscode-zig, and more setup automatically for you. It is very similar to my own development environment.
 
 ## vscode-zig
+
+Note: this is automatically installed on the devcontainer
 
 You will want to install the fork of `vscode-zig` so you get a `Run test` and a `Debug test` button.
 
 To do that:
 
 ```bash
-git clone https://github.com/jarred-sumner/vscode-zig
-cd vscode-zig
-yarn install
-yarn vsce package && code --install-extension ./zig-0.2.5.vsix
+curl -L https://github.com/Jarred-Sumner/vscode-zig/releases/download/fork-v1/zig-0.2.5.vsix > vscode-zig.vsix
+code --install-extension vscode-zig.vsix
 ```
 
 <a target="_blank" href="https://github.com/jarred-sumner/vscode-zig"><img src="https://pbs.twimg.com/media/FBZsKHlUcAYDzm5?format=jpg&name=large"></a>

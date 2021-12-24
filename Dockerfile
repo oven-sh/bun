@@ -76,12 +76,12 @@ ENV PATH "/home/ubuntu/zig:$PATH"
 ENV JSC_BASE_DIR $WEBKIT_OUT_DIR
 ENV LIB_ICU_PATH /home/ubuntu/icu/source/lib
 ENV BUN_RELEASE_DIR /home/ubuntu/bun-release
-ENV BUN_DEPS_OUT_DIR /home/ubuntu/bun-deps
 
 
 FROM ubuntu-base as build_dependencies
 
 WORKDIR /home/ubuntu/bun
+
 
 
 COPY Makefile /home/ubuntu/bun/Makefile
@@ -91,6 +91,9 @@ COPY src/js_lexer/identifier_cache.zig /home/ubuntu/bun/src/js_lexer/identifier_
 COPY src/node-fallbacks /home/ubuntu/bun/src/node-fallbacks
 
 WORKDIR /home/ubuntu/bun
+
+ENV BUN_DEPS_OUT_DIR /home/ubuntu/bun-deps
+
 
 RUN mkdir -p $BUN_DEPS_OUT_DIR; make \
     mimalloc \
@@ -102,6 +105,9 @@ RUN mkdir -p $BUN_DEPS_OUT_DIR; make \
     node-fallbacks 
 
 FROM ubuntu-base as prebuild
+
+ENV BUN_DEPS_OUT_DIR /home/ubuntu/bun-deps
+
 
 ADD . /home/ubuntu/bun
 COPY --from=build_dependencies /home/ubuntu/bun-deps /home/ubuntu/bun-deps
@@ -141,7 +147,6 @@ ENV PATH "/home/ubuntu/zig:$PATH"
 ENV JSC_BASE_DIR $WEBKIT_OUT_DIR
 ENV LIB_ICU_PATH /home/ubuntu/icu/source/lib
 ENV BUN_RELEASE_DIR /home/ubuntu/bun-release
-ENV BUN_DEPS_OUT_DIR /home/ubuntu/bun-deps
 ENV PATH "/workspaces/bun/packages/debug-bun-linux-x64:/workspaces/bun/packages/debug-bun-linux-aarch64:$PATH"
 ENV PATH "/home/ubuntu/zls/zig-out/bin:$PATH"
 
@@ -155,7 +160,7 @@ COPY .devcontainer/zls.json /workspaces/workspace.code-workspace
 COPY .devcontainer/limits.conf /etc/security/limits.conf
 COPY ".devcontainer/scripts/" /scripts/
 COPY ".devcontainer/scripts/getting-started.sh" /workspaces/getting-started.sh
-RUN mkdir -p /home/ubuntu/.bun /home/ubuntu/.config && bash /scripts/common-debian.sh && bash /scripts/github.sh && bash /scripts/nice.sh && bash /scripts/zig-env.sh
+RUN mkdir -p /home/ubuntu/.bun /home/ubuntu/.config /workspaces/bun && bash /scripts/common-debian.sh && bash /scripts/github.sh && bash /scripts/nice.sh && bash /scripts/zig-env.sh
 COPY .devcontainer/zls.json /home/ubuntu/.config/zls.json
 
 

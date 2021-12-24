@@ -29,9 +29,7 @@
 		"esbenp.prettier-vscode",
 		"xaver.clang-format"
 	],
-	
-
-	"postCreateCommand": "cd /workspaces; bash /workspaces/getting-started.sh; zsh",
+	"postCreateCommand": "cd /workspaces/bun; bash /workspaces/getting-started.sh; zsh",
 
 	"build": {
 		"target": "dev",
@@ -43,7 +41,7 @@
 		"--ulimit", "nofile=65536:65536",
 		"--cap-add=SYS_PTRACE", "--security-opt", "seccomp=unconfined"
 	],
-	"workspaceMount": "source=bun-dev2,target=/workspaces,type=volume",
+	"workspaceMount": "source=bun,target=/workspaces/bun,type=volume",
 	"workspaceFolder": "/workspaces/bun",
 	"mounts": [
 		"source=bun-install,target=/home/ubuntu/.bun,type=volume",

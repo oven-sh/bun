@@ -1168,7 +1168,7 @@ gh repo clone Jarred-Sumner/bun . -- --depth=1 --progress -j8
 # update all submodules except webkit because webkit takes awhile and it's already compiled for you.
 git -c submodule."src/javascript/jsc/WebKit".update=none submodule update --init --recursive --depth=1 --progress
 
-# Compile bun dependencies (zig is are already compiled)
+# Compile bun dependencies (zig is already compiled)
 make devcontainer
 
 # Build Bun for development

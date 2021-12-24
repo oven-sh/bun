@@ -55,7 +55,8 @@ CXX = $(shell which clang++-12 || which clang++)
 # macOS sed is different
 SED = $(shell which gsed || which sed)
 
-DEPS_DIR = $(shell pwd)/src/deps
+BUN_DEPS_DIR ?= $(shell pwd)/src/deps
+BUN_DEPS_OUT_DIR ?= $(BUN_DEPS_DIR)
 CPUS ?= $(shell nproc)
 USER ?= $(echo $USER)
 
@@ -64,7 +65,7 @@ BUN_RELEASE_DIR ?= $(shell pwd)/../bun-release
 OPENSSL_VERSION = OpenSSL_1_1_1l
 LIBICONV_PATH ?= $(BREW_PREFIX_PATH)/opt/libiconv/lib/libiconv.a
 
-OPENSSL_LINUX_DIR = $(DEPS_DIR)/openssl/openssl-OpenSSL_1_1_1l
+OPENSSL_LINUX_DIR = $(BUN_DEPS_DIR)/openssl/openssl-OpenSSL_1_1_1l
 
 CMAKE_FLAGS_WITHOUT_RELEASE = -DCMAKE_C_COMPILER=$(CC) -DCMAKE_CXX_COMPILER=$(CXX) -DCMAKE_OSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION) 
 CMAKE_FLAGS = $(CMAKE_FLAGS_WITHOUT_RELEASE) -DCMAKE_BUILD_TYPE=Release
@@ -78,9 +79,6 @@ endif
 ifeq ($(OS_NAME),linux)
 LIBICONV_PATH = 
 endif
-
-build-iconv-linux:
-	cd src/deps/libiconv/libiconv-1.16; ./configure --enable-static; make -j 12; cp ./lib/.libs/libiconv.a $(DEPS_DIR)/libiconv.a
 
 BUN_TMP_DIR := /tmp/make-bun
 BUN_DEPLOY_DIR = /tmp/bun-v$(PACKAGE_JSON_VERSION)/$(PACKAGE_NAME)
@@ -98,14 +96,14 @@ DEFAULT_JSC_LIB = $(JSC_BASE_DIR)/lib
 endif
 
 ifeq ($(OS_NAME),darwin)
-DEFAULT_JSC_LIB = src/deps
+DEFAULT_JSC_LIB = $(BUN_DEPS_DIR)
 endif
 
 JSC_LIB ?= $(DEFAULT_JSC_LIB)
 
 JSC_INCLUDE_DIR ?= $(JSC_BASE_DIR)/include
-ZLIB_INCLUDE_DIR ?= $(DEPS_DIR)/zlib
-ZLIB_LIB_DIR ?= $(DEPS_DIR)/zlib
+ZLIB_INCLUDE_DIR ?= $(BUN_DEPS_DIR)/zlib
+ZLIB_LIB_DIR ?= $(BUN_DEPS_DIR)/zlib
 
 JSC_FILES := $(JSC_LIB)/libJavaScriptCore.a $(JSC_LIB)/libWTF.a  $(JSC_LIB)/libbmalloc.a
 
@@ -170,7 +168,7 @@ ICU_FLAGS :=
 
 # TODO: find a way to make this more resilient
 # Ideally, we could just look up the linker search paths
-LIB_ICU_PATH ?= $(DEPS_DIR)
+LIB_ICU_PATH ?= $(BUN_DEPS_DIR)
 
 ifeq ($(OS_NAME),linux)
 	ICU_FLAGS += $(LIB_ICU_PATH)/libicuuc.a $(LIB_ICU_PATH)/libicudata.a $(LIB_ICU_PATH)/libicui18n.a
@@ -183,7 +181,7 @@ ICU_FLAGS += -l icucore \
 endif
 
 
-BORINGSSL_PACKAGE = --pkg-begin boringssl $(DEPS_DIR)/boringssl.zig --pkg-end
+BORINGSSL_PACKAGE = --pkg-begin boringssl $(BUN_DEPS_DIR)/boringssl.zig --pkg-end
 
 CLANG_FLAGS = $(INCLUDE_DIRS) \
 		-std=gnu++17 \
@@ -209,13 +207,13 @@ endif
 
 
 
-ARCHIVE_FILES_WITHOUT_LIBCRYPTO = src/deps/mimalloc/libmimalloc.a \
-		src/deps/zlib/libz.a \
-		src/deps/libarchive.a \
-		src/deps/libssl.a \
-		src/deps/picohttpparser.o \
+ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(BUN_DEPS_OUT_DIR)/libmimalloc.a \
+		$(BUN_DEPS_OUT_DIR)/libz.a \
+		$(BUN_DEPS_OUT_DIR)/libarchive.a \
+		$(BUN_DEPS_OUT_DIR)/libssl.a \
+		$(BUN_DEPS_OUT_DIR)/picohttpparser.o \
 
-ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) src/deps/libcrypto.boring.a
+ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) $(BUN_DEPS_OUT_DIR)/libcrypto.boring.a
 
 PLATFORM_LINKER_FLAGS =
 
@@ -249,47 +247,38 @@ bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release
 vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive 
 
 boringssl-build:
-	cd $(DEPS_DIR)/boringssl && mkdir -p build && cd build && cmake $(CMAKE_FLAGS) -GNinja .. && ninja 
+	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && cmake $(CMAKE_FLAGS) -GNinja .. && ninja 
 
 boringssl-copy:
-	cp $(DEPS_DIR)/boringssl/build/ssl/libssl.a $(DEPS_DIR)/libssl.a
-	cp $(DEPS_DIR)/boringssl/build/crypto/libcrypto.a $(DEPS_DIR)/libcrypto.boring.a
+	cp $(BUN_DEPS_DIR)/boringssl/build/ssl/libssl.a $(BUN_DEPS_OUT_DIR)/libssl.a
+	cp $(BUN_DEPS_DIR)/boringssl/build/crypto/libcrypto.a $(BUN_DEPS_OUT_DIR)/libcrypto.boring.a
 
 boringssl: boringssl-build boringssl-copy
 
 libarchive:
-	cd src/deps/libarchive; \
+	cd $(BUN_DEPS_DIR)/libarchive; \
 	(make clean || echo ""); \
 	(./build/clean.sh || echo ""); \
 	./build/autogen.sh; \
 	CFLAGS=$(CFLAGS) CC=$(CC) ./configure --disable-shared --enable-static  --with-pic  --disable-bsdtar   --disable-bsdcat --disable-rpath --enable-posix-regex-lib  --without-xml2  --without-expat --without-openssl  --without-iconv --without-zlib; \
 	make -j${CPUS}; \
-	cp ./.libs/libarchive.a $(DEPS_DIR)/libarchive.a;
+	cp ./.libs/libarchive.a $(BUN_DEPS_OUT_DIR)/libarchive.a;
 
 tgz:
 	$(ZIG) build tgz-obj -Drelease-fast
-	$(CXX) $(PACKAGE_DIR)/tgz.o -g -o ./misctools/tgz $(DEFAULT_LINKER_FLAGS) -lc  \
-		src/deps/zlib/libz.a \
-		src/deps/libarchive.a \
-		src/deps/libssl.a \
-		src/deps/libcrypto.boring.a \
-		src/deps/picohttpparser.o
+	$(CXX) $(PACKAGE_DIR)/tgz.o -g -o ./misctools/tgz $(DEFAULT_LINKER_FLAGS) -lc  $(ARCHIVE_FILES)
 	rm -rf $(PACKAGE_DIR)/tgz.o
 
 tgz-debug:
 	$(ZIG) build tgz-obj
-	$(CXX) $(DEBUG_PACKAGE_DIR)/tgz.o -g -o ./misctools/tgz $(DEFAULT_LINKER_FLAGS) -lc  \
-		src/deps/zlib/libz.a \
-		src/deps/libarchive.a \
-		src/deps/libssl.a \
-		src/deps/libcrypto.boring.a \
-		src/deps/picohttpparser.o
+	$(CXX) $(DEBUG_PACKAGE_DIR)/tgz.o -g -o ./misctools/tgz $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
 	rm -rf $(DEBUG_PACKAGE_DIR)/tgz.o
 
 vendor: require init-submodules vendor-without-check 
 
 zlib: 
-	cd src/deps/zlib; cmake $(CMAKE_FLAGS) .; make CFLAGS=$(CFLAGS);
+	cd $(BUN_DEPS_DIR)/zlib; cmake $(CMAKE_FLAGS) .; make CFLAGS=$(CFLAGS);
+	cp $(BUN_DEPS_DIR)/zlib/libz.a $(BUN_DEPS_OUT_DIR)/libz.a
 
 require:
 	@echo "Checking if the required utilities are available..."
@@ -353,45 +342,23 @@ generate-install-script:
 
 fetch:
 	$(ZIG) build -Drelease-fast fetch-obj
-	$(CXX) $(PACKAGE_DIR)/fetch.o -g -O3 -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc  \
-		src/deps/mimalloc/libmimalloc.a \
-		src/deps/zlib/libz.a \
-		src/deps/libarchive.a \
-		src/deps/libssl.a \
-		src/deps/libcrypto.boring.a \
-		src/deps/picohttpparser.o
+	$(CXX) $(PACKAGE_DIR)/fetch.o -g -O3 -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
 	rm -rf $(PACKAGE_DIR)/fetch.o
 	
 fetch-debug:
 	$(ZIG) build fetch-obj
-	$(CXX) $(DEBUG_PACKAGE_DIR)/fetch.o -g -O3 -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc  \
-		src/deps/mimalloc/libmimalloc.a \
-		src/deps/zlib/libz.a \
-		src/deps/libarchive.a \
-		src/deps/libssl.a \
-		src/deps/libcrypto.boring.a \
-		src/deps/picohttpparser.o
+	$(CXX) $(DEBUG_PACKAGE_DIR)/fetch.o -g -O3 -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
 
 
 httpbench-debug:
 	$(ZIG) build httpbench-obj
-	$(CXX) $(DEBUG_PACKAGE_DIR)/httpbench.o -g -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc  \
-		src/deps/zlib/libz.a \
-		src/deps/libarchive.a \
-		src/deps/libssl.a \
-		src/deps/libcrypto.boring.a \
-		src/deps/picohttpparser.o \
+	$(CXX) $(DEBUG_PACKAGE_DIR)/httpbench.o -g -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
 	rm -rf $(DEBUG_PACKAGE_DIR)/httpbench.o
 
 
 httpbench-release:
 	$(ZIG) build -Drelease-fast httpbench-obj
-	$(CXX) $(PACKAGE_DIR)/httpbench.o -g -O3 -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc  \
-		src/deps/zlib/libz.a \
-		src/deps/libarchive.a \
-		src/deps/libssl.a \
-		src/deps/libcrypto.boring.a \
-		src/deps/picohttpparser.o
+	$(CXX) $(PACKAGE_DIR)/httpbench.o -g -O3 -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
 	rm -rf $(PACKAGE_DIR)/httpbench.o
 
 bun-codesign-debug:
@@ -420,7 +387,9 @@ endif
 jsc: jsc-build jsc-copy-headers jsc-bindings  
 jsc-build: $(JSC_BUILD_STEPS)
 jsc-bindings: jsc-bindings-headers jsc-bindings-mac
-	
+
+devcontainer: mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks jsc-bindings-headers api analytics bun_error fallback_decoder jsc-bindings-mac dev
+
 jsc-bindings-headers:
 	rm -f /tmp/build-jsc-headers src/javascript/jsc/bindings/headers.zig
 	touch src/javascript/jsc/bindings/headers.zig
@@ -643,26 +612,27 @@ jsc-build-mac: jsc-build-mac-compile jsc-build-mac-copy
 jsc-build-linux: jsc-build-linux-compile-config jsc-build-linux-compile-build jsc-build-mac-copy
 
 jsc-build-mac-copy:
-	cp $(WEBKIT_RELEASE_DIR)/lib/libJavaScriptCore.a src/deps/libJavaScriptCore.a
-	cp $(WEBKIT_RELEASE_DIR)/lib/libWTF.a src/deps/libWTF.a
-	cp $(WEBKIT_RELEASE_DIR)/lib/libbmalloc.a src/deps/libbmalloc.a
+	cp $(WEBKIT_RELEASE_DIR)/lib/libJavaScriptCore.a $(BUN_DEPS_OUT_DIR)/libJavaScriptCore.a
+	cp $(WEBKIT_RELEASE_DIR)/lib/libWTF.a $(BUN_DEPS_OUT_DIR)/libWTF.a
+	cp $(WEBKIT_RELEASE_DIR)/lib/libbmalloc.a $(BUN_DEPS_OUT_DIR)/libbmalloc.a
 	 
 clean-bindings: 
 	rm -rf $(OBJ_DIR)/*.o
 
 clean: clean-bindings
-	rm src/deps/*.a src/deps/*.o
-	(cd src/deps/mimalloc && make clean) || echo "";
-	(cd src/deps/libarchive && make clean) || echo "";
-	(cd src/deps/boringssl && make clean) || echo "";
-	(cd src/deps/picohttp && make clean) || echo "";
-	(cd src/deps/zlib && make clean) || echo "";
+	rm $(BUN_DEPS_DIR)/*.a $(BUN_DEPS_DIR)/*.o
+	(cd $(BUN_DEPS_DIR)/mimalloc && make clean) || echo "";
+	(cd $(BUN_DEPS_DIR)/libarchive && make clean) || echo "";
+	(cd $(BUN_DEPS_DIR)/boringssl && make clean) || echo "";
+	(cd $(BUN_DEPS_DIR)/picohttp && make clean) || echo "";
+	(cd $(BUN_DEPS_DIR)/zlib && make clean) || echo "";
 
 jsc-bindings-mac: $(OBJ_FILES)
 
 
 mimalloc:
-	cd src/deps/mimalloc; cmake $(CMAKE_FLAGS) .; make; 
+	cd $(BUN_DEPS_DIR)/mimalloc; cmake $(CMAKE_FLAGS) .; make; 
+	cp $(BUN_DEPS_DIR)/mimalloc/libmimalloc.a $(BUN_DEPS_OUT_DIR)/libmimalloc.a
 
 bun-link-lld-debug:
 	$(CXX) $(BUN_LLD_FLAGS) \
@@ -703,7 +673,7 @@ sizegen:
 	$(BUN_TMP_DIR)/sizegen > src/javascript/jsc/bindings/sizes.zig
 
 picohttp:
-	 $(CC) $(MARCH_NATIVE) $(MACOS_MIN_FLAG) -O3 -g -fPIE -c src/deps/picohttpparser/picohttpparser.c -Isrc/deps -o src/deps/picohttpparser.o; cd ../../	
+	 $(CC) $(MARCH_NATIVE) $(MACOS_MIN_FLAG) -O3 -g -fPIE -c $(BUN_DEPS_DIR)/picohttpparser/picohttpparser.c -I$(BUN_DEPS_DIR) -o $(BUN_DEPS_OUT_DIR)/picohttpparser.o; cd ../../	
 
 analytics:
 	./node_modules/.bin/peechy --schema src/analytics/schema.peechy --zig src/analytics/analytics_schema.zig
@@ -799,8 +769,8 @@ build-unit:
 	@mkdir -p zig-out/bin
 	zig test $(realpath $(testpath)) \
 	$(testfilterflag) \
-	--pkg-begin picohttp $(DEPS_DIR)/picohttp.zig --pkg-end \
-	--pkg-begin clap $(DEPS_DIR)/zig-clap/clap.zig --pkg-end \
+	--pkg-begin picohttp $(BUN_DEPS_DIR)/picohttp.zig --pkg-end \
+	--pkg-begin clap $(BUN_DEPS_DIR)/zig-clap/clap.zig --pkg-end \
 	--main-pkg-path $(shell pwd) \
 	--test-no-exec \
 	-fPIC \
@@ -809,9 +779,7 @@ build-unit:
 	-lc -lc++ \
 	--cache-dir /tmp/zig-cache-bun-$(testname)-$(basename $(lastword $(testfilter))) \
 	-fallow-shlib-undefined \
-	-L$(LIBCRYPTO_PREFIX_DIR)/lib \
-	-lcrypto -lssl \
-	$(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) $(ICU_FLAGS) && \
+	$(ARCHIVE_FILES) $(ICU_FLAGS) && \
 	cp zig-out/bin/$(testname) $(testbinpath)
 
 run-unit:

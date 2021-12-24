@@ -1,0 +1,16 @@
+#!/bin/bash
+
+echo "To get started, login to GitHub and clone Bun's GitHub repo into /workspaces/bun"
+echo "Make sure to login with a Personal Access Token"
+echo ""
+echo "  gh auth login;"
+echo "  gh repo clone Jarred-Sumner/bun -- --depth=1 --progress --recursive -j8"
+echo "  cd bun;"
+echo "  make devcontainer"
+echo ""
+echo "To build for development:"
+echo "  make dev"
+echo ""
+echo "To run:"
+echo "  bun-debug"
+echo ""

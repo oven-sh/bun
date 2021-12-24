@@ -1,12 +1,13 @@
 {
   "version": "0.2.0",
   "configurations": [
+
     {
       "type": "lldb",
       "request": "launch",
       "name": "HTTP bench",
       "program": "${workspaceFolder}/misctools/http_bench",
-      "args": ["https://registry.npmjs.org/next", "--count=1"],
+      "args": ["https://example.com", "--count=80"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"
     },
@@ -15,7 +16,7 @@
       "request": "launch",
       "name": "fetch debug",
       "program": "${workspaceFolder}/misctools/fetch",
-      "args": ["https://api.github.com/repos/hanford/trends/tarball", "--verbose"],
+      "args": ["https://lodash.com", "--verbose"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"
     },
@@ -364,11 +365,10 @@
       "request": "launch",
       "name": "Install",
       "program": "bun-debug",
-      "args": ["install", "--backend=clonefile"],
-      "cwd": "/Users/jarred/Build/athena",
+      "args": ["install", "--backend=clonefile", "--force"],
+      "cwd": "/Users/jarred/Build/octokit-test",
       "env": {
 
-        "BUN_CONFIG_NO_DEDUPLICATE": "1"
       },
       "console": "internalConsole"
     },

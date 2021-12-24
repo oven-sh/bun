@@ -1,0 +1,9 @@
+{
+  "folders": [
+    {
+      // Source code
+      "name": "Bun",
+      "path": "bun"
+    },
+  ]
+}

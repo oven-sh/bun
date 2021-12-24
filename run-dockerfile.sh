@@ -37,7 +37,7 @@ export TEMP=/tmp/bun-0.0.$BUILD_ID
 rm -rf $TEMP
 mkdir -p $TEMP
 
-docker build . -t $CONTAINER_NAME --progress=plain --platform=linux/$BUILDKIT_ARCH
+docker build . --target build_release --progress=plain -t $CONTAINER_NAME:latest --build-arg BUILDKIT_INLINE_CACHE=1 --platform=linux/aarch64 --cache-from $CONTAINER_NAME:latest
 
 if (($?)); then
   echo "Failed to build container"
@@ -57,7 +57,6 @@ mv $CONTAINER_NAME/bun-profile $DEBUG_CONTAINER_NAME/bun
 zip -r $CONTAINER_NAME.zip $CONTAINER_NAME
 zip -r $DEBUG_CONTAINER_NAME.zip $DEBUG_CONTAINER_NAME
 docker rm -v $id
-docker tag $CONTAINER_NAME:latest ghcr.io/jarred-sumner/$CONTAINER_NAME:latest
 abs=$(realpath $TEMP/$CONTAINER_NAME.zip)
 debug_abs=$(realpath $TEMP/$DEBUG_CONTAINER_NAME.zip)
 

@@ -106,6 +106,28 @@ fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
     return filepath;
 }
 
+fn updateRuntime() anyerror!void {
+    var runtime_out_file = try std.fs.cwd().openFile("src/runtime.out.js", .{ .read = true });
+    const runtime_hash = std.hash.Wyhash.hash(
+        0,
+        try runtime_out_file.readToEndAlloc(std.heap.page_allocator, try runtime_out_file.getEndPos()),
+    );
+    const runtime_version_file = std.fs.cwd().createFile("src/runtime.version", .{ .truncate = true }) catch std.debug.panic("Failed to create src/runtime.version", .{});
+    defer runtime_version_file.close();
+    runtime_version_file.writer().print("{x}", .{runtime_hash}) catch unreachable;
+    var fallback_out_file = try std.fs.cwd().openFile("src/fallback.out.js", .{ .read = true });
+    const fallback_hash = std.hash.Wyhash.hash(
+        0,
+        try fallback_out_file.readToEndAlloc(std.heap.page_allocator, try fallback_out_file.getEndPos()),
+    );
+
+    const fallback_version_file = std.fs.cwd().createFile("src/fallback.version", .{ .truncate = true }) catch std.debug.panic("Failed to create src/fallback.version", .{});
+
+    fallback_version_file.writer().print("{x}", .{fallback_hash}) catch unreachable;
+
+    fallback_version_file.close();
+}
+
 var x64 = "x64";
 var mode: std.builtin.Mode = undefined;
 pub fn build(b: *std.build.Builder) !void {
@@ -220,184 +242,101 @@ pub fn build(b: *std.build.Builder) !void {
 
     exe.setOutputDir(output_dir);
     var cwd_dir = std.fs.cwd();
-    var runtime_out_file = try std.fs.cwd().openFile("src/runtime.out.js", .{ .read = true });
-    const runtime_hash = std.hash.Wyhash.hash(
-        0,
-        try runtime_out_file.readToEndAlloc(b.allocator, try runtime_out_file.getEndPos()),
-    );
-    const runtime_version_file = std.fs.cwd().createFile("src/runtime.version", .{ .truncate = true }) catch std.debug.panic("Failed to create src/runtime.version", .{});
-    defer runtime_version_file.close();
-    runtime_version_file.writer().print("{x}", .{runtime_hash}) catch unreachable;
-    var fallback_out_file = try std.fs.cwd().openFile("src/fallback.out.js", .{ .read = true });
-    const fallback_hash = std.hash.Wyhash.hash(
-        0,
-        try fallback_out_file.readToEndAlloc(b.allocator, try fallback_out_file.getEndPos()),
-    );
-
-    const fallback_version_file = std.fs.cwd().createFile("src/fallback.version", .{ .truncate = true }) catch std.debug.panic("Failed to create src/fallback.version", .{});
-
-    fallback_version_file.writer().print("{x}", .{fallback_hash}) catch unreachable;
-
-    defer fallback_version_file.close();
+    updateRuntime() catch {};
 
     exe.setTarget(target);
     exe.setBuildMode(mode);
     b.install_path = output_dir;
 
-    var javascript = b.addExecutable("spjs", "src/main_javascript.zig");
     var typings_exe = b.addExecutable("typescript-decls", "src/javascript/jsc/typescript.zig");
-    javascript.setMainPkgPath(b.pathFromRoot("."));
     typings_exe.setMainPkgPath(b.pathFromRoot("."));
-    exe.setMainPkgPath(b.pathFromRoot("."));
 
     // exe.want_lto = true;
-    if (!target.getCpuArch().isWasm()) {
-        b.default_step.dependOn(&exe.step);
 
-        const bindings_dir = std.fs.path.join(
-            b.allocator,
-            &.{
-                cwd,
-                "src",
-                "javascript",
-                "jsc",
-                "bindings-obj",
+    {
+        b.default_step.dependOn(&b.addLog(
+            "Build {s} v{} - v{}",
+            .{
+                triplet,
+                target.getOsVersionMin().semver,
+                target.getOsVersionMax().semver,
             },
-        ) catch unreachable;
+        ).step);
+    }
 
-        var bindings_dir_ = cwd_dir.openDir(bindings_dir, .{ .iterate = true }) catch std.debug.panic("Error opening bindings directory. Please make sure you ran `make jsc`. {s} should exist", .{bindings_dir});
-        var bindings_walker = bindings_dir_.walk(b.allocator) catch std.debug.panic("Error reading bindings directory {s}", .{bindings_dir});
+    var obj_step = b.step("obj", "Build Bun as a .o file");
+    var obj = b.addObject(bun_executable_name, exe.root_src.?.path);
 
-        var bindings_files = std.ArrayList([]const u8).init(b.allocator);
+    {
+        obj.setTarget(target);
+        addPicoHTTP(obj, false);
+        obj.setMainPkgPath(b.pathFromRoot("."));
 
-        while (bindings_walker.next() catch unreachable) |entry| {
-            if (std.mem.eql(u8, std.fs.path.extension(entry.basename), ".o")) {
-                bindings_files.append(bindings_dir_.realpathAlloc(b.allocator, entry.path) catch unreachable) catch unreachable;
-            }
-        }
-
-        // // References:
-        // // - https://github.com/mceSystems/node-jsc/blob/master/deps/jscshim/webkit.gyp
-        // // - https://github.com/mceSystems/node-jsc/blob/master/deps/jscshim/docs/webkit_fork_and_compilation.md#webkit-port-and-compilation
-        // const flags = [_][]const u8{
-        //     "-Isrc/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders",
-        //     "-Isrc/JavaScript/jsc/WebKit/WebKitBuild/Release/WTF/Headers",
-        //     "-Isrc/javascript/jsc/WebKit/WebKitBuild/Release/ICU/Headers",
-        //     "-DSTATICALLY_LINKED_WITH_JavaScriptCore=1",
-        //     "-DSTATICALLY_LINKED_WITH_WTF=1",
-        //     "-DBUILDING_WITH_CMAKE=1",
-        //     "-DNOMINMAX",
-        //     "-DENABLE_INSPECTOR_ALTERNATE_DISPATCHERS=0",
-        //     "-DBUILDING_JSCONLY__",
-        //     "-DASSERT_ENABLED=0", // missing symbol errors like this will happen "JSC::DFG::DoesGCCheck::verifyCanGC(JSC::VM&)"
-        //     "-Isrc/JavaScript/jsc/WebKit/WebKitBuild/Release/", // config.h,
-        //     "-Isrc/JavaScript/jsc/bindings/",
-        //     "-Isrc/javascript/jsc/WebKit/Source/bmalloc",
-        //     "-std=gnu++17",
-        //     if (target.getOsTag() == .macos) "-DUSE_FOUNDATION=1" else "",
-        //     if (target.getOsTag() == .macos) "-DUSE_CF_RETAIN_PTR=1" else "",
-        // };
+        try addInternalPackages(
+            obj,
+            b.allocator,
+            target,
+        );
 
         {
-            b.default_step.dependOn(&b.addLog(
-                "Build {s} v{} - v{}",
+            obj_step.dependOn(&b.addLog(
+                "Build {s} v{} - v{}\n",
                 .{
                     triplet,
-                    target.getOsVersionMin().semver,
-                    target.getOsVersionMax().semver,
+                    obj.target.getOsVersionMin().semver,
+                    obj.target.getOsVersionMax().semver,
                 },
             ).step);
         }
-        b.default_step.dependOn(&exe.step);
 
-        {
-            var obj_step = b.step("obj", "Build Bun as a .o file");
-            var obj = b.addObject(bun_executable_name, exe.root_src.?.path);
-            obj.setTarget(target);
-            addPicoHTTP(obj, false);
+        obj_step.dependOn(&obj.step);
 
-            try addInternalPackages(
-                obj,
-                b.allocator,
-                target,
-            );
+        obj.setOutputDir(output_dir);
+        obj.setBuildMode(mode);
+        obj.linkLibC();
+        obj.linkLibCpp();
 
-            {
-                obj_step.dependOn(&b.addLog(
-                    "Build {s} v{} - v{}\n",
-                    .{
-                        triplet,
-                        obj.target.getOsVersionMin().semver,
-                        obj.target.getOsVersionMax().semver,
-                    },
-                ).step);
-            }
+        obj.strip = false;
+        obj.bundle_compiler_rt = true;
 
-            obj_step.dependOn(&obj.step);
+        b.default_step.dependOn(&obj.step);
 
-            obj.setOutputDir(output_dir);
-            obj.setBuildMode(mode);
-            obj.linkLibC();
-            obj.linkLibCpp();
-
-            obj.strip = false;
-            obj.bundle_compiler_rt = true;
-
-            if (target.getOsTag() == .linux) {
-                // obj.want_lto = tar;
-                obj.link_emit_relocs = true;
-                obj.link_function_sections = true;
-            }
+        if (target.getOsTag() == .linux) {
+            // obj.want_lto = tar;
+            obj.link_emit_relocs = true;
+            obj.link_function_sections = true;
         }
-
-        {
-            const headers_step = b.step("headers-obj", "Build JavaScriptCore headers");
-            var headers_obj: *std.build.LibExeObjStep = b.addObject("headers", "src/bindgen.zig");
-            defer headers_step.dependOn(&headers_obj.step);
-            try configureObjectStep(headers_obj, target, exe.main_pkg_path.?);
-        }
-
-        {
-            const headers_step = b.step("httpbench-obj", "Build HTTPBench tool (object files)");
-            var headers_obj: *std.build.LibExeObjStep = b.addObject("httpbench", "misctools/http_bench.zig");
-            defer headers_step.dependOn(&headers_obj.step);
-            try configureObjectStep(headers_obj, target, exe.main_pkg_path.?);
-        }
-
-        {
-            const headers_step = b.step("fetch-obj", "Build fetch (object files)");
-            var headers_obj: *std.build.LibExeObjStep = b.addObject("fetch", "misctools/fetch.zig");
-            defer headers_step.dependOn(&headers_obj.step);
-            try configureObjectStep(headers_obj, target, exe.main_pkg_path.?);
-        }
-
-        {
-            const headers_step = b.step("tgz-obj", "Build tgz (object files)");
-            var headers_obj: *std.build.LibExeObjStep = b.addObject("tgz", "misctools/tgz.zig");
-            defer headers_step.dependOn(&headers_obj.step);
-            try configureObjectStep(headers_obj, target, exe.main_pkg_path.?);
-        }
-    } else {
-        b.default_step.dependOn(&exe.step);
+        var log_step = b.addLog("Destination: {s}/{s}\n", .{ output_dir, bun_executable_name });
+        log_step.step.dependOn(&obj.step);
     }
 
-    javascript.strip = false;
-    javascript.packages = std.ArrayList(std.build.Pkg).fromOwnedSlice(b.allocator, b.allocator.dupe(std.build.Pkg, exe.packages.items) catch unreachable);
-
-    javascript.setOutputDir(output_dir);
-    javascript.setBuildMode(mode);
-
-    const run_cmd = exe.run();
-    run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
+    {
+        const headers_step = b.step("headers-obj", "Build JavaScriptCore headers");
+        var headers_obj: *std.build.LibExeObjStep = b.addObject("headers", "src/bindgen.zig");
+        defer headers_step.dependOn(&headers_obj.step);
+        try configureObjectStep(headers_obj, target, obj.main_pkg_path.?);
     }
 
-    const run_step = b.step("run", "Run the app");
-    run_step.dependOn(&run_cmd.step);
+    {
+        const headers_step = b.step("httpbench-obj", "Build HTTPBench tool (object files)");
+        var headers_obj: *std.build.LibExeObjStep = b.addObject("httpbench", "misctools/http_bench.zig");
+        defer headers_step.dependOn(&headers_obj.step);
+        try configureObjectStep(headers_obj, target, obj.main_pkg_path.?);
+    }
 
-    var log_step = b.addLog("Destination: {s}/{s}\n", .{ output_dir, bun_executable_name });
-    log_step.step.dependOn(&exe.step);
+    {
+        const headers_step = b.step("fetch-obj", "Build fetch (object files)");
+        var headers_obj: *std.build.LibExeObjStep = b.addObject("fetch", "misctools/fetch.zig");
+        defer headers_step.dependOn(&headers_obj.step);
+        try configureObjectStep(headers_obj, target, obj.main_pkg_path.?);
+    }
+
+    {
+        const headers_step = b.step("tgz-obj", "Build tgz (object files)");
+        var headers_obj: *std.build.LibExeObjStep = b.addObject("tgz", "misctools/tgz.zig");
+        defer headers_step.dependOn(&headers_obj.step);
+        try configureObjectStep(headers_obj, target, obj.main_pkg_path.?);
+    }
 
     var typings_cmd: *std.build.RunStep = typings_exe.run();
     typings_cmd.cwd = cwd;
@@ -412,9 +351,6 @@ pub fn build(b: *std.build.Builder) !void {
 
     var typings_step = b.step("types", "Build TypeScript types");
     typings_step.dependOn(&typings_cmd.step);
-
-    var javascript_cmd = b.step("spjs", "Build standalone JavaScript runtime. Must run \"make jsc\" first.");
-    javascript_cmd.dependOn(&javascript.step);
 }
 
 pub var original_make_fn: ?fn (step: *std.build.Step) anyerror!void = null;

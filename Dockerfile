@@ -125,7 +125,9 @@ FROM prebuild as build_release
 
 WORKDIR /home/ubuntu/bun
 
-RUN release \
+ENV BUN_RELEASE_DIR /home/ubuntu/bun-release
+
+RUN mkdir -p $BUN_RELEASE_DIR; make release \
     copy-to-bun-release-dir
 
 

@@ -71,8 +71,19 @@ function writeSnapshot(name, code) {
   );
 }
 
+const baseOptions = {
+  args: [
+    "--disable-gpu",
+    "--disable-dev-shm-usage",
+    "--disable-setuid-sandbox",
+    "--no-sandbox",
+  ],
+};
+
 async function main() {
-  const launchOptions = USE_EXISTING_PROCESS ? { devtools: true } : undefined;
+  const launchOptions = USE_EXISTING_PROCESS
+    ? { ...baseOptions, devtools: true }
+    : baseOptions;
   const browser = await puppeteer.launch(launchOptions);
   const promises = [];
   let allTestsPassed = true;
@@ -83,6 +94,8 @@ async function main() {
   async function runPage(key) {
     var page;
     try {
+      console.log("launched");
+
       page = await browser.newPage();
       if (USE_EXISTING_PROCESS) {
         await page.evaluate(`

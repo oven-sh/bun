@@ -4,7 +4,7 @@ source "dockerfile-common.sh"
 
 export CONTAINER_NAME=$CONTAINER_NAME
 
-docker build . --target build_release --progress=plain -t $CONTAINER_NAME:latest --build-arg BUILDKIT_INLINE_CACHE=1 --platform=linux/$BUILDKIT_ARCH --cache-from $CONTAINER_NAME:latest
+docker build . --target release --progress=plain -t $CONTAINER_NAME:latest --build-arg BUILDKIT_INLINE_CACHE=1 --platform=linux/$BUILDKIT_ARCH --cache-from $CONTAINER_NAME:latest
 
 if (($?)); then
     echo "Failed to build container"

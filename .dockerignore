@@ -14,3 +14,4 @@ src/javascript/jsc/WebKit
 **/CMakeCache.txt
 packages/**/bun
 packages/**/bun-profile
+zig-cache

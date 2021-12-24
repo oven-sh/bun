@@ -49,8 +49,8 @@ curl -fsSL https://bun.sh/install | bash
 - [Credits](#credits)
 - [License](#license)
 - [Developing Bun](#developing-bun)
+  - [VSCode Dev Container](#vscode-dev-container-linux)
   - [MacOS](#macos)
-  - [Linux](#linux)
 - [vscode-zig](#vscode-zig)
 
 ## Benchmarks
@@ -1070,11 +1070,24 @@ For compatibiltiy reasons, these NPM packages are embedded into Bun’s binary a
 
 Estimated: 30-90 minutes :(
 
-### Linux
+### VSCode Dev Container (Linux)
 
 The VSCode Remote Container in this repository is the easiest way to get started. It comes with Zig, JavaScriptCore, Zig Language Server, vscode-zig, and more pre-installed on an instance of Ubuntu.
 
 <img src="https://user-images.githubusercontent.com/709451/147319227-6446589c-a4d9-480d-bd5b-43037a9e56fd.png" />
+
+To get started, install the devcontainer cli:
+
+```bash
+npm install -g @vscode/dev-container-cli
+```
+
+Then, in the `bun` repository locally run:
+
+```bash
+devcontainer build
+devcontainer open
+```
 
 You will need to clone the GitHub repository inside that container, which also requires authenticating with GitHub (until Bun's repository is public). Make sure to login with a Personal Access Token rather than a web browser.
 

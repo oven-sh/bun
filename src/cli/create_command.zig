@@ -60,9 +60,7 @@ const never_conflict = &[_]string{
     ".git/",
 };
 
-const npm_task_args = &[_]string{
-    "exec",
-};
+const npm_task_args = &[_]string{"run"};
 
 const UnsupportedPackages = struct {
     @"styled-jsx": bool = false,

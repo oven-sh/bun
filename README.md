@@ -1072,7 +1072,9 @@ Estimated: 30-90 minutes :(
 
 ### Linux
 
-Please use the VSCode Remote Container in this repository.
+The VSCode Remote Container in this repository is the easiest way to get started. It comes with Zig, JavaScriptCore, Zig Language Server, vscode-zig, and more pre-installed on an instance of Ubuntu.
+
+<img src="https://user-images.githubusercontent.com/709451/147319076-c16277be-0aca-4f09-9125-94fc291e06dd.png" />
 
 You will need to clone the GitHub repository inside that container, which also requires authenticating with GitHub (until Bun's repository is public). Make sure to login with a Personal Access Token rather than a web browser.
 
@@ -1096,7 +1098,7 @@ make dev
 bun-debug
 ```
 
-This container has Zig, zls, vscode-zig, and more setup automatically for you. It is very similar to my own development environment.
+It is very similar to my own development environment.
 
 ### MacOS
 

@@ -139,7 +139,6 @@ COPY .devcontainer/limits.conf /etc/security/limits.conf
 ENV BUN_INSTALL /opt/bun
 ENV PATH "/opt/bun/bin:$PATH"
 
-
 FROM ubuntu-base as dev
 
 ENV WEBKIT_OUT_DIR /home/ubuntu/bun-webkit
@@ -162,6 +161,5 @@ COPY ".devcontainer/scripts/" /scripts/
 COPY ".devcontainer/scripts/getting-started.sh" /workspaces/getting-started.sh
 RUN mkdir -p /home/ubuntu/.bun /home/ubuntu/.config /workspaces/bun && bash /scripts/common-debian.sh && bash /scripts/github.sh && bash /scripts/nice.sh && bash /scripts/zig-env.sh
 COPY .devcontainer/zls.json /home/ubuntu/.config/zls.json
-
 
 FROM release

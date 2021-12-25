@@ -325,7 +325,6 @@ COPY .devcontainer/zls.json /home/ubuntu/.config/zls.json
 
 FROM bun-base-with-args as test_base
 
-WORKDIR $BUN_DIR
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -335,6 +334,9 @@ ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+
+WORKDIR $BUN_DIR
+
 
 ENV NPM_CLIENT bun
 ENV PATH "${BUN_DIR}/packages/bun-linux-x64:${BUN_DIR}/packages/bun-linux-aarch64:$PATH"

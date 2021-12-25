@@ -1,4 +1,13 @@
-FROM base as mimalloc
+FROM bun-base:latest as mimalloc
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/mimalloc ${BUN_DIR}/src/deps/mimalloc
@@ -6,8 +15,16 @@ COPY src/deps/mimalloc ${BUN_DIR}/src/deps/mimalloc
 RUN cd ${BUN_DIR} && \
     make mimalloc
 
-FROM base as zlib
+FROM bun-base:latest as zlib
 
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/zlib ${BUN_DIR}/src/deps/zlib
@@ -17,8 +34,16 @@ WORKDIR $BUN_DIR
 RUN cd $BUN_DIR && \
     make zlib
 
-FROM base as libarchive
+FROM bun-base:latest as libarchive
 
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/libarchive ${BUN_DIR}/src/deps/libarchive
@@ -28,8 +53,16 @@ WORKDIR $BUN_DIR
 RUN cd $BUN_DIR && \
     make libarchive
 
-FROM base as boringssl
+FROM bun-base:latest as boringssl
 
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/boringssl ${BUN_DIR}/src/deps/boringssl
@@ -39,7 +72,16 @@ WORKDIR $BUN_DIR
 RUN cd $BUN_DIR && \
     make boringssl
 
-FROM base as picohttp
+FROM bun-base:latest as picohttp
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/picohttpparser ${BUN_DIR}/src/deps/picohttpparser
@@ -51,7 +93,16 @@ WORKDIR $BUN_DIR
 RUN cd $BUN_DIR && \
     make picohttp
 
-FROM base-with-zig-and-webkit as identifier_cache
+FROM bun-base-with-zig-and-webkit:latest as identifier_cache
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 
 WORKDIR $BUN_DIR
 
@@ -62,7 +113,16 @@ COPY src/js_lexer/identifier_cache.zig ${BUN_DIR}/src/js_lexer/identifier_cache.
 RUN cd $BUN_DIR && \
     make identifier-cache
 
-FROM base-with-zig-and-webkit as node_fallbacks
+FROM bun-base-with-zig-and-webkit:latest as node_fallbacks
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 
 WORKDIR $BUN_DIR
 
@@ -72,7 +132,7 @@ COPY src/node-fallbacks ${BUN_DIR}/src/node-fallbacks
 RUN cd $BUN_DIR && \
     make node-fallbacks
 
-FROM base-with-zig-and-webkit as build_release
+FROM bun-base-with-zig-and-webkit:latest as build_release
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -113,7 +173,7 @@ RUN cd $BUN_DIR && rm -rf /root/.cache zig-cache && \
     mkdir -p $BUN_RELEASE_DIR; make release \
     copy-to-bun-release-dir
 
-FROM base-with-zig-and-webkit as bun.devcontainer
+FROM bun-base-with-zig-and-webkit as bun.devcontainer
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -150,7 +210,7 @@ RUN mkdir -p /home/ubuntu/.bun /home/ubuntu/.config /workspaces/bun && \
     bash /scripts/zig-env.sh
 COPY .devcontainer/zls.json /home/ubuntu/.config/zls.json
 
-FROM base-with-args as test_base
+FROM bun-base-with-args as test_base
 
 WORKDIR $BUN_DIR
 
@@ -301,7 +361,7 @@ CMD cd $BUN_DIR && \
     bun install && \
     make test-no-hmr
 
-FROM base-with-args as release 
+FROM bun-base-with-args as release 
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build

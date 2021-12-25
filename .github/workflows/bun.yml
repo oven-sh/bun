@@ -57,7 +57,7 @@ jobs:
         uses: docker/setup-buildx-action@v1
       - name: ${{matrix.image}} - Run tests
         run:
-          BUILDKIT=1 docker build . -t ${{matrix.image}} --tag ${{matrix.image}} --progress=plain --platform=linux/amd64
+          BUILDKIT=1 docker build . -t ${{matrix.image}} --tag ${{matrix.image}} --progress=plain --platform=linux/amd64 && \
           docker run --rm --init --ulimit memlock=-1:-1 ${{matrix.image}}
 
   release:

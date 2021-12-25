@@ -346,9 +346,8 @@ const header_entry = Headers.Kv{
 
 fn readloop() anyerror!void {
     defer disabled = true;
-    Output.Source.configureThread();
+    Output.Source.configureNamedThread(thread, "Analytics");
     defer Output.flush();
-    thread.setName("Analytics") catch {};
 
     var event_list = try default_allocator.create(EventList);
     event_list.* = EventList.init();

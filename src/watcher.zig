@@ -273,6 +273,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         allocator: *std.mem.Allocator,
         watchloop_handle: ?std.Thread.Id = null,
         cwd: string,
+        thread: std.Thread = undefined,
 
         pub const HashType = u32;
 
@@ -302,17 +303,13 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         pub fn start(this: *Watcher) !void {
             std.debug.assert(this.watchloop_handle == null);
-            var thread = try std.Thread.spawn(.{}, Watcher.watchLoop, .{this});
-            thread.setName("File Watcher") catch {};
+            this.thread = try std.Thread.spawn(.{}, Watcher.watchLoop, .{this});
         }
 
         // This must only be called from the watcher thread
         pub fn watchLoop(this: *Watcher) !void {
             this.watchloop_handle = std.Thread.getCurrentId();
-            var stdout = std.io.getStdOut();
-            var stderr = std.io.getStdErr();
-            var output_source = Output.Source.init(stdout, stderr);
-            Output.Source.set(&output_source);
+            Output.Source.configureNamedThread(this.thread, "File Watcher");
 
             defer Output.flush();
             if (FeatureFlags.verbose_watcher) Output.prettyln("Watcher started", .{});

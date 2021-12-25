@@ -80,6 +80,19 @@ pub const Output = struct {
             source = Source.init(stdout_stream, stderr_stream);
         }
 
+        pub fn configureNamedThread(thread: std.Thread, name: stringZ) void {
+            if (source_set) return;
+            configureThread();
+
+            // On Linux, thread may be undefined 
+            // Fortunately, we can use a different syscall that only affects the current thread
+            if (Environment.isLinux) {
+                _ = std.os.linux.prctl(std.os.PR_SET_NAME, @ptrToInt(name.ptr), 0, 0, 0);
+            } else {
+                thread.setName(name) catch {};
+            }
+        }
+
         pub fn set(_source: *Source) void {
             source = _source.*;
             source_set = true;

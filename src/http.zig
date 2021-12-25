@@ -1111,7 +1111,7 @@ pub const RequestContext = struct {
         var js_thread: std.Thread = undefined;
         pub fn spawnThread(handler: *HandlerThread) !void {
             js_thread = try std.Thread.spawn(.{ .stack_size = 64 * 1024 * 1024 }, spawn, .{handler});
-            js_thread.setName("JavaScript SSR") catch {};
+            if (!Environment.isMac) js_thread.setName("JavaScript SSR") catch {};
             js_thread.detach();
         }
 
@@ -1125,11 +1125,7 @@ pub const RequestContext = struct {
             }
             var start_timer = std.time.Timer.start() catch unreachable;
 
-            var stdout = std.io.getStdOut();
-            var stderr = std.io.getStdErr();
-            var output_source = Output.Source.init(stdout, stderr);
-            defer Output.flush();
-            Output.Source.set(&output_source);
+            Output.Source.configureThread();
             @import("javascript/jsc/JavascriptCore.zig").JSCInitialize();
 
             js_ast.Stmt.Data.Store.create(std.heap.c_allocator);

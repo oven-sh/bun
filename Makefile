@@ -327,7 +327,7 @@ api:
 	$(PRETTIER) --write src/api/schema.d.ts
 
 node-fallbacks: 
-	@cd src/node-fallbacks; $(NPM_CLIENT) install; $(NPM_CLIENT) --silent build
+	@cd src/node-fallbacks; $(NPM_CLIENT) install; $(NPM_CLIENT) run --silent build
 
 fallback_decoder:
 	@esbuild --target=esnext  --bundle src/fallback.ts --format=iife --platform=browser --minify > src/fallback.out.js
@@ -339,7 +339,7 @@ runtime_js_dev:
 	@NODE_ENV=development esbuild --define:process.env.NODE_ENV="development" --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --external:/bun:* > src/runtime.out.js; cat src/runtime.footer.js >> src/runtime.out.js
 
 bun_error:
-	@cd packages/bun-error; $(NPM_CLIENT) install; $(NPM_CLIENT) --silent build
+	@cd packages/bun-error; $(NPM_CLIENT) install; $(NPM_CLIENT) run --silent build
 
 generate-install-script:
 	@rm -f $(PACKAGES_REALPATH)/bun/install.js 	

@@ -145,13 +145,13 @@ jobs:
         run: docker run --rm --init --ulimit memlock=-1:-1 test_bun_run
   release:
     runs-on: self-hosted
-    needs: |
-      setup
-      test_bun_run
-      test_create_react
-      test_create_next
-      integration-tests-no-hmr
-      integration-tests-hmr
+    needs:
+      - setup
+      - test_bun_run
+      - test_create_react
+      - test_create_next
+      - integration-tests-no-hmr
+      - integration-tests-hmr
     steps:
       - name: Checkout
         uses: actions/checkout@v2

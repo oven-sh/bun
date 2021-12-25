@@ -190,8 +190,6 @@ COPY --from=libarchive ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}
 COPY --from=picohttp ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}
 COPY --from=boringssl ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}
 COPY --from=zlib ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}
-COPY --from=node_fallbacks ${BUN_DIR}/src/node-fallbacks ${BUN_DIR}/src/node-fallbacks
-COPY --from=identifier_cache ${BUN_DIR}/src/js_lexer/*.blob ${BUN_DIR}/src/js_lexer/
 
 RUN cd $BUN_DIR && make \
     jsc-bindings-headers \
@@ -205,6 +203,9 @@ FROM build_dependencies as build_release
 WORKDIR $GITHUB_WORKSPACE
 
 ENV BUN_RELEASE_DIR ${BUN_RELEASE_DIR}
+
+COPY --from=node_fallbacks ${BUN_DIR}/src/node-fallbacks ${BUN_DIR}/src/node-fallbacks
+COPY --from=identifier_cache ${BUN_DIR}/src/js_lexer/*.blob ${BUN_DIR}/src/js_lexer/
 
 RUN cd $BUN_DIR && \
     mkdir -p $BUN_RELEASE_DIR; make release \

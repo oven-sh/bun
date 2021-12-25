@@ -95,7 +95,7 @@ RUN  cd $GITHUB_WORKSPACE && \
     ./configure --enable-static --disable-shared && \
     make -j$(nproc)
 
-ENV PATH "${ZIG_PATH}:$PATH"
+ENV ZIG "${ZIG_PATH}/zig"
 
 
 FROM base as mimalloc

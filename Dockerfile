@@ -1,5 +1,4 @@
-FROM ubuntu:20.04 as base
-ARG DEBIAN_FRONTEND=noninteractive
+FROM ubuntu:20.04 as base_with_args
 
 ARG GITHUB_WORKSPACE=/build-bun
 ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
@@ -8,6 +7,9 @@ ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+
+FROM base_with_args as base
+ARG DEBIAN_FRONTEND=noninteractive
 
 WORKDIR ${GITHUB_WORKSPACE}
 
@@ -234,7 +236,7 @@ RUN mkdir -p /home/ubuntu/.bun /home/ubuntu/.config /workspaces/bun && \
     bash /scripts/zig-env.sh
 COPY .devcontainer/zls.json /home/ubuntu/.config/zls.json
 
-FROM ubuntu:20.04 as test_base
+FROM base_with_args as test_base
 
 ARG DEBIAN_FRONTEND=noninteractive
 ENV DEBIAN_FRONTEND=noninteractive
@@ -308,7 +310,7 @@ CMD cd $BUN_DIR && \
     bun install && \
     make test-no-hmr
 
-FROM ubuntu:20.04 as release 
+FROM base_with_args as release 
 
 COPY --from=build_release ${BUN_RELEASE_DIR}/bun /opt/bun/bin/bun
 COPY .devcontainer/limits.conf /etc/security/limits.conf

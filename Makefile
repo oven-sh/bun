@@ -22,7 +22,7 @@ ifeq ($(ARCH_NAME_RAW),arm64)
    MIN_MACOS_VERSION = 11.0
 else
    ARCH_NAME = x64
-   DOCKER_BUILDARCH = x64
+   DOCKER_BUILDARCH = amd64
    BREW_PREFIX_PATH = /usr/local
    MARCH_NATIVE = -march=native
 endif

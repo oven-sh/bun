@@ -54,7 +54,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=min
       - name: Run test image
-        run: docker run --rm -it --init --ulimit memlock=-1:-1 test_hmr
+        run: docker run --rm --init --ulimit memlock=-1:-1 test_hmr
   integration-tests-no-hmr:
     runs-on: self-hosted
     needs: setup
@@ -76,7 +76,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=min
       - name: Run test image
-        run: docker run --rm -it --init --ulimit memlock=-1:-1 test_no_hmr
+        run: docker run --rm --init --ulimit memlock=-1:-1 test_no_hmr
   test_create_next:
     runs-on: self-hosted
     needs: setup
@@ -98,7 +98,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=min
       - name: Run test image
-        run: docker run --rm -it --init --ulimit memlock=-1:-1 test_create_next
+        run: docker run --rm --init --ulimit memlock=-1:-1 test_create_next
   test_create_react:
     runs-on: self-hosted
     needs: setup
@@ -120,7 +120,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=min
       - name: Run test image
-        run: docker run --rm -it --init --ulimit memlock=-1:-1 test_create_react
+        run: docker run --rm --init --ulimit memlock=-1:-1 test_create_react
   test_bun_run:
     runs-on: self-hosted
     needs: setup
@@ -142,4 +142,25 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=min
       - name: Run test image
-        run: docker run --rm -it --init --ulimit memlock=-1:-1 test_bun_run
+        run: docker run --rm --init --ulimit memlock=-1:-1 test_bun_run
+  release:
+    runs-on: self-hosted
+    needs: setup test_bun_run test_create_react test_create_next integration-tests-no-hmr integration-tests-hmr
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Checkout submodules
+        run: git -c submodule."src/javascript/jsc/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j 8
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+      - name: Build test image
+        uses: docker/build-push-action@v2
+        with:
+          context: .
+          push: true
+          target: release
+          tags: |
+            jarred-sumner/bun:${GITHUB_REF}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=min

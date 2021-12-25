@@ -252,8 +252,8 @@ COPY Makefile ${BUN_DIR}/Makefile
 COPY package.json ${BUN_DIR}/package.json
 
 # We don't want to worry about architecture differences in this image
-COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-aarch64/bun
-COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-x64/bun
+COPY --from=build_release ${BUN_RELEASE_DIR}/bun ${BUN_DIR}/packages/bun-linux-aarch64/bun
+COPY --from=build_release ${BUN_RELEASE_DIR}/bun ${BUN_DIR}/packages/bun-linux-x64/bun
 
 FROM test_base as test_create_next
 

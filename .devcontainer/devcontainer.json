@@ -32,8 +32,10 @@
 	"postCreateCommand": "cd /workspaces/bun; bash /workspaces/getting-started.sh; zsh",
 
 	"build": {
-		"target": "dev",
-		"cacheFrom": "dev:latest",
+		"target": "bun.devcontainer",
+		"cacheFrom": [
+			"bun.devcontainer:latest",
+		],
 		"args": {}
 	},
 	"runArgs": [

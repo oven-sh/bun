@@ -35,12 +35,14 @@ if (!USE_EXISTING_PROCESS) {
     console.error("❌ bun error", err);
     process.exit(1);
   });
-  waitSpawn = new Promise((resolve, reject) => {
-    bunProcess.once("spawn", (code) => {
-      console.log("Spawned");
-      resolve();
+  if (!process.env.CI) {
+    waitSpawn = new Promise((resolve, reject) => {
+      bunProcess.once("spawn", (code) => {
+        console.log("Spawned");
+        resolve();
+      });
     });
-  });
+  }
   process.on("beforeExit", () => {
     bunProcess && bunProcess.kill(0);
   });
@@ -72,17 +74,23 @@ function writeSnapshot(name, code) {
 }
 
 const baseOptions = {
+  dumpio: !!process.env.CI_DEBUG,
   args: [
     "--disable-gpu",
     "--disable-dev-shm-usage",
     "--disable-setuid-sandbox",
     "--no-sandbox",
+    "--ignore-certificate-errors",
+    "--use-fake-ui-for-media-stream",
+    "--use-fake-device-for-media-stream",
+    "--disable-sync",
   ],
+  headless: true,
 };
 
 async function main() {
   const launchOptions = USE_EXISTING_PROCESS
-    ? { ...baseOptions, devtools: true }
+    ? { ...baseOptions, devtools: !process.env.CI }
     : baseOptions;
   const browser = await puppeteer.launch(launchOptions);
   const promises = [];

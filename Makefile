@@ -41,7 +41,7 @@ PRETTIER ?= $(shell which prettier || echo "./node_modules/.bin/prettier")
 WEBKIT_DIR ?= $(realpath src/javascript/jsc/WebKit)
 WEBKIT_RELEASE_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Release
 
-NPM_CLIENT = $(shell which npm)
+NPM_CLIENT ?= $(shell which npm)
 ZIG ?= $(shell which zig || echo -e "error: Missing zig. Please make sure zig is in PATH. Or set ZIG=/path/to-zig-executable")
 
 # We must use the same compiler version for the JavaScriptCore bindings and JavaScriptCore
@@ -164,7 +164,7 @@ MACOS_ICU_FILES = $(HOMEBREW_PREFIX)/opt/icu4c/lib/libicudata.a \
 
 MACOS_ICU_INCLUDE = $(HOMEBREW_PREFIX)/opt/icu4c/include
 
-ICU_FLAGS := 
+ICU_FLAGS ?= 
 
 # TODO: find a way to make this more resilient
 # Ideally, we could just look up the linker search paths
@@ -207,7 +207,7 @@ endif
 
 
 
-ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(BUN_DEPS_OUT_DIR)/libmimalloc.a \
+ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(BUN_DEPS_OUT_DIR)/libmimalloc.o \
 		$(BUN_DEPS_OUT_DIR)/libz.a \
 		$(BUN_DEPS_OUT_DIR)/libarchive.a \
 		$(BUN_DEPS_OUT_DIR)/libssl.a \
@@ -216,6 +216,8 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(BUN_DEPS_OUT_DIR)/libmimalloc.a \
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) $(BUN_DEPS_OUT_DIR)/libcrypto.boring.a
 
 PLATFORM_LINKER_FLAGS =
+
+STATIC_MUSL_FLAG ?= 
 
 ifeq ($(OS_NAME), linux)
 PLATFORM_LINKER_FLAGS = \
@@ -227,7 +229,9 @@ PLATFORM_LINKER_FLAGS = \
 		-Wl,-z,stack-size=12800000 \
 		-ffunction-sections \
 		-fdata-sections \
-		-static-libstdc++
+		-static-libstdc++ \
+		-static-libgcc \
+		${STATIC_MUSL_FLAG} 
 endif
 
 
@@ -316,13 +320,14 @@ all-js: runtime_js fallback_decoder bun_error node-fallbacks
 
 
 api: 
-	$(NPM_CLIENT) install; ./node_modules/.bin/peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
+	$(NPM_CLIENT) install
+	./node_modules/.bin/peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
 	$(ZIG) fmt src/api/schema.zig
 	$(PRETTIER) --write src/api/schema.js
 	$(PRETTIER) --write src/api/schema.d.ts
 
 node-fallbacks: 
-	@cd src/node-fallbacks; $(NPM_CLIENT) install; npm run --silent build
+	@cd src/node-fallbacks; $(NPM_CLIENT) install; $(NPM_CLIENT) --silent build
 
 fallback_decoder:
 	@esbuild --target=esnext  --bundle src/fallback.ts --format=iife --platform=browser --minify > src/fallback.out.js
@@ -334,7 +339,7 @@ runtime_js_dev:
 	@NODE_ENV=development esbuild --define:process.env.NODE_ENV="development" --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --external:/bun:* > src/runtime.out.js; cat src/runtime.footer.js >> src/runtime.out.js
 
 bun_error:
-	@cd packages/bun-error; $(NPM_CLIENT) install; npm run --silent build
+	@cd packages/bun-error; $(NPM_CLIENT) install; $(NPM_CLIENT) --silent build
 
 generate-install-script:
 	@rm -f $(PACKAGES_REALPATH)/bun/install.js 	
@@ -410,6 +415,9 @@ jsc-bindings-headers:
 	$(SED) -i '/pub const JSClassRef/d' src/javascript/jsc/bindings/headers.zig
 	$(ZIG) fmt src/javascript/jsc/bindings/headers.zig
 	
+
+MIMALLOC_OVERRIDE_FLAG ?= 
+
 
 bump: 
 	expr $(BUILD_ID) + 1 > build-id
@@ -514,7 +522,6 @@ test-install:
 	cd integration/scripts && $(NPM_CLIENT) install
 
 test-all: test-install test-with-hmr test-no-hmr test-create-next test-create-react test-bun-run
-test-all-mac: test-install test-with-hmr-mac test-no-hmr-mac test-create-next-mac test-create-react-mac test-bun-run-mac
 
 copy-test-node-modules:
 	rm -rf integration/snippets/package-json-exports/node_modules || echo "";
@@ -543,22 +550,6 @@ test-with-hmr: kill-bun copy-test-node-modules
 test-no-hmr: kill-bun copy-test-node-modules
 	-killall bun -9;
 	DISABLE_HMR="DISABLE_HMR" BUN_BIN=$(RELEASE_BUN) node integration/scripts/browser.js
-
-test-create-next-mac: 
-	BUN_BIN=$(MAC_BUN) bash integration/apps/bun-create-next.sh
-
-test-bun-run-mac: 
-	cd integration/apps && BUN_BIN=$(MAC_BUN) bash ./bun-run-check.sh
-
-test-create-react-mac: 
-	BUN_BIN=$(MAC_BUN) bash integration/apps/bun-create-react.sh
-	
-test-with-hmr-mac: kill-bun copy-test-node-modules
-	BUN_BIN=$(MAC_BUN) node integration/scripts/browser.js
-
-test-no-hmr-mac: kill-bun copy-test-node-modules
-	-killall bun -9;
-	DISABLE_HMR="DISABLE_HMR" BUN_BIN=$(MAC_BUN) node integration/scripts/browser.js
 
 test-dev-with-hmr: copy-test-node-modules
 	-killall bun-debug -9;
@@ -630,9 +621,10 @@ clean: clean-bindings
 jsc-bindings-mac: $(OBJ_FILES)
 
 
+# mimalloc is built as object files so that it can overload the system malloc
 mimalloc:
-	cd $(BUN_DEPS_DIR)/mimalloc; cmake $(CMAKE_FLAGS) .; make; 
-	cp $(BUN_DEPS_DIR)/mimalloc/libmimalloc.a $(BUN_DEPS_OUT_DIR)/libmimalloc.a
+	cd $(BUN_DEPS_DIR)/mimalloc; cmake $(CMAKE_FLAGS) -DMI_BUILD_SHARED=OFF -DMI_BUILD_STATIC=OFF -DMI_BUILD_TESTS=OFF -DMI_BUILD_OBJECT=ON ${MIMALLOC_OVERRIDE_FLAG} .; make; 
+	cp $(BUN_DEPS_DIR)/mimalloc/CMakeFiles/mimalloc-obj.dir/src/static.c.o $(BUN_DEPS_OUT_DIR)/libmimalloc.o
 
 bun-link-lld-debug:
 	$(CXX) $(BUN_LLD_FLAGS) \

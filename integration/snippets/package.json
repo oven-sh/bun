@@ -1,7 +1,5 @@
 {
   "name": "snippets",
-  "version": "1.0.0",
-  "main": "index.js",
   "license": "MIT",
   "dependencies": {
     "@emotion/core": "^11.0.0",

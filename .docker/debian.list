@@ -1,0 +1,3 @@
+ deb http://deb.debian.org/debian buster main
+ deb http://deb.debian.org/debian buster-updates main
+ deb http://deb.debian.org/debian-security buster/updates main

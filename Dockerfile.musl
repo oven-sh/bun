@@ -1,0 +1,139 @@
+
+# This doesn't work
+# Specifically: there are a number of crashes and segfaults when using musl
+# The cause is likely related to differences in pthreads implementations
+# It is not just the stack size thing. It's something more complicated and importantly
+# There was no meaningful file size difference between musl and glibc
+
+
+# ARG BUILDARCH=aarch64
+# ARG zig_base_image=ghcr.io/jarred-sumner/zig-linux-musl-${BUILDARCH}
+# ARG webkit_base_image=ghcr.io/jarred-sumner/bun-webkit-musl-${BUILDARCH}
+# FROM ${zig_base_image}:latest AS zig
+# FROM ${webkit_base_image}:latest AS webkit
+
+# FROM zig as bun_base
+
+# COPY --from=webkit /webkit /webkit
+
+# ENV PATH "/zig/bin:$PATH"
+# ENV JSC_BASE_DIR=/webkit
+# ENV LIB_ICU_PATH=/webkit/lib
+# ENV BUN_DEPS_OUT_DIR /bun-deps
+# ENV STATIC_MUSL_FLAG=-static
+# ENV MIMALLOC_OVERRIDE_FLAG="-DMI_OVERRIDE=OFF"
+
+# RUN apk add --no-cache nodejs npm go libtool autoconf pkgconfig automake ninja
+# RUN mkdir -p $BUN_DEPS_OUT_DIR;
+
+# WORKDIR /bun
+# COPY Makefile /bun/Makefile
+
+# FROM bun_base as mimalloc
+
+# COPY src/deps/mimalloc /bun/src/deps/mimalloc
+
+# RUN make mimalloc;
+
+# FROM bun_base as zlib
+
+# COPY src/deps/zlib /bun/src/deps/zlib
+
+# RUN make zlib;
+
+# FROM bun_base as libarchive
+
+# COPY src/deps/libarchive /bun/src/deps/libarchive
+
+# RUN make libarchive;
+
+# FROM bun_base as boringssl
+
+# COPY src/deps/boringssl /bun/src/deps/boringssl
+
+# RUN make boringssl;
+
+# FROM bun_base as picohttp
+
+# COPY src/deps/picohttpparser /bun/src/deps/picohttpparser
+# COPY src/deps/*.c /bun/src/deps
+# COPY src/deps/*.h /bun/src/deps
+
+# RUN make picohttp
+
+# FROM bun_base as identifier_cache
+
+# COPY src/js_lexer/identifier_data.zig /bun/src/js_lexer/identifier_data.zig
+# COPY src/js_lexer/identifier_cache.zig /bun/src/js_lexer/identifier_cache.zig
+
+# RUN make identifier-cache
+
+# FROM bun_base as node_fallbacks
+
+# COPY src/node-fallbacks /bun/src/node-fallbacks
+# RUN make node-fallbacks
+
+# FROM bun_base as prebuild
+
+# WORKDIR /bun
+
+# COPY ./src /bun/src
+# COPY ./build.zig /bun/build.zig
+# COPY ./completions /bun/completions
+# COPY ./packages /bun/packages
+# COPY ./build-id /bun/build-id
+# COPY ./package.json /bun/package.json
+# COPY ./misctools /bun/misctools
+
+# COPY --from=mimalloc /bun-deps/*.o /bun-deps
+# COPY --from=libarchive /bun-deps/*.a /bun-deps
+# COPY --from=picohttp /bun-deps/*.o /bun-deps
+# COPY --from=boringssl /bun-deps/*.a /bun-deps
+# COPY --from=zlib /bun-deps/*.a /bun-deps
+# COPY --from=node_fallbacks /bun/src/node-fallbacks /bun/src/node-fallbacks
+# COPY --from=identifier_cache /bun/src/js_lexer/*.blob /bun/src/js_lexer/
+
+# ENV ICU_FLAGS="-I/webkit/include/wtf $ICU_FLAGS"
+
+# RUN apk add --no-cache chromium && npm install -g esbuild && make \
+#     jsc-bindings-headers \
+#     api \
+#     analytics \
+#     bun_error \
+#     fallback_decoder
+
+
+
+# FROM prebuild as release
+
+# ENV BUN_RELEASE_DIR /opt/bun
+
+# ENV LIB_ICU_PATH /usr/lib
+
+# RUN apk add icu-static icu-dev && mkdir -p $BUN_RELEASE_DIR; make release \
+#     copy-to-bun-release-dir
+
+# FROM alpine:3.15 as bun
+
+# COPY --from=release /opt/bun/bun /opt/bun/bin/bun
+# ENV BUN_INSTALL /opt/bun
+# ENV PATH /opt/bun/bin:$PATH
+
+# LABEL org.opencontainers.image.title="Bun - Linux ${BUILDARCH} (musl)"
+# LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
+
+# FROM release as test
+
+# ENV PATH /opt/bun/bin:$PATH
+# ENV PATH /bun/packages/bun-linux-aarch64:/bun/packages/bun-linux-x64:$PATH
+# ENV BUN_INSTALL /opt/bun
+
+# WORKDIR /bun
+
+# COPY ./integration /bun/integration
+# COPY ./integration/snippets/package-json-exports/_node_modules_copy /bun/integration/snippets/package-json-exports/_node_modules_copy 
+# CMD [ "bash", "-c", "npm install && cd /bun/integration/snippets && npm install && cd /bun && make copy-test-node-modules test-all"]
+
+
+# # FROM bun
+

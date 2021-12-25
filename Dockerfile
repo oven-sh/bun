@@ -1,21 +1,16 @@
 FROM ubuntu:20.04 as base
 ARG DEBIAN_FRONTEND=noninteractive
 
-ARG GITHUB_WORKSPACE=/home/ubuntu/bun
+ARG GITHUB_WORKSPACE=/home/ubuntu
 ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
 ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/webkit-build
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 
-ENV GITHUB_WORKSPACE="${GITHUB_WORKSPACE}"
-ENV ZIG_PATH="${ZIG_PATH}"
-ENV WEBKIT_DIR="${WEBKIT_DIR}"
-ENV BUN_RELEASE_DIR="${BUN_RELEASE_DIR}"
-ENV BUN_DEPS_OUT_DIR="${BUN_DEPS_OUT_DIR}"
-ENV BUN_DIR="${BUN_DIR}"
+WORKDIR ${GITHUB_WORKSPACE}
 
-RUN mkdir -p ${BUN_DIR} && apt-get update && \
+RUN apt-get update && \
     apt-get install --no-install-recommends -y wget gnupg2 curl lsb-release wget software-properties-common && \
     add-apt-repository ppa:longsleep/golang-backports && \
     wget https://apt.llvm.org/llvm.sh --no-check-certificate && \
@@ -80,13 +75,13 @@ RUN mkdir -p $BUN_RELEASE_DIR $BUN_DEPS_OUT_DIR ${BUN_DIR} ${BUN_DEPS_OUT_DIR}
 
 FROM base as base_with_zig_and_webkit
 
-RUN cd $BUN_DIR && \
+RUN cd $GITHUB_WORKSPACE && \
     curl -L https://github.com/Jarred-Sumner/WebKit/releases/download/Bun-v0/bun-webkit-linux-$BUILDARCH.tar.gz > bun-webkit-linux-$BUILDARCH.tar.gz; \
     tar -xzf bun-webkit-linux-$BUILDARCH.tar.gz > /dev/null; \
     rm bun-webkit-linux-$BUILDARCH.tar.gz && \
     cat $WEBKIT_OUT_DIR/include/cmakeconfig.h > /dev/null
 
-RUN  cd $BUN_DIR && \
+RUN  cd $GITHUB_WORKSPACE && \
     curl -L https://github.com/unicode-org/icu/releases/download/release-66-1/icu4c-66_1-src.tgz > icu4c-66_1-src.tgz && \
     tar -xzf icu4c-66_1-src.tgz > /dev/null && \
     rm icu4c-66_1-src.tgz && \

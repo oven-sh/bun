@@ -288,9 +288,9 @@ docker-login:
 	docker login ghcr.io --username jarred@jarredsumner.com
 
 docker-push-base:
-	BUILDKIT=1 docker build --platform=linux/$(shell uname -m) --tag bun-base --target base .
-	BUILDKIT=1 docker build --platform=linux/$(shell uname -m) --tag bun-base-with-zig-and-webkit --target base-with-zig-and-webkit .
-	BUILDKIT=1 docker build --platform=linux/$(shell uname -m) --tag bun-base-with-args --target base-with-args .
+	BUILDKIT=1 docker build --build-arg GITHUB_WORKSPACE=/build --platform=linux/$(shell uname -m) --tag bun-base --target base .
+	BUILDKIT=1 docker build --build-arg GITHUB_WORKSPACE=/build --platform=linux/$(shell uname -m) --tag bun-base-with-zig-and-webkit --target base-with-zig-and-webkit .
+	BUILDKIT=1 docker build --build-arg GITHUB_WORKSPACE=/build --platform=linux/$(shell uname -m) --tag bun-base-with-args --target base-with-args .
 
 	docker tag bun-base ghcr.io/jarred-sumner/bun-base:latest
 	docker push ghcr.io/jarred-sumner/bun-base:latest

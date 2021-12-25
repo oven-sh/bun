@@ -55,14 +55,16 @@ jobs:
         run: git -c submodule."src/javascript/jsc/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j 8
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v1
-      - name: ${{matrix.image}} - Run tests
+      - name: ${{matrix.image}} - Build
         uses: docker/build-push-action@v2
         with:
           context: .
           target: ${{matrix.image}}
           tags: jarred-sumner/bun-${{matrix.image}}:latest
-          cache-from: type=gha
-
+          load: true
+      - name: ${{matrix.image}} - Run
+        run: |
+          docker run --rm --init --ulimit memlock=-1:-1 jarred-sumner/bun-${{matrix.image}}:latest
   release:
     runs-on: self-hosted
     if: github.ref == 'refs/heads/master'

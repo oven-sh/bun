@@ -268,11 +268,11 @@ COPY ./package.json ${BUN_DIR}/package.json
 COPY ./misctools ${BUN_DIR}/misctools
 COPY Makefile ${BUN_DIR}/Makefile
 
-COPY --from=mimalloc ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}
-COPY --from=libarchive ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}
-COPY --from=picohttp ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}
-COPY --from=boringssl ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}
-COPY --from=zlib ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}
+COPY --from=mimalloc ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
+COPY --from=libarchive ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
+COPY --from=picohttp ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
+COPY --from=boringssl ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
+COPY --from=zlib ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=identifier_cache ${BUN_DIR}/src/js_lexer/*.blob ${BUN_DIR}/src/js_lexer
 
 RUN cd $BUN_DIR &&  rm -rf $HOME/.cache zig-cache && make \
@@ -370,7 +370,7 @@ ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 
-WORKDIR /opt/bun
+
 COPY .devcontainer/limits.conf /etc/security/limits.conf
 
 ENV BUN_INSTALL /opt/bun
@@ -379,3 +379,4 @@ ARG BUILDARCH=amd64
 LABEL org.opencontainers.image.title="Bun ${BUILDARCH} (glibc)"
 LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
 COPY --from=build_release ${BUN_RELEASE_DIR}/bun /opt/bun/bin/bun
+WORKDIR /opt/bun

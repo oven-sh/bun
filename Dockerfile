@@ -57,7 +57,7 @@ ENV ARCH "$BUILDARCH"
 
 RUN npm install -g esbuild
 
-RUN mkdir -p $ZIG_PATH && cd $ZIG_PATH/../ && rmdir zig && curl -L https://github.com/Jarred-Sumner/zig/releases/download/dec20/zig-linux-$BUILDARCH.zip > zig-linux-$BUILDARCH.zip; \
+RUN cd $BUN_DIR/ && curl -L https://github.com/Jarred-Sumner/zig/releases/download/dec20/zig-linux-$BUILDARCH.zip > zig-linux-$BUILDARCH.zip; \
     unzip -q zig-linux-$BUILDARCH.zip; \
     rm zig-linux-$BUILDARCH.zip;
 
@@ -75,11 +75,11 @@ RUN mkdir -p $BUN_RELEASE_DIR $BUN_DEPS_OUT_DIR ${BUN_DIR} ${BUN_DEPS_OUT_DIR}
 FROM base as base_with_zig_and_webkit
 
 RUN cd $BUN_DIR && curl -L https://github.com/Jarred-Sumner/WebKit/releases/download/Bun-v0/bun-webkit-linux-$BUILDARCH.tar.gz > bun-webkit-linux-$BUILDARCH.tar.gz; \
-    tar -xzf bun-webkit-linux-$BUILDARCH.tar.gz; \
+    tar -xzf bun-webkit-linux-$BUILDARCH.tar.gz > /dev/null; \
     rm bun-webkit-linux-$BUILDARCH.tar.gz && cat $WEBKIT_OUT_DIR/include/cmakeconfig.h > /dev/null
 
 RUN  cd $BUN_DIR && curl -L https://github.com/unicode-org/icu/releases/download/release-66-1/icu4c-66_1-src.tgz > icu4c-66_1-src.tgz && \
-    tar -xzf icu4c-66_1-src.tgz && \
+    tar -xzf icu4c-66_1-src.tgz > /dev/null && \
     rm icu4c-66_1-src.tgz && \
     cd icu/source && \
     ./configure --enable-static --disable-shared && \

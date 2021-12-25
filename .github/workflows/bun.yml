@@ -12,7 +12,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2
         with:
-          path: bun
+          path:
       - name: Checkout submodules
         run: cd bun && git -c submodule."src/javascript/jsc/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j 8
       - name: Set tag var

@@ -30,8 +30,8 @@ jobs:
         uses: docker/build-push-action@v2
         with:
           context: .
-          target: build_release
-          tags: jarred-sumner/bun-base:latest
+          target: release
+          tags: jarred-sumner/bun:${{{ github.ref }}
           cache-from: type=gha
           cache-to: type=gha,mode=min
 
@@ -40,13 +40,13 @@ jobs:
     needs: setup
     strategy:
       matrix:
-        image:
+        task:
           [
-            "test_create_next",
-            "test_create_react",
-            "test_bun_run",
-            "test_hmr",
-            "test_no_hmr",
+            "test-with-hmr",
+            "test-no-hmr",
+            "test-create-next",
+            "test-create-react",
+            "test-bun-run",
           ]
     steps:
       - name: Checkout
@@ -55,21 +55,22 @@ jobs:
         run: git -c submodule."src/javascript/jsc/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j 8
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v1
-      - name: ${{matrix.image}} - Build
+      - name: ${{matrix.task}} - Build Image
         uses: docker/build-push-action@v2
         with:
           context: .
-          target: ${{matrix.image}}
-          tags: jarred-sumner/bun-${{matrix.image}}:latest
+          target: ${{matrix.task}}
+          tags: jarred-sumner/bun-test_base:${{{ github.ref }}}
           load: true
           cache-from: type=gha
           cache-to: type=gha,mode=min
-      - name: ${{matrix.image}} - Run
+      - name: ${{matrix.task}} - Run
         run: |
-          docker run --rm --init --ulimit memlock=-1:-1 jarred-sumner/bun-${{matrix.image}}:latest
+          docker run --rm --init --ulimit memlock=-1:-1 jarred-sumner/bun-test_base:${{{ github.ref }}} -- make test-install ${{matrix.task}}
+
   release:
     runs-on: self-hosted
-    if: github.ref == 'refs/heads/master'
+    if: github.ref == 'refs/heads/main'
     needs:
       - setup
       - tests

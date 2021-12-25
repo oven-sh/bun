@@ -174,8 +174,6 @@ FROM base_with_zig_and_webkit as build_release
 
 WORKDIR $BUN_DIR
 
-ENV BUN_DEPS_OUT_DIR ${BUN_DEPS_OUT_DIR}
-
 COPY ./src ${BUN_DIR}/src
 COPY ./build.zig ${BUN_DIR}/build.zig
 COPY ./completions ${BUN_DIR}/completions

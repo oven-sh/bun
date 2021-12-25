@@ -29,7 +29,6 @@ jobs:
           tags: jarred-sumner/bun:${{steps.vars.outputs.docker_tag}},jarred-sumner/bun:latest
           build-args: |
             BUILDARCH=amd64
-            GITHUB_WORKSPACE=${GITHUB_WORKSPACE}
           target: release
           cache-from: type=gha
           cache-to: type=gha,mode=max

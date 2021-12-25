@@ -15,16 +15,14 @@ ENV BUN_RELEASE_DIR="${BUN_RELEASE_DIR}"
 ENV BUN_DEPS_OUT_DIR="${BUN_DEPS_OUT_DIR}"
 ENV BUN_DIR="${BUN_DIR}"
 
-RUN apt-get update && apt-get install --no-install-recommends -y wget gnupg2 curl lsb-release wget software-properties-common
-
-RUN add-apt-repository ppa:longsleep/golang-backports
-RUN curl -s https://deb.nodesource.com/gpgkey/nodesource.gpg.key | apt-key add -
-
-RUN wget https://apt.llvm.org/llvm.sh --no-check-certificate
-RUN chmod +x llvm.sh
-RUN ./llvm.sh 12
-
-RUN apt-get update && apt-get install --no-install-recommends -y \
+RUN mkdir -p ${BUN_DIR} && apt-get update && \
+    apt-get install --no-install-recommends -y wget gnupg2 curl lsb-release wget software-properties-common && \
+    add-apt-repository ppa:longsleep/golang-backports && \
+    wget https://apt.llvm.org/llvm.sh --no-check-certificate && \
+    chmod +x llvm.sh && \
+    ./llvm.sh 12 && \
+    apt-get update && \
+    apt-get install --no-install-recommends -y \
     ca-certificates \
     curl \
     gnupg2 \
@@ -64,7 +62,8 @@ ENV ARCH "$BUILDARCH"
 
 RUN npm install -g esbuild
 
-RUN cd $BUN_DIR/ && curl -L https://github.com/Jarred-Sumner/zig/releases/download/dec20/zig-linux-$BUILDARCH.zip > zig-linux-$BUILDARCH.zip; \
+RUN cd $BUN_DIR/ && \
+    curl -L https://github.com/Jarred-Sumner/zig/releases/download/dec20/zig-linux-$BUILDARCH.zip > zig-linux-$BUILDARCH.zip; \
     unzip -q zig-linux-$BUILDARCH.zip; \
     rm zig-linux-$BUILDARCH.zip;
 
@@ -81,11 +80,14 @@ RUN mkdir -p $BUN_RELEASE_DIR $BUN_DEPS_OUT_DIR ${BUN_DIR} ${BUN_DEPS_OUT_DIR}
 
 FROM base as base_with_zig_and_webkit
 
-RUN cd $BUN_DIR && curl -L https://github.com/Jarred-Sumner/WebKit/releases/download/Bun-v0/bun-webkit-linux-$BUILDARCH.tar.gz > bun-webkit-linux-$BUILDARCH.tar.gz; \
+RUN cd $BUN_DIR && \
+    curl -L https://github.com/Jarred-Sumner/WebKit/releases/download/Bun-v0/bun-webkit-linux-$BUILDARCH.tar.gz > bun-webkit-linux-$BUILDARCH.tar.gz; \
     tar -xzf bun-webkit-linux-$BUILDARCH.tar.gz > /dev/null; \
-    rm bun-webkit-linux-$BUILDARCH.tar.gz && cat $WEBKIT_OUT_DIR/include/cmakeconfig.h > /dev/null
+    rm bun-webkit-linux-$BUILDARCH.tar.gz && \
+    cat $WEBKIT_OUT_DIR/include/cmakeconfig.h > /dev/null
 
-RUN  cd $BUN_DIR && curl -L https://github.com/unicode-org/icu/releases/download/release-66-1/icu4c-66_1-src.tgz > icu4c-66_1-src.tgz && \
+RUN  cd $BUN_DIR && \
+    curl -L https://github.com/unicode-org/icu/releases/download/release-66-1/icu4c-66_1-src.tgz > icu4c-66_1-src.tgz && \
     tar -xzf icu4c-66_1-src.tgz > /dev/null && \
     rm icu4c-66_1-src.tgz && \
     cd icu/source && \
@@ -97,7 +99,8 @@ FROM base as mimalloc
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/mimalloc ${BUN_DIR}/src/deps/mimalloc
 
-RUN cd ${BUN_DIR} && make mimalloc
+RUN cd ${BUN_DIR} && \
+    make mimalloc
 
 FROM base as zlib
 
@@ -105,7 +108,8 @@ FROM base as zlib
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/zlib ${BUN_DIR}/src/deps/zlib
 
-RUN cd $BUN_DIR && make zlib
+RUN cd $BUN_DIR && \
+    make zlib
 
 FROM base as libarchive
 
@@ -113,7 +117,8 @@ FROM base as libarchive
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/libarchive ${BUN_DIR}/src/deps/libarchive
 
-RUN cd $BUN_DIR && make libarchive
+RUN cd $BUN_DIR && \
+    make libarchive
 
 FROM base as boringssl
 
@@ -121,7 +126,8 @@ FROM base as boringssl
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/boringssl ${BUN_DIR}/src/deps/boringssl
 
-RUN cd $BUN_DIR && make boringssl
+RUN cd $BUN_DIR && \
+    make boringssl
 
 FROM base as picohttp
 
@@ -130,7 +136,8 @@ COPY src/deps/picohttpparser ${BUN_DIR}/src/deps/picohttpparser
 COPY src/deps/*.c ${BUN_DIR}/src/deps
 COPY src/deps/*.h ${BUN_DIR}/src/deps
 
-RUN cd $BUN_DIR && make picohttp
+RUN cd $BUN_DIR && \
+    make picohttp
 
 FROM base_with_zig_and_webkit as identifier_cache
 
@@ -138,14 +145,16 @@ COPY Makefile ${BUN_DIR}/Makefile
 COPY src/js_lexer/identifier_data.zig ${BUN_DIR}/src/js_lexer/identifier_data.zig
 COPY src/js_lexer/identifier_cache.zig ${BUN_DIR}/src/js_lexer/identifier_cache.zig
 
-RUN cd $BUN_DIR && make identifier-cache
+RUN cd $BUN_DIR && \
+    make identifier-cache
 
 FROM base as node_fallbacks
 
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/node-fallbacks ${BUN_DIR}/src/node-fallbacks
-RUN cd $BUN_DIR && make node-fallbacks
+RUN cd $BUN_DIR && \
+    make node-fallbacks
 
 FROM base_with_zig_and_webkit as build_dependencies
 
@@ -179,7 +188,8 @@ FROM build_dependencies as build_release
 
 ENV BUN_RELEASE_DIR ${BUN_RELEASE_DIR}
 
-RUN cd $BUN_DIR && mkdir -p $BUN_RELEASE_DIR; make release \
+RUN cd $BUN_DIR && \
+    mkdir -p $BUN_RELEASE_DIR; make release \
     copy-to-bun-release-dir
 
 FROM base_with_zig_and_webkit as bun.devcontainer
@@ -202,7 +212,11 @@ COPY .devcontainer/zls.json /workspaces/workspace.code-workspace
 COPY .devcontainer/limits.conf /etc/security/limits.conf
 COPY ".devcontainer/scripts/" /scripts/
 COPY ".devcontainer/scripts/getting-started.sh" /workspaces/getting-started.sh
-RUN mkdir -p /home/ubuntu/.bun /home/ubuntu/.config /workspaces/bun && bash /scripts/common-debian.sh && bash /scripts/github.sh && bash /scripts/nice.sh && bash /scripts/zig-env.sh
+RUN mkdir -p /home/ubuntu/.bun /home/ubuntu/.config /workspaces/bun && \
+    bash /scripts/common-debian.sh && \
+    bash /scripts/github.sh && \
+    bash /scripts/nice.sh && \
+    bash /scripts/zig-env.sh
 COPY .devcontainer/zls.json /home/ubuntu/.config/zls.json
 
 FROM ubuntu:20.04 as test_base
@@ -232,16 +246,19 @@ COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-x64/bun
 
 FROM test_base as test_create_next
 
-CMD cd $BUN_DIR && make test-create-next
+CMD cd $BUN_DIR && \
+    make test-create-next
 
 FROM test_base as test_create_react
 
-CMD cd $BUN_DIR && make test-create-react
+CMD cd $BUN_DIR && \
+    make test-create-react
 
 
 FROM test_base as test_bun_run
 
-CMD cd $BUN_DIR && make test-bun-run
+CMD cd $BUN_DIR && \
+    make test-bun-run
 
 FROM test_base as browser_test_base
 
@@ -252,13 +269,16 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends chromium
 
 
-RUN cd $BUN_DIR && mkdir -p /var/run/dbus && ln -s /usr/bin/chromium /usr/bin/chromium-browser
+RUN cd $BUN_DIR && \
+    mkdir -p /var/run/dbus && \
+    ln -s /usr/bin/chromium /usr/bin/chromium-browser
 RUN apt-get install -y make fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-freefont-ttf libxss1 xvfb ca-certificates fonts-liberation libappindicator3-1 libasound2 libatk-bridge2.0-0 libatk1.0-0 libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 libgbm1 libgcc1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 lsb-release wget xdg-utils --no-install-recommends
 
 
 FROM browser_test_base as test_hmr
 
-CMD cd $BUN_DIR && dbus-daemon --system &> /dev/null && \
+CMD cd $BUN_DIR && \
+    dbus-daemon --system &> /dev/null && \
     bun install --cwd ${BUN_DIR}/integration/snippets && \
     bun install --cwd ${BUN_DIR}/integration/scripts && \
     bun install && \
@@ -266,7 +286,8 @@ CMD cd $BUN_DIR && dbus-daemon --system &> /dev/null && \
 
 FROM browser_test_base as test_no_hmr
 
-CMD cd $BUN_DIR && dbus-daemon --system &> /dev/null && \
+CMD cd $BUN_DIR && \
+    dbus-daemon --system &> /dev/null && \
     bun install --cwd ${BUN_DIR}/integration/snippets && \
     bun install --cwd ${BUN_DIR}/integration/scripts && \
     bun install && \

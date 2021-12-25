@@ -1,4 +1,5 @@
 FROM ubuntu:20.04 as base_with_args
+ARG DEBIAN_FRONTEND=noninteractive
 
 ARG GITHUB_WORKSPACE=/build-bun
 ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
@@ -9,7 +10,7 @@ ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 
 FROM base_with_args as base
-ARG DEBIAN_FRONTEND=noninteractive
+
 
 WORKDIR ${GITHUB_WORKSPACE}
 
@@ -159,7 +160,7 @@ COPY src/js_lexer/identifier_cache.zig ${BUN_DIR}/src/js_lexer/identifier_cache.
 RUN cd $BUN_DIR && \
     make identifier-cache
 
-FROM base as node_fallbacks
+FROM base_with_zig_and_webkit as node_fallbacks
 
 WORKDIR $GITHUB_WORKSPACE
 

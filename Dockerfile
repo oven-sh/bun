@@ -1,7 +1,7 @@
 FROM ubuntu:20.04 as base_with_args
 ARG DEBIAN_FRONTEND=noninteractive
 
-ARG GITHUB_WORKSPACE=/build-bun
+ARG GITHUB_WORKSPACE=/build/bun
 ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
 # Directory extracts to "bun-webkit"
 ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 

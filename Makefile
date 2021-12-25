@@ -14,12 +14,15 @@ MIN_MACOS_VERSION = 10.14
 MARCH_NATIVE =
 
 ARCH_NAME :=
+DOCKER_BUILDARCH =
 ifeq ($(ARCH_NAME_RAW),arm64)
    ARCH_NAME = aarch64
+   DOCKER_BUILDARCH = arm64
    BREW_PREFIX_PATH = /opt/homebrew
    MIN_MACOS_VERSION = 11.0
 else
    ARCH_NAME = x64
+   DOCKER_BUILDARCH = x64
    BREW_PREFIX_PATH = /usr/local
    MARCH_NATIVE = -march=native
 endif
@@ -288,9 +291,9 @@ docker-login:
 	docker login ghcr.io --username jarred@jarredsumner.com
 
 docker-push-base:
-	BUILDKIT=1 docker build --build-arg GITHUB_WORKSPACE=/build --platform=linux/$(shell uname -m) --tag bun-base --target base .
-	BUILDKIT=1 docker build --build-arg GITHUB_WORKSPACE=/build --platform=linux/$(shell uname -m) --tag bun-base-with-zig-and-webkit --target base-with-zig-and-webkit .
-	BUILDKIT=1 docker build --build-arg GITHUB_WORKSPACE=/build --platform=linux/$(shell uname -m) --tag bun-base-with-args --target base-with-args .
+	BUILDKIT=1 docker build --build-arg GITHUB_WORKSPACE=/build --platform=linux/$(DOCKER_BUILDARCH) --tag bun-base --target base .
+	BUILDKIT=1 docker build --build-arg GITHUB_WORKSPACE=/build --platform=linux/$(DOCKER_BUILDARCH) --tag bun-base-with-zig-and-webkit --target base-with-zig-and-webkit .
+	BUILDKIT=1 docker build --build-arg GITHUB_WORKSPACE=/build --platform=linux/$(DOCKER_BUILDARCH) --tag bun-base-with-args --target base-with-args .
 
 	docker tag bun-base ghcr.io/jarred-sumner/bun-base:latest
 	docker push ghcr.io/jarred-sumner/bun-base:latest

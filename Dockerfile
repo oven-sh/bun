@@ -376,5 +376,5 @@ ENV PATH "/opt/bun/bin:$PATH"
 ARG BUILDARCH=amd64
 LABEL org.opencontainers.image.title="Bun ${BUILDARCH} (glibc)"
 LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
-COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-aarch64/bun
-COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-x64/bun
+COPY --from=build_release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-aarch64/bun
+COPY --from=build_release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-x64/bun

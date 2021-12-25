@@ -55,9 +55,7 @@ ENV CC=clang-12
 ENV CXX=clang++-12
 
 
-ARG BUILDARCH
-ENV ARCH "$BUILDARCH"
-
+ARG BUILDARCH=amd64
 
 
 WORKDIR $GITHUB_WORKSPACE
@@ -85,6 +83,7 @@ ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG BUILDARCH=amd64
 
 WORKDIR $GITHUB_WORKSPACE
 
@@ -329,6 +328,7 @@ CMD cd $BUN_DIR && \
 
 FROM test_base as test_bun_run
 
+ARG BUILDARCH=amd64
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
 ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
@@ -347,6 +347,7 @@ CMD cd $BUN_DIR && \
 
 FROM test_base as browser_test_base
 
+ARG BUILDARCH=amd64
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
 ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
@@ -428,6 +429,6 @@ COPY .devcontainer/limits.conf /etc/security/limits.conf
 
 ENV BUN_INSTALL /opt/bun
 ENV PATH "/opt/bun/bin:$PATH"
-
+ARG BUILDARCH=amd64
 LABEL org.opencontainers.image.title="Bun ${BUILDARCH} (glibc)"
 LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun

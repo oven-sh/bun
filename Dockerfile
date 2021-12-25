@@ -3,9 +3,9 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 ARG GITHUB_WORKSPACE=/home/ubuntu/bun
 ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-ARG WEBKIT_OUT_DIR=${GITHUB_WORKSPACE}/webkit-build
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/webkit-build
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}
 
 RUN apt-get update && apt-get install --no-install-recommends -y wget gnupg2 curl lsb-release wget software-properties-common
@@ -68,17 +68,17 @@ ENV PATH "$ZIG_PATH:$PATH"
 ENV JSC_BASE_DIR $WEBKIT_OUT_DIR
 ENV LIB_ICU_PATH ${BUN_DIR}/icu/source/lib
 ENV BUN_RELEASE_DIR ${BUN_RELEASE_DIR}
-ENV BUN_DEPS_OUT_DIR ${BUN_DEPS_DIR}
+ENV BUN_DEPS_OUT_DIR ${BUN_DEPS_OUT_DIR}
 
-RUN mkdir -p $BUN_RELEASE_DIR $BUN_DEPS_OUT_DIR ${BUN_DIR}
+RUN mkdir -p $BUN_RELEASE_DIR $BUN_DEPS_OUT_DIR ${BUN_DIR} ${BUN_DEPS_OUT_DIR}
 
 FROM base as base_with_zig_and_webkit
 
-RUN mkdir -p $WEBKIT_DIR && cd $WEBKIT_DIR/../ && && rmdir webkit-build && curl -L https://github.com/Jarred-Sumner/WebKit/releases/download/Bun-v0/bun-webkit-linux-$BUILDARCH.tar.gz > bun-webkit-linux-$BUILDARCH.tar.gz; \
+RUN cd $BUN_DIR && curl -L https://github.com/Jarred-Sumner/WebKit/releases/download/Bun-v0/bun-webkit-linux-$BUILDARCH.tar.gz > bun-webkit-linux-$BUILDARCH.tar.gz; \
     tar -xzf bun-webkit-linux-$BUILDARCH.tar.gz; \
     rm bun-webkit-linux-$BUILDARCH.tar.gz && cat $WEBKIT_OUT_DIR/include/cmakeconfig.h > /dev/null
 
-RUN  cd $BUN_DIR && ../ && curl -L https://github.com/unicode-org/icu/releases/download/release-66-1/icu4c-66_1-src.tgz > icu4c-66_1-src.tgz && \
+RUN  cd $BUN_DIR && curl -L https://github.com/unicode-org/icu/releases/download/release-66-1/icu4c-66_1-src.tgz > icu4c-66_1-src.tgz && \
     tar -xzf icu4c-66_1-src.tgz && \
     rm icu4c-66_1-src.tgz && \
     cd icu/source && \
@@ -90,7 +90,7 @@ FROM base as mimalloc
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/mimalloc ${BUN_DIR}/src/deps/mimalloc
 
-RUN make mimalloc
+RUN cd ${BUN_DIR} && make mimalloc
 
 FROM base as zlib
 
@@ -142,7 +142,7 @@ RUN cd $BUN_DIR && make node-fallbacks
 
 FROM base_with_zig_and_webkit as build_dependencies
 
-ENV BUN_DEPS_OUT_DIR ${BUN_DEPS_DIR}
+ENV BUN_DEPS_OUT_DIR ${BUN_DEPS_OUT_DIR}
 
 COPY ./src ${BUN_DIR}/src
 COPY ./build.zig ${BUN_DIR}/build.zig
@@ -153,11 +153,11 @@ COPY ./package.json ${BUN_DIR}/package.json
 COPY ./misctools ${BUN_DIR}/misctools
 COPY Makefile ${BUN_DIR}/Makefile
 
-COPY --from=mimalloc ${BUN_DEPS_DIR}/*.o ${BUN_DEPS_DIR}
-COPY --from=libarchive ${BUN_DEPS_DIR}/*.a ${BUN_DEPS_DIR}
-COPY --from=picohttp ${BUN_DEPS_DIR}/*.o ${BUN_DEPS_DIR}
-COPY --from=boringssl ${BUN_DEPS_DIR}/*.a ${BUN_DEPS_DIR}
-COPY --from=zlib ${BUN_DEPS_DIR}/*.a ${BUN_DEPS_DIR}
+COPY --from=mimalloc ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}
+COPY --from=libarchive ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}
+COPY --from=picohttp ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}
+COPY --from=boringssl ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}
+COPY --from=zlib ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}
 COPY --from=node_fallbacks ${BUN_DIR}/src/node-fallbacks ${BUN_DIR}/src/node-fallbacks
 COPY --from=identifier_cache ${BUN_DIR}/src/js_lexer/*.blob ${BUN_DIR}/src/js_lexer/
 

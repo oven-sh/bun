@@ -1,7 +1,7 @@
 FROM ubuntu:20.04 as base
 ARG DEBIAN_FRONTEND=noninteractive
 
-ARG GITHUB_WORKSPACE=/home/ubuntu
+ARG GITHUB_WORKSPACE=/build-bun
 ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
 # Directory extracts to "bun-webkit"
 ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
@@ -68,7 +68,7 @@ ENV LIB_ICU_PATH ${GITHUB_WORKSPACE}/icu/source/lib
 ENV BUN_RELEASE_DIR ${BUN_RELEASE_DIR}
 ENV BUN_DEPS_OUT_DIR ${BUN_DEPS_OUT_DIR}
 
-RUN mkdir -p $BUN_RELEASE_DIR $BUN_DEPS_OUT_DIR ${BUN_DIR} ${BUN_DEPS_OUT_DIR}
+RUN cd / && mkdir -p $BUN_RELEASE_DIR $BUN_DEPS_OUT_DIR ${BUN_DIR} ${BUN_DEPS_OUT_DIR}
 
 FROM base as base_with_zig_and_webkit
 

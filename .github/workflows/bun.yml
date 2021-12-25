@@ -31,7 +31,7 @@ jobs:
         with:
           context: .
           target: release
-          tags: jarred-sumner/bun:${{github.ref}}
+          tags: jarred-sumner/bun:${{github.sha}}
           cache-from: type=gha
           cache-to: type=gha,mode=min
 
@@ -60,13 +60,13 @@ jobs:
         with:
           context: .
           target: ${{matrix.task}}
-          tags: jarred-sumner/bun-test_base:${{github.ref}}
+          tags: jarred-sumner/bun-test_base:${{github.sha}}
           load: true
           cache-from: type=gha
           cache-to: type=gha,mode=min
       - name: ${{matrix.task}} - Run
         run: |
-          docker run --rm --init --ulimit memlock=-1:-1 jarred-sumner/bun-test_base:${{github.ref}} -- cd /build/bun && make test-install ${{matrix.task}}
+          docker run --rm --init --ulimit memlock=-1:-1 jarred-sumner/bun-test_base:${{github.sha}} -- cd /build/bun && make test-install ${{matrix.task}}
 
   release:
     runs-on: self-hosted
@@ -88,7 +88,7 @@ jobs:
           push: true
           target: release
           tags: |
-            jarred-sumner/bun:${GITHUB_REF}
+            jarred-sumner/bun:${{github.sha}}
           platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=min

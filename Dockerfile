@@ -1,4 +1,4 @@
-FROM ubuntu:20.04 as base_with_args
+FROM ubuntu:20.04 as base-with-args
 ARG DEBIAN_FRONTEND=noninteractive
 
 ARG GITHUB_WORKSPACE=/build
@@ -9,7 +9,7 @@ ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 
-FROM base_with_args as base
+FROM base-with-args as base
 
 
 WORKDIR ${GITHUB_WORKSPACE}
@@ -72,7 +72,11 @@ ENV BUN_DEPS_OUT_DIR ${BUN_DEPS_OUT_DIR}
 
 RUN cd / && mkdir -p $BUN_RELEASE_DIR $BUN_DEPS_OUT_DIR ${BUN_DIR} ${BUN_DEPS_OUT_DIR}
 
-FROM base as base_with_zig_and_webkit
+LABEL org.opencontainers.image.title="Bun base image ${BUILDARCH} (glibc)"
+LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
+
+
+FROM base as base-with-zig-and-webkit
 
 WORKDIR $GITHUB_WORKSPACE
 
@@ -96,6 +100,9 @@ RUN  cd $GITHUB_WORKSPACE && \
     make -j$(nproc)
 
 ENV ZIG "${ZIG_PATH}/zig"
+
+LABEL org.opencontainers.image.title="Bun base image with zig & webkit ${BUILDARCH} (glibc)"
+LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
 
 
 FROM base as mimalloc
@@ -151,7 +158,7 @@ WORKDIR $BUN_DIR
 RUN cd $BUN_DIR && \
     make picohttp
 
-FROM base_with_zig_and_webkit as identifier_cache
+FROM base-with-zig-and-webkit as identifier_cache
 
 WORKDIR $BUN_DIR
 
@@ -162,7 +169,7 @@ COPY src/js_lexer/identifier_cache.zig ${BUN_DIR}/src/js_lexer/identifier_cache.
 RUN cd $BUN_DIR && \
     make identifier-cache
 
-FROM base_with_zig_and_webkit as node_fallbacks
+FROM base-with-zig-and-webkit as node_fallbacks
 
 WORKDIR $BUN_DIR
 
@@ -172,7 +179,7 @@ COPY src/node-fallbacks ${BUN_DIR}/src/node-fallbacks
 RUN cd $BUN_DIR && \
     make node-fallbacks
 
-FROM base_with_zig_and_webkit as build_release
+FROM base-with-zig-and-webkit as build_release
 
 WORKDIR $BUN_DIR
 
@@ -203,7 +210,7 @@ RUN cd $BUN_DIR && rm -rf /root/.cache zig-cache && \
     mkdir -p $BUN_RELEASE_DIR; make release \
     copy-to-bun-release-dir
 
-FROM base_with_zig_and_webkit as bun.devcontainer
+FROM base-with-zig-and-webkit as bun.devcontainer
 
 ENV WEBKIT_OUT_DIR ${WEBKIT_DIR}
 ENV PATH "$ZIG_PATH:$PATH"
@@ -230,7 +237,7 @@ RUN mkdir -p /home/ubuntu/.bun /home/ubuntu/.config /workspaces/bun && \
     bash /scripts/zig-env.sh
 COPY .devcontainer/zls.json /home/ubuntu/.config/zls.json
 
-FROM base_with_args as test_base
+FROM base-with-args as test_base
 
 WORKDIR $BUN_DIR
 
@@ -319,7 +326,7 @@ CMD cd $BUN_DIR && \
     bun install && \
     make test-no-hmr
 
-FROM base_with_args as release 
+FROM base-with-args as release 
 
 WORKDIR /opt/bun
 

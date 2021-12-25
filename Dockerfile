@@ -275,16 +275,16 @@ COPY --from=boringssl ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}
 COPY --from=zlib ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}
 COPY --from=identifier_cache ${BUN_DIR}/src/js_lexer/*.blob ${BUN_DIR}/src/js_lexer
 
-RUN cd $BUN_DIR && make \
+RUN cd $BUN_DIR &&  rm -rf $HOME/.cache zig-cache && make \
     jsc-bindings-headers \
     api \
     analytics \
     bun_error \
-    fallback_decoder 
+    fallback_decoder && rm -rf $HOME/.cache zig-cache
 
-RUN cd $BUN_DIR && rm -rf /root/.cache zig-cache && \
+RUN cd $BUN_DIR && rm -rf $HOME/.cache zig-cache && \
     mkdir -p $BUN_RELEASE_DIR; make release \
-    copy-to-bun-release-dir
+    copy-to-bun-release-dir && rm -rf $HOME/.cache zig-cache
 
 FROM bun-base-with-zig-and-webkit as bun.devcontainer
 

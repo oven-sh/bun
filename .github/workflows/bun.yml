@@ -9,14 +9,13 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   TEST_TAG: bun-test
+
 jobs:
   release:
     runs-on: self-hosted
     steps:
       - name: Checkout
         uses: actions/checkout@v2
-        with:
-          path:
       - name: Checkout submodules
         run: git -c submodule."src/javascript/jsc/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j 8
       - name: Set up Docker Buildx

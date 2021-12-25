@@ -26,20 +26,14 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v1
-      - name: Pull base images
-        run: |
-          docker pull ghcr.io/jarred-sumner/bun-base:latest
-          docker pull ghcr.io/jarred-sumner/bun-base-with-zig-and-webkit:latest
-          docker pull ghcr.io/jarred-sumner/bun-base-with-args:latest
-          docker tag ghcr.io/jarred-sumner/bun-base:latest bun-base:latest
-          docker tag ghcr.io/jarred-sumner/bun-base-with-zig-and-webkit:latest bun-base-with-zig-and-webkit:latest
-          docker tag ghcr.io/jarred-sumner/bun-base-with-args:latest bun-base-with-args:latest
       - name: Build release image
         uses: docker/build-push-action@v2
         with:
           context: .
-          load: true
           target: build_release
+          tags: jarred-sumner/bun-base:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
   integration-tests-hmr:
     runs-on: self-hosted
     needs: setup
@@ -57,6 +51,8 @@ jobs:
           load: true
           target: test_hmr
           tag: test_hmr
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
       - name: Run test image
         run: docker run --rm -it --init --ulimit memlock=-1:-1 test_hmr
   integration-tests-no-hmr:
@@ -76,6 +72,9 @@ jobs:
           load: true
           target: test_no_hmr
           tag: test_no_hmr
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
       - name: Run test image
         run: docker run --rm -it --init --ulimit memlock=-1:-1 test_no_hmr
   test_create_next:
@@ -95,6 +94,9 @@ jobs:
           load: true
           target: test_create_next
           tag: test_create_next
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
       - name: Run test image
         run: docker run --rm -it --init --ulimit memlock=-1:-1 test_create_next
   test_create_react:
@@ -114,6 +116,9 @@ jobs:
           load: true
           target: test_create_react
           tag: test_create_react
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
       - name: Run test image
         run: docker run --rm -it --init --ulimit memlock=-1:-1 test_create_react
   test_bun_run:
@@ -133,5 +138,8 @@ jobs:
           load: true
           target: test_bun_run
           tag: test_bun_run
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
       - name: Run test image
         run: docker run --rm -it --init --ulimit memlock=-1:-1 test_bun_run

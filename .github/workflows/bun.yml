@@ -31,7 +31,7 @@ jobs:
         with:
           context: .
           target: release
-          tags: jarred-sumner/bun:${{{ github.ref }}
+          tags: jarred-sumner/bun:${{ github.ref }}
           cache-from: type=gha
           cache-to: type=gha,mode=min
 

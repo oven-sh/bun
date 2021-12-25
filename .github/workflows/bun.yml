@@ -25,4 +25,3 @@ jobs:
           target: release
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          ulimit: "memlock=-1:-1 core=-1:-1"

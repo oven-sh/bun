@@ -295,7 +295,7 @@ CMD cd $BUN_DIR && \
     bun install --cwd ${BUN_DIR}/integration/snippets && \
     bun install --cwd ${BUN_DIR}/integration/scripts && \
     bun install && \
-    make test-hmr-hmr
+    make test-with-hmr
 
 FROM browser_test_base as test_no_hmr
 

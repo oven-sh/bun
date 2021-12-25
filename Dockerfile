@@ -121,7 +121,7 @@ FROM base as libarchive
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/libarchive ${BUN_DIR}/src/deps/libarchive
 
-WORKDIR $GITHUB_WORKSPACE
+WORKDIR $BUN_DIR
 
 RUN cd $BUN_DIR && \
     make libarchive
@@ -132,7 +132,7 @@ FROM base as boringssl
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/boringssl ${BUN_DIR}/src/deps/boringssl
 
-WORKDIR $GITHUB_WORKSPACE
+WORKDIR $BUN_DIR
 
 RUN cd $BUN_DIR && \
     make boringssl
@@ -144,14 +144,14 @@ COPY src/deps/picohttpparser ${BUN_DIR}/src/deps/picohttpparser
 COPY src/deps/*.c ${BUN_DIR}/src/deps
 COPY src/deps/*.h ${BUN_DIR}/src/deps
 
-WORKDIR $GITHUB_WORKSPACE
+WORKDIR $BUN_DIR
 
 RUN cd $BUN_DIR && \
     make picohttp
 
 FROM base_with_zig_and_webkit as identifier_cache
 
-WORKDIR $GITHUB_WORKSPACE
+WORKDIR $BUN_DIR
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/js_lexer/identifier_data.zig ${BUN_DIR}/src/js_lexer/identifier_data.zig
@@ -162,7 +162,7 @@ RUN cd $BUN_DIR && \
 
 FROM base_with_zig_and_webkit as node_fallbacks
 
-WORKDIR $GITHUB_WORKSPACE
+WORKDIR $BUN_DIR
 
 
 COPY Makefile ${BUN_DIR}/Makefile
@@ -172,7 +172,7 @@ RUN cd $BUN_DIR && \
 
 FROM base_with_zig_and_webkit as build_release
 
-WORKDIR $GITHUB_WORKSPACE
+WORKDIR $BUN_DIR
 
 ENV BUN_DEPS_OUT_DIR ${BUN_DEPS_OUT_DIR}
 

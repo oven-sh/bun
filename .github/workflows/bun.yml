@@ -31,9 +31,9 @@ jobs:
           docker pull ghcr.io/jarred-sumner/bun-base:latest
           docker pull ghcr.io/jarred-sumner/bun-base-with-zig-and-webkit:latest
           docker pull ghcr.io/jarred-sumner/bun-base-with-args:latest
-          docker tag ghcr.io/jarred-sumner/bun-base:latest base:latest
-          docker tag ghcr.io/jarred-sumner/bun-base-with-zig-and-webkit:latest base-with-zig-and-webkit:latest
-          docker tag ghcr.io/jarred-sumner/bun-base-with-args:latest base-with-args:latest
+          docker tag ghcr.io/jarred-sumner/bun-base:latest bun-base:latest
+          docker tag ghcr.io/jarred-sumner/bun-base-with-zig-and-webkit:latest bun-base-with-zig-and-webkit:latest
+          docker tag ghcr.io/jarred-sumner/bun-base-with-args:latest bun-base-with-args:latest
       - name: Build release image
         uses: docker/build-push-action@v2
         with:

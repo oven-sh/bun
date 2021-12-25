@@ -60,13 +60,13 @@ jobs:
         with:
           context: .
           target: ${{matrix.task}}
-          tags: jarred-sumner/bun-test_base:${github.ref}
+          tags: jarred-sumner/bun-test_base:${{github.ref}}
           load: true
           cache-from: type=gha
           cache-to: type=gha,mode=min
       - name: ${{matrix.task}} - Run
         run: |
-          docker run --rm --init --ulimit memlock=-1:-1 jarred-sumner/bun-test_base:${github.ref} -- cd /build/bun && make test-install ${{matrix.task}}
+          docker run --rm --init --ulimit memlock=-1:-1 jarred-sumner/bun-test_base:${{github.ref}} -- cd /build/bun && make test-install ${{matrix.task}}
 
   release:
     runs-on: self-hosted

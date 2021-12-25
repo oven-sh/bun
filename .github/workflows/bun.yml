@@ -39,15 +39,15 @@ jobs:
     runs-on: self-hosted
     needs: setup
     strategy:
-    matrix:
-      image:
-        [
-          "test_create_next",
-          "test_create_react",
-          "test_bun_run",
-          "test_hmr",
-          "test_no_hmr",
-        ]
+      matrix:
+        image:
+          [
+            "test_create_next",
+            "test_create_react",
+            "test_bun_run",
+            "test_hmr",
+            "test_no_hmr",
+          ]
     steps:
       - name: Checkout
         uses: actions/checkout@v2

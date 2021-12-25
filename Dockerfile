@@ -367,12 +367,29 @@ ENV CI 1
 
 # All this is necessary because Ubuntu decided to use snap for their Chromium packages
 # Which breaks using Chrome in the container on aarch64
+
+RUN apt-get update
+
+
 RUN apt-get clean && apt-get update && \
     apt-get install -y wget gnupg2 curl make git unzip nodejs npm psmisc && \
     apt-key adv --keyserver keyserver.ubuntu.com --recv-keys DCC9EFBF77E11517 && \
     apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 648ACFD622F3D138 && \
     apt-key adv --keyserver keyserver.ubuntu.com --recv-keys AA8E81B4331F7F50 && \
-    apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 112695A0E562B32A
+    apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 112695A0E562B32A 
+
+
+COPY .docker/chromium.pref /etc/apt/preferences.d/chromium.pref
+COPY .docker/debian.list /etc/apt/sources.list.d/debian.list
+
+RUN apt-get update && \
+    apt-get install -y chromium make fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-freefont-ttf libxss1 xvfb ca-certificates fonts-liberation libappindicator3-1 libasound2 libatk-bridge2.0-0 libatk1.0-0 libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 libgbm1 libgcc1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 lsb-release wget xdg-utils --no-install-recommends
+
+RUN cd $BUN_DIR && \
+    mkdir -p /var/run/dbus && \
+    ln -s /usr/bin/chromium /usr/bin/chromium-browser
+
+ENV BROWSER_EXECUTABLE /usr/bin/chromium
 
 COPY ./integration ${BUN_DIR}/integration
 COPY Makefile ${BUN_DIR}/Makefile

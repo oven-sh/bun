@@ -62,6 +62,8 @@ jobs:
           target: ${{matrix.image}}
           tags: jarred-sumner/bun-${{matrix.image}}:latest
           load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
       - name: ${{matrix.image}} - Run
         run: |
           docker run --rm --init --ulimit memlock=-1:-1 jarred-sumner/bun-${{matrix.image}}:latest

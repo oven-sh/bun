@@ -59,7 +59,7 @@ jobs:
         uses: docker/build-push-action@v2
         with:
           context: .
-          target: ${{matrix.task}}
+          target: test_base
           tags: jarred-sumner/bun-test_base:${{github.sha}}
           load: true
           cache-from: type=gha

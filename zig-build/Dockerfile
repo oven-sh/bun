@@ -1,3 +1,4 @@
+
 # This builds the specifc version of Zig used by Bun
 # It outputs a zig.zip file
 FROM ubuntu:20.04
@@ -54,8 +55,6 @@ RUN --mount=type=tmpfs,target=/zig-build \
     cd /zig-build; \
     zip -r zig.zip zig; \
     cp zig.zip /output;
-
-
 
 
 

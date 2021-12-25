@@ -66,7 +66,7 @@ jobs:
           cache-to: type=gha,mode=min
       - name: ${{matrix.task}} - Run
         run: |
-          docker run --rm --init --ulimit memlock=-1:-1 jarred-sumner/bun-test_base:${{github.sha}} BUN_TEST_NAME=${{matrix.task}} bash ./run-test.sh
+          docker run --rm --init --ulimit memlock=-1:-1 jarred-sumner/bun-test_base:${{github.sha}} BUN_TEST_NAME=${{matrix.task}} GITHUB_WORKSPACE=${GITHUB_WORKSPACE} bash ./run-test.sh
 
   release:
     runs-on: self-hosted

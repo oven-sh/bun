@@ -190,6 +190,7 @@ COPY --from=libarchive ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}
 COPY --from=picohttp ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}
 COPY --from=boringssl ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}
 COPY --from=zlib ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}
+COPY --from=identifier_cache src/js_lexer/*.blob src/js_lexer
 
 RUN cd $BUN_DIR && make \
     jsc-bindings-headers \

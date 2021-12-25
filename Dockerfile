@@ -1,3 +1,7 @@
+FROM ubuntu:20.04 as base-with-args
+
+FROM base-with-args as base
+
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
 ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
@@ -6,12 +10,6 @@ ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
-
-
-FROM ubuntu:20.04 as base-with-args
-
-FROM base-with-args as base
-
 
 WORKDIR ${GITHUB_WORKSPACE}
 
@@ -78,6 +76,15 @@ LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
 
 
 FROM base as base-with-zig-and-webkit
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 
 WORKDIR $GITHUB_WORKSPACE
 
@@ -182,6 +189,16 @@ RUN cd $BUN_DIR && \
 
 FROM base-with-zig-and-webkit as build_release
 
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+
+
 WORKDIR $BUN_DIR
 
 COPY ./src ${BUN_DIR}/src
@@ -212,6 +229,16 @@ RUN cd $BUN_DIR && rm -rf /root/.cache zig-cache && \
     copy-to-bun-release-dir
 
 FROM base-with-zig-and-webkit as bun.devcontainer
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+
 
 ENV WEBKIT_OUT_DIR ${WEBKIT_DIR}
 ENV PATH "$ZIG_PATH:$PATH"
@@ -268,12 +295,32 @@ COPY --from=build_release ${BUN_RELEASE_DIR}/bun ${BUN_DIR}/packages/bun-linux-x
 
 FROM test_base as test_create_next
 
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+
+
 WORKDIR $BUN_DIR
 
 CMD cd $BUN_DIR && \
     make test-create-next
 
 FROM test_base as test_create_react
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+
 
 WORKDIR $BUN_DIR
 
@@ -282,6 +329,16 @@ CMD cd $BUN_DIR && \
 
 FROM test_base as test_bun_run
 
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+
+
 WORKDIR $BUN_DIR
 
 
@@ -289,6 +346,16 @@ CMD cd $BUN_DIR && \
     make test-bun-run
 
 FROM test_base as browser_test_base
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+
 
 COPY .docker/chromium.pref /etc/apt/preferences.d/chromium.pref
 COPY .docker/debian.list /etc/apt/sources.list.d/debian.list
@@ -307,6 +374,16 @@ ENV BROWSER_EXECUTABLE /usr/bin/chromium
 
 FROM browser_test_base as test_hmr
 
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+
+
 WORKDIR $BUN_DIR
 
 CMD cd $BUN_DIR && \
@@ -318,6 +395,16 @@ CMD cd $BUN_DIR && \
 
 FROM browser_test_base as test_no_hmr
 
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+
+
 WORKDIR $BUN_DIR
 
 CMD cd $BUN_DIR && \
@@ -328,6 +415,11 @@ CMD cd $BUN_DIR && \
     make test-no-hmr
 
 FROM base-with-args as release 
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+
 
 WORKDIR /opt/bun
 

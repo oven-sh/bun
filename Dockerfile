@@ -42,11 +42,11 @@ RUN apt-get update && \
     wget \
     unzip \
     tar \
-    golang-go ninja-build pkg-config automake autoconf libtool curl
-
-RUN update-alternatives --install /usr/bin/cc cc /usr/bin/clang-12 90 && \
+    golang-go ninja-build pkg-config automake autoconf libtool curl && \
+    update-alternatives --install /usr/bin/cc cc /usr/bin/clang-12 90 && \
     update-alternatives --install /usr/bin/cpp cpp /usr/bin/clang++-12 90 && \
-    update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-12 90
+    update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-12 90 && \
+    npm install -g esbuild
 
 ENV CC=clang-12 
 ENV CXX=clang++-12
@@ -55,22 +55,15 @@ ENV CXX=clang++-12
 ARG BUILDARCH
 ENV ARCH "$BUILDARCH"
 
-RUN npm install -g esbuild
 
 
 WORKDIR $GITHUB_WORKSPACE
-
-RUN cd $GITHUB_WORKSPACE && \
-    curl -L https://github.com/Jarred-Sumner/zig/releases/download/dec20/zig-linux-$BUILDARCH.zip > zig-linux-$BUILDARCH.zip; \
-    unzip -q zig-linux-$BUILDARCH.zip; \
-    rm zig-linux-$BUILDARCH.zip;
-
 
 ENV WEBKIT_OUT_DIR ${WEBKIT_DIR}
 
 ENV PATH "$ZIG_PATH:$PATH"
 ENV JSC_BASE_DIR $WEBKIT_OUT_DIR
-ENV LIB_ICU_PATH ${BUN_DIR}/icu/source/lib
+ENV LIB_ICU_PATH ${GITHUB_WORKSPACE}/icu/source/lib
 ENV BUN_RELEASE_DIR ${BUN_RELEASE_DIR}
 ENV BUN_DEPS_OUT_DIR ${BUN_DEPS_OUT_DIR}
 
@@ -79,6 +72,11 @@ RUN mkdir -p $BUN_RELEASE_DIR $BUN_DEPS_OUT_DIR ${BUN_DIR} ${BUN_DEPS_OUT_DIR}
 FROM base as base_with_zig_and_webkit
 
 WORKDIR $GITHUB_WORKSPACE
+
+RUN cd $GITHUB_WORKSPACE && \
+    curl -L https://github.com/Jarred-Sumner/zig/releases/download/dec20/zig-linux-$BUILDARCH.zip > zig-linux-$BUILDARCH.zip; \
+    unzip -q zig-linux-$BUILDARCH.zip; \
+    rm zig-linux-$BUILDARCH.zip;
 
 RUN cd $GITHUB_WORKSPACE && \
     curl -L https://github.com/Jarred-Sumner/WebKit/releases/download/Bun-v0/bun-webkit-linux-$BUILDARCH.tar.gz > bun-webkit-linux-$BUILDARCH.tar.gz; \

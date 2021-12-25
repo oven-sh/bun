@@ -32,6 +32,9 @@ jobs:
           context: .
           target: release
           tags: jarred-sumner/bun:${{github.sha}}
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
+
   tests:
     runs-on: self-hosted
     needs: setup
@@ -59,6 +62,8 @@ jobs:
           target: test_base
           tags: jarred-sumner/bun-test_base:${{github.sha}}
           load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
       - name: ${{matrix.task}} - Run
         run: |
           docker run --rm --init --ulimit memlock=-1:-1 jarred-sumner/bun-test_base:${{github.sha}} -- cd /build/bun && make test-install ${{matrix.task}}

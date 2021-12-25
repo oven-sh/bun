@@ -323,6 +323,29 @@ RUN mkdir -p /home/ubuntu/.bun /home/ubuntu/.config /workspaces/bun && \
     bash /scripts/zig-env.sh
 COPY .devcontainer/zls.json /home/ubuntu/.config/zls.json
 
+FROM bun-base-with-args as release 
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+
+
+COPY .devcontainer/limits.conf /etc/security/limits.conf
+
+ENV BUN_INSTALL /opt/bun
+ENV PATH "/opt/bun/bin:$PATH"
+ARG BUILDARCH=amd64
+LABEL org.opencontainers.image.title="Bun ${BUILDARCH} (glibc)"
+LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
+COPY --from=build_release ${BUN_RELEASE_DIR}/bun /opt/bun/bin/bun
+WORKDIR /opt/bun
+
+
 FROM bun-base-with-args as test_base
 
 
@@ -359,24 +382,4 @@ COPY package.json ${BUN_DIR}/package.json
 COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-aarch64/bun
 COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-x64/bun
 
-FROM bun-base-with-args as release 
-
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
-
-
-COPY .devcontainer/limits.conf /etc/security/limits.conf
-
-ENV BUN_INSTALL /opt/bun
-ENV PATH "/opt/bun/bin:$PATH"
-ARG BUILDARCH=amd64
-LABEL org.opencontainers.image.title="Bun ${BUILDARCH} (glibc)"
-LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
-COPY --from=build_release ${BUN_RELEASE_DIR}/bun /opt/bun/bin/bun
-WORKDIR /opt/bun
+FROM release

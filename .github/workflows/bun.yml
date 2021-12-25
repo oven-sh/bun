@@ -9,14 +9,14 @@ jobs:
   release:
     runs-on: self-hosted
     container:
-      image: ubuntu:20.04
+      image: ubuntu-20.04
     steps:
       - name: Checkout
         uses: actions/checkout@v2
         with:
           path:
       - name: Checkout submodules
-        run: git -c submodule."src/javascript/jsc/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j 8
+        run: apt-get install git && git -c submodule."src/javascript/jsc/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j 8
       - name: Set tag var
         id: vars
         run: echo ::set-output name=docker_tag::$(echo ${GITHUB_REF} | cut -d'/' -f3)-${GITHUB_SHA}

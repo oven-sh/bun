@@ -65,7 +65,6 @@ WORKDIR $GITHUB_WORKSPACE
 
 ENV WEBKIT_OUT_DIR ${WEBKIT_DIR}
 
-ENV PATH "$ZIG_PATH:$PATH"
 ENV JSC_BASE_DIR $WEBKIT_OUT_DIR
 ENV LIB_ICU_PATH ${GITHUB_WORKSPACE}/icu/source/lib
 ENV BUN_RELEASE_DIR ${BUN_RELEASE_DIR}
@@ -95,6 +94,9 @@ RUN  cd $GITHUB_WORKSPACE && \
     cd icu/source && \
     ./configure --enable-static --disable-shared && \
     make -j$(nproc)
+
+ENV PATH "${ZIG_PATH}:$PATH"
+
 
 FROM base as mimalloc
 

@@ -70,7 +70,7 @@ jobs:
 
   release:
     runs-on: self-hosted
-    if: github.ref == 'refs/heads/main'
+    if: ${{ github.ref == 'refs/heads/main' }}
     needs:
       - setup
       - tests

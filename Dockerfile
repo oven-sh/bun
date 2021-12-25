@@ -198,7 +198,7 @@ RUN cd $BUN_DIR && make \
     bun_error \
     fallback_decoder 
 
-RUN cd $BUN_DIR && \ rm -rf /root/.cache zig-cache && \
+RUN cd $BUN_DIR && rm -rf /root/.cache zig-cache && \
     mkdir -p $BUN_RELEASE_DIR; make release \
     copy-to-bun-release-dir
 

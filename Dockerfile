@@ -232,6 +232,8 @@ COPY .devcontainer/zls.json /home/ubuntu/.config/zls.json
 
 FROM base_with_args as test_base
 
+WORKDIR $BUN_DIR
+
 ARG DEBIAN_FRONTEND=noninteractive
 ENV DEBIAN_FRONTEND=noninteractive
 

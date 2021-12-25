@@ -14,7 +14,7 @@ jobs:
         with:
           path:
       - name: Checkout submodules
-        run: cd bun && git -c submodule."src/javascript/jsc/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j 8
+        run: git -c submodule."src/javascript/jsc/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j 8
       - name: Set tag var
         id: vars
         run: echo ::set-output name=docker_tag::$(echo ${GITHUB_REF} | cut -d'/' -f3)-${GITHUB_SHA}

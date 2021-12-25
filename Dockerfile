@@ -57,7 +57,10 @@ ENV ARCH "$BUILDARCH"
 
 RUN npm install -g esbuild
 
-RUN cd $BUN_DIR/ && \
+
+WORKDIR $GITHUB_WORKSPACE
+
+RUN cd $GITHUB_WORKSPACE && \
     curl -L https://github.com/Jarred-Sumner/zig/releases/download/dec20/zig-linux-$BUILDARCH.zip > zig-linux-$BUILDARCH.zip; \
     unzip -q zig-linux-$BUILDARCH.zip; \
     rm zig-linux-$BUILDARCH.zip;
@@ -74,6 +77,8 @@ ENV BUN_DEPS_OUT_DIR ${BUN_DEPS_OUT_DIR}
 RUN mkdir -p $BUN_RELEASE_DIR $BUN_DEPS_OUT_DIR ${BUN_DIR} ${BUN_DEPS_OUT_DIR}
 
 FROM base as base_with_zig_and_webkit
+
+WORKDIR $GITHUB_WORKSPACE
 
 RUN cd $GITHUB_WORKSPACE && \
     curl -L https://github.com/Jarred-Sumner/WebKit/releases/download/Bun-v0/bun-webkit-linux-$BUILDARCH.tar.gz > bun-webkit-linux-$BUILDARCH.tar.gz; \
@@ -103,6 +108,8 @@ FROM base as zlib
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/zlib ${BUN_DIR}/src/deps/zlib
 
+WORKDIR $GITHUB_WORKSPACE
+
 RUN cd $BUN_DIR && \
     make zlib
 
@@ -112,6 +119,8 @@ FROM base as libarchive
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/libarchive ${BUN_DIR}/src/deps/libarchive
 
+WORKDIR $GITHUB_WORKSPACE
+
 RUN cd $BUN_DIR && \
     make libarchive
 
@@ -120,6 +129,8 @@ FROM base as boringssl
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/boringssl ${BUN_DIR}/src/deps/boringssl
+
+WORKDIR $GITHUB_WORKSPACE
 
 RUN cd $BUN_DIR && \
     make boringssl
@@ -131,10 +142,14 @@ COPY src/deps/picohttpparser ${BUN_DIR}/src/deps/picohttpparser
 COPY src/deps/*.c ${BUN_DIR}/src/deps
 COPY src/deps/*.h ${BUN_DIR}/src/deps
 
+WORKDIR $GITHUB_WORKSPACE
+
 RUN cd $BUN_DIR && \
     make picohttp
 
 FROM base_with_zig_and_webkit as identifier_cache
+
+WORKDIR $GITHUB_WORKSPACE
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/js_lexer/identifier_data.zig ${BUN_DIR}/src/js_lexer/identifier_data.zig
@@ -145,6 +160,8 @@ RUN cd $BUN_DIR && \
 
 FROM base as node_fallbacks
 
+WORKDIR $GITHUB_WORKSPACE
+
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/node-fallbacks ${BUN_DIR}/src/node-fallbacks
@@ -152,6 +169,8 @@ RUN cd $BUN_DIR && \
     make node-fallbacks
 
 FROM base_with_zig_and_webkit as build_dependencies
+
+WORKDIR $GITHUB_WORKSPACE
 
 ENV BUN_DEPS_OUT_DIR ${BUN_DEPS_OUT_DIR}
 
@@ -180,6 +199,8 @@ RUN make \
     fallback_decoder 
 
 FROM build_dependencies as build_release 
+
+WORKDIR $GITHUB_WORKSPACE
 
 ENV BUN_RELEASE_DIR ${BUN_RELEASE_DIR}
 

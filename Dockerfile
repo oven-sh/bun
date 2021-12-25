@@ -239,6 +239,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 ENV NPM_CLIENT bun
 ENV PATH "${BUN_DIR}/packages/bun-linux-x64:${BUN_DIR}/packages/bun-linux-aarch64:$PATH"
+ENV CI 1
 
 # All this is necessary because Ubuntu decided to use snap for their Chromium packages
 # Which breaks using Chrome in the container on aarch64
@@ -259,16 +260,22 @@ COPY --from=build_release ${BUN_RELEASE_DIR}/bun ${BUN_DIR}/packages/bun-linux-x
 
 FROM test_base as test_create_next
 
+WORKDIR $BUN_DIR
+
 CMD cd $BUN_DIR && \
     make test-create-next
 
 FROM test_base as test_create_react
 
+WORKDIR $BUN_DIR
+
 CMD cd $BUN_DIR && \
     make test-create-react
 
-
 FROM test_base as test_bun_run
+
+WORKDIR $BUN_DIR
+
 
 CMD cd $BUN_DIR && \
     make test-bun-run
@@ -290,14 +297,18 @@ RUN apt-get install -y make fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlw
 
 FROM browser_test_base as test_hmr
 
+WORKDIR $BUN_DIR
+
 CMD cd $BUN_DIR && \
     dbus-daemon --system &> /dev/null && \
-    bun install --cwd ${BUN_DIR}/integration/snippets && \
-    bun install --cwd ${BUN_DIR}/integration/scripts && \
+    bun install --cwd ./integration/snippets && \
+    bun install --cwd ./integration/scripts && \
     bun install && \
     make test-with-hmr
 
 FROM browser_test_base as test_no_hmr
+
+WORKDIR $BUN_DIR
 
 CMD cd $BUN_DIR && \
     dbus-daemon --system &> /dev/null && \
@@ -307,6 +318,8 @@ CMD cd $BUN_DIR && \
     make test-no-hmr
 
 FROM base_with_args as release 
+
+WORKDIR /opt/bun
 
 COPY --from=build_release ${BUN_RELEASE_DIR}/bun /opt/bun/bin/bun
 COPY .devcontainer/limits.conf /etc/security/limits.conf

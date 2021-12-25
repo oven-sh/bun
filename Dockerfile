@@ -1,6 +1,6 @@
 FROM ubuntu:20.04 as bun-base-with-args
 
-FROM base-with-args as bun-base
+FROM bun-base-with-args as bun-base
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -73,7 +73,7 @@ LABEL org.opencontainers.image.title="Bun base image ${BUILDARCH} (glibc)"
 LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
 
 
-FROM base as bun-base-with-zig-and-webkit
+FROM bun-base as bun-base-with-zig-and-webkit
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build

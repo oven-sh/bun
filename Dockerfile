@@ -110,7 +110,7 @@ FROM base as zlib
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/zlib ${BUN_DIR}/src/deps/zlib
 
-WORKDIR $GITHUB_WORKSPACE
+WORKDIR $BUN_DIR
 
 RUN cd $BUN_DIR && \
     make zlib

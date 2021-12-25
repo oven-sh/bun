@@ -170,7 +170,7 @@ COPY src/node-fallbacks ${BUN_DIR}/src/node-fallbacks
 RUN cd $BUN_DIR && \
     make node-fallbacks
 
-FROM base_with_zig_and_webkit as build_dependencies
+FROM base_with_zig_and_webkit as build_release
 
 WORKDIR $GITHUB_WORKSPACE
 
@@ -197,15 +197,6 @@ RUN cd $BUN_DIR && make \
     analytics \
     bun_error \
     fallback_decoder 
-
-FROM build_dependencies as build_release 
-
-WORKDIR $GITHUB_WORKSPACE
-
-ENV BUN_RELEASE_DIR ${BUN_RELEASE_DIR}
-
-COPY --from=node_fallbacks ${BUN_DIR}/src/node-fallbacks ${BUN_DIR}/src/node-fallbacks
-COPY --from=identifier_cache ${BUN_DIR}/src/js_lexer/*.blob ${BUN_DIR}/src/js_lexer/
 
 RUN cd $BUN_DIR && \
     mkdir -p $BUN_RELEASE_DIR; make release \

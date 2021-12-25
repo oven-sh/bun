@@ -15,11 +15,11 @@ jobs:
           path: bun
       - name: Checkout submodules
         run: cd bun && git -c submodule."src/javascript/jsc/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j 8
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v1
-      - name: Set tag var
         id: vars
         run: echo ::set-output name=docker_tag::$(echo ${GITHUB_REF} | cut -d'/' -f3)-${GITHUB_SHA}
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v1
       - name: Build and push
         uses: docker/build-push-action@v2
         with:
@@ -30,5 +30,3 @@ jobs:
           build-args: |
             BUILDARCH=amd64
           target: release
-          cache-from: type=gha
-          cache-to: type=gha,mode=max

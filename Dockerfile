@@ -81,7 +81,7 @@ RUN cd $GITHUB_WORKSPACE && \
 
 RUN cd $GITHUB_WORKSPACE && \
     curl -o bun-webkit-linux-$BUILDARCH.tar.gz -L https://github.com/Jarred-Sumner/WebKit/releases/download/Bun-v0/bun-webkit-linux-$BUILDARCH.tar.gz && \
-    tar -xzf bun-webkit-linux-$BUILDARCH.tar.gz  && \
+    tar -xzf bun-webkit-linux-$BUILDARCH.tar.gz && \
     rm bun-webkit-linux-$BUILDARCH.tar.gz && \
     cat $WEBKIT_OUT_DIR/include/cmakeconfig.h > /dev/null
 

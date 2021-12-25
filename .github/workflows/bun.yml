@@ -25,6 +25,9 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: jarred-sumner/bun:${{steps.vars.outputs.docker_tag}},jarred-sumner/bun:latest
+          build-args: |
+            GITHUB_WORKSPACE=${GITHUB_WORKSPACE}
+            BUILDARCH=amd64
           target: release
           cache-from: type=gha
           cache-to: type=gha,mode=max

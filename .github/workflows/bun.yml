@@ -22,5 +22,5 @@ jobs:
         id: run
         run: |
           cd bun
-          DOCKER_BUILDKIT=1 docker build -t bun:{Psteps.vars.outputs.docker_tag}} -f Dockerfile --tag=release --progress=plain . 
+          DOCKER_BUILDKIT=1 docker build -t bun:{{steps.vars.outputs.docker_tag}} -f Dockerfile --tag=release --progress=plain . 
           DOCKER_BUILDKIT=1 docker push ghcr.io/jarred-sumner/bun:{{steps.vars.outputs.docker_tag}}

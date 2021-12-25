@@ -8,6 +8,13 @@ ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}
 
+ENV GITHUB_WORKSPACE="${GITHUB_WORKSPACE}"
+ENV ZIG_PATH="${ZIG_PATH}"
+ENV WEBKIT_DIR="${WEBKIT_DIR}"
+ENV BUN_RELEASE_DIR="${BUN_RELEASE_DIR}"
+ENV BUN_DEPS_OUT_DIR="${BUN_DEPS_OUT_DIR}"
+ENV BUN_DIR="${BUN_DIR}"
+
 RUN apt-get update && apt-get install --no-install-recommends -y wget gnupg2 curl lsb-release wget software-properties-common
 
 RUN add-apt-repository ppa:longsleep/golang-backports

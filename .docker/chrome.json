@@ -1533,6 +1533,7 @@
     },
     { "name": "io_uring_setup", "action": "SCMP_ACT_ALLOW", "args": null },
     { "name": "io_uring_enter", "action": "SCMP_ACT_ALLOW", "args": null },
-    { "name": "io_uring_register", "action": "SCMP_ACT_ALLOW", "args": null }
+    { "name": "io_uring_register", "action": "SCMP_ACT_ALLOW", "args": null },
+    { "name": "copy_file_range", "action": "SCMP_ACT_ALLOW", "args": null }
   ]
 }

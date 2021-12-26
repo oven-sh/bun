@@ -232,37 +232,7 @@ COPY --from=build_release ${BUN_RELEASE_DIR}/bun /opt/bun/bin/bun
 WORKDIR /opt/bun
 
 
-FROM debian:bullseye-slim as test_base
-# Original creator:
-# LABEL maintainer "Jessie Frazelle <jess@linux.com>"
-
-# Install Chromium
-# Yes, including the Google API Keys sucks but even debian does the same: https://packages.debian.org/stretch/amd64/chromium/filelist
-RUN apt-get update && apt-get install -y \
-    chromium \
-    chromium-l10n \
-    fonts-liberation \
-    fonts-roboto \
-    hicolor-icon-theme \
-    libcanberra-gtk-module \
-    libexif-dev \
-    libgl1-mesa-dri \
-    libgl1-mesa-glx \
-    libpangox-1.0-0 \
-    libv4l-0 \
-    fonts-symbola \
-    bash \
-    make \
-    psmisc \
-    curl \
-    --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /etc/chromium.d/ \
-    && /bin/echo -e 'export GOOGLE_API_KEY="AIzaSyCkfPOPZXDKNn8hhgu3JrA62wIgC93d44k"\nexport GOOGLE_DEFAULT_CLIENT_ID="811574891467.apps.googleusercontent.com"\nexport GOOGLE_DEFAULT_CLIENT_SECRET="kdloedMFGdGla2P1zacGjAQh"' > /etc/chromium.d/googleapikeys  && \
-    curl -fsSL https://deb.nodesource.com/setup_16.x | bash - && \
-    apt-get install -y nodejs
-
-
+FROM bunbunbunbun/bun-test-base as test_base
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build

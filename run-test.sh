@@ -2,10 +2,10 @@
 
 set -euxo pipefail
 
-cd $GITHUB_WORKSPACE/bun
+cd $GITHUB_WORKSPACE
 
 bun install
-bun install --cwd $GITHUB_WORKSPACE/bun/integration/snippets
-bun install --cwd $GITHUB_WORKSPACE/bun/integration/scripts
+bun install --cwd $GITHUB_WORKSPACE/integration/snippets
+bun install --cwd $GITHUB_WORKSPACE/integration/scripts
 
 make $BUN_TEST_NAME

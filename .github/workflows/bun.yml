@@ -62,6 +62,8 @@ jobs:
           target: test_base
           tags: jarred-sumner/bun:test-${{github.sha}}
           load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
       - name: ${{matrix.task}} - Run
         env:
           BUN_TEST_NAME: ${{matrix.task}}

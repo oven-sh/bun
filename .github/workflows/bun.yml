@@ -33,7 +33,9 @@ jobs:
         with:
           context: .
           target: release
-          tags: ["bun:${{github.sha}}", "bun-test:latest"]
+          tags: |
+            bun:${{github.sha}}
+            bun-test:latest
           builder: ${{ steps.buildx.outputs.name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

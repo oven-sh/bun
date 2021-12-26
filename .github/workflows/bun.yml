@@ -38,7 +38,6 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-${{github.sha}}
       - name: Build Release Image
         uses: docker/build-push-action@v2
-        if: steps.cache-builds.outputs.cache-hit != 'true'
         with:
           context: .
           target: release
@@ -47,9 +46,9 @@ jobs:
           cache-to: type=gha,mode=max
           builder: ${{ steps.buildx.outputs.name }}
           load: true
-      - name: Copy bun binary to cache
+      - name: Copy bun binary over to cache
         if: steps.cache-builds.outputs.cache-hit != 'true'
-        run: docker cp jarred-sumner/bun:${{github.sha}}:/build/bun/bun-release/bun bun-binary
+        run: docker container cp jarred-sumner/bun:${{github.sha}}:/opt/bun bun-binary
       - name: ${{matrix.task}} - Build Image
         uses: docker/build-push-action@v2
         with:

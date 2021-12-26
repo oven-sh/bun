@@ -175,7 +175,7 @@ RUN cd $BUN_DIR &&  rm -rf $HOME/.cache zig-cache && make \
 FROM bunbunbunbun/bun-base-with-zig-and-webkit:latest as bun.devcontainer
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
+ARG GITHUB_WORKSPACE=/workspaces
 ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
 # Directory extracts to "bun-webkit"
 ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
@@ -220,7 +220,6 @@ ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 
-
 COPY .devcontainer/limits.conf /etc/security/limits.conf
 
 ENV BUN_INSTALL /opt/bun
@@ -230,6 +229,8 @@ LABEL org.opencontainers.image.title="Bun ${BUILDARCH} (glibc)"
 LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
 COPY --from=build_release ${BUN_RELEASE_DIR}/bun /opt/bun/bin/bun
 WORKDIR /opt/bun
+
+ENTRYPOINT [ "/opt/bun/bin/bun" ]
 
 
 FROM bunbunbunbun/bun-test-base as test_base
@@ -258,7 +259,7 @@ ENV BROWSER_EXECUTABLE /usr/bin/chromium
 COPY ./integration ${BUN_DIR}/integration
 COPY Makefile ${BUN_DIR}/Makefile
 COPY package.json ${BUN_DIR}/package.json
-COPY run-test.sh ${BUN_DIR}/run-test.sh
+COPY .docker/run-test.sh ${BUN_DIR}/run-test.sh
 COPY ./bun.lockb ${BUN_DIR}/bun.lockb   
 
 # # We don't want to worry about architecture differences in this image
@@ -269,6 +270,6 @@ USER root
 RUN chgrp -R chromium ${BUN_DIR} && chmod g+rwx ${BUN_DIR} && chown -R chromium:chromium ${BUN_DIR}
 USER chromium
 
-CMD [ "bash", "run-test.sh" ]
+CMD [ "bash", ".run-test.sh" ]
 
 FROM release

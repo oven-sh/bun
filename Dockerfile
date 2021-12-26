@@ -398,5 +398,6 @@ COPY package.json ${BUN_DIR}/package.json
 # We don't want to worry about architecture differences in this image
 COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-aarch64/bun
 COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-x64/bun
+COPY ./bun.lockb ${BUN_DIR}/bun.lockb                
 
 FROM release

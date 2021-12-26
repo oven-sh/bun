@@ -33,9 +33,7 @@ jobs:
         with:
           context: .
           target: release
-          tags: |
-            bun:${{github.sha}}
-            bun-test:latest
+          tags: bun:${{github.sha}}
           builder: ${{ steps.buildx.outputs.name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -45,7 +43,7 @@ jobs:
         with:
           context: .
           target: test_base
-          tags: jarred-sumner/bun-test:${{github.sha}}
+          tags: bun-test:latest
           load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max

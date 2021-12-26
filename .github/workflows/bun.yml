@@ -29,12 +29,12 @@ jobs:
         with:
           install: true
       - name: Cache Docker layers
-          uses: actions/cache@v2
-          with:
-            path: /tmp/.buildx-cache
-            key: ${{ runner.os }}-${{ runner.arch }}-buildx-${{ github.sha }}
-            restore-keys: |
-              ${{ runner.os }}-${{ runner.arch }}-buildx-
+        uses: actions/cache@v2
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-${{ runner.arch }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-buildx-
       - name: Build release image
         uses: docker/build-push-action@v2
         with:
@@ -78,7 +78,7 @@ jobs:
           target: test_base
           tags: jarred-sumner/bun:test-${{github.sha}}
           load: true
-          cache-from: ["type=local,src=/tmp/.buildx-cache", "type=gha"]
+          cache-from: "type=local,src=/tmp/.buildx-cache"
           cache-to: type=local,dest=/tmp/.buildx-cache-new
       - name: ${{matrix.task}} - Run
         env:

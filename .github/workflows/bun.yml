@@ -88,10 +88,7 @@ jobs:
           BUN_TEST_NAME: test-bun-run
           RUNNER_TEMP: ${RUNNER_TEMP}
           GITHUB_WORKSPACE: $GITHUB_WORKSPACE
-        run: |
-          id=$(cat $RUNNER_TEMP/container-id)
-          docker rm $id
-          rm $RUNNER_TEMP/container-id
+        run: id=$(cat $RUNNER_TEMP/container-id); docker rm $id && rm $RUNNER_TEMP/container-id
 
   release:
     runs-on: self-hosted

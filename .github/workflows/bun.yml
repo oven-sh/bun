@@ -60,15 +60,15 @@ jobs:
         with:
           context: .
           target: test_base
-          tags: jarred-sumner/bun-test_base:${{github.sha}}
+          tags: jarred-sumner/bun:test-${{github.sha}}
           load: true
           cache-from: type=gha
           cache-to: type=gha,mode=min
       - name: ${{matrix.task}} - Run
-        uses: docker://jarred-sumner/bun-test_base:${{github.sha}}
         env:
-          GITHUB_WORKSPACE: ${GITHUB_WORKSPACE}
           BUN_TEST_NAME: ${{matrix.task}}
+          GITHUB_WORKSPACE: $GITHUB_WORKSPACE}
+        run: docker run --env GITHUB_WORKSPACE=$GITHUB_WORKSPACE --env BUN_TEST_NAME=$BUN_TEST_NAME --ulimit memlock=-1:-1 --init --rm jarred-sumner/bun:test-${{github.sha}}
 
   release:
     runs-on: self-hosted

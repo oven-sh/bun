@@ -400,6 +400,6 @@ COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-aarch64/bun
 COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-x64/bun
 COPY ./bun.lockb ${BUN_DIR}/bun.lockb      
 
-ENTRYPOINT [ "bash", "run-test.sh" ]
+ENTRYPOINT [ "/bin/bash", "run-test.sh" ]
 
 FROM release

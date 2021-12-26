@@ -1,8 +1,12 @@
-name: CI workflow for bun-framework-next
+name: bun-framework-next
 on:
   push:
+    paths:
+      - packages/bun-framework-next/**/*
     branches: [main, bun-framework-next-actions]
   pull_request:
+    paths:
+      - packages/bun-framework-next/**/*
     branches: [main]
 
 jobs:

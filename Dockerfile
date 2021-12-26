@@ -394,7 +394,7 @@ ENV BROWSER_EXECUTABLE /usr/bin/chromium
 COPY ./integration ${BUN_DIR}/integration
 COPY Makefile ${BUN_DIR}/Makefile
 COPY package.json ${BUN_DIR}/package.json
-
+COPY run-test.sh ${BUN_DIR}/run-test.sh
 # We don't want to worry about architecture differences in this image
 COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-aarch64/bun
 COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-x64/bun

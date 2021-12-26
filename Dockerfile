@@ -253,7 +253,7 @@ WORKDIR $BUN_DIR
 ENV NPM_CLIENT bun
 ENV PATH "${BUN_DIR}/packages/bun-linux-x64:${BUN_DIR}/packages/bun-linux-aarch64:$PATH"
 ENV CI 1
-ENV BROWSER_EXECUTABLE /usr/bin/chromium-browser
+ENV BROWSER_EXECUTABLE /usr/bin/chromium
 
 COPY ./integration ${BUN_DIR}/integration
 COPY Makefile ${BUN_DIR}/Makefile

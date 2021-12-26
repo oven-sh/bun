@@ -28,6 +28,13 @@ jobs:
         uses: docker/setup-buildx-action@v1
         with:
           install: true
+      - name: Cache Docker layers
+          uses: actions/cache@v2
+          with:
+            path: /tmp/.buildx-cache
+            key: ${{ runner.os }}-${{ runner.arch }}-buildx-${{ github.sha }}
+            restore-keys: |
+              ${{ runner.os }}-${{ runner.arch }}-buildx-
       - name: Build release image
         uses: docker/build-push-action@v2
         with:
@@ -35,7 +42,7 @@ jobs:
           target: release
           tags: jarred-sumner/bun:${{github.sha}}
           cache-from: type=gha
-          cache-to: type=gha,mode=min
+          cache-to: type=gha,mode=min type=local,path=/tmp/.buildx-cache
 
   tests:
     runs-on: self-hosted

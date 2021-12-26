@@ -46,6 +46,7 @@ jobs:
           cache-from: type=gha,mode=max
           cache-to: type=gha,mode=max
           builder: ${{ steps.buildx.outputs.name }}
+          load: true
       - name: Copy bun binary to cache
         if: steps.cache-builds.outputs.cache-hit != 'true'
         run: docker cp jarred-sumner/bun:${{github.sha}}:/build/bun/bun-release/bun bun-binary

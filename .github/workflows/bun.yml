@@ -128,7 +128,7 @@ jobs:
             linux/amd64
           labels: |
             org.opencontainers.image.title=Bun
-            org.opencontainers.image.description=Bun is a fast bundler, transpiler, JavaScript Runtime environment and package manager for web software. This is the official docker image for Bun. The image is an Ubuntu 20.04 image with bun preinstalled into /opt/bun.
+            org.opencontainers.image.description=Bun is a fast bundler, transpiler, JavaScript Runtime environment and package manager for web software. The image is an Ubuntu 20.04 image with bun preinstalled into /opt/bun.
             org.opencontainers.image.vendor=Bun
             org.opencontainers.image.source=https://github.com/Jarred-Sumner/bun
             org.opencontainers.image.url=https://bun.sh

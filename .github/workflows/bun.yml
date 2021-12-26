@@ -2,8 +2,19 @@ name: bun
 on:
   push:
     branches: [main, bun-actions]
+    paths-ignore:
+      - "examples/**"
+      - "bench/**"
+      - "README.*"
+      - "LICENSE"
+      - ".vscode"
+      - ".devcontainer"
   pull_request:
     branches: [main]
+    paths-ignore:
+      - "examples/**"
+      - "bench/**"
+      - README.*
 
 env:
   REGISTRY: ghcr.io

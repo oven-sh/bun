@@ -15,8 +15,17 @@ All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for develo
 
 ## Install
 
+Native: (macOS x64 & arm64, Linux x64, WSL)
+
 ```sh
 curl -fsSL https://bun.sh/install | bash
+```
+
+Docker: (Linux x64)
+
+```sh
+docker pull jarredsumner/bun:edge
+docker run --rm --init --ulimit memlock=-1:-1 jarredsumner/bun:edge
 ```
 
 ## Table of Contents

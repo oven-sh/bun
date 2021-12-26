@@ -398,6 +398,8 @@ COPY run-test.sh ${BUN_DIR}/run-test.sh
 # We don't want to worry about architecture differences in this image
 COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-aarch64/bun
 COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-x64/bun
-COPY ./bun.lockb ${BUN_DIR}/bun.lockb                
+COPY ./bun.lockb ${BUN_DIR}/bun.lockb      
+
+ENTRYPOINT [ "bash", "run-test.sh" ]
 
 FROM release

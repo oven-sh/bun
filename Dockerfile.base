@@ -1,0 +1,112 @@
+FROM ubuntu:20.04 as bun-base-with-args
+
+FROM bun-base-with-args as bun-base
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+
+WORKDIR ${GITHUB_WORKSPACE}
+
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y wget gnupg2 curl lsb-release wget software-properties-common && \
+    add-apt-repository ppa:longsleep/golang-backports && \
+    wget https://apt.llvm.org/llvm.sh --no-check-certificate && \
+    chmod +x llvm.sh && \
+    ./llvm.sh 12 && \
+    apt-get update && \
+    apt-get install --no-install-recommends -y \
+    ca-certificates \
+    curl \
+    gnupg2 \
+    software-properties-common \
+    cmake \
+    build-essential \
+    git \
+    libssl-dev \
+    ruby \
+    liblld-12-dev \
+    libclang-12-dev \
+    nodejs \
+    gcc \
+    g++ \
+    npm \
+    clang-12 \
+    clang-format-12 \
+    libc++-12-dev \
+    libc++abi-12-dev \
+    lld-12 \
+    libicu-dev \
+    wget \
+    unzip \
+    tar \
+    golang-go ninja-build pkg-config automake autoconf libtool curl && \
+    update-alternatives --install /usr/bin/cc cc /usr/bin/clang-12 90 && \
+    update-alternatives --install /usr/bin/cpp cpp /usr/bin/clang++-12 90 && \
+    update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-12 90 && \
+    npm install -g esbuild
+
+ENV CC=clang-12 
+ENV CXX=clang++-12
+
+
+ARG BUILDARCH=amd64
+
+
+WORKDIR $GITHUB_WORKSPACE
+
+ENV WEBKIT_OUT_DIR ${WEBKIT_DIR}
+
+ENV JSC_BASE_DIR $WEBKIT_OUT_DIR
+ENV LIB_ICU_PATH ${GITHUB_WORKSPACE}/icu/source/lib
+ENV BUN_RELEASE_DIR ${BUN_RELEASE_DIR}
+ENV BUN_DEPS_OUT_DIR ${BUN_DEPS_OUT_DIR}
+
+RUN cd / && mkdir -p $BUN_RELEASE_DIR $BUN_DEPS_OUT_DIR ${BUN_DIR} ${BUN_DEPS_OUT_DIR}
+
+LABEL org.opencontainers.image.title="Bun base image ${BUILDARCH} (glibc)"
+LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
+
+
+FROM bun-base as bun-base-with-zig-and-webkit
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG BUILDARCH=amd64
+
+WORKDIR $GITHUB_WORKSPACE
+
+RUN cd $GITHUB_WORKSPACE && \
+    curl -o zig-linux-$BUILDARCH.zip -L https://github.com/Jarred-Sumner/zig/releases/download/dec20/zig-linux-$BUILDARCH.zip && \
+    unzip -q zig-linux-$BUILDARCH.zip && \
+    rm zig-linux-$BUILDARCH.zip;
+
+RUN cd $GITHUB_WORKSPACE && \
+    curl -o bun-webkit-linux-$BUILDARCH.tar.gz -L https://github.com/Jarred-Sumner/WebKit/releases/download/Bun-v0/bun-webkit-linux-$BUILDARCH.tar.gz && \
+    tar -xzf bun-webkit-linux-$BUILDARCH.tar.gz && \
+    rm bun-webkit-linux-$BUILDARCH.tar.gz && \
+    cat $WEBKIT_OUT_DIR/include/cmakeconfig.h > /dev/null
+
+RUN  cd $GITHUB_WORKSPACE && \
+    curl -o icu4c-66_1-src.tgz -L https://github.com/unicode-org/icu/releases/download/release-66-1/icu4c-66_1-src.tgz  && \
+    tar -xzf icu4c-66_1-src.tgz && \
+    rm icu4c-66_1-src.tgz && \
+    cd icu/source && \
+    ./configure --enable-static --disable-shared && \
+    make -j$(nproc)
+
+ENV ZIG "${ZIG_PATH}/zig"
+
+LABEL org.opencontainers.image.title="Bun base image with zig & webkit ${BUILDARCH} (glibc)"
+LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun

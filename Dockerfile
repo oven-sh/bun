@@ -1,117 +1,4 @@
-FROM ubuntu:20.04 as bun-base-with-args
-
-FROM bun-base-with-args as bun-base
-
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
-
-WORKDIR ${GITHUB_WORKSPACE}
-
-RUN apt-get update && \
-    apt-get install --no-install-recommends -y wget gnupg2 curl lsb-release wget software-properties-common && \
-    add-apt-repository ppa:longsleep/golang-backports && \
-    wget https://apt.llvm.org/llvm.sh --no-check-certificate && \
-    chmod +x llvm.sh && \
-    ./llvm.sh 12 && \
-    apt-get update && \
-    apt-get install --no-install-recommends -y \
-    ca-certificates \
-    curl \
-    gnupg2 \
-    software-properties-common \
-    cmake \
-    build-essential \
-    git \
-    libssl-dev \
-    ruby \
-    liblld-12-dev \
-    libclang-12-dev \
-    nodejs \
-    gcc \
-    g++ \
-    npm \
-    clang-12 \
-    clang-format-12 \
-    libc++-12-dev \
-    libc++abi-12-dev \
-    lld-12 \
-    libicu-dev \
-    wget \
-    unzip \
-    tar \
-    golang-go ninja-build pkg-config automake autoconf libtool curl && \
-    update-alternatives --install /usr/bin/cc cc /usr/bin/clang-12 90 && \
-    update-alternatives --install /usr/bin/cpp cpp /usr/bin/clang++-12 90 && \
-    update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-12 90 && \
-    npm install -g esbuild
-
-ENV CC=clang-12 
-ENV CXX=clang++-12
-
-
-ARG BUILDARCH=amd64
-
-
-WORKDIR $GITHUB_WORKSPACE
-
-ENV WEBKIT_OUT_DIR ${WEBKIT_DIR}
-
-ENV JSC_BASE_DIR $WEBKIT_OUT_DIR
-ENV LIB_ICU_PATH ${GITHUB_WORKSPACE}/icu/source/lib
-ENV BUN_RELEASE_DIR ${BUN_RELEASE_DIR}
-ENV BUN_DEPS_OUT_DIR ${BUN_DEPS_OUT_DIR}
-
-RUN cd / && mkdir -p $BUN_RELEASE_DIR $BUN_DEPS_OUT_DIR ${BUN_DIR} ${BUN_DEPS_OUT_DIR}
-
-LABEL org.opencontainers.image.title="Bun base image ${BUILDARCH} (glibc)"
-LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
-
-
-FROM bun-base as bun-base-with-zig-and-webkit
-
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
-ARG BUILDARCH=amd64
-
-WORKDIR $GITHUB_WORKSPACE
-
-RUN cd $GITHUB_WORKSPACE && \
-    curl -o zig-linux-$BUILDARCH.zip -L https://github.com/Jarred-Sumner/zig/releases/download/dec20/zig-linux-$BUILDARCH.zip && \
-    unzip -q zig-linux-$BUILDARCH.zip && \
-    rm zig-linux-$BUILDARCH.zip;
-
-RUN cd $GITHUB_WORKSPACE && \
-    curl -o bun-webkit-linux-$BUILDARCH.tar.gz -L https://github.com/Jarred-Sumner/WebKit/releases/download/Bun-v0/bun-webkit-linux-$BUILDARCH.tar.gz && \
-    tar -xzf bun-webkit-linux-$BUILDARCH.tar.gz && \
-    rm bun-webkit-linux-$BUILDARCH.tar.gz && \
-    cat $WEBKIT_OUT_DIR/include/cmakeconfig.h > /dev/null
-
-RUN  cd $GITHUB_WORKSPACE && \
-    curl -o icu4c-66_1-src.tgz -L https://github.com/unicode-org/icu/releases/download/release-66-1/icu4c-66_1-src.tgz  && \
-    tar -xzf icu4c-66_1-src.tgz && \
-    rm icu4c-66_1-src.tgz && \
-    cd icu/source && \
-    ./configure --enable-static --disable-shared && \
-    make -j$(nproc)
-
-ENV ZIG "${ZIG_PATH}/zig"
-
-LABEL org.opencontainers.image.title="Bun base image with zig & webkit ${BUILDARCH} (glibc)"
-LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
-
-FROM bun-base as mimalloc
+FROM bun-base:latest as mimalloc
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -128,7 +15,7 @@ COPY src/deps/mimalloc ${BUN_DIR}/src/deps/mimalloc
 RUN cd ${BUN_DIR} && \
     make mimalloc
 
-FROM bun-base as zlib
+FROM bun-base:latest as zlib
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -147,7 +34,7 @@ WORKDIR $BUN_DIR
 RUN cd $BUN_DIR && \
     make zlib
 
-FROM bun-base as libarchive
+FROM bun-base:latest as libarchive
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -166,7 +53,7 @@ WORKDIR $BUN_DIR
 RUN cd $BUN_DIR && \
     make libarchive
 
-FROM bun-base as boringssl
+FROM bun-base:latest as boringssl
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -185,7 +72,7 @@ WORKDIR $BUN_DIR
 RUN cd $BUN_DIR && \
     make boringssl
 
-FROM bun-base as picohttp
+FROM bun-base:latest as picohttp
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -206,7 +93,7 @@ WORKDIR $BUN_DIR
 RUN cd $BUN_DIR && \
     make picohttp
 
-FROM bun-base-with-zig-and-webkit as identifier_cache
+FROM bun-base-with-zig-and-webkit:latest as identifier_cache
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -226,7 +113,7 @@ COPY src/js_lexer/identifier_cache.zig ${BUN_DIR}/src/js_lexer/identifier_cache.
 RUN cd $BUN_DIR && \
     make identifier-cache
 
-FROM bun-base-with-zig-and-webkit as node_fallbacks
+FROM bun-base-with-zig-and-webkit:latest as node_fallbacks
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -245,7 +132,7 @@ COPY src/node-fallbacks ${BUN_DIR}/src/node-fallbacks
 RUN cd $BUN_DIR && \
     make node-fallbacks
 
-FROM bun-base-with-zig-and-webkit as build_release
+FROM bun-base-with-zig-and-webkit:latest as build_release
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -286,7 +173,7 @@ RUN cd $BUN_DIR && rm -rf $HOME/.cache zig-cache && \
     mkdir -p $BUN_RELEASE_DIR; make release \
     copy-to-bun-release-dir && rm -rf $HOME/.cache zig-cache
 
-FROM bun-base-with-zig-and-webkit as bun.devcontainer
+FROM bun-base-with-zig-and-webkit:latest as bun.devcontainer
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -323,7 +210,7 @@ RUN mkdir -p /home/ubuntu/.bun /home/ubuntu/.config /workspaces/bun && \
     bash /scripts/zig-env.sh
 COPY .devcontainer/zls.json /home/ubuntu/.config/zls.json
 
-FROM bun-base-with-args as release 
+FROM bun-base:latest as release 
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build

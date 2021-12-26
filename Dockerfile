@@ -13,7 +13,7 @@ COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/mimalloc ${BUN_DIR}/src/deps/mimalloc
 
 RUN cd ${BUN_DIR} && \
-    make mimalloc
+    make mimalloc && rm -rf src/deps/mimalloc Makefile
 
 FROM bunbunbunbun/bun-base:latest as zlib
 
@@ -32,7 +32,7 @@ COPY src/deps/zlib ${BUN_DIR}/src/deps/zlib
 WORKDIR $BUN_DIR
 
 RUN cd $BUN_DIR && \
-    make zlib
+    make zlib && rm -rf src/deps/zlib Makefile
 
 FROM bunbunbunbun/bun-base:latest as libarchive
 
@@ -51,7 +51,7 @@ COPY src/deps/libarchive ${BUN_DIR}/src/deps/libarchive
 WORKDIR $BUN_DIR
 
 RUN cd $BUN_DIR && \
-    make libarchive
+    make libarchive && rm -rf src/deps/libarchive Makefile
 
 FROM bunbunbunbun/bun-base:latest as boringssl
 
@@ -70,7 +70,7 @@ COPY src/deps/boringssl ${BUN_DIR}/src/deps/boringssl
 WORKDIR $BUN_DIR
 
 RUN cd $BUN_DIR && \
-    make boringssl
+    make boringssl && rm -rf src/deps/boringssl Makefile
 
 FROM bunbunbunbun/bun-base:latest as picohttp
 
@@ -111,7 +111,7 @@ COPY src/js_lexer/identifier_data.zig ${BUN_DIR}/src/js_lexer/identifier_data.zi
 COPY src/js_lexer/identifier_cache.zig ${BUN_DIR}/src/js_lexer/identifier_cache.zig
 
 RUN cd $BUN_DIR && \
-    make identifier-cache
+    make identifier-cache && rm -rf zig-cache Makefile
 
 FROM bunbunbunbun/bun-base-with-zig-and-webkit:latest as node_fallbacks
 
@@ -130,7 +130,7 @@ WORKDIR $BUN_DIR
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/node-fallbacks ${BUN_DIR}/src/node-fallbacks
 RUN cd $BUN_DIR && \
-    make node-fallbacks
+    make node-fallbacks && rm -rf src/node-fallbacks/node_modules Makefile
 
 FROM bunbunbunbun/bun-base-with-zig-and-webkit:latest as build_release
 
@@ -167,11 +167,10 @@ RUN cd $BUN_DIR &&  rm -rf $HOME/.cache zig-cache && make \
     api \
     analytics \
     bun_error \
-    fallback_decoder && rm -rf $HOME/.cache zig-cache
-
-RUN cd $BUN_DIR && rm -rf $HOME/.cache zig-cache && \
-    mkdir -p $BUN_RELEASE_DIR; make release \
-    copy-to-bun-release-dir && rm -rf $HOME/.cache zig-cache
+    fallback_decoder && rm -rf $HOME/.cache zig-cache && \
+    mkdir -p $BUN_RELEASE_DIR && \
+    make release copy-to-bun-release-dir && \
+    rm -rf $HOME/.cache zig-cache misctools package.json build-id completions build.zig
 
 FROM bunbunbunbun/bun-base-with-zig-and-webkit:latest as bun.devcontainer
 

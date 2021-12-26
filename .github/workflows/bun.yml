@@ -42,7 +42,7 @@ jobs:
         env:
           CONTAINER_TAG: bun:${{github.sha}}
           BUN_RELEASE_DIR: /opt/bun
-        run: cat $(bash .docker/copy-bun-binary.sh) > ${RUNNER_TEMP}/container-id
+        run: echo "$(bash .docker/copy-bun-binary.sh)" > ${RUNNER_TEMP}/container-id
       - name: Build tests
         uses: docker/build-push-action@v2
         with:

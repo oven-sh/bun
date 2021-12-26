@@ -8,4 +8,4 @@ bun install
 bun install --cwd $GITHUB_WORKSPACE/bun/integration/snippets
 bun install --cwd $GITHUB_WORKSPACE/bun/integration/scripts
 
-make $BUN_TEST_FILE
+make $BUN_TEST_NAME

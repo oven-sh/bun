@@ -11,36 +11,8 @@ env:
   TEST_TAG: bun-test'
 
 jobs:
-  setup:
-    runs-on: self-hosted
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v2
-      - name: Checkout submodules
-        run: git -c submodule."src/javascript/jsc/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j 8
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v1
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v1
-        with:
-          install: true
-      - name: Build release image
-        uses: docker/build-push-action@v2
-        with:
-          context: .
-          target: release
-          tags: ghcr.io/jarred-sumner/bun-staging:${{github.sha}}
-          builder: ${{ steps.buildx.outputs.name }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          push: true
   tests:
     runs-on: self-hosted
-    needs: setup
     strategy:
       matrix:
         task:
@@ -58,12 +30,27 @@ jobs:
         run: git -c submodule."src/javascript/jsc/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j 8
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v1
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v1
+      - name: Cache Builds
+        id: cache-builds
+        uses: actions/cache@v2
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          path: bun-binary
+          key: ${{ runner.os }}-${{ runner.arch }}-${{github.sha}}
+      - name: Build Release Image
+        uses: docker/build-push-action@v2
+        if: steps.cache-builds.outputs.cache-hit != 'true'
+        with:
+          context: .
+          target: release
+          tags: ghcr.io/jarred-sumner/bun:${{github.sha}}
+          cache-from: type=gha,mode=max
+          cache-to: type=gha,mode=max
+          builder: ${{ steps.buildx.outputs.name }}
+      - name: Copy bun binary to cache
+        uses: docker/build-push-action@v2
+        if: steps.cache-builds.outputs.cache-hit != 'true'
+        run: |
+          docker cp ghcr.io/jarred-sumner/bun:${{github.sha}}:/build/bun-release/bun bun-binary
       - name: ${{matrix.task}} - Build Image
         uses: docker/build-push-action@v2
         with:
@@ -71,7 +58,7 @@ jobs:
           target: test_base
           tags: ghcr.io/jarred-sumner/bun-test:${{github.sha}}
           load: true
-          cache-from: type=registry,ref=ghcr.io/jarred-sumner/bun-staging:${{github.sha}}
+          cache-from: type=gha,mode=max
           cache-to: type=gha,mode=max
           builder: ${{ steps.buildx.outputs.name }}
       - name: ${{matrix.task}} - Run
@@ -103,7 +90,9 @@ jobs:
         with:
           context: .
           target: release
-          tags: ghcr.io/jarred-sumner/bun:${{github.sha}}
+          tags: [
+            ghcr.io/jarred-sumner/bun:${{github.sha}},
+            ghcr.io/jarred-sumner/bun:latest
+          ]
           builder: ${{ steps.buildx.outputs.name }}
-          cache-from: type=registry,ref=ghcr.io/jarred-sumner/bun-staging:${{github.sha}}
           push: true

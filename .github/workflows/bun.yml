@@ -65,6 +65,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=min
       - name: ${{matrix.task}} - Run
+        container:
+          image: docker://jarred-sumner/bun:test-${{github.sha}}
         env:
           BUN_TEST_NAME: ${{matrix.task}}
           GITHUB_WORKSPACE: $GITHUB_WORKSPACE

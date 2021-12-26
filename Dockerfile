@@ -374,9 +374,7 @@ COPY ./integration ${BUN_DIR}/integration
 COPY Makefile ${BUN_DIR}/Makefile
 COPY package.json ${BUN_DIR}/package.json
 COPY run-test.sh ${BUN_DIR}/run-test.sh
-COPY ./bun.lockb ${BUN_DIR}/bun.lockb    
-
-
+COPY ./bun.lockb ${BUN_DIR}/bun.lockb   
 
 # # We don't want to worry about architecture differences in this image
 COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-aarch64/bun

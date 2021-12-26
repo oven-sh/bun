@@ -346,7 +346,30 @@ COPY --from=build_release ${BUN_RELEASE_DIR}/bun /opt/bun/bin/bun
 WORKDIR /opt/bun
 
 
-FROM zenika/alpine-chrome:latest as test_base
+FROM debian:bullseye-slim as test_base
+# Original creator:
+# LABEL maintainer "Jessie Frazelle <jess@linux.com>"
+
+# Install Chromium
+# Yes, including the Google API Keys sucks but even debian does the same: https://packages.debian.org/stretch/amd64/chromium/filelist
+RUN apt-get update && apt-get install -y \
+    chromium \
+    chromium-l10n \
+    fonts-liberation \
+    fonts-roboto \
+    hicolor-icon-theme \
+    libcanberra-gtk-module \
+    libexif-dev \
+    libgl1-mesa-dri \
+    libgl1-mesa-glx \
+    libpangox-1.0-0 \
+    libv4l-0 \
+    fonts-symbola \
+    bash \
+    --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /etc/chromium.d/ \
+    && /bin/echo -e 'export GOOGLE_API_KEY="AIzaSyCkfPOPZXDKNn8hhgu3JrA62wIgC93d44k"\nexport GOOGLE_DEFAULT_CLIENT_ID="811574891467.apps.googleusercontent.com"\nexport GOOGLE_DEFAULT_CLIENT_SECRET="kdloedMFGdGla2P1zacGjAQh"' > /etc/chromium.d/googleapikeys
 
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -359,16 +382,13 @@ ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 
 WORKDIR $BUN_DIR
+ARG BUILDARCH=amd64
 
 
 ENV NPM_CLIENT bun
 ENV PATH "${BUN_DIR}/packages/bun-linux-x64:${BUN_DIR}/packages/bun-linux-aarch64:$PATH"
 ENV CI 1
 ENV BROWSER_EXECUTABLE /usr/bin/chromium-browser
-
-USER root
-RUN apk add bash gcompat
-USER chrome
 
 COPY ./integration ${BUN_DIR}/integration
 COPY Makefile ${BUN_DIR}/Makefile
@@ -377,10 +397,9 @@ COPY run-test.sh ${BUN_DIR}/run-test.sh
 COPY ./bun.lockb ${BUN_DIR}/bun.lockb   
 
 # # We don't want to worry about architecture differences in this image
-COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-aarch64/bun
-COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-x64/bun
+COPY --from=release  /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-aarch64/bun
+COPY --from=release  /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-x64/bun
 
-
-ENTRYPOINT [ "/bin/bash", "run-test.sh" ]
+USER root
 
 FROM release

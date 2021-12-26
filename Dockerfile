@@ -366,10 +366,12 @@ RUN apt-get update && apt-get install -y \
     libv4l-0 \
     fonts-symbola \
     bash \
+    make \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /etc/chromium.d/ \
-    && /bin/echo -e 'export GOOGLE_API_KEY="AIzaSyCkfPOPZXDKNn8hhgu3JrA62wIgC93d44k"\nexport GOOGLE_DEFAULT_CLIENT_ID="811574891467.apps.googleusercontent.com"\nexport GOOGLE_DEFAULT_CLIENT_SECRET="kdloedMFGdGla2P1zacGjAQh"' > /etc/chromium.d/googleapikeys
+    && /bin/echo -e 'export GOOGLE_API_KEY="AIzaSyCkfPOPZXDKNn8hhgu3JrA62wIgC93d44k"\nexport GOOGLE_DEFAULT_CLIENT_ID="811574891467.apps.googleusercontent.com"\nexport GOOGLE_DEFAULT_CLIENT_SECRET="kdloedMFGdGla2P1zacGjAQh"' > /etc/chromium.d/googleapikeys && \
+    rm -rf $(which apt-get) $(which apt-cache) $(which dpkg) # Make it harder to install software
 
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -381,9 +383,12 @@ ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 
-WORKDIR $BUN_DIR
 ARG BUILDARCH=amd64
+RUN groupadd -r chromium && useradd   -d  ${BUN_DIR} -M -r -g chromium -G audio,video chromium \
+    && mkdir -p /home/chromium/Downloads && chown -R chromium:chromium /home/chromium
 
+USER chromium
+WORKDIR $BUN_DIR
 
 ENV NPM_CLIENT bun
 ENV PATH "${BUN_DIR}/packages/bun-linux-x64:${BUN_DIR}/packages/bun-linux-aarch64:$PATH"
@@ -401,5 +406,9 @@ COPY --from=release  /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-aarch64/bun
 COPY --from=release  /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-x64/bun
 
 USER root
+RUN chgrp -R chromium ${BUN_DIR} && chmod g+rwx ${BUN_DIR} && chown -R chromium:chromium ${BUN_DIR}
+USER chromium
+
+CMD [ "bash", "run-test.sh" ]
 
 FROM release

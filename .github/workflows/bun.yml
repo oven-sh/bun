@@ -57,45 +57,41 @@ jobs:
         env:
           BUN_TEST_NAME: test-with-hmr
           GITHUB_WORKSPACE: $GITHUB_WORKSPACE
-        run: |
-          id=${cat ${RUNNER_TEMP}/container-id}
-          docker container run --security-opt seccomp=.docker/chrome.json --env GITHUB_WORKSPACE=$GITHUB_WORKSPACE --env BUN_TEST_NAME=$BUN_TEST_NAME --ulimit memlock=-1:-1 --init --rm ${id}
+          RUNNER_TEMP: ${RUNNER_TEMP}
+        run: bash .docker/runner.sh
       - name: Run test-no-hmr
         env:
           BUN_TEST_NAME: test-no-hmr
           GITHUB_WORKSPACE: $GITHUB_WORKSPACE
-        run: |
-          id=${cat ${RUNNER_TEMP}/container-id}
-          docker container run --security-opt seccomp=.docker/chrome.json --env GITHUB_WORKSPACE=$GITHUB_WORKSPACE --env BUN_TEST_NAME=$BUN_TEST_NAME --ulimit memlock=-1:-1 --init --rm ${id}
+          RUNNER_TEMP: ${RUNNER_TEMP}
+        run: bash .docker/runner.sh
      - name: Run test-bun-create-next
         env:
+          RUNNER_TEMP: ${RUNNER_TEMP}
           BUN_TEST_NAME: test-create-next
           GITHUB_WORKSPACE: $GITHUB_WORKSPACE
-        run: |
-          id=${cat ${RUNNER_TEMP}/container-id}
-          docker container run --security-opt seccomp=.docker/chrome.json --env GITHUB_WORKSPACE=$GITHUB_WORKSPACE --env BUN_TEST_NAME=$BUN_TEST_NAME --ulimit memlock=-1:-1 --init --rm ${id}
+        run: bash .docker/runner.sh
      - name: Run test-bun-create-react
-        env:
+       env:
+          RUNNER_TEMP: ${RUNNER_TEMP}
           BUN_TEST_NAME: test-create-react
           GITHUB_WORKSPACE: $GITHUB_WORKSPACE
-        run: |
-          id=${cat ${RUNNER_TEMP}/container-id}
-          docker container run --security-opt seccomp=.docker/chrome.json --env GITHUB_WORKSPACE=$GITHUB_WORKSPACE --env BUN_TEST_NAME=$BUN_TEST_NAME --ulimit memlock=-1:-1 --init --rm ${id}
+        run: bash .docker/runner.sh
      - name: Run test-bun-run
         env:
+          RUNNER_TEMP: ${RUNNER_TEMP}
           BUN_TEST_NAME: test-bun-run
           GITHUB_WORKSPACE: $GITHUB_WORKSPACE
-        run: |
-          id=${cat ${RUNNER_TEMP}/container-id}
-          docker container run --security-opt seccomp=.docker/chrome.json --env GITHUB_WORKSPACE=$GITHUB_WORKSPACE --env BUN_TEST_NAME=$BUN_TEST_NAME --ulimit memlock=-1:-1 --init --rm ${id}
+        run: bash .docker/runner.sh
      - name: Run cleanup
         env:
           BUN_TEST_NAME: test-bun-run
+          RUNNER_TEMP: ${RUNNER_TEMP}
           GITHUB_WORKSPACE: $GITHUB_WORKSPACE
         run: |
-          id=${cat ${RUNNER_TEMP}/container-id}
-          docker rm ${id}
-          rm ${RUNNER_TEMP}/container-id
+          id=$(cat $RUNNER_TEMP/container-id)
+          docker rm $id
+          rm $RUNNER_TEMP/container-id
 
   release:
     runs-on: self-hosted

@@ -33,7 +33,7 @@ jobs:
         with:
           context: .
           target: release
-          tags: jarred-sumner/bun-staging:${{github.sha}}
+          tags: ghcr.io/jarred-sumner/bun-staging:${{github.sha}}
           builder: ${{ steps.buildx.outputs.name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -69,9 +69,9 @@ jobs:
         with:
           context: .
           target: test_base
-          tags: jarred-sumner/bun-test:${{github.sha}}
+          tags: ghcr.io/jarred-sumner/bun-test:${{github.sha}}
           load: true
-          cache-from: type=registry,ref=jarred-sumner/bun-staging:${{github.sha}}
+          cache-from: type=registry,ref=ghcr.io/jarred-sumner/bun-staging:${{github.sha}}
           cache-to: type=gha,mode=max
           builder: ${{ steps.buildx.outputs.name }}
       - name: ${{matrix.task}} - Run
@@ -103,7 +103,7 @@ jobs:
         with:
           context: .
           target: release
-          tags: jarred-sumner/bun:${{github.sha}}
+          tags: ghcr.io/jarred-sumner/bun:${{github.sha}}
           builder: ${{ steps.buildx.outputs.name }}
-          cache-from: type=registry,ref=jarred-sumner/bun-staging:${{github.sha}}
+          cache-from: type=registry,ref=ghcr.io/jarred-sumner/bun-staging:${{github.sha}}
           push: true

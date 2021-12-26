@@ -270,6 +270,6 @@ USER root
 RUN chgrp -R chromium ${BUN_DIR} && chmod g+rwx ${BUN_DIR} && chown -R chromium:chromium ${BUN_DIR}
 USER chromium
 
-CMD [ "bash", ".run-test.sh" ]
+CMD [ "bash", "run-test.sh" ]
 
 FROM release

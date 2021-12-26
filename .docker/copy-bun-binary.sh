@@ -2,6 +2,7 @@
 
 set -euxo pipefail
 
-id=$(docker create --name=bun-binary $CONTAINER_TAG)
-docker container cp bun-binary:$BUN_RELEASE_DIR bun-binary
-docker rm bun-binary
+name=$(openssl rand -hex 12)
+id=$(docker create --name=bun-binary-$name $CONTAINER_TAG)
+docker container cp bun-binary-$name:$BUN_RELEASE_DIR bun-binary
+docker rm bun-binary-$name

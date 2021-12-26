@@ -346,7 +346,7 @@ COPY --from=build_release ${BUN_RELEASE_DIR}/bun /opt/bun/bin/bun
 WORKDIR /opt/bun
 
 
-FROM bun-base-with-args as test_base
+FROM zenika/alpine-chrome:latest as test_base
 
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -364,41 +364,22 @@ WORKDIR $BUN_DIR
 ENV NPM_CLIENT bun
 ENV PATH "${BUN_DIR}/packages/bun-linux-x64:${BUN_DIR}/packages/bun-linux-aarch64:$PATH"
 ENV CI 1
-
-# All this is necessary because Ubuntu decided to use snap for their Chromium packages
-# Which breaks using Chrome in the container on aarch64
-
-RUN apt-get update
-
-
-RUN apt-get clean && apt-get update && \
-    apt-get install -y wget gnupg2 curl make git unzip nodejs npm psmisc && \
-    apt-key adv --keyserver keyserver.ubuntu.com --recv-keys DCC9EFBF77E11517 && \
-    apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 648ACFD622F3D138 && \
-    apt-key adv --keyserver keyserver.ubuntu.com --recv-keys AA8E81B4331F7F50 && \
-    apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 112695A0E562B32A 
-
-
-COPY .docker/chromium.pref /etc/apt/preferences.d/chromium.pref
-COPY .docker/debian.list /etc/apt/sources.list.d/debian.list
-
-RUN apt-get update && \
-    apt-get install -y chromium make fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-freefont-ttf libxss1 xvfb ca-certificates fonts-liberation libappindicator3-1 libasound2 libatk-bridge2.0-0 libatk1.0-0 libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 libgbm1 libgcc1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 lsb-release wget xdg-utils --no-install-recommends
-
-RUN cd $BUN_DIR && \
-    mkdir -p /var/run/dbus && \
-    ln -s /usr/bin/chromium /usr/bin/chromium-browser
-
-ENV BROWSER_EXECUTABLE /usr/bin/chromium
+ENV BROWSER_EXECUTABLE /usr/bin/chromium-browser
 
 COPY ./integration ${BUN_DIR}/integration
 COPY Makefile ${BUN_DIR}/Makefile
 COPY package.json ${BUN_DIR}/package.json
 COPY run-test.sh ${BUN_DIR}/run-test.sh
-# We don't want to worry about architecture differences in this image
+COPY ./bun.lockb ${BUN_DIR}/bun.lockb    
+
+USER root
+RUN apk add bash gcompat
+USER chrome
+
+# # We don't want to worry about architecture differences in this image
 COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-aarch64/bun
 COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-x64/bun
-COPY ./bun.lockb ${BUN_DIR}/bun.lockb      
+
 
 ENTRYPOINT [ "/bin/bash", "run-test.sh" ]
 

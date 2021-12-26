@@ -26,6 +26,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v1
+          install: true
       - name: Build release image
         uses: docker/build-push-action@v2
         with:
@@ -55,6 +56,13 @@ jobs:
         run: git -c submodule."src/javascript/jsc/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j 8
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v1
+      - name: Cache Docker layers
+        uses: actions/cache@v2
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-${{ runner.arch }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-buildx-
       - name: ${{matrix.task}} - Build Image
         uses: docker/build-push-action@v2
         with:
@@ -62,14 +70,22 @@ jobs:
           target: test_base
           tags: jarred-sumner/bun:test-${{github.sha}}
           load: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=min
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new
       - name: ${{matrix.task}} - Run
         env:
           BUN_TEST_NAME: ${{matrix.task}}
           GITHUB_WORKSPACE: $GITHUB_WORKSPACE
         run: docker container run --security-opt seccomp=.docker/chrome.json --env GITHUB_WORKSPACE=$GITHUB_WORKSPACE --env BUN_TEST_NAME=$BUN_TEST_NAME --ulimit memlock=-1:-1 --init --rm jarred-sumner/bun:test-${{github.sha}}
-
+        # This ugly bit is necessary if you don't want your cache to grow forever
+        # till it hits GitHub's limit of 5GB.
+        # Temp fix
+        # https://github.com/docker/build-push-action/issues/252
+        # https://github.com/moby/buildkit/issues/1896
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
   release:
     runs-on: self-hosted
     if: ${{ github.ref == 'refs/heads/main' }}

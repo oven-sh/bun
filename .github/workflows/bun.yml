@@ -33,16 +33,11 @@ jobs:
         with:
           context: .
           target: release
-          tags: bun:${{github.sha}}
+          tags: ["bun:${{github.sha}}", "bun-test:latest"]
           builder: ${{ steps.buildx.outputs.name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           load: true
-      - name: Copy bun binary over to cache
-        env:
-          CONTAINER_TAG: bun:${{github.sha}}
-          BUN_RELEASE_DIR: /opt/bun
-        run: echo "$(bash .docker/copy-bun-binary.sh)" > ${RUNNER_TEMP}/container-id
       - name: Build tests
         uses: docker/build-push-action@v2
         with:
@@ -83,12 +78,6 @@ jobs:
           BUN_TEST_NAME: test-bun-run
           GITHUB_WORKSPACE: $GITHUB_WORKSPACE
         run: bash .docker/runner.sh
-      - name: Run cleanup
-        env:
-          BUN_TEST_NAME: test-bun-run
-          RUNNER_TEMP: ${RUNNER_TEMP}
-          GITHUB_WORKSPACE: $GITHUB_WORKSPACE
-        run: id=$(cat $RUNNER_TEMP/container-id); docker rm $id && \rm $RUNNER_TEMP/container-id
 
   release:
     runs-on: self-hosted

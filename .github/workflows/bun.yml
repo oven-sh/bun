@@ -65,30 +65,30 @@ jobs:
           GITHUB_WORKSPACE: $GITHUB_WORKSPACE
           RUNNER_TEMP: ${RUNNER_TEMP}
         run: bash .docker/runner.sh
-     - name: Run test-bun-create-next
+      - name: Run test-bun-create-next
         env:
           RUNNER_TEMP: ${RUNNER_TEMP}
           BUN_TEST_NAME: test-create-next
           GITHUB_WORKSPACE: $GITHUB_WORKSPACE
         run: bash .docker/runner.sh
-     - name: Run test-bun-create-react
-       env:
+      - name: Run test-bun-create-react
+        env:
           RUNNER_TEMP: ${RUNNER_TEMP}
           BUN_TEST_NAME: test-create-react
           GITHUB_WORKSPACE: $GITHUB_WORKSPACE
         run: bash .docker/runner.sh
-     - name: Run test-bun-run
+      - name: Run test-bun-run
         env:
           RUNNER_TEMP: ${RUNNER_TEMP}
           BUN_TEST_NAME: test-bun-run
           GITHUB_WORKSPACE: $GITHUB_WORKSPACE
         run: bash .docker/runner.sh
-     - name: Run cleanup
+      - name: Run cleanup
         env:
           BUN_TEST_NAME: test-bun-run
           RUNNER_TEMP: ${RUNNER_TEMP}
           GITHUB_WORKSPACE: $GITHUB_WORKSPACE
-        run: id=$(cat $RUNNER_TEMP/container-id); docker rm $id && rm $RUNNER_TEMP/container-id
+        run: id=$(cat $RUNNER_TEMP/container-id); docker rm $id && \rm $RUNNER_TEMP/container-id
 
   release:
     runs-on: self-hosted

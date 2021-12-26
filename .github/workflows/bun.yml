@@ -51,8 +51,6 @@ jobs:
           context: .
           target: release
           tags: bun:${{github.sha}}
-          cache-from: type=gha,mode=max
-          cache-to: type=gha,mode=max
           builder: ${{ steps.buildx.outputs.name }}
           load: true
       - name: Copy bun binary over to cache

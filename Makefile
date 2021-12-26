@@ -14,12 +14,15 @@ MIN_MACOS_VERSION = 10.14
 MARCH_NATIVE =
 
 ARCH_NAME :=
+DOCKER_BUILDARCH =
 ifeq ($(ARCH_NAME_RAW),arm64)
    ARCH_NAME = aarch64
+   DOCKER_BUILDARCH = arm64
    BREW_PREFIX_PATH = /opt/homebrew
    MIN_MACOS_VERSION = 11.0
 else
    ARCH_NAME = x64
+   DOCKER_BUILDARCH = amd64
    BREW_PREFIX_PATH = /usr/local
    MARCH_NATIVE = -march=native
 endif
@@ -284,6 +287,23 @@ zlib:
 	cd $(BUN_DEPS_DIR)/zlib; cmake $(CMAKE_FLAGS) .; make CFLAGS=$(CFLAGS);
 	cp $(BUN_DEPS_DIR)/zlib/libz.a $(BUN_DEPS_OUT_DIR)/libz.a
 
+docker-login:
+	docker login ghcr.io --username jarred@jarredsumner.com
+
+docker-push-base:
+	BUILDKIT=1 docker build -f Dockerfile.base --build-arg GITHUB_WORKSPACE=/build --platform=linux/$(DOCKER_BUILDARCH) --tag bun-base --target base .
+	BUILDKIT=1 docker build -f Dockerfile.base --build-arg GITHUB_WORKSPACE=/build --platform=linux/$(DOCKER_BUILDARCH) --tag bun-base-with-zig-and-webkit --target base-with-zig-and-webkit .
+	BUILDKIT=1 docker build -f Dockerfile.base --build-arg GITHUB_WORKSPACE=/build --platform=linux/$(DOCKER_BUILDARCH) --tag bun-base-with-args --target base-with-args .
+
+	docker tag bun-base ghcr.io/jarred-sumner/bun-base:latest
+	docker push ghcr.io/jarred-sumner/bun-base:latest
+
+	docker tag bun-base-with-zig-and-webkit ghcr.io/jarred-sumner/bun-base-with-zig-and-webkit:latest
+	docker push ghcr.io/jarred-sumner/bun-base-with-zig-and-webkit:latest
+
+	docker tag bun-base-with-args ghcr.io/jarred-sumner/bun-base-with-args:latest
+	docker push ghcr.io/jarred-sumner/bun-base-with-args:latest
+
 require:
 	@echo "Checking if the required utilities are available..."
 	@cmake --version >/dev/null 2>&1 || (echo -e "ERROR: cmake is required."; exit 1)
@@ -327,7 +347,7 @@ api:
 	$(PRETTIER) --write src/api/schema.d.ts
 
 node-fallbacks: 
-	@cd src/node-fallbacks; $(NPM_CLIENT) install; $(NPM_CLIENT) --silent build
+	@cd src/node-fallbacks; $(NPM_CLIENT) install; $(NPM_CLIENT) run --silent build
 
 fallback_decoder:
 	@esbuild --target=esnext  --bundle src/fallback.ts --format=iife --platform=browser --minify > src/fallback.out.js
@@ -339,7 +359,7 @@ runtime_js_dev:
 	@NODE_ENV=development esbuild --define:process.env.NODE_ENV="development" --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --external:/bun:* > src/runtime.out.js; cat src/runtime.footer.js >> src/runtime.out.js
 
 bun_error:
-	@cd packages/bun-error; $(NPM_CLIENT) install; $(NPM_CLIENT) --silent build
+	@cd packages/bun-error; $(NPM_CLIENT) install; $(NPM_CLIENT) run --silent build
 
 generate-install-script:
 	@rm -f $(PACKAGES_REALPATH)/bun/install.js 	

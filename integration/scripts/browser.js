@@ -75,6 +75,7 @@ function writeSnapshot(name, code) {
 
 const baseOptions = {
   dumpio: !!process.env.CI_DEBUG,
+
   args: [
     "--disable-gpu",
     "--disable-dev-shm-usage",
@@ -85,6 +86,7 @@ const baseOptions = {
     "--use-fake-device-for-media-stream",
     "--disable-sync",
   ],
+  executablePath: process.env.BROWSER_EXECUTABLE,
   headless: true,
 };
 

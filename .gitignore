@@ -81,3 +81,5 @@ src/tests.zig
 src/deps/s2n-tls
 .npm
 .npm.gz
+
+bun-binary

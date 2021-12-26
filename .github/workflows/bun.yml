@@ -43,7 +43,7 @@ jobs:
           tags: jarred-sumner/bun:${{github.sha}}
           cache-from: type=gha
           cache-to: type=gha,mode=min type=local,path=/tmp/.buildx-cache
-
+          builder: ${{ steps.buildx.outputs.name }}
   tests:
     runs-on: self-hosted
     needs: setup
@@ -80,6 +80,7 @@ jobs:
           load: true
           cache-from: "type=local,src=/tmp/.buildx-cache"
           cache-to: type=local,dest=/tmp/.buildx-cache-new
+          builder: ${{ steps.buildx.outputs.name }}
       - name: ${{matrix.task}} - Run
         env:
           BUN_TEST_NAME: ${{matrix.task}}

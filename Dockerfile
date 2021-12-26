@@ -367,6 +367,7 @@ RUN apt-get update && apt-get install -y \
     fonts-symbola \
     bash \
     make \
+    psmisc \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /etc/chromium.d/ \

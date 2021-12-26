@@ -48,7 +48,7 @@ jobs:
           builder: ${{ steps.buildx.outputs.name }}
       - name: Copy bun binary to cache
         if: steps.cache-builds.outputs.cache-hit != 'true'
-        run: docker cp ghcr.io/jarred-sumner/bun:${{github.sha}}:/build/bun-release/bun bun-binary
+        run: docker cp ghcr.io/jarred-sumner/bun:${{github.sha}}:/build/bun/bun-release/bun bun-binary
       - name: ${{matrix.task}} - Build Image
         uses: docker/build-push-action@v2
         with:

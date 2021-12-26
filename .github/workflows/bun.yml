@@ -71,7 +71,7 @@ jobs:
           target: test_base
           tags: jarred-sumner/bun:test-${{github.sha}}
           load: true
-          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-from: type=local,src=/tmp/.buildx-cache type=gha
           cache-to: type=local,dest=/tmp/.buildx-cache-new
       - name: ${{matrix.task}} - Run
         env:

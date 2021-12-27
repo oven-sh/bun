@@ -338,6 +338,27 @@ pub fn build(b: *std.build.Builder) !void {
         try configureObjectStep(headers_obj, target, obj.main_pkg_path.?);
     }
 
+    {
+        const headers_step = b.step("test", "Build test");
+
+        var test_file_ = b.option([]const u8, "test-file", "Input file for test");
+        var test_bin_ = b.option([]const u8, "test-bin", "Emit bin to");
+        var test_filter = b.option([]const u8, "test-filter", "Filter for test");
+
+        if (test_file_) |test_file| {
+            var headers_obj: *std.build.LibExeObjStep = b.addTest(test_file);
+            headers_obj.setFilter(test_filter);
+            if (test_bin_) |test_bin| {
+                headers_obj.name = std.fs.path.basename(test_bin);
+                if (std.fs.path.dirname(test_bin)) |dir| headers_obj.setOutputDir(dir);
+            }
+
+            try configureObjectStep(headers_obj, target, obj.main_pkg_path.?);
+            try linkObjectFiles(b, headers_obj, target);
+            headers_step.dependOn(&headers_obj.step);
+        }
+    }
+
     var typings_cmd: *std.build.RunStep = typings_exe.run();
     typings_cmd.cwd = cwd;
     typings_cmd.addArg(cwd);
@@ -354,6 +375,61 @@ pub fn build(b: *std.build.Builder) !void {
 }
 
 pub var original_make_fn: ?fn (step: *std.build.Step) anyerror!void = null;
+
+// Due to limitations in std.build.Builder
+// we cannot use this with debugging
+// so I am leaving this here for now, with the eventual intent to switch to std.build.Builder
+// but it is dead code
+pub fn linkObjectFiles(b: *std.build.Builder, obj: *std.build.LibExeObjStep, target: anytype) !void {
+    var dirs_to_search = std.BoundedArray([]const u8, 32).init(0) catch unreachable;
+    const arm_brew_prefix: []const u8 = "/opt/homebrew";
+    const x86_brew_prefix: []const u8 = "/usr/local";
+    try dirs_to_search.append(b.env_map.get("BUN_DEPS_DIR") orelse @as([]const u8, b.pathFromRoot("src/deps")));
+    if (target.getOsTag() == .macos) {
+        if (target.getCpuArch().isAARCH64()) {
+            try dirs_to_search.append(comptime arm_brew_prefix ++ "/opt/icu4c/lib/");
+        } else {
+            try dirs_to_search.append(comptime x86_brew_prefix ++ "/opt/icu4c/lib/");
+        }
+    }
+
+    if (b.env_map.get("JSC_LIB")) |jsc| {
+        try dirs_to_search.append(jsc);
+    }
+
+    var added = std.AutoHashMap(u64, void).init(b.allocator);
+
+    const files_we_care_about = std.ComptimeStringMap([]const u8, .{
+        .{ "libmimalloc.o", "libmimalloc.o" },
+        .{ "libz.a", "libz.a" },
+        .{ "libarchive.a", "libarchive.a" },
+        .{ "libssl.a", "libssl.a" },
+        .{ "picohttpparser.o", "picohttpparser.o" },
+        .{ "libcrypto.boring.a", "libcrypto.boring.a" },
+        .{ "libicuuc.a", "libicuuc.a" },
+        .{ "libicudata.a", "libicudata.a" },
+        .{ "libicui18n.a", "libicui18n.a" },
+        .{ "libJavaScriptCore.a", "libJavaScriptCore.a" },
+        .{ "libWTF.a", "libWTF.a" },
+        .{ "libbmalloc.a", "libbmalloc.a" },
+    });
+
+    for (dirs_to_search.slice()) |deps_path| {
+        var deps_dir = std.fs.cwd().openDir(deps_path, .{ .iterate = true }) catch |err| @panic("Failed to open dependencies directory");
+        var iterator = deps_dir.iterate();
+
+        while (iterator.next() catch null) |entr| {
+            const entry: std.fs.Dir.Entry = entr;
+            if (files_we_care_about.get(entry.name)) |obj_name| {
+                var has_added = try added.getOrPut(std.hash.Wyhash.hash(0, obj_name));
+                if (!has_added.found_existing) {
+                    var paths = [_][]const u8{ deps_path, obj_name };
+                    obj.addObjectFile(try std.fs.path.join(b.allocator, &paths));
+                }
+            }
+        }
+    }
+}
 
 pub fn configureObjectStep(obj: *std.build.LibExeObjStep, target: anytype, main_pkg_path: []const u8) !void {
     obj.setMainPkgPath(main_pkg_path);

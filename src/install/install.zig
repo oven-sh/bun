@@ -5502,6 +5502,91 @@ pub const PackageManager = struct {
         resolution_string_buf: []const u8 = "",
         missing_version: bool = false,
         e_string: ?*JSAst.E.String = null,
+
+        pub const Array = std.BoundedArray(UpdateRequest, 64);
+
+        pub fn parse(
+            allocator: *std.mem.Allocator,
+            log: *logger.Log,
+            positionals: []const string,
+            update_requests: *Array,
+            op: Lockfile.Package.Diff.Op,
+        ) []UpdateRequest {
+            // first one is always either:
+            // add
+            // remove
+            for (positionals) |positional| {
+                var request = UpdateRequest{
+                    .name = positional,
+                };
+                var unscoped_name = positional;
+                request.name = unscoped_name;
+
+                if (unscoped_name.len > 0 and unscoped_name[0] == '@') {
+                    unscoped_name = unscoped_name[1..];
+                }
+                if (std.mem.indexOfScalar(u8, unscoped_name, '@')) |i| {
+                    request.name = unscoped_name[0..i];
+
+                    if (unscoped_name.ptr != positional.ptr) {
+                        request.name = request.name[0 .. i + 1];
+                    }
+
+                    if (positional.len > i + 1) request.version_buf = positional[i + 1 ..];
+                }
+
+                if (strings.hasPrefix("http://", request.name) or
+                    strings.hasPrefix("https://", request.name))
+                {
+                    if (Output.isEmojiEnabled()) {
+                        Output.prettyErrorln("<r>😢 <red>error<r><d>:<r> bun {s} http://url is not implemented yet.", .{
+                            @tagName(op),
+                        });
+                    } else {
+                        Output.prettyErrorln("<r><red>error<r><d>:<r> bun {s} http://url is not implemented yet.", .{
+                            @tagName(op),
+                        });
+                    }
+                    Output.flush();
+
+                    std.os.exit(1);
+                }
+
+                request.name = std.mem.trim(u8, request.name, "\n\r\t");
+                if (request.name.len == 0) continue;
+
+                request.version_buf = std.mem.trim(u8, request.version_buf, "\n\r\t");
+
+                // https://github.com/npm/npm-package-arg/blob/fbaf2fd0b72a0f38e7c24260fd4504f4724c9466/npa.js#L330
+                if (strings.hasPrefix("https://", request.version_buf) or
+                    strings.hasPrefix("http://", request.version_buf))
+                {
+                    if (Output.isEmojiEnabled()) {
+                        Output.prettyErrorln("<r>😢 <red>error<r><d>:<r> bun {s} http://url is not implemented yet.", .{
+                            @tagName(op),
+                        });
+                    } else {
+                        Output.prettyErrorln("<r><red>error<r><d>:<r> bun {s} http://url is not implemented yet.", .{
+                            @tagName(op),
+                        });
+                    }
+                    Output.flush();
+
+                    std.os.exit(1);
+                }
+
+                if (request.version_buf.len == 0) {
+                    request.missing_version = true;
+                } else {
+                    const sliced = SlicedString.init(request.version_buf, request.version_buf);
+                    request.version = Dependency.parse(allocator, request.version_buf, &sliced, log) orelse Dependency.Version{};
+                }
+
+                update_requests.append(request) catch break;
+            }
+
+            return update_requests.slice();
+        }
     };
 
     fn updatePackageJSONAndInstall(
@@ -5560,8 +5645,7 @@ pub const PackageManager = struct {
         comptime op: Lockfile.Package.Diff.Op,
         comptime log_level: Options.LogLevel,
     ) !void {
-        var update_requests = try std.BoundedArray(UpdateRequest, 64).init(0);
-        var need_to_get_versions_from_npm = false;
+        var update_requests = try UpdateRequest.Array.init(0);
 
         if (manager.options.positionals.len == 1) {
             var examples_to_print: [3]string = undefined;
@@ -5629,79 +5713,7 @@ pub const PackageManager = struct {
             }
         }
 
-        // first one is always either:
-        // add
-        // remove
-        for (manager.options.positionals[1..]) |positional| {
-            var request = UpdateRequest{
-                .name = positional,
-            };
-            var unscoped_name = positional;
-            if (unscoped_name.len > 0 and unscoped_name[0] == '@') {
-                request.name = unscoped_name[1..];
-            }
-            if (std.mem.indexOfScalar(u8, unscoped_name, '@')) |i| {
-                request.name = unscoped_name[0..i];
-
-                if (unscoped_name.ptr != positional.ptr) {
-                    request.name = request.name[0 .. i + 1];
-                }
-
-                if (positional.len > i + 1) request.version_buf = positional[i + 1 ..];
-            }
-
-            if (strings.hasPrefix("http://", request.name) or
-                strings.hasPrefix("https://", request.name))
-            {
-                if (Output.isEmojiEnabled()) {
-                    Output.prettyErrorln("<r>😢 <red>error<r><d>:<r> bun {s} http://url is not implemented yet.", .{
-                        @tagName(op),
-                    });
-                } else {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> bun {s} http://url is not implemented yet.", .{
-                        @tagName(op),
-                    });
-                }
-                Output.flush();
-
-                std.os.exit(1);
-            }
-
-            request.name = std.mem.trim(u8, request.name, "\n\r\t");
-            if (request.name.len == 0) continue;
-
-            request.version_buf = std.mem.trim(u8, request.version_buf, "\n\r\t");
-
-            // https://github.com/npm/npm-package-arg/blob/fbaf2fd0b72a0f38e7c24260fd4504f4724c9466/npa.js#L330
-            if (strings.hasPrefix("https://", request.version_buf) or
-                strings.hasPrefix("http://", request.version_buf))
-            {
-                if (Output.isEmojiEnabled()) {
-                    Output.prettyErrorln("<r>😢 <red>error<r><d>:<r> bun {s} http://url is not implemented yet.", .{
-                        @tagName(op),
-                    });
-                } else {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> bun {s} http://url is not implemented yet.", .{
-                        @tagName(op),
-                    });
-                }
-                Output.flush();
-
-                std.os.exit(1);
-            }
-
-            if (request.version_buf.len == 0) {
-                need_to_get_versions_from_npm = true;
-                request.missing_version = true;
-            } else {
-                const sliced = SlicedString.init(request.version_buf, request.version_buf);
-                request.version = Dependency.parse(ctx.allocator, request.version_buf, &sliced, ctx.log) orelse Dependency.Version{};
-            }
-
-            update_requests.append(request) catch break;
-        }
-
-        var updates: []UpdateRequest = update_requests.slice();
+        var updates = UpdateRequest.parse(ctx.allocator, ctx.log, manager.options.positionals[1..], &update_requests, op);
 
         if (ctx.log.errors > 0) {
             if (comptime log_level != .silent) {
@@ -6841,3 +6853,29 @@ pub const PackageManager = struct {
 };
 
 const Package = Lockfile.Package;
+
+test "UpdateRequests.parse" {
+    var log = logger.Log.init(default_allocator);
+    var array = PackageManager.UpdateRequest.Array.init(0) catch unreachable;
+
+    const updates: []const []const u8 = &.{
+        "@bacon/name",
+        "foo",
+        "bar",
+        "baz",
+        "boo@1.0.0",
+        "bing@latest",
+    };
+    var reqs = PackageManager.UpdateRequest.parse(default_allocator, &log, updates, &array, .add);
+
+    try std.testing.expectEqualStrings(reqs[0].name, "@bacon/name");
+    try std.testing.expectEqualStrings(reqs[1].name, "foo");
+    try std.testing.expectEqualStrings(reqs[2].name, "bar");
+    try std.testing.expectEqualStrings(reqs[3].name, "baz");
+    try std.testing.expectEqualStrings(reqs[4].name, "boo");
+    try std.testing.expectEqual(reqs[4].version.tag, Dependency.Version.Tag.npm);
+    try std.testing.expectEqualStrings(reqs[4].version.literal.slice("boo@1.0.0"), "1.0.0");
+    try std.testing.expectEqual(reqs[5].version.tag, Dependency.Version.Tag.dist_tag);
+    try std.testing.expectEqualStrings(reqs[5].version.literal.slice("bing@1.0.0"), "latest");
+    try std.testing.expectEqual(updates.len, 6);
+}

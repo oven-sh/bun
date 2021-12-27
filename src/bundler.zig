@@ -149,6 +149,27 @@ pub const Bundler = struct {
         this.resolver.allocator = allocator;
     }
 
+    pub inline fn resolveEntryPoint(bundler: *ThisBundler, entry_point: string) !_resolver.Result {
+        return bundler.resolver.resolve(bundler.fs.top_level_dir, entry_point, .entry_point) catch |err| {
+            const has_dot_slash_form = !strings.hasPrefix(entry_point, "./") and brk: {
+                _ = bundler.resolver.resolve(bundler.fs.top_level_dir, try strings.append(bundler.allocator, "./", entry_point), .entry_point) catch break :brk false;
+                break :brk true;
+            };
+
+            if (has_dot_slash_form) {
+                bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} resolving \"{s}\". Did you mean: \"./{s}\"", .{
+                    @errorName(err),
+                    entry_point,
+                    entry_point,
+                }) catch unreachable;
+            } else {
+                bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} resolving \"{s}\" (entry point)", .{ @errorName(err), entry_point }) catch unreachable;
+            }
+
+            return err;
+        };
+    }
+
     // to_bundle:
 
     // thread_pool: *ThreadPool,
@@ -891,11 +912,7 @@ pub const Bundler = struct {
 
                 const entry_points = try router.getEntryPoints();
                 for (entry_points) |entry_point| {
-                    const source_dir = bundler.fs.top_level_dir;
-                    const resolved = bundler.resolver.resolve(source_dir, entry_point, .entry_point) catch |err| {
-                        bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} resolving \"{s}\" (entry point)", .{ @errorName(err), entry_point }) catch unreachable;
-                        continue;
-                    };
+                    const resolved = bundler.resolveEntryPoint(entry_point) catch continue;
                     try this.enqueueItem(resolved);
                 }
                 this.bundler.resetStore();
@@ -906,11 +923,7 @@ pub const Bundler = struct {
                 defer this.bundler.resetStore();
 
                 const entry_point_path = bundler.normalizeEntryPointPath(entry_point);
-                const source_dir = bundler.fs.top_level_dir;
-                const resolved = bundler.resolver.resolve(source_dir, entry_point, .entry_point) catch |err| {
-                    bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} resolving \"{s}\" (entry point)", .{ @errorName(err), entry_point }) catch unreachable;
-                    continue;
-                };
+                const resolved = bundler.resolveEntryPoint(entry_point_path) catch continue;
                 try this.enqueueItem(resolved);
             }
 

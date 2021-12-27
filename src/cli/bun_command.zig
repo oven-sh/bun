@@ -4,7 +4,7 @@ usingnamespace @import("../global.zig");
 
 const lex = @import("../js_lexer.zig");
 const logger = @import("../logger.zig");
-const alloc = @import("../alloc.zig");
+
 const options = @import("../options.zig");
 const js_parser = @import("../js_parser.zig");
 const json_parser = @import("../json_parser.zig");

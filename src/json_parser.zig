@@ -4,7 +4,6 @@ const js_lexer = @import("js_lexer.zig");
 const importRecord = @import("import_record.zig");
 const js_ast = @import("js_ast.zig");
 const options = @import("options.zig");
-const alloc = @import("alloc.zig");
 
 const fs = @import("fs.zig");
 usingnamespace @import("global.zig");
@@ -668,7 +667,6 @@ fn expectPrintedJSON(_contents: string, expected: string) !void {
 }
 
 test "ParseJSON" {
-    try alloc.setup(default_allocator);
     try expectPrintedJSON("true", "true");
     try expectPrintedJSON("false", "false");
     try expectPrintedJSON("1", "1");

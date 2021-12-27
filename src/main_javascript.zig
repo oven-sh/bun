@@ -1,7 +1,6 @@
 const std = @import("std");
 const lex = @import("js_lexer.zig");
 const logger = @import("logger.zig");
-const alloc = @import("alloc.zig");
 const options = @import("options.zig");
 const js_parser = @import("js_parser.zig");
 const json_parser = @import("json_parser.zig");
@@ -37,7 +36,7 @@ pub fn main() anyerror!void {
     // std.heap.GeneralPurposeAllocator makes this about 3x _slower_ than esbuild.
     // var root_alloc = std.heap.ArenaAllocator.init(std.heap.raw_c_allocator);
     // var root_alloc_ = &root_alloc.allocator;
-    try alloc.setup(default_allocator);
+
     var stdout = std.io.getStdOut();
     // var stdout = std.io.bufferedWriter(stdout_file.writer());
     var stderr = std.io.getStdErr();
@@ -371,7 +370,6 @@ pub const Cli = struct {
             stderr: Stderr,
             args: Api.TransformOptions,
             pub fn spawn(this: @This()) !void {
-                try alloc.setup(default_allocator);
                 var stdout = std.io.getStdOut();
                 // var stdout = std.io.bufferedWriter(stdout_file.writer());
                 var stderr = std.io.getStdErr();
@@ -400,7 +398,7 @@ pub const Cli = struct {
         var panicker = MainPanicHandler.init(&log);
         MainPanicHandler.Singleton = &panicker;
 
-        var args = try Arguments.parse(alloc.static, stdout, stderr);
+        var args = try Arguments.parse(default_allocator, stdout, stderr);
         // var serve_bundler = try bundler.ServeBundler.init(allocator, &log, args);
         // var res = try serve_bundler.buildFile(&log, allocator, args.entry_points[0], std.fs.path.extension(args.entry_points[0]));
 

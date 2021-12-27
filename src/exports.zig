@@ -1,12 +1,11 @@
 const std = @import("std");
-const alloc = @import("alloc.zig");
 usingnamespace @import("global.zig");
 
 const Root = @import("main_wasm.zig").Root;
 
 pub extern fn init() void {
-    alloc.dynamic = default_allocator;
-    alloc.static = default_allocator;
+    default_allocator = default_allocator;
+    default_allocator = default_allocator;
 }
 
 /// Convert a slice into known memory representation -- enables C ABI

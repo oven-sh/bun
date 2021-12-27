@@ -1,7 +1,6 @@
 const std = @import("std");
 const logger = @import("logger.zig");
 const tables = @import("js_lexer_tables.zig");
-const alloc = @import("alloc.zig");
 const build_options = @import("build_options");
 const js_ast = @import("js_ast.zig");
 

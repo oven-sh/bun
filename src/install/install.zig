@@ -3,7 +3,7 @@ const std = @import("std");
 
 const JSLexer = @import("../js_lexer.zig");
 const logger = @import("../logger.zig");
-const alloc = @import("../alloc.zig");
+
 const js_parser = @import("../js_parser.zig");
 const json_parser = @import("../json_parser.zig");
 const JSPrinter = @import("../js_printer.zig");

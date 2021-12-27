@@ -4,7 +4,6 @@ const js_lexer = @import("js_lexer.zig");
 const importRecord = @import("import_record.zig");
 const js_ast = @import("js_ast.zig");
 const options = @import("options.zig");
-const alloc = @import("alloc.zig");
 const rename = @import("renamer.zig");
 const runtime = @import("runtime.zig");
 const Lock = @import("./lock.zig").Lock;
@@ -4002,7 +4001,7 @@ const FileWriterInternal = struct {
 
     pub fn init(file: std.fs.File) FileWriterInternal {
         if (!has_loaded_buffer) {
-            buffer = MutableString.init(alloc.dynamic, 0) catch unreachable;
+            buffer = MutableString.init(default_allocator, 0) catch unreachable;
             has_loaded_buffer = true;
         }
 

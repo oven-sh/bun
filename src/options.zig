@@ -3,7 +3,7 @@
 const std = @import("std");
 const logger = @import("logger.zig");
 const Fs = @import("fs.zig");
-const alloc = @import("alloc.zig");
+
 const resolver = @import("./resolver/resolver.zig");
 const api = @import("./api/schema.zig");
 const Api = api.Api;

@@ -1,7 +1,7 @@
 const std = @import("std");
 const lex = @import("js_lexer.zig");
 const logger = @import("logger.zig");
-const alloc = @import("alloc.zig");
+
 const options = @import("options.zig");
 const js_parser = @import("js_parser.zig");
 const json_parser = @import("json_parser.zig");
@@ -26,12 +26,11 @@ pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace) nore
 pub fn main() anyerror!void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     var allocator = &arena.allocator;
-    try alloc.setup(allocator);
-    var log = logger.Log.init(alloc.dynamic);
+    var log = logger.Log.init(default_allocator);
     var panicker = MainPanicHandler.init(&log);
     MainPanicHandler.Singleton = &panicker;
 
-    const args = try std.process.argsAlloc(alloc.dynamic);
+    const args = try std.process.argsAlloc(default_allocator);
     const stdout = std.io.getStdOut();
     const stderr = std.io.getStdErr();
 
@@ -42,29 +41,29 @@ pub fn main() anyerror!void {
 
     const absolutePath = args[args.len - 1];
     const pathname = fs.PathName.init(absolutePath);
-    const entryPointName = try alloc.dynamic.alloc(u8, pathname.base.len + pathname.ext.len);
+    const entryPointName = try default_allocator.alloc(u8, pathname.base.len + pathname.ext.len);
     std.mem.copy(u8, entryPointName, pathname.base);
     std.mem.copy(u8, entryPointName[pathname.base.len..entryPointName.len], pathname.ext);
-    const code = try std.io.getStdIn().readToEndAlloc(alloc.dynamic, std.math.maxInt(usize));
+    const code = try std.io.getStdIn().readToEndAlloc(default_allocator, std.math.maxInt(usize));
 
-    const opts = try options.TransformOptions.initUncached(alloc.dynamic, entryPointName, code);
-    var source = logger.Source.initFile(opts.entry_point, alloc.dynamic);
+    const opts = try options.TransformOptions.initUncached(default_allocator, entryPointName, code);
+    var source = logger.Source.initFile(opts.entry_point, default_allocator);
     var ast: js_ast.Ast = undefined;
 
-    var raw_defines = RawDefines.init(alloc.static);
+    var raw_defines = RawDefines.init(default_allocator);
     try raw_defines.put("process.env.NODE_ENV", "\"development\"");
 
-    var user_defines = try DefineData.from_input(raw_defines, &log, alloc.static);
+    var user_defines = try DefineData.from_input(raw_defines, &log, default_allocator);
 
     var define = try Define.init(
-        alloc.static,
+        default_allocator,
         user_defines,
     );
 
     switch (opts.loader) {
         .json => {
-            var expr = try json_parser.ParseJSON(&source, &log, alloc.dynamic);
-            var stmt = js_ast.Stmt.alloc(alloc.dynamic, js_ast.S.ExportDefault{
+            var expr = try json_parser.ParseJSON(&source, &log, default_allocator);
+            var stmt = js_ast.Stmt.alloc(default_allocator, js_ast.S.ExportDefault{
                 .value = js_ast.StmtOrExpr{ .expr = expr },
                 .default_name = js_ast.LocRef{ .loc = logger.Loc{}, .ref = Ref{} },
             }, logger.Loc{ .start = 0 });
@@ -76,7 +75,7 @@ pub fn main() anyerror!void {
             ast = js_ast.Ast.initTest(&([_]js_ast.Part{part}));
         },
         .jsx, .tsx, .ts, .js => {
-            var parser = try js_parser.Parser.init(opts, &log, &source, define, alloc.dynamic);
+            var parser = try js_parser.Parser.init(opts, &log, &source, define, default_allocator);
             var res = try parser.parse();
             ast = res.ast;
         },
@@ -88,7 +87,7 @@ pub fn main() anyerror!void {
     var _linker = linker.Linker{};
     var symbols: [][]js_ast.Symbol = &([_][]js_ast.Symbol{ast.symbols});
     const printed = try js_printer.printAst(
-        alloc.dynamic,
+        default_allocator,
         ast,
         js_ast.Symbol.Map.initList(symbols),
         &source,
@@ -101,7 +100,7 @@ pub fn main() anyerror!void {
     //     var fixed_buffer = [_]u8{0} ** 512000;
     //     var buf_stream = std.io.fixedBufferStream(&fixed_buffer);
 
-    //     try ast.toJSON(alloc.dynamic, stderr.writer());
+    //     try ast.toJSON(default_allocator, stderr.writer());
     // }
 
     _ = try stdout.write(printed.js);

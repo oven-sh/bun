@@ -1,6 +1,5 @@
 const std = @import("std");
 const js_ast = @import("./js_ast.zig");
-const alloc = @import("alloc.zig");
 const logger = @import("logger.zig");
 const js_lexer = @import("js_lexer.zig");
 const json_parser = @import("json_parser.zig");
@@ -354,7 +353,6 @@ pub const Define = struct {
 
 const expect = std.testing.expect;
 test "UserDefines" {
-    try alloc.setup(std.heap.page_allocator);
     var orig = RawDefines.init(alloc.dynamic);
     try orig.put("process.env.NODE_ENV", "\"development\"");
     try orig.put("globalThis", "window");

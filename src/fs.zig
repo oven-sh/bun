@@ -1,7 +1,7 @@
 const std = @import("std");
 usingnamespace @import("global.zig");
 const sync = @import("sync.zig");
-const alloc = @import("alloc.zig");
+
 const expect = std.testing.expect;
 const Mutex = @import("./lock.zig").Lock;
 const Semaphore = sync.Semaphore;

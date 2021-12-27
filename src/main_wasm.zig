@@ -1,7 +1,6 @@
 const std = @import("std");
 const lex = @import("js_lexer.zig");
 const logger = @import("logger.zig");
-const alloc = @import("alloc.zig");
 const options = @import("options.zig");
 const js_parser = @import("js_parser.zig");
 const json_parser = @import("json_parser.zig");
@@ -50,7 +49,7 @@ pub const Uint8Array = packed struct {
     }
 
     pub fn encode(comptime SchemaType: type, obj: SchemaType) !Abi {
-        var list = std.ArrayList(u8).init(alloc.dynamic);
+        var list = std.ArrayList(u8).init(default_allocator);
         var writer = list.writer();
         try obj.encode(writer);
         return Uint8Array.fromSlice(list.toOwnedSlice());
@@ -59,7 +58,7 @@ pub const Uint8Array = packed struct {
     pub fn decode(self: Abi, comptime SchemaType: type) !SchemaType {
         var buf = Uint8Array.toSlice(self);
         var stream = std.io.fixedBufferStream(buf);
-        const res = try SchemaType.decode(alloc.dynamic, stream.reader());
+        const res = try SchemaType.decode(default_allocator, stream.reader());
         return res;
     }
 };
@@ -75,25 +74,25 @@ pub const Api = struct {
     defines: ?*Define = null,
 
     pub fn transform(self: *Api, request: Schema.Transform) !Schema.TransformResponse {
-        const opts = try options.TransformOptions.initUncached(alloc.dynamic, request.path.?, request.contents);
-        var source = logger.Source.initFile(opts.entry_point, alloc.dynamic);
+        const opts = try options.TransformOptions.initUncached(default_allocator, request.path.?, request.contents);
+        var source = logger.Source.initFile(opts.entry_point, default_allocator);
 
         var ast: js_ast.Ast = undefined;
         if (self.defines == null) {
-            var raw_defines = RawDefines.init(alloc.static);
+            var raw_defines = RawDefines.init(default_allocator);
             raw_defines.put("process.env.NODE_ENV", "\"development\"") catch unreachable;
 
-            var user_defines = try DefineData.from_input(raw_defines, &self.log, alloc.static);
+            var user_defines = try DefineData.from_input(raw_defines, &self.log, default_allocator);
             self.defines = try Define.init(
-                alloc.static,
+                default_allocator,
                 user_defines,
             );
         }
 
         switch (opts.loader) {
             .json => {
-                var expr = try json_parser.ParseJSON(&source, &self.log, alloc.dynamic);
-                var stmt = js_ast.Stmt.alloc(alloc.dynamic, js_ast.S.ExportDefault{
+                var expr = try json_parser.ParseJSON(&source, &self.log, default_allocator);
+                var stmt = js_ast.Stmt.alloc(default_allocator, js_ast.S.ExportDefault{
                     .value = js_ast.StmtOrExpr{ .expr = expr },
                     .default_name = js_ast.LocRef{ .loc = logger.Loc{}, .ref = Ref{} },
                 }, logger.Loc{ .start = 0 });
@@ -105,7 +104,7 @@ pub const Api = struct {
                 ast = js_ast.Ast.initTest(&([_]js_ast.Part{part}));
             },
             .jsx, .tsx, .ts, .js => {
-                var parser = try js_parser.Parser.init(opts, &self.log, &source, self.defines.?, alloc.dynamic);
+                var parser = try js_parser.Parser.init(opts, &self.log, &source, self.defines.?, default_allocator);
                 var res = try parser.parse();
                 ast = res.ast;
             },
@@ -117,7 +116,7 @@ pub const Api = struct {
         var _linker = linker.Linker{};
         var symbols: [][]js_ast.Symbol = &([_][]js_ast.Symbol{ast.symbols});
         const printed = try js_printer.printAst(
-            alloc.dynamic,
+            default_allocator,
             ast,
             js_ast.Symbol.Map.initList(symbols),
             &source,
@@ -126,7 +125,7 @@ pub const Api = struct {
             &_linker,
         );
         // Output.print("Parts count: {d}", .{ast.parts.len});
-        var output_files = try alloc.dynamic.alloc(Schema.OutputFile, 1);
+        var output_files = try default_allocator.alloc(Schema.OutputFile, 1);
         var _data = printed.js[0..printed.js.len];
         var _path = constStrToU8(source.path.text);
 
@@ -172,7 +171,6 @@ pub const Exports = struct {
 
         // var gpa = Gpa{};
         // var allocator = &gpa.allocator;
-        // alloc.setup(allocator) catch return -1;
         var out_buffer = perma_hunk_low.allocator.alloc(u8, 4096) catch return -1;
         var err_buffer = perma_hunk_low.allocator.alloc(u8, 4096) catch return -1;
         var output = perma_hunk_low.allocator.create(Output.Source) catch return -1;
@@ -206,13 +204,13 @@ pub const Exports = struct {
             hunk = alloc.Hunk.init(buf);
             hunk_high = hunk.high();
             hunk_low = hunk.low();
-            alloc.dynamic = &hunk_high.allocator;
-            alloc.static = &hunk_low.allocator;
+            default_allocator = &hunk_high.allocator;
+            default_allocator = &hunk_low.allocator;
             alloc.needs_setup = false;
         }
 
         Output.printErrorable("Initialized.", .{}) catch |err| {
-            var name = alloc.static.alloc(u8, @errorName(err).len) catch unreachable;
+            var name = default_allocator.alloc(u8, @errorName(err).len) catch unreachable;
             std.mem.copy(u8, name, @errorName(err));
             console_error(Uint8Array.fromSlice(name));
         };
@@ -224,7 +222,7 @@ pub const Exports = struct {
         // Output.print("Received {d}", .{abi});
         const req: Schema.Transform = Uint8Array.decode(abi, Schema.Transform) catch return Uint8Array.empty();
         // Output.print("Req {s}", .{req});
-        // alloc.dynamic.free(Uint8Array.toSlice(abi));
+        // default_allocator.free(Uint8Array.toSlice(abi));
         const resp = api.?.transform(req) catch return Uint8Array.empty();
 
         var res = Uint8Array.encode(Schema.TransformResponse, resp) catch return Uint8Array.empty();
@@ -254,7 +252,7 @@ pub const Exports = struct {
         if (size == 0) {
             return 0;
         }
-        const result = alloc.dynamic.alloc(u8, size) catch unreachable;
+        const result = default_allocator.alloc(u8, size) catch unreachable;
         return Uint8Array.fromSlice(result);
     }
     // fn calloc(num_elements: usize, element_size: usize) callconv(.C) ?*c_void {
@@ -273,14 +271,14 @@ pub const Exports = struct {
     //     } else if (c_ptr) |ptr| {
     //         // Use a synthetic slice
     //         const p = @ptrCast([*]u8, ptr);
-    //         const result = alloc.dynamic.realloc(p[0..1], new_size) catch return null;
+    //         const result = default_allocator.realloc(p[0..1], new_size) catch return null;
     //         return @ptrCast(*c_void, result.ptr);
     //     } else {
     //         return @call(.{ .modifier = .never_inline }, malloc, .{new_size});
     //     }
     // }
     fn free(abi: Uint8Array.Abi) callconv(.C) void {
-        alloc.dynamic.free(Uint8Array.toSlice(abi));
+        default_allocator.free(Uint8Array.toSlice(abi));
     }
 };
 

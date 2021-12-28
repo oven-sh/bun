@@ -799,7 +799,6 @@ build-unit:
 	-femit-bin=zig-out/bin/$(testname) \
 	-fcompiler-rt \
 	-lc -lc++ \
-	-stdlib=libstdc++ \
 	--cache-dir /tmp/zig-cache-bun-$(testname)-$(basename $(lastword $(testfilter))) \
 	-fallow-shlib-undefined \
 	$(ARCHIVE_FILES) $(ICU_FLAGS) && \
@@ -816,7 +815,6 @@ run-all-unit-tests:
 	-femit-bin=zig-out/bin/__main_test \
 	-fcompiler-rt \
 	-lc -lc++ \
-	
 	--cache-dir /tmp/zig-cache-bun-__main_test \
 	-fallow-shlib-undefined \
 	$(ARCHIVE_FILES) $(ICU_FLAGS) $(JSC_FILES) $(OBJ_FILES) && \

@@ -799,7 +799,7 @@ build-unit:
 	-femit-bin=zig-out/bin/$(testname) \
 	-fcompiler-rt \
 	-lc -lc++ \
-	-lstdc++fs \
+	$(PLATFORM_LINKER_FLAGS) \
 	--cache-dir /tmp/zig-cache-bun-$(testname)-$(basename $(lastword $(testfilter))) \
 	-fallow-shlib-undefined \
 	$(ARCHIVE_FILES) $(ICU_FLAGS) && \
@@ -819,6 +819,7 @@ run-all-unit-tests:
 	-lstdc++fs \
 	--cache-dir /tmp/zig-cache-bun-__main_test \
 	-fallow-shlib-undefined \
+	$(PLATFORM_LINKER_FLAGS) \
 	$(ARCHIVE_FILES) $(ICU_FLAGS) $(JSC_FILES) $(OBJ_FILES) && \
 	zig-out/bin/__main_test notARealParam
 

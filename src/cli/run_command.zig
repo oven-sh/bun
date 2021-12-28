@@ -49,6 +49,28 @@ pub const RunCommand = struct {
             }
         }
 
+        const Try = struct {
+            pub fn shell(str: stringZ) bool {
+                std.os.accessZ(str, std.os.X_OK) catch return false;
+                return true;
+            }
+        };
+
+        const hardcoded_popular_ones = [_]stringZ{
+            "/bin/bash",
+            "/usr/bin/bash",
+            "/usr/local/bin/bash", // don't think this is a real one
+            "/bin/sh",
+            "/usr/bin/sh", // don't think this is a real one
+            "/usr/bin/zsh",
+            "/usr/local/bin/zsh",
+        };
+        inline for (hardcoded_popular_ones) |shell| {
+            if (Try.shell(shell)) {
+                return shell;
+            }
+        }
+
         return null;
     }
 

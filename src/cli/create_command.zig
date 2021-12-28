@@ -116,8 +116,7 @@ fn execTask(allocator: *std.mem.Allocator, task_: string, cwd: string, PATH: str
     }
 
     if (strings.startsWith(task, "bun ")) {
-        argv[1] = argv[0];
-        argv = argv[1..];
+        argv = argv[2..];
     }
 
     Output.pretty("\n<r><d>$<b>", .{});

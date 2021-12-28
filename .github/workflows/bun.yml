@@ -81,7 +81,7 @@ jobs:
         run: bash .docker/runner.sh
   zig-unit-tests:
     runs-on: self-hosted
-    name: "Zig Unit Tests"
+    name: "Unit tests (Zig)"
     steps:
       - name: Checkout
         uses: actions/checkout@v2

@@ -175,11 +175,6 @@ void GlobalObject::installAPIGlobals(JSClassRef *globals, int count) {
   // were compiled with Webpack to run without crashing in this environment.
   JSC::JSObject *process = JSC::constructEmptyObject(this, this->objectPrototype(), 4);
 
-  // The transpiler inlines all defined process.env vars & dead code eliminates as relevant
-  // so this is just to return undefined for any missing ones and not crash if something tries to
-  // modify it or it wasn't statically analyzable
-  JSC::JSObject *processDotEnv = JSC::constructEmptyObject(this, this->objectPrototype(), 0);
-
   // this should be transpiled out, but just incase
   process->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "browser"),
                      JSC::JSValue(false));
@@ -187,7 +182,7 @@ void GlobalObject::installAPIGlobals(JSClassRef *globals, int count) {
   // this gives some way of identifying at runtime whether the SSR is happening in node or not.
   // this should probably be renamed to what the name of the bundler is, instead of "notNodeJS"
   // but it must be something that won't evaluate to truthy in Node.js
-  process->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "notNodeJS"),
+  process->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "isBun"),
                      JSC::JSValue(true));
 #if defined(__APPLE__)
   process->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "platform"),

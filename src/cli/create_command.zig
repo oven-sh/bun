@@ -116,12 +116,8 @@ fn execTask(allocator: *std.mem.Allocator, task_: string, cwd: string, PATH: str
     }
 
     if (strings.startsWith(task, "bun ")) {
-        // TODO: use self exe
-        if (bun_path orelse which(&bun_path_buf, PATH, cwd, "bun")) |bun_path_| {
-            bun_path = bun_path_;
-            argv = argv[npm_args..];
-            argv[0] = std.mem.span(bun_path_);
-        }
+        argv[1] = argv[0];
+        argv = argv[1..];
     }
 
     Output.pretty("\n<r><d>$<b>", .{});

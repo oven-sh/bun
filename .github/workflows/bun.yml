@@ -79,7 +79,7 @@ jobs:
           BUN_TEST_NAME: test-bun-run
           GITHUB_WORKSPACE: $GITHUB_WORKSPACE
         run: bash .docker/runner.sh
-zig-unit-tests:
+  zig-unit-tests:
     runs-on: self-hosted
     name: "Zig Unit Tests"
     steps:
@@ -113,10 +113,7 @@ zig-unit-tests:
         run: bash .docker/unit-tests.sh
   release:
     runs-on: self-hosted
-    needs: [
-      "tests", 
-      "zig-unit-tests"
-    ]
+    needs: ["tests", "zig-unit-tests"]
     if: github.ref == 'refs/heads/main'
     steps:
       - name: Checkout

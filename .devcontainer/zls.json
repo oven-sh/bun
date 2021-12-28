@@ -1,5 +1,5 @@
 {
-  "zig_exe_path": "/home/ubuntu/zig/zig",
+  "zig_exe_path": "/build/zig/zig",
   "enable_snippets": true,
   "warn_style": false,
   "enable_semantic_tokens": true,

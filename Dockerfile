@@ -217,7 +217,7 @@ CMD cd $BUN_DIR && \
 FROM bunbunbunbun/bun-base-with-zig-and-webkit:latest as bun.devcontainer
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/workspaces
+ARG GITHUB_WORKSPACE=/build
 ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
 # Directory extracts to "bun-webkit"
 ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 

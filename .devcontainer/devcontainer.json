@@ -1,70 +1,68 @@
 // For format details, see https://aka.ms/devcontainer.json. For config options, see the README at:
 // https://github.com/microsoft/vscode-dev-containers/tree/v0.209.6/containers/docker-existing-dockerfile
 {
-	"name": "Bun (Ubuntu)",
+  "name": "Bun (Ubuntu)",
 
-	// Sets the run context to one level up instead of the .devcontainer folder.
-	"context": "..",
+  // Sets the run context to one level up instead of the .devcontainer folder.
+  "context": "..",
 
-	// Update the 'dockerFile' property if you aren't using the standard 'Dockerfile' filename.
-	"dockerFile": "../Dockerfile",
+  // Update the 'dockerFile' property if you aren't using the standard 'Dockerfile' filename.
+  "dockerFile": "../Dockerfile",
 
-	// Set *default* container specific settings.json values on container create.
-	"settings": {
-		"terminal.integrated.shell.linux": "/bin/zsh",
-		"zigLanguageClient.path": "/home/ubuntu/zls/zig-out/bin/zls",
-		"zig.zigPath": "/home/ubuntu/zig/zig",
-		"editor.defaultFormatter": "esbenp.prettier-vscode",
-		"[zig]": {
-			"editor.defaultFormatter": "tiehuis.zig"
-		}
-	},
-	
-	// Add the IDs of extensions you want installed when the container is created.
-	"extensions": [
-		"AugusteRame.zls-vscode",
-		"ms-vscode.cpptools",
-		"/home/ubuntu/vscode-zig.vsix",
-		"vadimcn.vscode-lldb",
-		"esbenp.prettier-vscode",
-		"xaver.clang-format"
-	],
-	"postCreateCommand": "cd /workspaces/bun; bash /workspaces/getting-started.sh; zsh",
+  // Set *default* container specific settings.json values on container create.
+  "settings": {
+    "terminal.integrated.shell.linux": "/bin/zsh",
+    "zigLanguageClient.path": "/home/ubuntu/zls/zig-out/bin/zls",
+    "zig.zigPath": "/build/zig/zig",
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "[zig]": {
+      "editor.defaultFormatter": "tiehuis.zig"
+    }
+  },
 
-	"build": {
-		"target": "bun.devcontainer",
-		"cacheFrom": [
-			"bun.devcontainer:latest",
-		],
-		"args": {}
-	},
-	"runArgs": [
-		"--ulimit", "memlock=-1:-1",
-		"--ulimit", "nofile=65536:65536",
-		"--cap-add=SYS_PTRACE", "--security-opt", "seccomp=unconfined"
-	],
-	"workspaceMount": "source=bun,target=/workspaces/bun,type=volume",
-	"workspaceFolder": "/workspaces/bun",
-	"mounts": [
-		"source=bun-install,target=/home/ubuntu/.bun,type=volume",
-		"source=bun-config,target=/home/ubuntu/.config,type=volume"
-	],
+  // Add the IDs of extensions you want installed when the container is created.
+  "extensions": [
+    "AugusteRame.zls-vscode",
+    "ms-vscode.cpptools",
+    "/home/ubuntu/vscode-zig.vsix",
+    "vadimcn.vscode-lldb",
+    "esbenp.prettier-vscode",
+    "xaver.clang-format"
+  ],
+  "postCreateCommand": "cd /build/bun; bash /build/getting-started.sh; zsh",
 
-	// Use 'forwardPorts' to make a list of ports inside the container available locally.
-	"forwardPorts": [
-		3000,
-		8081,
-		8080,
-	],
+  "build": {
+    "target": "bun.devcontainer",
+    "cacheFrom": ["bun.devcontainer:latest"],
+    "args": {}
+  },
+  "runArgs": [
+    "--ulimit",
+    "memlock=-1:-1",
+    "--ulimit",
+    "nofile=65536:65536",
+    "--cap-add=SYS_PTRACE",
+    "--security-opt",
+    "seccomp=unconfined"
+  ],
+  "workspaceMount": "source=bun,target=/build/bun,type=volume",
+  "workspaceFolder": "/build/bun",
+  "mounts": [
+    "source=bun-install,target=/home/ubuntu/.bun,type=volume",
+    "source=bun-config,target=/home/ubuntu/.config,type=volume"
+  ],
 
-	// Uncomment the next line to run commands after the container is created - for example installing curl.
-	// "postCreateCommand": "apt-get update && apt-get install -y curl",
+  // Use 'forwardPorts' to make a list of ports inside the container available locally.
+  "forwardPorts": [3000, 8081, 8080]
 
-	// Uncomment when using a ptrace-based debugger like C++, Go, and Rust
+  // Uncomment the next line to run commands after the container is created - for example installing curl.
+  // "postCreateCommand": "apt-get update && apt-get install -y curl",
 
-	// Uncomment to use the Docker CLI from inside the container. See https://aka.ms/vscode-remote/samples/docker-from-docker.
-	// "mounts": [ "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind" ],
+  // Uncomment when using a ptrace-based debugger like C++, Go, and Rust
 
-	// Uncomment to connect as a non-root user if you've added one. See https://aka.ms/vscode-remote/containers/non-root.
-	// "remoteUser": "vscode"
+  // Uncomment to use the Docker CLI from inside the container. See https://aka.ms/vscode-remote/samples/docker-from-docker.
+  // "mounts": [ "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind" ],
+
+  // Uncomment to connect as a non-root user if you've added one. See https://aka.ms/vscode-remote/containers/non-root.
+  // "remoteUser": "vscode"
 }

@@ -100,7 +100,7 @@ jobs:
         uses: docker/build-push-action@v2
         with:
           context: .
-          target: test_base
+          target: build_unit
           tags: bun-unit-tests:latest
           load: true
           cache-from: type=gha

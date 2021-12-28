@@ -236,19 +236,6 @@ fn testDiag(diag: Diagnostic, err: anyerror, expected: []const u8) void {
     testing.expectEqualStrings(expected, slice_stream.getWritten());
 }
 
-test "Diagnostic.report" {
-    testDiag(.{ .arg = "c" }, error.InvalidArgument, "Invalid argument 'c'\n");
-    testDiag(.{ .name = .{ .long = "cc" } }, error.InvalidArgument, "Invalid argument '--cc'\n");
-    testDiag(.{ .name = .{ .short = 'c' } }, error.DoesntTakeValue, "The argument '-c' does not take a value\n");
-    testDiag(.{ .name = .{ .long = "cc" } }, error.DoesntTakeValue, "The argument '--cc' does not take a value\n");
-    testDiag(.{ .name = .{ .short = 'c' } }, error.MissingValue, "The argument '-c' requires a value but none was supplied\n");
-    testDiag(.{ .name = .{ .long = "cc" } }, error.MissingValue, "The argument '--cc' requires a value but none was supplied\n");
-    testDiag(.{ .name = .{ .short = 'c' } }, error.InvalidArgument, "Invalid argument '-c'\n");
-    testDiag(.{ .name = .{ .long = "cc" } }, error.InvalidArgument, "Invalid argument '--cc'\n");
-    testDiag(.{ .name = .{ .short = 'c' } }, error.SomethingElse, "Error while parsing arguments: SomethingElse\n");
-    testDiag(.{ .name = .{ .long = "cc" } }, error.SomethingElse, "Error while parsing arguments: SomethingElse\n");
-}
-
 pub fn Args(comptime Id: type, comptime params: []const Param(Id)) type {
     return struct {
         arena: std.heap.ArenaAllocator,
@@ -445,37 +432,6 @@ fn getValueSimple(param: Param(Help)) []const u8 {
     return param.id.value;
 }
 
-test "clap.help" {
-    var buf: [1024]u8 = undefined;
-    var slice_stream = io.fixedBufferStream(&buf);
-
-    @setEvalBranchQuota(10000);
-    try help(
-        slice_stream.writer(),
-        comptime &[_]Param(Help){
-            parseParam("-a                Short flag.") catch unreachable,
-            parseParam("-b <V1>           Short option.") catch unreachable,
-            parseParam("--aa              Long flag.") catch unreachable,
-            parseParam("--bb <V2>         Long option.") catch unreachable,
-            parseParam("-c, --cc          Both flag.") catch unreachable,
-            parseParam("-d, --dd <V3>     Both option.") catch unreachable,
-            parseParam("-d, --dd <V3>...  Both repeated option.") catch unreachable,
-            parseParam("<P>               Positional. This should not appear in the help message.") catch unreachable,
-        },
-    );
-
-    const expected = "" ++
-        "\t-a              \tShort flag.\n" ++
-        "\t-b <V1>         \tShort option.\n" ++
-        "\t    --aa        \tLong flag.\n" ++
-        "\t    --bb <V2>   \tLong option.\n" ++
-        "\t-c, --cc        \tBoth flag.\n" ++
-        "\t-d, --dd <V3>   \tBoth option.\n" ++
-        "\t-d, --dd <V3>...\tBoth repeated option.\n";
-
-    testing.expectEqualStrings(expected, slice_stream.getWritten());
-}
-
 /// Will print a usage message in the following format:
 /// [-abc] [--longa] [-d <valueText>] [--longb <valueText>] <valueText>
 ///
@@ -572,39 +528,4 @@ fn testUsage(expected: []const u8, params: []const Param(Help)) !void {
     var fbs = io.fixedBufferStream(&buf);
     try usage(fbs.writer(), params);
     testing.expectEqualStrings(expected, fbs.getWritten());
-}
-
-test "usage" {
-    @setEvalBranchQuota(100000);
-    try testUsage("[-ab]", comptime &[_]Param(Help){
-        parseParam("-a") catch unreachable,
-        parseParam("-b") catch unreachable,
-    });
-    try testUsage("[-a <value>] [-b <v>]", comptime &[_]Param(Help){
-        parseParam("-a <value>") catch unreachable,
-        parseParam("-b <v>") catch unreachable,
-    });
-    try testUsage("[--a] [--b]", comptime &[_]Param(Help){
-        parseParam("--a") catch unreachable,
-        parseParam("--b") catch unreachable,
-    });
-    try testUsage("[--a <value>] [--b <v>]", comptime &[_]Param(Help){
-        parseParam("--a <value>") catch unreachable,
-        parseParam("--b <v>") catch unreachable,
-    });
-    try testUsage("<file>", comptime &[_]Param(Help){
-        parseParam("<file>") catch unreachable,
-    });
-    try testUsage("[-ab] [-c <value>] [-d <v>] [--e] [--f] [--g <value>] [--h <v>] [-i <v>...] <file>", comptime &[_]Param(Help){
-        parseParam("-a") catch unreachable,
-        parseParam("-b") catch unreachable,
-        parseParam("-c <value>") catch unreachable,
-        parseParam("-d <v>") catch unreachable,
-        parseParam("--e") catch unreachable,
-        parseParam("--f") catch unreachable,
-        parseParam("--g <value>") catch unreachable,
-        parseParam("--h <v>") catch unreachable,
-        parseParam("-i <v>...") catch unreachable,
-        parseParam("<file>") catch unreachable,
-    });
 }

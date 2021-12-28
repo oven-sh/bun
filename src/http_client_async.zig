@@ -2041,176 +2041,176 @@ pub fn sendHTTPS(this: *HTTPClient, body_str: []const u8, body_out_str: *Mutable
     }
 }
 
-// zig test src/http_client.zig --test-filter "sendHTTP - only" -lc -lc++ /Users/jarred/Code/bun/src/deps/zlib/libz.a /Users/jarred/Code/bun/src/deps/picohttpparser.o --cache-dir /Users/jarred/Code/bun/zig-cache --global-cache-dir /Users/jarred/.cache/zig --name bun --pkg-begin clap /Users/jarred/Code/bun/src/deps/zig-clap/clap.zig --pkg-end --pkg-begin picohttp /Users/jarred/Code/bun/src/deps/picohttp.zig --pkg-end --pkg-begin iguanaTLS /Users/jarred/Code/bun/src/deps/iguanaTLS/src/main.zig --pkg-end -I /Users/jarred/Code/bun/src/deps -I /Users/jarred/Code/bun/src/deps/mimalloc -I /usr/local/opt/icu4c/include  -L src/deps/mimalloc -L /usr/local/opt/icu4c/lib --main-pkg-path /Users/jarred/Code/bun --enable-cache -femit-bin=zig-out/bin/test --test-no-exec
-test "sendHTTP - only" {
-    Output.initTest();
-    defer Output.flush();
+// // zig test src/http_client.zig --test-filter "sendHTTP - only" -lc -lc++ /Users/jarred/Code/bun/src/deps/zlib/libz.a /Users/jarred/Code/bun/src/deps/picohttpparser.o --cache-dir /Users/jarred/Code/bun/zig-cache --global-cache-dir /Users/jarred/.cache/zig --name bun --pkg-begin clap /Users/jarred/Code/bun/src/deps/zig-clap/clap.zig --pkg-end --pkg-begin picohttp /Users/jarred/Code/bun/src/deps/picohttp.zig --pkg-end --pkg-begin iguanaTLS /Users/jarred/Code/bun/src/deps/iguanaTLS/src/main.zig --pkg-end -I /Users/jarred/Code/bun/src/deps -I /Users/jarred/Code/bun/src/deps/mimalloc -I /usr/local/opt/icu4c/include  -L src/deps/mimalloc -L /usr/local/opt/icu4c/lib --main-pkg-path /Users/jarred/Code/bun --enable-cache -femit-bin=zig-out/bin/test --test-no-exec
+// test "sendHTTP - only" {
+//     Output.initTest();
+//     defer Output.flush();
 
-    var headers = try std.heap.c_allocator.create(Headers);
-    headers.* = Headers{
-        .entries = @TypeOf(headers.entries){},
-        .buf = @TypeOf(headers.buf){},
-        .used = 0,
-        .allocator = std.heap.c_allocator,
-    };
+//     var headers = try std.heap.c_allocator.create(Headers);
+//     headers.* = Headers{
+//         .entries = @TypeOf(headers.entries){},
+//         .buf = @TypeOf(headers.buf){},
+//         .used = 0,
+//         .allocator = std.heap.c_allocator,
+//     };
 
-    // headers.appendHeader("X-What", "ok", true, true, false);
-    headers.appendHeader("Accept-Encoding", "identity", true, true, false);
+//     // headers.appendHeader("X-What", "ok", true, true, false);
+//     headers.appendHeader("Accept-Encoding", "identity", true, true, false);
 
-    var client = HTTPClient.init(
-        std.heap.c_allocator,
-        .GET,
-        URL.parse("http://example.com/"),
-        headers.entries,
-        headers.buf.items,
-    );
-    var body_out_str = try MutableString.init(std.heap.c_allocator, 0);
-    var response = try client.sendHTTP("", &body_out_str);
-    try std.testing.expectEqual(response.status_code, 200);
-    try std.testing.expectEqual(body_out_str.list.items.len, 1256);
-    try std.testing.expectEqualStrings(body_out_str.list.items, @embedFile("fixtures_example.com.html"));
-}
+//     var client = HTTPClient.init(
+//         std.heap.c_allocator,
+//         .GET,
+//         URL.parse("http://example.com/"),
+//         headers.entries,
+//         headers.buf.items,
+//     );
+//     var body_out_str = try MutableString.init(std.heap.c_allocator, 0);
+//     var response = try client.sendHTTP("", &body_out_str);
+//     try std.testing.expectEqual(response.status_code, 200);
+//     try std.testing.expectEqual(body_out_str.list.items.len, 1256);
+//     try std.testing.expectEqualStrings(body_out_str.list.items, @embedFile("fixtures_example.com.html"));
+// }
 
-// zig test src/http_client.zig --test-filter "sendHTTP - gzip" -lc -lc++ /Users/jarred/Code/bun/src/deps/zlib/libz.a /Users/jarred/Code/bun/src/deps/picohttpparser.o --cache-dir /Users/jarred/Code/bun/zig-cache --global-cache-dir /Users/jarred/.cache/zig --name bun --pkg-begin clap /Users/jarred/Code/bun/src/deps/zig-clap/clap.zig --pkg-end --pkg-begin picohttp /Users/jarred/Code/bun/src/deps/picohttp.zig --pkg-end --pkg-begin iguanaTLS /Users/jarred/Code/bun/src/deps/iguanaTLS/src/main.zig --pkg-end -I /Users/jarred/Code/bun/src/deps -I /Users/jarred/Code/bun/src/deps/mimalloc -I /usr/local/opt/icu4c/include  -L src/deps/mimalloc -L /usr/local/opt/icu4c/lib --main-pkg-path /Users/jarred/Code/bun --enable-cache -femit-bin=zig-out/bin/test --test-no-exec
-test "sendHTTP - gzip" {
-    Output.initTest();
-    defer Output.flush();
+// // zig test src/http_client.zig --test-filter "sendHTTP - gzip" -lc -lc++ /Users/jarred/Code/bun/src/deps/zlib/libz.a /Users/jarred/Code/bun/src/deps/picohttpparser.o --cache-dir /Users/jarred/Code/bun/zig-cache --global-cache-dir /Users/jarred/.cache/zig --name bun --pkg-begin clap /Users/jarred/Code/bun/src/deps/zig-clap/clap.zig --pkg-end --pkg-begin picohttp /Users/jarred/Code/bun/src/deps/picohttp.zig --pkg-end --pkg-begin iguanaTLS /Users/jarred/Code/bun/src/deps/iguanaTLS/src/main.zig --pkg-end -I /Users/jarred/Code/bun/src/deps -I /Users/jarred/Code/bun/src/deps/mimalloc -I /usr/local/opt/icu4c/include  -L src/deps/mimalloc -L /usr/local/opt/icu4c/lib --main-pkg-path /Users/jarred/Code/bun --enable-cache -femit-bin=zig-out/bin/test --test-no-exec
+// test "sendHTTP - gzip" {
+//     Output.initTest();
+//     defer Output.flush();
 
-    var headers = try std.heap.c_allocator.create(Headers);
-    headers.* = Headers{
-        .entries = @TypeOf(headers.entries){},
-        .buf = @TypeOf(headers.buf){},
-        .used = 0,
-        .allocator = std.heap.c_allocator,
-    };
+//     var headers = try std.heap.c_allocator.create(Headers);
+//     headers.* = Headers{
+//         .entries = @TypeOf(headers.entries){},
+//         .buf = @TypeOf(headers.buf){},
+//         .used = 0,
+//         .allocator = std.heap.c_allocator,
+//     };
 
-    // headers.appendHeader("X-What", "ok", true, true, false);
-    headers.appendHeader("Accept-Encoding", "gzip", true, true, false);
+//     // headers.appendHeader("X-What", "ok", true, true, false);
+//     headers.appendHeader("Accept-Encoding", "gzip", true, true, false);
 
-    var client = HTTPClient.init(
-        std.heap.c_allocator,
-        .GET,
-        URL.parse("http://example.com/"),
-        headers.entries,
-        headers.buf.items,
-    );
-    var body_out_str = try MutableString.init(std.heap.c_allocator, 0);
-    var response = try client.sendHTTP("", &body_out_str);
-    try std.testing.expectEqual(response.status_code, 200);
-    try std.testing.expectEqualStrings(body_out_str.list.items, @embedFile("fixtures_example.com.html"));
-}
+//     var client = HTTPClient.init(
+//         std.heap.c_allocator,
+//         .GET,
+//         URL.parse("http://example.com/"),
+//         headers.entries,
+//         headers.buf.items,
+//     );
+//     var body_out_str = try MutableString.init(std.heap.c_allocator, 0);
+//     var response = try client.sendHTTP("", &body_out_str);
+//     try std.testing.expectEqual(response.status_code, 200);
+//     try std.testing.expectEqualStrings(body_out_str.list.items, @embedFile("fixtures_example.com.html"));
+// }
 
-// zig test src/http_client.zig --test-filter "sendHTTPS - identity" -lc -lc++ /Users/jarred/Code/bun/src/deps/zlib/libz.a /Users/jarred/Code/bun/src/deps/picohttpparser.o --cache-dir /Users/jarred/Code/bun/zig-cache --global-cache-dir /Users/jarred/.cache/zig --name bun --pkg-begin clap /Users/jarred/Code/bun/src/deps/zig-clap/clap.zig --pkg-end --pkg-begin picohttp /Users/jarred/Code/bun/src/deps/picohttp.zig --pkg-end --pkg-begin iguanaTLS /Users/jarred/Code/bun/src/deps/iguanaTLS/src/main.zig --pkg-end -I /Users/jarred/Code/bun/src/deps -I /Users/jarred/Code/bun/src/deps/mimalloc -I /usr/local/opt/icu4c/include  -L src/deps/mimalloc -L /usr/local/opt/icu4c/lib --main-pkg-path /Users/jarred/Code/bun --enable-cache -femit-bin=zig-out/bin/test --test-no-exec
-test "sendHTTPS - identity" {
-    Output.initTest();
-    defer Output.flush();
+// // zig test src/http_client.zig --test-filter "sendHTTPS - identity" -lc -lc++ /Users/jarred/Code/bun/src/deps/zlib/libz.a /Users/jarred/Code/bun/src/deps/picohttpparser.o --cache-dir /Users/jarred/Code/bun/zig-cache --global-cache-dir /Users/jarred/.cache/zig --name bun --pkg-begin clap /Users/jarred/Code/bun/src/deps/zig-clap/clap.zig --pkg-end --pkg-begin picohttp /Users/jarred/Code/bun/src/deps/picohttp.zig --pkg-end --pkg-begin iguanaTLS /Users/jarred/Code/bun/src/deps/iguanaTLS/src/main.zig --pkg-end -I /Users/jarred/Code/bun/src/deps -I /Users/jarred/Code/bun/src/deps/mimalloc -I /usr/local/opt/icu4c/include  -L src/deps/mimalloc -L /usr/local/opt/icu4c/lib --main-pkg-path /Users/jarred/Code/bun --enable-cache -femit-bin=zig-out/bin/test --test-no-exec
+// test "sendHTTPS - identity" {
+//     Output.initTest();
+//     defer Output.flush();
 
-    var headers = try std.heap.c_allocator.create(Headers);
-    headers.* = Headers{
-        .entries = @TypeOf(headers.entries){},
-        .buf = @TypeOf(headers.buf){},
-        .used = 0,
-        .allocator = std.heap.c_allocator,
-    };
+//     var headers = try std.heap.c_allocator.create(Headers);
+//     headers.* = Headers{
+//         .entries = @TypeOf(headers.entries){},
+//         .buf = @TypeOf(headers.buf){},
+//         .used = 0,
+//         .allocator = std.heap.c_allocator,
+//     };
 
-    headers.appendHeader("X-What", "ok", true, true, false);
-    headers.appendHeader("Accept-Encoding", "identity", true, true, false);
+//     headers.appendHeader("X-What", "ok", true, true, false);
+//     headers.appendHeader("Accept-Encoding", "identity", true, true, false);
 
-    var client = HTTPClient.init(
-        std.heap.c_allocator,
-        .GET,
-        URL.parse("https://example.com/"),
-        headers.entries,
-        headers.buf.items,
-    );
-    var body_out_str = try MutableString.init(std.heap.c_allocator, 0);
-    var response = try client.sendHTTPS("", &body_out_str);
-    try std.testing.expectEqual(response.status_code, 200);
-    try std.testing.expectEqualStrings(body_out_str.list.items, @embedFile("fixtures_example.com.html"));
-}
+//     var client = HTTPClient.init(
+//         std.heap.c_allocator,
+//         .GET,
+//         URL.parse("https://example.com/"),
+//         headers.entries,
+//         headers.buf.items,
+//     );
+//     var body_out_str = try MutableString.init(std.heap.c_allocator, 0);
+//     var response = try client.sendHTTPS("", &body_out_str);
+//     try std.testing.expectEqual(response.status_code, 200);
+//     try std.testing.expectEqualStrings(body_out_str.list.items, @embedFile("fixtures_example.com.html"));
+// }
 
-test "sendHTTPS - gzip" {
-    Output.initTest();
-    defer Output.flush();
+// test "sendHTTPS - gzip" {
+//     Output.initTest();
+//     defer Output.flush();
 
-    var headers = try std.heap.c_allocator.create(Headers);
-    headers.* = Headers{
-        .entries = @TypeOf(headers.entries){},
-        .buf = @TypeOf(headers.buf){},
-        .used = 0,
-        .allocator = std.heap.c_allocator,
-    };
+//     var headers = try std.heap.c_allocator.create(Headers);
+//     headers.* = Headers{
+//         .entries = @TypeOf(headers.entries){},
+//         .buf = @TypeOf(headers.buf){},
+//         .used = 0,
+//         .allocator = std.heap.c_allocator,
+//     };
 
-    headers.appendHeader("Accept-Encoding", "gzip", false, false, false);
+//     headers.appendHeader("Accept-Encoding", "gzip", false, false, false);
 
-    var client = HTTPClient.init(
-        std.heap.c_allocator,
-        .GET,
-        URL.parse("https://example.com/"),
-        headers.entries,
-        headers.buf.items,
-    );
-    var body_out_str = try MutableString.init(std.heap.c_allocator, 0);
-    var response = try client.sendHTTPS("", &body_out_str);
-    try std.testing.expectEqual(response.status_code, 200);
-    try std.testing.expectEqualStrings(body_out_str.list.items, @embedFile("fixtures_example.com.html"));
-}
+//     var client = HTTPClient.init(
+//         std.heap.c_allocator,
+//         .GET,
+//         URL.parse("https://example.com/"),
+//         headers.entries,
+//         headers.buf.items,
+//     );
+//     var body_out_str = try MutableString.init(std.heap.c_allocator, 0);
+//     var response = try client.sendHTTPS("", &body_out_str);
+//     try std.testing.expectEqual(response.status_code, 200);
+//     try std.testing.expectEqualStrings(body_out_str.list.items, @embedFile("fixtures_example.com.html"));
+// }
 
-// zig test src/http_client.zig --test-filter "sendHTTPS - deflate" -lc -lc++ /Users/jarred/Code/bun/src/deps/zlib/libz.a /Users/jarred/Code/bun/src/deps/picohttpparser.o --cache-dir /Users/jarred/Code/bun/zig-cache --global-cache-dir /Users/jarred/.cache/zig --name bun --pkg-begin clap /Users/jarred/Code/bun/src/deps/zig-clap/clap.zig --pkg-end --pkg-begin picohttp /Users/jarred/Code/bun/src/deps/picohttp.zig --pkg-end --pkg-begin iguanaTLS /Users/jarred/Code/bun/src/deps/iguanaTLS/src/main.zig --pkg-end -I /Users/jarred/Code/bun/src/deps -I /Users/jarred/Code/bun/src/deps/mimalloc -I /usr/local/opt/icu4c/include  -L src/deps/mimalloc -L /usr/local/opt/icu4c/lib --main-pkg-path /Users/jarred/Code/bun --enable-cache -femit-bin=zig-out/bin/test
-test "sendHTTPS - deflate" {
-    Output.initTest();
-    defer Output.flush();
+// // zig test src/http_client.zig --test-filter "sendHTTPS - deflate" -lc -lc++ /Users/jarred/Code/bun/src/deps/zlib/libz.a /Users/jarred/Code/bun/src/deps/picohttpparser.o --cache-dir /Users/jarred/Code/bun/zig-cache --global-cache-dir /Users/jarred/.cache/zig --name bun --pkg-begin clap /Users/jarred/Code/bun/src/deps/zig-clap/clap.zig --pkg-end --pkg-begin picohttp /Users/jarred/Code/bun/src/deps/picohttp.zig --pkg-end --pkg-begin iguanaTLS /Users/jarred/Code/bun/src/deps/iguanaTLS/src/main.zig --pkg-end -I /Users/jarred/Code/bun/src/deps -I /Users/jarred/Code/bun/src/deps/mimalloc -I /usr/local/opt/icu4c/include  -L src/deps/mimalloc -L /usr/local/opt/icu4c/lib --main-pkg-path /Users/jarred/Code/bun --enable-cache -femit-bin=zig-out/bin/test
+// test "sendHTTPS - deflate" {
+//     Output.initTest();
+//     defer Output.flush();
 
-    var headers = try std.heap.c_allocator.create(Headers);
-    headers.* = Headers{
-        .entries = @TypeOf(headers.entries){},
-        .buf = @TypeOf(headers.buf){},
-        .used = 0,
-        .allocator = std.heap.c_allocator,
-    };
+//     var headers = try std.heap.c_allocator.create(Headers);
+//     headers.* = Headers{
+//         .entries = @TypeOf(headers.entries){},
+//         .buf = @TypeOf(headers.buf){},
+//         .used = 0,
+//         .allocator = std.heap.c_allocator,
+//     };
 
-    headers.appendHeader("Accept-Encoding", "deflate", false, false, false);
+//     headers.appendHeader("Accept-Encoding", "deflate", false, false, false);
 
-    var client = HTTPClient.init(
-        std.heap.c_allocator,
-        .GET,
-        URL.parse("https://example.com/"),
-        headers.entries,
-        headers.buf.items,
-    );
-    var body_out_str = try MutableString.init(std.heap.c_allocator, 0);
-    var response = try client.sendHTTPS("", &body_out_str);
-    try std.testing.expectEqual(response.status_code, 200);
-    try std.testing.expectEqualStrings(body_out_str.list.items, @embedFile("fixtures_example.com.html"));
-}
+//     var client = HTTPClient.init(
+//         std.heap.c_allocator,
+//         .GET,
+//         URL.parse("https://example.com/"),
+//         headers.entries,
+//         headers.buf.items,
+//     );
+//     var body_out_str = try MutableString.init(std.heap.c_allocator, 0);
+//     var response = try client.sendHTTPS("", &body_out_str);
+//     try std.testing.expectEqual(response.status_code, 200);
+//     try std.testing.expectEqualStrings(body_out_str.list.items, @embedFile("fixtures_example.com.html"));
+// }
 
-// zig test src/http_client.zig --test-filter "sendHTTP" -lc -lc++ /Users/jarred/Code/bun/src/deps/zlib/libz.a /Users/jarred/Code/bun/src/deps/picohttpparser.o --cache-dir /Users/jarred/Code/bun/zig-cache --global-cache-dir /Users/jarred/.cache/zig --name bun --pkg-begin clap /Users/jarred/Code/bun/src/deps/zig-clap/clap.zig --pkg-end --pkg-begin picohttp /Users/jarred/Code/bun/src/deps/picohttp.zig --pkg-end --pkg-begin iguanaTLS /Users/jarred/Code/bun/src/deps/iguanaTLS/src/main.zig --pkg-end -I /Users/jarred/Code/bun/src/deps -I /Users/jarred/Code/bun/src/deps/mimalloc -I /usr/local/opt/icu4c/include  -L src/deps/mimalloc -L /usr/local/opt/icu4c/lib --main-pkg-path /Users/jarred/Code/bun --enable-cache -femit-bin=zig-out/bin/test
+// // zig test src/http_client.zig --test-filter "sendHTTP" -lc -lc++ /Users/jarred/Code/bun/src/deps/zlib/libz.a /Users/jarred/Code/bun/src/deps/picohttpparser.o --cache-dir /Users/jarred/Code/bun/zig-cache --global-cache-dir /Users/jarred/.cache/zig --name bun --pkg-begin clap /Users/jarred/Code/bun/src/deps/zig-clap/clap.zig --pkg-end --pkg-begin picohttp /Users/jarred/Code/bun/src/deps/picohttp.zig --pkg-end --pkg-begin iguanaTLS /Users/jarred/Code/bun/src/deps/iguanaTLS/src/main.zig --pkg-end -I /Users/jarred/Code/bun/src/deps -I /Users/jarred/Code/bun/src/deps/mimalloc -I /usr/local/opt/icu4c/include  -L src/deps/mimalloc -L /usr/local/opt/icu4c/lib --main-pkg-path /Users/jarred/Code/bun --enable-cache -femit-bin=zig-out/bin/test
 
-test "send - redirect" {
-    Output.initTest();
-    defer Output.flush();
+// test "send - redirect" {
+//     Output.initTest();
+//     defer Output.flush();
 
-    var headers = try std.heap.c_allocator.create(Headers);
-    headers.* = Headers{
-        .entries = @TypeOf(headers.entries){},
-        .buf = @TypeOf(headers.buf){},
-        .used = 0,
-        .allocator = std.heap.c_allocator,
-    };
+//     var headers = try std.heap.c_allocator.create(Headers);
+//     headers.* = Headers{
+//         .entries = @TypeOf(headers.entries){},
+//         .buf = @TypeOf(headers.buf){},
+//         .used = 0,
+//         .allocator = std.heap.c_allocator,
+//     };
 
-    headers.appendHeader("Accept-Encoding", "gzip", false, false, false);
+//     headers.appendHeader("Accept-Encoding", "gzip", false, false, false);
 
-    var client = HTTPClient.init(
-        std.heap.c_allocator,
-        .GET,
-        URL.parse("https://www.bun.sh/"),
-        headers.entries,
-        headers.buf.items,
-    );
-    try std.testing.expectEqualStrings(client.url.hostname, "www.bun.sh");
-    var body_out_str = try MutableString.init(std.heap.c_allocator, 0);
-    var response = try client.send("", &body_out_str);
-    try std.testing.expectEqual(response.status_code, 200);
-    try std.testing.expectEqual(client.url.hostname, "bun.sh");
-    try std.testing.expectEqualStrings(body_out_str.list.items, @embedFile("fixtures_example.com.html"));
-}
+//     var client = HTTPClient.init(
+//         std.heap.c_allocator,
+//         .GET,
+//         URL.parse("https://www.bun.sh/"),
+//         headers.entries,
+//         headers.buf.items,
+//     );
+//     try std.testing.expectEqualStrings(client.url.hostname, "www.bun.sh");
+//     var body_out_str = try MutableString.init(std.heap.c_allocator, 0);
+//     var response = try client.send("", &body_out_str);
+//     try std.testing.expectEqual(response.status_code, 200);
+//     try std.testing.expectEqual(client.url.hostname, "bun.sh");
+//     try std.testing.expectEqualStrings(body_out_str.list.items, @embedFile("fixtures_example.com.html"));
+// }

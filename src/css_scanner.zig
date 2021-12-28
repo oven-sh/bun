@@ -7,7 +7,6 @@ const logger = @import("./logger.zig");
 const Options = options;
 const resolver = @import("./resolver/resolver.zig");
 const _linker = @import("./linker.zig");
-const alloc = @import("./alloc.zig");
 const replacementCharacter: CodePoint = 0xFFFD;
 
 pub const Chunk = struct {
@@ -1160,9 +1159,9 @@ pub fn NewBundler(
             linker: Linker,
         ) !CodeCount {
             if (!has_set_global_queue) {
-                global_queued = QueuedList.init(alloc.static);
-                global_import_queud = ImportQueueFifo.init(alloc.static);
-                global_bundle_queud = QueuedList.init(alloc.static);
+                global_queued = QueuedList.init(default_allocator);
+                global_import_queud = ImportQueueFifo.init(default_allocator);
+                global_bundle_queud = QueuedList.init(default_allocator);
                 has_set_global_queue = true;
             } else {
                 global_queued.clearRetainingCapacity();

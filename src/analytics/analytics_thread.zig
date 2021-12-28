@@ -422,8 +422,11 @@ pub const EventList = struct {
         var in_buffer = &this.in_buffer;
         var buffer_writer = in_buffer.writer();
         var analytics_writer = AnalyticsWriter.init(&buffer_writer);
-
-        const start_time = @import("root").start_time;
+        const Root = @import("root");
+        const start_time: i128 = if (@hasDecl(Root, "start_time"))
+            Root.start_time
+        else
+            0;
         const now = std.time.nanoTimestamp();
 
         this.header.session_length = @truncate(u32, @intCast(u64, (now - start_time)) / std.time.ns_per_ms);

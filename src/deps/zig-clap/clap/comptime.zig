@@ -148,32 +148,3 @@ pub fn ComptimeClap(
         }
     };
 }
-
-test "" {
-    const Clap = ComptimeClap(clap.Help, comptime &[_]clap.Param(clap.Help){
-        clap.parseParam("-a, --aa    ") catch unreachable,
-        clap.parseParam("-b, --bb    ") catch unreachable,
-        clap.parseParam("-c, --cc <V>") catch unreachable,
-        clap.parseParam("-d, --dd <V>...") catch unreachable,
-        clap.parseParam("<P>") catch unreachable,
-    });
-
-    var iter = clap.args.SliceIterator{
-        .args = &[_][]const u8{
-            "-a", "-c", "0", "something", "-d", "a", "--dd", "b",
-        },
-    };
-    var args = try Clap.parse(&iter, .{ .allocator = testing.allocator });
-    defer args.deinit();
-
-    testing.expect(args.flag("-a"));
-    testing.expect(args.flag("--aa"));
-    testing.expect(!args.flag("-b"));
-    testing.expect(!args.flag("--bb"));
-    testing.expectEqualStrings("0", args.option("-c").?);
-    testing.expectEqualStrings("0", args.option("--cc").?);
-    testing.expectEqual(@as(usize, 1), args.positionals().len);
-    testing.expectEqualStrings("something", args.positionals()[0]);
-    testing.expectEqualSlices([]const u8, &[_][]const u8{ "a", "b" }, args.options("-d"));
-    testing.expectEqualSlices([]const u8, &[_][]const u8{ "a", "b" }, args.options("--dd"));
-}

@@ -5,7 +5,7 @@ const options = @import("../options.zig");
 const cache = @import("../cache.zig");
 const logger = @import("../logger.zig");
 const js_ast = @import("../js_ast.zig");
-const alloc = @import("../alloc.zig");
+
 const fs = @import("../fs.zig");
 const resolver = @import("./resolver.zig");
 const js_lexer = @import("../js_lexer.zig");
@@ -445,7 +445,6 @@ pub const PackageJSON = struct {
         dirname_fd: StoredFileDescriptorType,
         comptime generate_hash: bool,
         comptime include_scripts: bool,
-        
     ) ?PackageJSON {
 
         // TODO: remove this extra copy

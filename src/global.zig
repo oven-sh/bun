@@ -84,7 +84,7 @@ pub const Output = struct {
             if (source_set) return;
             configureThread();
 
-            // On Linux, thread may be undefined 
+            // On Linux, thread may be undefined
             // Fortunately, we can use a different syscall that only affects the current thread
             if (Environment.isLinux) {
                 _ = std.os.linux.prctl(std.os.PR_SET_NAME, @ptrToInt(name.ptr), 0, 0, 0);
@@ -489,6 +489,11 @@ pub const Global = struct {
         std.fmt.comptimePrint("0.0.{d}_debug", .{build_id})
     else
         std.fmt.comptimePrint("0.0.{d}", .{build_id});
+
+    pub inline fn getStartTime() i128 {
+        if (Environment.isTest) return 0;
+        return @import("root").start_time;
+    }
 
     pub const AllocatorConfiguration = struct {
         verbose: bool = false,

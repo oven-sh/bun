@@ -132,7 +132,7 @@ COPY src/node-fallbacks ${BUN_DIR}/src/node-fallbacks
 RUN cd $BUN_DIR && \
     make node-fallbacks && rm -rf src/node-fallbacks/node_modules Makefile
 
-FROM bunbunbunbun/bun-base-with-zig-and-webkit:latest as build_release
+FROM bunbunbunbun/bun-base-with-zig-and-webkit:latest as prepare_release
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -162,6 +162,22 @@ COPY --from=boringssl ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=zlib ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=identifier_cache ${BUN_DIR}/src/js_lexer/*.blob ${BUN_DIR}/src/js_lexer
 
+WORKDIR ${BUN_DIR}
+
+
+FROM prepare_release as build_release
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+
+WORKDIR $BUN_DIR
+
 RUN cd $BUN_DIR &&  rm -rf $HOME/.cache zig-cache && make \
     jsc-bindings-headers \
     api \
@@ -171,6 +187,32 @@ RUN cd $BUN_DIR &&  rm -rf $HOME/.cache zig-cache && make \
     mkdir -p $BUN_RELEASE_DIR && \
     make release copy-to-bun-release-dir && \
     rm -rf $HOME/.cache zig-cache misctools package.json build-id completions build.zig
+
+FROM prepare_release as build_unit
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+
+WORKDIR $BUN_DIR
+
+ENTRYPOINT [ "/bin/bash" ]
+
+CMD cd $BUN_DIR && \
+    make \
+    jsc-bindings-headers \
+    api \
+    analytics \
+    bun_error \
+    fallback_decoder \
+    jsc-bindings-mac && \
+    make \
+    run-all-unit-tests
 
 FROM bunbunbunbun/bun-base-with-zig-and-webkit:latest as bun.devcontainer
 

@@ -1,8 +1,6 @@
 const std = @import("std");
 usingnamespace @import("global.zig");
 const sync = @import("sync.zig");
-const alloc = @import("alloc.zig");
-const expect = std.testing.expect;
 const Mutex = @import("./lock.zig").Lock;
 const Semaphore = sync.Semaphore;
 const Fs = @This();
@@ -97,7 +95,7 @@ pub const FileSystem = struct {
             return;
         }
 
-        max_fd = std.math.max(fd, max_fd);
+        max_fd = @maximum(fd, max_fd);
     }
     pub var instance_loaded: bool = false;
     pub var instance: FileSystem = undefined;
@@ -116,6 +114,14 @@ pub const FileSystem = struct {
         allocator: *std.mem.Allocator,
         top_level_dir: ?string,
     ) !*FileSystem {
+        return init1WithForce(allocator, top_level_dir, false);
+    }
+
+    pub fn init1WithForce(
+        allocator: *std.mem.Allocator,
+        top_level_dir: ?string,
+        comptime force: bool,
+    ) !*FileSystem {
         var _top_level_dir = top_level_dir orelse (if (isBrowser) "/project/" else try std.process.getCwdAlloc(allocator));
 
         // Ensure there's a trailing separator in the top level directory
@@ -130,7 +136,7 @@ pub const FileSystem = struct {
             _top_level_dir = tld;
         }
 
-        if (!instance_loaded) {
+        if (!instance_loaded or force) {
             instance = FileSystem{
                 .allocator = allocator,
                 .top_level_dir = _top_level_dir,
@@ -158,9 +164,9 @@ pub const FileSystem = struct {
         fd: StoredFileDescriptorType = 0,
         data: EntryMap,
 
-        pub fn removeEntry(dir: *DirEntry, name: string) !void {
-            dir.data.remove(name);
-        }
+        // pub fn removeEntry(dir: *DirEntry, name: string) !void {
+        //     // dir.data.remove(name);
+        // }
 
         pub fn addEntry(dir: *DirEntry, entry: std.fs.Dir.Entry) !void {
             var _kind: Entry.Kind = undefined;
@@ -217,14 +223,6 @@ pub const FileSystem = struct {
                 } else {
                     Output.prettyln("   + {s}", .{stored_name});
                 }
-            }
-        }
-
-        pub fn updateDir(i: *DirEntry, dir: string) void {
-            var iter = i.data.iterator();
-            i.dir = dir;
-            while (iter.next()) |entry| {
-                entry.value_ptr.dir = dir;
             }
         }
 
@@ -424,14 +422,6 @@ pub const FileSystem = struct {
         });
     }
 
-    pub fn relativeAlloc(f: *@This(), allocator: *std.mem.Allocator, from: string, to: string) string {
-        return @call(.{ .modifier = .always_inline }, path_handler.relativeAlloc, .{
-            alloc,
-            from,
-            to,
-        });
-    }
-
     pub fn relativeTo(f: *@This(), to: string) string {
         return @call(.{ .modifier = .always_inline }, path_handler.relative, .{
             f.top_level_dir,
@@ -443,14 +433,6 @@ pub const FileSystem = struct {
         return @call(.{ .modifier = .always_inline }, path_handler.relative, .{
             from,
             f.top_level_dir,
-        });
-    }
-
-    pub fn relativeToAlloc(f: *@This(), allocator: *std.mem.Allocator, to: string) string {
-        return @call(.{ .modifier = .always_inline }, path_handler.relativeAlloc, .{
-            allocator,
-            f.top_level_dir,
-            to,
         });
     }
 
@@ -502,7 +484,6 @@ pub const FileSystem = struct {
         entries_mutex: Mutex = Mutex.init(),
         entries: *EntriesOption.Map,
         allocator: *std.mem.Allocator,
-        // limiter: *Limiter,
         cwd: string,
         parent_fs: *FileSystem = undefined,
         file_limit: usize = 32,
@@ -719,8 +700,6 @@ pub const FileSystem = struct {
         }
 
         pub fn modKey(fs: *RealFS, path: string) anyerror!ModKey {
-            // fs.limiter.before();
-            // defer fs.limiter.after();
             var file = try std.fs.openFileAbsolute(path, std.fs.File.OpenFlags{ .read = true });
             defer {
                 if (fs.needToCloseFiles()) {
@@ -745,33 +724,6 @@ pub const FileSystem = struct {
             pub const Map = allocators.BSSMap(EntriesOption, Preallocate.Counts.dir_entry, false, 128, true);
         };
 
-        // Limit the number of files open simultaneously to avoid ulimit issues
-        pub const Limiter = struct {
-            semaphore: Semaphore,
-            pub fn init(allocator: *std.mem.Allocator, limit: usize) Limiter {
-                return Limiter{
-                    .semaphore = Semaphore.init(limit),
-                    // .counter = std.atomic.Int(u8).init(0),
-                    // .lock = std.Thread.Mutex.init(),
-                };
-            }
-
-            // This will block if the number of open files is already at the limit
-            pub fn before(limiter: *Limiter) void {
-                limiter.semaphore.wait();
-                // var added = limiter.counter.fetchAdd(1);
-            }
-
-            pub fn after(limiter: *Limiter) void {
-                limiter.semaphore.post();
-                // limiter.counter.decr();
-                // if (limiter.held) |hold| {
-                //     hold.release();
-                //     limiter.held = null;
-                // }
-            }
-        };
-
         pub fn openDir(fs: *RealFS, unsafe_dir_string: string) std.fs.File.OpenError!std.fs.Dir {
             return try std.fs.openDirAbsolute(unsafe_dir_string, std.fs.Dir.OpenDirOptions{ .iterate = true, .access_sub_paths = true, .no_follow = false });
         }
@@ -781,9 +733,6 @@ pub const FileSystem = struct {
             _dir: string,
             handle: std.fs.Dir,
         ) !DirEntry {
-            // fs.limiter.before();
-            // defer fs.limiter.after();
-
             var iter: std.fs.Dir.Iterator = handle.iterate();
             var dir = DirEntry.init(_dir, fs.allocator);
             errdefer dir.deinit();
@@ -938,26 +887,6 @@ pub const FileSystem = struct {
             }
 
             return File{ .path = Path.init(path), .contents = file_contents };
-        }
-
-        pub fn readFile(
-            fs: *RealFS,
-            path: string,
-            _size: ?usize,
-        ) !File {
-            fs.limiter.before();
-            defer fs.limiter.after();
-            const file: std.fs.File = std.fs.openFileAbsolute(path, std.fs.File.OpenFlags{ .read = true, .write = false }) catch |err| {
-                fs.readFileError(path, err);
-                return err;
-            };
-            defer {
-                if (fs.needToCloseFiles()) {
-                    file.close();
-                }
-            }
-
-            return try fs.readFileWithHandle(path, _size, file);
         }
 
         pub fn kind(fs: *RealFS, _dir: string, base: string, existing_fd: StoredFileDescriptorType) !Entry.Cache {
@@ -1282,4 +1211,8 @@ test "PathName.init" {
     try std.testing.expectEqualStrings(res.dir, "/root/directory");
     try std.testing.expectEqualStrings(res.base, "file");
     try std.testing.expectEqualStrings(res.ext, ".ext");
+}
+
+test "" {
+    @import("std").testing.refAllDecls(FileSystem);
 }

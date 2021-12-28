@@ -4,7 +4,6 @@ pub const js_lexer = @import("../js_lexer.zig");
 pub const importRecord = @import("../import_record.zig");
 pub const js_ast = @import("../js_ast.zig");
 pub const options = @import("../options.zig");
-pub const alloc = @import("../alloc.zig");
 pub const js_printer = @import("../js_printer.zig");
 pub const renamer = @import("../renamer.zig");
 const _runtime = @import("../runtime.zig");

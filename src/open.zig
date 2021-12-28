@@ -1,6 +1,5 @@
 usingnamespace @import("./global.zig");
 const std = @import("std");
-const alloc = @import("./alloc.zig");
 
 const opener = switch (std.Target.current.os.tag) {
     .macos => "/usr/bin/open",
@@ -16,7 +15,7 @@ pub fn openURL(url: string) !void {
     }
 
     var args_buf = [_]string{ opener, url };
-    var child_process = try std.ChildProcess.init(&args_buf, alloc.dynamic);
+    var child_process = try std.ChildProcess.init(&args_buf, default_allocator);
     child_process.stderr_behavior = .Pipe;
     child_process.stdin_behavior = .Ignore;
     child_process.stdout_behavior = .Pipe;
@@ -24,4 +23,3 @@ pub fn openURL(url: string) !void {
     _ = try child_process.wait();
     return;
 }
-

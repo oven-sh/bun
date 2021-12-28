@@ -62,7 +62,7 @@ pub fn BSSSectionAllocator(comptime size: usize) type {
 }
 
 pub fn isSliceInBuffer(slice: anytype, buffer: anytype) bool {
-    return (@ptrToInt(buffer) <= @ptrToInt(slice.ptr) and (@ptrToInt(slice.ptr) + slice.len) <= (@ptrToInt(buffer) + buffer.len));
+    return (@ptrToInt(&buffer) <= @ptrToInt(slice.ptr) and (@ptrToInt(slice.ptr) + slice.len) <= (@ptrToInt(buffer) + buffer.len));
 }
 
 pub fn sliceRange(slice: []const u8, buffer: []const u8) ?[2]u32 {
@@ -413,7 +413,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
         }
 
         pub fn remove(self: *Self, index: IndexType) void {
-            @compileError("Not implemented yet.");
+            // @compileError("Not implemented yet.");
             // switch (index) {
             //     Unassigned.index => {
             //         self.index.remove(_key);

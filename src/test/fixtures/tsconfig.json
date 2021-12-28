@@ -4,6 +4,6 @@
     "paths": {
       "components/*": ["components/*"]
     },
-    "jsx": "preserve"
+    "jsx": "preserve",
   }
 }

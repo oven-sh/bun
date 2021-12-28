@@ -36,7 +36,7 @@ const IPv6 = std.x.os.IPv6;
 const Socket = std.x.os.Socket;
 const os = std.os;
 
-const picohttp = @import("./deps/picohttp.zig");
+const picohttp = @import("picohttp");
 const Header = picohttp.Header;
 const Request = picohttp.Request;
 const Response = picohttp.Response;
@@ -2682,7 +2682,7 @@ pub const Server = struct {
                 server.bundler.options.origin.port = try std.fmt.allocPrint(server.allocator, "{d}", .{addr.ipv4.port});
             }
         }
-        const start_time = @import("root").start_time;
+        const start_time = Global.getStartTime();
         const now = std.time.nanoTimestamp();
         Output.printStartEnd(start_time, now);
         // This is technically imprecise.
@@ -2996,7 +2996,7 @@ pub const Server = struct {
     pub fn initWatcher(server: *Server) !void {
         server.watcher = try Watcher.init(server, server.bundler.fs, server.allocator);
 
-        if (comptime FeatureFlags.watch_directories) {
+        if (comptime FeatureFlags.watch_directories and !Environment.isTest) {
             server.bundler.resolver.onStartWatchingDirectoryCtx = server.watcher;
             server.bundler.resolver.onStartWatchingDirectory = onMaybeWatchDirectory;
         }

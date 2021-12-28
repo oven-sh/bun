@@ -721,11 +721,6 @@ pub const Performance = struct {
 };
 
 const bun_file_import_path = "/node_modules.server.bun";
-pub const LazyClasses = [_]type{};
-
-pub const Module = struct {
-    reload_pending: bool = false,
-};
 
 const FetchTasklet = Fetch.FetchTasklet;
 const TaggedPointerUnion = @import("../../tagged_pointer.zig").TaggedPointerUnion;
@@ -738,14 +733,12 @@ pub const Task = TaggedPointerUnion(.{
 // We can see that it's sort of like std.mem.Allocator but for JSGlobalContextRef, to support Automatic Reference Counting
 // Its unavailable on Linux
 pub const VirtualMachine = struct {
-    const RequireCacheType = std.AutoHashMap(u32, *Module);
     global: *JSGlobalObject,
     allocator: *std.mem.Allocator,
     node_modules: ?*NodeModuleBundle = null,
     bundler: Bundler,
     watcher: ?*http.Watcher = null,
     console: *ZigConsoleClient,
-    require_cache: RequireCacheType,
     log: *logger.Log,
     event_listeners: EventListenerMixin.Map,
     main: string = "",
@@ -867,7 +860,6 @@ pub const VirtualMachine = struct {
             .global = undefined,
             .allocator = allocator,
             .entry_point = ServerEntryPoint{},
-            .require_cache = RequireCacheType.init(allocator),
             .event_listeners = EventListenerMixin.Map.init(allocator),
             .bundler = bundler,
             .console = console,
@@ -1871,10 +1863,6 @@ pub const VirtualMachine = struct {
     }
 };
 
-pub const Object = struct {
-    ref: js.jsObjectRef,
-};
-
 const GetterFn = fn (
     this: anytype,
     ctx: js.JSContextRef,
@@ -2390,3 +2378,4 @@ pub const BuildError = struct {
 };
 
 pub const JSPrivateDataTag = JSPrivateDataPtr.Tag;
+

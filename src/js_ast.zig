@@ -7120,122 +7120,122 @@ pub const Macro = struct {
     };
 };
 
-test "Binding.init" {
-    var binding = Binding.alloc(
-        std.heap.page_allocator,
-        B.Identifier{ .ref = Ref{ .source_index = 0, .inner_index = 10 } },
-        logger.Loc{ .start = 1 },
-    );
-    std.testing.expect(binding.loc.start == 1);
-    std.testing.expect(@as(Binding.Tag, binding.data) == Binding.Tag.b_identifier);
+// test "Binding.init" {
+//     var binding = Binding.alloc(
+//         std.heap.page_allocator,
+//         B.Identifier{ .ref = Ref{ .source_index = 0, .inner_index = 10 } },
+//         logger.Loc{ .start = 1 },
+//     );
+//     std.testing.expect(binding.loc.start == 1);
+//     std.testing.expect(@as(Binding.Tag, binding.data) == Binding.Tag.b_identifier);
 
-    printmem("-------Binding:           {d} bits\n", .{@bitSizeOf(Binding)});
-    printmem("B.Identifier:             {d} bits\n", .{@bitSizeOf(B.Identifier)});
-    printmem("B.Array:                  {d} bits\n", .{@bitSizeOf(B.Array)});
-    printmem("B.Property:               {d} bits\n", .{@bitSizeOf(B.Property)});
-    printmem("B.Object:                 {d} bits\n", .{@bitSizeOf(B.Object)});
-    printmem("B.Missing:                {d} bits\n", .{@bitSizeOf(B.Missing)});
-    printmem("-------Binding:           {d} bits\n", .{@bitSizeOf(Binding)});
-}
+//     printmem("-------Binding:           {d} bits\n", .{@bitSizeOf(Binding)});
+//     printmem("B.Identifier:             {d} bits\n", .{@bitSizeOf(B.Identifier)});
+//     printmem("B.Array:                  {d} bits\n", .{@bitSizeOf(B.Array)});
+//     printmem("B.Property:               {d} bits\n", .{@bitSizeOf(B.Property)});
+//     printmem("B.Object:                 {d} bits\n", .{@bitSizeOf(B.Object)});
+//     printmem("B.Missing:                {d} bits\n", .{@bitSizeOf(B.Missing)});
+//     printmem("-------Binding:           {d} bits\n", .{@bitSizeOf(Binding)});
+// }
 
-test "Stmt.init" {
-    var stmt = Stmt.alloc(
-        std.heap.page_allocator,
-        S.Continue{},
-        logger.Loc{ .start = 1 },
-    );
-    std.testing.expect(stmt.loc.start == 1);
-    std.testing.expect(@as(Stmt.Tag, stmt.data) == Stmt.Tag.s_continue);
+// test "Stmt.init" {
+//     var stmt = Stmt.alloc(
+//         std.heap.page_allocator,
+//         S.Continue{},
+//         logger.Loc{ .start = 1 },
+//     );
+//     std.testing.expect(stmt.loc.start == 1);
+//     std.testing.expect(@as(Stmt.Tag, stmt.data) == Stmt.Tag.s_continue);
 
-    printmem("-----Stmt       {d} bits\n", .{@bitSizeOf(Stmt)});
-    printmem("StmtNodeList:   {d} bits\n", .{@bitSizeOf(StmtNodeList)});
-    printmem("StmtOrExpr:     {d} bits\n", .{@bitSizeOf(StmtOrExpr)});
-    printmem("S.Block         {d} bits\n", .{@bitSizeOf(S.Block)});
-    printmem("S.Comment       {d} bits\n", .{@bitSizeOf(S.Comment)});
-    printmem("S.Directive     {d} bits\n", .{@bitSizeOf(S.Directive)});
-    printmem("S.ExportClause  {d} bits\n", .{@bitSizeOf(S.ExportClause)});
-    printmem("S.Empty         {d} bits\n", .{@bitSizeOf(S.Empty)});
-    printmem("S.TypeScript    {d} bits\n", .{@bitSizeOf(S.TypeScript)});
-    printmem("S.Debugger      {d} bits\n", .{@bitSizeOf(S.Debugger)});
-    printmem("S.ExportFrom    {d} bits\n", .{@bitSizeOf(S.ExportFrom)});
-    printmem("S.ExportDefault {d} bits\n", .{@bitSizeOf(S.ExportDefault)});
-    printmem("S.Enum          {d} bits\n", .{@bitSizeOf(S.Enum)});
-    printmem("S.Namespace     {d} bits\n", .{@bitSizeOf(S.Namespace)});
-    printmem("S.Function      {d} bits\n", .{@bitSizeOf(S.Function)});
-    printmem("S.Class         {d} bits\n", .{@bitSizeOf(S.Class)});
-    printmem("S.If            {d} bits\n", .{@bitSizeOf(S.If)});
-    printmem("S.For           {d} bits\n", .{@bitSizeOf(S.For)});
-    printmem("S.ForIn         {d} bits\n", .{@bitSizeOf(S.ForIn)});
-    printmem("S.ForOf         {d} bits\n", .{@bitSizeOf(S.ForOf)});
-    printmem("S.DoWhile       {d} bits\n", .{@bitSizeOf(S.DoWhile)});
-    printmem("S.While         {d} bits\n", .{@bitSizeOf(S.While)});
-    printmem("S.With          {d} bits\n", .{@bitSizeOf(S.With)});
-    printmem("S.Try           {d} bits\n", .{@bitSizeOf(S.Try)});
-    printmem("S.Switch        {d} bits\n", .{@bitSizeOf(S.Switch)});
-    printmem("S.Import        {d} bits\n", .{@bitSizeOf(S.Import)});
-    printmem("S.Return        {d} bits\n", .{@bitSizeOf(S.Return)});
-    printmem("S.Throw         {d} bits\n", .{@bitSizeOf(S.Throw)});
-    printmem("S.Local         {d} bits\n", .{@bitSizeOf(S.Local)});
-    printmem("S.Break         {d} bits\n", .{@bitSizeOf(S.Break)});
-    printmem("S.Continue      {d} bits\n", .{@bitSizeOf(S.Continue)});
-    printmem("-----Stmt       {d} bits\n", .{@bitSizeOf(Stmt)});
-}
+//     printmem("-----Stmt       {d} bits\n", .{@bitSizeOf(Stmt)});
+//     printmem("StmtNodeList:   {d} bits\n", .{@bitSizeOf(StmtNodeList)});
+//     printmem("StmtOrExpr:     {d} bits\n", .{@bitSizeOf(StmtOrExpr)});
+//     printmem("S.Block         {d} bits\n", .{@bitSizeOf(S.Block)});
+//     printmem("S.Comment       {d} bits\n", .{@bitSizeOf(S.Comment)});
+//     printmem("S.Directive     {d} bits\n", .{@bitSizeOf(S.Directive)});
+//     printmem("S.ExportClause  {d} bits\n", .{@bitSizeOf(S.ExportClause)});
+//     printmem("S.Empty         {d} bits\n", .{@bitSizeOf(S.Empty)});
+//     printmem("S.TypeScript    {d} bits\n", .{@bitSizeOf(S.TypeScript)});
+//     printmem("S.Debugger      {d} bits\n", .{@bitSizeOf(S.Debugger)});
+//     printmem("S.ExportFrom    {d} bits\n", .{@bitSizeOf(S.ExportFrom)});
+//     printmem("S.ExportDefault {d} bits\n", .{@bitSizeOf(S.ExportDefault)});
+//     printmem("S.Enum          {d} bits\n", .{@bitSizeOf(S.Enum)});
+//     printmem("S.Namespace     {d} bits\n", .{@bitSizeOf(S.Namespace)});
+//     printmem("S.Function      {d} bits\n", .{@bitSizeOf(S.Function)});
+//     printmem("S.Class         {d} bits\n", .{@bitSizeOf(S.Class)});
+//     printmem("S.If            {d} bits\n", .{@bitSizeOf(S.If)});
+//     printmem("S.For           {d} bits\n", .{@bitSizeOf(S.For)});
+//     printmem("S.ForIn         {d} bits\n", .{@bitSizeOf(S.ForIn)});
+//     printmem("S.ForOf         {d} bits\n", .{@bitSizeOf(S.ForOf)});
+//     printmem("S.DoWhile       {d} bits\n", .{@bitSizeOf(S.DoWhile)});
+//     printmem("S.While         {d} bits\n", .{@bitSizeOf(S.While)});
+//     printmem("S.With          {d} bits\n", .{@bitSizeOf(S.With)});
+//     printmem("S.Try           {d} bits\n", .{@bitSizeOf(S.Try)});
+//     printmem("S.Switch        {d} bits\n", .{@bitSizeOf(S.Switch)});
+//     printmem("S.Import        {d} bits\n", .{@bitSizeOf(S.Import)});
+//     printmem("S.Return        {d} bits\n", .{@bitSizeOf(S.Return)});
+//     printmem("S.Throw         {d} bits\n", .{@bitSizeOf(S.Throw)});
+//     printmem("S.Local         {d} bits\n", .{@bitSizeOf(S.Local)});
+//     printmem("S.Break         {d} bits\n", .{@bitSizeOf(S.Break)});
+//     printmem("S.Continue      {d} bits\n", .{@bitSizeOf(S.Continue)});
+//     printmem("-----Stmt       {d} bits\n", .{@bitSizeOf(Stmt)});
+// }
 
-test "Expr.init" {
-    var allocator = std.heap.page_allocator;
-    const ident = Expr.init(E.Identifier, E.Identifier{}, logger.Loc{ .start = 100 });
-    var list = [_]Expr{ident};
-    var expr = Expr.init(
-        E.Array,
-        E.Array{ .items = list[0..] },
-        logger.Loc{ .start = 1 },
-    );
-    try std.testing.expect(expr.loc.start == 1);
-    try std.testing.expect(@as(Expr.Tag, expr.data) == Expr.Tag.e_array);
-    try std.testing.expect(expr.data.e_array.items[0].loc.start == 100);
+// test "Expr.init" {
+//     var allocator = std.heap.page_allocator;
+//     const ident = Expr.init(E.Identifier, E.Identifier{}, logger.Loc{ .start = 100 });
+//     var list = [_]Expr{ident};
+//     var expr = Expr.init(
+//         E.Array,
+//         E.Array{ .items = list[0..] },
+//         logger.Loc{ .start = 1 },
+//     );
+//     try std.testing.expect(expr.loc.start == 1);
+//     try std.testing.expect(@as(Expr.Tag, expr.data) == Expr.Tag.e_array);
+//     try std.testing.expect(expr.data.e_array.items[0].loc.start == 100);
 
-    printmem("--Ref                      {d} bits\n", .{@bitSizeOf(Ref)});
-    printmem("--LocRef                   {d} bits\n", .{@bitSizeOf(LocRef)});
-    printmem("--logger.Loc               {d} bits\n", .{@bitSizeOf(logger.Loc)});
-    printmem("--logger.Range             {d} bits\n", .{@bitSizeOf(logger.Range)});
-    printmem("----------Expr:            {d} bits\n", .{@bitSizeOf(Expr)});
-    printmem("ExprNodeList:              {d} bits\n", .{@bitSizeOf(ExprNodeList)});
-    printmem("E.Array:                   {d} bits\n", .{@bitSizeOf(E.Array)});
+//     printmem("--Ref                      {d} bits\n", .{@bitSizeOf(Ref)});
+//     printmem("--LocRef                   {d} bits\n", .{@bitSizeOf(LocRef)});
+//     printmem("--logger.Loc               {d} bits\n", .{@bitSizeOf(logger.Loc)});
+//     printmem("--logger.Range             {d} bits\n", .{@bitSizeOf(logger.Range)});
+//     printmem("----------Expr:            {d} bits\n", .{@bitSizeOf(Expr)});
+//     printmem("ExprNodeList:              {d} bits\n", .{@bitSizeOf(ExprNodeList)});
+//     printmem("E.Array:                   {d} bits\n", .{@bitSizeOf(E.Array)});
 
-    printmem("E.Unary:                   {d} bits\n", .{@bitSizeOf(E.Unary)});
-    printmem("E.Binary:                  {d} bits\n", .{@bitSizeOf(E.Binary)});
-    printmem("E.Boolean:                 {d} bits\n", .{@bitSizeOf(E.Boolean)});
-    printmem("E.Super:                   {d} bits\n", .{@bitSizeOf(E.Super)});
-    printmem("E.Null:                    {d} bits\n", .{@bitSizeOf(E.Null)});
-    printmem("E.Undefined:               {d} bits\n", .{@bitSizeOf(E.Undefined)});
-    printmem("E.New:                     {d} bits\n", .{@bitSizeOf(E.New)});
-    printmem("E.NewTarget:               {d} bits\n", .{@bitSizeOf(E.NewTarget)});
-    printmem("E.Function:                {d} bits\n", .{@bitSizeOf(E.Function)});
-    printmem("E.ImportMeta:              {d} bits\n", .{@bitSizeOf(E.ImportMeta)});
-    printmem("E.Call:                    {d} bits\n", .{@bitSizeOf(E.Call)});
-    printmem("E.Dot:                     {d} bits\n", .{@bitSizeOf(E.Dot)});
-    printmem("E.Index:                   {d} bits\n", .{@bitSizeOf(E.Index)});
-    printmem("E.Arrow:                   {d} bits\n", .{@bitSizeOf(E.Arrow)});
-    printmem("E.Identifier:              {d} bits\n", .{@bitSizeOf(E.Identifier)});
-    printmem("E.ImportIdentifier:        {d} bits\n", .{@bitSizeOf(E.ImportIdentifier)});
-    printmem("E.PrivateIdentifier:       {d} bits\n", .{@bitSizeOf(E.PrivateIdentifier)});
-    printmem("E.JSXElement:              {d} bits\n", .{@bitSizeOf(E.JSXElement)});
-    printmem("E.Missing:                 {d} bits\n", .{@bitSizeOf(E.Missing)});
-    printmem("E.Number:                  {d} bits\n", .{@bitSizeOf(E.Number)});
-    printmem("E.BigInt:                  {d} bits\n", .{@bitSizeOf(E.BigInt)});
-    printmem("E.Object:                  {d} bits\n", .{@bitSizeOf(E.Object)});
-    printmem("E.Spread:                  {d} bits\n", .{@bitSizeOf(E.Spread)});
-    printmem("E.String:                  {d} bits\n", .{@bitSizeOf(E.String)});
-    printmem("E.TemplatePart:            {d} bits\n", .{@bitSizeOf(E.TemplatePart)});
-    printmem("E.Template:                {d} bits\n", .{@bitSizeOf(E.Template)});
-    printmem("E.RegExp:                  {d} bits\n", .{@bitSizeOf(E.RegExp)});
-    printmem("E.Await:                   {d} bits\n", .{@bitSizeOf(E.Await)});
-    printmem("E.Yield:                   {d} bits\n", .{@bitSizeOf(E.Yield)});
-    printmem("E.If:                      {d} bits\n", .{@bitSizeOf(E.If)});
-    printmem("E.RequireOrRequireResolve: {d} bits\n", .{@bitSizeOf(E.RequireOrRequireResolve)});
-    printmem("E.Import:                  {d} bits\n", .{@bitSizeOf(E.Import)});
-    printmem("----------Expr:            {d} bits\n", .{@bitSizeOf(Expr)});
-}
+//     printmem("E.Unary:                   {d} bits\n", .{@bitSizeOf(E.Unary)});
+//     printmem("E.Binary:                  {d} bits\n", .{@bitSizeOf(E.Binary)});
+//     printmem("E.Boolean:                 {d} bits\n", .{@bitSizeOf(E.Boolean)});
+//     printmem("E.Super:                   {d} bits\n", .{@bitSizeOf(E.Super)});
+//     printmem("E.Null:                    {d} bits\n", .{@bitSizeOf(E.Null)});
+//     printmem("E.Undefined:               {d} bits\n", .{@bitSizeOf(E.Undefined)});
+//     printmem("E.New:                     {d} bits\n", .{@bitSizeOf(E.New)});
+//     printmem("E.NewTarget:               {d} bits\n", .{@bitSizeOf(E.NewTarget)});
+//     printmem("E.Function:                {d} bits\n", .{@bitSizeOf(E.Function)});
+//     printmem("E.ImportMeta:              {d} bits\n", .{@bitSizeOf(E.ImportMeta)});
+//     printmem("E.Call:                    {d} bits\n", .{@bitSizeOf(E.Call)});
+//     printmem("E.Dot:                     {d} bits\n", .{@bitSizeOf(E.Dot)});
+//     printmem("E.Index:                   {d} bits\n", .{@bitSizeOf(E.Index)});
+//     printmem("E.Arrow:                   {d} bits\n", .{@bitSizeOf(E.Arrow)});
+//     printmem("E.Identifier:              {d} bits\n", .{@bitSizeOf(E.Identifier)});
+//     printmem("E.ImportIdentifier:        {d} bits\n", .{@bitSizeOf(E.ImportIdentifier)});
+//     printmem("E.PrivateIdentifier:       {d} bits\n", .{@bitSizeOf(E.PrivateIdentifier)});
+//     printmem("E.JSXElement:              {d} bits\n", .{@bitSizeOf(E.JSXElement)});
+//     printmem("E.Missing:                 {d} bits\n", .{@bitSizeOf(E.Missing)});
+//     printmem("E.Number:                  {d} bits\n", .{@bitSizeOf(E.Number)});
+//     printmem("E.BigInt:                  {d} bits\n", .{@bitSizeOf(E.BigInt)});
+//     printmem("E.Object:                  {d} bits\n", .{@bitSizeOf(E.Object)});
+//     printmem("E.Spread:                  {d} bits\n", .{@bitSizeOf(E.Spread)});
+//     printmem("E.String:                  {d} bits\n", .{@bitSizeOf(E.String)});
+//     printmem("E.TemplatePart:            {d} bits\n", .{@bitSizeOf(E.TemplatePart)});
+//     printmem("E.Template:                {d} bits\n", .{@bitSizeOf(E.Template)});
+//     printmem("E.RegExp:                  {d} bits\n", .{@bitSizeOf(E.RegExp)});
+//     printmem("E.Await:                   {d} bits\n", .{@bitSizeOf(E.Await)});
+//     printmem("E.Yield:                   {d} bits\n", .{@bitSizeOf(E.Yield)});
+//     printmem("E.If:                      {d} bits\n", .{@bitSizeOf(E.If)});
+//     printmem("E.RequireOrRequireResolve: {d} bits\n", .{@bitSizeOf(E.RequireOrRequireResolve)});
+//     printmem("E.Import:                  {d} bits\n", .{@bitSizeOf(E.Import)});
+//     printmem("----------Expr:            {d} bits\n", .{@bitSizeOf(Expr)});
+// }
 
 // -- ESBuild bit sizes
 // EArray             | 256

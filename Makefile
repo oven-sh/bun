@@ -654,7 +654,7 @@ jsc-bindings-mac: $(OBJ_FILES)
 
 # mimalloc is built as object files so that it can overload the system malloc
 mimalloc:
-	cd $(BUN_DEPS_DIR)/mimalloc; cmake $(CMAKE_FLAGS) -DMI_BUILD_SHARED=OFF -DMI_BUILD_STATIC=ON -DMI_BUILD_TESTS=OFF -DMI_BUILD_OBJECT=OFF ${MIMALLOC_OVERRIDE_FLAG} -DMI_USE_CXX=ON .; make; 
+	cd $(BUN_DEPS_DIR)/mimalloc; cmake $(CMAKE_FLAGS) -DMI_BUILD_SHARED=OFF -DMI_BUILD_STATIC=ON -DMI_BUILD_TESTS=OFF -DMI_BUILD_OBJECT=ON ${MIMALLOC_OVERRIDE_FLAG} -DMI_USE_CXX=ON .; make; 
 	cp $(BUN_DEPS_DIR)/mimalloc/$(MIMALLOC_INPUT_PATH) $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE)
 
 bun-link-lld-debug:

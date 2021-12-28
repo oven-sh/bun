@@ -177,6 +177,8 @@ ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 
+COPY Makefile ${BUN_DIR}/Makefile
+
 WORKDIR $BUN_DIR
 
 RUN cd $BUN_DIR &&  rm -rf $HOME/.cache zig-cache && make \
@@ -204,9 +206,7 @@ WORKDIR $BUN_DIR
 
 ENV PATH "$ZIG_PATH:$PATH"
 
-CMD cd $BUN_DIR && \
-    make \
-    jsc-bindings-headers \
+CMD make jsc-bindings-headers \
     api \
     analytics \
     bun_error \

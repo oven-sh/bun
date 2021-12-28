@@ -816,10 +816,9 @@ run-all-unit-tests:
 	-femit-bin=zig-out/bin/__main_test \
 	-fcompiler-rt \
 	-lc -lc++ \
+	
 	--cache-dir /tmp/zig-cache-bun-__main_test \
 	-fallow-shlib-undefined \
-	-stdlib=libstdc++
-	$(PLATFORM_LINKER_FLAGS) \
 	$(ARCHIVE_FILES) $(ICU_FLAGS) $(JSC_FILES) $(OBJ_FILES) && \
 	zig-out/bin/__main_test notARealParam
 

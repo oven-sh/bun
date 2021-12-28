@@ -228,7 +228,7 @@ ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 ENV WEBKIT_OUT_DIR ${WEBKIT_DIR}
 ENV PATH "$ZIG_PATH:$PATH"
 ENV JSC_BASE_DIR $WEBKIT_OUT_DIR
-ENV LIB_ICU_PATH ${GITHUB_WORKSPACE}}/icu/source/lib
+ENV LIB_ICU_PATH ${GITHUB_WORKSPACE}/icu/source/lib
 ENV BUN_RELEASE_DIR ${BUN_RELEASE_DIR}
 ENV PATH "${GITHUB_WORKSPACE}/packages/bun-linux-x64:${GITHUB_WORKSPACE}/packages/bun-linux-aarch64:${GITHUB_WORKSPACE}/packages/debug-bun-linux-x64:${GITHUB_WORKSPACE}/packages/debug-bun-linux-aarch64:$PATH"
 ENV PATH "/home/ubuntu/zls/zig-out/bin:$PATH"

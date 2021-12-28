@@ -10,7 +10,7 @@ fn isValid(buf: *[std.fs.MAX_PATH_BYTES]u8, segment: []const u8, bin: []const u8
     // we cannot use access() here even though all we want to do now here is check it is executable
     // directories can be considered executable
     if (std.c.stat(filepath, &stat) != 0) return null;
-    if (stat.mode & std.os.S_IXUSR == 0 or stat.mode & std.os.S_IFREG == 0) return null;
+    if (stat.mode & std.os.S_IXUSR == 0 or (stat.mode & std.os.S_IFREG == 0 and stat.mode & std.os.S_ISLNK == 0)) return null;
     return @intCast(u16, filepath.len);
 }
 

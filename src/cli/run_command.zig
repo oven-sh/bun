@@ -560,20 +560,28 @@ pub const RunCommand = struct {
                 possibly_open_with_bun_js: {
                     if (options.defaultLoaders.get(std.fs.path.extension(script_name_to_search))) |loader| {
                         if (loader.isJavaScriptLike()) {
-                            const cwd = std.os.getcwd(&path_buf) catch break :possibly_open_with_bun_js;
-                            path_buf[cwd.len] = std.fs.path.sep;
-                            var parts = [_]string{script_name_to_search};
-                            var file_path = resolve_path.joinAbsStringBuf(
-                                path_buf[0 .. cwd.len + 1],
-                                &path_buf2,
-                                &parts,
-                                .auto,
-                            );
-                            if (file_path.len == 0) break :possibly_open_with_bun_js;
-                            path_buf2[file_path.len] = 0;
-                            var file_pathZ = path_buf2[0..file_path.len :0];
+                            var file_path = script_name_to_search;
+                            const file_: std.fs.File.OpenError!std.fs.File = brk: {
+                                if (script_name_to_search[0] == std.fs.path.sep) {
+                                    break :brk std.fs.openFileAbsolute(script_name_to_search, .{ .read = true });
+                                } else {
+                                    const cwd = std.os.getcwd(&path_buf) catch break :possibly_open_with_bun_js;
+                                    path_buf[cwd.len] = std.fs.path.sep;
+                                    var parts = [_]string{script_name_to_search};
+                                    file_path = resolve_path.joinAbsStringBuf(
+                                        path_buf[0 .. cwd.len + 1],
+                                        &path_buf2,
+                                        &parts,
+                                        .auto,
+                                    );
+                                    if (file_path.len == 0) break :possibly_open_with_bun_js;
+                                    path_buf2[file_path.len] = 0;
+                                    var file_pathZ = path_buf2[0..file_path.len :0];
+                                    break :brk std.fs.openFileAbsoluteZ(file_pathZ, .{ .read = true });
+                                }
+                            };
 
-                            var file = std.fs.openFileAbsoluteZ(file_pathZ, .{ .read = true }) catch break :possibly_open_with_bun_js;
+                            const file = file_ catch break :possibly_open_with_bun_js;
                             // "White space after #! is optional."
                             var shebang_buf: [64]u8 = undefined;
                             const shebang_size = file.pread(&shebang_buf, 0) catch |err| {

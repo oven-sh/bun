@@ -869,12 +869,6 @@ pub const Command = struct {
                     }
                 }
 
-                if (ctx.positionals.len > 0 and extension.len == 0) {
-                    if (try RunCommand.exec(ctx, true, false)) {
-                        return;
-                    }
-                }
-
                 if (options.defaultLoaders.get(extension)) |loader| {
                     if (loader.isJavaScriptLike()) {
                         possibly_open_with_bun_js: {
@@ -921,6 +915,12 @@ pub const Command = struct {
                                 std.os.exit(1);
                             };
                         }
+                    }
+                }
+
+                if (ctx.positionals.len > 0 and extension.len == 0) {
+                    if (try RunCommand.exec(ctx, true, false)) {
+                        return;
                     }
                 }
 

@@ -27,6 +27,19 @@ pub fn addPicoHTTP(step: *std.build.LibExeObjStep, comptime with_obj: bool) void
     // homebrew-provided icu4c
 }
 
+const color_map = std.ComptimeStringMap([]const u8, .{
+    &.{ "black", "30m" },
+    &.{ "blue", "34m" },
+    &.{ "b", "1m" },
+    &.{ "d", "2m" },
+    &.{ "cyan", "36m" },
+    &.{ "green", "32m" },
+    &.{ "magenta", "35m" },
+    &.{ "red", "31m" },
+    &.{ "white", "37m" },
+    &.{ "yellow", "33m" },
+});
+
 fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: *std.mem.Allocator, target: anytype) !void {
     var boringssl: std.build.Pkg = .{
         .name = "boringssl",
@@ -95,6 +108,7 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: *std.mem.Alloc
     step.addPackage(clap);
     step.addPackage(http);
     step.addPackage(network_thread);
+    step.addPackage(boringssl);
 }
 var output_dir: []const u8 = "";
 fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
@@ -341,21 +355,45 @@ pub fn build(b: *std.build.Builder) !void {
     {
         const headers_step = b.step("test", "Build test");
 
-        var test_file_ = b.option([]const u8, "test-file", "Input file for test");
+        var test_file = b.option([]const u8, "test-file", "Input file for test");
         var test_bin_ = b.option([]const u8, "test-bin", "Emit bin to");
         var test_filter = b.option([]const u8, "test-filter", "Filter for test");
 
-        if (test_file_) |test_file| {
-            var headers_obj: *std.build.LibExeObjStep = b.addTest(test_file);
-            headers_obj.setFilter(test_filter);
-            if (test_bin_) |test_bin| {
-                headers_obj.name = std.fs.path.basename(test_bin);
-                if (std.fs.path.dirname(test_bin)) |dir| headers_obj.setOutputDir(dir);
+        var headers_obj: *std.build.LibExeObjStep = b.addTest(test_file orelse "src/main.zig");
+        headers_obj.setFilter(test_filter);
+        if (test_bin_) |test_bin| {
+            headers_obj.name = std.fs.path.basename(test_bin);
+            if (std.fs.path.dirname(test_bin)) |dir| headers_obj.setOutputDir(dir);
+        }
+
+        try configureObjectStep(headers_obj, target, obj.main_pkg_path.?);
+        try linkObjectFiles(b, headers_obj, target);
+        {
+            var before = b.addLog("\x1b[" ++ color_map.get("magenta").? ++ "\x1b[" ++ color_map.get("b").? ++ "[{s} tests]" ++ "\x1b[" ++ color_map.get("d").? ++ " ----\n\n" ++ "\x1b[0m", .{"bun"});
+            var after = b.addLog("\x1b[" ++ color_map.get("d").? ++ "–––---\n\n" ++ "\x1b[0m", .{});
+            headers_step.dependOn(&before.step);
+            headers_step.dependOn(&headers_obj.step);
+            headers_step.dependOn(&after.step);
+        }
+
+        for (headers_obj.packages.items) |pkg_| {
+            const pkg: std.build.Pkg = pkg_;
+            if (std.mem.eql(u8, pkg.name, "clap")) continue;
+            var test_ = b.addTestSource(pkg.path);
+
+            test_.setMainPkgPath(obj.main_pkg_path.?);
+            test_.setTarget(target);
+            try linkObjectFiles(b, test_, target);
+            if (pkg.dependencies) |children| {
+                test_.packages = std.ArrayList(std.build.Pkg).init(b.allocator);
+                try test_.packages.appendSlice(children);
             }
 
-            try configureObjectStep(headers_obj, target, obj.main_pkg_path.?);
-            try linkObjectFiles(b, headers_obj, target);
-            headers_step.dependOn(&headers_obj.step);
+            var before = b.addLog("\x1b[" ++ color_map.get("magenta").? ++ "\x1b[" ++ color_map.get("b").? ++ "[{s} tests]" ++ "\x1b[" ++ color_map.get("d").? ++ " ----\n\n" ++ "\x1b[0m", .{pkg.name});
+            var after = b.addLog("\x1b[" ++ color_map.get("d").? ++ "–––---\n\n" ++ "\x1b[0m", .{});
+            headers_step.dependOn(&before.step);
+            headers_step.dependOn(&test_.step);
+            headers_step.dependOn(&after.step);
         }
     }
 

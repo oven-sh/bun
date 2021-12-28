@@ -353,39 +353,19 @@ pub const Define = struct {
 
 const expect = std.testing.expect;
 test "UserDefines" {
-    var orig = RawDefines.init(alloc.dynamic);
+    js_ast.Stmt.Data.Store.create(default_allocator);
+    js_ast.Expr.Data.Store.create(default_allocator);
+    var orig = RawDefines.init(default_allocator);
     try orig.put("process.env.NODE_ENV", "\"development\"");
     try orig.put("globalThis", "window");
-    var log = logger.Log.init(alloc.dynamic);
-    var data = try DefineData.from_input(orig, &log, alloc.dynamic);
+    var log = logger.Log.init(default_allocator);
+    var data = try DefineData.from_input(orig, &log, default_allocator);
 
     try expect(data.contains("process.env.NODE_ENV"));
     try expect(data.contains("globalThis"));
     const globalThis = data.get("globalThis");
     const val = data.get("process.env.NODE_ENV");
     try expect(val != null);
-    try expect(strings.utf16EqlString(val.?.value.e_string.value, "development"));
+    try expect(val.?.value.e_string.eql([]const u8, "development"));
     try std.testing.expectEqualStrings(globalThis.?.original_name.?, "window");
-}
-
-// 396,000ns was upper end of last time this was checked how long it took
-// => 0.396ms
-test "Defines" {
-    try alloc.setup(std.heap.page_allocator);
-    const start = std.time.nanoTimestamp();
-    var orig = RawDefines.init(alloc.dynamic);
-    try orig.put("process.env.NODE_ENV", "\"development\"");
-    var log = logger.Log.init(alloc.dynamic);
-    var data = try DefineData.from_input(orig, &log, alloc.dynamic);
-    var defines = try Define.init(alloc.dynamic, data);
-    Output.print("Time: {d}", .{std.time.nanoTimestamp() - start});
-    const node_env_dots = defines.dots.get("NODE_ENV");
-    try expect(node_env_dots != null);
-    try expect(node_env_dots.?.len > 0);
-    const node_env = node_env_dots.?[0];
-    try std.testing.expectEqual(node_env.parts.len, 2);
-    try std.testing.expectEqualStrings("process", node_env.parts[0]);
-    try std.testing.expectEqualStrings("env", node_env.parts[1]);
-    try expect(node_env.data.original_name == null);
-    try expect(strings.utf16EqlString(node_env.data.value.e_string.value, "development"));
 }

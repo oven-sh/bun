@@ -835,7 +835,7 @@ pub fn initJSXEntityMap() !void {
 }
 
 test "tokenToString" {
-    expectString(tokenToString.get(T.t_end_of_file), "end of file");
+    try expectString(tokenToString.get(T.t_end_of_file), "end of file");
 }
 
 // test "jsxEntity" {
@@ -850,5 +850,3 @@ test "tokenToString" {
 //     }
 // }
 
-pub const id_start = @import("./js_lexer/unicode.zig").id_start;
-pub const id_continue = @import("./js_lexer/unicode.zig").id_continue;

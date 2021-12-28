@@ -38,6 +38,7 @@ pub fn main() anyerror!void {
 
     Output.Source.set(&output_source);
     defer Output.flush();
+    
     cli.Cli.start(default_allocator, stdout, stderr, MainPanicHandler) catch |err| {
         switch (err) {
             error.CurrentWorkingDirectoryUnlinked => {
@@ -58,3 +59,11 @@ pub fn main() anyerror!void {
 }
 
 pub const JavaScriptVirtualMachine = VirtualMachine;
+
+test "" {
+    @import("std").testing.refAllDecls(@This());
+
+    std.mem.doNotOptimizeAway(JavaScriptVirtualMachine.fetch);
+    std.mem.doNotOptimizeAway(JavaScriptVirtualMachine.init);
+    std.mem.doNotOptimizeAway(JavaScriptVirtualMachine.resolve);
+}

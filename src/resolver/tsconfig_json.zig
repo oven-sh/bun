@@ -5,7 +5,6 @@ const logger = @import("../logger.zig");
 const cache = @import("../cache.zig");
 const js_ast = @import("../js_ast.zig");
 const js_lexer = @import("../js_lexer.zig");
-const alloc = @import("../alloc.zig");
 
 // Heuristic: you probably don't have 100 of these
 // Probably like 5-10
@@ -370,7 +369,3 @@ pub const TSConfigJSON = struct {
         return false;
     }
 };
-
-test "tsconfig.json" {
-    try alloc.setup(default_allocator);
-}

@@ -1359,7 +1359,7 @@ pub const Resolver = struct {
             null,
         );
         // The file name needs to be persistent because it can have errors
-        // and if those errors need to print the filename 
+        // and if those errors need to print the filename
         // then it will be undefined memory if we parse another tsconfig.json late
         const key_path = try Path.init(file).dupeAlloc(r.allocator);
 
@@ -2714,18 +2714,6 @@ pub const Dirname = struct {
         return path[0 .. end_index + 1];
     }
 };
-
-test "murmur" {
-    var str = try std.heap.c_allocator.alloc(u8, "swiper@6.8.2swiper.cjs.js".len);
-    var str2 = try std.heap.c_allocator.alloc(u8, "swiper@6.8.2swiper.cjs.js".len);
-    std.mem.copy(u8, str, "swiper@6.8.2swiper.cjs.js");
-    std.mem.copy(u8, str2, "swiper@6.8.2swiper.cjs.js");
-
-    try std.testing.expectEqual(
-        std.hash.murmur.Murmur3_32.hash(str),
-        std.hash.murmur.Murmur3_32.hash(str2),
-    );
-}
 
 pub const RootPathPair = struct {
     base_path: string,

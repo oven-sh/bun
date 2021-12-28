@@ -1,7 +1,8 @@
 usingnamespace @import("../base.zig");
 const std = @import("std");
 const Api = @import("../../../api/schema.zig").Api;
-const http = @import("../../../http.zig");
+const RequestContext = @import("../../../http.zig").RequestContext;
+const MimeType = @import("../../../http.zig").MimeType;
 usingnamespace @import("../javascript.zig");
 usingnamespace @import("../bindings/bindings.zig");
 const ZigURL = @import("../../../query_string_map.zig").URL;
@@ -263,7 +264,7 @@ pub const Response = struct {
         this.allocator.destroy(this);
     }
 
-    pub fn mimeType(response: *const Response, request_ctx: *const http.RequestContext) string {
+    pub fn mimeType(response: *const Response, request_ctx: *const RequestContext) string {
         if (response.body.init.headers) |headers| {
             // Remember, we always lowercase it
             // hopefully doesn't matter here tho
@@ -273,7 +274,7 @@ pub const Response = struct {
         }
 
         if (request_ctx.url.extname.len > 0) {
-            return http.MimeType.byExtension(request_ctx.url.extname).value;
+            return MimeType.byExtension(request_ctx.url.extname).value;
         }
 
         switch (response.body.value) {
@@ -283,10 +284,10 @@ pub const Response = struct {
             .String => |body| {
                 // poor man's mimetype sniffing
                 if (body.len > 0 and (body[0] == '{' or body[0] == '[')) {
-                    return http.MimeType.json.value;
+                    return MimeType.json.value;
                 }
 
-                return http.MimeType.html.value;
+                return MimeType.html.value;
             },
             .Unconsumed, .ArrayBuffer => {
                 return "application/octet-stream";
@@ -1092,7 +1093,7 @@ pub const Headers = struct {
     }
 
     // TODO: is it worth making this lazy? instead of copying all the request headers, should we just do it on get/put/iterator?
-    pub fn fromRequestCtx(allocator: *std.mem.Allocator, request: *http.RequestContext) !Headers {
+    pub fn fromRequestCtx(allocator: *std.mem.Allocator, request: *RequestContext) !Headers {
         return fromPicoHeaders(allocator, request.request.headers);
     }
 
@@ -1486,7 +1487,7 @@ pub const Body = struct {
 
 // https://developer.mozilla.org/en-US/docs/Web/API/Request
 pub const Request = struct {
-    request_context: *http.RequestContext,
+    request_context: *RequestContext,
     url_string_ref: js.JSStringRef = null,
     headers: ?Headers = null,
 
@@ -1673,7 +1674,7 @@ pub const Request = struct {
 pub const FetchEvent = struct {
     started_waiting_at: u64 = 0,
     response: ?*Response = null,
-    request_context: *http.RequestContext,
+    request_context: *RequestContext,
     request: Request,
     pending_promise: ?*JSInternalPromise = null,
 
@@ -1980,3 +1981,7 @@ pub const FetchEvent = struct {
 //         },
 //     );
 // };
+
+test "" {
+    std.testing.refAllDecls(Api);
+}

@@ -1,6 +1,5 @@
 const tester = @import("../test/tester.zig");
 const std = @import("std");
-
 const FeatureFlags = @import("../feature_flags.zig");
 const default_allocator = @import("../memory_allocator.zig").c_allocator;
 
@@ -19,13 +18,15 @@ inline fn nqlAtIndex(comptime string_count: comptime_int, index: usize, strings:
     return false;
 }
 
+const IsSeparatorFunc = fn (char: u8) bool;
+
 // TODO: is it faster to determine longest_common_separator in the while loop
 // or as an extra step at the end?
 // only boether to check if this function appears in benchmarking
-pub fn longestCommonPathGeneric(strings: []const []const u8, comptime separator: u8, comptime isPathSeparator: anytype) []const u8 {
+pub fn longestCommonPathGeneric(strings: []const []const u8, comptime separator: u8, comptime isPathSeparator: IsSeparatorFunc) []const u8 {
     var min_length: usize = std.math.maxInt(usize);
     for (strings) |str| {
-        min_length = std.math.min(str.len, min_length);
+        min_length = @minimum(str.len, min_length);
     }
 
     var last_common_separator_is_at_end = false;
@@ -150,34 +151,6 @@ pub fn longestCommonPathGeneric(strings: []const []const u8, comptime separator:
     return strings[0][0 .. last_common_separator + 1];
 }
 
-const sep_posix_str = &([_]u8{std.fs.path.sep_posix});
-const node_modules_root = "node_modules" ++ std.fs.path.sep_str;
-
-pub const PackageRelativePath = struct { base_path: string, package_name: string };
-pub fn packageRelative(absolute_path: string) ?PackageRelativePath {
-    if (std.Target.current.os.tag == .windows) {
-        @compileError("Not implemented in windows");
-    }
-
-    const node_modules_index = std.mem.lastIndexOf(u8, absolute_path, node_modules_root) orelse return null;
-    const current_path = absolute_path[node_modules_index + node_modules_root.len + 1 ..];
-    return packageRelativeFromNodeModulesFolder(current_path);
-}
-
-pub fn packageRelativeFromNodeModulesFolder(current_path: string) ?PackageRelativePath {
-    if (std.Target.current.os.tag == .windows) {
-        @compileError("Not implemented in windows");
-    }
-
-    const package_name_end = std.mem.indexOfScalar(u8, current_path, std.fs.path.sep) orelse return null;
-    const package_name = current_path[0..package_name_end];
-
-    return PackageRelativePath{
-        .base_path = current_path[package_name_end + 1 ..],
-        .package_name = package_name,
-    };
-}
-
 pub fn longestCommonPath(strings: []const []const u8) []const u8 {
     return longestCommonPathGeneric(strings, '/', isSepAny);
 }
@@ -207,9 +180,9 @@ pub fn relativeToCommonPath(
 
     const common_path = if (has_leading_separator) _common_path[1..] else _common_path;
 
-    var shortest = std.math.min(normalized_from.len, normalized_to.len);
+    var shortest = @minimum(normalized_from.len, normalized_to.len);
 
-    var last_common_separator = std.math.max(common_path.len, 1) - 1;
+    var last_common_separator = @maximum(common_path.len, 1) - 1;
 
     if (shortest == common_path.len) {
         if (normalized_to.len > normalized_from.len) {
@@ -303,7 +276,7 @@ pub fn relativeToCommonPath(
 
 pub fn relativeNormalized(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
     const two = [_][]const u8{ from, to };
-    const common_path = longestCommonPathGeneric(&two, comptime platform.separator(), platform.isSeparator);
+    const common_path = longestCommonPathGeneric(&two, comptime platform.separator(), comptime platform.getSeparatorFunc());
     return relativeToCommonPath(common_path, from, to, &relative_to_common_path_buf, comptime platform.separator(), always_copy);
 }
 
@@ -344,55 +317,12 @@ pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Pla
 }
 
 pub fn relativeAlloc(allocator: *std.mem.Allocator, from: []const u8, to: []const u8) ![]const u8 {
-    if (FeatureFlags.use_std_path_relative) {
+    if (comptime FeatureFlags.use_std_path_relative) {
         return try std.fs.path.relative(allocator, from, to);
     } else {
         const result = relativePlatform(from, to, Platform.current, false);
         return try allocator.dupe(u8, result);
     }
-}
-
-test "relative" {
-    var t = tester.Tester.t(default_allocator);
-    defer t.report(@src());
-
-    const strs = [_][]const u8{
-        "/var/boo/foo/",
-        "/var/boo/foo/baz/",
-        "/var/boo/foo/beep/",
-        "/var/boo/foo/beep/bleep",
-        "/bar/baz",
-        "/bar/not-related",
-        "/bar/file.txt",
-    };
-    _ = t.expect("var/foo", try relativeAlloc(default_allocator, "/", "/var/foo/"), @src());
-    _ = t.expect("index.js", try relativeAlloc(default_allocator, "/app/public/", "/app/public/index.js"), @src());
-    _ = t.expect("..", try relativeAlloc(default_allocator, "/app/public/index.js", "/app/public/"), @src());
-    _ = t.expect("../../src/bacon.ts", try relativeAlloc(default_allocator, "/app/public/index.html", "/app/src/bacon.ts"), @src());
-}
-
-test "longestCommonPath" {
-    var t = tester.Tester.t(default_allocator);
-    defer t.report(@src());
-
-    const strs = [_][]const u8{
-        "/var/boo/foo/",
-        "/var/boo/foo/baz/",
-        "/var/boo/foo/beep/",
-        "/var/boo/foo/beep/bleep",
-        "/bar/baz",
-        "/bar/not-related",
-        "/bar/file.txt",
-    };
-    _ = t.expect("/var/boo/foo/", longestCommonPath(strs[0..2]), @src());
-    _ = t.expect("/var/boo/foo/", longestCommonPath(strs[0..4]), @src());
-    _ = t.expect("/var/boo/foo/beep/", longestCommonPath(strs[2..3]), @src());
-    _ = t.expect("/bar/", longestCommonPath(strs[5..strs.len]), @src());
-    _ = t.expect("/", longestCommonPath(&strs), @src());
-
-    const more = [_][]const u8{ "/app/public/index.html", "/app/public/index.js", "/app/public", "/app/src/bacon.ts" };
-    _ = t.expect("/app/", longestCommonPath(&more), @src());
-    _ = t.expect("/app/public/", longestCommonPath(more[0..2]), @src());
 }
 
 // This function is based on Node.js' path.normalize function.
@@ -500,14 +430,28 @@ pub const Platform = enum {
         };
     }
 
-    pub const current = switch (std.Target.current.os.tag) {
-        .windows => .windows,
-        else => .posix,
+    pub const current: Platform = switch (std.Target.current.os.tag) {
+        .windows => Platform.windows,
+        else => Platform.posix,
     };
 
-    pub fn isSeparator(comptime _platform: Platform, char: u8) bool {
-        const platform = _platform.resolve();
-        switch (platform) {
+    pub fn getSeparatorFunc(comptime _platform: Platform) IsSeparatorFunc {
+        switch (comptime _platform.resolve()) {
+            .auto => unreachable,
+            .loose => {
+                return isSepAny;
+            },
+            .windows => {
+                return isSepWin32;
+            },
+            .posix => {
+                return isSepPosix;
+            },
+        }
+    }
+
+    pub inline fn isSeparator(comptime _platform: Platform, char: u8) bool {
+        switch (comptime _platform.resolve()) {
             .auto => unreachable,
             .loose => {
                 return isSepAny(char);
@@ -522,7 +466,7 @@ pub const Platform = enum {
     }
 
     pub fn leadingSeparatorIndex(comptime _platform: Platform, path: anytype) ?usize {
-        switch (_platform.resolve()) {
+        switch (comptime _platform.resolve()) {
             .windows => {
                 if (path.len < 1)
                     return null;
@@ -561,20 +505,14 @@ pub const Platform = enum {
     }
 
     pub fn resolve(comptime _platform: Platform) Platform {
-        if (_platform == .auto) {
-            switch (std.Target.current.os.tag) {
-                .windows => {
-                    return .windows;
-                },
+        if (comptime _platform == .auto) {
+            return switch (std.Target.current.os.tag) {
+                .windows => Platform.windows,
 
-                .freestanding, .emscripten, .other => {
-                    return .loose;
-                },
+                .freestanding, .emscripten, .other => Platform.loose,
 
-                else => {
-                    return .posix;
-                },
-            }
+                else => Platform.posix,
+            };
         }
 
         return _platform;
@@ -586,7 +524,7 @@ pub fn normalizeString(str: []const u8, comptime allow_above_root: bool, comptim
 }
 
 pub fn normalizeStringBuf(str: []const u8, buf: []u8, comptime allow_above_root: bool, comptime _platform: Platform, comptime preserve_trailing_slash: anytype) []u8 {
-    const platform = _platform.resolve();
+    const platform = comptime _platform.resolve();
 
     switch (platform) {
         .auto => unreachable,
@@ -1088,4 +1026,51 @@ test "normalizeStringWindows" {
     _ = t.expect("", try normalizeStringAlloc(default_allocator, "\\\\\\\\\\", false, .windows), @src());
     _ = t.expect("..", try normalizeStringAlloc(default_allocator, "..\\boom\\..\\", true, .windows), @src());
     _ = t.expect("", try normalizeStringAlloc(default_allocator, ".\\", true, .windows), @src());
+}
+
+test "relative" {
+    var t = tester.Tester.t(default_allocator);
+    defer t.report(@src());
+
+    const strs = [_][]const u8{
+        "/var/boo/foo/",
+        "/var/boo/foo/baz/",
+        "/var/boo/foo/beep/",
+        "/var/boo/foo/beep/bleep",
+        "/bar/baz",
+        "/bar/not-related",
+        "/bar/file.txt",
+    };
+    _ = t.expect("var/foo", try relativeAlloc(default_allocator, "/", "/var/foo/"), @src());
+    _ = t.expect("index.js", try relativeAlloc(default_allocator, "/app/public/", "/app/public/index.js"), @src());
+    _ = t.expect("..", try relativeAlloc(default_allocator, "/app/public/index.js", "/app/public/"), @src());
+    _ = t.expect("../../src/bacon.ts", try relativeAlloc(default_allocator, "/app/public/index.html", "/app/src/bacon.ts"), @src());
+}
+
+test "longestCommonPath" {
+    var t = tester.Tester.t(default_allocator);
+    defer t.report(@src());
+
+    const strs = [_][]const u8{
+        "/var/boo/foo/",
+        "/var/boo/foo/baz/",
+        "/var/boo/foo/beep/",
+        "/var/boo/foo/beep/bleep",
+        "/bar/baz",
+        "/bar/not-related",
+        "/bar/file.txt",
+    };
+    _ = t.expect("/var/boo/foo/", longestCommonPath(strs[0..2]), @src());
+    _ = t.expect("/var/boo/foo/", longestCommonPath(strs[0..4]), @src());
+    _ = t.expect("/var/boo/foo/beep/", longestCommonPath(strs[2..3]), @src());
+    _ = t.expect("/bar/", longestCommonPath(strs[5..strs.len]), @src());
+    _ = t.expect("/", longestCommonPath(&strs), @src());
+
+    const more = [_][]const u8{ "/app/public/index.html", "/app/public/index.js", "/app/public", "/app/src/bacon.ts" };
+    _ = t.expect("/app/", longestCommonPath(&more), @src());
+    _ = t.expect("/app/public/", longestCommonPath(more[0..2]), @src());
+}
+
+test "" {
+    @import("std").testing.refAllDecls(@This());
 }

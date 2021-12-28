@@ -111,6 +111,11 @@ ZLIB_LIB_DIR ?= $(BUN_DEPS_DIR)/zlib
 
 JSC_FILES := $(JSC_LIB)/libJavaScriptCore.a $(JSC_LIB)/libWTF.a  $(JSC_LIB)/libbmalloc.a
 
+# https://github.com/microsoft/mimalloc/issues/512
+# Linking mimalloc via object file on macOS x64 can cause heap corruption
+MIMALLOC_FILE = libmimalloc.o
+MIMALLOC_INPUT_PATH = CMakeFiles/mimalloc-obj.dir/src/static.c.o
+
 DEFAULT_LINKER_FLAGS =
 
 JSC_BUILD_STEPS :=
@@ -120,6 +125,8 @@ DEFAULT_LINKER_FLAGS= -pthread -ldl
 endif
 ifeq ($(OS_NAME),darwin)
 	JSC_BUILD_STEPS += jsc-build-mac jsc-copy-headers
+	MIMALLOC_FILE = libmimalloc.a
+	MIMALLOC_INPUT_PATH = libmimalloc.a
 endif
 
 
@@ -211,7 +218,7 @@ endif
 
 
 
-ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(BUN_DEPS_OUT_DIR)/libmimalloc.o \
+ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE) \
 		$(BUN_DEPS_OUT_DIR)/libz.a \
 		$(BUN_DEPS_OUT_DIR)/libarchive.a \
 		$(BUN_DEPS_OUT_DIR)/libssl.a \
@@ -647,8 +654,8 @@ jsc-bindings-mac: $(OBJ_FILES)
 
 # mimalloc is built as object files so that it can overload the system malloc
 mimalloc:
-	cd $(BUN_DEPS_DIR)/mimalloc; cmake $(CMAKE_FLAGS) -DMI_BUILD_SHARED=OFF -DMI_BUILD_STATIC=OFF -DMI_BUILD_TESTS=OFF -DMI_BUILD_OBJECT=ON ${MIMALLOC_OVERRIDE_FLAG} .; make; 
-	cp $(BUN_DEPS_DIR)/mimalloc/CMakeFiles/mimalloc-obj.dir/src/static.c.o $(BUN_DEPS_OUT_DIR)/libmimalloc.o
+	cd $(BUN_DEPS_DIR)/mimalloc; cmake $(CMAKE_FLAGS) -DMI_BUILD_SHARED=OFF -DMI_BUILD_STATIC=ON -DMI_BUILD_TESTS=OFF -DMI_BUILD_OBJECT=OFF ${MIMALLOC_OVERRIDE_FLAG} -DMI_USE_CXX=ON .; make; 
+	cp $(BUN_DEPS_DIR)/mimalloc/$(MIMALLOC_INPUT_PATH) $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE)
 
 bun-link-lld-debug:
 	$(CXX) $(BUN_LLD_FLAGS) \

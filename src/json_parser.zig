@@ -624,34 +624,35 @@ const js_printer = @import("js_printer.zig");
 const renamer = @import("renamer.zig");
 const SymbolList = [][]Symbol;
 
+const Bundler = @import("./bundler.zig").Bundler;
+const ParseResult = @import("./bundler.zig").ParseResult;
 fn expectPrintedJSON(_contents: string, expected: string) !void {
-    var contents = alloc.dynamic.alloc(u8, _contents.len + 1) catch unreachable;
+    Expr.Data.Store.create(default_allocator);
+    Stmt.Data.Store.create(default_allocator);
+    defer {
+        Expr.Data.Store.reset();
+        Stmt.Data.Store.reset();
+    }
+    var contents = default_allocator.alloc(u8, _contents.len + 1) catch unreachable;
     std.mem.copy(u8, contents, _contents);
     contents[contents.len - 1] = ';';
-    var log = logger.Log.init(alloc.dynamic);
+    var log = logger.Log.init(default_allocator);
     defer log.msgs.deinit();
 
     var source = logger.Source.initPathString(
         "source.json",
         contents,
     );
-    const expr = try ParseJSON(&source, &log, alloc.dynamic);
-    var stmt = Stmt.alloc(alloc.dynamic, S.SExpr{ .value = expr }, logger.Loc{ .start = 0 });
+    const expr = try ParseJSON(&source, &log, default_allocator);
 
-    var part = js_ast.Part{
-        .stmts = &([_]Stmt{stmt}),
-    };
-    const tree = js_ast.Ast.initTest(&([_]js_ast.Part{part}));
-    var symbols: SymbolList = &([_][]Symbol{tree.symbols});
-    var symbol_map = js_ast.Symbol.Map.initList(symbols);
     if (log.msgs.items.len > 0) {
         Global.panic("--FAIL--\nExpr {s}\nLog: {s}\n--FAIL--", .{ expr, log.msgs.items[0].data.text });
     }
-    var linker = @import("linker.zig").Linker{};
 
-    const result = js_printer.printAst(alloc.dynamic, tree, symbol_map, &source, true, js_printer.Options{ .to_module_ref = Ref{ .inner_index = 0 } }, &linker) catch unreachable;
-
-    var js = result.js;
+    var buffer_writer = try js_printer.BufferWriter.init(default_allocator);
+    var writer = js_printer.BufferPrinter.init(buffer_writer);
+    const written = try js_printer.printJSON(@TypeOf(&writer), &writer, expr, &source);
+    var js = writer.ctx.buffer.list.items.ptr[0 .. written + 1];
 
     if (js.len > 1) {
         while (js[js.len - 1] == '\n') {
@@ -663,7 +664,7 @@ fn expectPrintedJSON(_contents: string, expected: string) !void {
         }
     }
 
-    std.testing.expectEqualStrings(expected, js);
+    try std.testing.expectEqualStrings(expected, js);
 }
 
 test "ParseJSON" {
@@ -678,41 +679,16 @@ test "ParseJSON" {
     try expectPrintedJSON("3.4159820837456", "3.4159820837456");
     try expectPrintedJSON("-10000.25", "-10000.25");
     try expectPrintedJSON("\"hi\"", "\"hi\"");
-    try expectPrintedJSON("{\"hi\": 1, \"hey\": \"200\", \"boom\": {\"yo\": true}}", "({\"hi\": 1, \"hey\": \"200\", \"boom\": {\"yo\": true}})");
-    try expectPrintedJSON("{\"hi\": \"hey\"}", "({hi: \"hey\"})");
-    try expectPrintedJSON("{\"hi\": [\"hey\", \"yo\"]}", "({hi:[\"hey\",\"yo\"]})");
-    // TODO: emoji?
-}
-
-test "ParseJSON DuplicateKey warning" {
-    alloc.setup(std.heap.page_allocator) catch unreachable;
-    var log = logger.Log.init(alloc.dynamic);
-
-    var source = logger.Source.initPathString(
-        "package.json",
-        duplicateKeyJson,
+    try expectPrintedJSON("{\"hi\": 1, \"hey\": \"200\", \"boom\": {\"yo\": true}}", "{\"hi\": 1, \"hey\": \"200\", \"boom\": {\"yo\": true } }");
+    try expectPrintedJSON("{\"hi\": \"hey\"}", "{\"hi\": \"hey\" }");
+    try expectPrintedJSON(
+        "{\"hi\": [\"hey\", \"yo\"]}",
+        \\{"hi": [
+        \\  "hey",
+        \\  "yo"
+        \\] }
+        ,
     );
-    const expr = try ParseJSON(&source, &log, alloc.dynamic);
 
-    const tag = @as(Expr.Tag, expr.data);
-    expect(tag == .e_object);
-    const object = expr.data.e_object;
-    std.testing.expectEqual(@as(usize, 2), object.properties.len);
-    const name1 = object.properties[0];
-    expect(name1.key != null);
-    expect(name1.value != null);
-    expect(Expr.Tag.e_string == @as(Expr.Tag, name1.value.?.data));
-    expect(Expr.Tag.e_string == @as(Expr.Tag, name1.key.?.data));
-    expect(strings.eqlUtf16("name", name1.key.?.data.e_string.value));
-    expect(strings.eqlUtf16("valid", name1.value.?.data.e_string.value));
-
-    const name2 = object.properties[1];
-    expect(name2.key != null);
-    expect(name2.value != null);
-    expect(Expr.Tag.e_string == @as(Expr.Tag, name2.value.?.data));
-    expect(Expr.Tag.e_string == @as(Expr.Tag, name2.key.?.data));
-    expect(strings.eqlUtf16("name", name2.key.?.data.e_string.value));
-    std.testing.expectEqualStrings("invalid", try name2.value.?.data.e_string.string(alloc.dynamic));
-
-    std.testing.expectEqual(@as(usize, 1), log.msgs.items.len);
+    // TODO: emoji?
 }

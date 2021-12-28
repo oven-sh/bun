@@ -51,6 +51,18 @@ fn notimpl() void {
     Global.panic("Not implemented yet!", .{});
 }
 
+fn formatUnsignedIntegerBetween(comptime len: u16, buf: *[len]u8, val: u64, comptime min: u32, comptime max: u32) void {
+    comptime var i: u16 = len;
+    var remainder = val;
+    // Write out the number from the end to the front
+
+    inline while (i > 0) {
+        comptime i -= 1;
+        buf[comptime i] = @intCast(u8, (remainder % 10)) + '0';
+        remainder /= 10;
+    }
+}
+
 pub fn writeModuleId(comptime Writer: type, writer: Writer, module_id: u32) void {
     std.debug.assert(module_id != 0); // either module_id is forgotten or it should be disabled
     _ = writer.writeAll("$") catch unreachable;
@@ -591,15 +603,108 @@ pub fn NewPrinter(
         pub fn printNonNegativeFloat(p: *Printer, float: f64) void {
             // Is this actually an integer?
             @setRuntimeSafety(false);
-            if (float < std.math.maxInt(u32) and std.math.ceil(float) == float) {
+            const floored: f64 = @floor(float);
+            const remainder: f64 = (float - floored);
+            const is_integer = remainder == 0;
+            if (float < std.math.maxInt(u52) and is_integer) {
+                @setFloatMode(.Optimized);
                 // In JavaScript, numbers are represented as 64 bit floats
                 // However, they could also be signed or unsigned int 32 (when doing bit shifts)
                 // In this case, it's always going to unsigned since that conversion has already happened.
-                std.fmt.formatInt(@floatToInt(u32, float), 10, .upper, .{}, p) catch unreachable;
+                const val = @floatToInt(u64, float);
+                switch (val) {
+                    0 => {
+                        p.print("0");
+                    },
+                    1...9 => {
+                        var bytes = [1]u8{'0' + @intCast(u8, val)};
+                        p.print(&bytes);
+                    },
+                    10 => {
+                        p.print("10");
+                    },
+                    11...99 => {
+                        var buf: *[2]u8 = (p.writer.reserve(2) catch unreachable)[0..2];
+                        formatUnsignedIntegerBetween(2, buf, val, 11, 99);
+                        p.writer.advance(2);
+                    },
+                    100 => {
+                        p.print("100");
+                    },
+                    101...999 => {
+                        var buf: *[3]u8 = (p.writer.reserve(3) catch unreachable)[0..3];
+                        formatUnsignedIntegerBetween(3, buf, val, 101, 999);
+                        p.writer.advance(3);
+                    },
+
+                    1000 => {
+                        p.print("1000");
+                    },
+                    1001...9999 => {
+                        var buf: *[4]u8 = (p.writer.reserve(4) catch unreachable)[0..4];
+                        formatUnsignedIntegerBetween(4, buf, val, 1001, 9999);
+                        p.writer.advance(4);
+                    },
+                    10000 => {
+                        p.print("1e4");
+                    },
+                    100000 => {
+                        p.print("1e5");
+                    },
+                    1000000 => {
+                        p.print("1e6");
+                    },
+                    10000000 => {
+                        p.print("1e7");
+                    },
+                    100000000 => {
+                        p.print("1e8");
+                    },
+                    1000000000 => {
+                        p.print("1e9");
+                    },
+
+                    10001...99999 => {
+                        var buf: *[5]u8 = (p.writer.reserve(5) catch unreachable)[0..5];
+                        formatUnsignedIntegerBetween(5, buf, val, 10001, 99999);
+                        p.writer.advance(5);
+                    },
+                    100001...999999 => {
+                        var buf: *[6]u8 = (p.writer.reserve(6) catch unreachable)[0..6];
+                        formatUnsignedIntegerBetween(6, buf, val, 100001, 999999);
+                        p.writer.advance(6);
+                    },
+                    1_000_001...9_999_999 => {
+                        var buf: *[7]u8 = (p.writer.reserve(7) catch unreachable)[0..7];
+                        formatUnsignedIntegerBetween(7, buf, val, 1_000_001, 9_999_999);
+                        p.writer.advance(7);
+                    },
+                    10_000_001...99_999_999 => {
+                        var buf: *[8]u8 = (p.writer.reserve(8) catch unreachable)[0..8];
+                        formatUnsignedIntegerBetween(8, buf, val, 10_000_001, 99_999_999);
+                        p.writer.advance(8);
+                    },
+                    100_000_001...999_999_999 => {
+                        var buf: *[9]u8 = (p.writer.reserve(9) catch unreachable)[0..9];
+                        formatUnsignedIntegerBetween(9, buf, val, 100_000_001, 999_999_999);
+                        p.writer.advance(9);
+                    },
+                    1_000_000_001...9_999_999_999 => {
+                        var buf: *[10]u8 = (p.writer.reserve(10) catch unreachable)[0..10];
+                        formatUnsignedIntegerBetween(10, buf, val, 100_000_001, 999_999_999);
+                        p.writer.advance(10);
+                    },
+                    else => std.fmt.formatInt(val, 10, .lower, .{}, p) catch unreachable,
+                }
+
                 return;
             }
 
-            std.fmt.formatFloatScientific(float, .{}, p) catch unreachable;
+            std.fmt.formatFloatDecimal(
+                float,
+                .{},
+                p,
+            ) catch unreachable;
         }
 
         pub fn printQuotedUTF16(e: *Printer, text: []const u16, quote: u8) void {
@@ -1456,7 +1561,8 @@ pub fn NewPrinter(
                 },
                 .e_number => |e| {
                     const value = e.value;
-                    const absValue = std.math.fabs(value);
+
+                    const absValue = @fabs(value);
 
                     if (std.math.isNan(value)) {
                         p.printSpaceBeforeIdentifier();

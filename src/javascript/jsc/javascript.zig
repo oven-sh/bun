@@ -182,6 +182,28 @@ pub const Bun = struct {
         return ZigString.init(VirtualMachine.vm.bundler.options.routes.asset_prefix_path).toValue(VirtualMachine.vm.global).asRef();
     }
 
+    pub fn getArgv(
+        this: void,
+        ctx: js.JSContextRef,
+        thisObject: js.JSValueRef,
+        prop: js.JSStringRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        if (comptime Environment.isWindows) {
+            @compileError("argv not supported on windows");
+        }
+
+        var argv_list = std.heap.stackFallback(128, getAllocator(ctx));
+        var allocator = argv_list.get();
+        var argv = allocator.alloc(ZigString, std.os.argv.len) catch unreachable;
+        defer if (argv.len > 128) allocator.free(argv);
+        for (std.os.argv) |arg, i| {
+            argv[i] = ZigString.init(std.mem.span(arg));
+        }
+
+        return JSValue.createStringArray(VirtualMachine.vm.global, argv.ptr, argv.len).asObjectRef();
+    }
+
     pub fn getRoutesDir(
         this: void,
         ctx: js.JSContextRef,
@@ -586,6 +608,10 @@ pub const Bun = struct {
             .assetPrefix = .{
                 .get = getAssetPrefix,
                 .ts = d.ts{ .name = "assetPrefix", .@"return" = "string" },
+            },
+            .argv = .{
+                .get = getArgv,
+                .ts = d.ts{ .name = "argv", .@"return" = "string[]" },
             },
             .env = .{
                 .get = EnvironmentVariables.getter,
@@ -2378,4 +2404,3 @@ pub const BuildError = struct {
 };
 
 pub const JSPrivateDataTag = JSPrivateDataPtr.Tag;
-

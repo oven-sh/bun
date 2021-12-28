@@ -1,5 +1,6 @@
 pub const add_completions: []const u8 = @embedFile("add_completions.txt");
 const std = @import("std");
+const Environment = @import("../env.zig");
 
 pub const FirstLetter = enum(u8) {
     a = 'a',
@@ -31,7 +32,7 @@ pub const FirstLetter = enum(u8) {
 };
 
 pub const Index = std.EnumArray(FirstLetter, []const []const u8);
-pub const index: Index = brk: {
+pub const index: Index = if (Environment.isDebug) Index.initFill(&.{}) else brk: {
     var array: Index = Index.initFill(&[_][]const u8{});
 
     var i: u8 = 'a';

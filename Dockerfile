@@ -203,14 +203,16 @@ WORKDIR $BUN_DIR
 
 ENTRYPOINT [ "/bin/bash" ]
 
-CMD cd $BUN_DIR &&  rm -rf $HOME/.cache zig-cache && make \
+CMD cd $BUN_DIR && \
+    make \
     jsc-bindings-headers \
     api \
     analytics \
     bun_error \
-    fallback_decoder && rm -rf $HOME/.cache zig-cache jsc-bindings-mac && \
-    make build-unit $(BUN_DIR)/src/main.zig /tmp/test-bun && \
-    /tmp/test-bun 
+    fallback_decoder \
+    jsc-bindings-mac && \
+    make \
+    run-all-unit-tests
 
 FROM bunbunbunbun/bun-base-with-zig-and-webkit:latest as bun.devcontainer
 

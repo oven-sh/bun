@@ -225,13 +225,12 @@ ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 
-
 ENV WEBKIT_OUT_DIR ${WEBKIT_DIR}
 ENV PATH "$ZIG_PATH:$PATH"
 ENV JSC_BASE_DIR $WEBKIT_OUT_DIR
-ENV LIB_ICU_PATH /home/ubuntu/icu/source/lib
+ENV LIB_ICU_PATH ${GITHUB_WORKSPACE}}/icu/source/lib
 ENV BUN_RELEASE_DIR ${BUN_RELEASE_DIR}
-ENV PATH "/workspaces/bun/packages/bun-linux-x64:/workspaces/bun/packages/bun-linux-aarch64:/workspaces/bun/packages/debug-bun-linux-x64:/workspaces/bun/packages/debug-bun-linux-aarch64:$PATH"
+ENV PATH "${GITHUB_WORKSPACE}/packages/bun-linux-x64:${GITHUB_WORKSPACE}/packages/bun-linux-aarch64:${GITHUB_WORKSPACE}/packages/debug-bun-linux-x64:${GITHUB_WORKSPACE}/packages/debug-bun-linux-aarch64:$PATH"
 ENV PATH "/home/ubuntu/zls/zig-out/bin:$PATH"
 
 ENV BUN_INSTALL /home/ubuntu/.bun
@@ -239,12 +238,12 @@ ENV XDG_CONFIG_HOME /home/ubuntu/.config
 
 RUN update-alternatives --install /usr/bin/lldb lldb /usr/bin/lldb-12 90
 
-COPY .devcontainer/workspace.code-workspace /workspaces/workspace.code-workspace
-COPY .devcontainer/zls.json /workspaces/workspace.code-workspace
+COPY .devcontainer/workspace.code-workspace $GITHUB_WORKSPACE/workspace.code-workspace
+COPY .devcontainer/zls.json $GITHUB_WORKSPACE/workspace.code-workspace
 COPY .devcontainer/limits.conf /etc/security/limits.conf
 COPY ".devcontainer/scripts/" /scripts/
-COPY ".devcontainer/scripts/getting-started.sh" /workspaces/getting-started.sh
-RUN mkdir -p /home/ubuntu/.bun /home/ubuntu/.config /workspaces/bun && \
+COPY ".devcontainer/scripts/getting-started.sh" $GITHUB_WORKSPACE/getting-started.sh
+RUN mkdir -p /home/ubuntu/.bun /home/ubuntu/.config $GITHUB_WORKSPACE/bun && \
     bash /scripts/common-debian.sh && \
     bash /scripts/github.sh && \
     bash /scripts/nice.sh && \

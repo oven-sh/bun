@@ -18,7 +18,7 @@ const Api = @import("api/schema.zig").Api;
 const resolve_path = @import("./resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("./javascript/jsc/config.zig").configureTransformOptionsForBun;
 const clap = @import("clap");
-
+const BunJS = @import("./bun_js.zig");
 const Install = @import("./install/install.zig");
 const bundler = @import("bundler.zig");
 const DotEnv = @import("./env_loader.zig");
@@ -564,6 +564,8 @@ pub const PrintBundleCommand = struct {
 };
 
 pub const Command = struct {
+    var script_name_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+
     pub const DebugOptions = struct {
         dump_environment_variables: bool = false,
         dump_limits: bool = false,
@@ -845,10 +847,12 @@ pub const Command = struct {
                     }
                 };
 
+                const extension: []const u8 = if (ctx.args.entry_points.len > 0)
+                    std.fs.path.extension(ctx.args.entry_points[0])
+                else
+                    @as([]const u8, "");
                 // KEYWORDS: open file argv argv0
                 if (ctx.args.entry_points.len == 1) {
-                    const extension = std.fs.path.extension(ctx.args.entry_points[0]);
-
                     if (strings.eqlComptime(extension, ".bun")) {
                         try PrintBundleCommand.exec(ctx);
                         return;
@@ -865,9 +869,52 @@ pub const Command = struct {
                     }
                 }
 
-                if (ctx.positionals.len > 0 and (std.fs.path.extension(ctx.positionals[0]).len == 0)) {
-                    if (try RunCommand.exec(ctx, true, false)) {
-                        return;
+                if (options.defaultLoaders.get(extension)) |loader| {
+                    if (loader.isJavaScriptLike()) {
+                        possibly_open_with_bun_js: {
+                            const script_name_to_search = ctx.args.entry_points[0];
+
+                            var file_path = script_name_to_search;
+                            const file_: std.fs.File.OpenError!std.fs.File = brk: {
+                                if (script_name_to_search[0] == std.fs.path.sep) {
+                                    break :brk std.fs.openFileAbsolute(script_name_to_search, .{ .read = true });
+                                } else {
+                                    var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                                    const cwd = std.os.getcwd(&path_buf) catch break :possibly_open_with_bun_js;
+                                    path_buf[cwd.len] = std.fs.path.sep;
+                                    var parts = [_]string{script_name_to_search};
+                                    file_path = resolve_path.joinAbsStringBuf(
+                                        path_buf[0 .. cwd.len + 1],
+                                        &script_name_buf,
+                                        &parts,
+                                        .auto,
+                                    );
+                                    if (file_path.len == 0) break :possibly_open_with_bun_js;
+                                    script_name_buf[file_path.len] = 0;
+                                    var file_pathZ = script_name_buf[0..file_path.len :0];
+                                    break :brk std.fs.openFileAbsoluteZ(file_pathZ, .{ .read = true });
+                                }
+                            };
+
+                            const file = file_ catch break :possibly_open_with_bun_js;
+
+                            Global.configureAllocator(.{ .long_running = true });
+
+                            BunJS.Run.boot(ctx, file, ctx.allocator.dupe(u8, file_path) catch unreachable) catch |err| {
+                                if (Output.enable_ansi_colors) {
+                                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                                } else {
+                                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                                }
+
+                                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
+                                    std.fs.path.basename(file_path),
+                                    @errorName(err),
+                                });
+                                Output.flush();
+                                std.os.exit(1);
+                            };
+                        }
                     }
                 }
 

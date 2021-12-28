@@ -10,7 +10,7 @@ docker buildx build \
     --platform=linux/$BUILDARCH --build-arg BUILDARCH=$BUILDARCH .
 docker buildx build \
     --target bun-base \
-    -t bunbunbunbun/bun-base:latest --platform=linux/$UILDARCH \
+    -t bunbunbunbun/bun-base:latest --platform=linux/$BUILDARCH \
     --build-arg BUILDARCH=$BUILDARCH .
 docker buildx build \
     -t bunbunbunbun/bun-base-with-zig-and-webkit:latest \

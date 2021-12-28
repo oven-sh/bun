@@ -6451,7 +6451,7 @@ pub const PackageManager = struct {
 
                 if (comptime log_level != .silent) {
                     const fmt = "\n<r><yellow>warn:<r> no compatible binaries found for <b>{s}<r>\n";
-                    const args = .{names[package_id]};
+                    const args = .{names[package_id].slice(lockfile.buffers.string_bytes.items)};
 
                     if (comptime log_level.showProgress()) {
                         if (Output.enable_ansi_colors) {

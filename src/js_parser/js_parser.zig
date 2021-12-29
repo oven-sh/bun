@@ -1121,11 +1121,11 @@ pub const SideEffects = enum(u2) {
             },
 
             .s_while => {
-                return shouldKeepStmtInDeadControlFlow(stmt.getWhile().body);
+                return shouldKeepStmtInDeadControlFlow(stmt.data.s_while.body);
             },
 
             .s_do_while => {
-                return shouldKeepStmtInDeadControlFlow(stmt.getDoWhile().body);
+                return shouldKeepStmtInDeadControlFlow(stmt.data.s_do_while.body);
             },
 
             .s_for => |__for__| {

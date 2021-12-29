@@ -14,6 +14,7 @@ const std = @import("std");
 const resolve_path = @import("./resolver/resolve_path.zig");
 const Fs = @import("./fs.zig");
 const Schema = @import("./api/schema.zig");
+const Ref = @import("ast/base.zig").Ref;
 
 // packages/bun-cli-*/bun
 const BUN_ROOT = "../../";

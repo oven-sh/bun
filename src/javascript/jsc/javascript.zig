@@ -1,4 +1,22 @@
 const std = @import("std");
+const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
+const StaticExport = @import("./bindings/static_export.zig");
+const c_char = StaticExport.c_char;
+const _global = @import("../../global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const StoredFileDescriptorType = _global.StoredFileDescriptorType;
+const C = _global.C;
+
+pub fn zigCast(comptime Destination: type, value: anytype) *Destination {
+    return @ptrCast(*Destination, @alignCast(@alignOf(*Destination), value));
+}
 
 const Fs = @import("../../fs.zig");
 const Resolver = @import("../../resolver/resolver.zig");
@@ -21,8 +39,8 @@ const Analytics = @import("../../analytics/analytics_thread.zig");
 usingnamespace @import("./base.zig");
 usingnamespace @import("./webcore/response.zig");
 usingnamespace @import("./config.zig");
-usingnamespace @import("./bindings/exports.zig");
 usingnamespace @import("./bindings/bindings.zig");
+const ZigString = @import("./bindings/bindings.zig").ZigString;
 const Runtime = @import("../../runtime.zig");
 const Router = @import("./api/router.zig");
 const ImportRecord = ast.ImportRecord;
@@ -30,6 +48,36 @@ const DotEnv = @import("../../env_loader.zig");
 const ParseResult = @import("../../bundler.zig").ParseResult;
 const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../../resolver/package_json.zig").MacroMap;
+const Request = @import("./webcore/response.zig").Request;
+const Response = @import("./webcore/response.zig").Response;
+const Headers = @import("./webcore/response.zig").Headers;
+const Fetch = @import("./webcore/response.zig").Fetch;
+const FetchEvent = @import("./webcore/response.zig").FetchEvent;
+const js = @import("./JavaScriptCore.zig");
+const JSError = @import("./base.zig").JSError;
+const d = @import("./base.zig").d;
+const MarkedArrayBuffer = @import("./base.zig").MarkedArrayBuffer;
+const getAllocator = @import("./base.zig").getAllocator;
+const JSValue = @import("./bindings/bindings.zig").JSValue;
+const NewClass = @import("./base.zig").NewClass;
+const Microtask = @import("./bindings/bindings.zig").Microtask;
+const JSGlobalObject = @import("./bindings/bindings.zig").JSGlobalObject;
+const ExceptionValueRef = @import("./base.zig").ExceptionValueRef;
+const JSPrivateDataPtr = @import("./base.zig").JSPrivateDataPtr;
+const ZigConsoleClient = @import("./bindings/exports.zig").ZigConsoleClient;
+const ZigException = @import("./bindings/exports.zig").ZigException;
+const ZigStackTrace = @import("./bindings/exports.zig").ZigStackTrace;
+const ErrorableResolvedSource = @import("./bindings/exports.zig").ErrorableResolvedSource;
+const ResolvedSource = @import("./bindings/exports.zig").ResolvedSource;
+const JSPromise = @import("./bindings/bindings.zig").JSPromise;
+const JSInternalPromise = @import("./bindings/bindings.zig").JSInternalPromise;
+const JSModuleLoader = @import("./bindings/bindings.zig").JSModuleLoader;
+const JSPromiseRejectionOperation = @import("./bindings/bindings.zig").JSPromiseRejectionOperation;
+const Exception = @import("./bindings/bindings.zig").Exception;
+const ErrorableZigString = @import("./bindings/bindings.zig").ErrorableZigString;
+const ZigGlobalObject = @import("./bindings/bindings.zig").ZigGlobalObject;
+const VM = @import("./bindings/bindings.zig").VM;
+const Config = @import("./config.zig");
 
 pub const GlobalClasses = [_]type{
     Request.Class,
@@ -878,7 +926,7 @@ pub const VirtualMachine = struct {
         const bundler = try Bundler.init(
             allocator,
             log,
-            try configureTransformOptionsForBunVM(allocator, _args),
+            try Config.configureTransformOptionsForBunVM(allocator, _args),
             existing_bundle,
             env_loader,
         );
@@ -1271,7 +1319,7 @@ pub const VirtualMachine = struct {
 
                     const package = &node_modules_bundle.bundle.packages[pkg_id];
 
-                    if (isDebug) {
+                    if (Environment.isDebug) {
                         std.debug.assert(strings.eql(node_modules_bundle.str(package.name), package_json.name));
                     }
 
@@ -1658,7 +1706,7 @@ pub const VirtualMachine = struct {
             },
             else => {
                 this.printErrorInstance(@intToEnum(JSValue, @intCast(i64, (@ptrToInt(value)))), exception_list, allow_ansi_color) catch |err| {
-                    if (comptime isDebug) {
+                    if (comptime Environment.isDebug) {
                         // yo dawg
                         Output.printErrorln("Error while printing Error-like object: {s}", .{@errorName(err)});
                         Output.flush();

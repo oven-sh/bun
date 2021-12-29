@@ -8,7 +8,7 @@ usingnamespace @import("../bindings/bindings.zig");
 const ZigURL = @import("../../../query_string_map.zig").URL;
 const HTTPClient = @import("http");
 const NetworkThread = @import("network_thread");
-
+const js = @import("../JavaScriptCore.zig");
 const Method = @import("../../../http/method.zig").Method;
 
 const ObjectPool = @import("../../../pool.zig").ObjectPool;

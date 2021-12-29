@@ -13,6 +13,8 @@ const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
 const C = _global.C;
 usingnamespace @import("ast/base.zig");
+const Ref = @import("ast/base.zig").Ref;
+const RefHashCtx = @import("ast/base.zig").RefHashCtx;
 
 const ImportRecord = @import("import_record.zig").ImportRecord;
 const allocators = @import("allocators.zig");
@@ -1165,7 +1167,7 @@ pub const E = struct {
         // A version of this where `utf8` and `value` are stored in a packed union, with len as a single u32 was attempted.
         // It did not improve benchmarks. Neither did converting this from a heap-allocated type to a stack-allocated type.
         value: []const u16 = &.{},
-        utf8: string = &([_]u8{}),
+        utf8: _global.string = &([_]u8{}),
         prefer_template: bool = false,
 
         pub var empty = String{};
@@ -1214,7 +1216,7 @@ pub const E = struct {
                             return strings.utf16EqlString(other.value, s.utf8);
                         }
                     },
-                    string => {
+                    _global.string => {
                         return strings.eql(s.utf8, other);
                     },
                     []u16, []const u16 => {
@@ -1233,7 +1235,7 @@ pub const E = struct {
                             return std.mem.eql(u16, other.value, s.value);
                         }
                     },
-                    string => {
+                    _global.string => {
                         return strings.utf16EqlString(s.value, other);
                     },
                     []u16, []const u16 => {
@@ -1246,7 +1248,7 @@ pub const E = struct {
             }
         }
 
-        pub fn string(s: *const String, allocator: std.mem.Allocator) !string {
+        pub fn string(s: *const String, allocator: std.mem.Allocator) !_global.string {
             if (s.isUTF8()) {
                 return s.utf8;
             } else {
@@ -1408,105 +1410,6 @@ pub const Stmt = struct {
 
     const None = S.Empty{};
 
-    pub inline fn getBlock(self: *const @This()) *S.Block {
-        return self.data.s_block;
-    }
-    pub inline fn getBreak(self: *const @This()) *S.Break {
-        return self.data.s_break;
-    }
-    pub inline fn getClass(self: *const @This()) *S.Class {
-        return self.data.s_class;
-    }
-    pub inline fn getComment(self: *const @This()) *S.Comment {
-        return self.data.s_comment;
-    }
-    pub inline fn getContinue(self: *const @This()) *S.Continue {
-        return self.data.s_continue;
-    }
-    pub inline fn getDebugger(self: *const @This()) S.Debugger {
-        return S.Debugger{};
-    }
-    pub inline fn getDirective(self: *const @This()) *S.Directive {
-        return self.data.s_directive;
-    }
-    pub inline fn getDoWhile(self: *const @This()) *S.DoWhile {
-        return self.data.s_do_while;
-    }
-    pub inline fn getEmpty(self: *const @This()) S.Empty {
-        return S.Empty{};
-    }
-    pub inline fn getEnum(self: *const @This()) *S.Enum {
-        return self.data.s_enum;
-    }
-    pub inline fn getExportClause(self: *const @This()) *S.ExportClause {
-        return self.data.s_export_clause;
-    }
-    pub inline fn getExportDefault(self: *const @This()) *S.ExportDefault {
-        return self.data.s_export_default;
-    }
-    pub inline fn getExportEquals(self: *const @This()) *S.ExportEquals {
-        return self.data.s_export_equals;
-    }
-    pub inline fn getExportFrom(self: *const @This()) *S.ExportFrom {
-        return self.data.s_export_from;
-    }
-    pub inline fn getExportStar(self: *const @This()) *S.ExportStar {
-        return self.data.s_export_star;
-    }
-    pub inline fn getExpr(self: *const @This()) *S.SExpr {
-        return self.data.s_expr;
-    }
-    pub inline fn getForIn(self: *const @This()) *S.ForIn {
-        return self.data.s_for_in;
-    }
-    pub inline fn getForOf(self: *const @This()) *S.ForOf {
-        return self.data.s_for_of;
-    }
-    pub inline fn getFor(self: *const @This()) *S.For {
-        return self.data.s_for;
-    }
-    pub inline fn getFunction(self: *const @This()) *S.Function {
-        return self.data.s_function;
-    }
-    pub inline fn getIf(self: *const @This()) *S.If {
-        return self.data.s_if;
-    }
-    pub inline fn getImport(self: *const @This()) *S.Import {
-        return self.data.s_import;
-    }
-    pub inline fn getLabel(self: *const @This()) *S.Label {
-        return self.data.s_label;
-    }
-    pub inline fn getLazyExport(self: *const @This()) *S.LazyExport {
-        return self.data.s_lazy_export;
-    }
-    pub inline fn getLocal(self: *const @This()) *S.Local {
-        return self.data.s_local;
-    }
-    pub inline fn getNamespace(self: *const @This()) *S.Namespace {
-        return self.data.s_namespace;
-    }
-    pub inline fn getReturn(self: *const @This()) *S.Return {
-        return self.data.s_return;
-    }
-    pub inline fn getSwitch(self: *const @This()) *S.Switch {
-        return self.data.s_switch;
-    }
-    pub inline fn getThrow(self: *const @This()) *S.Throw {
-        return self.data.s_throw;
-    }
-    pub inline fn getTry(self: *const @This()) *S.Try {
-        return self.data.s_try;
-    }
-    pub inline fn getTypeScript(self: *const @This()) S.TypeScript {
-        return S.TypeScript{};
-    }
-    pub inline fn getWhile(self: *const @This()) *S.While {
-        return self.data.s_while;
-    }
-    pub inline fn getWith(self: *const @This()) *S.With {
-        return self.data.s_with;
-    }
     pub var icount: usize = 0;
     pub fn init(comptime StatementType: type, origData: *StatementType, loc: logger.Loc) Stmt {
         icount += 1;
@@ -1876,122 +1779,6 @@ pub const Stmt = struct {
                 return All.append(ValueType, value);
             }
         };
-
-        pub inline fn set(data: *Data, value: anytype) void {
-            const ValueType = @TypeOf(value);
-            if (@typeInfo(ValueType) == .Pointer) {
-                data.setValue(@TypeOf(value.*), value.*);
-            } else {
-                data.setValue(@TypeOf(value), value);
-            }
-        }
-
-        pub inline fn setValue(data: *Data, comptime ValueType: type, value: ValueType) void {
-            switch (comptime ValueType) {
-                S.Block => {
-                    data.s_block = Block.append(value);
-                },
-                S.Break => {
-                    data.s_break = Break.append(value);
-                },
-                S.Class => {
-                    data.s_class = Class.append(value);
-                },
-                S.Comment => {
-                    data.s_comment = Comment.append(value);
-                },
-                S.Continue => {
-                    data.s_continue = Continue.append(value);
-                },
-                S.Debugger => {
-                    data.s_debugger = Debugger.append(value);
-                },
-                S.Directive => {
-                    data.s_directive = Directive.append(value);
-                },
-                S.DoWhile => {
-                    data.s_do_while = DoWhile.append(value);
-                },
-                S.Empty => {
-                    data.s_empty = Empty.append(value);
-                },
-                S.Enum => {
-                    data.s_enum = Enum.append(value);
-                },
-                S.ExportClause => {
-                    data.s_export_clause = ExportClause.append(value);
-                },
-                S.ExportDefault => {
-                    data.s_export_default = ExportDefault.append(value);
-                },
-                S.ExportEquals => {
-                    data.s_export_equals = ExportEquals.append(value);
-                },
-                S.ExportFrom => {
-                    data.s_export_from = ExportFrom.append(value);
-                },
-                S.ExportStar => {
-                    data.s_export_star = ExportStar.append(value);
-                },
-                S.SExpr => {
-                    data.s_s_expr = SExpr.append(value);
-                },
-                S.ForIn => {
-                    data.s_for_in = ForIn.append(value);
-                },
-                S.ForOf => {
-                    data.s_for_of = ForOf.append(value);
-                },
-                S.For => {
-                    data.s_for = For.append(value);
-                },
-                S.Function => {
-                    data.s_function = Function.append(value);
-                },
-                S.If => {
-                    data.s_if = If.append(value);
-                },
-                S.Import => {
-                    data.s_import = Import.append(value);
-                },
-                S.Label => {
-                    data.s_label = Label.append(value);
-                },
-                S.LazyExport => {
-                    data.s_lazy_export = LazyExport.append(value);
-                },
-                S.Local => {
-                    data.s_local = Local.append(value);
-                },
-                S.Namespace => {
-                    data.s_namespace = Namespace.append(value);
-                },
-                S.Return => {
-                    data.s_return = Return.append(value);
-                },
-                S.Switch => {
-                    data.s_switch = Switch.append(value);
-                },
-                S.Throw => {
-                    data.s_throw = Throw.append(value);
-                },
-                S.Try => {
-                    data.s_try = Try.append(value);
-                },
-                S.TypeScript => {
-                    data.s_type_script = value;
-                },
-                S.While => {
-                    data.s_while = While.append(value);
-                },
-                S.With => {
-                    data.s_with = With.append(value);
-                },
-                else => {
-                    @compileError("Invalid type passed to Stmt.Data.set " ++ @typeName(ValueType));
-                },
-            }
-        }
     };
 
     pub fn caresAboutScope(self: *Stmt) bool {
@@ -2001,7 +1788,7 @@ pub const Stmt = struct {
             },
 
             .s_local => |local| {
-                return local.kind != Kind.k_var;
+                return local.kind != S.Kind.k_var;
             },
             else => {
                 return true;
@@ -2030,107 +1817,6 @@ pub const Expr = struct {
         return std.meta.activeTag(expr.data) == .e_missing;
     }
     pub const Query = struct { expr: Expr, loc: logger.Loc, i: u32 = 0 };
-
-    pub fn getArray(exp: *const Expr) *E.Array {
-        return exp.data.e_array;
-    }
-    pub fn getUnary(exp: *const Expr) *E.Unary {
-        return exp.data.e_unary;
-    }
-    pub fn getBinary(exp: *const Expr) *E.Binary {
-        return exp.data.e_binary;
-    }
-    pub fn getThis(exp: *const Expr) *E.This {
-        return E.This{};
-    }
-    pub fn getClass(exp: *const Expr) *E.Class {
-        return exp.data.e_class;
-    }
-    pub fn getBoolean(exp: *const Expr) *E.Boolean {
-        return exp.data.e_boolean;
-    }
-    pub fn getSuper(exp: *const Expr) *E.Super {
-        return exp.data.e_super;
-    }
-    pub fn getNull(exp: *const Expr) *E.Null {
-        return exp.data.e_null;
-    }
-    pub fn getUndefined(exp: *const Expr) *E.Undefined {
-        return exp.data.e_undefined;
-    }
-    pub fn getNew(exp: *const Expr) *E.New {
-        return exp.data.e_new;
-    }
-    pub fn getNewTarget(exp: *const Expr) *E.NewTarget {
-        return &E.NewTarget{};
-    }
-    pub fn getFunction(exp: *const Expr) *E.Function {
-        return exp.data.e_function;
-    }
-
-    pub fn getCall(exp: *const Expr) *E.Call {
-        return exp.data.e_call;
-    }
-    pub fn getDot(exp: *const Expr) *E.Dot {
-        return exp.data.e_dot;
-    }
-    pub fn getIndex(exp: *const Expr) *E.Index {
-        return exp.data.e_index;
-    }
-    pub fn getArrow(exp: *const Expr) *E.Arrow {
-        return exp.data.e_arrow;
-    }
-    pub fn getPrivateIdentifier(exp: *const Expr) *E.PrivateIdentifier {
-        return exp.data.e_private_identifier;
-    }
-    pub fn getJsxElement(exp: *const Expr) *E.JSXElement {
-        return exp.data.e_jsx_element;
-    }
-    pub fn getMissing(exp: *const Expr) *E.Missing {
-        return exp.data.e_missing;
-    }
-    pub fn getNumber(exp: *const Expr) E.Number {
-        return exp.data.e_number;
-    }
-    pub fn getBigInt(exp: *const Expr) E.BigInt {
-        return exp.data.e_big_int;
-    }
-    pub fn getObject(exp: *const Expr) *E.Object {
-        return exp.data.e_object;
-    }
-    pub fn getSpread(exp: *const Expr) *E.Spread {
-        return exp.data.e_spread;
-    }
-    pub fn getString(exp: *const Expr) E.String {
-        return exp.data.e_string;
-    }
-    pub fn getTemplatePart(exp: *const Expr) *E.TemplatePart {
-        return exp.data.e_template_part;
-    }
-    pub fn getTemplate(exp: *const Expr) *E.Template {
-        return exp.data.e_template;
-    }
-    pub fn getRegExp(exp: *const Expr) *E.RegExp {
-        return exp.data.e_reg_exp;
-    }
-    pub fn getAwait(exp: *const Expr) *E.Await {
-        return exp.data.e_await;
-    }
-    pub fn getYield(exp: *const Expr) *E.Yield {
-        return exp.data.e_yield;
-    }
-    pub fn getIf(exp: *const Expr) *E.If {
-        return exp.data.e_if;
-    }
-    pub fn getRequire(exp: *const Expr) *E.Require {
-        return exp.data.e_require;
-    }
-    pub fn getRequireOrRequireResolve(exp: *const Expr) *E.RequireOrRequireResolve {
-        return exp.data.e_require_or_require_resolve;
-    }
-    pub fn getImport(exp: *const Expr) *E.Import {
-        return exp.data.e_import;
-    }
 
     pub fn hasAnyPropertyNamed(expr: *const Expr, comptime names: []const string) bool {
         if (std.meta.activeTag(expr.data) != .e_object) return false;
@@ -2587,7 +2273,7 @@ pub const Expr = struct {
                 };
             },
             E.String => {
-                if (comptime isDebug) {
+                if (comptime Environment.isDebug) {
                     // Sanity check: assert string is not a null ptr
                     if (st.isUTF8() and st.utf8.len > 0) {
                         std.debug.assert(@ptrToInt(st.utf8.ptr) > 0);
@@ -3333,7 +3019,7 @@ pub const Expr = struct {
 
             pub fn append(comptime ValueType: type, value: anytype) *ValueType {
                 if (ValueType == E.Identifier) {
-                    return Identifier.append(ValueType, value);
+                    return E.Identifier.append(ValueType, value);
                 } else {
                     return All.append(ValueType, value);
                 }
@@ -4857,7 +4543,7 @@ pub const Macro = struct {
                     return JSNode{ .loc = this.loc, .data = .{ .inline_identifier = value } };
                 },
                 else => {
-                    if (comptime isDebug) {
+                    if (comptime Environment.isDebug) {
                         Output.prettyWarnln("initExpr fail: {s}", .{@tagName(this.data)});
                     }
                     return JSNode{ .loc = this.loc, .data = .{ .e_missing = .{} } };
@@ -7099,7 +6785,7 @@ pub const Macro = struct {
             comptime Visitor: type,
             visitor: Visitor,
         ) Expr {
-            if (comptime isDebug) Output.prettyln("<r><d>[macro]<r> call <d><b>{s}<r>", .{function_name});
+            if (comptime Environment.isDebug) Output.prettyln("<r><d>[macro]<r> call <d><b>{s}<r>", .{function_name});
 
             exception_holder = Zig.ZigException.Holder.init();
             expr_nodes_buf[0] = JSNode.initExpr(caller);

@@ -2899,7 +2899,7 @@ pub fn NewPrinter(
                     switch (s.body.data) {
                         .s_block => {
                             p.printSpace();
-                            p.printBlock(s.body.loc, s.body.getBlock().stmts);
+                            p.printBlock(s.body.loc, s.body.data.s_block.stmts);
                             p.printSpace();
                         },
                         else => {
@@ -3068,7 +3068,7 @@ pub fn NewPrinter(
                             switch (c.body[0].data) {
                                 .s_block => |block| {
                                     p.printSpace();
-                                    p.printBlock(c.body[0].loc, c.body[0].getBlock().stmts);
+                                    p.printBlock(c.body[0].loc, c.body[0].data.s_block.stmts);
                                     p.printNewline();
                                     continue;
                                 },
@@ -3661,7 +3661,7 @@ pub fn NewPrinter(
             switch (s.yes.data) {
                 .s_block => |block| {
                     p.printSpace();
-                    p.printBlock(s.yes.loc, s.yes.getBlock().stmts);
+                    p.printBlock(s.yes.loc, s.yes.data.s_block.stmts);
 
                     if (s.no != null) {
                         p.printSpace();
@@ -3709,11 +3709,11 @@ pub fn NewPrinter(
                 switch (no_block.data) {
                     .s_block => |no| {
                         p.printSpace();
-                        p.printBlock(no_block.loc, no_block.getBlock().stmts);
+                        p.printBlock(no_block.loc, no_block.data.s_block.stmts);
                         p.printNewline();
                     },
                     .s_if => |no| {
-                        p.printIf(no_block.getIf());
+                        p.printIf(no_block.data.s_if);
                     },
                     else => {
                         p.printNewline();

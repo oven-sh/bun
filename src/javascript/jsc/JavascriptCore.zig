@@ -235,7 +235,6 @@ pub extern fn JSObjectGetTypedArrayBuffer(ctx: JSContextRef, object: JSObjectRef
 pub extern fn JSObjectMakeArrayBufferWithBytesNoCopy(ctx: JSContextRef, bytes: ?*anyopaque, byteLength: usize, bytesDeallocator: JSTypedArrayBytesDeallocator, deallocatorContext: ?*anyopaque, exception: ExceptionRef) JSObjectRef;
 pub extern fn JSObjectGetArrayBufferBytesPtr(ctx: JSContextRef, object: JSObjectRef, exception: ExceptionRef) ?*anyopaque;
 pub extern fn JSObjectGetArrayBufferByteLength(ctx: JSContextRef, object: JSObjectRef, exception: ExceptionRef) usize;
-pub extern fn JSStringCreateWithCFString(string: CFStringRef) JSStringRef;
 pub const OpaqueJSContextGroup = struct_OpaqueJSContextGroup;
 pub const OpaqueJSContext = struct_OpaqueJSContext;
 pub const OpaqueJSString = struct_OpaqueJSString;

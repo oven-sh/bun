@@ -1678,8 +1678,8 @@ pub const FetchEvent = struct {
     request: Request,
     pending_promise: ?*JSInternalPromise = null,
 
-    onPromiseRejectionCtx: *c_void = undefined,
-    onPromiseRejectionHandler: ?fn (ctx: *c_void, err: anyerror, fetch_event: *FetchEvent, value: JSValue) void = null,
+    onPromiseRejectionCtx: *anyopaque = undefined,
+    onPromiseRejectionHandler: ?fn (ctx: *anyopaque, err: anyerror, fetch_event: *FetchEvent, value: JSValue) void = null,
     rejected: bool = false,
 
     pub const Class = NewClass(

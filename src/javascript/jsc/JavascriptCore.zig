@@ -1,6 +1,6 @@
 const cpp = @import("./bindings/bindings.zig");
 const generic = opaque {};
-pub const Private = c_void;
+pub const Private = anyopaque;
 pub const struct_OpaqueJSContextGroup = generic;
 pub const JSContextGroupRef = ?*const struct_OpaqueJSContextGroup;
 pub const struct_OpaqueJSContext = generic;
@@ -18,7 +18,7 @@ pub const struct_OpaqueJSPropertyNameArray = generic;
 pub const JSPropertyNameArrayRef = ?*struct_OpaqueJSPropertyNameArray;
 pub const struct_OpaqueJSPropertyNameAccumulator = generic;
 pub const JSPropertyNameAccumulatorRef = ?*struct_OpaqueJSPropertyNameAccumulator;
-pub const JSTypedArrayBytesDeallocator = ?fn (*c_void, *c_void) callconv(.C) void;
+pub const JSTypedArrayBytesDeallocator = ?fn (*anyopaque, *anyopaque) callconv(.C) void;
 pub const OpaqueJSValue = generic;
 pub const JSValueRef = ?*OpaqueJSValue;
 pub const JSObjectRef = ?*OpaqueJSValue;
@@ -167,7 +167,7 @@ pub extern const kJSClassDefinitionEmpty: JSClassDefinition;
 pub extern "c" fn JSClassCreate(definition: [*c]const JSClassDefinition) JSClassRef;
 pub extern "c" fn JSClassRetain(jsClass: JSClassRef) JSClassRef;
 pub extern "c" fn JSClassRelease(jsClass: JSClassRef) void;
-pub extern "c" fn JSObjectMake(ctx: JSContextRef, jsClass: JSClassRef, data: ?*c_void) JSObjectRef;
+pub extern "c" fn JSObjectMake(ctx: JSContextRef, jsClass: JSClassRef, data: ?*anyopaque) JSObjectRef;
 pub extern "c" fn JSObjectMakeFunctionWithCallback(ctx: JSContextRef, name: JSStringRef, callAsFunction: JSObjectCallAsFunctionCallback) JSObjectRef;
 pub extern "c" fn JSObjectMakeConstructor(ctx: JSContextRef, jsClass: JSClassRef, callAsConstructor: JSObjectCallAsConstructorCallback) JSObjectRef;
 pub extern "c" fn JSObjectMakeArray(ctx: JSContextRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: ExceptionRef) JSObjectRef;
@@ -188,8 +188,8 @@ pub extern "c" fn JSObjectSetPropertyForKey(ctx: JSContextRef, object: JSObjectR
 pub extern "c" fn JSObjectDeletePropertyForKey(ctx: JSContextRef, object: JSObjectRef, propertyKey: JSValueRef, exception: ExceptionRef) bool;
 pub extern "c" fn JSObjectGetPropertyAtIndex(ctx: JSContextRef, object: JSObjectRef, propertyIndex: c_uint, exception: ExceptionRef) JSValueRef;
 pub extern "c" fn JSObjectSetPropertyAtIndex(ctx: JSContextRef, object: JSObjectRef, propertyIndex: c_uint, value: JSValueRef, exception: ExceptionRef) void;
-pub extern "c" fn JSObjectGetPrivate(object: JSObjectRef) ?*c_void;
-pub extern "c" fn JSObjectSetPrivate(object: JSObjectRef, data: ?*c_void) bool;
+pub extern "c" fn JSObjectGetPrivate(object: JSObjectRef) ?*anyopaque;
+pub extern "c" fn JSObjectSetPrivate(object: JSObjectRef, data: ?*anyopaque) bool;
 pub extern "c" fn JSObjectIsFunction(ctx: JSContextRef, object: JSObjectRef) bool;
 pub extern "c" fn JSObjectCallAsFunction(ctx: JSContextRef, object: JSObjectRef, thisObject: JSObjectRef, argumentCount: usize, arguments: [*c]const JSValueRef, exception: ExceptionRef) JSValueRef;
 pub extern "c" fn JSObjectIsConstructor(ctx: JSContextRef, object: JSObjectRef) bool;
@@ -224,16 +224,16 @@ pub extern fn JSStringGetUTF8CString(string: JSStringRef, buffer: [*c]u8, buffer
 pub extern fn JSStringIsEqual(a: JSStringRef, b: JSStringRef) bool;
 pub extern fn JSStringIsEqualToUTF8CString(a: JSStringRef, b: [*c]const u8) bool;
 pub extern fn JSObjectMakeTypedArray(ctx: JSContextRef, arrayType: JSTypedArrayType, length: usize, exception: ExceptionRef) JSObjectRef;
-pub extern fn JSObjectMakeTypedArrayWithBytesNoCopy(ctx: JSContextRef, arrayType: JSTypedArrayType, bytes: ?*c_void, byteLength: usize, bytesDeallocator: JSTypedArrayBytesDeallocator, deallocatorContext: ?*c_void, exception: ExceptionRef) JSObjectRef;
+pub extern fn JSObjectMakeTypedArrayWithBytesNoCopy(ctx: JSContextRef, arrayType: JSTypedArrayType, bytes: ?*anyopaque, byteLength: usize, bytesDeallocator: JSTypedArrayBytesDeallocator, deallocatorContext: ?*anyopaque, exception: ExceptionRef) JSObjectRef;
 pub extern fn JSObjectMakeTypedArrayWithArrayBuffer(ctx: JSContextRef, arrayType: JSTypedArrayType, buffer: JSObjectRef, exception: ExceptionRef) JSObjectRef;
 pub extern fn JSObjectMakeTypedArrayWithArrayBufferAndOffset(ctx: JSContextRef, arrayType: JSTypedArrayType, buffer: JSObjectRef, byteOffset: usize, length: usize, exception: ExceptionRef) JSObjectRef;
-pub extern fn JSObjectGetTypedArrayBytesPtr(ctx: JSContextRef, object: JSObjectRef, exception: ExceptionRef) ?*c_void;
+pub extern fn JSObjectGetTypedArrayBytesPtr(ctx: JSContextRef, object: JSObjectRef, exception: ExceptionRef) ?*anyopaque;
 pub extern fn JSObjectGetTypedArrayLength(ctx: JSContextRef, object: JSObjectRef, exception: ExceptionRef) usize;
 pub extern fn JSObjectGetTypedArrayByteLength(ctx: JSContextRef, object: JSObjectRef, exception: ExceptionRef) usize;
 pub extern fn JSObjectGetTypedArrayByteOffset(ctx: JSContextRef, object: JSObjectRef, exception: ExceptionRef) usize;
 pub extern fn JSObjectGetTypedArrayBuffer(ctx: JSContextRef, object: JSObjectRef, exception: ExceptionRef) JSObjectRef;
-pub extern fn JSObjectMakeArrayBufferWithBytesNoCopy(ctx: JSContextRef, bytes: ?*c_void, byteLength: usize, bytesDeallocator: JSTypedArrayBytesDeallocator, deallocatorContext: ?*c_void, exception: ExceptionRef) JSObjectRef;
-pub extern fn JSObjectGetArrayBufferBytesPtr(ctx: JSContextRef, object: JSObjectRef, exception: ExceptionRef) ?*c_void;
+pub extern fn JSObjectMakeArrayBufferWithBytesNoCopy(ctx: JSContextRef, bytes: ?*anyopaque, byteLength: usize, bytesDeallocator: JSTypedArrayBytesDeallocator, deallocatorContext: ?*anyopaque, exception: ExceptionRef) JSObjectRef;
+pub extern fn JSObjectGetArrayBufferBytesPtr(ctx: JSContextRef, object: JSObjectRef, exception: ExceptionRef) ?*anyopaque;
 pub extern fn JSObjectGetArrayBufferByteLength(ctx: JSContextRef, object: JSObjectRef, exception: ExceptionRef) usize;
 pub extern fn JSStringCreateWithCFString(string: CFStringRef) JSStringRef;
 pub const OpaqueJSContextGroup = struct_OpaqueJSContextGroup;
@@ -384,10 +384,10 @@ pub const CellType = enum(u8) {
         };
     }
 };
-pub const ExternalStringFinalizer = fn (finalize_ptr: ?*c_void, ref: JSStringRef, buffer: *c_void, byteLength: usize) callconv(.C) void;
+pub const ExternalStringFinalizer = fn (finalize_ptr: ?*anyopaque, ref: JSStringRef, buffer: *anyopaque, byteLength: usize) callconv(.C) void;
 pub extern fn JSStringCreate(string: UTF8Ptr, length: usize) JSStringRef;
 pub extern fn JSStringCreateStatic(string: UTF8Ptr, length: usize) JSStringRef;
-pub extern fn JSStringCreateExternal(string: UTF8Ptr, length: usize, finalize_ptr: ?*c_void, finalizer: ExternalStringFinalizer) JSStringRef;
+pub extern fn JSStringCreateExternal(string: UTF8Ptr, length: usize, finalize_ptr: ?*anyopaque, finalizer: ExternalStringFinalizer) JSStringRef;
 pub extern fn JSStringIsEqualToString(a: JSStringRef, string: UTF8Ptr, length: usize) bool;
 pub extern fn JSStringEncoding(string: JSStringRef) Encoding;
 pub extern fn JSStringGetCharacters8Ptr(string: JSStringRef) UTF8Ptr;
@@ -396,10 +396,10 @@ pub extern fn JSCellType(cell: JSCellValue) CellType;
 pub extern fn JSStringIsStatic(ref: JSStringRef) bool;
 pub extern fn JSStringIsExternal(ref: JSStringRef) bool;
 
-pub const JStringIteratorAppendCallback = fn (ctx: *JSStringIterator_, ptr: *c_void, length: u32) callconv(.C) c_void;
-pub const JStringIteratorWriteCallback = fn (ctx: *JSStringIterator_, ptr: *c_void, length: u32, offset: u32) callconv(.C) c_void;
+pub const JStringIteratorAppendCallback = fn (ctx: *JSStringIterator_, ptr: *anyopaque, length: u32) callconv(.C) anyopaque;
+pub const JStringIteratorWriteCallback = fn (ctx: *JSStringIterator_, ptr: *anyopaque, length: u32, offset: u32) callconv(.C) anyopaque;
 const JSStringIterator_ = extern struct {
-    ctx: *c_void,
+    ctx: *anyopaque,
     stop: u8,
 
     append8: JStringIteratorAppendCallback,
@@ -409,7 +409,7 @@ const JSStringIterator_ = extern struct {
 };
 
 pub const JSString = struct {
-    pub const Callback = fn (finalize_ptr_: ?*c_void, ref: JSStringRef, buffer: *c_void, byteLength: usize) callconv(.C) void;
+    pub const Callback = fn (finalize_ptr_: ?*anyopaque, ref: JSStringRef, buffer: *anyopaque, byteLength: usize) callconv(.C) void;
     _ref: JSStringRef = null,
     backing: Backing = .{ .gc = 0 },
 
@@ -427,8 +427,8 @@ pub const JSString = struct {
 
     const ExternalString = struct {
         callback: Callback,
-        external_callback: *c_void,
-        external_ptr: ?*c_void = null,
+        external_callback: *anyopaque,
+        external_ptr: ?*anyopaque = null,
         slice: []const u8,
     };
 
@@ -436,7 +436,7 @@ pub const JSString = struct {
         const CallbackFunctionType = @TypeOf(callback);
 
         const ExternalWrapper = struct {
-            pub fn finalizer_callback(finalize_ptr_: ?*c_void, buffer: *c_void, byteLength: usize) callconv(.C) void {
+            pub fn finalizer_callback(finalize_ptr_: ?*anyopaque, buffer: *anyopaque, byteLength: usize) callconv(.C) void {
                 var finalize_ptr = finalize_ptr_ orelse return;
 
                 var jsstring = @ptrCast(

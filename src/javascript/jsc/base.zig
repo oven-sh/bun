@@ -132,9 +132,9 @@ pub const To = struct {
                     arguments: [*c]const js.JSValueRef,
                     exception: js.ExceptionRef,
                 ) callconv(.C) js.JSValueRef {
-                    var object_ptr: *c_void = undefined;
+                    var object_ptr: *anyopaque = undefined;
 
-                    if (comptime ZigContextType == c_void) {
+                    if (comptime ZigContextType == anyopaque) {
                         return ctxfn(
                             js.JSObjectGetPrivate(function) or js.jsObjectGetPrivate(thisObject),
                             ctx,
@@ -1539,7 +1539,7 @@ pub const MarkedArrayBuffer = struct {
     }
 };
 
-export fn MarkedArrayBuffer_deallocator(bytes_: *c_void, ctx_: *c_void) void {
+export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, ctx_: *anyopaque) void {
     var ctx = @ptrCast(*MarkedArrayBuffer, @alignCast(@alignOf(*MarkedArrayBuffer), ctx_));
 
     if (comptime isDebug) std.debug.assert(ctx.buffer.ptr == @ptrCast([*]u8, bytes_));

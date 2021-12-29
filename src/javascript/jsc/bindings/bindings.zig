@@ -18,8 +18,8 @@ pub const JSObject = extern struct {
         });
     }
 
-    const InitializeCallback = fn (ctx: ?*c_void, obj: [*c]JSObject, global: [*c]JSGlobalObject) callconv(.C) void;
-    pub fn create(global_object: *JSGlobalObject, length: usize, ctx: *c_void, initializer: InitializeCallback) JSValue {
+    const InitializeCallback = fn (ctx: ?*anyopaque, obj: [*c]JSObject, global: [*c]JSGlobalObject) callconv(.C) void;
+    pub fn create(global_object: *JSGlobalObject, length: usize, ctx: *anyopaque, initializer: InitializeCallback) JSValue {
         return cppFn("create", .{
             global_object,
             length,
@@ -30,7 +30,7 @@ pub const JSObject = extern struct {
 
     pub fn Initializer(comptime Ctx: type, comptime func: fn (*Ctx, obj: *JSObject, global: *JSGlobalObject) void) type {
         return struct {
-            pub fn call(this: ?*c_void, obj: [*c]JSObject, global: [*c]JSGlobalObject) callconv(.C) void {
+            pub fn call(this: ?*anyopaque, obj: [*c]JSObject, global: [*c]JSGlobalObject) callconv(.C) void {
                 @call(.{ .modifier = .always_inline }, func, .{ @ptrCast(*Ctx, @alignCast(@alignOf(*Ctx), this.?)), obj.?, global.? });
             }
         };
@@ -625,7 +625,7 @@ pub const JSFunction = extern struct {
     pub const name = "JSC::JSFunction";
     pub const namespace = "JSC";
 
-    pub const NativeFunctionCallback = fn (ctx: ?*c_void, global: [*c]JSGlobalObject, call_frame: [*c]CallFrame) callconv(.C) JSValue;
+    pub const NativeFunctionCallback = fn (ctx: ?*anyopaque, global: [*c]JSGlobalObject, call_frame: [*c]CallFrame) callconv(.C) JSValue;
 
     // pub fn createFromSourceCode(
     //     global: *JSGlobalObject,
@@ -652,7 +652,7 @@ pub const JSFunction = extern struct {
         global: *JSGlobalObject,
         argument_count: u16,
         name_: ?*const String,
-        ctx: ?*c_void,
+        ctx: ?*anyopaque,
         func: NativeFunctionCallback,
     ) *JSFunction {
         return cppFn("createFromNative", .{ global, argument_count, name_, ctx, func });
@@ -921,7 +921,7 @@ pub const JSGlobalObject = extern struct {
         return cppFn("asyncGeneratorFunctionPrototype", .{this});
     }
 
-    pub fn createAggregateError(globalObject: *JSGlobalObject, errors: [*]*c_void, errors_len: u16, message: *const ZigString) JSValue {
+    pub fn createAggregateError(globalObject: *JSGlobalObject, errors: [*]*anyopaque, errors_len: u16, message: *const ZigString) JSValue {
         return cppFn("createAggregateError", .{ globalObject, errors, errors_len, message });
     }
 
@@ -1503,8 +1503,8 @@ pub const JSValue = enum(i64) {
         return @ptrCast(C_API.JSObjectRef, this.asVoid());
     }
 
-    pub inline fn asVoid(this: JSValue) *c_void {
-        return @intToPtr(*c_void, @intCast(usize, @enumToInt(this)));
+    pub inline fn asVoid(this: JSValue) *anyopaque {
+        return @intToPtr(*anyopaque, @intCast(usize, @enumToInt(this)));
     }
 
     pub const Extern = [_][]const u8{ "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "get", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
@@ -1960,7 +1960,7 @@ pub const Identifier = extern struct {
     };
 };
 
-const DeinitFunction = fn (ctx: *c_void, buffer: [*]u8, len: usize) callconv(.C) void;
+const DeinitFunction = fn (ctx: *anyopaque, buffer: [*]u8, len: usize) callconv(.C) void;
 
 pub const StringImpl = extern struct {
     pub const shim = Shimmer("WTF", "StringImpl", @This());

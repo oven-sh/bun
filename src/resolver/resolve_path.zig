@@ -530,20 +530,10 @@ pub fn normalizeStringBuf(str: []const u8, buf: []u8, comptime allow_above_root:
         .auto => unreachable,
 
         .windows => {
-            return normalizeStringWindowsBuf(
-                str,
-                buf,
-                allow_above_root,
-                preserve_trailing_slash,
-            );
+            @compileError("Not implemented");
         },
         .posix => {
-            return normalizeStringPosixBuf(
-                str,
-                buf,
-                allow_above_root,
-                preserve_trailing_slash,
-            );
+            @compileError("Not implemented");
         },
 
         .loose => {
@@ -602,10 +592,6 @@ pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [
         return std.fs.path.join(&alloc.allocator, _parts) catch unreachable;
     }
 
-    if (_parts.len == 0) {
-        return _cwd;
-    }
-
     var parts = _parts;
 
     var written: usize = 0;
@@ -633,8 +619,8 @@ pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [
     if (_parts[0].len > 0 and _parts[0][0] == _platform.separator()) {
         const out = switch (platform) {
             .loose => normalizeStringLooseBuf(parser_join_input_buffer[0..written], buf[1..], false, false),
-            .windows => normalizeStringWindows(parser_join_input_buffer[0..written], buf[1..], false, false),
-            else => normalizeStringPosixBuf(parser_join_input_buffer[0..written], buf[1..], false, false),
+            .windows => @compileError("Not implemented yet"),
+            else => @compileError("Not implemented yet"),
         };
         buf[0] = _platform.separator();
 
@@ -642,8 +628,8 @@ pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [
     } else {
         return switch (platform) {
             .loose => normalizeStringLooseBuf(parser_join_input_buffer[0..written], buf[0..], false, false),
-            .windows => normalizeStringWindows(parser_join_input_buffer[0..written], buf[0..], false, false),
-            else => normalizeStringPosixBuf(parser_join_input_buffer[0..written], buf[0..], false, false),
+            .windows => @compileError("Not implemented yet"),
+            else => @compileError("Not implemented yet"),
         };
     }
 }
@@ -772,71 +758,6 @@ pub fn lastIndexOfSeparatorPosix(slice: []const u8) ?usize {
 
 pub fn lastIndexOfSeparatorLoose(slice: []const u8) ?usize {
     return std.mem.lastIndexOfAny(u8, slice, "/\\");
-}
-
-pub fn normalizeStringPosix(str: []const u8, comptime allow_above_root: bool, comptime preserve_trailing_slash: bool) []u8 {
-    return normalizeStringGenericBuf(
-        str,
-        &parser_buffer,
-        allow_above_root,
-        std.fs.path.sep_posix,
-        isSepPosix,
-        lastIndexOfSeparatorPosix,
-        preserve_trailing_slash,
-    );
-}
-
-pub fn normalizeStringPosixBuf(
-    str: []const u8,
-    buf: []u8,
-    comptime allow_above_root: bool,
-    comptime preserve_trailing_slash: bool,
-) []u8 {
-    return normalizeStringGeneric(
-        str,
-        buf,
-        allow_above_root,
-        std.fs.path.sep_posix,
-        isSepPosix,
-        lastIndexOfSeparatorPosix,
-        preserve_trailing_slash,
-    );
-}
-
-pub fn normalizeStringWindows(str: []const u8, comptime allow_above_root: bool, comptime preserve_trailing_slash: bool) []u8 {
-    return normalizeStringGenericBuf(
-        str,
-        &parser_buffer,
-        allow_above_root,
-        std.fs.path.sep_windows,
-        isSepWin32,
-        lastIndexOfSeparatorWindows,
-        preserve_trailing_slash,
-    );
-}
-
-pub fn normalizeStringWindowsBuf(str: []const u8, buf: []u8, comptime allow_above_root: bool, comptime preserve_trailing_slash: bool) []u8 {
-    return normalizeStringGeneric(
-        str,
-        buf,
-        allow_above_root,
-        std.fs.path.sep_windows,
-        isSepWin32,
-        lastIndexOfSeparatorWindows,
-        preserve_trailing_slash,
-    );
-}
-
-pub fn normalizeStringLoose(str: []const u8, comptime allow_above_root: bool, comptime preserve_trailing_slash: bool) []u8 {
-    return normalizeStringGenericBuf(
-        str,
-        &parser_buffer,
-        allow_above_root,
-        std.fs.path.sep_posix,
-        isSepAny,
-        lastIndexOfSeparatorLoose,
-        preserve_trailing_slash,
-    );
 }
 
 pub fn normalizeStringLooseBuf(str: []const u8, buf: []u8, comptime allow_above_root: bool, comptime preserve_trailing_slash: bool) []u8 {

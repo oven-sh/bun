@@ -25,7 +25,7 @@ const CAllocator = struct {
             // The posix_memalign only accepts alignment values that are a
             // multiple of the pointer size
 
-            var aligned_ptr: ?*c_void = undefined;
+            var aligned_ptr: ?*anyopaque = undefined;
             if (mimalloc.mi_posix_memalign(&aligned_ptr, @maximum(alignment, @sizeOf(usize)), len) != 0)
                 return null;
 

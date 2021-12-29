@@ -177,21 +177,21 @@ pub fn NewStream(comptime SeekableStream: type) type {
         const Stream = @This();
         source: SeekableStream,
 
-        pub inline fn fromCtx(ctx: *c_void) *Stream {
+        pub inline fn fromCtx(ctx: *anyopaque) *Stream {
             return @ptrCast(*Stream, @alignCast(@alignOf(*Stream), ctx));
         }
 
         pub fn archive_read_callback(
             archive: *struct_archive,
-            ctx_: *c_void,
-            buffer: [*c]*const c_void,
+            ctx_: *anyopaque,
+            buffer: [*c]*const anyopaque,
         ) callconv(.C) lib.la_ssize_t {
             var this = fromCtx(ctx_);
         }
 
         pub fn archive_skip_callback(
             archive: *struct_archive,
-            ctx_: *c_void,
+            ctx_: *anyopaque,
             offset: lib.la_int64_,
         ) callconv(.C) lib.la_int64_t {
             var this = fromCtx(ctx_);
@@ -199,7 +199,7 @@ pub fn NewStream(comptime SeekableStream: type) type {
 
         pub fn archive_seek_callback(
             archive: *struct_archive,
-            ctx_: *c_void,
+            ctx_: *anyopaque,
             offset: lib.la_int64_t,
             whence: c_int,
         ) callconv(.C) lib.la_int64_t {
@@ -208,36 +208,36 @@ pub fn NewStream(comptime SeekableStream: type) type {
 
         pub fn archive_write_callback(
             archive: *struct_archive,
-            ctx_: *c_void,
-            buffer: *const c_void,
+            ctx_: *anyopaque,
+            buffer: *const anyopaque,
             len: usize,
         ) callconv(.C) lib.la_ssize_t {
             var this = fromCtx(ctx_);
         }
         pub fn archive_open_callback(
             archive: *struct_archive,
-            ctx_: *c_void,
+            ctx_: *anyopaque,
         ) callconv(.C) c_int {
             var this = fromCtx(ctx_);
         }
 
         pub fn archive_close_callback(
             archive: *struct_archive,
-            ctx_: *c_void,
+            ctx_: *anyopaque,
         ) callconv(.C) c_int {
             var this = fromCtx(ctx_);
         }
         pub fn archive_free_callback(
             archive: *struct_archive,
-            ctx_: *c_void,
+            ctx_: *anyopaque,
         ) callconv(.C) c_int {
             var this = fromCtx(ctx_);
         }
 
         pub fn archive_switch_callback(
             archive: *struct_archive,
-            ctx1: *c_void,
-            ctx2: *c_void,
+            ctx1: *anyopaque,
+            ctx2: *anyopaque,
         ) callconv(.C) c_int {
             var this = fromCtx(ctx1);
             var that = fromCtx(ctx2);
@@ -299,21 +299,21 @@ pub const BufferReadStream = struct {
         return this.buf[this.pos..];
     }
 
-    pub inline fn fromCtx(ctx: *c_void) *Stream {
+    pub inline fn fromCtx(ctx: *anyopaque) *Stream {
         return @ptrCast(*Stream, @alignCast(@alignOf(*Stream), ctx));
     }
 
     pub fn archive_close_callback(
         archive: *struct_archive,
-        ctx_: *c_void,
+        ctx_: *anyopaque,
     ) callconv(.C) c_int {
         return 0;
     }
 
     pub fn archive_read_callback(
         archive: *struct_archive,
-        ctx_: *c_void,
-        buffer: [*c]*const c_void,
+        ctx_: *anyopaque,
+        buffer: [*c]*const anyopaque,
     ) callconv(.C) lib.la_ssize_t {
         var this = fromCtx(ctx_);
         const remaining = this.bufLeft();
@@ -327,7 +327,7 @@ pub const BufferReadStream = struct {
 
     pub fn archive_skip_callback(
         archive: *struct_archive,
-        ctx_: *c_void,
+        ctx_: *anyopaque,
         offset: lib.la_int64_t,
     ) callconv(.C) lib.la_int64_t {
         var this = fromCtx(ctx_);
@@ -343,7 +343,7 @@ pub const BufferReadStream = struct {
 
     pub fn archive_seek_callback(
         archive: *struct_archive,
-        ctx_: *c_void,
+        ctx_: *anyopaque,
         offset: lib.la_int64_t,
         whence: c_int,
     ) callconv(.C) lib.la_int64_t {
@@ -373,8 +373,8 @@ pub const BufferReadStream = struct {
 
     // pub fn archive_write_callback(
     //     archive: *struct_archive,
-    //     ctx_: *c_void,
-    //     buffer: *const c_void,
+    //     ctx_: *anyopaque,
+    //     buffer: *const anyopaque,
     //     len: usize,
     // ) callconv(.C) lib.la_ssize_t {
     //     var this = fromCtx(ctx_);
@@ -382,21 +382,21 @@ pub const BufferReadStream = struct {
 
     // pub fn archive_close_callback(
     //     archive: *struct_archive,
-    //     ctx_: *c_void,
+    //     ctx_: *anyopaque,
     // ) callconv(.C) c_int {
     //     var this = fromCtx(ctx_);
     // }
     // pub fn archive_free_callback(
     //     archive: *struct_archive,
-    //     ctx_: *c_void,
+    //     ctx_: *anyopaque,
     // ) callconv(.C) c_int {
     //     var this = fromCtx(ctx_);
     // }
 
     // pub fn archive_switch_callback(
     //     archive: *struct_archive,
-    //     ctx1: *c_void,
-    //     ctx2: *c_void,
+    //     ctx1: *anyopaque,
+    //     ctx2: *anyopaque,
     // ) callconv(.C) c_int {
     //     var this = fromCtx(ctx1);
     //     var that = fromCtx(ctx2);

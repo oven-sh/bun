@@ -119,7 +119,7 @@ pub const Options = struct {
 
     // The temporary fix here is to tag a stmts ptr as the one we want to prepend to
     // Then, when we're JUST about to print it, we print the body of prepend_part_value first
-    prepend_part_key: ?*c_void = null,
+    prepend_part_key: ?*anyopaque = null,
     prepend_part_value: ?*js_ast.Part = null,
 
     // If we're writing out a source map, this table of line start indices lets

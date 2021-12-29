@@ -3408,8 +3408,10 @@ pub const S = struct {
         is_single_line: bool,
     };
 
-    pub const ExportDefault = struct { default_name: LocRef, // value may be a SFunction or SClass
-    value: StmtOrExpr };
+    pub const ExportDefault = struct {
+        default_name: LocRef, // value may be a SFunction or SClass
+        value: StmtOrExpr,
+    };
 
     pub const Enum = struct {
         name: LocRef,
@@ -3438,12 +3440,19 @@ pub const S = struct {
     };
 
     pub const For = struct {
-    // May be a SConst, SLet, SVar, or SExpr
-    init: ?StmtNodeIndex = null, test_: ?ExprNodeIndex = null, update: ?ExprNodeIndex = null, body: StmtNodeIndex };
+        // May be a SConst, SLet, SVar, or SExpr
+        init: ?StmtNodeIndex = null,
+        test_: ?ExprNodeIndex = null,
+        update: ?ExprNodeIndex = null,
+        body: StmtNodeIndex,
+    };
 
     pub const ForIn = struct {
-    // May be a SConst, SLet, SVar, or SExpr
-    init: StmtNodeIndex, value: ExprNodeIndex, body: StmtNodeIndex };
+        // May be a SConst, SLet, SVar, or SExpr
+        init: StmtNodeIndex,
+        value: ExprNodeIndex,
+        body: StmtNodeIndex,
+    };
 
     pub const ForOf = struct {
         is_await: bool = false,
@@ -3899,10 +3908,6 @@ pub const ExportsKind = enum {
         return try std.json.stringify(@tagName(self), opts, o);
     }
 };
-
-pub fn isDynamicExport(exp: ExportsKind) bool {
-    return kind == .cjs || kind == .esm_with_dyn;
-}
 
 pub const DeclaredSymbol = struct {
     ref: Ref,

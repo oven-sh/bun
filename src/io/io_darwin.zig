@@ -227,7 +227,7 @@ fn flush_timeouts(self: *IO) ?u64 {
 /// This struct holds the data needed for a single IO operation
 pub const Completion = struct {
     next: ?*Completion,
-    context: ?*c_void,
+    context: ?*anyopaque,
     callback: fn (*IO, *Completion) void,
     operation: Operation,
 };

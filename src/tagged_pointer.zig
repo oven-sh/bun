@@ -11,7 +11,7 @@ pub const TaggedPointer = packed struct {
     pub inline fn init(ptr: anytype, data: TagSize) TaggedPointer {
         const Ptr = @TypeOf(ptr);
 
-        if (comptime @typeInfo(Ptr) != .Pointer and Ptr != ?*c_void) {
+        if (comptime @typeInfo(Ptr) != .Pointer and Ptr != ?*anyopaque) {
             @compileError(@typeName(Ptr) ++ " must be a ptr, received: " ++ @tagName(@typeInfo(Ptr)));
         }
 
@@ -31,13 +31,13 @@ pub const TaggedPointer = packed struct {
         const ValueType = @TypeOf(val);
         return switch (ValueType) {
             f64, i64, u64 => @bitCast(TaggedPointer, val),
-            ?*c_void, *c_void => @bitCast(TaggedPointer, @ptrToInt(val)),
+            ?*anyopaque, *anyopaque => @bitCast(TaggedPointer, @ptrToInt(val)),
             else => @compileError("Unsupported type: " ++ @typeName(ValueType)),
         };
     }
 
-    pub inline fn to(this: TaggedPointer) *c_void {
-        return @intToPtr(*c_void, @bitCast(u64, this));
+    pub inline fn to(this: TaggedPointer) *anyopaque {
+        return @intToPtr(*anyopaque, @bitCast(u64, this));
     }
 };
 
@@ -94,7 +94,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
             return this.repr.data == comptime @enumToInt(@field(Tag, @typeName(Type)));
         }
 
-        pub inline fn isValidPtr(_ptr: ?*c_void) bool {
+        pub inline fn isValidPtr(_ptr: ?*anyopaque) bool {
             return This.isValid(This.from(_ptr));
         }
 
@@ -109,11 +109,11 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
             };
         }
 
-        pub inline fn from(_ptr: ?*c_void) This {
+        pub inline fn from(_ptr: ?*anyopaque) This {
             return This{ .repr = TaggedPointer.from(_ptr) };
         }
 
-        pub inline fn ptr(this: This) *c_void {
+        pub inline fn ptr(this: This) *anyopaque {
             return this.repr.to();
         }
 

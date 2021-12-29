@@ -7,7 +7,7 @@ const JSBase = @import("../base.zig");
 const ZigURL = @import("../../../query_string_map.zig").URL;
 const Api = @import("../../../api/schema.zig").Api;
 const Handler = struct {
-    pub export fn global_signal_handler_fn(sig: i32, info: *const std.os.siginfo_t, ctx_ptr: ?*const c_void) callconv(.C) void {
+    pub export fn global_signal_handler_fn(sig: i32, info: *const std.os.siginfo_t, ctx_ptr: ?*const anyopaque) callconv(.C) void {
         var stdout = std.io.getStdOut();
         var stderr = std.io.getStdErr();
         var source = Output.Source.init(stdout, stderr);
@@ -28,7 +28,7 @@ const Handler = struct {
 pub const ZigGlobalObject = extern struct {
     pub const shim = Shimmer("Zig", "GlobalObject", @This());
     bytes: shim.Bytes,
-    pub const Type = *c_void;
+    pub const Type = *anyopaque;
     pub const name = "Zig::GlobalObject";
     pub const include = "\"ZigGlobalObject.h\"";
     pub const namespace = shim.namespace;
@@ -37,7 +37,7 @@ pub const ZigGlobalObject = extern struct {
     pub var sigaction: std.os.Sigaction = undefined;
     pub var sigaction_installed = false;
 
-    pub fn create(class_ref: [*]CAPI.JSClassRef, count: i32, console: *c_void) *JSGlobalObject {
+    pub fn create(class_ref: [*]CAPI.JSClassRef, count: i32, console: *anyopaque) *JSGlobalObject {
         if (!sigaction_installed) {
             sigaction_installed = true;
 
@@ -53,11 +53,11 @@ pub const ZigGlobalObject = extern struct {
         return shim.cppFn("create", .{ class_ref, count, console });
     }
 
-    pub fn getModuleRegistryMap(global: *JSGlobalObject) *c_void {
+    pub fn getModuleRegistryMap(global: *JSGlobalObject) *anyopaque {
         return shim.cppFn("getModuleRegistryMap", .{global});
     }
 
-    pub fn resetModuleRegistryMap(global: *JSGlobalObject, map: *c_void) bool {
+    pub fn resetModuleRegistryMap(global: *JSGlobalObject, map: *anyopaque) bool {
         return shim.cppFn("resetModuleRegistryMap", .{ global, map });
     }
 
@@ -165,9 +165,9 @@ pub const ZigErrorType = extern struct {
     pub const namespace = shim.namespace;
 
     code: ErrorCode,
-    ptr: ?*c_void,
+    ptr: ?*anyopaque,
 
-    pub fn isPrivateData(ptr: ?*c_void) callconv(.C) bool {
+    pub fn isPrivateData(ptr: ?*anyopaque) callconv(.C) bool {
         return JSBase.JSPrivateDataPtr.isValidPtr(ptr);
     }
 
@@ -202,7 +202,7 @@ pub fn Errorable(comptime Type: type) type {
         }
 
         threadlocal var err_buf: [4096]u8 = undefined;
-        pub fn err(code: anyerror, ptr: *c_void) @This() {
+        pub fn err(code: anyerror, ptr: *anyopaque) @This() {
             return @This(){
                 .result = .{
                     .err = .{
@@ -226,13 +226,13 @@ pub const ResolvedSource = extern struct {
     source_url: ZigString,
     hash: u32,
 
-    allocator: ?*c_void,
+    allocator: ?*anyopaque,
 
     // 0 means disabled
     bytecodecache_fd: u64,
 };
 
-export fn ZigString__free(ptr: [*]const u8, len: usize, allocator_: ?*c_void) void {
+export fn ZigString__free(ptr: [*]const u8, len: usize, allocator_: ?*anyopaque) void {
     var allocator: *std.mem.Allocator = @ptrCast(*std.mem.Allocator, @alignCast(@alignOf(*std.mem.Allocator), allocator_ orelse return));
 
     var str = ptr[0..len];
@@ -555,7 +555,7 @@ pub const ZigException = extern struct {
     message: ZigString,
     stack: ZigStackTrace,
 
-    exception: ?*c_void,
+    exception: ?*anyopaque,
 
     pub const shim = Shimmer("Zig", "Exception", @This());
     pub const name = "ZigException";
@@ -662,7 +662,7 @@ pub const ErrorableJSValue = Errorable(JSValue);
 
 pub const ZigConsoleClient = struct {
     pub const shim = Shimmer("Zig", "ConsoleClient", @This());
-    pub const Type = *c_void;
+    pub const Type = *anyopaque;
     pub const name = "Zig::ConsoleClient";
     pub const include = "\"ZigConsoleClient.h\"";
     pub const namespace = shim.namespace;
@@ -958,7 +958,7 @@ pub const ZigConsoleClient = struct {
 
 // pub const CommonJSModule = struct {
 //     pub const shim = Shimmer("Zig", "CommonJSModule", @This());
-//     pub const Type = *c_void;
+//     pub const Type = *anyopaque;
 //     pub const name = "Zig::CommonJSModule";
 //     pub const include = "\"CommonJSModule.h\"";
 //     pub const namespace = shim.namespace;

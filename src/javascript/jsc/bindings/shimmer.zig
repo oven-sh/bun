@@ -18,13 +18,13 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
         // fn toCppType(comptime FromType: type) type {
         //     var NewReturnType = FromType;
 
-        //     if (NewReturnType == c_void) {
+        //     if (NewReturnType == anyopaque) {
         //         return FromType;
         //     }
 
         //     var ReturnTypeInfo: std.builtin.TypeInfo = @typeInfo(FromType);
 
-        //     if (ReturnTypeInfo == .Pointer and NewReturnType != *c_void) {
+        //     if (ReturnTypeInfo == .Pointer and NewReturnType != *anyopaque) {
         //         NewReturnType = ReturnTypeInfo.Pointer.child;
         //         ReturnTypeInfo = @typeInfo(NewReturnType);
         //     }

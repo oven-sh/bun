@@ -484,7 +484,7 @@ pub const AsyncMessage = struct {
     pooled: ?*BufferPool = null,
     allocator: *std.mem.Allocator,
     next: ?*AsyncMessage = null,
-    context: *c_void = undefined,
+    context: *anyopaque = undefined,
     released: bool = false,
     var _first_ssl: ?*AsyncMessage = null;
     pub fn getSSL(allocator: *std.mem.Allocator) *AsyncMessage {
@@ -1344,7 +1344,7 @@ pub const AsyncBIO = struct {
             }
             unreachable;
         }
-        pub fn ctrl(this_bio: *boring.BIO, cmd: c_int, larg: c_long, pargs: ?*c_void) callconv(.C) c_long {
+        pub fn ctrl(this_bio: *boring.BIO, cmd: c_int, larg: c_long, pargs: ?*anyopaque) callconv(.C) c_long {
             return switch (cmd) {
                 boring.BIO_CTRL_PENDING, boring.BIO_CTRL_WPENDING => 0,
                 else => 1,

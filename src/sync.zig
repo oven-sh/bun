@@ -619,7 +619,7 @@ pub const RwLock = if (std.builtin.os.tag != .windows and std.builtin.link_libc)
                 ptr_wblocked_last: ?*u8 = null,
                 ptr_nreaders: c_uint = 0,
                 ptr_owner: std.c.pthread_t = null,
-                ptr_private: ?*c_void = null,
+                ptr_private: ?*anyopaque = null,
             },
             .haiku => extern struct {
                 flags: u32 = 0,
@@ -628,10 +628,10 @@ pub const RwLock = if (std.builtin.os.tag != .windows and std.builtin.link_libc)
                 lock_count: i32 = 0,
                 reader_count: i32 = 0,
                 writer_count: i32 = 0,
-                waiters: [2]?*c_void = [_]?*c_void{ null, null },
+                waiters: [2]?*anyopaque = [_]?*anyopaque{ null, null },
             },
             .kfreebsd, .freebsd, .openbsd => extern struct {
-                ptr: ?*c_void = null,
+                ptr: ?*anyopaque = null,
             },
             .hermit => extern struct {
                 ptr: usize = std.math.maxInt(usize),

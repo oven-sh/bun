@@ -1324,7 +1324,7 @@ pub const VirtualMachine = struct {
             };
 
             {
-                res.* = ErrorableZigString.err(err, @ptrCast(*c_void, ResolveError.create(vm.allocator, msg, source.slice())));
+                res.* = ErrorableZigString.err(err, @ptrCast(*anyopaque, ResolveError.create(vm.allocator, msg, source.slice())));
             }
 
             return;
@@ -1362,7 +1362,7 @@ pub const VirtualMachine = struct {
     }
 
     const main_file_name: string = "bun:main";
-    threadlocal var errors_stack: [256]*c_void = undefined;
+    threadlocal var errors_stack: [256]*anyopaque = undefined;
     pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) void {
         var log = logger.Log.init(vm.bundler.allocator);
         const spec = specifier.slice();
@@ -1418,7 +1418,7 @@ pub const VirtualMachine = struct {
                     .data = logger.rangeData(null, logger.Range.None, std.fmt.allocPrint(vm.allocator, "{s} while building {s}", .{ @errorName(err), specifier.slice() }) catch unreachable),
                 };
                 {
-                    ret.* = ErrorableResolvedSource.err(err, @ptrCast(*c_void, BuildError.create(vm.bundler.allocator, msg)));
+                    ret.* = ErrorableResolvedSource.err(err, @ptrCast(*anyopaque, BuildError.create(vm.bundler.allocator, msg)));
                 }
                 return;
             },
@@ -1618,7 +1618,7 @@ pub const VirtualMachine = struct {
         was_internal = this.printErrorFromMaybePrivateData(value.asRef(), exception_list, allow_ansi_color);
     }
 
-    pub fn printErrorFromMaybePrivateData(this: *VirtualMachine, value: ?*c_void, exception_list: ?*ExceptionList, comptime allow_ansi_color: bool) bool {
+    pub fn printErrorFromMaybePrivateData(this: *VirtualMachine, value: ?*anyopaque, exception_list: ?*ExceptionList, comptime allow_ansi_color: bool) bool {
         const private_data_ptr = JSPrivateDataPtr.from(value);
 
         switch (private_data_ptr.tag()) {
@@ -1944,7 +1944,7 @@ pub const EventListenerMixin = struct {
         var listeners = vm.event_listeners.get(EventType.fetch) orelse (return onError(ctx, error.NoListeners, JSValue.jsUndefined(), request_context) catch {});
         if (listeners.items.len == 0) return onError(ctx, error.NoListeners, JSValue.jsUndefined(), request_context) catch {};
         const FetchEventRejectionHandler = struct {
-            pub fn onRejection(_ctx: *c_void, err: anyerror, fetch_event: *FetchEvent, value: JSValue) void {
+            pub fn onRejection(_ctx: *anyopaque, err: anyerror, fetch_event: *FetchEvent, value: JSValue) void {
                 onError(
                     @intToPtr(*CtxType, @ptrToInt(_ctx)),
                     err,
@@ -1960,7 +1960,7 @@ pub const EventListenerMixin = struct {
         fetch_event.* = FetchEvent{
             .request_context = request_context,
             .request = Request{ .request_context = request_context },
-            .onPromiseRejectionCtx = @as(*c_void, ctx),
+            .onPromiseRejectionCtx = @as(*anyopaque, ctx),
             .onPromiseRejectionHandler = FetchEventRejectionHandler.onRejection,
         };
 

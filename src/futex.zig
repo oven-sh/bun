@@ -109,8 +109,8 @@ const WindowsFutex = struct {
         }
 
         switch (windows.ntdll.RtlWaitOnAddress(
-            @ptrCast(?*const c_void, ptr),
-            @ptrCast(?*const c_void, &expect),
+            @ptrCast(?*const anyopaque, ptr),
+            @ptrCast(?*const anyopaque, &expect),
             @sizeOf(@TypeOf(expect)),
             timeout_ptr,
         )) {
@@ -121,7 +121,7 @@ const WindowsFutex = struct {
     }
 
     fn wake(ptr: *const Atomic(u32), num_waiters: u32) void {
-        const address = @ptrCast(?*const c_void, ptr);
+        const address = @ptrCast(?*const anyopaque, ptr);
         switch (num_waiters) {
             1 => windows.ntdll.RtlWakeAddressSingle(address),
             else => windows.ntdll.RtlWakeAddressAll(address),
@@ -191,7 +191,7 @@ const DarwinFutex = struct {
             assert(timeout_value != 0);
             timeout_ns = timeout_value;
         }
-        const addr = @ptrCast(*const c_void, ptr);
+        const addr = @ptrCast(*const anyopaque, ptr);
         const flags = darwin.UL_COMPARE_AND_WAIT | darwin.ULF_NO_ERRNO;
         // If we're using `__ulock_wait` and `timeout` is too big to fit inside a `u32` count of
         // micro-seconds (around 70min), we'll request a shorter timeout. This is fine (users
@@ -226,7 +226,7 @@ const DarwinFutex = struct {
         }
 
         while (true) {
-            const addr = @ptrCast(*const c_void, ptr);
+            const addr = @ptrCast(*const anyopaque, ptr);
             const status = darwin.__ulock_wake(flags, addr, 0);
 
             if (status >= 0) return;

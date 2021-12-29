@@ -255,7 +255,7 @@ pub const Exports = struct {
         const result = default_allocator.alloc(u8, size) catch unreachable;
         return Uint8Array.fromSlice(result);
     }
-    // fn calloc(num_elements: usize, element_size: usize) callconv(.C) ?*c_void {
+    // fn calloc(num_elements: usize, element_size: usize) callconv(.C) ?*anyopaque {
     //     const size = num_elements *% element_size;
     //     const c_ptr = @call(.{ .modifier = .never_inline }, malloc, .{size});
     //     if (c_ptr) |ptr| {
@@ -264,7 +264,7 @@ pub const Exports = struct {
     //     }
     //     return c_ptr;
     // }
-    // fn realloc(c_ptr: ?*c_void, new_size: usize) callconv(.C) ?*c_void {
+    // fn realloc(c_ptr: ?*anyopaque, new_size: usize) callconv(.C) ?*anyopaque {
     //     if (new_size == 0) {
     //         // @call(.{ .modifier = .never_inline }, free, .{@intCast(Uint8Array.Abi, c_ptr.?)});
     //         return null;
@@ -272,7 +272,7 @@ pub const Exports = struct {
     //         // Use a synthetic slice
     //         const p = @ptrCast([*]u8, ptr);
     //         const result = default_allocator.realloc(p[0..1], new_size) catch return null;
-    //         return @ptrCast(*c_void, result.ptr);
+    //         return @ptrCast(*anyopaque, result.ptr);
     //     } else {
     //         return @call(.{ .modifier = .never_inline }, malloc, .{new_size});
     //     }

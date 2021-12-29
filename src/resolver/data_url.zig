@@ -3,6 +3,7 @@ usingnamespace @import("../global.zig");
 const std = @import("std");
 const assert = std.debug.assert;
 const mem = std.mem;
+const Allocator = mem.Allocator;
 
 // https://github.com/Vexu/zuri/blob/master/src/zuri.zig#L61-L127
 pub const PercentEncoding = struct {
@@ -65,32 +66,6 @@ pub const PercentEncoding = struct {
         if (ret) |some| return allocator.shrink(some, ret_index);
         return null;
     }
-
-    /// percent encode if path contains characters not allowed in paths
-    pub fn encode(allocator: Allocator, path: []const u8) EncodeError!?[]u8 {
-        var ret: ?[]u8 = null;
-        var ret_index: usize = 0;
-        for (path) |c, i| {
-            if (c != '/' and !isPchar(path[i..])) {
-                if (ret == null) {
-                    ret = try allocator.alloc(u8, path.len * 3);
-                    mem.copy(u8, ret.?, path[0..i]);
-                    ret_index = i;
-                }
-                const hex_digits = "0123456789ABCDEF";
-                ret.?[ret_index] = '%';
-                ret.?[ret_index + 1] = hex_digits[(c & 0xF0) >> 4];
-                ret.?[ret_index + 2] = hex_digits[c & 0x0F];
-                ret_index += 3;
-            } else if (ret != null) {
-                ret.?[ret_index] = c;
-                ret_index += 1;
-            }
-        }
-
-        if (ret) |some| return allocator.shrink(some, ret_index);
-        return null;
-    }
 };
 
 pub const MimeType = enum {
@@ -143,18 +118,5 @@ pub const DataURL = struct {
 
     pub fn decode_mime_type(d: DataURL) MimeType {
         return MimeType.decode(d.mime_type);
-    }
-
-    pub fn decode_data(d: *DataURL, allocator: std.mem.Allocator, url: string) !string {
-        // Try to read base64 data
-        if (d.is_base64) {
-            const size = try std.base64.standard.Decoder.calcSizeForSlice(d.data);
-            var buf = try allocator.alloc(u8, size);
-            try std.base64.standard.Decoder.decode(buf, d.data);
-            return buf;
-        }
-
-        // Try to read percent-escaped data
-        return try PercentEncoding.decode(allocator, url);
     }
 };

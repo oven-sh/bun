@@ -254,6 +254,7 @@ pub const AsyncHTTP = struct {
 
     pub const CompletionCallback = fn (this: *AsyncHTTP, sender: *HTTPSender) void;
     pub var active_requests_count = std.atomic.Atomic(u32).init(0);
+    pub var max_simultaneous_requests: u16 = 32;
 
     pub const State = enum(u32) {
         pending = 0,

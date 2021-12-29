@@ -1,6 +1,15 @@
 // const c = @import("./c.zig");
 const std = @import("std");
-usingnamespace @import("global.zig");
+const _global = @import("global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 const Api = @import("./api/schema.zig").Api;
 const ApiReader = @import("./api/schema.zig").Reader;
 const ApiWriter = @import("./api/schema.zig").Writer;

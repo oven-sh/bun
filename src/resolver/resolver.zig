@@ -1,4 +1,14 @@
-usingnamespace @import("../global.zig");
+const _global = @import("../global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const StoredFileDescriptorType = _global.StoredFileDescriptorType;
+const C = _global.C;
 const ast = @import("../import_record.zig");
 const logger = @import("../logger.zig");
 const options = @import("../options.zig");
@@ -14,7 +24,7 @@ const BrowserMap = @import("./package_json.zig").BrowserMap;
 const CacheSet = cache.Set;
 usingnamespace @import("./data_url.zig");
 pub const DirInfo = @import("./dir_info.zig");
-const HTTPWatcher = if (isTest) void else @import("../http.zig").Watcher;
+const HTTPWatcher = if (Environment.isTest) void else @import("../http.zig").Watcher;
 const Wyhash = std.hash.Wyhash;
 const ResolvePath = @import("./resolve_path.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
@@ -22,7 +32,7 @@ const Mutex = @import("../lock.zig").Lock;
 const StringBoolMap = std.StringHashMap(bool);
 
 const allocators = @import("../allocators.zig");
-
+const Msg = logger.Msg;
 const Path = Fs.Path;
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 

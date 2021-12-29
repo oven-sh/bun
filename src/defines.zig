@@ -4,7 +4,16 @@ const logger = @import("logger.zig");
 const js_lexer = @import("js_lexer.zig");
 const json_parser = @import("json_parser.zig");
 const fs = @import("fs.zig");
-usingnamespace @import("global.zig");
+const _global = @import("global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 usingnamespace @import("ast/base.zig");
 
 const GlobalDefinesKey = @import("./defines-table.zig").GlobalDefinesKey;

@@ -1,11 +1,23 @@
 const std = @import("std");
-usingnamespace @import("global.zig");
+const _global = @import("global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const StoredFileDescriptorType = _global.StoredFileDescriptorType;
+const FileDescriptorType = _global.FileDescriptorType;
+const FeatureFlags = _global.FeatureFlags;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 const sync = @import("sync.zig");
 const Mutex = @import("./lock.zig").Lock;
 const Semaphore = sync.Semaphore;
 const Fs = @This();
 const path_handler = @import("./resolver/resolve_path.zig");
-
+const PathString = _global.PathString;
 const allocators = @import("./allocators.zig");
 const hash_map = @import("hash_map.zig");
 
@@ -122,7 +134,7 @@ pub const FileSystem = struct {
         top_level_dir: ?string,
         comptime force: bool,
     ) !*FileSystem {
-        var _top_level_dir = top_level_dir orelse (if (isBrowser) "/project/" else try std.process.getCwdAlloc(allocator));
+        var _top_level_dir = top_level_dir orelse (if (Environment.isBrowser) "/project/" else try std.process.getCwdAlloc(allocator));
 
         // Ensure there's a trailing separator in the top level directory
         // This makes path resolution more reliable

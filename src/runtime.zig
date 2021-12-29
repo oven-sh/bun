@@ -1,6 +1,15 @@
 const options = @import("./options.zig");
 usingnamespace @import("ast/base.zig");
-usingnamespace @import("global.zig");
+const _global = @import("global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 const std = @import("std");
 const resolve_path = @import("./resolver/resolve_path.zig");
 const Fs = @import("./fs.zig");
@@ -18,7 +27,7 @@ pub const ErrorCSS = struct {
     pub const ProdSourceContent = @embedFile("../" ++ ErrorCSSPath);
 
     pub inline fn sourceContent() string {
-        if (comptime isDebug) {
+        if (comptime Environment.isDebug) {
             var env = std.process.getEnvMap(default_allocator) catch unreachable;
             var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
             var dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
@@ -43,7 +52,7 @@ pub const ErrorJS = struct {
     pub const ProdSourceContent = @embedFile("../" ++ ErrorJSPath);
 
     pub inline fn sourceContent() string {
-        if (comptime isDebug) {
+        if (comptime Environment.isDebug) {
             var env = std.process.getEnvMap(default_allocator) catch unreachable;
             var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
             var dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
@@ -102,7 +111,7 @@ pub const Fallback = struct {
     };
 
     pub inline fn scriptContent() string {
-        if (comptime isDebug) {
+        if (comptime Environment.isDebug) {
             var dirpath = std.fs.path.dirname(@src().file).?;
             var env = std.process.getEnvMap(default_allocator) catch unreachable;
 
@@ -161,7 +170,7 @@ pub const Runtime = struct {
     pub const ProdSourceContent = @embedFile("./runtime.out.js");
 
     pub inline fn sourceContent() string {
-        if (comptime isDebug) {
+        if (comptime Environment.isDebug) {
             var dirpath = std.fs.path.dirname(@src().file).?;
             var env = std.process.getEnvMap(default_allocator) catch unreachable;
 
@@ -196,7 +205,7 @@ pub const Runtime = struct {
     const bytecodeCacheFilename = std.fmt.comptimePrint("__runtime.{s}", .{version_hash});
     var bytecodeCacheFetcher = Fs.BytecodeCacheFetcher{};
 
-    pub fn byteCodeCacheFile(fs: *Fs.FileSystem.RealFS) ?StoredFileDescriptorType {
+    pub fn byteCodeCacheFile(fs: *Fs.FileSystem.RealFS) ?_global.StoredFileDescriptorType {
         return bytecodeCacheFetcher.fetch(bytecodeCacheFilename, fs);
     }
 

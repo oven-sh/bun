@@ -2,7 +2,16 @@ const std = @import("std");
 const logger = @import("logger.zig");
 const JSXRuntime = @import("options.zig").JSX.Runtime;
 const Runtime = @import("runtime.zig").Runtime;
-usingnamespace @import("global.zig");
+const _global = @import("global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 usingnamespace @import("ast/base.zig");
 
 const ImportRecord = @import("import_record.zig").ImportRecord;

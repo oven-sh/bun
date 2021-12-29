@@ -10,10 +10,10 @@ else
 
 pub const C = @import("c.zig");
 
-pub usingnamespace Environment;
-
 pub const FeatureFlags = @import("feature_flags.zig");
 const root = @import("root");
+const stringZ = StringTypes.stringZ;
+const string = StringTypes.string;
 
 pub const Output = struct {
     // These are threadlocal so we don't have stdout/stderr writing on top of each other
@@ -34,7 +34,7 @@ pub const Output = struct {
 
     pub const Source = struct {
         pub const StreamType: type = brk: {
-            if (isWasm) {
+            if (Environment.isWasm) {
                 break :brk std.io.FixedBufferStream([]u8);
             } else {
                 break :brk std.fs.File;
@@ -56,7 +56,7 @@ pub const Output = struct {
             stream: StreamType,
             err: StreamType,
         ) Source {
-            if (comptime Environment.isDebug) {
+            if (comptime Environment.Environment.isDebug) {
                 if (comptime use_mimalloc) {
                     if (!source_set) {
                         const Mimalloc = @import("./allocators/mimalloc.zig");
@@ -115,16 +115,16 @@ pub const Output = struct {
         }
     };
 
-    pub var enable_ansi_colors = isNative;
+    pub var enable_ansi_colors = Environment.isNative;
     pub var enable_buffering = true;
     pub var is_stdout_piped = false;
     pub var is_stderr_piped = false;
 
     pub inline fn isEmojiEnabled() bool {
-        return enable_ansi_colors and !isWindows;
+        return enable_ansi_colors and !Environment.isWindows;
     }
 
-    var _source_for_test: if (isTest) Output.Source else void = undefined;
+    var _source_for_test: if (Environment.isTest) Output.Source else void = undefined;
     var _source_for_test_set = false;
     pub fn initTest() void {
         if (_source_for_test_set) return;
@@ -169,7 +169,7 @@ pub const Output = struct {
     }
 
     pub fn flush() void {
-        if (isNative and source_set) {
+        if (Environment.isNative and source_set) {
             source.buffered_stream.flush() catch {};
             source.buffered_error_stream.flush() catch {};
             // source.stream.flush() catch {};
@@ -229,7 +229,7 @@ pub const Output = struct {
     }
 
     pub fn printErrorable(comptime fmt: string, args: anytype) !void {
-        if (comptime isWasm) {
+        if (comptime Environment.isWasm) {
             try source.stream.seekTo(0);
             try source.stream.writer().print(fmt, args);
             root.console_log(root.Uint8Array.fromSlice(source.out_buffer[0..source.stream.pos]));
@@ -246,7 +246,7 @@ pub const Output = struct {
         return print(fmt, args);
     }
 
-    pub const debug = if (isDebug) _debug else _noop;
+    pub const debug = if (Environment.isDebug) _debug else _noop;
 
     fn _noop(comptime fmt: string, args: anytype) void {}
 
@@ -262,7 +262,7 @@ pub const Output = struct {
     pub fn print(comptime fmt: string, args: anytype) void {
         std.debug.assert(source_set);
 
-        if (comptime isWasm) {
+        if (comptime Environment.isWasm) {
             source.stream.seekTo(0) catch return;
             source.stream.writer().print(fmt, args) catch return;
 
@@ -454,7 +454,7 @@ pub const Output = struct {
         Error,
     };
 
-    pub var level = if (isDebug) Level.Warn else Level.Error;
+    pub var level = if (Environment.isDebug) Level.Warn else Level.Error;
 
     pub fn prettyWarn(comptime fmt: string, args: anytype) void {
         prettyWithPrinter(fmt, args, printError, .Warn);
@@ -473,7 +473,7 @@ pub const Output = struct {
     }
 
     pub fn printError(comptime fmt: string, args: anytype) void {
-        if (comptime isWasm) {
+        if (comptime Environment.isWasm) {
             source.error_stream.seekTo(0) catch return;
             source.error_stream.writer().print(fmt, args) catch unreachable;
             root.console_error(root.Uint8Array.fromSlice(source.err_buffer[0..source.error_stream.pos]));
@@ -485,7 +485,7 @@ pub const Output = struct {
 
 pub const Global = struct {
     pub const build_id = std.fmt.parseInt(u64, std.mem.trim(u8, @embedFile("../build-id"), "\n \r\t"), 10) catch unreachable;
-    pub const package_json_version = if (isDebug)
+    pub const package_json_version = if (Environment.isDebug)
         std.fmt.comptimePrint("0.0.{d}_debug", .{build_id})
     else
         std.fmt.comptimePrint("0.0.{d}", .{build_id});
@@ -521,7 +521,7 @@ pub const Global = struct {
 
     pub fn panic(comptime fmt: string, args: anytype) noreturn {
         @setCold(true);
-        if (comptime isWasm) {
+        if (comptime Environment.isWasm) {
             Output.printErrorln(fmt, args);
             Output.flush();
             @panic(fmt);
@@ -542,7 +542,7 @@ pub const Global = struct {
     inline fn _invariant(comptime fmt: string, args: anytype) noreturn {
         @setCold(true);
 
-        if (comptime isWasm) {
+        if (comptime Environment.isWasm) {
             Output.printErrorln(fmt, args);
             Output.flush();
             @panic(fmt);
@@ -566,13 +566,14 @@ pub const Global = struct {
     }
 };
 
-pub const FileDescriptorType = if (isBrowser) u0 else std.os.fd_t;
+pub const FileDescriptorType = if (Environment.isBrowser) u0 else std.os.fd_t;
 
 // When we are on a computer with an absurdly high number of max open file handles
 // such is often the case with macOS
 // As a useful optimization, we can store file descriptors and just keep them open...forever
-pub const StoredFileDescriptorType = if (isWindows or isBrowser) u0 else std.os.fd_t;
+pub const StoredFileDescriptorType = if (Environment.isWindows or Environment.isBrowser) u0 else std.os.fd_t;
 
-pub usingnamespace @import("string_types.zig");
+const StringTypes = @import("string_types.zig");
+pub usingnamespace StringTypes;
 pub const strings = @import("string_immutable.zig");
 pub const MutableString = @import("string_mutable.zig").MutableString;

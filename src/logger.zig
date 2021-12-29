@@ -2,7 +2,16 @@ const std = @import("std");
 const Api = @import("./api/schema.zig").Api;
 const js = @import("./javascript/jsc/bindings/bindings.zig");
 const ImportKind = @import("./import_record.zig").ImportKind;
-usingnamespace @import("global.zig");
+const _global = @import("global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 
 const fs = @import("fs.zig");
 const unicode = std.unicode;
@@ -34,7 +43,7 @@ pub const Kind = enum(i8) {
         };
     }
 
-    pub inline fn string(self: Kind) string {
+    pub inline fn string(self: Kind) _global.string {
         return switch (self) {
             .err => "error",
             .warn => "warn",
@@ -163,7 +172,7 @@ pub const Data = struct {
             loc.deinit(allocator);
         }
 
-        allocator.free(text);
+        allocator.free(d.text);
     }
 
     pub fn toAPI(this: *const Data) Api.MessageData {
@@ -474,7 +483,7 @@ pub const Log = struct {
     warnings: usize = 0,
     errors: usize = 0,
     msgs: ArrayList(Msg),
-    level: Level = if (isDebug) Level.info else Level.warn,
+    level: Level = if (Environment.isDebug) Level.info else Level.warn,
 
     pub fn toAPI(this: *const Log, allocator: std.mem.Allocator) !Api.Log {
         var warnings: u32 = 0;

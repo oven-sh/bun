@@ -5,6 +5,10 @@ usingnamespace @import("string_types.zig");
 const strings = @import("string_immutable.zig");
 const js_lexer = @import("js_lexer.zig");
 
+const string = @import("string_types.zig").string;
+const stringZ = @import("string_types.zig").stringZ;
+const CodePoint = @import("string_types.zig").CodePoint;
+
 pub const MutableString = struct {
     allocator: std.mem.Allocator,
     list: std.ArrayListUnmanaged(u8),

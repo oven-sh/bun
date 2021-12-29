@@ -1,4 +1,63 @@
-usingnamespace @import("imports.zig");
+pub const std = @import("std");
+pub const logger = @import("../logger.zig");
+pub const js_lexer = @import("../js_lexer.zig");
+pub const importRecord = @import("../import_record.zig");
+pub const js_ast = @import("../js_ast.zig");
+pub const options = @import("../options.zig");
+pub const js_printer = @import("../js_printer.zig");
+pub const renamer = @import("../renamer.zig");
+const _runtime = @import("../runtime.zig");
+pub const RuntimeImports = _runtime.Runtime.Imports;
+pub const RuntimeFeatures = _runtime.Runtime.Features;
+pub const RuntimeNames = _runtime.Runtime.Names;
+pub const fs = @import("../fs.zig");
+const _hash_map = @import("../hash_map.zig");
+const _global = @import("../global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
+const G = js_ast.G;
+const Define = @import("../defines.zig").Define;
+const DefineData = @import("../defines.zig").DefineData;
+const FeatureFlags = @import("../feature_flags.zig");
+pub const isPackagePath = @import("../resolver/resolver.zig").isPackagePath;
+pub const ImportKind = importRecord.ImportKind;
+pub const BindingNodeIndex = js_ast.BindingNodeIndex;
+const Decl = G.Decl;
+const Property = G.Property;
+const Arg = G.Arg;
+
+pub const StmtNodeIndex = js_ast.StmtNodeIndex;
+pub const ExprNodeIndex = js_ast.ExprNodeIndex;
+pub const ExprNodeList = js_ast.ExprNodeList;
+pub const StmtNodeList = js_ast.StmtNodeList;
+pub const BindingNodeList = js_ast.BindingNodeList;
+
+pub const assert = std.debug.assert;
+
+pub const LocRef = js_ast.LocRef;
+pub const S = js_ast.S;
+pub const B = js_ast.B;
+pub const T = js_lexer.T;
+pub const E = js_ast.E;
+pub const Stmt = js_ast.Stmt;
+pub const Expr = js_ast.Expr;
+pub const Binding = js_ast.Binding;
+pub const Symbol = js_ast.Symbol;
+pub const Level = js_ast.Op.Level;
+pub const Op = js_ast.Op;
+pub const Scope = js_ast.Scope;
+pub const locModuleScope = logger.Loc{ .start = -100 };
+const Ref = @import("../ast/base.zig").Ref;
+
+pub const StringHashMap = _hash_map.StringHashMap;
+pub const AutoHashMap = _hash_map.AutoHashMap;
 
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 // Dear reader,
@@ -15,7 +74,6 @@ const NodeFallbackModules = @import("../node_fallbacks.zig");
 // While the names for Expr, Binding, and Stmt are directly copied from esbuild, those were likely inspired by Go's parser.
 // which is another example of a very fast parser.
 
-const TemplatePartTuple = std.meta.Tuple(&[_]type{ []E.TemplatePart, logger.Loc });
 const ScopeOrderList = std.ArrayListUnmanaged(?ScopeOrder);
 
 const JSXFactoryName = "JSX";
@@ -1932,7 +1990,6 @@ pub const Parser = struct {
 
         // Parse the file in the first pass, but do not bind symbols
         var opts = ParseStatementOptions{ .is_module_scope = true };
-        debugl("<p.parseStmtsUpTo>");
 
         // Parsing seems to take around 2x as much time as visiting.
         // Which makes sense.
@@ -2031,14 +2088,13 @@ pub const Parser = struct {
 
         // Parse the file in the first pass, but do not bind symbols
         var opts = ParseStatementOptions{ .is_module_scope = true };
-        debugl("<p.parseStmtsUpTo>");
 
         // Parsing seems to take around 2x as much time as visiting.
         // Which makes sense.
         // June 4: "Parsing took: 18028000"
         // June 4: "Rest of this took: 8003000"
         const stmts = try p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts);
-        debugl("</p.parseStmtsUpTo>");
+
         try p.prepareForVisitPass();
 
         // ESM is always strict mode. I don't think we need this.
@@ -2061,7 +2117,6 @@ pub const Parser = struct {
         //     }, logger.Loc.Empty);
         // }
 
-        debugl("<p.appendPart>");
         var before = List(js_ast.Part).init(p.allocator);
         var after = List(js_ast.Part).init(p.allocator);
         var parts = List(js_ast.Part).init(p.allocator);
@@ -2470,24 +2525,24 @@ pub const Parser = struct {
         if (FeatureFlags.auto_import_buffer) {
             // If they use Buffer...just automatically import it.
             // ✨ magic ✨ (i don't like this)
-            if (p.symbols.items[p.buffer_ref.inner_index].use_count_estimate > 0) {
-                var named_import = p.named_imports.getOrPut(p.buffer_ref);
+            // if (p.symbols.items[p.buffer_ref.inner_index].use_count_estimate > 0) {
+            //     var named_import = p.named_imports.getOrPut(p.buffer_ref);
 
-                // if Buffer is actually an import, let them use that one instead.
-                if (!named_import.found_existing) {
-                    const import_record_id = p.addImportRecord(
-                        .require,
-                        logger.Loc.empty,
-                        NodeFallbacks.buffer_fallback_import_name,
-                    );
-                    var import_stmt = p.s(S.Import{
-                        .namespace_ref = p.buffer_ref,
-                        .star_name_loc = loc,
-                        .is_single_line = true,
-                        .import_record_index = import_record_id,
-                    }, loc);
-                }
-            }
+            //     // if Buffer is actually an import, let them use that one instead.
+            //     if (!named_import.found_existing) {
+            //         const import_record_id = p.addImportRecord(
+            //             .require,
+            //             logger.Loc.empty,
+            //             NodeFallbackModules.buffer_fallback_import_name,
+            //         );
+            //         var import_stmt = p.s(S.Import{
+            //             .namespace_ref = p.buffer_ref,
+            //             .star_name_loc = loc,
+            //             .is_single_line = true,
+            //             .import_record_index = import_record_id,
+            //         }, loc);
+            //     }
+            // }
         }
 
         const has_cjs_imports = p.cjs_import_stmts.items.len > 0 and p.options.transform_require_to_import;
@@ -2582,14 +2637,12 @@ pub const Parser = struct {
             before.deinit();
             parts_slice = parts.items;
         }
-        debugl("</p.appendPart>");
 
         // Pop the module scope to apply the "ContainsDirectEval" rules
         // p.popScope();
-        debugl("<result.Ast>");
+
         result.ast = try p.toAST(parts_slice, exports_kind, wrapper_expr);
         result.ok = true;
-        debugl("</result.Ast>");
 
         return result;
     }
@@ -3935,8 +3988,6 @@ pub fn NewParser(
         }
 
         fn pushScopeForParsePass(p: *P, comptime kind: js_ast.Scope.Kind, loc: logger.Loc) !usize {
-            debugl("<pushScopeForParsePass>");
-            defer debugl("</pushScopeForParsePass>");
             var parent: *Scope = p.current_scope;
 
             var scope = try p.allocator.create(Scope);
@@ -3956,7 +4007,7 @@ pub fn NewParser(
 
             p.current_scope = scope;
 
-            if (comptime !isRelease) {
+            if (comptime !Environment.isRelease) {
                 // Enforce that scope locations are strictly increasing to help catch bugs
                 // where the pushed scopes are mistmatched between the first and second passes
                 if (p.scopes_in_order.items.len > 0) {
@@ -7189,7 +7240,7 @@ pub fn NewParser(
                     }
 
                     // If we end with a .t_close_paren, that's a bug. It means we aren't following the last parenthese
-                    if (isDebug) {
+                    if (Environment.isDebug) {
                         std.debug.assert(p.lexer.token != .t_close_paren);
                     }
                 }
@@ -14898,7 +14949,7 @@ pub fn NewParser(
                 // in debug: crash in the printer due to undefined memory
                 // in release: print ";" instead.
                 // this should never happen regardless, but i'm just being cautious here.
-                if (comptime !isDebug) {
+                if (comptime !Environment.isDebug) {
                     std.mem.set(Stmt, _stmts, Stmt.empty());
                 }
 
@@ -14940,7 +14991,7 @@ pub fn NewParser(
                     }
                 }
 
-                var args_list: []Expr = if (isDebug) &Prefill.HotModuleReloading.DebugEnabledArgs else &Prefill.HotModuleReloading.DebugDisabled;
+                var args_list: []Expr = if (Environment.isDebug) &Prefill.HotModuleReloading.DebugEnabledArgs else &Prefill.HotModuleReloading.DebugDisabled;
 
                 const new_call_args_count: usize = comptime if (is_react_fast_refresh_enabled) 3 else 2;
                 var call_args = try p.allocator.alloc(Expr, new_call_args_count + 1);

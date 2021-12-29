@@ -1,5 +1,14 @@
 const picohttp = @import("picohttp");
-usingnamespace @import("./global.zig");
+const _global = @import("./global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 const std = @import("std");
 const Headers = @import("./javascript/jsc/webcore/response.zig").Headers;
 const URL = @import("./query_string_map.zig").URL;

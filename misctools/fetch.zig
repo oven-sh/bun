@@ -1,5 +1,14 @@
 const std = @import("std");
-usingnamespace @import("../src/global.zig");
+const _global = @import("../src/global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 const clap = @import("../src/deps/zig-clap/clap.zig");
 
 const URL = @import("../src/query_string_map.zig").URL;

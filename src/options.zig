@@ -12,7 +12,18 @@ const resolve_path = @import("./resolver/resolve_path.zig");
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 const URL = @import("./query_string_map.zig").URL;
 const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
-usingnamespace @import("global.zig");
+const _global = @import("global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const FileDescriptorType = _global.FileDescriptorType;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
+const StoredFileDescriptorType = _global.StoredFileDescriptorType;
 
 const Analytics = @import("./analytics/analytics_thread.zig");
 
@@ -1353,7 +1364,7 @@ pub const BundleOptions = struct {
 
             // Windows has weird locking rules for file access.
             // so it's a bad idea to keep a file handle open for a long time on Windows.
-            if (isWindows and opts.routes.static_dir_handle != null) {
+            if (Environment.isWindows and opts.routes.static_dir_handle != null) {
                 opts.routes.static_dir_handle.?.close();
             }
             opts.hot_module_reloading = opts.platform.isWebLike();
@@ -1429,7 +1440,7 @@ pub const TransformOptions = struct {
         };
 
         var cwd: string = "/";
-        if (isWasi or isNative) {
+        if (Environment.isWasi or Environment.isWindows) {
             cwd = try std.process.getCwdAlloc(allocator);
         }
 
@@ -1567,7 +1578,7 @@ pub const OutputFile = struct {
         // TODO: close file_out on error
         const fd_in = (try std.fs.openFileAbsolute(file.input.text, .{ .read = true })).handle;
 
-        if (isNative) {
+        if (Environment.isWindows) {
             Fs.FileSystem.setMaxFd(fd_out);
             Fs.FileSystem.setMaxFd(fd_in);
             do_close = Fs.FileSystem.instance.fs.needToCloseFiles();

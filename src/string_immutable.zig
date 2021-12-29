@@ -3,7 +3,9 @@ const expect = std.testing.expect;
 
 const JavascriptString = @import("ast/base.zig").JavascriptString;
 
-usingnamespace @import("string_types.zig");
+const string = @import("string_types.zig").string;
+const stringZ = @import("string_types.zig").stringZ;
+const CodePoint = @import("string_types.zig").CodePoint;
 
 pub inline fn containsChar(self: string, char: u8) bool {
     return indexOfChar(self, char) != null;

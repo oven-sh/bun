@@ -9,8 +9,20 @@ const runtime = @import("runtime.zig");
 const Lock = @import("./lock.zig").Lock;
 const Api = @import("./api/schema.zig").Api;
 const fs = @import("fs.zig");
-usingnamespace @import("global.zig");
-usingnamespace @import("ast/base.zig");
+const _global = @import("global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
+const Ref = @import("ast/base.zig").Ref;
+const StoredFileDescriptorType = _global.StoredFileDescriptorType;
+const FeatureFlags = _global.FeatureFlags;
+const FileDescriptorType = _global.FileDescriptorType;
 usingnamespace js_ast.G;
 
 const expect = std.testing.expect;
@@ -431,8 +443,6 @@ pub fn NewPrinter(
         }
 
         pub fn printDecls(p: *Printer, comptime keyword: string, decls: []G.Decl, flags: ExprFlag) void {
-            debug("<printDecls>\n   {s}", .{decls});
-            defer debug("</printDecls>", .{});
             p.print(keyword);
             p.printSpace();
 
@@ -1939,8 +1949,6 @@ pub fn NewPrinter(
         }
 
         pub fn printProperty(p: *Printer, item: G.Property) void {
-            debugl("<printProperty>");
-            defer debugl("</printProperty>");
             if (item.kind == .spread) {
                 p.print("...");
                 p.printExpr(item.value.?, .comma, ExprFlag.None());
@@ -2171,8 +2179,6 @@ pub fn NewPrinter(
         }
 
         pub fn printBinding(p: *Printer, binding: Binding) void {
-            debug("<printBinding>\n   {s}", .{binding});
-            defer debugl("</printBinding>");
             p.addSourceMapping(binding.loc);
 
             switch (binding.data) {
@@ -2358,9 +2364,6 @@ pub fn NewPrinter(
 
                 p.prev_stmt_tag = std.meta.activeTag(stmt.data);
             }
-
-            debug("<printStmt>: {s}\n", .{stmt});
-            defer debug("</printStmt>: {s}\n", .{stmt});
 
             p.addSourceMapping(stmt.loc);
             switch (stmt.data) {
@@ -4485,10 +4488,10 @@ pub fn printCommonJSThreaded(
         defer lock.unlock();
         lock.lock();
         result.off = @truncate(u32, try getPos(getter));
-        if (comptime isMac or isLinux) {
+        if (comptime Environment.isMac or Environment.isLinux) {
             // Don't bother preallocate the file if it's less than 1 KB. Preallocating is potentially two syscalls
             if (printer.writer.written > 1024) {
-                if (comptime isMac) {
+                if (comptime Environment.isMac) {
                     try C.preallocate_file(
                         getter.handle,
                         @intCast(std.os.off_t, 0),
@@ -4496,7 +4499,7 @@ pub fn printCommonJSThreaded(
                     );
                 }
 
-                if (comptime isLinux) {
+                if (comptime Environment.isLinux) {
                     _ = std.os.system.fallocate(getter.handle, 0, @intCast(i64, result.off), printer.writer.written);
                 }
             }

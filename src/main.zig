@@ -9,12 +9,21 @@ const js_ast = @import("js_ast.zig");
 const linker = @import("linker.zig");
 usingnamespace @import("ast/base.zig");
 usingnamespace @import("defines.zig");
-usingnamespace @import("global.zig");
+const _global = @import("global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 const panicky = @import("panic_handler.zig");
 const cli = @import("cli.zig");
 pub const MainPanicHandler = panicky.NewPanicHandler(std.builtin.default_panic);
 const js = @import("javascript/jsc/bindings/bindings.zig");
-usingnamespace @import("javascript/jsc/javascript.zig");
+const JavaScript = @import("javascript/jsc/javascript.zig");
 
 pub const io_mode = .blocking;
 
@@ -58,7 +67,7 @@ pub fn main() anyerror!void {
     std.mem.doNotOptimizeAway(JavaScriptVirtualMachine.resolve);
 }
 
-pub const JavaScriptVirtualMachine = VirtualMachine;
+pub const JavaScriptVirtualMachine = JavaScript.VirtualMachine;
 
 test "" {
     @import("std").testing.refAllDecls(@This());

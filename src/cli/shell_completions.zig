@@ -47,7 +47,7 @@ pub fn print(this: @This()) void {
     const delimiter = if (this.shell == Shell.fish) " " else "\n";
 
     writer.writeAll(this.commands[0]) catch return;
-    
+
     if (this.descriptions.len > 0) {
         writer.writeAll("\t") catch return;
         writer.writeAll(this.descriptions[0]) catch return;

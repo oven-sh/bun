@@ -736,5 +736,3 @@ pub fn NewWatcher(comptime ContextType: type) type {
         }
     };
 }
-
-

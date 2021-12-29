@@ -126,4 +126,3 @@ pub fn parse(possibly_encoded_pathname_: string) !URLPath {
         .needs_redirect = needs_redirect,
     };
 }
-

@@ -38,7 +38,7 @@ pub fn main() anyerror!void {
 
     Output.Source.set(&output_source);
     defer Output.flush();
-    
+
     cli.Cli.start(default_allocator, stdout, stderr, MainPanicHandler) catch |err| {
         switch (err) {
             error.CurrentWorkingDirectoryUnlinked => {

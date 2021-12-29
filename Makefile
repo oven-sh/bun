@@ -386,7 +386,6 @@ fetch-debug:
 httpbench-debug:
 	$(ZIG) build httpbench-obj
 	$(CXX) $(DEBUG_PACKAGE_DIR)/httpbench.o -g -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
-	rm -rf $(DEBUG_PACKAGE_DIR)/httpbench.o
 
 
 httpbench-release:

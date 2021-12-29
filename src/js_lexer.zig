@@ -90,7 +90,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
         rescan_close_brace_as_template_token: bool = false,
         prev_error_loc: logger.Loc = logger.Loc.Empty,
         regex_flags_start: ?u16 = null,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         /// In JavaScript, strings are stored as UTF-16, but nearly every string is ascii.
         /// This means, usually, we can skip UTF8 -> UTF16 conversions.
         string_literal_buffer: std.ArrayList(u16),
@@ -1703,7 +1703,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             };
         }
 
-        pub fn initTSConfig(log: *logger.Log, source: *const logger.Source, allocator: *std.mem.Allocator) !LexerType {
+        pub fn initTSConfig(log: *logger.Log, source: *const logger.Source, allocator: std.mem.Allocator) !LexerType {
             var empty_string_literal: JavascriptString = &emptyJavaScriptString;
             var lex = LexerType{
                 .log = log,
@@ -1721,7 +1721,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             return lex;
         }
 
-        pub fn initJSON(log: *logger.Log, source: *const logger.Source, allocator: *std.mem.Allocator) !LexerType {
+        pub fn initJSON(log: *logger.Log, source: *const logger.Source, allocator: std.mem.Allocator) !LexerType {
             var empty_string_literal: JavascriptString = &emptyJavaScriptString;
             var lex = LexerType{
                 .log = log,
@@ -1738,7 +1738,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             return lex;
         }
 
-        pub fn init(log: *logger.Log, source: *const logger.Source, allocator: *std.mem.Allocator) !LexerType {
+        pub fn init(log: *logger.Log, source: *const logger.Source, allocator: std.mem.Allocator) !LexerType {
             try tables.initJSXEntityMap();
             var empty_string_literal: JavascriptString = &emptyJavaScriptString;
             var lex = LexerType{

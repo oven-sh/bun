@@ -12,9 +12,9 @@ const RESET = "\x1b[0m";
 pub const Tester = struct {
     pass: std.ArrayList(Expectation),
     fail: std.ArrayList(Expectation),
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 
-    pub fn t(allocator: *std.mem.Allocator) Tester {
+    pub fn t(allocator: std.mem.Allocator) Tester {
         return Tester{
             .allocator = allocator,
             .pass = std.ArrayList(Expectation).init(allocator),

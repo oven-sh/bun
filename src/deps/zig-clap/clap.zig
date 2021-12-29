@@ -271,7 +271,7 @@ pub const ParseOptions = struct {
     ///       `parse`, `parseEx` does not wrap the allocator so the heap allocator can be
     ///       quite expensive. (TODO: Can we pick a better default? For `parse`, this allocator
     ///       is fine, as it wraps it in an arena)
-    allocator: *mem.Allocator = heap.page_allocator,
+    allocator: mem.Allocator = heap.page_allocator,
     diagnostic: ?*Diagnostic = null,
 };
 

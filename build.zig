@@ -40,7 +40,7 @@ const color_map = std.ComptimeStringMap([]const u8, .{
     &.{ "yellow", "33m" },
 });
 
-fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: *std.mem.Allocator, target: anytype) !void {
+fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: std.mem.Allocator, target: anytype) !void {
     var boringssl: std.build.Pkg = .{
         .name = "boringssl",
         .path = pkgPath("src/deps/boringssl.zig"),
@@ -168,9 +168,9 @@ pub fn build(b: *std.build.Builder) !void {
     if (std.mem.eql(u8, os_tagname, "macos")) {
         os_tagname = "darwin";
         if (arch.isAARCH64()) {
-            target.os_version_min = std.build.Target.OsVersion{ .semver = .{ .major = 11, .minor = 0, .patch = 0 } };
+            target.os_version_min = std.zig.CrossTarget.OsVersion{ .semver = .{ .major = 11, .minor = 0, .patch = 0 } };
         } else if (arch.isX86()) {
-            target.os_version_min = std.build.Target.OsVersion{ .semver = .{ .major = 10, .minor = 14, .patch = 0 } };
+            target.os_version_min = std.zig.CrossTarget.OsVersion{ .semver = .{ .major = 10, .minor = 14, .patch = 0 } };
         }
     }
 
@@ -196,60 +196,7 @@ pub fn build(b: *std.build.Builder) !void {
     output_dir = b.pathFromRoot(output_dir_base);
     const bun_executable_name = if (mode == std.builtin.Mode.Debug) "bun-debug" else "bun";
 
-    if (target.getOsTag() == .wasi) {
-        exe.enable_wasmtime = true;
-        exe = b.addExecutable(bun_executable_name, "src/main_wasi.zig");
-        exe.linkage = .dynamic;
-        exe.setOutputDir(output_dir);
-    } else if (target.getCpuArch().isWasm()) {
-        // exe = b.addExecutable(
-        //     "bun",
-        //     "src/main_wasm.zig",
-        // );
-        // exe.is_linking_libc = false;
-        // exe.is_dynamic = true;
-        var lib = b.addExecutable(bun_executable_name, "src/main_wasm.zig");
-        lib.single_threaded = true;
-        // exe.want_lto = true;
-        // exe.linkLibrary(lib);
-
-        if (mode == std.builtin.Mode.Debug) {
-            // exception_handling
-            var features = target.getCpuFeatures();
-            features.addFeature(2);
-            target.updateCpuFeatures(&features);
-        } else {
-            // lib.strip = true;
-        }
-
-        lib.setOutputDir(output_dir);
-        lib.want_lto = true;
-        b.install_path = lib.getOutputSource().getPath(b);
-
-        std.debug.print("Build: ./{s}\n", .{b.install_path});
-        b.default_step.dependOn(&lib.step);
-        b.verbose_link = true;
-        lib.setTarget(target);
-        lib.setBuildMode(mode);
-
-        std.fs.deleteTreeAbsolute(std.fs.path.join(b.allocator, &.{ cwd, lib.getOutputSource().getPath(b) }) catch unreachable) catch {};
-        var install = b.getInstallStep();
-        lib.strip = false;
-        lib.install();
-
-        const run_cmd = lib.run();
-        run_cmd.step.dependOn(b.getInstallStep());
-        if (b.args) |args| {
-            run_cmd.addArgs(args);
-        }
-
-        const run_step = b.step("run", "Run the app");
-        run_step.dependOn(&run_cmd.step);
-
-        return;
-    } else {
-        exe = b.addExecutable(bun_executable_name, "src/main.zig");
-    }
+    exe = b.addExecutable(bun_executable_name, "src/main.zig");
     // exe.setLibCFile("libc.txt");
     exe.linkLibC();
     // exe.linkLibCpp();

@@ -13,7 +13,7 @@ pub fn count(this: *StringBuilder, slice: string) void {
     this.cap += slice.len;
 }
 
-pub fn allocate(this: *StringBuilder, allocator: *Allocator) !void {
+pub fn allocate(this: *StringBuilder, allocator: Allocator) !void {
     var slice = try allocator.alloc(u8, this.cap);
     this.ptr = slice.ptr;
     this.len = 0;

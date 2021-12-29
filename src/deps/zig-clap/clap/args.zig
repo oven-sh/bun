@@ -56,7 +56,7 @@ pub const OsIterator = struct {
     ///       return an error when we have no exe.
     exe_arg: ?[:0]const u8,
 
-    pub fn init(allocator: *mem.Allocator) Error!OsIterator {
+    pub fn init(allocator: mem.Allocator) Error!OsIterator {
         var res = OsIterator{
             .arena = heap.ArenaAllocator.init(allocator),
             .args = process.args(),
@@ -90,7 +90,7 @@ pub const ShellIterator = struct {
     arena: heap.ArenaAllocator,
     str: []const u8,
 
-    pub fn init(allocator: *mem.Allocator, str: []const u8) ShellIterator {
+    pub fn init(allocator: mem.Allocator, str: []const u8) ShellIterator {
         return .{
             .arena = heap.ArenaAllocator.init(allocator),
             .str = str,

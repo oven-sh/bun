@@ -14,7 +14,7 @@ pub fn Builder(comptime Type: type) type {
             this.cap += slice.len;
         }
 
-        pub fn allocate(this: *This, allocator: *Allocator) !void {
+        pub fn allocate(this: *This, allocator: Allocator) !void {
             var slice = try allocator.alloc(Type, this.cap);
             this.ptr = slice.ptr;
             this.len = 0;

@@ -21,11 +21,11 @@ pub fn NewBlockQueue(comptime Value: type, comptime block_size: comptime_int, co
         write_lock: bool = false,
         overflow_write_lock: bool = false,
         overflow_readers: std.atomic.Atomic(u8) = std.atomic.Atomic(u8).init(0),
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         empty_queue: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(1),
         rand: std.rand.DefaultPrng = std.rand.DefaultPrng.init(100),
 
-        pub fn new(this: *BlockQueue, allocator: *std.mem.Allocator) void {
+        pub fn new(this: *BlockQueue, allocator: std.mem.Allocator) void {
             this.* = BlockQueue{
                 .allocator = allocator,
                 .overflow = std.ArrayList(*Block).init(allocator),
@@ -144,12 +144,12 @@ pub fn NewBunQueue(comptime Value: type) type {
         const KeyType = u32;
         const BunQueue = @This();
         const Queue = NewBlockQueue(Value, 64, 48);
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         queue: Queue,
         keys: Keys,
         count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
 
-        pub fn init(allocator: *std.mem.Allocator) !*BunQueue {
+        pub fn init(allocator: std.mem.Allocator) !*BunQueue {
             var bun = try allocator.create(BunQueue);
             bun.* = BunQueue{
                 .allocator = allocator,

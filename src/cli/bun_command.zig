@@ -30,7 +30,7 @@ const ServerBundleGeneratorThread = struct {
     inline fn _generate(
         logs: *logger.Log,
         env_loader_: *DotEnv.Loader,
-        allocator_: *std.mem.Allocator,
+        allocator_: std.mem.Allocator,
         ctx: Command.Context,
         _filepath: [*:0]const u8,
         server_conf: Api.LoadedFramework,

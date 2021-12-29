@@ -20,9 +20,9 @@ pub const Map = struct {
     const HashMap = std.ArrayHashMap(u64, Blob, MapContext, false);
     lock: Lock,
     map: HashMap,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 
-    pub fn init(allocator: *std.mem.Allocator) Map {
+    pub fn init(allocator: std.mem.Allocator) Map {
         return Map{
             .lock = Lock.init(),
             .map = HashMap.init(allocator),
@@ -53,9 +53,9 @@ pub const Map = struct {
 pub const Group = struct {
     persistent: Map,
     temporary: Map,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 
-    pub fn init(allocator: *std.mem.Allocator) !*Group {
+    pub fn init(allocator: std.mem.Allocator) !*Group {
         var group = try allocator.create(Group);
         group.* = Group{ .persistent = Map.init(allocator), .temporary = Map.init(allocator), .allocator = allocator };
         return group;

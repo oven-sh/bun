@@ -54,7 +54,7 @@ const HashMapPool = struct {
         }
     };
 
-    pub fn get(allocator: *std.mem.Allocator) *LinkedList.Node {
+    pub fn get(allocator: std.mem.Allocator) *LinkedList.Node {
         if (loaded) {
             if (list.popFirst()) |node| {
                 node.data.clearRetainingCapacity();
@@ -85,9 +85,9 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
         lexer: Lexer,
         source: *const logger.Source,
         log: *logger.Log,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
 
-        pub fn init(allocator: *std.mem.Allocator, source: *const logger.Source, log: *logger.Log) !Parser {
+        pub fn init(allocator: std.mem.Allocator, source: *const logger.Source, log: *logger.Log) !Parser {
             return Parser{
                 .lexer = try Lexer.init(log, source, allocator),
                 .allocator = allocator,
@@ -292,7 +292,7 @@ pub const PackageJSONVersionChecker = struct {
     lexer: Lexer,
     source: *const logger.Source,
     log: *logger.Log,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     depth: usize = 0,
 
     found_version_buf: [1024]u8 = undefined,
@@ -310,7 +310,7 @@ pub const PackageJSONVersionChecker = struct {
         .allow_trailing_commas = true,
     };
 
-    pub fn init(allocator: *std.mem.Allocator, source: *const logger.Source, log: *logger.Log) !Parser {
+    pub fn init(allocator: std.mem.Allocator, source: *const logger.Source, log: *logger.Log) !Parser {
         return Parser{
             .lexer = try Lexer.init(log, source, allocator),
             .allocator = allocator,
@@ -481,7 +481,7 @@ var empty_string_data = Expr.Data{ .e_string = &empty_string };
 var empty_object_data = Expr.Data{ .e_object = &empty_object };
 var empty_array_data = Expr.Data{ .e_array = &empty_array };
 
-pub fn ParseJSON(source: *const logger.Source, log: *logger.Log, allocator: *std.mem.Allocator) !Expr {
+pub fn ParseJSON(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
     var parser = try JSONParser.init(allocator, source, log);
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
@@ -515,7 +515,7 @@ pub const JSONParseResult = struct {
     };
 };
 
-pub fn ParseJSONForBundling(source: *const logger.Source, log: *logger.Log, allocator: *std.mem.Allocator) !JSONParseResult {
+pub fn ParseJSONForBundling(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !JSONParseResult {
     var parser = try JSONParser.init(allocator, source, log);
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
@@ -544,7 +544,7 @@ pub fn ParseJSONForBundling(source: *const logger.Source, log: *logger.Log, allo
 
 // threadlocal var env_json_auto_quote_buffer: MutableString = undefined;
 // threadlocal var env_json_auto_quote_buffer_loaded: bool = false;
-pub fn ParseEnvJSON(source: *const logger.Source, log: *logger.Log, allocator: *std.mem.Allocator) !Expr {
+pub fn ParseEnvJSON(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
     var parser = try DotEnvJSONParser.init(allocator, source, log);
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
@@ -594,7 +594,7 @@ pub fn ParseEnvJSON(source: *const logger.Source, log: *logger.Log, allocator: *
     }
 }
 
-pub fn ParseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: *std.mem.Allocator) !Expr {
+pub fn ParseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {

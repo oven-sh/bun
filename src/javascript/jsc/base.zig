@@ -1466,7 +1466,7 @@ pub fn NewClass(
 
 threadlocal var error_args: [1]js.JSValueRef = undefined;
 pub fn JSError(
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     comptime fmt: string,
     args: anytype,
     ctx: js.JSContextRef,
@@ -1489,7 +1489,7 @@ pub fn JSError(
     }
 }
 
-pub fn getAllocator(ctx: js.JSContextRef) *std.mem.Allocator {
+pub fn getAllocator(ctx: js.JSContextRef) std.mem.Allocator {
     return default_allocator;
 }
 
@@ -1512,9 +1512,9 @@ pub const ArrayBuffer = struct {
 
 pub const MarkedArrayBuffer = struct {
     buffer: ArrayBuffer,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 
-    pub fn fromBytes(bytes: []u8, allocator: *std.mem.Allocator, typed_array_type: js.JSTypedArrayType) MarkedArrayBuffer {
+    pub fn fromBytes(bytes: []u8, allocator: std.mem.Allocator, typed_array_type: js.JSTypedArrayType) MarkedArrayBuffer {
         return MarkedArrayBuffer{
             .buffer = ArrayBuffer{ .offset = 0, .len = @intCast(u32, bytes.len), .byte_len = @intCast(u32, bytes.len), .typed_array_type = typed_array_type, .ptr = bytes.ptr },
             .allocator = allocator,
@@ -1527,7 +1527,7 @@ pub const MarkedArrayBuffer = struct {
         content.allocator.destroy(this);
     }
 
-    pub fn init(allocator: *std.mem.Allocator, size: u32, typed_array_type: js.JSTypedArrayType) !*MarkedArrayBuffer {
+    pub fn init(allocator: std.mem.Allocator, size: u32, typed_array_type: js.JSTypedArrayType) !*MarkedArrayBuffer {
         const bytes = try allocator.alloc(u8, size);
         var container = try allocator.create(MarkedArrayBuffer);
         container.* = MarkedArrayBuffer.fromBytes(bytes, allocator, typed_array_type);

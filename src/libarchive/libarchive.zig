@@ -429,7 +429,7 @@ pub const Archive = struct {
         filename_hash: u64 = 0,
         found: bool = false,
         fd: FileDescriptorType = 0,
-        pub fn init(filepath: string, estimated_size: usize, allocator: *std.mem.Allocator) !Plucker {
+        pub fn init(filepath: string, estimated_size: usize, allocator: std.mem.Allocator) !Plucker {
             return Plucker{
                 .contents = try MutableString.init(allocator, estimated_size),
                 .filename_hash = std.hash.Wyhash.hash(0, filepath),

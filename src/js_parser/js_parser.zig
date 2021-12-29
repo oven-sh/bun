@@ -1843,7 +1843,7 @@ pub const ScanPassResult = struct {
     import_records_to_keep: List(u32),
     approximate_newline_count: usize = 0,
 
-    pub fn init(allocator: *std.mem.Allocator) ScanPassResult {
+    pub fn init(allocator: std.mem.Allocator) ScanPassResult {
         return .{
             .import_records = List(ImportRecord).init(allocator),
             .named_imports = js_ast.Ast.NamedImports.init(allocator),
@@ -1867,7 +1867,7 @@ pub const Parser = struct {
     log: *logger.Log,
     source: *const logger.Source,
     define: *Define,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 
     pub const Options = struct {
         jsx: options.JSX.Pragma,
@@ -2594,7 +2594,7 @@ pub const Parser = struct {
         return result;
     }
 
-    pub fn init(_options: Options, log: *logger.Log, source: *const logger.Source, define: *Define, allocator: *std.mem.Allocator) !Parser {
+    pub fn init(_options: Options, log: *logger.Log, source: *const logger.Source, define: *Define, allocator: std.mem.Allocator) !Parser {
         const lexer = try js_lexer.Lexer.init(log, source, allocator);
         return Parser{
             .options = _options,
@@ -2798,7 +2798,7 @@ pub const MacroState = struct {
     prepend_stmts: *List(Stmt) = undefined,
     imports: std.AutoArrayHashMap(i32, Ref),
 
-    pub fn init(allocator: *std.mem.Allocator) MacroState {
+    pub fn init(allocator: std.mem.Allocator) MacroState {
         return MacroState{
             .refs = MacroRefs.init(allocator),
             .prepend_stmts = undefined,
@@ -2827,7 +2827,7 @@ pub fn NewParser(
         const P = @This();
         pub const jsx_transform_type: JSXTransformType = js_parser_jsx;
         macro: MacroState = undefined,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         options: Parser.Options,
         log: *logger.Log,
         define: *Define,
@@ -15349,7 +15349,7 @@ pub fn NewParser(
         }
 
         pub fn init(
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             log: *logger.Log,
             source: *const logger.Source,
             define: *Define,

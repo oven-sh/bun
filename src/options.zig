@@ -26,7 +26,7 @@ pub const WriteDestination = enum {
     // eventaully: wasm
 };
 
-pub fn validatePath(log: *logger.Log, fs: *Fs.FileSystem.Implementation, cwd: string, rel_path: string, allocator: *std.mem.Allocator, path_kind: string) string {
+pub fn validatePath(log: *logger.Log, fs: *Fs.FileSystem.Implementation, cwd: string, rel_path: string, allocator: std.mem.Allocator, path_kind: string) string {
     if (rel_path.len == 0) {
         return "";
     }
@@ -39,7 +39,7 @@ pub fn validatePath(log: *logger.Log, fs: *Fs.FileSystem.Implementation, cwd: st
     return out;
 }
 
-pub fn stringHashMapFromArrays(comptime t: type, allocator: *std.mem.Allocator, keys: anytype, values: anytype) !t {
+pub fn stringHashMapFromArrays(comptime t: type, allocator: std.mem.Allocator, keys: anytype, values: anytype) !t {
     var hash_map = t.init(allocator);
     if (keys.len > 0) {
         try hash_map.ensureCapacity(@intCast(u32, keys.len));
@@ -80,7 +80,7 @@ pub const ExternalModules = struct {
     };
 
     pub fn init(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         fs: *Fs.FileSystem.Implementation,
         cwd: string,
         externals: []const string,
@@ -401,7 +401,7 @@ pub const Platform = enum {
         };
     };
 
-    pub fn outExtensions(platform: Platform, allocator: *std.mem.Allocator) std.StringHashMap(string) {
+    pub fn outExtensions(platform: Platform, allocator: std.mem.Allocator) std.StringHashMap(string) {
         var exts = std.StringHashMap(string).init(allocator);
 
         const js = Extensions.Out.JavaScript[0];
@@ -628,7 +628,7 @@ pub const ESMConditions = struct {
     import: ConditionsMap = undefined,
     require: ConditionsMap = undefined,
 
-    pub fn init(allocator: *std.mem.Allocator, defaults: []const string) !ESMConditions {
+    pub fn init(allocator: std.mem.Allocator, defaults: []const string) !ESMConditions {
         var default_condition_amp = ConditionsMap.init(allocator);
 
         var import_condition_map = ConditionsMap.init(allocator);
@@ -713,7 +713,7 @@ pub const JSX = struct {
         // "React.createElement" => ["React", "createElement"]
         // ...unless new is "React.createElement" and original is ["React", "createElement"]
         // saves an allocation for the majority case
-        pub fn memberListToComponentsIfDifferent(allocator: *std.mem.Allocator, original: []const string, new: string) ![]const string {
+        pub fn memberListToComponentsIfDifferent(allocator: std.mem.Allocator, original: []const string, new: string) ![]const string {
             var splitter = std.mem.split(u8, new, ".");
 
             var needs_alloc = false;
@@ -747,7 +747,7 @@ pub const JSX = struct {
             return out;
         }
 
-        pub fn fromApi(jsx: api.Api.Jsx, allocator: *std.mem.Allocator) !Pragma {
+        pub fn fromApi(jsx: api.Api.Jsx, allocator: std.mem.Allocator) !Pragma {
             var pragma = JSX.Pragma{};
 
             if (jsx.fragment.len > 0) {
@@ -814,7 +814,7 @@ pub const DefaultUserDefines = struct {
 };
 
 pub fn definesFromTransformOptions(
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     log: *logger.Log,
     _input_define: ?Api.StringMap,
     hmr: bool,
@@ -883,7 +883,7 @@ pub fn definesFromTransformOptions(
     );
 }
 
-pub fn loadersFromTransformOptions(allocator: *std.mem.Allocator, _loaders: ?Api.LoaderMap) !std.StringHashMap(Loader) {
+pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.LoaderMap) !std.StringHashMap(Loader) {
     var input_loaders = _loaders orelse std.mem.zeroes(Api.LoaderMap);
     var loader_values = try allocator.alloc(Loader, input_loaders.loaders.len);
     for (loader_values) |_, i| {
@@ -991,7 +991,7 @@ pub const BundleOptions = struct {
         return !this.defines_loaded;
     }
 
-    pub fn loadDefines(this: *BundleOptions, allocator: *std.mem.Allocator, loader_: ?*DotEnv.Loader, env: ?*const Env) !void {
+    pub fn loadDefines(this: *BundleOptions, allocator: std.mem.Allocator, loader_: ?*DotEnv.Loader, env: ?*const Env) !void {
         if (this.defines_loaded) {
             return;
         }
@@ -1059,7 +1059,7 @@ pub const BundleOptions = struct {
     };
 
     pub fn fromApi(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         fs: *Fs.FileSystem,
         log: *logger.Log,
         transform: Api.TransformOptions,
@@ -1420,7 +1420,7 @@ pub const TransformOptions = struct {
     platform: Platform = Platform.browser,
     main_fields: []string = Platform.DefaultMainFields.get(Platform.browser),
 
-    pub fn initUncached(allocator: *std.mem.Allocator, entryPointName: string, code: string) !TransformOptions {
+    pub fn initUncached(allocator: std.mem.Allocator, entryPointName: string, code: string) !TransformOptions {
         assert(entryPointName.len > 0);
 
         var entryPoint = Fs.File{
@@ -1629,7 +1629,7 @@ pub const TransformResult = struct {
         outbase: string,
         output_files: []OutputFile,
         log: *logger.Log,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
     ) !TransformResult {
         var errors = try std.ArrayList(logger.Msg).initCapacity(allocator, log.errors);
         var warnings = try std.ArrayList(logger.Msg).initCapacity(allocator, log.warnings);
@@ -1664,10 +1664,10 @@ pub const Env = struct {
     behavior: Api.DotEnvBehavior = Api.DotEnvBehavior.disable,
     prefix: string = "",
     defaults: List = List{},
-    allocator: *std.mem.Allocator = undefined,
+    allocator: std.mem.Allocator = undefined,
 
     pub fn init(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
     ) Env {
         return Env{
             .allocator = allocator,
@@ -1716,7 +1716,7 @@ pub const Env = struct {
         }
     }
 
-    pub fn setFromLoaded(this: *Env, config: Api.LoadedEnvConfig, allocator: *std.mem.Allocator) !void {
+    pub fn setFromLoaded(this: *Env, config: Api.LoadedEnvConfig, allocator: std.mem.Allocator) !void {
         this.allocator = allocator;
         this.behavior = switch (config.dotenv) {
             Api.DotEnvBehavior.prefix => Api.DotEnvBehavior.prefix,
@@ -1778,14 +1778,14 @@ pub const EntryPoint = struct {
         }
     };
 
-    pub fn toAPI(this: *const EntryPoint, allocator: *std.mem.Allocator, toplevel_path: string, kind: Kind) !?Api.FrameworkEntryPoint {
+    pub fn toAPI(this: *const EntryPoint, allocator: std.mem.Allocator, toplevel_path: string, kind: Kind) !?Api.FrameworkEntryPoint {
         if (this.kind == .disabled)
             return null;
 
         return Api.FrameworkEntryPoint{ .kind = kind.toAPI(), .env = this.env.toAPI(), .path = try this.normalizedPath(allocator, toplevel_path) };
     }
 
-    fn normalizedPath(this: *const EntryPoint, allocator: *std.mem.Allocator, toplevel_path: string) !string {
+    fn normalizedPath(this: *const EntryPoint, allocator: std.mem.Allocator, toplevel_path: string) !string {
         std.debug.assert(std.fs.path.isAbsolute(this.path));
         var str = this.path;
         if (strings.indexOf(str, toplevel_path)) |top| {
@@ -1809,7 +1809,7 @@ pub const EntryPoint = struct {
     pub fn fromLoaded(
         this: *EntryPoint,
         framework_entry_point: Api.FrameworkEntryPoint,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         kind: Kind,
     ) !void {
         this.path = framework_entry_point.path;
@@ -1820,7 +1820,7 @@ pub const EntryPoint = struct {
     pub fn fromAPI(
         this: *EntryPoint,
         framework_entry_point: Api.FrameworkEntryPointMessage,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         kind: Kind,
     ) !void {
         this.path = framework_entry_point.path orelse "";
@@ -1868,7 +1868,7 @@ pub const Framework = struct {
         return entry;
     }
 
-    pub fn fromLoadedFramework(loaded: Api.LoadedFramework, allocator: *std.mem.Allocator) !Framework {
+    pub fn fromLoadedFramework(loaded: Api.LoadedFramework, allocator: std.mem.Allocator) !Framework {
         var framework = Framework{
             .package = loaded.package,
             .development = loaded.development,
@@ -1895,7 +1895,7 @@ pub const Framework = struct {
 
     pub fn toAPI(
         this: *const Framework,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         toplevel_path: string,
     ) !?Api.LoadedFramework {
         if (this.client.kind == .disabled and this.server.kind == .disabled and this.fallback.kind == .disabled) return null;
@@ -1920,7 +1920,7 @@ pub const Framework = struct {
 
     pub fn fromApi(
         transform: Api.FrameworkConfig,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
     ) !Framework {
         var client = EntryPoint{};
         var server = EntryPoint{};
@@ -2010,7 +2010,7 @@ pub const RouteConfig = struct {
         };
     }
 
-    pub fn fromApi(router_: Api.RouteConfig, allocator: *std.mem.Allocator) !RouteConfig {
+    pub fn fromApi(router_: Api.RouteConfig, allocator: std.mem.Allocator) !RouteConfig {
         var router = zero();
 
         var static_dir: string = std.mem.trimRight(u8, router_.static_dir orelse "", "/\\");

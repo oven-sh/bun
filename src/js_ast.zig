@@ -29,7 +29,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
         const Block = struct {
             items: [count]UnionValueType align(MaxAlign) = undefined,
             used: usize = 0,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
 
             pub inline fn isFull(block: *const Block) bool {
                 return block.used >= block.items.len;
@@ -49,7 +49,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
         overflow_ptrs: [4096 * 3]*Block = undefined,
         overflow: []*Block = &([_]*Block{}),
         overflow_used: usize = 0,
-        allocator: *Allocator,
+        allocator: Allocator,
 
         pub threadlocal var instance: Self = undefined;
         pub threadlocal var _self: *Self = undefined;
@@ -62,7 +62,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
             _self.overflow_used = 0;
         }
 
-        pub fn init(allocator: *std.mem.Allocator) *Self {
+        pub fn init(allocator: std.mem.Allocator) *Self {
             instance = Self{
                 .allocator = allocator,
                 .block = Block{ .allocator = allocator },
@@ -229,7 +229,7 @@ pub const Binding = struct {
         const ExprType = expr_type;
         return struct {
             context: *ExprType,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             pub const Context = @This();
 
             pub fn wrapIdentifier(ctx: *const Context, loc: logger.Loc, ref: Ref) Expr {
@@ -330,7 +330,7 @@ pub const Binding = struct {
         }
     }
 
-    pub fn alloc(allocator: *std.mem.Allocator, t: anytype, loc: logger.Loc) Binding {
+    pub fn alloc(allocator: std.mem.Allocator, t: anytype, loc: logger.Loc) Binding {
         icount += 1;
         switch (@TypeOf(t)) {
             B.Identifier => {
@@ -737,7 +737,7 @@ pub const Symbol = struct {
             return &self.symbols_for_source[ref.source_index][ref.inner_index];
         }
 
-        pub fn init(sourceCount: usize, allocator: *std.mem.Allocator) !Map {
+        pub fn init(sourceCount: usize, allocator: std.mem.Allocator) !Map {
             var symbols_for_source: [][]Symbol = try allocator.alloc([]Symbol, sourceCount);
             return Map{ .symbols_for_source = symbols_for_source };
         }
@@ -1165,7 +1165,7 @@ pub const E = struct {
         pub var @"null" = String{ .utf8 = "null" };
         pub var @"undefined" = String{ .utf8 = "undefined" };
 
-        pub fn clone(str: *const String, allocator: *std.mem.Allocator) !String {
+        pub fn clone(str: *const String, allocator: std.mem.Allocator) !String {
             if (str.isUTF8()) {
                 return String{
                     .utf8 = try allocator.dupe(u8, str.utf8),
@@ -1237,7 +1237,7 @@ pub const E = struct {
             }
         }
 
-        pub fn string(s: *const String, allocator: *std.mem.Allocator) !string {
+        pub fn string(s: *const String, allocator: std.mem.Allocator) !string {
             if (s.isUTF8()) {
                 return s.utf8;
             } else {
@@ -1611,7 +1611,7 @@ pub const Stmt = struct {
             },
         }
     }
-    inline fn comptime_alloc(allocator: *std.mem.Allocator, comptime tag_name: string, comptime typename: type, origData: anytype, loc: logger.Loc) Stmt {
+    inline fn comptime_alloc(allocator: std.mem.Allocator, comptime tag_name: string, comptime typename: type, origData: anytype, loc: logger.Loc) Stmt {
         return Stmt{ .loc = loc, .data = @unionInit(Data, tag_name, Data.Store.append(typename, origData)) };
     }
 
@@ -1619,7 +1619,7 @@ pub const Stmt = struct {
         return Stmt{ .loc = loc, .data = @unionInit(Data, tag_name, origData) };
     }
 
-    pub fn alloc(allocator: *std.mem.Allocator, comptime StatementData: type, origData: StatementData, loc: logger.Loc) Stmt {
+    pub fn alloc(allocator: std.mem.Allocator, comptime StatementData: type, origData: StatementData, loc: logger.Loc) Stmt {
         icount += 1;
         switch (StatementData) {
             S.Block => {
@@ -1849,7 +1849,7 @@ pub const Stmt = struct {
 
             threadlocal var has_inited = false;
             pub threadlocal var disable_reset = false;
-            pub fn create(allocator: *std.mem.Allocator) void {
+            pub fn create(allocator: std.mem.Allocator) void {
                 if (has_inited) {
                     return;
                 }
@@ -2183,7 +2183,7 @@ pub const Expr = struct {
         return ArrayIterator{ .array = array, .index = 0 };
     }
 
-    pub inline fn asString(expr: *const Expr, allocator: *std.mem.Allocator) ?string {
+    pub inline fn asString(expr: *const Expr, allocator: std.mem.Allocator) ?string {
         if (std.meta.activeTag(expr.data) != .e_string) return null;
 
         const key_str = expr.data.e_string;
@@ -2222,7 +2222,7 @@ pub const Expr = struct {
         comptime op: Op.Code,
         a: Expr,
         b: Expr,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
     ) Expr {
         // "(a, b) op c" => "a, b op c"
         switch (a.data) {
@@ -2255,7 +2255,7 @@ pub const Expr = struct {
         return Expr.init(E.Binary, E.Binary{ .op = op, .left = a, .right = b }, a.loc);
     }
 
-    pub fn joinWithComma(a: Expr, b: Expr, allocator: *std.mem.Allocator) Expr {
+    pub fn joinWithComma(a: Expr, b: Expr, allocator: std.mem.Allocator) Expr {
         if (a.isMissing()) {
             return b;
         }
@@ -2267,7 +2267,7 @@ pub const Expr = struct {
         return Expr.init(E.Binary, E.Binary{ .op = .bin_comma, .left = a, .right = b }, a.loc);
     }
 
-    pub fn joinAllWithComma(all: []Expr, allocator: *std.mem.Allocator) Expr {
+    pub fn joinAllWithComma(all: []Expr, allocator: std.mem.Allocator) Expr {
         std.debug.assert(all.len > 0);
         switch (all.len) {
             1 => {
@@ -2288,7 +2288,7 @@ pub const Expr = struct {
         }
     }
 
-    pub fn joinAllWithCommaCallback(all: []Expr, comptime Context: type, ctx: Context, callback: (fn (ctx: anytype, expr: anytype) ?Expr), allocator: *std.mem.Allocator) ?Expr {
+    pub fn joinAllWithCommaCallback(all: []Expr, comptime Context: type, ctx: Context, callback: (fn (ctx: anytype, expr: anytype) ?Expr), allocator: std.mem.Allocator) ?Expr {
         std.debug.assert(all.len > 0);
         switch (all.len) {
             1 => {
@@ -3110,14 +3110,14 @@ pub const Expr = struct {
         return false;
     }
 
-    pub fn assign(a: Expr, b: Expr, allocator: *std.mem.Allocator) Expr {
+    pub fn assign(a: Expr, b: Expr, allocator: std.mem.Allocator) Expr {
         return init(E.Binary, E.Binary{
             .op = .bin_assign,
             .left = a,
             .right = b,
         }, a.loc);
     }
-    pub inline fn at(expr: Expr, comptime Type: type, t: Type, allocator: *std.mem.Allocator) Expr {
+    pub inline fn at(expr: Expr, comptime Type: type, t: Type, allocator: std.mem.Allocator) Expr {
         return init(Type, t, expr.loc);
     }
 
@@ -3125,7 +3125,7 @@ pub const Expr = struct {
     // will potentially be simplified to avoid generating unnecessary extra "!"
     // operators. For example, calling this with "!!x" will return "!x" instead
     // of returning "!!!x".
-    pub fn not(expr: *Expr, allocator: *std.mem.Allocator) Expr {
+    pub fn not(expr: *Expr, allocator: std.mem.Allocator) Expr {
         return maybeSimplifyNot(expr, allocator) orelse expr.*;
     }
 
@@ -3141,7 +3141,7 @@ pub const Expr = struct {
     // whole operator (i.e. the "!x") if it can be simplified, or false if not.
     // It's separate from "Not()" above to avoid allocation on failure in case
     // that is undesired.
-    pub fn maybeSimplifyNot(expr: *Expr, allocator: *std.mem.Allocator) ?Expr {
+    pub fn maybeSimplifyNot(expr: *Expr, allocator: std.mem.Allocator) ?Expr {
         switch (expr.data) {
             .e_null, .e_undefined => {
                 return expr.at(E.Boolean, E.Boolean{ .value = true }, allocator);
@@ -3203,7 +3203,7 @@ pub const Expr = struct {
         return null;
     }
 
-    pub fn assignStmt(a: Expr, b: Expr, allocator: *std.mem.Allocator) Stmt {
+    pub fn assignStmt(a: Expr, b: Expr, allocator: std.mem.Allocator) Stmt {
         return Stmt.alloc(
             allocator,
             S.SExpr,
@@ -3308,7 +3308,7 @@ pub const Expr = struct {
 
             threadlocal var has_inited = false;
             pub threadlocal var disable_reset = false;
-            pub fn create(allocator: *std.mem.Allocator) void {
+            pub fn create(allocator: std.mem.Allocator) void {
                 if (has_inited) {
                     return;
                 }
@@ -3864,7 +3864,7 @@ pub const Ast = struct {
 
     pub const empty = Ast{ .parts = &[_]Part{}, .runtime_imports = undefined };
 
-    pub fn toJSON(self: *const Ast, allocator: *std.mem.Allocator, stream: anytype) !void {
+    pub fn toJSON(self: *const Ast, allocator: std.mem.Allocator, stream: anytype) !void {
         const opts = std.json.StringifyOptions{ .whitespace = std.json.StringifyOptions.Whitespace{
             .separator = true,
         } };
@@ -4321,7 +4321,7 @@ pub const Macro = struct {
             },
         );
 
-        pub fn makeFromExpr(allocator: *std.mem.Allocator, expr: Expr) js.JSObjectRef {
+        pub fn makeFromExpr(allocator: std.mem.Allocator, expr: Expr) js.JSObjectRef {
             var ptr = allocator.create(JSNode) catch unreachable;
             ptr.* = JSNode.initExpr(expr);
             // If we look at JSObjectMake, we can see that all it does with the ctx value is lookup what the global object is
@@ -5319,7 +5319,7 @@ pub const Macro = struct {
                 log: *logger.Log,
                 args: ExprList,
                 bun_identifier: *E.Identifier,
-                allocator: *std.mem.Allocator,
+                allocator: std.mem.Allocator,
                 parent_tag: Tag = Tag.e_missing,
 
                 pub fn initWriter(p: *P, bun_identifier: *E.Identifier) JSXWriter {
@@ -6136,7 +6136,7 @@ pub const Macro = struct {
             exception: JSCBase.ExceptionValueRef = null,
             ctx: js.JSContextRef,
             errored: bool = false,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             loc: logger.Loc,
             args_value: JSC.JSValue,
             args_i: u32 = 0,
@@ -7024,7 +7024,7 @@ pub const Macro = struct {
     disabled: bool = false,
 
     pub fn init(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         resolver: *Resolver,
         resolved: ResolveResult,
         log: *logger.Log,
@@ -7081,7 +7081,7 @@ pub const Macro = struct {
         pub fn run(
             macro: Macro,
             log: *logger.Log,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             function_name: string,
             caller: Expr,
             args: []Expr,

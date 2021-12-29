@@ -4203,7 +4203,7 @@ pub const BufferWriter = struct {
     append_null_byte: bool = false,
     approximate_newline_count: usize = 0,
 
-    pub fn init(allocator: *std.mem.Allocator) !BufferWriter {
+    pub fn init(allocator: std.mem.Allocator) !BufferWriter {
         return BufferWriter{
             .buffer = MutableString.init(
                 allocator,

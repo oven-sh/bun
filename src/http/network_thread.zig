@@ -54,7 +54,7 @@ const IdentityContext = struct {
 
 const AddressListCache = std.HashMap(u64, CachedAddressList, IdentityContext, 80);
 var address_list_cached: AddressListCache = undefined;
-pub fn getAddressList(allocator: *std.mem.Allocator, name: []const u8, port: u16) !*CachedAddressList {
+pub fn getAddressList(allocator: std.mem.Allocator, name: []const u8, port: u16) !*CachedAddressList {
     const hash = CachedAddressList.hash(name, port);
     const now = @intCast(u64, @maximum(0, std.time.milliTimestamp()));
     if (address_list_cached.getPtr(hash)) |cached| {

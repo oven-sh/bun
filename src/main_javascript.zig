@@ -58,7 +58,7 @@ pub const Cli = struct {
     const LoaderMatcher = strings.ExactSizeMatcher(4);
     pub fn ColonListType(comptime t: type, value_resolver: anytype) type {
         return struct {
-            pub fn init(allocator: *std.mem.Allocator, count: usize) !@This() {
+            pub fn init(allocator: std.mem.Allocator, count: usize) !@This() {
                 var keys = try allocator.alloc(string, count);
                 var values = try allocator.alloc(t, count);
 
@@ -82,7 +82,7 @@ pub const Cli = struct {
                 }
             }
 
-            pub fn resolve(allocator: *std.mem.Allocator, input: []const string) !@This() {
+            pub fn resolve(allocator: std.mem.Allocator, input: []const string) !@This() {
                 var list = try init(allocator, input.len);
                 try list.load(input);
                 return list;
@@ -119,7 +119,7 @@ pub const Cli = struct {
         }
 
         pub fn readFile(
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             cwd: string,
             filename: string,
         ) ![]u8 {
@@ -132,7 +132,7 @@ pub const Cli = struct {
             return try file.readToEndAlloc(allocator, stats.size);
         }
 
-        pub fn parse(allocator: *std.mem.Allocator, stdout: anytype, stderr: anytype) !Api.TransformOptions {
+        pub fn parse(allocator: std.mem.Allocator, stdout: anytype, stderr: anytype) !Api.TransformOptions {
             @setEvalBranchQuota(9999);
             const params = comptime [_]clap.Param(clap.Help){
                 clap.parseParam("-h, --help                        Display this help and exit.              ") catch unreachable,
@@ -352,20 +352,20 @@ pub const Cli = struct {
             return error.InvalidJSXRuntime;
         }
     }
-    pub fn printScanResults(scan_results: bundler.ScanResult.Summary, allocator: *std.mem.Allocator) !void {
+    pub fn printScanResults(scan_results: bundler.ScanResult.Summary, allocator: std.mem.Allocator) !void {
         var stdout = std.io.getStdOut();
         const print_start = std.time.nanoTimestamp();
         try std.json.stringify(scan_results.list(), .{}, stdout.writer());
         Output.printError("\nJSON printing took: {d}\n", .{std.time.nanoTimestamp() - print_start});
     }
-    pub fn startTransform(allocator: *std.mem.Allocator, args: Api.TransformOptions, log: *logger.Log) anyerror!void {}
+    pub fn startTransform(allocator: std.mem.Allocator, args: Api.TransformOptions, log: *logger.Log) anyerror!void {}
     const StringS = struct {
         pub const src = "var headers = new Headers(); headers.set(\"hey\", \"hi\"); console.log(headers.get(\"hey\")); \"HELLO\";";
     };
 
     pub fn Threader(comptime Stdout: type, comptime Stderr: type) type {
         return struct {
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             stdout: Stdout,
             stderr: Stderr,
             args: Api.TransformOptions,
@@ -392,7 +392,7 @@ pub const Cli = struct {
         };
     }
 
-    pub fn start(allocator: *std.mem.Allocator, stdout: anytype, stderr: anytype) anyerror!void {
+    pub fn start(allocator: std.mem.Allocator, stdout: anytype, stderr: anytype) anyerror!void {
         const start_time = std.time.nanoTimestamp();
         var log = logger.Log.init(allocator);
         var panicker = MainPanicHandler.init(&log);

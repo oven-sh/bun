@@ -62,7 +62,7 @@ pub const Arguments = struct {
     body: string = "",
     turbo: bool = false,
 
-    pub fn parse(allocator: *std.mem.Allocator) !Arguments {
+    pub fn parse(allocator: std.mem.Allocator) !Arguments {
         var diag = clap.Diagnostic{};
 
         var args = clap.parse(clap.Help, &params, .{

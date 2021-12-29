@@ -22,7 +22,7 @@ pub const DefaultBunDefines = struct {
     };
 };
 
-pub fn configureTransformOptionsForBunVM(allocator: *std.mem.Allocator, _args: Api.TransformOptions) !Api.TransformOptions {
+pub fn configureTransformOptionsForBunVM(allocator: std.mem.Allocator, _args: Api.TransformOptions) !Api.TransformOptions {
     var args = _args;
 
     // args.serve = false;
@@ -32,7 +32,7 @@ pub fn configureTransformOptionsForBunVM(allocator: *std.mem.Allocator, _args: A
     return try configureTransformOptionsForBun(allocator, args);
 }
 
-pub fn configureTransformOptionsForBun(allocator: *std.mem.Allocator, _args: Api.TransformOptions) !Api.TransformOptions {
+pub fn configureTransformOptionsForBun(allocator: std.mem.Allocator, _args: Api.TransformOptions) !Api.TransformOptions {
     var args = _args;
     args.platform = Api.Platform.bun;
     return args;

@@ -194,7 +194,7 @@ pub const Bitset = struct {
 //         };
 //     }
 
-//     pub fn init(allocator: *std.mem.Allocator) !void {
+//     pub fn init(allocator: std.mem.Allocator) !void {
 //         starts = std.AutoHashMap(i32, void).init(allocator);
 //         parts = std.AutoHashMap(i32, void).init(allocator);
 

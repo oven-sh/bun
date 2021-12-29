@@ -50,7 +50,7 @@ pub const Response = struct {
         },
     );
 
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     body: Body,
     status_text: string = "",
 
@@ -437,7 +437,7 @@ pub const Fetch = struct {
             tasklet: *FetchTasklet,
         };
 
-        pub fn init(allocator: *std.mem.Allocator) anyerror!FetchTasklet {
+        pub fn init(allocator: std.mem.Allocator) anyerror!FetchTasklet {
             return FetchTasklet{};
         }
 
@@ -557,7 +557,7 @@ pub const Fetch = struct {
         }
 
         pub fn get(
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             method: Method,
             url: ZigURL,
             headers: Headers.Entries,
@@ -586,7 +586,7 @@ pub const Fetch = struct {
         }
 
         pub fn queue(
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             global: *JSGlobalObject,
             method: Method,
             url: ZigURL,
@@ -760,7 +760,7 @@ pub const Headers = struct {
     pub const Entries = std.MultiArrayList(Kv);
     entries: Entries,
     buf: std.ArrayListUnmanaged(u8),
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     used: u32 = 0,
     guard: Guard = Guard.none,
 
@@ -1052,7 +1052,7 @@ pub const Headers = struct {
         none,
     };
 
-    pub fn fromPicoHeaders(allocator: *std.mem.Allocator, picohttp_headers: []const picohttp.Header) !Headers {
+    pub fn fromPicoHeaders(allocator: std.mem.Allocator, picohttp_headers: []const picohttp.Header) !Headers {
         var total_len: usize = 0;
         for (picohttp_headers) |header| {
             total_len += header.name.len;
@@ -1093,7 +1093,7 @@ pub const Headers = struct {
     }
 
     // TODO: is it worth making this lazy? instead of copying all the request headers, should we just do it on get/put/iterator?
-    pub fn fromRequestCtx(allocator: *std.mem.Allocator, request: *RequestContext) !Headers {
+    pub fn fromRequestCtx(allocator: std.mem.Allocator, request: *RequestContext) !Headers {
         return fromPicoHeaders(allocator, request.request.headers);
     }
 
@@ -1277,9 +1277,9 @@ pub const Body = struct {
     value: Value,
     ptr: ?[*]u8 = null,
     len: usize = 0,
-    ptr_allocator: ?*std.mem.Allocator = null,
+    ptr_allocator: ?std.mem.Allocator = null,
 
-    pub fn deinit(this: *Body, allocator: *std.mem.Allocator) void {
+    pub fn deinit(this: *Body, allocator: std.mem.Allocator) void {
         if (this.init.headers) |headers| {
             headers.deinit();
         }
@@ -1297,7 +1297,7 @@ pub const Body = struct {
         headers: ?Headers,
         status_code: u16,
 
-        pub fn init(allocator: *std.mem.Allocator, ctx: js.JSContextRef, init_ref: js.JSValueRef) !?Init {
+        pub fn init(allocator: std.mem.Allocator, ctx: js.JSContextRef, init_ref: js.JSValueRef) !?Init {
             var result = Init{ .headers = null, .status_code = 0 };
             var array = js.JSObjectCopyPropertyNames(ctx, init_ref);
             defer js.JSPropertyNameArrayRelease(array);

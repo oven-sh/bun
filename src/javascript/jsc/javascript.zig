@@ -760,7 +760,7 @@ pub const Task = TaggedPointerUnion(.{
 // Its unavailable on Linux
 pub const VirtualMachine = struct {
     global: *JSGlobalObject,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     node_modules: ?*NodeModuleBundle = null,
     bundler: Bundler,
     watcher: ?*http.Watcher = null,
@@ -858,7 +858,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn init(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         _args: Api.TransformOptions,
         existing_bundle: ?*NodeModuleBundle,
         _log: ?*logger.Log,
@@ -2054,11 +2054,11 @@ pub const EventListenerMixin = struct {
 
 pub const ResolveError = struct {
     msg: logger.Msg,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     referrer: ?Fs.Path = null,
     logged: bool = false,
 
-    pub fn fmt(allocator: *std.mem.Allocator, specifier: string, referrer: string, err: anyerror) !string {
+    pub fn fmt(allocator: std.mem.Allocator, specifier: string, referrer: string, err: anyerror) !string {
         switch (err) {
             error.ModuleNotFound => {
                 if (Resolver.isPackagePath(specifier)) {
@@ -2119,7 +2119,7 @@ pub const ResolveError = struct {
     );
 
     pub fn create(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         msg: logger.Msg,
         referrer: string,
     ) js.JSObjectRef {
@@ -2203,7 +2203,7 @@ pub const ResolveError = struct {
 pub const BuildError = struct {
     msg: logger.Msg,
     // resolve_result: Resolver.Result,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     logged: bool = false,
 
     pub const Class = NewClass(
@@ -2231,7 +2231,7 @@ pub const BuildError = struct {
     );
 
     pub fn create(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         msg: logger.Msg,
         // resolve_result: *const Resolver.Result,
     ) js.JSObjectRef {

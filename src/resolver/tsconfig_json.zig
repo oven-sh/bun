@@ -77,7 +77,7 @@ pub const TSConfigJSON = struct {
     }
 
     pub fn parse(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         log: *logger.Log,
         source: logger.Source,
         json_cache: *cache.Json,
@@ -282,7 +282,7 @@ pub const TSConfigJSON = struct {
         return _result;
     }
 
-    pub fn isValidTSConfigPathPattern(text: string, log: *logger.Log, source: *const logger.Source, loc: logger.Loc, allocator: *std.mem.Allocator) bool {
+    pub fn isValidTSConfigPathPattern(text: string, log: *logger.Log, source: *const logger.Source, loc: logger.Loc, allocator: std.mem.Allocator) bool {
         var found_asterisk = false;
         for (text) |c, i| {
             if (c == '*') {
@@ -298,7 +298,7 @@ pub const TSConfigJSON = struct {
         return true;
     }
 
-    pub fn parseMemberExpressionForJSX(log: *logger.Log, source: *const logger.Source, loc: logger.Loc, text: string, allocator: *std.mem.Allocator) ![]string {
+    pub fn parseMemberExpressionForJSX(log: *logger.Log, source: *const logger.Source, loc: logger.Loc, text: string, allocator: std.mem.Allocator) ![]string {
         if (text.len == 0) {
             return &([_]string{});
         }
@@ -323,7 +323,7 @@ pub const TSConfigJSON = struct {
         return c == '/' or c == '\\';
     }
 
-    pub fn isValidTSConfigPathNoBaseURLPattern(text: string, log: *logger.Log, source: *const logger.Source, allocator: *std.mem.Allocator, loc: logger.Loc) bool {
+    pub fn isValidTSConfigPathNoBaseURLPattern(text: string, log: *logger.Log, source: *const logger.Source, allocator: std.mem.Allocator, loc: logger.Loc) bool {
         var c0: u8 = 0;
         var c1: u8 = 0;
         var c2: u8 = 0;

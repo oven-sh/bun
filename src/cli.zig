@@ -47,8 +47,8 @@ var start_time: i128 = undefined;
 
 pub const Cli = struct {
     var wait_group: sync.WaitGroup = undefined;
-    pub fn startTransform(allocator: *std.mem.Allocator, args: Api.TransformOptions, log: *logger.Log) anyerror!void {}
-    pub fn start(allocator: *std.mem.Allocator, stdout: anytype, stderr: anytype, comptime MainPanicHandler: type) anyerror!void {
+    pub fn startTransform(allocator: std.mem.Allocator, args: Api.TransformOptions, log: *logger.Log) anyerror!void {}
+    pub fn start(allocator: std.mem.Allocator, stdout: anytype, stderr: anytype, comptime MainPanicHandler: type) anyerror!void {
         start_time = std.time.nanoTimestamp();
         var log = try allocator.create(logger.Log);
         log.* = logger.Log.init(allocator);
@@ -102,7 +102,7 @@ pub const Arguments = struct {
     }
 
     pub fn readFile(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         cwd: string,
         filename: string,
     ) ![]u8 {
@@ -173,7 +173,7 @@ pub const Arguments = struct {
         std.os.exit(0);
     }
 
-    pub fn parse(allocator: *std.mem.Allocator, ctx: *Command.Context, comptime cmd: Command.Tag) !Api.TransformOptions {
+    pub fn parse(allocator: std.mem.Allocator, ctx: *Command.Context, comptime cmd: Command.Tag) !Api.TransformOptions {
         var diag = clap.Diagnostic{};
 
         var args = clap.parse(clap.Help, &params, .{
@@ -438,15 +438,15 @@ pub const Arguments = struct {
 };
 
 const AutoCommand = struct {
-    pub fn exec(allocator: *std.mem.Allocator) !void {
+    pub fn exec(allocator: std.mem.Allocator) !void {
         try HelpCommand.execWithReason(allocator, .invalid_command);
     }
 };
 const InitCommand = struct {
-    pub fn exec(allocator: *std.mem.Allocator) !void {}
+    pub fn exec(allocator: std.mem.Allocator) !void {}
 };
 pub const HelpCommand = struct {
-    pub fn exec(allocator: *std.mem.Allocator) !void {
+    pub fn exec(allocator: std.mem.Allocator) !void {
         @setCold(true);
         execWithReason(allocator, .explicit);
     }
@@ -526,7 +526,7 @@ pub const HelpCommand = struct {
 
         Output.flush();
     }
-    pub fn execWithReason(allocator: *std.mem.Allocator, comptime reason: Reason) void {
+    pub fn execWithReason(allocator: std.mem.Allocator, comptime reason: Reason) void {
         @setCold(true);
         printWithReason(reason);
 
@@ -577,12 +577,12 @@ pub const Command = struct {
         start_time: i128,
         args: Api.TransformOptions = std.mem.zeroes(Api.TransformOptions),
         log: *logger.Log,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         positionals: []const string = &[_]string{},
 
         debug: DebugOptions = DebugOptions{},
 
-        pub fn create(allocator: *std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
+        pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
             var ctx = Command.Context{
                 .args = std.mem.zeroes(Api.TransformOptions),
                 .log = log,
@@ -598,7 +598,7 @@ pub const Command = struct {
         }
     };
 
-    pub fn which(allocator: *std.mem.Allocator) Tag {
+    pub fn which(allocator: std.mem.Allocator) Tag {
         var args_iter = std.process.args();
         // first one is the executable name
         const skipped = args_iter.skip();
@@ -660,7 +660,7 @@ pub const Command = struct {
         "help",
     };
 
-    pub fn start(allocator: *std.mem.Allocator, log: *logger.Log) !void {
+    pub fn start(allocator: std.mem.Allocator, log: *logger.Log) !void {
         const tag = which(allocator);
         switch (tag) {
             .DiscordCommand => return try DiscordCommand.exec(allocator),

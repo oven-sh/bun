@@ -6,9 +6,9 @@ pub const Reader = struct {
 
     buf: []u8,
     remain: []u8,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 
-    pub fn init(buf: []u8, allocator: *std.mem.Allocator) Reader {
+    pub fn init(buf: []u8, allocator: std.mem.Allocator) Reader {
         return Reader{
             .buf = buf,
             .remain = buf,

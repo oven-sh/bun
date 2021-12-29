@@ -136,7 +136,7 @@ pub const Api = struct {
         resp.files = output_files;
 
         return resp;
-        // var source = logger.Source.initFile(file: fs.File, allocator: *std.mem.Allocator)
+        // var source = logger.Source.initFile(file: fs.File, allocator: std.mem.Allocator)
     }
 };
 
@@ -154,9 +154,9 @@ var hunk: alloc.Hunk = undefined;
 var hunk_high: alloc.HunkSide = undefined;
 var hunk_low: alloc.HunkSide = undefined;
 var perma_hunk: alloc.Hunk = undefined;
-var perma_hunk_high_alloc: *std.mem.Allocator = undefined;
+var perma_hunk_high_alloc: std.mem.Allocator = undefined;
 var perma_hunk_high: alloc.HunkSide = undefined;
-var perma_hunk_low_alloc: *std.mem.Allocator = undefined;
+var perma_hunk_low_alloc: std.mem.Allocator = undefined;
 var perma_hunk_low: alloc.HunkSide = undefined;
 var last_start_high: usize = 0;
 var last_start_low: usize = 0;

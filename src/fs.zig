@@ -64,7 +64,7 @@ pub const BytecodeCacheFetcher = struct {
 };
 
 pub const FileSystem = struct {
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     top_level_dir: string = "/",
     fs: Implementation,
 
@@ -111,14 +111,14 @@ pub const FileSystem = struct {
     };
 
     pub fn init1(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         top_level_dir: ?string,
     ) !*FileSystem {
         return init1WithForce(allocator, top_level_dir, false);
     }
 
     pub fn init1WithForce(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         top_level_dir: ?string,
         comptime force: bool,
     ) !*FileSystem {
@@ -226,11 +226,11 @@ pub const FileSystem = struct {
             }
         }
 
-        pub fn empty(dir: string, allocator: *std.mem.Allocator) DirEntry {
+        pub fn empty(dir: string, allocator: std.mem.Allocator) DirEntry {
             return DirEntry{ .dir = dir, .data = EntryMap.init(allocator) };
         }
 
-        pub fn init(dir: string, allocator: *std.mem.Allocator) DirEntry {
+        pub fn init(dir: string, allocator: std.mem.Allocator) DirEntry {
             if (comptime FeatureFlags.verbose_fs) {
                 Output.prettyln("\n  {s}", .{dir});
             }
@@ -343,7 +343,7 @@ pub const FileSystem = struct {
             };
         };
 
-        pub fn deinit(e: *Entry, allocator: *std.mem.Allocator) void {
+        pub fn deinit(e: *Entry, allocator: std.mem.Allocator) void {
             e.base_.deinit(allocator);
 
             allocator.free(e.dir);
@@ -436,7 +436,7 @@ pub const FileSystem = struct {
         });
     }
 
-    pub fn absAlloc(f: *@This(), allocator: *std.mem.Allocator, parts: anytype) !string {
+    pub fn absAlloc(f: *@This(), allocator: std.mem.Allocator, parts: anytype) !string {
         const joined = path_handler.joinAbsString(
             f.top_level_dir,
             parts,
@@ -457,7 +457,7 @@ pub const FileSystem = struct {
         return path_handler.joinAbsStringBuf(f.top_level_dir, buf, parts, .auto);
     }
 
-    pub fn joinAlloc(f: *@This(), allocator: *std.mem.Allocator, parts: anytype) !string {
+    pub fn joinAlloc(f: *@This(), allocator: std.mem.Allocator, parts: anytype) !string {
         const joined = f.join(parts);
         return try allocator.dupe(u8, joined);
     }
@@ -483,7 +483,7 @@ pub const FileSystem = struct {
     pub const RealFS = struct {
         entries_mutex: Mutex = Mutex.init(),
         entries: *EntriesOption.Map,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         cwd: string,
         parent_fs: *FileSystem = undefined,
         file_limit: usize = 32,
@@ -611,7 +611,7 @@ pub const FileSystem = struct {
         var _entries_option_map: *EntriesOption.Map = undefined;
         var _entries_option_map_loaded: bool = false;
         pub fn init(
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             cwd: string,
         ) RealFS {
             const file_limit = adjustUlimit() catch unreachable;
@@ -976,7 +976,7 @@ pub const PathName = struct {
     // the code as far as avoiding symbol name collisions. These names still go
     // through the renaming logic that all other symbols go through to avoid name
     // collisions.
-    pub fn nonUniqueNameString(self: *const PathName, allocator: *std.mem.Allocator) !string {
+    pub fn nonUniqueNameString(self: *const PathName, allocator: std.mem.Allocator) !string {
         if (strings.eqlComptime(self.base, "index")) {
             if (self.dir.len > 0) {
                 return MutableString.ensureValidIdentifier(PathName.init(self.dir).base, allocator);
@@ -1073,7 +1073,7 @@ pub const Path = struct {
 
     // This duplicates but only when strictly necessary
     // This will skip allocating if it's already in FilenameStore or DirnameStore
-    pub fn dupeAlloc(this: *const Path, allocator: *std.mem.Allocator) !Fs.Path {
+    pub fn dupeAlloc(this: *const Path, allocator: std.mem.Allocator) !Fs.Path {
         if (this.text.ptr == this.pretty.ptr and this.text.len == this.text.len) {
             if (FileSystem.FilenameStore.instance.exists(this.text) or FileSystem.DirnameStore.instance.exists(this.text)) {
                 return this.*;
@@ -1149,7 +1149,7 @@ pub const Path = struct {
         return try std.json.stringify(self.text, options, writer);
     }
 
-    pub fn generateKey(p: *Path, allocator: *std.mem.Allocator) !string {
+    pub fn generateKey(p: *Path, allocator: std.mem.Allocator) !string {
         return try std.fmt.allocPrint(allocator, "{s}://{s}", .{ p.namespace, p.text });
     }
 

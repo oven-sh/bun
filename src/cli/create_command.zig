@@ -85,7 +85,7 @@ const UnsupportedPackages = struct {
 };
 
 var bun_path: ?[:0]const u8 = null;
-fn execTask(allocator: *std.mem.Allocator, task_: string, cwd: string, PATH: string, npm_client: ?NPMClient) void {
+fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, PATH: string, npm_client: ?NPMClient) void {
     const task = std.mem.trim(u8, task_, " \n\r\t");
     if (task.len == 0) return;
 

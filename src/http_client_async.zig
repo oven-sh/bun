@@ -53,7 +53,7 @@ method: Method,
 header_entries: Headers.Entries,
 header_buf: string,
 url: URL,
-allocator: *std.mem.Allocator,
+allocator: std.mem.Allocator,
 verbose: bool = isTest,
 tcp_client: tcp.Client = undefined,
 body_size: u32 = 0,
@@ -75,7 +75,7 @@ request_headers_buf: [128]picohttp.Header = undefined,
 response_headers_buf: [128]picohttp.Header = undefined,
 
 pub fn init(
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     method: Method,
     url: URL,
     header_entries: Headers.Entries,
@@ -176,7 +176,7 @@ pub const HeaderBuilder = struct {
         this.content.count(value);
     }
 
-    pub fn allocate(this: *HeaderBuilder, allocator: *std.mem.Allocator) !void {
+    pub fn allocate(this: *HeaderBuilder, allocator: std.mem.Allocator) !void {
         try this.content.allocate(allocator);
         try this.entries.ensureTotalCapacity(allocator, this.header_count);
     }
@@ -227,7 +227,7 @@ pub const AsyncHTTP = struct {
     response_headers: Headers.Entries = Headers.Entries{},
     response_buffer: *MutableString,
     request_body: *MutableString,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     request_header_buf: string = "",
     method: Method = Method.GET,
     max_retry_count: u32 = 0,
@@ -266,7 +266,7 @@ pub const AsyncHTTP = struct {
     const AtomicState = std.atomic.Atomic(State);
 
     pub fn init(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         method: Method,
         url: URL,
         headers: Headers.Entries,
@@ -290,7 +290,7 @@ pub const AsyncHTTP = struct {
         return this;
     }
 
-    pub fn schedule(this: *AsyncHTTP, allocator: *std.mem.Allocator, batch: *ThreadPool.Batch) void {
+    pub fn schedule(this: *AsyncHTTP, allocator: std.mem.Allocator, batch: *ThreadPool.Batch) void {
         std.debug.assert(NetworkThread.global_loaded.load(.Monotonic) == 1);
         var sender = HTTPSender.get(this, allocator);
         this.state.store(.scheduled, .Monotonic);
@@ -337,7 +337,7 @@ pub const AsyncHTTP = struct {
 
         next: ?*HTTPSender = null,
 
-        pub fn get(http: *AsyncHTTP, allocator: *std.mem.Allocator) *HTTPSender {
+        pub fn get(http: *AsyncHTTP, allocator: std.mem.Allocator) *HTTPSender {
             @fence(.Acquire);
 
             var head_ = http_sender_head.load(.Monotonic);
@@ -416,11 +416,11 @@ const BufferPool = struct {
     pub const len = std.math.maxInt(u16) - 64;
     buf: [len]u8 = undefined,
     next: ?*BufferPool = null,
-    allocator: *std.mem.Allocator = undefined,
+    allocator: std.mem.Allocator = undefined,
 
     var head: ?*BufferPool = null;
 
-    pub fn get(allocator: *std.mem.Allocator) !*BufferPool {
+    pub fn get(allocator: std.mem.Allocator) !*BufferPool {
         if (head) |item| {
             var this = item;
             var head_ = item.next;
@@ -448,11 +448,11 @@ const URLBufferPool = struct {
     pub const len = 4096;
     buf: [len]u8 = undefined,
     next: ?*URLBufferPool = null,
-    allocator: *std.mem.Allocator = undefined,
+    allocator: std.mem.Allocator = undefined,
 
     var head: ?*URLBufferPool = null;
 
-    pub fn get(allocator: *std.mem.Allocator) !*URLBufferPool {
+    pub fn get(allocator: std.mem.Allocator) !*URLBufferPool {
         if (head) |item| {
             var this = item;
             var head_ = item.next;
@@ -482,12 +482,12 @@ pub const AsyncMessage = struct {
     completion: AsyncIO.Completion = undefined,
     buf: []u8 = undefined,
     pooled: ?*BufferPool = null,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     next: ?*AsyncMessage = null,
     context: *anyopaque = undefined,
     released: bool = false,
     var _first_ssl: ?*AsyncMessage = null;
-    pub fn getSSL(allocator: *std.mem.Allocator) *AsyncMessage {
+    pub fn getSSL(allocator: std.mem.Allocator) *AsyncMessage {
         if (_first_ssl) |first| {
             var prev = first;
             std.debug.assert(prev.released);
@@ -512,7 +512,7 @@ pub const AsyncMessage = struct {
     }
 
     var _first: ?*AsyncMessage = null;
-    pub fn get(allocator: *std.mem.Allocator) *AsyncMessage {
+    pub fn get(allocator: std.mem.Allocator) *AsyncMessage {
         if (_first) |first| {
             var prev = first;
             std.debug.assert(prev.released);
@@ -587,7 +587,7 @@ const AsyncSocket = struct {
     socket: std.os.socket_t = 0,
     head: *AsyncMessage = undefined,
     tail: *AsyncMessage = undefined,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     err: ?anyerror = null,
     queued: usize = 0,
     sent: usize = 0,
@@ -604,7 +604,7 @@ const AsyncSocket = struct {
 
     const ConnectError = AsyncIO.ConnectError || std.os.SocketError || std.os.SetSockOptError;
 
-    pub fn init(io: *AsyncIO, socket: std.os.socket_t, allocator: *std.mem.Allocator) !AsyncSocket {
+    pub fn init(io: *AsyncIO, socket: std.os.socket_t, allocator: std.mem.Allocator) !AsyncSocket {
         var head = AsyncMessage.get(allocator);
 
         return AsyncSocket{ .io = io, .socket = socket, .head = head, .tail = head, .allocator = allocator };
@@ -1040,7 +1040,7 @@ const AsyncSocket = struct {
             return len;
         }
 
-        pub inline fn init(allocator: *std.mem.Allocator, io: *AsyncIO) !SSL {
+        pub inline fn init(allocator: std.mem.Allocator, io: *AsyncIO) !SSL {
             var head = AsyncMessage.get(allocator);
 
             return SSL{
@@ -1073,7 +1073,7 @@ const AsyncSocket = struct {
 pub const AsyncBIO = struct {
     bio: *boring.BIO = undefined,
     socket_fd: std.os.socket_t = 0,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 
     read_wait: Wait = Wait.pending,
     send_wait: Wait = Wait.pending,
@@ -1109,7 +1109,7 @@ pub const AsyncBIO = struct {
         completed,
     };
 
-    fn instance(allocator: *std.mem.Allocator) *AsyncBIO {
+    fn instance(allocator: std.mem.Allocator) *AsyncBIO {
         if (head) |head_| {
             var next = head_.next;
             var ret = head_;
@@ -1150,7 +1150,7 @@ pub const AsyncBIO = struct {
         head = this;
     }
 
-    pub fn init(allocator: *std.mem.Allocator) !*AsyncBIO {
+    pub fn init(allocator: std.mem.Allocator) !*AsyncBIO {
         var bio = instance(allocator);
 
         bio.bio = boring.BIO_new(
@@ -1548,13 +1548,13 @@ pub fn sendHTTP(this: *HTTPClient, body: []const u8, body_out_str: *MutableStrin
 const ZlibPool = struct {
     lock: Lock = Lock.init(),
     items: std.ArrayList(*MutableString),
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     pub var instance: ZlibPool = undefined;
     pub var loaded: bool = false;
     pub var decompression_thread_pool: ThreadPool = undefined;
     pub var decompression_thread_pool_loaded: bool = false;
 
-    pub fn init(allocator: *std.mem.Allocator) ZlibPool {
+    pub fn init(allocator: std.mem.Allocator) ZlibPool {
         return ZlibPool{
             .allocator = allocator,
             .items = std.ArrayList(*MutableString).init(allocator),
@@ -1618,7 +1618,7 @@ const ZlibPool = struct {
 
         pub var head: ?*DecompressionTask = null;
 
-        pub fn get(allocator: *std.mem.Allocator) !*DecompressionTask {
+        pub fn get(allocator: std.mem.Allocator) !*DecompressionTask {
             if (head) |head_| {
                 var this = head_;
                 head = this.next;

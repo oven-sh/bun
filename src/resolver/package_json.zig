@@ -28,7 +28,7 @@ pub const PackageJSON = struct {
     };
 
     const node_modules_path = std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str;
-    pub fn nameForImport(this: *const PackageJSON, allocator: *std.mem.Allocator) !string {
+    pub fn nameForImport(this: *const PackageJSON, allocator: std.mem.Allocator) !string {
         if (strings.indexOf(this.source.path.text, node_modules_path)) |_| {
             return this.name;
         } else {
@@ -100,7 +100,7 @@ pub const PackageJSON = struct {
     fn loadDefineDefaults(
         env: *options.Env,
         json: *const js_ast.E.Object,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
     ) !void {
         var valid_count: usize = 0;
         for (json.properties) |prop| {
@@ -123,7 +123,7 @@ pub const PackageJSON = struct {
     fn loadOverrides(
         framework: *options.Framework,
         json: *const js_ast.E.Object,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
     ) void {
         var valid_count: usize = 0;
         for (json.properties) |prop| {
@@ -146,7 +146,7 @@ pub const PackageJSON = struct {
     fn loadDefineExpression(
         env: *options.Env,
         json: *const js_ast.E.Object,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
     ) anyerror!void {
         for (json.properties) |prop| {
             switch (prop.key.?.data) {
@@ -182,7 +182,7 @@ pub const PackageJSON = struct {
     fn loadFrameworkExpression(
         framework: *options.Framework,
         json: js_ast.Expr,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         comptime read_define: bool,
     ) bool {
         if (json.asProperty("client")) |client| {
@@ -277,7 +277,7 @@ pub const PackageJSON = struct {
         package_json: *const PackageJSON,
         pair: *FrameworkRouterPair,
         json: js_ast.Expr,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         comptime read_defines: bool,
         comptime load_framework: LoadFramework,
     ) void {
@@ -764,7 +764,7 @@ pub const ExportsMap = struct {
     root: Entry,
     exports_range: logger.Range = logger.Range.None,
 
-    pub fn parse(allocator: *std.mem.Allocator, source: *const logger.Source, log: *logger.Log, json: js_ast.Expr) ?ExportsMap {
+    pub fn parse(allocator: std.mem.Allocator, source: *const logger.Source, log: *logger.Log, json: js_ast.Expr) ?ExportsMap {
         var visitor = Visitor{ .allocator = allocator, .source = source, .log = log };
 
         const root = visitor.visit(json);
@@ -780,7 +780,7 @@ pub const ExportsMap = struct {
     }
 
     pub const Visitor = struct {
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         source: *const logger.Source,
         log: *logger.Log,
 
@@ -973,7 +973,7 @@ pub const ESModule = struct {
 
     debug_logs: ?*resolver.DebugLogs = null,
     conditions: ConditionsMap,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 
     pub const Resolution = struct {
         status: Status = Status.Undefined,

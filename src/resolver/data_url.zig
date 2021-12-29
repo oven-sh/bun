@@ -31,7 +31,7 @@ pub const PercentEncoding = struct {
     }
 
     /// decode path if it is percent encoded
-    pub fn decode(allocator: *Allocator, path: []const u8) EncodeError!?[]u8 {
+    pub fn decode(allocator: Allocator, path: []const u8) EncodeError!?[]u8 {
         var ret: ?[]u8 = null;
         errdefer if (ret) |some| allocator.free(some);
         var ret_index: usize = 0;
@@ -67,7 +67,7 @@ pub const PercentEncoding = struct {
     }
 
     /// percent encode if path contains characters not allowed in paths
-    pub fn encode(allocator: *Allocator, path: []const u8) EncodeError!?[]u8 {
+    pub fn encode(allocator: Allocator, path: []const u8) EncodeError!?[]u8 {
         var ret: ?[]u8 = null;
         var ret_index: usize = 0;
         for (path) |c, i| {
@@ -145,7 +145,7 @@ pub const DataURL = struct {
         return MimeType.decode(d.mime_type);
     }
 
-    pub fn decode_data(d: *DataURL, allocator: *std.mem.Allocator, url: string) !string {
+    pub fn decode_data(d: *DataURL, allocator: std.mem.Allocator, url: string) !string {
         // Try to read base64 data
         if (d.is_base64) {
             const size = try std.base64.standard.Decoder.calcSizeForSlice(d.data);

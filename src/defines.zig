@@ -66,7 +66,7 @@ pub const DefineData = struct {
         };
     }
 
-    pub fn from_mergable_input(defines: RawDefines, user_defines: *UserDefines, log: *logger.Log, allocator: *std.mem.Allocator) !void {
+    pub fn from_mergable_input(defines: RawDefines, user_defines: *UserDefines, log: *logger.Log, allocator: std.mem.Allocator) !void {
         try user_defines.ensureUnusedCapacity(@truncate(u32, defines.count()));
         var iter = defines.iterator();
         while (iter.next()) |entry| {
@@ -157,7 +157,7 @@ pub const DefineData = struct {
         }
     }
 
-    pub fn from_input(defines: RawDefines, log: *logger.Log, allocator: *std.mem.Allocator) !UserDefines {
+    pub fn from_input(defines: RawDefines, log: *logger.Log, allocator: std.mem.Allocator) !UserDefines {
         var user_defines = UserDefines.init(allocator);
         try from_mergable_input(defines, &user_defines, log, allocator);
 
@@ -199,9 +199,9 @@ var __filename = js_ast.E.String{ .utf8 = __filename_str };
 pub const Define = struct {
     identifiers: std.StringHashMap(IdentifierDefine),
     dots: std.StringHashMap([]DotDefine),
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 
-    pub fn insertFromIterator(define: *Define, allocator: *std.mem.Allocator, comptime Iterator: type, iter: Iterator) !void {
+    pub fn insertFromIterator(define: *Define, allocator: std.mem.Allocator, comptime Iterator: type, iter: Iterator) !void {
         while (iter.next()) |user_define| {
             const user_define_key = user_define.key_ptr.*;
             // If it has a dot, then it's a DotDefine.
@@ -255,7 +255,7 @@ pub const Define = struct {
         }
     }
 
-    pub fn init(allocator: *std.mem.Allocator, _user_defines: ?UserDefines, string_defines: ?UserDefinesArray) !*@This() {
+    pub fn init(allocator: std.mem.Allocator, _user_defines: ?UserDefines, string_defines: ?UserDefinesArray) !*@This() {
         var define = try allocator.create(Define);
         define.allocator = allocator;
         define.identifiers = std.StringHashMap(IdentifierDefine).init(allocator);

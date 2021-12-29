@@ -236,7 +236,7 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
         input: []const u8,
         buf: [buffer_size]u8,
         zlib: zStream_struct,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         arena: std.heap.ArenaAllocator,
         state: State = State.Uninitialized,
 
@@ -263,7 +263,7 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
             }
         }
 
-        pub fn init(writer: Writer, input: []const u8, allocator: *std.mem.Allocator) !*ZlibReader {
+        pub fn init(writer: Writer, input: []const u8, allocator: std.mem.Allocator) !*ZlibReader {
             var zlib_reader = try allocator.create(ZlibReader);
             zlib_reader.* = ZlibReader{
                 .context = writer,
@@ -419,7 +419,7 @@ pub const ZlibReaderArrayList = struct {
     list: std.ArrayListUnmanaged(u8),
     list_ptr: *std.ArrayListUnmanaged(u8),
     zlib: zStream_struct,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
     state: State = State.Uninitialized,
 
@@ -446,7 +446,7 @@ pub const ZlibReaderArrayList = struct {
         }
     }
 
-    pub fn init(input: []const u8, list: *std.ArrayListUnmanaged(u8), allocator: *std.mem.Allocator) ZlibError!*ZlibReader {
+    pub fn init(input: []const u8, list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator) ZlibError!*ZlibReader {
         var zlib_reader = try allocator.create(ZlibReader);
         zlib_reader.* = ZlibReader{
             .input = input,

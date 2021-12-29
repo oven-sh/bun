@@ -107,7 +107,7 @@ pub const Scanner = struct {
 
     has_newline_before: bool = false,
     has_delimiter_before: bool = false,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 
     source: *const logger.Source,
     codepoint: CodePoint = -1,
@@ -115,7 +115,7 @@ pub const Scanner = struct {
 
     did_warn_tailwind: bool = false,
 
-    pub fn init(log: *logger.Log, allocator: *std.mem.Allocator, source: *const logger.Source) Scanner {
+    pub fn init(log: *logger.Log, allocator: std.mem.Allocator, source: *const logger.Source) Scanner {
         return Scanner{ .log = log, .source = source, .allocator = allocator };
     }
 
@@ -889,7 +889,7 @@ pub fn NewWriter(
         pub fn scan(
             writer: *Writer,
             log: *logger.Log,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             did_warn_tailwind: *bool,
         ) !void {
             var scanner = Scanner.init(
@@ -907,7 +907,7 @@ pub fn NewWriter(
         pub fn append(
             writer: *Writer,
             log: *logger.Log,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             did_warn_tailwind: *bool,
         ) !usize {
             var scanner = Scanner.init(
@@ -928,7 +928,7 @@ pub fn NewWriter(
         pub fn run(
             writer: *Writer,
             log: *logger.Log,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             did_warn_tailwind: *bool,
         ) !void {
             var scanner = Scanner.init(
@@ -1145,7 +1145,7 @@ pub fn NewBundler(
         watcher: *Watcher,
         fs_reader: FileReader,
         fs: FSType,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         pub fn bundle(
             absolute_path: string,
             fs: FSType,
@@ -1154,7 +1154,7 @@ pub fn NewBundler(
             fs_reader: FileReader,
             hash: u32,
             input_fd: ?StoredFileDescriptorType,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             log: *logger.Log,
             linker: Linker,
         ) !CodeCount {

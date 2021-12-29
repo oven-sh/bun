@@ -216,7 +216,7 @@ pub const String = extern struct {
             else
                 &[_]u8{};
         }
-        pub fn allocate(this: *Builder, allocator: *std.mem.Allocator) !void {
+        pub fn allocate(this: *Builder, allocator: std.mem.Allocator) !void {
             var ptr_ = try allocator.alloc(u8, this.cap);
             this.ptr = ptr_.ptr;
         }
@@ -628,7 +628,7 @@ pub const Version = extern struct {
 
         var multi_tag_warn = false;
         // TODO: support multiple tags
-        pub fn parse(allocator: *std.mem.Allocator, sliced_string: SlicedString) TagResult {
+        pub fn parse(allocator: std.mem.Allocator, sliced_string: SlicedString) TagResult {
             var input = sliced_string.slice;
             var build_count: u32 = 0;
             var pre_count: u32 = 0;
@@ -743,7 +743,7 @@ pub const Version = extern struct {
         stopped_at: u32 = 0,
     };
 
-    pub fn parse(sliced_string: SlicedString, allocator: *std.mem.Allocator) ParseResult {
+    pub fn parse(sliced_string: SlicedString, allocator: std.mem.Allocator) ParseResult {
         var input = sliced_string.slice;
         var result = ParseResult{};
 
@@ -1132,7 +1132,7 @@ pub const Query = struct {
             return lhs_next.eql(rhs_next);
         }
 
-        pub fn andRange(self: *List, allocator: *std.mem.Allocator, range: Range) !void {
+        pub fn andRange(self: *List, allocator: std.mem.Allocator, range: Range) !void {
             if (!self.head.range.hasLeft() and !self.head.range.hasRight()) {
                 self.head.range = range;
                 return;
@@ -1153,7 +1153,7 @@ pub const Query = struct {
     pub const Group = struct {
         head: List = List{},
         tail: ?*List = null,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         input: string = "",
 
         flags: FlagsBitSet = FlagsBitSet.initEmpty(),
@@ -1432,7 +1432,7 @@ pub const Query = struct {
     };
 
     pub fn parse(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         input: string,
         sliced: SlicedString,
     ) !Group {

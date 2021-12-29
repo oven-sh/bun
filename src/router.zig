@@ -30,13 +30,13 @@ pub const Param = struct {
 dir: StoredFileDescriptorType = 0,
 routes: Routes,
 loaded_routes: bool = false,
-allocator: *std.mem.Allocator,
+allocator: std.mem.Allocator,
 fs: *Fs.FileSystem,
 config: Options.RouteConfig,
 
 pub fn init(
     fs: *Fs.FileSystem,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     config: Options.RouteConfig,
 ) !Router {
     return Router{
@@ -103,7 +103,7 @@ pub const Routes = struct {
     index: ?*Route = null,
     index_id: ?usize = 0,
 
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     config: Options.RouteConfig,
 
     // This is passed here and propagated through Match
@@ -187,7 +187,7 @@ pub const Routes = struct {
         return null;
     }
 
-    fn matchDynamic(this: *Routes, allocator: *std.mem.Allocator, path: string, comptime MatchContext: type, ctx: MatchContext) ?*Route {
+    fn matchDynamic(this: *Routes, allocator: std.mem.Allocator, path: string, comptime MatchContext: type, ctx: MatchContext) ?*Route {
         // its cleaned, so now we search the big list of strings
         var i: usize = 0;
         while (i < this.dynamic_names.len) : (i += 1) {
@@ -202,7 +202,7 @@ pub const Routes = struct {
         return null;
     }
 
-    fn match(this: *Routes, allocator: *std.mem.Allocator, pathname_: string, comptime MatchContext: type, ctx: MatchContext) ?*Route {
+    fn match(this: *Routes, allocator: std.mem.Allocator, pathname_: string, comptime MatchContext: type, ctx: MatchContext) ?*Route {
         var pathname = std.mem.trimLeft(u8, pathname_, "/");
 
         if (pathname.len == 0) {
@@ -215,7 +215,7 @@ pub const Routes = struct {
 };
 
 const RouteLoader = struct {
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     fs: *FileSystem,
     config: Options.RouteConfig,
     route_dirname_len: u16 = 0,
@@ -308,7 +308,7 @@ const RouteLoader = struct {
         }
     }
 
-    pub fn loadAll(allocator: *std.mem.Allocator, config: Options.RouteConfig, log: *Logger.Log, comptime ResolverType: type, resolver: *ResolverType, root_dir_info: *const DirInfo) Routes {
+    pub fn loadAll(allocator: std.mem.Allocator, config: Options.RouteConfig, log: *Logger.Log, comptime ResolverType: type, resolver: *ResolverType, root_dir_info: *const DirInfo) Routes {
         var this = RouteLoader{
             .allocator = allocator,
             .log = log,
@@ -607,7 +607,7 @@ pub const Route = struct {
         extname: string,
         entry: *Fs.FileSystem.Entry,
         log: *Logger.Log,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         public_dir_: string,
         routes_dirname_len: u16,
     ) ?Route {
@@ -1027,7 +1027,7 @@ const Pattern = struct {
         name: string,
         /// case-insensitive, must not have a leading slash
         match_name: string,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         comptime ParamsListType: type,
         params: ParamsListType,
         comptime allow_optional_catch_all: bool,
@@ -1127,7 +1127,7 @@ const Pattern = struct {
     /// Validate a Route pattern, returning the number of route parameters.
     /// `null` means invalid. Error messages are logged. 
     /// That way, we can provide a list of all invalid routes rather than failing the first time.
-    pub fn validate(input: string, allocator: *std.mem.Allocator, log: *Logger.Log) ?ValidationResult {
+    pub fn validate(input: string, allocator: std.mem.Allocator, log: *Logger.Log) ?ValidationResult {
         if (CodepointIterator.needsUTF8Decoding(input)) {
             const source = Logger.Source.initEmptyFile(input);
             log.addErrorFmt(

@@ -70,7 +70,7 @@ pub const Arguments = struct {
     repeat: usize = 0,
     concurrency: u16 = 32,
 
-    pub fn parse(allocator: *std.mem.Allocator) !Arguments {
+    pub fn parse(allocator: std.mem.Allocator) !Arguments {
         var diag = clap.Diagnostic{};
 
         var args = clap.parse(clap.Help, &params, .{

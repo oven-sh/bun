@@ -33,7 +33,7 @@ pub const OnImportCallback = fn (resolve_result: *const Resolver.Result, import_
 pub const Linker = struct {
     const HashedFileNameMap = std.AutoHashMap(u64, string);
     const ThisLinker = @This();
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     options: *Options.BundleOptions,
     fs: *Fs.FileSystem,
     log: *logger.Log,
@@ -49,7 +49,7 @@ pub const Linker = struct {
     onImportCSS: ?OnImportCallback = null,
 
     pub fn init(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         log: *logger.Log,
         resolve_queue: *ResolveQueue,
         options: *Options.BundleOptions,

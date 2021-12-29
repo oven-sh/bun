@@ -270,7 +270,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         // this is what kqueue knows about
         fd: StoredFileDescriptorType,
         ctx: ContextType,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         watchloop_handle: ?std.Thread.Id = null,
         cwd: string,
         thread: std.Thread = undefined,
@@ -283,7 +283,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             return @truncate(HashType, std.hash.Wyhash.hash(0, filepath));
         }
 
-        pub fn init(ctx: ContextType, fs: *Fs.FileSystem, allocator: *std.mem.Allocator) !*Watcher {
+        pub fn init(ctx: ContextType, fs: *Fs.FileSystem, allocator: std.mem.Allocator) !*Watcher {
             var watcher = try allocator.create(Watcher);
             try PlatformWatcher.init();
 

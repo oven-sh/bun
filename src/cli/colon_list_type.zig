@@ -3,7 +3,7 @@ const std = @import("std");
 
 pub fn ColonListType(comptime t: type, value_resolver: anytype) type {
     return struct {
-        pub fn init(allocator: *std.mem.Allocator, count: usize) !@This() {
+        pub fn init(allocator: std.mem.Allocator, count: usize) !@This() {
             var keys = try allocator.alloc(string, count);
             var values = try allocator.alloc(t, count);
 
@@ -27,7 +27,7 @@ pub fn ColonListType(comptime t: type, value_resolver: anytype) type {
             }
         }
 
-        pub fn resolve(allocator: *std.mem.Allocator, input: []const string) !@This() {
+        pub fn resolve(allocator: std.mem.Allocator, input: []const string) !@This() {
             var list = try init(allocator, input.len);
             try list.load(input);
             return list;

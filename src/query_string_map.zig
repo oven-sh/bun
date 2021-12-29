@@ -158,7 +158,7 @@ pub const URL = struct {
         try writer.print("{s}/{s}", .{ this.origin, normalized_path });
     }
 
-    pub fn joinAlloc(this: *const URL, allocator: *std.mem.Allocator, prefix: string, dirname: string, basename: string, extname: string, absolute_path: string) !string {
+    pub fn joinAlloc(this: *const URL, allocator: std.mem.Allocator, prefix: string, dirname: string, basename: string, extname: string, absolute_path: string) !string {
         const has_uplevels = std.mem.indexOf(u8, dirname, "../") != null;
 
         if (has_uplevels) {
@@ -381,7 +381,7 @@ pub const URL = struct {
 
 /// QueryString array-backed hash table that does few allocations and preserves the original order
 pub const QueryStringMap = struct {
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     slice: string,
     buffer: []u8,
     list: Param.List,
@@ -510,7 +510,7 @@ pub const QueryStringMap = struct {
     };
 
     pub fn initWithScanner(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         _scanner: CombinedScanner,
     ) !?QueryStringMap {
         var list = Param.List{};
@@ -619,7 +619,7 @@ pub const QueryStringMap = struct {
     }
 
     pub fn init(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         query_string: string,
     ) !?QueryStringMap {
         var list = Param.List{};

@@ -14,15 +14,15 @@ pub fn BSSSectionAllocator(comptime size: usize) type {
         const Self = @This();
 
         allocator: Allocator,
-        fallback_allocator: *Allocator,
+        fallback_allocator: Allocator,
 
         is_overflowed: bool = false,
 
-        pub fn get(self: *Self) *Allocator {
+        pub fn get(self: *Self) Allocator {
             return &self.allocator;
         }
 
-        pub fn init(fallback_allocator: *Allocator) Self {
+        pub fn init(fallback_allocator: Allocator) Self {
             return Self{ .fallback_allocator = fallback_allocator, .allocator = Allocator{
                 .allocFn = BSSSectionAllocator(size).alloc,
                 .resizeFn = BSSSectionAllocator(size).resize,
@@ -30,7 +30,7 @@ pub fn BSSSectionAllocator(comptime size: usize) type {
         }
 
         pub fn alloc(
-            allocator: *Allocator,
+            allocator: Allocator,
             len: usize,
             ptr_align: u29,
             len_align: u29,
@@ -44,7 +44,7 @@ pub fn BSSSectionAllocator(comptime size: usize) type {
         }
 
         pub fn resize(
-            allocator: *Allocator,
+            allocator: Allocator,
             buf: []u8,
             buf_align: u29,
             new_len: usize,
@@ -153,7 +153,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
         const Allocator = std.mem.Allocator;
         const Self = @This();
 
-        allocator: *Allocator,
+        allocator: Allocator,
         mutex: Mutex = Mutex.init(),
         head: *OverflowBlock = undefined,
         tail: OverflowBlock = OverflowBlock{},
@@ -165,7 +165,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
             return index / ChunkSize;
         }
 
-        pub fn init(allocator: *std.mem.Allocator) *Self {
+        pub fn init(allocator: std.mem.Allocator) *Self {
             if (!loaded) {
                 instance = Self{
                     .allocator = allocator,
@@ -240,7 +240,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
         const Self = @This();
 
         overflow_list: std.ArrayListUnmanaged(ValueType),
-        allocator: *Allocator,
+        allocator: Allocator,
 
         pub var instance: Self = undefined;
         var loaded: bool = false;
@@ -251,7 +251,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             len: usize = 0,
         };
 
-        pub fn init(allocator: *std.mem.Allocator) *Self {
+        pub fn init(allocator: std.mem.Allocator) *Self {
             if (!loaded) {
                 instance = Self{
                     .allocator = allocator,
@@ -452,14 +452,14 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
 
         index: IndexMap,
         overflow_list: std.ArrayListUnmanaged(ValueType),
-        allocator: *Allocator,
+        allocator: Allocator,
         mutex: Mutex = Mutex.init(),
 
         pub var instance: Self = undefined;
 
         var loaded: bool = false;
 
-        pub fn init(allocator: *std.mem.Allocator) *Self {
+        pub fn init(allocator: std.mem.Allocator) *Self {
             if (!loaded) {
                 instance = Self{
                     .index = IndexMap{},
@@ -609,7 +609,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
         var key_list_slices: [count][]u8 = undefined;
         var key_list_overflow: std.ArrayListUnmanaged([]u8) = undefined;
         var instance_loaded = false;
-        pub fn init(allocator: *std.mem.Allocator) *Self {
+        pub fn init(allocator: std.mem.Allocator) *Self {
             if (!instance_loaded) {
                 instance = Self{
                     .map = BSSMapType.init(allocator),

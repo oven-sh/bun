@@ -112,7 +112,7 @@ pub fn HashMap(
 ) type {
     return struct {
         unmanaged: Unmanaged,
-        allocator: *Allocator,
+        allocator: Allocator,
 
         pub const Unmanaged = HashMapUnmanaged(K, V, hashFn, eqlFn, max_load_percentage);
         pub const Entry = Unmanaged.Entry;
@@ -123,7 +123,7 @@ pub fn HashMap(
 
         const Self = @This();
 
-        pub fn init(allocator: *Allocator) Self {
+        pub fn init(allocator: Allocator) Self {
             return .{
                 .unmanaged = .{},
                 .allocator = allocator,
@@ -440,7 +440,7 @@ pub fn HashMapUnmanaged(
 
         pub const Managed = HashMap(K, V, hashFn, eqlFn, max_load_percentage);
 
-        pub fn promote(self: Self, allocator: *Allocator) Managed {
+        pub fn promote(self: Self, allocator: Allocator) Managed {
             return .{
                 .unmanaged = self,
                 .allocator = allocator,
@@ -451,12 +451,12 @@ pub fn HashMapUnmanaged(
             return size * 100 < max_load_percentage * cap;
         }
 
-        pub fn deinit(self: *Self, allocator: *Allocator) void {
+        pub fn deinit(self: *Self, allocator: Allocator) void {
             self.deallocate(allocator);
             self.* = undefined;
         }
 
-        fn deallocate(self: *Self, allocator: *Allocator) void {
+        fn deallocate(self: *Self, allocator: Allocator) void {
             if (self.metadata == null) return;
 
             const cap = self.capacity();
@@ -482,7 +482,7 @@ pub fn HashMapUnmanaged(
             return new_cap;
         }
 
-        pub fn ensureCapacity(self: *Self, allocator: *Allocator, new_size: Size) !void {
+        pub fn ensureCapacity(self: *Self, allocator: Allocator, new_size: Size) !void {
             if (new_size > self.size)
                 try self.growIfNeeded(allocator, new_size - self.size);
         }
@@ -495,7 +495,7 @@ pub fn HashMapUnmanaged(
             }
         }
 
-        pub fn clearAndFree(self: *Self, allocator: *Allocator) void {
+        pub fn clearAndFree(self: *Self, allocator: Allocator) void {
             self.deallocate(allocator);
             self.size = 0;
             self.available = 0;
@@ -524,7 +524,7 @@ pub fn HashMapUnmanaged(
         }
 
         /// Insert an entry in the map. Assumes it is not already present.
-        pub fn putNoClobber(self: *Self, allocator: *Allocator, key: K, value: V) !void {
+        pub fn putNoClobber(self: *Self, allocator: Allocator, key: K, value: V) !void {
             if (std.builtin.mode != .ReleaseFast) assert(!self.contains(key));
             try self.growIfNeeded(allocator, 1);
 
@@ -573,7 +573,7 @@ pub fn HashMapUnmanaged(
         }
 
         /// Inserts a new `Entry` into the hash map, returning the previous one, if any.
-        pub fn fetchPut(self: *Self, allocator: *Allocator, key: K, value: V) !?Entry {
+        pub fn fetchPut(self: *Self, allocator: Allocator, key: K, value: V) !?Entry {
             const gop = try self.getOrPut(allocator, key);
             var result: ?Entry = null;
             if (gop.found_existing) {
@@ -632,13 +632,13 @@ pub fn HashMapUnmanaged(
         }
 
         /// Insert an entry if the associated key is not already present, otherwise update preexisting value.
-        pub fn put(self: *Self, allocator: *Allocator, key: K, value: V) !void {
+        pub fn put(self: *Self, allocator: Allocator, key: K, value: V) !void {
             const result = try self.getOrPut(allocator, key);
             result.entry.value = value;
         }
 
         /// Insert an entry if the associated key is not already present, otherwise update preexisting value.
-        pub fn putWithHash(self: *Self, allocator: *Allocator, key: K, hash: u64, value: V) !void {
+        pub fn putWithHash(self: *Self, allocator: Allocator, key: K, hash: u64, value: V) !void {
             const result = try self.getOrPutWithHash(allocator, key, hash);
             result.entry.value = value;
         }
@@ -699,13 +699,13 @@ pub fn HashMapUnmanaged(
             return null;
         }
 
-        pub fn getOrPut(self: *Self, allocator: *Allocator, key: K) !GetOrPutResult {
+        pub fn getOrPut(self: *Self, allocator: Allocator, key: K) !GetOrPutResult {
             try self.growIfNeeded(allocator, 1);
 
             return self.getOrPutAssumeCapacity(key);
         }
 
-        pub fn getOrPutWithHash(self: *Self, allocator: *Allocator, key: K, hash: u64) !GetOrPutResult {
+        pub fn getOrPutWithHash(self: *Self, allocator: Allocator, key: K, hash: u64) !GetOrPutResult {
             try self.growIfNeeded(allocator, 1);
 
             return self.getOrPutAssumeCapacityWithHash(key, hash);
@@ -753,7 +753,7 @@ pub fn HashMapUnmanaged(
             return GetOrPutResult{ .entry = entry, .found_existing = false };
         }
 
-        pub fn getOrPutValue(self: *Self, allocator: *Allocator, key: K, value: V) !*Entry {
+        pub fn getOrPutValue(self: *Self, allocator: Allocator, key: K, value: V) !*Entry {
             const res = try self.getOrPut(allocator, key);
             if (!res.found_existing) res.entry.value = value;
             return res.entry;
@@ -833,13 +833,13 @@ pub fn HashMapUnmanaged(
             return @truncate(Size, max_load - self.available);
         }
 
-        fn growIfNeeded(self: *Self, allocator: *Allocator, new_count: Size) !void {
+        fn growIfNeeded(self: *Self, allocator: Allocator, new_count: Size) !void {
             if (new_count > self.available) {
                 try self.grow(allocator, capacityForSize(self.load() + new_count));
             }
         }
 
-        pub fn clone(self: Self, allocator: *Allocator) !Self {
+        pub fn clone(self: Self, allocator: Allocator) !Self {
             var other = Self{};
             if (self.size == 0)
                 return other;
@@ -864,7 +864,7 @@ pub fn HashMapUnmanaged(
             return other;
         }
 
-        fn grow(self: *Self, allocator: *Allocator, new_capacity: Size) !void {
+        fn grow(self: *Self, allocator: Allocator, new_capacity: Size) !void {
             const new_cap = std.math.max(new_capacity, minimal_capacity);
             if (std.builtin.mode != .ReleaseFast) assert(new_cap > self.capacity());
             if (std.builtin.mode != .ReleaseFast) assert(std.math.isPowerOfTwo(new_cap));
@@ -894,7 +894,7 @@ pub fn HashMapUnmanaged(
             std.mem.swap(Self, self, &map);
         }
 
-        fn allocate(self: *Self, allocator: *Allocator, new_capacity: Size) !void {
+        fn allocate(self: *Self, allocator: Allocator, new_capacity: Size) !void {
             const meta_size = @sizeOf(Header) + new_capacity * @sizeOf(Metadata);
 
             const alignment = @alignOf(Entry) - 1;

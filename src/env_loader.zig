@@ -374,7 +374,7 @@ pub const Lexer = struct {
 
 pub const Loader = struct {
     map: *Map,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 
     @".env.local": ?logger.Source = null,
     @".env.development": ?logger.Source = null,
@@ -403,7 +403,7 @@ pub const Loader = struct {
         framework_defaults: Api.StringMap,
         behavior: Api.DotEnvBehavior,
         prefix: string,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
     ) ![]u8 {
         var iter = this.map.iter();
         var key_count: usize = 0;
@@ -561,7 +561,7 @@ pub const Loader = struct {
         return key_buf;
     }
 
-    pub fn init(map: *Map, allocator: *std.mem.Allocator) Loader {
+    pub fn init(map: *Map, allocator: std.mem.Allocator) Loader {
         return Loader{
             .map = map,
             .allocator = allocator,
@@ -726,7 +726,7 @@ pub const Loader = struct {
 pub const Parser = struct {
     pub fn parse(
         source: *const logger.Source,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         map: *Map,
         comptime override: bool,
         comptime is_process: bool,
@@ -769,7 +769,7 @@ pub const Map = struct {
 
     map: HashTable,
 
-    pub fn cloneToBufMap(this: *Map, allocator: *std.mem.Allocator) !std.BufMap {
+    pub fn cloneToBufMap(this: *Map, allocator: std.mem.Allocator) !std.BufMap {
         var buf_map = std.BufMap.init(allocator);
 
         const Convert = struct {
@@ -786,7 +786,7 @@ pub const Map = struct {
         return buf_map;
     }
 
-    pub inline fn init(allocator: *std.mem.Allocator) Map {
+    pub inline fn init(allocator: std.mem.Allocator) Map {
         return Map{ .map = HashTable.init(allocator) };
     }
 

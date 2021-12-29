@@ -476,7 +476,7 @@ pub const DynamicBitSetUnmanaged = struct {
 
     /// Creates a bit set with no elements present.
     /// If bit_length is not zero, deinit must eventually be called.
-    pub fn initEmpty(bit_length: usize, allocator: *Allocator) !Self {
+    pub fn initEmpty(bit_length: usize, allocator: Allocator) !Self {
         var self = Self{};
         try self.resize(bit_length, false, allocator);
         return self;
@@ -484,7 +484,7 @@ pub const DynamicBitSetUnmanaged = struct {
 
     /// Creates a bit set with all elements present.
     /// If bit_length is not zero, deinit must eventually be called.
-    pub fn initFull(bit_length: usize, allocator: *Allocator) !Self {
+    pub fn initFull(bit_length: usize, allocator: Allocator) !Self {
         var self = Self{};
         try self.resize(bit_length, true, allocator);
         return self;
@@ -493,7 +493,7 @@ pub const DynamicBitSetUnmanaged = struct {
     /// Resizes to a new bit_length.  If the new length is larger
     /// than the old length, fills any added bits with `fill`.
     /// If new_len is not zero, deinit must eventually be called.
-    pub fn resize(self: *@This(), new_len: usize, fill: bool, allocator: *Allocator) !void {
+    pub fn resize(self: *@This(), new_len: usize, fill: bool, allocator: Allocator) !void {
         const old_len = self.bit_length;
 
         const old_masks = numMasks(old_len);
@@ -556,12 +556,12 @@ pub const DynamicBitSetUnmanaged = struct {
     /// deinitializes the array and releases its memory.
     /// The passed allocator must be the same one used for
     /// init* or resize in the past.
-    pub fn deinit(self: *Self, allocator: *Allocator) void {
+    pub fn deinit(self: *Self, allocator: Allocator) void {
         self.resize(0, false, allocator) catch unreachable;
     }
 
     /// Creates a duplicate of this bit set, using the new allocator.
-    pub fn clone(self: *const Self, new_allocator: *Allocator) !Self {
+    pub fn clone(self: *const Self, new_allocator: Allocator) !Self {
         const num_masks = numMasks(self.bit_length);
         var copy = Self{};
         try copy.resize(self.bit_length, false, new_allocator);
@@ -773,13 +773,13 @@ pub const DynamicBitSet = struct {
     pub const ShiftInt = std.math.Log2Int(MaskInt);
 
     /// The allocator used by this bit set
-    allocator: *Allocator,
+    allocator: Allocator,
 
     /// The number of valid items in this bit set
     unmanaged: DynamicBitSetUnmanaged = .{},
 
     /// Creates a bit set with no elements present.
-    pub fn initEmpty(bit_length: usize, allocator: *Allocator) !Self {
+    pub fn initEmpty(bit_length: usize, allocator: Allocator) !Self {
         return Self{
             .unmanaged = try DynamicBitSetUnmanaged.initEmpty(bit_length, allocator),
             .allocator = allocator,
@@ -787,7 +787,7 @@ pub const DynamicBitSet = struct {
     }
 
     /// Creates a bit set with all elements present.
-    pub fn initFull(bit_length: usize, allocator: *Allocator) !Self {
+    pub fn initFull(bit_length: usize, allocator: Allocator) !Self {
         return Self{
             .unmanaged = try DynamicBitSetUnmanaged.initFull(bit_length, allocator),
             .allocator = allocator,
@@ -808,7 +808,7 @@ pub const DynamicBitSet = struct {
     }
 
     /// Creates a duplicate of this bit set, using the new allocator.
-    pub fn clone(self: *const Self, new_allocator: *Allocator) !Self {
+    pub fn clone(self: *const Self, new_allocator: Allocator) !Self {
         return Self{
             .unmanaged = try self.unmanaged.clone(new_allocator),
             .allocator = new_allocator,

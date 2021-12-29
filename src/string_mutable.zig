@@ -6,10 +6,10 @@ const strings = @import("string_immutable.zig");
 const js_lexer = @import("js_lexer.zig");
 
 pub const MutableString = struct {
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     list: std.ArrayListUnmanaged(u8),
 
-    pub fn init2048(allocator: *std.mem.Allocator) !MutableString {
+    pub fn init2048(allocator: std.mem.Allocator) !MutableString {
         return MutableString.init(allocator, 2048);
     }
 
@@ -39,11 +39,11 @@ pub const MutableString = struct {
         return self.list.items.len;
     }
 
-    pub fn init(allocator: *std.mem.Allocator, capacity: usize) !MutableString {
+    pub fn init(allocator: std.mem.Allocator, capacity: usize) !MutableString {
         return MutableString{ .allocator = allocator, .list = try std.ArrayListUnmanaged(u8).initCapacity(allocator, capacity) };
     }
 
-    pub fn initCopy(allocator: *std.mem.Allocator, str: anytype) !MutableString {
+    pub fn initCopy(allocator: std.mem.Allocator, str: anytype) !MutableString {
         var mutable = try MutableString.init(allocator, std.mem.len(str));
         try mutable.copy(str);
         return mutable;
@@ -53,7 +53,7 @@ pub const MutableString = struct {
     // identifier, you're going to potentially cause trouble with non-BMP code
     // points in target environments that don't support bracketed Unicode escapes.
 
-    pub fn ensureValidIdentifier(str: string, allocator: *std.mem.Allocator) !string {
+    pub fn ensureValidIdentifier(str: string, allocator: std.mem.Allocator) !string {
         if (str.len == 0) {
             return "_";
         }

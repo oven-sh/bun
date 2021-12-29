@@ -1,5 +1,36 @@
 const std = @import("std");
-pub usingnamespace @import("std").zig.c_builtins;
+const C = @import("std").zig.c_builtins;
+
+const pthread_rwlock_t = C.pthread_rwlock_t;
+const time_t = C.time_t;
+const va_list = C.va_list;
+const struct_timeval = C.struct_timeval;
+const __attribute__ = C.__attribute__;
+const ERR_LIB_DSO = C.ERR_LIB_DSO;
+const ERR_LIB_STORE = C.ERR_LIB_STORE;
+const ERR_LIB_FIPS = C.ERR_LIB_FIPS;
+const ERR_LIB_CMS = C.ERR_LIB_CMS;
+const ERR_LIB_TS = C.ERR_LIB_TS;
+const ERR_LIB_JPAKE = C.ERR_LIB_JPAKE;
+const DEFINE_NAMED_STACK_OF = C.DEFINE_NAMED_STACK_OF;
+const __FILE__ = C.__FILE__;
+const struct_timespec = C.struct_timespec;
+const _CLOCK_REALTIME = C._CLOCK_REALTIME;
+const _CLOCK_MONOTONIC = C._CLOCK_MONOTONIC;
+const _CLOCK_MONOTONIC_RAW = C._CLOCK_MONOTONIC_RAW;
+const _CLOCK_MONOTONIC_RAW_APPROX = C._CLOCK_MONOTONIC_RAW_APPROX;
+const _CLOCK_UPTIME_RAW = C._CLOCK_UPTIME_RAW;
+const _CLOCK_UPTIME_RAW_APPROX = C._CLOCK_UPTIME_RAW_APPROX;
+const _CLOCK_PROCESS_CPUTIME_ID = C._CLOCK_PROCESS_CPUTIME_ID;
+const _CLOCK_THREAD_CPUTIME_ID = C._CLOCK_THREAD_CPUTIME_ID;
+const NULL = C.NULL;
+const DECLARE_ASN1_FUNCTIONS_name = C.DECLARE_ASN1_FUNCTIONS_name;
+const DECLARE_ASN1_ALLOC_FUNCTIONS_name = C.DECLARE_ASN1_ALLOC_FUNCTIONS_name;
+const timercmp = C.timercmp;
+const doesnt_exist = C.doesnt_exist;
+const struct_tm = C.struct_tm;
+const enum_ssl_verify_result_t = C.enum_ssl_verify_result_t;
+
 pub const CRYPTO_THREADID = c_int;
 pub const struct_asn1_null_st = opaque {};
 pub const ASN1_NULL = struct_asn1_null_st;
@@ -5933,10 +5964,6 @@ pub extern fn SSL_CIPHER_get_value(cipher: ?*const SSL_CIPHER) u16;
 pub const OPENSSL_VERSION_NUMBER = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x1010107f, .hexadecimal);
 pub const SSLEAY_VERSION_NUMBER = OPENSSL_VERSION_NUMBER;
 pub const BORINGSSL_API_VERSION = @as(c_int, 16);
-pub inline fn OPENSSL_PRINTF_FORMAT_FUNC(string_index: anytype, first_to_check: anytype) @TypeOf(__attribute__(__format__(__printf__, string_index, first_to_check))) {
-    return __attribute__(__format__(__printf__, string_index, first_to_check));
-}
-pub const OPENSSL_UNUSED = __attribute__(unused);
 pub inline fn ERR_GET_LIB(packed_error: anytype) c_int {
     return @import("std").zig.c_translation.cast(c_int, (packed_error >> @as(c_int, 24)) & @as(c_int, 0xff));
 }
@@ -16294,10 +16321,6 @@ pub const EVP_PKEY_DH = NID_dhKeyAgreement;
 pub const EVP_PKEY_RSA2 = NID_rsa;
 pub const EVP_PKEY_X448 = NID_X448;
 pub const EVP_PKEY_ED448 = NID_ED448;
-pub inline fn EVPerr(function: anytype, reason: anytype) @TypeOf(ERR_put_error(ERR_LIB_EVP, @as(c_int, 0), reason, __FILE__, __LINE__)) {
-    _ = function;
-    return ERR_put_error(ERR_LIB_EVP, @as(c_int, 0), reason, __FILE__, __LINE__);
-}
 pub const PKCS7_DETACHED = @as(c_int, 0x40);
 pub const PKCS7_TEXT = @as(c_int, 0x1);
 pub const PKCS7_NOCERTS = @as(c_int, 0x2);
@@ -18122,10 +18145,6 @@ pub const SSL_R_TLSV1_UNRECOGNIZED_NAME = SSL_R_TLSV1_ALERT_UNRECOGNIZED_NAME;
 pub const SSL_R_TLSV1_BAD_CERTIFICATE_STATUS_RESPONSE = SSL_R_TLSV1_ALERT_BAD_CERTIFICATE_STATUS_RESPONSE;
 pub const SSL_R_TLSV1_BAD_CERTIFICATE_HASH_VALUE = SSL_R_TLSV1_ALERT_BAD_CERTIFICATE_HASH_VALUE;
 pub const SSL_R_TLSV1_CERTIFICATE_REQUIRED = SSL_R_TLSV1_ALERT_CERTIFICATE_REQUIRED;
-pub inline fn SSLerr(function: anytype, reason: anytype) @TypeOf(ERR_put_error(ERR_LIB_SSL, @as(c_int, 0), reason, __FILE__, __LINE__)) {
-    _ = function;
-    return ERR_put_error(ERR_LIB_SSL, @as(c_int, 0), reason, __FILE__, __LINE__);
-}
 pub const DTLS_CTRL_GET_TIMEOUT = doesnt_exist;
 pub const DTLS_CTRL_HANDLE_TIMEOUT = doesnt_exist;
 pub const SSL_CTRL_CHAIN = doesnt_exist;

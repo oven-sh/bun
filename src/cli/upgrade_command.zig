@@ -113,7 +113,7 @@ pub const UpgradeCommand = struct {
     var tmpdir_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
     pub fn getLatestVersion(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         env_loader: *DotEnv.Loader,
         refresher: *std.Progress,
         progress: *std.Progress.Node,

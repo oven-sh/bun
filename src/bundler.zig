@@ -104,7 +104,7 @@ pub const Bundler = struct {
 
     options: options.BundleOptions,
     log: *logger.Log,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     result: options.TransformResult = undefined,
     resolver: Resolver,
     fs: *Fs.FileSystem,
@@ -127,7 +127,7 @@ pub const Bundler = struct {
 
     pub const isCacheEnabled = cache_files;
 
-    pub fn clone(this: *ThisBundler, allocator: *std.mem.Allocator, to: *ThisBundler) !void {
+    pub fn clone(this: *ThisBundler, allocator: std.mem.Allocator, to: *ThisBundler) !void {
         to.* = this.*;
         to.setAllocator(allocator);
         to.log = try allocator.create(logger.Log);
@@ -142,7 +142,7 @@ pub const Bundler = struct {
         this.resolver.log = log;
     }
 
-    pub fn setAllocator(this: *ThisBundler, allocator: *std.mem.Allocator) void {
+    pub fn setAllocator(this: *ThisBundler, allocator: std.mem.Allocator) void {
         this.allocator = allocator;
         this.linker.allocator = allocator;
         this.resolver.allocator = allocator;
@@ -174,7 +174,7 @@ pub const Bundler = struct {
     // thread_pool: *ThreadPool,
 
     pub fn init(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         log: *logger.Log,
         opts: Api.TransformOptions,
         existing_bundle: ?*NodeModuleBundle,
@@ -542,7 +542,7 @@ pub const Bundler = struct {
                 thread_id: std.Thread.Id,
                 thread: std.Thread,
 
-                allocator: *std.mem.Allocator,
+                allocator: std.mem.Allocator,
                 generator: *GenerateNodeModuleBundle,
                 data: *WorkerData = undefined,
                 quit: bool = false,
@@ -556,7 +556,7 @@ pub const Bundler = struct {
                     estimated_input_lines_of_code: usize = 0,
                     macro_context: js_ast.Macro.MacroContext,
 
-                    pub fn deinit(this: *WorkerData, allocator: *std.mem.Allocator) void {
+                    pub fn deinit(this: *WorkerData, allocator: std.mem.Allocator) void {
                         this.shared_buffer.deinit();
                         this.scan_pass_result.named_imports.deinit();
                         this.scan_pass_result.import_records.deinit();
@@ -661,7 +661,7 @@ pub const Bundler = struct {
         package_list_map: std.AutoHashMap(u64, u32),
         queue: *BunQueue,
         bundler: *ThisBundler,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         tmpfile: std.fs.File,
         log: *logger.Log,
         pool: *ThreadPool,
@@ -758,7 +758,7 @@ pub const Bundler = struct {
 
         pub fn generate(
             bundler: *ThisBundler,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             framework_config: ?Api.LoadedFramework,
             route_config: ?Api.LoadedRouteConfig,
             destination: [*:0]const u8,
@@ -2153,7 +2153,7 @@ pub const Bundler = struct {
     pub fn buildWithResolveResult(
         bundler: *ThisBundler,
         resolve_result: _resolver.Result,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         loader: options.Loader,
         comptime Writer: type,
         writer: Writer,
@@ -2560,7 +2560,7 @@ pub const Bundler = struct {
     }
 
     pub const ParseOptions = struct {
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         dirname_fd: StoredFileDescriptorType,
         file_descriptor: ?StoredFileDescriptorType = null,
         file_hash: ?u32 = null,
@@ -2719,7 +2719,7 @@ pub const Bundler = struct {
     pub fn buildFile(
         bundler: *ThisBundler,
         log: *logger.Log,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         path_to_use_: string,
         _extension: string,
         comptime client_entry_point_enabled: bool,
@@ -2891,7 +2891,7 @@ pub const Bundler = struct {
     }
 
     pub fn bundle(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         log: *logger.Log,
         opts: Api.TransformOptions,
     ) !options.TransformResult {
@@ -3089,7 +3089,7 @@ pub const Bundler = struct {
 pub const Transformer = struct {
     opts: Api.TransformOptions,
     log: *logger.Log,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     platform: options.Platform = undefined,
     out_extensions: std.StringHashMap(string) = undefined,
     output_path: string,
@@ -3097,7 +3097,7 @@ pub const Transformer = struct {
     define: *Define,
 
     pub fn transform(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         log: *logger.Log,
         opts: Api.TransformOptions,
     ) !options.TransformResult {
@@ -3128,7 +3128,7 @@ pub const Transformer = struct {
         var jsx = if (opts.jsx) |_jsx| try options.JSX.Pragma.fromApi(_jsx, allocator) else options.JSX.Pragma{};
 
         var output_i: usize = 0;
-        var chosen_alloc: *std.mem.Allocator = allocator;
+        var chosen_alloc: std.mem.Allocator = allocator;
         var arena: std.heap.ArenaAllocator = undefined;
         const use_arenas = opts.entry_points.len > 8;
 
@@ -3305,7 +3305,7 @@ pub const Transformer = struct {
     }
 
     pub fn _transform(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         log: *logger.Log,
         opts: js_parser.Parser.Options,
         loader: options.Loader,

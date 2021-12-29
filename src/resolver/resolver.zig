@@ -162,7 +162,7 @@ pub const Result = struct {
         suggestion_text: string = "",
         suggestion_message: string = "",
 
-        pub fn init(allocator: *std.mem.Allocator) DebugMeta {
+        pub fn init(allocator: std.mem.Allocator) DebugMeta {
             return DebugMeta{ .notes = std.ArrayList(logger.Data).init(allocator) };
         }
 
@@ -226,7 +226,7 @@ pub const DebugLogs = struct {
 
     pub const FlushMode = enum { fail, success };
 
-    pub fn init(allocator: *std.mem.Allocator) !DebugLogs {
+    pub fn init(allocator: std.mem.Allocator) !DebugLogs {
         var mutable = try MutableString.init(allocator, 0);
         return DebugLogs{
             .indent = mutable,
@@ -338,7 +338,7 @@ pub const Resolver = struct {
     opts: options.BundleOptions,
     fs: *Fs.FileSystem,
     log: *logger.Log,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     node_module_bundle: ?*NodeModuleBundle,
     extension_order: []const string = undefined,
     timer: std.time.Timer = undefined,
@@ -399,7 +399,7 @@ pub const Resolver = struct {
     dir_cache: *DirInfo.HashMap,
 
     pub fn init1(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         log: *logger.Log,
         _fs: *Fs.FileSystem,
         opts: options.BundleOptions,

@@ -69,7 +69,7 @@ pub const Registry = struct {
 
     const Pico = @import("picohttp");
     pub fn getPackageMetadata(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         response: Pico.Response,
         body: []const u8,
         log: *logger.Log,
@@ -481,7 +481,7 @@ pub const PackageManifest = struct {
             try std.os.renameatZ(tmpdir.fd, tmp_path, cache_dir.fd, out_path);
         }
 
-        pub fn load(allocator: *std.mem.Allocator, cache_dir: std.fs.Dir, package_name: string) !?PackageManifest {
+        pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.Dir, package_name: string) !?PackageManifest {
             const file_id = std.hash.Wyhash.hash(0, package_name);
             var file_path_buf: [512 + 64]u8 = undefined;
             var file_path = try std.fmt.bufPrintZ(&file_path_buf, "{x}.npm", .{file_id});
@@ -668,7 +668,7 @@ pub const PackageManifest = struct {
 
     /// This parses [Abbreviated metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-metadata-format)
     pub fn parse(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         log: *logger.Log,
         json_buffer: []const u8,
         expected_name: []const u8,

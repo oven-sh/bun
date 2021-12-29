@@ -36,7 +36,7 @@ const ShellCompletions = @import("./shell_completions.zig");
 
 pub const InstallCompletionsCommand = struct {
     pub fn testPath(completions_dir: string) !std.fs.Dir {}
-    pub fn exec(allocator: *std.mem.Allocator) !void {
+    pub fn exec(allocator: std.mem.Allocator) !void {
         var shell = ShellCompletions.Shell.unknown;
         if (std.os.getenvZ("SHELL")) |shell_name| {
             shell = ShellCompletions.Shell.fromEnv(@TypeOf(shell_name), shell_name);

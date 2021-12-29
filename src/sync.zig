@@ -1,4 +1,5 @@
 const std = @import("std");
+const system = std.system;
 
 // https://gist.github.com/kprotty/0d2dc3da4840341d6ff361b27bdac7dc
 pub const ThreadPool = struct {
@@ -6,11 +7,11 @@ pub const ThreadPool = struct {
     spawned: usize = 0,
     run_queue: Queue,
     idle_semaphore: Semaphore,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     workers: []Worker = &[_]Worker{},
 
     pub const InitConfig = struct {
-        allocator: ?*std.mem.Allocator = null,
+        allocator: ?std.mem.Allocator = null,
         max_threads: ?usize = null,
 
         var default_gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -54,7 +55,7 @@ pub const ThreadPool = struct {
         const Args = @TypeOf(args);
         const Closure = struct {
             func_args: Args,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             run_node: RunNode = .{ .data = .{ .runFn = runFn } },
 
             fn runFn(runnable: *Runnable) void {
@@ -381,7 +382,7 @@ pub fn Channel(
                 }
             },
             .Dynamic => struct {
-                pub fn init(allocator: *std.mem.Allocator) Self {
+                pub fn init(allocator: std.mem.Allocator) Self {
                     return Self.withBuffer(Buffer.init(allocator));
                 }
             },

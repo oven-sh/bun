@@ -64,7 +64,7 @@ const CAllocator = struct {
     }
 
     fn alloc(
-        allocator: *Allocator,
+        allocator: Allocator,
         len: usize,
         alignment: u29,
         len_align: u29,
@@ -91,7 +91,7 @@ const CAllocator = struct {
     }
 
     fn resize(
-        allocator: *Allocator,
+        allocator: Allocator,
         buf: []u8,
         buf_align: u29,
         new_len: usize,

@@ -20,13 +20,13 @@ const PackageNameMap = std.StringHashMap([]BundledPackageID);
 pub const AllocatedString = struct {
     str: string,
     len: u32,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 };
 
 pub const NodeModuleBundle = struct {
     container: Api.JavascriptBundleContainer,
     bundle: Api.JavascriptBundle,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     bytes_ptr: []u8 = undefined,
     bytes: []u8 = &[_]u8{},
     fd: FileDescriptorType = 0,
@@ -57,7 +57,7 @@ pub const NodeModuleBundle = struct {
         return this.bytecode_cache_fetcher.fetch(basename, fs);
     }
 
-    pub fn readCodeAsStringSlow(this: *NodeModuleBundle, allocator: *std.mem.Allocator) !string {
+    pub fn readCodeAsStringSlow(this: *NodeModuleBundle, allocator: std.mem.Allocator) !string {
         if (this.code_string) |code| {
             return code.str;
         }
@@ -159,7 +159,7 @@ pub const NodeModuleBundle = struct {
     pub fn allocModuleImport(
         this: *const NodeModuleBundle,
         to: *const Api.JavascriptBundledModule,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
     ) !string {
         return try std.fmt.allocPrint(
             allocator,
@@ -266,7 +266,7 @@ pub const NodeModuleBundle = struct {
         ) orelse return null) + package.modules_offset;
     }
 
-    pub fn init(container: Api.JavascriptBundleContainer, allocator: *std.mem.Allocator) NodeModuleBundle {
+    pub fn init(container: Api.JavascriptBundleContainer, allocator: std.mem.Allocator) NodeModuleBundle {
         return NodeModuleBundle{
             .container = container,
             .bundle = container.bundle.?,
@@ -288,7 +288,7 @@ pub const NodeModuleBundle = struct {
         return std.mem.readIntNative(u32, jsbundle_prefix[magic_bytes.len .. magic_bytes.len + 4]);
     }
 
-    pub fn loadBundle(allocator: *std.mem.Allocator, stream: anytype) !NodeModuleBundle {
+    pub fn loadBundle(allocator: std.mem.Allocator, stream: anytype) !NodeModuleBundle {
         const end = try getCodeEndPosition(stream, false);
         try stream.seekTo(end);
         const file_end = try stream.getEndPos();
@@ -386,7 +386,7 @@ pub const NodeModuleBundle = struct {
         input: StreamType,
         comptime DestinationStreamType: type,
         output: DestinationStreamType,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
     ) !void {
         const this = try loadBundle(allocator, input);
         this.printSummary();

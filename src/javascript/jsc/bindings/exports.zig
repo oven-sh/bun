@@ -233,7 +233,7 @@ pub const ResolvedSource = extern struct {
 };
 
 export fn ZigString__free(ptr: [*]const u8, len: usize, allocator_: ?*anyopaque) void {
-    var allocator: *std.mem.Allocator = @ptrCast(*std.mem.Allocator, @alignCast(@alignOf(*std.mem.Allocator), allocator_ orelse return));
+    var allocator: std.mem.Allocator = @ptrCast(std.mem.Allocator, @alignCast(@alignOf(std.mem.Allocator), allocator_ orelse return));
 
     var str = ptr[0..len];
     allocator.free(str);
@@ -323,7 +323,7 @@ pub const ZigStackTrace = extern struct {
     frames_ptr: [*c]ZigStackFrame,
     frames_len: u8,
 
-    pub fn toAPI(this: *const ZigStackTrace, allocator: *std.mem.Allocator) !Api.StackTrace {
+    pub fn toAPI(this: *const ZigStackTrace, allocator: std.mem.Allocator) !Api.StackTrace {
         var stack_trace: Api.StackTrace = std.mem.zeroes(Api.StackTrace);
         {
             var source_lines_iter = this.sourceLineIterator();
@@ -414,7 +414,7 @@ pub const ZigStackFrame = extern struct {
     position: ZigStackFramePosition,
     code_type: ZigStackFrameCode,
 
-    pub fn toAPI(this: *const ZigStackFrame, allocator: *std.mem.Allocator) !Api.StackFrame {
+    pub fn toAPI(this: *const ZigStackFrame, allocator: std.mem.Allocator) !Api.StackFrame {
         var frame: Api.StackFrame = std.mem.zeroes(Api.StackFrame);
         if (this.function_name.len > 0) {
             frame.function_name = try allocator.dupe(u8, this.function_name.slice());
@@ -675,7 +675,7 @@ pub const ZigConsoleClient = struct {
             pub const List = std.MultiArrayList(Entry);
         };
         counts: Entry.List,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
     };
     const BufferedWriter = std.io.BufferedWriter(4096, Output.WriterType);
     error_writer: BufferedWriter,

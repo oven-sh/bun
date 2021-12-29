@@ -61,7 +61,7 @@ pub inline fn indexOf(self: string, str: string) ?usize {
     return std.mem.indexOf(u8, self, str);
 }
 
-pub fn cat(allocator: *std.mem.Allocator, first: string, second: string) !string {
+pub fn cat(allocator: std.mem.Allocator, first: string, second: string) !string {
     var out = try allocator.alloc(u8, first.len + second.len);
     std.mem.copy(u8, out, first);
     std.mem.copy(u8, out[first.len..], second);
@@ -84,7 +84,7 @@ pub const StringOrTinyString = struct {
         };
     }
 
-    pub fn deinit(this: *StringOrTinyString, allocator: *std.mem.Allocator) void {
+    pub fn deinit(this: *StringOrTinyString, allocator: std.mem.Allocator) void {
         if (this.is_tiny_string == 1) return;
 
         // var slice_ = this.slice();
@@ -291,7 +291,7 @@ pub fn endsWithAny(self: string, str: string) bool {
 
 pub fn lastNonwhitespace(self: string, str: string) bool {}
 
-pub fn quotedAlloc(allocator: *std.mem.Allocator, self: string) !string {
+pub fn quotedAlloc(allocator: std.mem.Allocator, self: string) !string {
     var count: usize = 0;
     for (self) |char| {
         count += @boolToInt(char == '"');
@@ -464,7 +464,7 @@ pub fn eqlLong(a_: string, b: string, comptime check_len: bool) bool {
     return true;
 }
 
-pub inline fn append(allocator: *std.mem.Allocator, self: string, other: string) !string {
+pub inline fn append(allocator: std.mem.Allocator, self: string, other: string) !string {
     return std.fmt.allocPrint(allocator, "{s}{s}", .{ self, other });
 }
 
@@ -494,7 +494,7 @@ pub fn eqlUtf16(comptime self: string, other: []const u16) bool {
     return std.mem.eql(u16, std.unicode.utf8ToUtf16LeStringLiteral(self), other);
 }
 
-pub fn toUTF8Alloc(allocator: *std.mem.Allocator, js: []const u16) !string {
+pub fn toUTF8Alloc(allocator: std.mem.Allocator, js: []const u16) !string {
     var temp: [4]u8 = undefined;
     var list = std.ArrayList(u8).initCapacity(allocator, js.len) catch unreachable;
     var i: usize = 0;
@@ -759,7 +759,7 @@ pub fn containsNonBmpCodePointUTF16(_text: []const u16) bool {
     return false;
 }
 
-pub fn join(slices: []const string, delimiter: string, allocator: *std.mem.Allocator) !string {
+pub fn join(slices: []const string, delimiter: string, allocator: std.mem.Allocator) !string {
     return try std.mem.join(allocator, delimiter, slices);
 }
 

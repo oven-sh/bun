@@ -18,7 +18,7 @@ pub const FsCacheEntry = struct {
     contents: string,
     fd: StoredFileDescriptorType = 0,
 
-    pub fn deinit(entry: *FsCacheEntry, allocator: *std.mem.Allocator) void {
+    pub fn deinit(entry: *FsCacheEntry, allocator: std.mem.Allocator) void {
         if (entry.contents.len > 0) {
             allocator.free(entry.contents);
             entry.contents = "";
@@ -31,7 +31,7 @@ pub const Set = struct {
     fs: Fs,
     json: Json,
 
-    pub fn init(allocator: *std.mem.Allocator) Set {
+    pub fn init(allocator: std.mem.Allocator) Set {
         return Set{
             .js = JavaScript.init(allocator),
             .fs = Fs{
@@ -154,14 +154,14 @@ pub const Css = struct {
 pub const JavaScript = struct {
     pub const Result = js_ast.Result;
 
-    pub fn init(allocator: *std.mem.Allocator) JavaScript {
+    pub fn init(allocator: std.mem.Allocator) JavaScript {
         return JavaScript{};
     }
     // For now, we're not going to cache JavaScript ASTs.
     // It's probably only relevant when bundling for production.
     pub fn parse(
         cache: *@This(),
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         opts: js_parser.Parser.Options,
         defines: *Define,
         log: *logger.Log,
@@ -188,7 +188,7 @@ pub const JavaScript = struct {
 
     pub fn scan(
         cache: *@This(),
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         scan_pass_result: *js_parser.ScanPassResult,
         opts: js_parser.Parser.Options,
         defines: *Define,
@@ -207,10 +207,10 @@ pub const JavaScript = struct {
 };
 
 pub const Json = struct {
-    pub fn init(allocator: *std.mem.Allocator) Json {
+    pub fn init(allocator: std.mem.Allocator) Json {
         return Json{};
     }
-    fn parse(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: *std.mem.Allocator, is_tsconfig: bool, func: anytype) anyerror!?js_ast.Expr {
+    fn parse(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator, is_tsconfig: bool, func: anytype) anyerror!?js_ast.Expr {
         var temp_log = logger.Log.init(allocator);
         defer {
             temp_log.appendToMaybeRecycled(log, &source) catch {};
@@ -219,11 +219,11 @@ pub const Json = struct {
             break :handler null;
         };
     }
-    pub fn parseJSON(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: *std.mem.Allocator) anyerror!?js_ast.Expr {
+    pub fn parseJSON(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) anyerror!?js_ast.Expr {
         return try parse(cache, log, source, allocator, false, json_parser.ParseJSON);
     }
 
-    pub fn parseTSConfig(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: *std.mem.Allocator) anyerror!?js_ast.Expr {
+    pub fn parseTSConfig(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) anyerror!?js_ast.Expr {
         return try parse(cache, log, source, allocator, true, json_parser.ParseTSConfig);
     }
 };

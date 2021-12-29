@@ -193,7 +193,7 @@ const NetworkTask = struct {
     http: AsyncHTTP = undefined,
     task_id: u64,
     url_buf: []const u8 = &[_]u8{},
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     request_buffer: MutableString = undefined,
     response_buffer: MutableString = undefined,
     callback: union(Task.Tag) {
@@ -214,7 +214,7 @@ const NetworkTask = struct {
     pub fn forManifest(
         this: *NetworkTask,
         name: string,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         registry_url: URL,
         loaded_manifest: ?Npm.PackageManifest,
     ) !void {
@@ -304,7 +304,7 @@ const NetworkTask = struct {
 
     pub fn forTarball(
         this: *NetworkTask,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         tarball: ExtractTarball,
     ) !void {
         this.url_buf = try ExtractTarball.buildURL(
@@ -390,7 +390,7 @@ pub const Lockfile = struct {
     package_index: PackageIndex.Map,
     unique_packages: Bitset,
     string_pool: StringPool,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     scratch: Scratch = Scratch{},
 
     const Stream = std.io.FixedBufferStream([]u8);
@@ -413,7 +413,7 @@ pub const Lockfile = struct {
         };
     };
 
-    pub fn loadFromDisk(this: *Lockfile, allocator: *std.mem.Allocator, log: *logger.Log, filename: stringZ) LoadFromDiskResult {
+    pub fn loadFromDisk(this: *Lockfile, allocator: std.mem.Allocator, log: *logger.Log, filename: stringZ) LoadFromDiskResult {
         std.debug.assert(FileSystem.instance_loaded);
         var file = std.fs.cwd().openFileZ(filename, .{ .read = true }) catch |err| {
             return switch (err) {
@@ -552,7 +552,7 @@ pub const Lockfile = struct {
         };
 
         const Builder = struct {
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             name_hashes: []const PackageNameHash,
             list: ArrayList = ArrayList{},
             resolutions: []const PackageID,
@@ -653,7 +653,7 @@ pub const Lockfile = struct {
             name_hashes: []const PackageNameHash,
             lists: []Lockfile.PackageIDList,
             trees: []Tree,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
         ) Id {
             const this_packages = this.packages.get(lists[this.id].items);
             const name_hash = name_hashes[package_id];
@@ -1013,7 +1013,7 @@ pub const Lockfile = struct {
         var lockfile_path_buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
         pub fn print(
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             log: *logger.Log,
             lockfile_path_: string,
             format: Format,
@@ -1081,7 +1081,7 @@ pub const Lockfile = struct {
         }
 
         pub fn printWithLockfile(
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             lockfile: *Lockfile,
             format: Format,
             comptime Writer: type,
@@ -1495,7 +1495,7 @@ pub const Lockfile = struct {
         // }
     }
 
-    pub fn initEmpty(this: *Lockfile, allocator: *std.mem.Allocator) !void {
+    pub fn initEmpty(this: *Lockfile, allocator: std.mem.Allocator) !void {
         this.* = Lockfile{
             .format = .v0,
             .packages = Lockfile.Package.List{},
@@ -1662,7 +1662,7 @@ pub const Lockfile = struct {
         duplicate_checker_map: DuplicateCheckerMap = undefined,
         dependency_list_queue: DependencyQueue = undefined,
 
-        pub fn init(allocator: *std.mem.Allocator) Scratch {
+        pub fn init(allocator: std.mem.Allocator) Scratch {
             return Scratch{
                 .dependency_list_queue = DependencyQueue.init(allocator),
                 .duplicate_checker_map = DuplicateCheckerMap.init(allocator),
@@ -1954,7 +1954,7 @@ pub const Lockfile = struct {
         }
 
         pub fn fromNPM(
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             lockfile: *Lockfile,
             log: *logger.Log,
             manifest: *const Npm.PackageManifest,
@@ -2171,7 +2171,7 @@ pub const Lockfile = struct {
             };
 
             pub fn generate(
-                allocator: *std.mem.Allocator,
+                allocator: std.mem.Allocator,
                 from_lockfile: *Lockfile,
                 to_lockfile: *Lockfile,
                 from: *Lockfile.Package,
@@ -2257,7 +2257,7 @@ pub const Lockfile = struct {
         pub fn parseMain(
             lockfile: *Lockfile,
             package: *Lockfile.Package,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             log: *logger.Log,
             source: logger.Source,
             comptime features: Features,
@@ -2268,7 +2268,7 @@ pub const Lockfile = struct {
         pub fn parse(
             lockfile: *Lockfile,
             package: *Lockfile.Package,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             log: *logger.Log,
             source: logger.Source,
             comptime ResolverContext: type,
@@ -2598,7 +2598,7 @@ pub const Lockfile = struct {
 
             pub fn load(
                 stream: *Stream,
-                allocator: *std.mem.Allocator,
+                allocator: std.mem.Allocator,
             ) !Lockfile.Package.List {
                 var reader = stream.reader();
 
@@ -2649,7 +2649,7 @@ pub const Lockfile = struct {
         // node_modules_package_ids: PackageIDList = PackageIDList{},
         string_bytes: StringBuffer = StringBuffer{},
 
-        pub fn preallocate(this: *Buffers, that: Buffers, allocator: *std.mem.Allocator) !void {
+        pub fn preallocate(this: *Buffers, that: Buffers, allocator: std.mem.Allocator) !void {
             try this.trees.ensureTotalCapacity(allocator, that.trees.items.len);
             try this.resolutions.ensureTotalCapacity(allocator, that.resolutions.items.len);
             try this.dependencies.ensureTotalCapacity(allocator, that.dependencies.items.len);
@@ -2736,7 +2736,7 @@ pub const Lockfile = struct {
             }
         }
 
-        pub fn save(this: Buffers, allocator: *std.mem.Allocator, comptime StreamType: type, stream: StreamType, comptime Writer: type, writer: Writer) !void {
+        pub fn save(this: Buffers, allocator: std.mem.Allocator, comptime StreamType: type, stream: StreamType, comptime Writer: type, writer: Writer) !void {
             inline for (sizes.names) |name, i| {
                 var pos: usize = 0;
                 if (comptime Environment.isDebug) {
@@ -2805,7 +2805,7 @@ pub const Lockfile = struct {
             }
         }
 
-        pub fn load(stream: *Stream, allocator: *std.mem.Allocator, log: *logger.Log) !Buffers {
+        pub fn load(stream: *Stream, allocator: std.mem.Allocator, log: *logger.Log) !Buffers {
             var this = Buffers{};
             var external_dependency_list: []Dependency.External = &[_]Dependency.External{};
             inline for (sizes.names) |name, i| {
@@ -2886,7 +2886,7 @@ pub const Lockfile = struct {
         pub fn load(
             lockfile: *Lockfile,
             stream: *Stream,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             log: *logger.Log,
         ) !void {
             var reader = stream.reader();
@@ -3064,7 +3064,7 @@ const PackageInstall = struct {
     destination_dir_subpath: stringZ = "",
     destination_dir_subpath_buf: []u8,
 
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 
     progress: *Progress,
 
@@ -3083,7 +3083,7 @@ const PackageInstall = struct {
         skip_verify: bool = false,
         progress: *Progress = undefined,
         cache_dir: std.fs.Dir = undefined,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
     };
 
     pub const Task = struct {
@@ -3652,7 +3652,7 @@ pub const PackageManager = struct {
     cache_directory: std.fs.Dir = undefined,
     root_dir: *Fs.FileSystem.DirEntry,
     env_loader: *DotEnv.Loader,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     log: *logger.Log,
     resolve_tasks: TaskChannel,
     timestamp: u32 = 0,
@@ -4375,7 +4375,7 @@ pub const PackageManager = struct {
     pub fn link(this: *PackageManager) !void {}
 
     pub fn fetchCacheDirectoryPath(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         env_loader: *DotEnv.Loader,
         root_dir: *Fs.FileSystem.DirEntry,
     ) ?string {
@@ -4741,7 +4741,7 @@ pub const PackageManager = struct {
 
         pub fn load(
             this: *Options,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             log: *logger.Log,
             env_loader: *DotEnv.Loader,
             cli_: ?CommandLineArguments,
@@ -5004,7 +5004,7 @@ pub const PackageManager = struct {
 
     const PackageJSONEditor = struct {
         pub fn edit(
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             updates: []UpdateRequest,
             current_package_json: *JSAst.Expr,
             dependency_list: string,
@@ -5405,7 +5405,7 @@ pub const PackageManager = struct {
         };
 
         pub fn parse(
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             comptime params: []const ParamType,
         ) !CommandLineArguments {
             var diag = clap.Diagnostic{};
@@ -5532,7 +5532,7 @@ pub const PackageManager = struct {
         pub const Array = std.BoundedArray(UpdateRequest, 64);
 
         pub fn parse(
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             log: *logger.Log,
             positionals: []const string,
             update_requests: *Array,

@@ -316,7 +316,7 @@ pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Pla
     return relativeNormalized(normalized_from, normalized_to, platform, always_copy);
 }
 
-pub fn relativeAlloc(allocator: *std.mem.Allocator, from: []const u8, to: []const u8) ![]const u8 {
+pub fn relativeAlloc(allocator: std.mem.Allocator, from: []const u8, to: []const u8) ![]const u8 {
     if (comptime FeatureFlags.use_std_path_relative) {
         return try std.fs.path.relative(allocator, from, to);
     } else {
@@ -547,7 +547,7 @@ pub fn normalizeStringBuf(str: []const u8, buf: []u8, comptime allow_above_root:
     }
 }
 
-pub fn normalizeStringAlloc(allocator: *std.mem.Allocator, str: []const u8, comptime allow_above_root: bool, comptime _platform: Platform) ![]const u8 {
+pub fn normalizeStringAlloc(allocator: std.mem.Allocator, str: []const u8, comptime allow_above_root: bool, comptime _platform: Platform) ![]const u8 {
     return try allocator.dupe(u8, normalizeString(str, allow_above_root, _platform));
 }
 

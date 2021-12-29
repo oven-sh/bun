@@ -94,7 +94,7 @@ pub const External = extern struct {
     version: Dependency.Version.External,
 
     pub const Context = struct {
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         log: *logger.Log,
         buffer: []const u8,
     };
@@ -473,7 +473,7 @@ pub fn eqlResolved(a: Dependency, b: Dependency) bool {
     return @as(Dependency.Version.Tag, a.version) == @as(Dependency.Version.Tag, b.version) and a.resolution == b.resolution;
 }
 
-pub fn parse(allocator: *std.mem.Allocator, dependency_: string, sliced: *const SlicedString, log: ?*logger.Log) ?Version {
+pub fn parse(allocator: std.mem.Allocator, dependency_: string, sliced: *const SlicedString, log: ?*logger.Log) ?Version {
     var dependency = std.mem.trimLeft(u8, dependency_, " \t\n\r");
 
     if (dependency.len == 0) return null;
@@ -500,7 +500,7 @@ pub fn parse(allocator: *std.mem.Allocator, dependency_: string, sliced: *const 
 }
 
 pub fn parseWithTag(
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     dependency: string,
     tag: Dependency.Version.Tag,
     sliced: *const SlicedString,

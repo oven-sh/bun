@@ -71,7 +71,7 @@ pub const RequestContext = struct {
     method: Method,
     url: URLPath,
     conn: *tcp.Connection,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     arena: *std.heap.ArenaAllocator,
     log: logger.Log,
     bundler: *Bundler,
@@ -130,7 +130,7 @@ pub const RequestContext = struct {
 
     pub fn renderFallback(
         this: *RequestContext,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         bundler_: *Bundler,
         step: Api.FallbackStep,
         log: *logger.Log,
@@ -675,7 +675,7 @@ pub const RequestContext = struct {
     pub const WatchBuilder = struct {
         watcher: *Watcher,
         bundler: *Bundler,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         printer: js_printer.BufferPrinter,
         timer: std.time.Timer,
         count: usize = 0,
@@ -695,7 +695,7 @@ pub const RequestContext = struct {
                 fail,
             };
         };
-        pub fn build(this: *WatchBuilder, id: u32, from_timestamp: u32, allocator: *std.mem.Allocator) !WatchBuildResult {
+        pub fn build(this: *WatchBuilder, id: u32, from_timestamp: u32, allocator: std.mem.Allocator) !WatchBuildResult {
             if (this.count == 0) {
                 var writer = try js_printer.BufferWriter.init(this.allocator);
                 this.printer = js_printer.BufferPrinter.init(writer);
@@ -2432,7 +2432,7 @@ var serve_as_package_path = false;
 //     channel: WatcherBuildChannel,
 //     bundler: *Bundler,
 //     watcher: *Watcher,
-//     allocator: *std.mem.Allocator,
+//     allocator: std.mem.Allocator,
 
 //     pub fn start(queue: *@This()) void {
 //         var stdout = std.io.getStdOut();
@@ -2467,7 +2467,7 @@ var serve_as_package_path = false;
 
 pub const Server = struct {
     log: logger.Log,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     bundler: *Bundler,
     watcher: *Watcher,
     timer: std.time.Timer = undefined,
@@ -3043,7 +3043,7 @@ pub const Server = struct {
     }
 
     pub var global_start_time: std.time.Timer = undefined;
-    pub fn start(allocator: *std.mem.Allocator, options: Api.TransformOptions, comptime DebugType: type, debug: DebugType) !void {
+    pub fn start(allocator: std.mem.Allocator, options: Api.TransformOptions, comptime DebugType: type, debug: DebugType) !void {
         var log = logger.Log.init(allocator);
         var server = try allocator.create(Server);
         server.* = Server{

@@ -248,8 +248,8 @@ noinline fn wait(self: *ThreadPool, _is_waking: bool) error{Shutdown}!bool {
         } else {
             if (self.io) |io| {
                 const HTTP = @import("http");
-                io.run_for_ns(std.time.ns_per_us * 100) catch {};
-                while (HTTP.AsyncHTTP.active_requests_count.load(.Monotonic) > 255) {
+                io.run_for_ns(std.time.ns_per_us * 10) catch {};
+                while (HTTP.AsyncHTTP.active_requests_count.load(.Monotonic) > HTTP.AsyncHTTP.max_simultaneous_requests) {
                     io.tick() catch {};
                 }
                 sync = @bitCast(Sync, self.sync.load(.Monotonic));

@@ -385,9 +385,9 @@ pub const AsyncHTTP = struct {
             var timer = std.time.Timer.start() catch @panic("Timer failure");
             defer this.elapsed = timer.read();
             _ = active_requests_count.fetchAdd(1, .Monotonic);
-            defer _ = active_requests_count.fetchSub(1, .Monotonic);
 
             this.response = await this.client.sendAsync(this.request_body.list.items, this.response_buffer) catch |err| {
+                _ = active_requests_count.fetchSub(1, .Monotonic);
                 this.state.store(.fail, .Monotonic);
                 this.err = err;
 
@@ -402,6 +402,7 @@ pub const AsyncHTTP = struct {
             this.redirect_count = @intCast(u32, @maximum(127 - this.client.remaining_redirect_count, 0));
             this.state.store(.success, .Monotonic);
             this.gzip_elapsed = this.client.gzip_elapsed;
+            _ = active_requests_count.fetchSub(1, .Monotonic);
         }
 
         if (sender.http.callback) |callback| {
@@ -536,7 +537,7 @@ pub const AsyncMessage = struct {
     pub fn release(self: *AsyncMessage) void {
         self.used = 0;
         self.sent = 0;
-        std.debug.assert(!self.released);
+        if (self.released) return;
         self.released = true;
 
         if (self.pooled != null) {
@@ -1461,16 +1462,6 @@ pub fn connect(
     var client = std.x.net.tcp.Client{ .socket = std.x.os.Socket.from(this.socket.socket.socket) };
     client.setReadBufferSize(BufferPool.len) catch {};
     client.setQuickACK(true) catch {};
-
-    if (comptime Environment.isMac) {
-        // Don't crash if the server disconnects.
-        std.os.setsockopt(
-            client.socket.fd,
-            std.os.IPPROTO_TCP,
-            std.os.SO_NOSIGPIPE,
-            std.mem.asBytes(&@as(u32, @boolToInt(true))),
-        ) catch {};
-    }
 
     this.tcp_client = client;
     if (this.timeout > 0) {

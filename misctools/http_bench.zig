@@ -29,6 +29,8 @@ const params = [_]clap.Param(clap.Help){
     clap.parseParam("--no-compression           Disable gzip & deflate") catch unreachable,
     clap.parseParam("--version                  Print the version and exit") catch unreachable,
     clap.parseParam("--turbo                    Skip sending TLS shutdown signals") catch unreachable,
+    clap.parseParam("--repeat <INT>             Repeat N times") catch unreachable,
+    clap.parseParam("--max-concurrency <INT>    Max concurrent") catch unreachable,
     clap.parseParam("<POS>...                          ") catch unreachable,
 };
 
@@ -65,6 +67,8 @@ pub const Arguments = struct {
     turbo: bool = false,
     count: usize = 10,
     timeout: usize = 0,
+    repeat: usize = 0,
+    concurrency: u16 = 32,
 
     pub fn parse(allocator: *std.mem.Allocator) !Arguments {
         var diag = clap.Diagnostic{};
@@ -153,6 +157,8 @@ pub const Arguments = struct {
             .headers = .{},
             .headers_buf = "",
             .body = body_string,
+            .keep_alive = !args.flag("--no-keep-alive"),
+            .concurrency = std.fmt.parseInt(u16, args.option("--max-concurrency") orelse "32", 10) catch 32,
             .turbo = args.flag("--turbo"),
             .timeout = std.fmt.parseInt(usize, args.option("--timeout") orelse "0", 10) catch |err| {
                 Output.prettyErrorln("<r><red>{s}<r> parsing timeout", .{@errorName(err)});
@@ -189,51 +195,52 @@ pub fn main() anyerror!void {
     try channel.buffer.ensureCapacity(args.count);
 
     try NetworkThread.init();
-
+    if (args.concurrency > 0) HTTP.AsyncHTTP.max_simultaneous_requests = args.concurrency;
     const Group = struct {
         response_body: MutableString = undefined,
         request_body: MutableString = undefined,
         context: HTTP.HTTPChannelContext = undefined,
     };
-    var groups = try default_allocator.alloc(Group, args.count);
-    var i: usize = 0;
     const Batch = @import("../src/thread_pool.zig").Batch;
-    var batch = Batch{};
-    while (i < args.count) : (i += 1) {
-        groups[i] = Group{};
-        var response_body = &groups[i].response_body;
-        response_body.* = try MutableString.init(default_allocator, 1024);
-        var request_body = &groups[i].request_body;
-        request_body.* = try MutableString.init(default_allocator, 0);
+    var groups = try default_allocator.alloc(Group, args.count);
+    var repeat_i: usize = 0;
+    while (repeat_i < args.repeat + 1) : (repeat_i += 1) {
+        var i: usize = 0;
+        var batch = Batch{};
+        while (i < args.count) : (i += 1) {
+            groups[i] = Group{};
+            var response_body = &groups[i].response_body;
+            response_body.* = try MutableString.init(default_allocator, 1024);
+            var request_body = &groups[i].request_body;
+            request_body.* = try MutableString.init(default_allocator, 0);
 
-        var ctx = &groups[i].context;
-        ctx.* = .{
-            .channel = channel,
-            .http = try HTTP.AsyncHTTP.init(
-                default_allocator,
-                args.method,
-                args.url,
-                args.headers,
-                args.headers_buf,
-                request_body,
-                response_body,
-                args.timeout,
-            ),
-        };
-        ctx.http.callback = HTTP.HTTPChannelContext.callback;
-        ctx.http.schedule(default_allocator, &batch);
-        
-    }
-    NetworkThread.global.pool.schedule(batch);
+            var ctx = &groups[i].context;
+            ctx.* = .{
+                .channel = channel,
+                .http = try HTTP.AsyncHTTP.init(
+                    default_allocator,
+                    args.method,
+                    args.url,
+                    args.headers,
+                    args.headers_buf,
+                    request_body,
+                    response_body,
+                    args.timeout,
+                ),
+            };
+            ctx.http.callback = HTTP.HTTPChannelContext.callback;
+            ctx.http.schedule(default_allocator, &batch);
+        }
+        NetworkThread.global.pool.schedule(batch);
 
-    var read_count: usize = 0;
-    var success_count: usize = 0;
-    var fail_count: usize = 0;
-    var min_duration: usize = std.math.maxInt(usize);
-    var max_duration: usize = 0;
-    var timer = try std.time.Timer.start();
-    while (read_count < args.count) {
-        while (channel.tryReadItem() catch null) |http| {
+        var read_count: usize = 0;
+        var success_count: usize = 0;
+        var fail_count: usize = 0;
+        var min_duration: usize = std.math.maxInt(usize);
+        var max_duration: usize = 0;
+        var timer = try std.time.Timer.start();
+        while (read_count < args.count) {
+            const http = channel.readItem() catch continue;
             read_count += 1;
 
             Output.printElapsed(@floatCast(f64, @intToFloat(f128, http.elapsed) / std.time.ns_per_ms));

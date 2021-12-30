@@ -644,7 +644,7 @@ pub fn HashMapUnmanaged(
         }
 
         /// Get an optional pointer to the value associated with key, if present.
-        pub fn getHash(self: Self, key: K) u64 {
+        pub fn getHash(key: K) u64 {
             return hashFn(key);
         }
 

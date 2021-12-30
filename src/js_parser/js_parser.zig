@@ -7567,38 +7567,20 @@ pub fn NewParser(
         }
 
         fn markStrictModeFeature(p: *P, feature: StrictModeFeature, r: logger.Range, detail: string) !void {
-            var text: string = undefined;
-            var can_be_transformed = false;
-            switch (feature) {
-                .with_statement => {
-                    text = "With statements";
-                },
-                .delete_bare_name => {
-                    text = "\"delete\" of a bare identifier";
-                },
-                .for_in_var_init => {
-                    text = "Variable initializers within for-in loops";
-                    can_be_transformed = true;
-                },
-                .eval_or_arguments => {
-                    text = try std.fmt.allocPrint(p.allocator, "Declarations with the name {s}", .{detail});
-                },
-                .reserved_word => {
-                    text = try std.fmt.allocPrint(p.allocator, "{s} is a reserved word and", .{detail});
-                },
-                .legacy_octal_literal => {
-                    text = "Legacy octal literals";
-                },
-                .legacy_octal_escape => {
-                    text = "Legacy octal escape sequences";
-                },
-                .if_else_function_stmt => {
-                    text = "Function declarations inside if statements";
-                },
+            const can_be_transformed = feature == StrictModeFeature.for_in_var_init;
+            const text = switch (feature) {
+                .with_statement => "With statements",
+                .delete_bare_name => "\"delete\" of a bare identifier",
+                .for_in_var_init => "Variable initializers within for-in loops",
+                .eval_or_arguments => try std.fmt.allocPrint(p.allocator, "Declarations with the name {s}", .{detail}),
+                .reserved_word => try std.fmt.allocPrint(p.allocator, "{s} is a reserved word and", .{detail}),
+                .legacy_octal_literal => "Legacy octal literals",
+                .legacy_octal_escape => "Legacy octal escape sequences",
+                .if_else_function_stmt => "Function declarations inside if statements",
                 // else => {
                 //     text = "This feature";
                 // },
-            }
+            };
 
             var scope = p.current_scope;
             if (p.isStrictMode()) {

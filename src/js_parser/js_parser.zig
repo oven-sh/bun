@@ -59,6 +59,7 @@ const Ref = @import("../ast/base.zig").Ref;
 pub const StringHashMap = _hash_map.StringHashMap;
 pub const AutoHashMap = _hash_map.AutoHashMap;
 const StringHashMapUnamanged = _hash_map.StringHashMapUnamanged;
+const ObjectPool = @import("../pool.zig").ObjectPool;
 
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 // Dear reader,
@@ -1727,6 +1728,44 @@ const List = std.ArrayListUnmanaged;
 const ListManaged = std.ArrayList;
 const LocList = ListManaged(logger.Loc);
 const StmtList = ListManaged(Stmt);
+
+// This hash table is used every time we parse function args
+// Rather than allocating a new hash table each time, we can just reuse the previous allocation
+
+const StringVoidMap = struct {
+    allocator: std.mem.Allocator,
+    map: std.StringHashMapUnmanaged(void) = std.StringHashMapUnmanaged(void){},
+
+    /// Returns true if the map already contained the given key.
+    pub fn getOrPutContains(this: *StringVoidMap, key: string) bool {
+        const entry = this.map.getOrPut(this.allocator, key) catch unreachable;
+        return entry.found_existing;
+    }
+
+    pub fn contains(this: *StringVoidMap, key: string) bool {
+        return this.map.contains(key);
+    }
+
+    fn init(allocator: std.mem.Allocator) anyerror!StringVoidMap {
+        return StringVoidMap{ .allocator = allocator };
+    }
+
+    pub fn reset(this: *StringVoidMap) void {
+        // We must reset or the hash table will contain invalid pointers
+        this.map.clearRetainingCapacity();
+    }
+
+    pub inline fn get(allocator: std.mem.Allocator) *Node {
+        return Pool.get(allocator);
+    }
+
+    pub inline fn release(node: *Node) void {
+        Pool.release(node);
+    }
+
+    pub const Pool = ObjectPool(StringVoidMap, init, true);
+    pub const Node = Pool.Node;
+};
 
 const SymbolUseMap = Map(Ref, js_ast.Symbol.Use);
 const StringBoolMap = _hash_map.StringHashMapUnmanaged(bool);
@@ -7777,29 +7816,26 @@ pub fn NewParser(
 
             // The name is optional
             if (p.lexer.token == .t_identifier) {
+                const text = p.lexer.identifier;
+
                 // Don't declare the name "arguments" since it's shadowed and inaccessible
-                var _name = js_ast.LocRef{
+                name = js_ast.LocRef{
                     .loc = p.lexer.loc(),
-                    .ref = null,
+                    .ref = if (text.len > 0 and !strings.eqlComptime(text, "arguments"))
+                        try p.declareSymbol(.hoisted_function, p.lexer.loc(), text)
+                    else
+                        try p.newSymbol(.hoisted_function, text),
                 };
 
-                const text = p.lexer.identifier;
-                if (text.len > 0 and !strings.eqlComptime(text, "arguments")) {
-                    _name.ref = try p.declareSymbol(.hoisted_function, _name.loc, text);
-                } else {
-                    _name.ref = try p.newSymbol(.hoisted_function, text);
-                }
-
-                name = _name;
                 try p.lexer.next();
             }
 
             // Even anonymous functions can have TypeScript type parameters
-            if (is_typescript_enabled) {
+            if (comptime is_typescript_enabled) {
                 try p.skipTypeScriptTypeParameters();
             }
 
-            var func = try p.parseFn(name, FnOrArrowDataParse{
+            const func = try p.parseFn(name, FnOrArrowDataParse{
                 .async_range = async_range,
                 .allow_await = if (is_async) .allow_expr else .allow_ident,
                 .allow_yield = if (is_generator) .allow_expr else .allow_ident,
@@ -8345,15 +8381,10 @@ pub fn NewParser(
                     // Support contextual keywords
                     if (kind == .normal and !opts.is_generator) {
                         // Does the following token look like a key?
-                        var couldBeModifierKeyword = p.lexer.isIdentifierOrKeyword();
-                        if (!couldBeModifierKeyword) {
-                            switch (p.lexer.token) {
-                                .t_open_bracket, .t_numeric_literal, .t_string_literal, .t_asterisk, .t_private_identifier => {
-                                    couldBeModifierKeyword = true;
-                                },
-                                else => {},
-                            }
-                        }
+                        const couldBeModifierKeyword = p.lexer.isIdentifierOrKeyword() or switch (p.lexer.token) {
+                            .t_open_bracket, .t_numeric_literal, .t_string_literal, .t_asterisk, .t_private_identifier => true,
+                            else => false,
+                        };
 
                         // If so, check for a modifier keyword
                         if (couldBeModifierKeyword) {
@@ -8402,9 +8433,21 @@ pub fn NewParser(
                     key = p.e(E.String{ .utf8 = name }, name_range.loc);
 
                     // Parse a shorthand property
-                    const isShorthandProperty = (!opts.is_class and kind == .normal and p.lexer.token != .t_colon and p.lexer.token != .t_open_paren and p.lexer.token != .t_less_than and !opts.is_generator and !opts.is_async and !js_lexer.Keywords.has(name));
+                    const isShorthandProperty = (!opts.is_class and
+                        kind == .normal and
+                        p.lexer.token != .t_colon and
+                        p.lexer.token != .t_open_paren and
+                        p.lexer.token != .t_less_than and
+                        !opts.is_generator and
+                        !opts.is_async and
+                        !js_lexer.Keywords.has(name));
+
                     if (isShorthandProperty) {
-                        if ((p.fn_or_arrow_data_parse.allow_await != .allow_ident and strings.eqlComptime(name, "await")) or (p.fn_or_arrow_data_parse.allow_yield != .allow_ident and strings.eqlComptime(name, "yield"))) {
+                        if ((p.fn_or_arrow_data_parse.allow_await != .allow_ident and
+                            strings.eqlComptime(name, "await")) or
+                            (p.fn_or_arrow_data_parse.allow_yield != .allow_ident and
+                            strings.eqlComptime(name, "yield")))
+                        {
                             // TODO: add fmt to addRangeError
                             p.log.addRangeError(p.source, name_range, "Cannot use \"yield\" or \"await\" here.") catch unreachable;
                         }
@@ -8806,7 +8849,7 @@ pub fn NewParser(
                     try p.lexer.next();
                     break :parseTemplatePart;
                 }
-                std.debug.assert(p.lexer.token != .t_end_of_file);
+                if (comptime Environment.allow_assert) std.debug.assert(p.lexer.token != .t_end_of_file);
             }
 
             p.allow_in = oldAllowIn;
@@ -9858,7 +9901,7 @@ pub fn NewParser(
                     return try p.parseStringLiteral();
                 },
                 .t_template_head => {
-                    var head = p.lexer.toEString();
+                    const head = p.lexer.toEString();
 
                     const parts = try p.parseTemplateParts(false);
 
@@ -10496,7 +10539,7 @@ pub fn NewParser(
                                 continue;
                             }
 
-                            var prop_name = p.e(E.String{ .utf8 = prop_name_literal }, key_range.loc);
+                            const prop_name = p.e(E.String{ .utf8 = prop_name_literal }, key_range.loc);
 
                             // Parse the value
                             var value: Expr = undefined;
@@ -10719,7 +10762,8 @@ pub fn NewParser(
 
             if (partStmts.items.len > 0) {
                 const _stmts = partStmts.toOwnedSlice();
-                var part = js_ast.Part{
+
+                try parts.append(js_ast.Part{
                     .stmts = _stmts,
                     .symbol_uses = p.symbol_uses,
                     .declared_symbols = p.declared_symbols.toOwnedSlice(
@@ -10730,9 +10774,7 @@ pub fn NewParser(
                     ),
                     .scopes = p.scopes_for_current_part.toOwnedSlice(p.allocator),
                     .can_be_removed_if_unused = p.stmtsCanBeRemovedIfUnused(_stmts),
-                };
-
-                try parts.append(part);
+                });
             }
         }
 
@@ -12311,7 +12353,13 @@ pub fn NewParser(
         fn visitArgs(p: *P, args: []G.Arg, opts: VisitArgsOpts) void {
             const strict_loc = fnBodyContainsUseStrict(opts.body);
             const has_simple_args = isSimpleParameterList(args, opts.has_rest_arg);
-            var duplicate_args_check: ?StringBoolMap = null;
+            var duplicate_args_check: ?*StringVoidMap.Node = null;
+            defer {
+                if (duplicate_args_check) |checker| {
+                    StringVoidMap.release(checker);
+                }
+            }
+
             // Section 15.2.1 Static Semantics: Early Errors: "It is a Syntax Error if
             // FunctionBodyContainsUseStrict of FunctionBody is true and
             // IsSimpleParameterList of FormalParameters is false."
@@ -12324,11 +12372,14 @@ pub fn NewParser(
             // functions which have simple parameter lists and which are not defined in
             // strict mode code."
             if (opts.is_unique_formal_parameters or strict_loc != null or !has_simple_args or p.isStrictMode()) {
-                duplicate_args_check = StringBoolMap{};
+                duplicate_args_check = StringVoidMap.get(_global.default_allocator);
             }
 
             var i: usize = 0;
-            var duplicate_args_check_ptr: ?*StringBoolMap = if (duplicate_args_check != null) &duplicate_args_check.? else null;
+            var duplicate_args_check_ptr: ?*StringVoidMap = if (duplicate_args_check != null)
+                &duplicate_args_check.?.data
+            else
+                null;
 
             while (i < args.len) : (i += 1) {
                 if (args[i].ts_decorators.len > 0) {
@@ -13904,7 +13955,7 @@ pub fn NewParser(
             return false;
         }
 
-        fn visitBinding(p: *P, binding: BindingNodeIndex, duplicate_arg_check: ?*StringBoolMap) void {
+        fn visitBinding(p: *P, binding: BindingNodeIndex, duplicate_arg_check: ?*StringVoidMap) void {
             switch (binding.data) {
                 .b_missing => {},
                 .b_identifier => |bind| {
@@ -13913,19 +13964,16 @@ pub fn NewParser(
                     if (isEvalOrArguments(name)) {
                         p.markStrictModeFeature(.eval_or_arguments, js_lexer.rangeOfIdentifier(p.source, binding.loc), name) catch unreachable;
                     }
-                    const allocator = p.allocator;
                     if (duplicate_arg_check) |dup| {
-                        const res = dup.getOrPut(allocator, name) catch unreachable;
-                        if (res.found_existing) {
+                        if (dup.getOrPutContains(name)) {
                             p.log.addRangeErrorFmt(
                                 p.source,
                                 js_lexer.rangeOfIdentifier(p.source, binding.loc),
-                                allocator,
+                                p.allocator,
                                 "\"{s}\" cannot be bound multiple times in the same parameter list",
                                 .{name},
                             ) catch unreachable;
                         }
-                        res.entry.value = true;
                     }
                 },
                 .b_array => |bind| {

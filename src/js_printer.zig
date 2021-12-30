@@ -4146,7 +4146,7 @@ const FileWriterInternal = struct {
         return @ptrCast([*]u8, &buffer.list.items.ptr[buffer.list.items.len]);
     }
     pub fn advanceBy(ctx: *FileWriterInternal, count: u32) void {
-        if (comptime Environment.isDebug) std.debug.assert(buffer.list.items.len + count < buffer.list.capacity);
+        if (comptime Environment.isDebug) std.debug.assert(buffer.list.items.len + count <= buffer.list.capacity);
 
         buffer.list.items = buffer.list.items.ptr[0 .. buffer.list.items.len + count];
     }

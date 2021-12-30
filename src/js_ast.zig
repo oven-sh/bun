@@ -21,6 +21,7 @@ const allocators = @import("allocators.zig");
 const _hash_map = @import("hash_map.zig");
 const StringHashMap = _hash_map.StringHashMap;
 const AutoHashMap = _hash_map.AutoHashMap;
+const StringHashMapUnmanaged = _hash_map.StringHashMapUnmanaged;
 pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
     var max_size = 0;
     var max_align = 1;
@@ -30,55 +31,86 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
     }
 
     const UnionValueType = [max_size]u8;
+    const SizeType = std.math.IntFittingRange(0, (count + 1));
     const MaxAlign = max_align;
-    const total_items_len = max_size * count;
+
     return struct {
         const Allocator = std.mem.Allocator;
         const Self = @This();
 
         const Block = struct {
+            used: SizeType = 0,
             items: [count]UnionValueType align(MaxAlign) = undefined,
-            used: usize = 0,
-            allocator: std.mem.Allocator,
 
             pub inline fn isFull(block: *const Block) bool {
-                return block.used >= block.items.len;
+                return block.used >= @as(SizeType, count);
             }
 
-            pub fn append(block: *Block, value: anytype) *UnionValueType {
-                std.debug.assert(block.used < count);
+            pub fn append(block: *Block, comptime ValueType: type, value: ValueType) *UnionValueType {
+                if (comptime Environment.allow_assert) std.debug.assert(block.used < count);
                 const index = block.used;
-                std.mem.copy(u8, &block.items[index], value);
-
+                block.items[index][0..value.len].* = value.*;
                 block.used += 1;
                 return &block.items[index];
             }
         };
 
-        block: Block,
-        overflow_ptrs: [4096 * 3]*Block = undefined,
-        overflow: []*Block = &([_]*Block{}),
-        overflow_used: usize = 0,
-        allocator: Allocator,
+        const Overflow = struct {
+            const max = 4096 * 3;
+            const UsedSize = std.math.IntFittingRange(0, max + 1);
+            used: UsedSize = 0,
+            allocated: UsedSize = 0,
+            allocator: Allocator,
+            ptrs: [max]*Block = undefined,
 
-        pub threadlocal var instance: Self = undefined;
+            pub fn tail(this: *Overflow) *Block {
+                if (this.ptrs[this.used].isFull()) {
+                    this.used += 1;
+                    if (this.allocated > this.used) {
+                        this.ptrs[this.used].used = 0;
+                    }
+                }
+
+                if (this.allocated <= this.used) {
+                    var new_ptrs = this.allocator.alloc(Block, 2) catch unreachable;
+                    new_ptrs[0] = Block{};
+                    new_ptrs[1] = Block{};
+                    this.ptrs[this.allocated] = &new_ptrs[0];
+                    this.ptrs[this.allocated + 1] = &new_ptrs[1];
+                    this.allocated += 2;
+                }
+
+                return this.ptrs[this.used];
+            }
+
+            pub inline fn slice(this: *Overflow) []*Block {
+                return this.ptrs[0..this.used];
+            }
+        };
+
+        block: Block = Block{ .used = 0 },
+        overflow: Overflow = Overflow{},
+
         pub threadlocal var _self: *Self = undefined;
 
         pub fn reset() void {
-            _self.block.used = 0;
-            for (_self.overflow[0.._self.overflow_used]) |b| {
+            for (_self.overflow.slice()) |b| {
                 b.used = 0;
             }
-            _self.overflow_used = 0;
+            _self.overflow.used = 0;
         }
 
         pub fn init(allocator: std.mem.Allocator) *Self {
-            instance = Self{
-                .allocator = allocator,
-                .block = Block{ .allocator = allocator },
+            var instance = allocator.create(Self) catch unreachable;
+            instance.* = Self{
+                .overflow = Overflow{ .allocator = allocator },
+                .block = Block{},
             };
+            instance.overflow.ptrs[0] = &instance.block;
+            instance.overflow.allocated = 1;
 
-            _self = &instance;
+            _self = instance;
+
             return _self;
         }
 
@@ -86,39 +118,37 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
             return _self._append(ValueType, value);
         }
 
-        fn _append(self: *Self, comptime ValueType: type, value: ValueType) *ValueType {
-            if (!self.block.isFull()) {
-                var ptr = self.block.append(std.mem.asBytes(&value));
-                var aligned_slice = @alignCast(@alignOf(ValueType), ptr);
+        inline fn _append(self: *Self, comptime ValueType: type, value: ValueType) *ValueType {
+            const bytes = std.mem.asBytes(&value);
+            const BytesAsSlice = @TypeOf(bytes);
 
-                return @ptrCast(
-                    *ValueType,
-                    aligned_slice,
-                );
-            }
+            // if (self.overflow_used >= self.overflow.len or self.overflow[self.overflow_used].isFull()) {
+            //     var slice = self.allocator.alloc(Block, 2) catch unreachable;
+            //     slice[0] = Block{
+            //         .used = 0,
+            //         .items = undefined,
+            //     };
+            //     slice[1] = Block{
+            //         .used = 0,
+            //         .items = undefined,
+            //     };
 
-            if (self.overflow_used >= self.overflow.len or self.overflow[self.overflow_used].isFull()) {
-                var slice = self.allocator.alloc(Block, 2) catch unreachable;
-                for (slice) |*block| {
-                    block.allocator = self.allocator;
-                    block.used = 0;
-                    block.items = undefined;
-                    self.overflow_ptrs[self.overflow.len] = block;
-                    self.overflow = self.overflow_ptrs[0 .. self.overflow.len + 1];
-                }
-            }
+            //     self.overflow_ptrs[self.overflow.len] = &slice[0];
+            //     self.overflow_ptrs[self.overflow.len + 1] = &slice[1];
+            //     self.overflow = self.overflow_ptrs[0 .. self.overflow.len + 2];
+            //     if (self.overflow[self.overflow_used].isFull()) {
+            //         self.overflow_used += 1;
+            //     }
+            // }
 
-            var block = self.overflow[self.overflow_used];
-            var ptr = block.append(std.mem.asBytes(&value));
-            if (block.isFull()) {
-                self.overflow_used += 1;
-            }
-
-            var aligned_slice = @alignCast(@alignOf(ValueType), ptr);
+            var block = self.overflow.tail();
 
             return @ptrCast(
                 *ValueType,
-                aligned_slice,
+                @alignCast(
+                    @alignOf(ValueType),
+                    @alignCast(@alignOf(ValueType), block.append(BytesAsSlice, bytes)),
+                ),
             );
         }
     };
@@ -3543,7 +3573,6 @@ pub const Ast = struct {
     // is conveniently fully parallelized.
     named_imports: NamedImports = undefined,
     named_exports: NamedExports = undefined,
-    top_level_symbol_to_parts: AutoHashMap(Ref, std.ArrayList(u32)) = undefined,
     export_star_import_records: []u32 = &([_]u32{}),
 
     pub const NamedImports = std.ArrayHashMap(Ref, NamedImport, RefHashCtx, true);
@@ -3663,7 +3692,7 @@ pub const Part = struct {
         jsx_import,
     };
 
-    pub const SymbolUseMap = AutoHashMap(Ref, Symbol.Use);
+    pub const SymbolUseMap = _hash_map.AutoHashMapUnmanaged(Ref, Symbol.Use);
     pub fn jsonStringify(self: *const Part, options: std.json.StringifyOptions, writer: anytype) !void {
         return std.json.stringify(self.stmts, options, writer);
     }
@@ -3720,9 +3749,9 @@ pub const Scope = struct {
     id: usize = 0,
     kind: Kind = Kind.block,
     parent: ?*Scope,
-    children: std.ArrayList(*Scope),
-    members: StringHashMap(Member),
-    generated: std.ArrayList(Ref),
+    children: std.ArrayListUnmanaged(*Scope) = .{},
+    members: StringHashMapUnmanaged(Member) = .{},
+    generated: std.ArrayListUnmanaged(Ref) = .{},
 
     // This is used to store the ref of the label symbol for ScopeLabel scopes.
     label_ref: ?Ref = null,

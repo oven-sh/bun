@@ -5,63 +5,6 @@ const Wyhash = std.hash.Wyhash;
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const constStrToU8 = @import("./global.zig").constStrToU8;
 
-// https://en.wikipedia.org/wiki/.bss#BSS_in_C
-pub fn BSSSectionAllocator(comptime size: usize) type {
-    return struct {
-        var backing_buf: [size]u8 = undefined;
-        var fixed_buffer_allocator = FixedBufferAllocator.init(&backing_buf);
-        var buf_allocator = &fixed_buffer_allocator.allocator;
-        const Allocator = std.mem.Allocator;
-        const Self = @This();
-
-        allocator: Allocator,
-        fallback_allocator: Allocator,
-
-        is_overflowed: bool = false,
-
-        pub fn get(self: *Self) Allocator {
-            return &self.allocator;
-        }
-
-        pub fn init(fallback_allocator: Allocator) Self {
-            return Self{ .fallback_allocator = fallback_allocator, .allocator = Allocator{
-                .allocFn = BSSSectionAllocator(size).alloc,
-                .resizeFn = BSSSectionAllocator(size).resize,
-            } };
-        }
-
-        pub fn alloc(
-            allocator: Allocator,
-            len: usize,
-            ptr_align: u29,
-            len_align: u29,
-            return_address: usize,
-        ) error{OutOfMemory}![]u8 {
-            const self = @fieldParentPtr(Self, "allocator", allocator);
-            return buf_allocator.allocFn(buf_allocator, len, ptr_align, len_align, return_address) catch |err| {
-                self.is_overflowed = true;
-                return self.fallback_allocator.allocFn(self.fallback_allocator, len, ptr_align, len_align, return_address);
-            };
-        }
-
-        pub fn resize(
-            allocator: Allocator,
-            buf: []u8,
-            buf_align: u29,
-            new_len: usize,
-            len_align: u29,
-            return_address: usize,
-        ) error{OutOfMemory}!usize {
-            const self = @fieldParentPtr(Self, "allocator", allocator);
-            if (fixed_buffer_allocator.ownsPtr(buf.ptr)) {
-                return fixed_buffer_allocator.allocator.resizeFn(&fixed_buffer_allocator.allocator, buf, buf_align, new_len, len_align, return_address);
-            } else {
-                return self.fallback_allocator.resizeFn(self.fallback_allocator, buf, buf_align, new_len, len_align, return_address);
-            }
-        }
-    };
-}
-
 pub fn isSliceInBuffer(slice: anytype, buffer: anytype) bool {
     return (@ptrToInt(&buffer) <= @ptrToInt(slice.ptr) and (@ptrToInt(slice.ptr) + slice.len) <= (@ptrToInt(buffer) + buffer.len));
 }

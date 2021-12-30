@@ -77,7 +77,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
 
         // err: ?LexerType.Error,
         log: *logger.Log,
-        source: *const logger.Source,
+        source: logger.Source,
         current: usize = 0,
         start: usize = 0,
         end: usize = 0,
@@ -182,7 +182,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                 return;
             }
 
-            self.log.addErrorFmt(self.source, __loc, self.allocator, format, args) catch unreachable;
+            self.log.addErrorFmt(&self.source, __loc, self.allocator, format, args) catch unreachable;
             self.prev_error_loc = __loc;
         }
 
@@ -195,7 +195,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             }
 
             const errorMessage = std.fmt.allocPrint(self.allocator, format, args) catch unreachable;
-            var msg = self.log.addRangeError(self.source, r, errorMessage);
+            var msg = self.log.addRangeError(&self.source, r, errorMessage);
             self.prev_error_loc = r.loc;
 
             // if (panic) {
@@ -1300,7 +1300,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
 
                                 if (lexer.code_point == '>' and lexer.has_newline_before) {
                                     lexer.step();
-                                    lexer.log.addRangeWarning(lexer.source, lexer.range(), "Treating \"-->\" as the start of a legacy HTML single-line comment") catch unreachable;
+                                    lexer.log.addRangeWarning(&lexer.source, lexer.range(), "Treating \"-->\" as the start of a legacy HTML single-line comment") catch unreachable;
 
                                     singleLineHTMLCloseComment: while (true) {
                                         switch (lexer.code_point) {
@@ -1714,7 +1714,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             };
         }
 
-        pub fn initTSConfig(log: *logger.Log, source: *const logger.Source, allocator: std.mem.Allocator) !LexerType {
+        pub fn initTSConfig(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) !LexerType {
             var empty_string_literal: JavascriptString = &emptyJavaScriptString;
             var lex = LexerType{
                 .log = log,
@@ -1732,7 +1732,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             return lex;
         }
 
-        pub fn initJSON(log: *logger.Log, source: *const logger.Source, allocator: std.mem.Allocator) !LexerType {
+        pub fn initJSON(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) !LexerType {
             var empty_string_literal: JavascriptString = &emptyJavaScriptString;
             var lex = LexerType{
                 .log = log,
@@ -1749,7 +1749,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             return lex;
         }
 
-        pub fn init(log: *logger.Log, source: *const logger.Source, allocator: std.mem.Allocator) !LexerType {
+        pub fn init(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) !LexerType {
             try tables.initJSXEntityMap();
             var empty_string_literal: JavascriptString = &emptyJavaScriptString;
             var lex = LexerType{

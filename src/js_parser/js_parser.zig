@@ -1730,7 +1730,6 @@ const StmtList = ListManaged(Stmt);
 
 const SymbolUseMap = Map(Ref, js_ast.Symbol.Use);
 const StringBoolMap = _hash_map.StringHashMapUnmanaged(bool);
-const StringBoolMapUnmanaged = _hash_map.StringHashMap(bool);
 const RefMap = Map(Ref, void);
 const RefRefMap = Map(Ref, Ref);
 const ImportRecord = importRecord.ImportRecord;
@@ -7613,7 +7612,7 @@ pub fn NewParser(
             }
         }
 
-        pub fn isStrictMode(p: *P) bool {
+        pub inline fn isStrictMode(p: *P) bool {
             return p.current_scope.strict_mode != .sloppy_mode;
         }
 

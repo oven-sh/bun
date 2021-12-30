@@ -1,11 +1,13 @@
 const _global = @import("global.zig");
 const string = _global.string;
 const Output = _global.Output;
+const StoredFileDescriptorType = _global.StoredFileDescriptorType;
 const Global = _global.Global;
 const Environment = _global.Environment;
 const strings = _global.strings;
 const MutableString = _global.MutableString;
 const stringZ = _global.stringZ;
+const FeatureFlags = _global.FeatureFlags;
 const default_allocator = _global.default_allocator;
 const C = _global.C;
 
@@ -21,6 +23,7 @@ const sync = @import("sync.zig");
 const Mutex = @import("./lock.zig").Lock;
 
 const import_record = @import("./import_record.zig");
+
 const ImportRecord = import_record.ImportRecord;
 
 pub const FsCacheEntry = struct {
@@ -85,7 +88,7 @@ pub const Fs = struct {
         }
 
         const file = rfs.readFileWithHandle(path, null, file_handle, true, shared) catch |err| {
-            if (comptime isDebug) {
+            if (comptime Environment.isDebug) {
                 Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
             }
             return err;
@@ -136,7 +139,7 @@ pub const Fs = struct {
         }
 
         const file = rfs.readFileWithHandle(path, null, file_handle, use_shared_buffer, &c.shared_buffer) catch |err| {
-            if (isDebug) {
+            if (Environment.isDebug) {
                 Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
             }
             return err;

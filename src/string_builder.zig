@@ -1,4 +1,4 @@
-usingnamespace @import("string_types.zig");
+const string = @import("string_types.zig").string;
 const Allocator = @import("std").mem.Allocator;
 const assert = @import("std").debug.assert;
 const copy = @import("std").mem.copy;

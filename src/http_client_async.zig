@@ -6,6 +6,7 @@ const Global = _global.Global;
 const Environment = _global.Environment;
 const strings = _global.strings;
 const MutableString = _global.MutableString;
+const FeatureFlags = _global.FeatureFlags;
 const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
 const C = _global.C;
@@ -63,7 +64,7 @@ header_entries: Headers.Entries,
 header_buf: string,
 url: URL,
 allocator: std.mem.Allocator,
-verbose: bool = isTest,
+verbose: bool = Environment.isTest,
 tcp_client: tcp.Client = undefined,
 body_size: u32 = 0,
 read_count: u32 = 0,
@@ -1582,7 +1583,7 @@ const ZlibPool = struct {
             },
         }
 
-        return item;
+        unreachable;
     }
 
     pub fn put(this: *ZlibPool, mutable: *MutableString) !void {

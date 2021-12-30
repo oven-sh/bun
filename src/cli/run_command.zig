@@ -83,7 +83,7 @@ pub const RunCommand = struct {
         return null;
     }
 
-    const BUN_BIN_NAME = if (isDebug) "bun-debug" else "bun";
+    const BUN_BIN_NAME = if (Environment.isDebug) "bun-debug" else "bun";
     const BUN_RUN = std.fmt.comptimePrint("{s} run", .{BUN_BIN_NAME});
 
     // Look for invocations of any:

@@ -8,6 +8,7 @@ const Global = _global.Global;
 const Environment = _global.Environment;
 const strings = _global.strings;
 const MutableString = _global.MutableString;
+const FileDescriptorType = _global.FileDescriptorType;
 const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
 const C = _global.C;

@@ -277,7 +277,7 @@ pub const UpgradeCommand = struct {
             while (assets.next()) |asset| {
                 if (asset.asProperty("content_type")) |content_type| {
                     const content_type_ = (content_type.expr.asString(allocator)) orelse continue;
-                    if (comptime isDebug) {
+                    if (comptime Environment.isDebug) {
                         Output.prettyln("Content-type: {s}", .{content_type_});
                         Output.flush();
                     }
@@ -287,13 +287,13 @@ pub const UpgradeCommand = struct {
 
                 if (asset.asProperty("name")) |name_| {
                     if (name_.expr.asString(allocator)) |name| {
-                        if (comptime isDebug) {
+                        if (comptime Environment.isDebug) {
                             Output.prettyln("Comparing {s} vs {s}", .{ name, Version.zip_filename });
                             Output.flush();
                         }
                         if (strings.eqlComptime(name, Version.zip_filename)) {
                             version.zip_url = (asset.asProperty("browser_download_url") orelse break :get_asset).expr.asString(allocator) orelse break :get_asset;
-                            if (comptime isDebug) {
+                            if (comptime Environment.isDebug) {
                                 Output.prettyln("Found Zip {s}", .{version.zip_url});
                                 Output.flush();
                             }

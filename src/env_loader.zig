@@ -9,6 +9,7 @@ const strings = _global.strings;
 const MutableString = _global.MutableString;
 const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
+const CodePoint = _global.CodePoint;
 const C = _global.C;
 const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
 const Analytics = @import("./analytics/analytics_thread.zig");

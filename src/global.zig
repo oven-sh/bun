@@ -577,3 +577,7 @@ const StringTypes = @import("string_types.zig");
 pub usingnamespace StringTypes;
 pub const strings = @import("string_immutable.zig");
 pub const MutableString = @import("string_mutable.zig").MutableString;
+
+pub inline fn constStrToU8(s: []const u8) []u8 {
+    return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
+}

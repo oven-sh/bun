@@ -7,8 +7,9 @@ const strings = _global.strings;
 const MutableString = _global.MutableString;
 const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
+const FileDescriptorType = _global.FileDescriptorType;
 const C = _global.C;
-usingnamespace @import("./ast/base.zig");
+const Ref = @import("./ast/base.zig").Ref;
 
 const std = @import("std");
 const lex = @import("js_lexer.zig");
@@ -79,12 +80,6 @@ pub const Linker = struct {
             .runtime_source_path = fs.absAlloc(allocator, &([_]string{"__runtime.js"})) catch unreachable,
             .hashed_filenames = HashedFileNameMap.init(allocator),
         };
-    }
-
-    // fs: fs.FileSystem,
-    // TODO:
-    pub fn requireOrImportMetaForSource(c: ThisLinker, source_index: Ref.Int) RequireOrImportMeta {
-        return RequireOrImportMeta{};
     }
 
     pub fn getHashedFilename(
@@ -259,7 +254,7 @@ pub const Linker = struct {
                                     if (node_modules_bundle.getPackageIDByHash(package_json.hash)) |pkg_id| {
                                         const package = node_modules_bundle.bundle.packages[pkg_id];
 
-                                        if (comptime isDebug) {
+                                        if (comptime Environment.isDebug) {
                                             std.debug.assert(strings.eql(node_modules_bundle.str(package.name), package_json.name));
                                             std.debug.assert(strings.eql(node_modules_bundle.str(package.version), package_json.version));
                                         }
@@ -283,7 +278,7 @@ pub const Linker = struct {
                                             break :bundled;
                                         };
 
-                                        if (comptime isDebug) {
+                                        if (comptime Environment.isDebug) {
                                             const module_path = node_modules_bundle.str(found_module.path);
                                             std.debug.assert(
                                                 strings.eql(
@@ -585,7 +580,7 @@ pub const Linker = struct {
 
             .absolute_url => {
                 if (strings.eqlComptime(namespace, "node")) {
-                    if (comptime isDebug) std.debug.assert(strings.eqlComptime(source_path[0..5], "node:"));
+                    if (comptime Environment.isDebug) std.debug.assert(strings.eqlComptime(source_path[0..5], "node:"));
 
                     return Fs.Path.init(try std.fmt.allocPrint(
                         linker.allocator,

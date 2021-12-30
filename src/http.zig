@@ -7,7 +7,9 @@ const Global = _global.Global;
 const Environment = _global.Environment;
 const strings = _global.strings;
 const MutableString = _global.MutableString;
+const FeatureFlags = _global.FeatureFlags;
 const stringZ = _global.stringZ;
+const StoredFileDescriptorType = _global.StoredFileDescriptorType;
 const default_allocator = _global.default_allocator;
 const C = _global.C;
 const Api = @import("./api/schema.zig").Api;
@@ -31,6 +33,7 @@ const DotEnv = @import("./env_loader.zig");
 const mimalloc = @import("./allocators/mimalloc.zig");
 const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 const Analytics = @import("./analytics/analytics_thread.zig");
+
 pub fn constStrToU8(s: string) []u8 {
     return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
 }
@@ -442,7 +445,7 @@ pub const RequestContext = struct {
         comptime chunked: bool,
     ) !void {
         defer {
-            if (Environment.isDebug or isTest) {
+            if (Environment.allow_assert) {
                 std.debug.assert(!ctx.has_written_last_header);
                 ctx.has_written_last_header = true;
             }
@@ -568,7 +571,7 @@ pub const RequestContext = struct {
         defer ctx.done();
         try ctx.writeStatus(500);
         const printed = std.fmt.bufPrint(&error_buf, "Error: {s}", .{@errorName(err)}) catch |err2| brk: {
-            if (Environment.isDebug or isTest) {
+            if (Environment.isDebug or Environment.isTest) {
                 Global.panic("error while printing error: {s}", .{@errorName(err2)});
             }
 
@@ -594,8 +597,8 @@ pub const RequestContext = struct {
     }
 
     pub fn appendHeader(ctx: *RequestContext, comptime key: string, value: string) void {
-        if (comptime isDebug or isTest) std.debug.assert(!ctx.has_written_last_header);
-        if (comptime isDebug or isTest) std.debug.assert(ctx.res_headers_count < res_headers_buf.len);
+        if (comptime Environment.allow_assert) std.debug.assert(!ctx.has_written_last_header);
+        if (comptime Environment.allow_assert) std.debug.assert(ctx.res_headers_count < res_headers_buf.len);
         res_headers_buf[ctx.res_headers_count] = Header{ .name = key, .value = value };
         ctx.res_headers_count += 1;
     }
@@ -1019,7 +1022,7 @@ pub const RequestContext = struct {
                 }
             }
 
-            pub fn handleRuntimeJSError(this: *HandlerThread, js_value: JSValue, comptime step: Api.FallbackStep, comptime fmt: string, args: anytype) !void {
+            pub fn handleRuntimeJSError(this: *HandlerThread, js_value: JavaScript.JSValue, comptime step: Api.FallbackStep, comptime fmt: string, args: anytype) !void {
                 var arena = std.heap.ArenaAllocator.init(default_allocator);
                 var allocator = &arena.allocator;
                 defer arena.deinit();
@@ -1065,7 +1068,7 @@ pub const RequestContext = struct {
                 }
             }
 
-            pub fn handleFetchEventError(this: *HandlerThread, err: anyerror, js_value: JSValue, ctx: *RequestContext) !void {
+            pub fn handleFetchEventError(this: *HandlerThread, err: anyerror, js_value: JavaScript.JSValue, ctx: *RequestContext) !void {
                 var arena = std.heap.ArenaAllocator.init(default_allocator);
                 var allocator = &arena.allocator;
                 defer arena.deinit();
@@ -1208,7 +1211,7 @@ pub const RequestContext = struct {
                 };
 
                 switch (load_result.status(vm.global.vm())) {
-                    JSPromise.Status.Fulfilled => {},
+                    JavaScript.JSPromise.Status.Fulfilled => {},
                     else => {
                         var result = load_result.result(vm.global.vm());
 
@@ -1266,9 +1269,9 @@ pub const RequestContext = struct {
 
         var __arena: std.heap.ArenaAllocator = undefined;
         pub fn runLoop(vm: *JavaScript.VirtualMachine, thread: *HandlerThread) !void {
-            var module_map = ZigGlobalObject.getModuleRegistryMap(vm.global);
+            var module_map = JavaScript.ZigGlobalObject.getModuleRegistryMap(vm.global);
 
-            if (!VM.isJITEnabled()) {
+            if (!JavaScript.VM.isJITEnabled()) {
                 Output.prettyErrorln("<red><r>warn:<r> JIT is disabled,,,this is a bug in Bun and/or a permissions problem. JS will run slower.", .{});
                 if (vm.bundler.env.map.get("BUN_CRASH_WITHOUT_JIT") != null) {
                     Global.crash();
@@ -1283,7 +1286,7 @@ pub const RequestContext = struct {
                 defer {
                     JavaScript.VirtualMachine.vm.flush();
                     std.debug.assert(
-                        ZigGlobalObject.resetModuleRegistryMap(vm.global, module_map),
+                        JavaScript.ZigGlobalObject.resetModuleRegistryMap(vm.global, module_map),
                     );
                     js_ast.Stmt.Data.Store.reset();
                     js_ast.Expr.Data.Store.reset();
@@ -1835,7 +1838,7 @@ pub const RequestContext = struct {
 
                     pub fn reserveNext(rctx: *SocketPrinterInternal, count: u32) anyerror![*]u8 {
                         try buffer.growIfNeeded(count);
-                        return return @ptrCast([*]u8, &buffer.list.items.ptr[buffer.list.items.len]);
+                        return @ptrCast([*]u8, &buffer.list.items.ptr[buffer.list.items.len]);
                     }
 
                     pub fn advanceBy(rctx: *SocketPrinterInternal, count: u32) void {
@@ -2484,23 +2487,6 @@ pub const Server = struct {
     javascript_enabled: bool = false,
     fallback_only: bool = false,
 
-    pub fn onTCPConnection(server: *Server, conn: tcp.Connection, comptime features: ConnectionFeatures) void {
-        conn.client.setNoDelay(true) catch {};
-        conn.client.setQuickACK(true) catch {};
-
-        if (comptime Environment.isMac) {
-            // Don't crash if the client disconnects.
-            std.os.setsockopt(
-                conn.client.socket.fd,
-                std.os.IPPROTO_TCP,
-                std.os.SO_NOSIGPIPE,
-                mem.asBytes(&@as(u32, @boolToInt(true))),
-            ) catch {};
-        }
-
-        server.handleConnection(&conn, comptime features);
-    }
-
     threadlocal var filechange_buf: [32]u8 = undefined;
 
     pub fn onFileUpdate(
@@ -2848,7 +2834,7 @@ pub const Server = struct {
         defer {
             if (!req_ctx.controlled) {
                 if (!req_ctx.has_called_done) {
-                    if (comptime isDebug) {
+                    if (comptime Environment.isDebug) {
                         if (@errorReturnTrace()) |trace| {
                             std.debug.dumpStackTrace(trace.*);
                             Output.printError("\n", .{});

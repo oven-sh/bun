@@ -1,6 +1,6 @@
 // This file benchmarks different approaches for determinig whether or not a unicode codepoint is possibly a JS identifier
 // these values are copy-pasted from "typescript/lib/typescriptServices.js"
-
+const std = @import("std");
 pub const SerializedBitset = extern struct {};
 
 pub const Bitset = struct {

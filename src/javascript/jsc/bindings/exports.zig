@@ -1,4 +1,4 @@
-usingnamespace @import("./bindings.zig");
+const JSC = @import("./bindings.zig");
 usingnamespace @import("./shared.zig");
 const Fs = @import("../../../fs.zig");
 const CAPI = @import("../JavascriptCore.zig");
@@ -6,6 +6,27 @@ const JS = @import("../javascript.zig");
 const JSBase = @import("../base.zig");
 const ZigURL = @import("../../../query_string_map.zig").URL;
 const Api = @import("../../../api/schema.zig").Api;
+const _global = @import("../../../global.zig");
+const std = @import("std");
+const Shimmer = @import("./shimmer.zig").Shimmer;
+const strings = @import("strings");
+const default_allocator = _global.default_allocator;
+const NewGlobalObject = JSC.NewGlobalObject;
+const JSGlobalObject = JSC.JSGlobalObject;
+const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
+const ZigString = JSC.ZigString;
+const string = _global.string;
+const JSValue = JSC.JSValue;
+const Output = _global.Output;
+const Environment = _global.Environment;
+const ScriptArguments = JSC.ScriptArguments;
+const JSPromise = JSC.JSPromise;
+const JSPromiseRejectionOperation = JSC.JSPromiseRejectionOperation;
+const Exception = JSC.Exception;
+const JSModuleLoader = JSC.JSModuleLoader;
+const JSModuleRecord = JSC.JSModuleRecord;
+const Microtask = JSC.Microtask;
+
 const Handler = struct {
     pub export fn global_signal_handler_fn(sig: i32, info: *const std.os.siginfo_t, ctx_ptr: ?*const anyopaque) callconv(.C) void {
         var stdout = std.io.getStdOut();
@@ -45,7 +66,7 @@ pub const ZigGlobalObject = extern struct {
             sigaction.handler = .{ .sigaction = Handler.global_signal_handler_fn };
 
             std.os.sigaction(std.os.SIGABRT, &sigaction, null);
-            if (comptime !isDebug) {
+            if (comptime !Environment.isDebug) {
                 std.os.sigaction(std.os.SIGTRAP, &sigaction, null);
             }
         }

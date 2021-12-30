@@ -211,35 +211,6 @@ pub const Websocket = struct {
 
     }
 
-    pub fn writeIterator(self: *Websocket, header: WebsocketHeader, count: usize, comptime BodyIterator: type, body_iter: BodyIterator) anyerror!usize {
-        var stream = self.conn.client.writer(self.flags);
-
-        if (!dataframe.isValid()) return error.InvalidMessage;
-
-        try stream.writeIntBig(u16, @bitCast(u16, header));
-
-        // Write extended length if needed
-        const n = count;
-        switch (n) {
-            0...126 => {}, // Included in header
-            127...0xFFFF => try stream.writeIntBig(u16, @truncate(u16, n)),
-            else => try stream.writeIntBig(u64, n),
-        }
-
-        // TODO: Handle compression
-        if (dataframe.header.compressed) return error.InvalidMessage;
-
-        std.debug.assert(header.mask == false);
-
-        while (body_iter.next()) |chunk| {
-            try stream.writeAll(chunk);
-        }
-
-        // try self.io.flush();
-
-        return count;
-    }
-
     // Write a raw data frame
     pub fn writeDataFrame(self: *Websocket, dataframe: WebsocketDataFrame) anyerror!usize {
         var stream = self.conn.client.writer(self.flags);

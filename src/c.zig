@@ -1,12 +1,13 @@
 const std = @import("std");
 const Enviroment = @import("./env.zig");
 
-pub usingnamespace switch (std.Target.current.os.tag) {
+const PlatformSpecific = switch (std.Target.current.os.tag) {
     .macos => @import("./darwin_c.zig"),
     else => struct {},
 };
+pub usingnamespace PlatformSpecific;
 
-usingnamespace std.c;
+const C = std.c;
 const builtin = @import("builtin");
 const os = std.os;
 const mem = std.mem;
@@ -14,6 +15,8 @@ const Stat = std.fs.File.Stat;
 const Kind = std.fs.File.Kind;
 const StatError = std.fs.File.StatError;
 const errno = os.errno;
+const mode_t = C.mode_t;
+const libc_stat = C.libc_stat;
 const zeroes = mem.zeroes;
 
 pub extern "c" fn chmod([*c]const u8, mode_t) c_int;
@@ -26,25 +29,7 @@ pub extern "c" fn lstat64([*c]const u8, [*c]libc_stat) c_int;
 
 pub fn lstat_absolute(path: [:0]const u8) StatError!Stat {
     if (builtin.os.tag == .windows) {
-        var io_status_block: windows.IO_STATUS_BLOCK = undefined;
-        var info: windows.FILE_ALL_INFORMATION = undefined;
-        const rc = windows.ntdll.NtQueryInformationFile(self.handle, &io_status_block, &info, @sizeOf(windows.FILE_ALL_INFORMATION), .FileAllInformation);
-        switch (rc) {
-            .SUCCESS => {},
-            .BUFFER_OVERFLOW => {},
-            .INVALID_PARAMETER => unreachable,
-            .ACCESS_DENIED => return error.AccessDenied,
-            else => return windows.unexpectedStatus(rc),
-        }
-        return Stat{
-            .inode = info.InternalInformation.IndexNumber,
-            .size = @bitCast(u64, info.StandardInformation.EndOfFile),
-            .mode = 0,
-            .kind = if (info.StandardInformation.Directory == 0) .File else .Directory,
-            .atime = windows.fromSysTime(info.BasicInformation.LastAccessTime),
-            .mtime = windows.fromSysTime(info.BasicInformation.LastWriteTime),
-            .ctime = windows.fromSysTime(info.BasicInformation.CreationTime),
-        };
+        @compileError("Not implemented yet");
     }
 
     var st = zeroes(libc_stat);
@@ -142,7 +127,7 @@ pub fn moveFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, dest
         if (comptime Enviroment.isMac) {
             // if this fails, it doesn't matter
             // we only really care about read & write succeeding
-            preallocate_file(
+            PlatformSpecific.preallocate_file(
                 out_handle,
                 @intCast(std.os.off_t, 0),
                 @intCast(std.os.off_t, stat_.size),

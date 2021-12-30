@@ -640,31 +640,6 @@ test "BunQueue: SCMP Threaded" {
                 try dedup_list.insert(cur);
             }
         }
-
-        pub fn run1(queue: *BunQueue, num: u8, dedup_list: *std.BufSet, wg: *WaitGroup, mut: *Mutex) !void {
-            defer wg.done();
-            const tasks = more_work[num];
-            var remain = tasks;
-            try queue.upsert(@truncate(u32, std.hash.Wyhash.hash(0, remain[0])), remain[0]);
-            remain = tasks[1..];
-            loop: while (true) {
-                while (queue.next()) |cur| {
-                    mut.acquire();
-                    try dedup_list.insert(cur);
-                    mut.release();
-                }
-
-                if (remain.len > 0) {
-                    try queue.upsert(@truncate(u32, std.hash.Wyhash.hash(0, remain[0])), remain[0]);
-                    remain = tasks[1..];
-                    var j: usize = 0;
-                    while (j < 1000) : (j += 1) {}
-                    continue :loop;
-                }
-
-                break :loop;
-            }
-        }
     };
 
     var out = try default_allocator.create(std.BufSet);

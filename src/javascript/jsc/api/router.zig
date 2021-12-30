@@ -1,4 +1,3 @@
-usingnamespace @import("../base.zig");
 const std = @import("std");
 const Api = @import("../../../api/schema.zig").Api;
 const FilesystemRouter = @import("../../../router.zig");
@@ -6,13 +5,29 @@ const http = @import("../../../http.zig");
 const JavaScript = @import("../javascript.zig");
 const QueryStringMap = @import("../../../query_string_map.zig").QueryStringMap;
 const CombinedScanner = @import("../../../query_string_map.zig").CombinedScanner;
-usingnamespace @import("../bindings/bindings.zig");
-usingnamespace @import("../webcore/response.zig");
+const _global = @import("../../../global.zig");
+const string = _global.string;
+const js = @import("../JavaScriptCore.zig");
+const JSC = @import("../bindings/bindings.zig");
+const WebCore = @import("../webcore/response.zig");
 const Router = @This();
 const Bundler = @import("../../../bundler.zig");
 const VirtualMachine = JavaScript.VirtualMachine;
 const ScriptSrcStream = std.io.FixedBufferStream([]u8);
+const ZigString = JSC.ZigString;
 const Fs = @import("../../../fs.zig");
+const Base = @import("../base.zig");
+const getAllocator = Base.getAllocator;
+const JSObject = JSC.JSObject;
+const JSError = Base.JSError;
+const JSValue = JSC.JSValue;
+const JSGlobalObject = JSC.JSGlobalObject;
+const strings = @import("strings");
+const NewClass = Base.NewClass;
+const To = Base.To;
+const Request = WebCore.Request;
+const d = Base.d;
+const FetchEvent = WebCore.FetchEvent;
 
 route: *const FilesystemRouter.Match,
 query_string_map: ?QueryStringMap = null,
@@ -30,7 +45,7 @@ pub fn importRoute(
     arguments: []const js.JSValueRef,
     exception: js.ExceptionRef,
 ) js.JSObjectRef {
-    const prom = JSModuleLoader.loadAndEvaluateModule(VirtualMachine.vm.global, &ZigString.init(this.route.file_path));
+    const prom = JSC.JSModuleLoader.loadAndEvaluateModule(VirtualMachine.vm.global, &ZigString.init(this.route.file_path));
 
     VirtualMachine.vm.tick();
 

@@ -1,7 +1,7 @@
 const fs = @import("fs.zig");
 const logger = @import("logger.zig");
 const std = @import("std");
-usingnamespace @import("ast/base.zig");
+const Ref = @import("ast/base.zig").Ref;
 
 pub const ImportKind = enum(u8) {
 

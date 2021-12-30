@@ -71,19 +71,6 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
             pub const is_return = true;
         };
 
-        pub inline fn getConvertibleType(comptime ZigType: type) type {
-            if (@typeInfo(ZigType) == .Struct) {
-                const Struct: std.builtin.TypeInfo.Struct = ChildType.Struct;
-                for (Struct.fields) |field| {
-                    if (std.mem.eql(u8, field.name, "ref")) {
-                        return field.field_type;
-                    }
-                }
-            }
-
-            return ZigType;
-        }
-
         fn pointerChild(comptime Type: type) type {
             if (@typeInfo(Type) == .Pointer) {
                 return @typeInfo(Type).Pointer.child_type;

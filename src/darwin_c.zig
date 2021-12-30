@@ -6,6 +6,7 @@ const mem = std.mem;
 const Stat = std.fs.File.Stat;
 const Kind = std.fs.File.Kind;
 const StatError = std.fs.File.StatError;
+const off_t = std.c.off_t;
 const errno = os.errno;
 const zeroes = mem.zeroes;
 

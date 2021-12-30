@@ -452,7 +452,7 @@ pub const QueryStringMap = struct {
 
             while (std.mem.indexOfScalar(u64, remainder_hashes[current_i..], hash)) |next_index| {
                 const real_i = current_i + next_index + this.i;
-                if (comptime isDebug) {
+                if (comptime Environment.isDebug) {
                     std.debug.assert(!this.visited.isSet(real_i));
                 }
 

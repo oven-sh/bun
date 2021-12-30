@@ -7,6 +7,8 @@ const strings = _global.strings;
 const MutableString = _global.MutableString;
 const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
+const StoredFileDescriptorType = _global.StoredFileDescriptorType;
+const FeatureFlags = _global.FeatureFlags;
 const C = _global.C;
 
 const std = @import("std");
@@ -18,8 +20,9 @@ const json_parser = @import("json_parser.zig");
 const js_printer = @import("js_printer.zig");
 const js_ast = @import("js_ast.zig");
 const linker = @import("linker.zig");
-usingnamespace @import("ast/base.zig");
-usingnamespace @import("defines.zig");
+const Ref = @import("ast/base.zig").Ref;
+const Define = @import("defines.zig").Define;
+
 const panicky = @import("panic_handler.zig");
 const Fs = @import("fs.zig");
 const schema = @import("api/schema.zig");
@@ -590,11 +593,11 @@ pub const Bundler = struct {
                 pub fn run(this: *Worker) void {
                     Output.Source.configureThread();
                     this.thread_id = std.Thread.getCurrentId();
-                    if (isDebug) {
+                    if (Environment.isDebug) {
                         Output.prettyln("Thread started.\n", .{});
                     }
                     defer {
-                        if (isDebug) {
+                        if (Environment.isDebug) {
                             Output.prettyln("Thread stopped.\n", .{});
                         }
                         Output.flush();
@@ -823,7 +826,7 @@ pub const Bundler = struct {
             try generator.appendBytes(&initial_header);
             // If we try to be smart and rely on .written, it turns out incorrect
             const code_start_pos = try this.tmpfile.getPos();
-            if (isDebug) {
+            if (Environment.isDebug) {
                 try generator.appendBytes(runtime.Runtime.sourceContent());
                 try generator.appendBytes("\n\n");
             } else {
@@ -1069,7 +1072,7 @@ pub const Bundler = struct {
                 GenerateNodeModuleBundle.sortJavascriptModuleByPath,
             );
 
-            if (comptime isDebug) {
+            if (comptime Environment.isDebug) {
                 const SeenHash = std.AutoHashMap(u64, void);
                 var map = SeenHash.init(this.allocator);
                 var ids = SeenHash.init(this.allocator);
@@ -1184,7 +1187,7 @@ pub const Bundler = struct {
             try tmpwriter.flush();
 
             // sanity check
-            if (isDebug) {
+            if (Environment.isDebug) {
                 try this.tmpfile.seekTo(start_pos);
                 var contents = try allocator.alloc(u8, (try this.tmpfile.getEndPos()) - start_pos);
                 var read_bytes = try this.tmpfile.read(contents);
@@ -1438,7 +1441,7 @@ pub const Bundler = struct {
 
             const code_length = @atomicLoad(u32, &this.tmpfile_byte_offset, .SeqCst) - code_offset;
 
-            if (comptime isDebug) {
+            if (comptime Environment.isDebug) {
                 std.debug.assert(code_length > 0);
                 std.debug.assert(package.hash != 0);
                 std.debug.assert(package.version.len > 0);
@@ -1663,7 +1666,7 @@ pub const Bundler = struct {
                                             _resolved_import.*,
                                         );
                                     } else |err| {
-                                        if (comptime isDebug) {
+                                        if (comptime Environment.isDebug) {
                                             if (!import_record.handles_import_errors) {
                                                 Output.prettyErrorln("\n<r><red>{s}<r> on resolving \"{s}\" from \"{s}\"", .{
                                                     @errorName(err),
@@ -1959,7 +1962,7 @@ pub const Bundler = struct {
                     }
                 }
 
-                if (comptime isDebug) {
+                if (comptime Environment.isDebug) {
                     Output.prettyln("{s}@{s}/{s} - {d}:{d} \n", .{ package.name, package.version, package_relative_path, package.hash, module_id });
                     Output.flush();
                     std.debug.assert(package_relative_path.len > 0);

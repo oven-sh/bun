@@ -5,6 +5,7 @@ const Global = _global.Global;
 const Environment = _global.Environment;
 const strings = _global.strings;
 const MutableString = _global.MutableString;
+const StoredFileDescriptorType = _global.StoredFileDescriptorType;
 const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
 const C = _global.C;
@@ -485,7 +486,7 @@ pub const PackageJSON = struct {
         json_source.path.pretty = r.prettyPath(json_source.path);
 
         const json: js_ast.Expr = (r.caches.json.parseJSON(r.log, json_source, r.allocator) catch |err| {
-            if (isDebug) {
+            if (Environment.isDebug) {
                 Output.printError("{s}: JSON parse error: {s}", .{ package_json_path, @errorName(err) });
             }
             return null;

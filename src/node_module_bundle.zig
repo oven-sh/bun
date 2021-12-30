@@ -9,6 +9,8 @@ const Global = _global.Global;
 const Environment = _global.Environment;
 const strings = _global.strings;
 const MutableString = _global.MutableString;
+const FileDescriptorType = _global.FileDescriptorType;
+const StoredFileDescriptorType = _global.StoredFileDescriptorType;
 const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
 const C = _global.C;
@@ -328,22 +330,6 @@ pub const NodeModuleBundle = struct {
         return bundle.bundle.manifest_string[pointer.offset .. pointer.offset + pointer.length];
     }
 
-    pub fn getPackageSize(this: *const NodeModuleBundle, pkg: Api.JavascriptBundledPackage) usize {
-        var size: usize = 0;
-        for (modules) |module| {
-            size += module.code.length;
-        }
-        return size;
-    }
-
-    pub fn isPackageBigger(
-        this: *const NodeModuleBundle,
-        a: Api.JavascriptBundledPackage,
-        b: Api.JavascriptBundledPackage,
-    ) bool {
-        return this.getPackageSize(a) < this.getPackageSize(b);
-    }
-
     pub fn printSummary(this: *const NodeModuleBundle) void {
         const last = std.math.max(this.bundle.packages.len, 1) - 1;
         const indent = comptime "   ";
@@ -439,7 +425,7 @@ pub const NodeModuleBundle = struct {
             }
         };
 
-        if (isMac) {
+        if (Environment.isMac) {
             // darwin only allows reading ahead on/off, not specific amount
             _ = std.os.fcntl(input.handle, std.os.F_RDAHEAD, 1) catch 0;
         }

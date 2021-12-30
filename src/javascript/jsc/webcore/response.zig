@@ -9,9 +9,35 @@ const ZigURL = @import("../../../query_string_map.zig").URL;
 const HTTPClient = @import("http");
 const NetworkThread = @import("network_thread");
 const js = @import("../JavaScriptCore.zig");
+
 const Method = @import("../../../http/method.zig").Method;
 
 const ObjectPool = @import("../../../pool.zig").ObjectPool;
+
+const Output = @import("../../../global.zig").Output;
+const MutableString = @import("../../../global.zig").MutableString;
+const strings = @import("../../../global.zig").strings;
+const string = @import("../../../global.zig").string;
+const default_allocator = @import("../../../global.zig").default_allocator;
+const FeatureFlags = @import("../../../global.zig").FeatureFlags;
+const ArrayBuffer = @import("../base.zig").ArrayBuffer;
+const Properties = @import("../base.zig").Properties;
+const NewClass = @import("../base.zig").NewClass;
+const d = @import("../base.zig").d;
+const castObj = @import("../base.zig").castObj;
+const getAllocator = @import("../base.zig").getAllocator;
+const JSPrivateDataPtr = @import("../base.zig").JSPrivateDataPtr;
+const GetJSPrivateData = @import("../base.zig").GetJSPrivateData;
+
+const ZigString = @import("../bindings/bindings.zig").ZigString;
+const JSInternalPromise = @import("../bindings/bindings.zig").JSInternalPromise;
+const JSPromise = @import("../bindings/bindings.zig").JSPromise;
+const JSValue = @import("../bindings/bindings.zig").JSValue;
+const JSError = @import("../bindings/bindings.zig").JSError;
+const JSGlobalObject = @import("../bindings/bindings.zig").JSGlobalObject;
+
+const VirtualMachine = @import("../javascript.zig").VirtualMachine;
+const Task = @import("../javascript.zig").Task;
 
 const picohttp = @import("picohttp");
 pub const Response = struct {

@@ -3,6 +3,7 @@ const std = @import("std");
 const FeatureFlags = @import("./feature_flags.zig");
 const Wyhash = std.hash.Wyhash;
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
+const constStrToU8 = @import("./global.zig").constStrToU8;
 
 // https://en.wikipedia.org/wiki/.bss#BSS_in_C
 pub fn BSSSectionAllocator(comptime size: usize) type {
@@ -107,10 +108,6 @@ pub const Result = struct {
     pub fn isOverflowing(r: *const Result, comptime count: usize) bool {
         return r.index >= count;
     }
-
-    pub fn realIndex(r: *const Result, comptime count: anytype) IndexType {
-        return if (r.isOverflowing(count)) @intCast(IndexType, r.index - max_index) else r.index;
-    }
 };
 const Seed = 999;
 
@@ -127,7 +124,7 @@ pub const ItemStatus = enum(u3) {
     not_found,
 };
 
-const hasDeinit = std.meta.trait.hasFn("deinit")(ValueType);
+// const hasDeinit = std.meta.trait.hasFn("deinit")(ValueType);
 
 pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
     const count = _count * 2;
@@ -708,8 +705,4 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
             return self.map.remove(key);
         }
     };
-}
-
-pub inline fn constStrToU8(s: []const u8) []u8 {
-    return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
 }

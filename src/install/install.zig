@@ -137,47 +137,10 @@ pub const ExternalStringMap = extern struct {
     name: ExternalStringList = ExternalStringList{},
     value: ExternalStringList = ExternalStringList{},
 
-    pub const Iterator = NewIterator(ExternalStringList);
-
     pub const Small = extern struct {
         name: SmallExternalStringList = SmallExternalStringList{},
         value: SmallExternalStringList = SmallExternalStringList{},
-
-        pub const Iterator = NewIterator(SmallExternalStringList);
-
-        pub inline fn iterator(this: Small, buf: []const String) Small.Iterator {
-            return Small.Iterator.init(buf, this.name, this.value);
-        }
     };
-
-    pub inline fn iterator(this: ExternalStringMap, buf: []const String) Iterator {
-        return Iterator.init(buf, this.name, this.value);
-    }
-
-    fn NewIterator(comptime Type: type) type {
-        return struct {
-            const ThisIterator = @This();
-
-            i: usize = 0,
-            names: []const Type.Child,
-            values: []const Type.Child,
-
-            pub fn init(all: []const Type.Child, names: Type, values: Type) ThisIterator {
-                this.names = names.get(all);
-                this.values = values.get(all);
-                return this;
-            }
-
-            pub fn next(this: *ThisIterator) ?[2]Type.Child {
-                if (this.i < this.names.len) {
-                    const ret = [2]Type.Child{ this.names[this.i], this.values[this.i] };
-                    this.i += 1;
-                }
-
-                return null;
-            }
-        };
-    }
 };
 
 pub const PackageNameHash = u64;
@@ -1824,7 +1787,6 @@ pub const Lockfile = struct {
 
     pub const DependencySlice = ExternalSlice(Dependency);
     pub const PackageIDSlice = ExternalSlice(PackageID);
-    pub const NodeModulesFolderSlice = ExternalSlice(NodeModulesFolder);
 
     pub const PackageIDList = std.ArrayListUnmanaged(PackageID);
     pub const DependencyList = std.ArrayListUnmanaged(Dependency);
@@ -4730,7 +4692,7 @@ pub const PackageManager = struct {
             verbose_no_progress,
 
             pub inline fn isVerbose(this: LogLevel) bool {
-                return return switch (this) {
+                return switch (this) {
                     .verbose_no_progress, .verbose => true,
                     else => false,
                 };

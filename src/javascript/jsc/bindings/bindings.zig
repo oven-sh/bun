@@ -1,9 +1,21 @@
 usingnamespace @import("./shared.zig");
 usingnamespace @import("./headers.zig");
 pub const Shimmer = @import("./shimmer.zig").Shimmer;
+const std = @import("std");
+const _global = @import("../../../global.zig");
+const string = _global.string;
+const Output = _global.Output;
 const hasRef = std.meta.trait.hasField("ref");
 const C_API = @import("../JavascriptCore.zig");
 const StringPointer = @import("../../../api/schema.zig").Api.StringPointer;
+const Exports = @import("./exports.zig");
+
+const ErrorableZigString = Exports.ErrorableZigString;
+const ErrorableResolvedSource = Exports.ErrorableResolvedSource;
+const ZigException = Exports.ZigException;
+const ZigStackTrace = Exports.ZigStackTrace;
+const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
+
 pub const JSObject = extern struct {
     pub const shim = Shimmer("JSC", "JSObject", @This());
     bytes: shim.Bytes,

@@ -7,6 +7,7 @@ const strings = _global.strings;
 const MutableString = _global.MutableString;
 const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
+const FeatureFlags = _global.FeatureFlags;
 const C = _global.C;
 
 const sync = @import("../sync.zig");
@@ -188,7 +189,7 @@ var event_queue: EventQueue = undefined;
 
 pub const GenerateHeader = struct {
     pub fn generate() Analytics.EventListHeader {
-        if (comptime isDebug) {
+        if (comptime Environment.isDebug) {
             if (project_id.first == 0 and project_id.second == 0) {
                 Output.prettyErrorln("warn: project_id is 0", .{});
             }
@@ -327,7 +328,7 @@ fn start() bool {
 
     event_queue = EventQueue.init(std.heap.c_allocator);
     spawn() catch |err| {
-        if (comptime isDebug) {
+        if (comptime Environment.isDebug) {
             Output.prettyErrorln("[Analytics] error spawning thread {s}", .{@errorName(err)});
             Output.flush();
         }

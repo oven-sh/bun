@@ -14,7 +14,7 @@ const MutableString = _global.MutableString;
 const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
 const C = _global.C;
-usingnamespace @import("ast/base.zig");
+const Ref = @import("ast/base.zig").Ref;
 
 const GlobalDefinesKey = @import("./defines-table.zig").GlobalDefinesKey;
 

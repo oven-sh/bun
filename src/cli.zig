@@ -7,6 +7,8 @@ const strings = _global.strings;
 const MutableString = _global.MutableString;
 const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
+const constStrToU8 = _global.constStrToU8;
+const FeatureFlags = _global.FeatureFlags;
 const C = _global.C;
 usingnamespace @import("./http.zig");
 

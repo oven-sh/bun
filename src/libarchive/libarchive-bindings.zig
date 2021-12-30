@@ -6,6 +6,9 @@ pub const struct_archive_entry = opaque {};
 pub const archive = struct_archive;
 pub const archive_entry = struct_archive_entry;
 const mode_t = @import("std").c.mode_t;
+const FILE = @import("std").c.FILE;
+const time_t = @import("std").c.time_t;
+const dev_t = @import("std").c.dev_t;
 
 pub const FileType = enum(mode_t) {
     regular = 0100000,

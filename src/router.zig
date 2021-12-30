@@ -11,13 +11,15 @@ const _global = @import("global.zig");
 const string = _global.string;
 const Output = _global.Output;
 const Global = _global.Global;
+const PathString = _global.PathString;
+const HashedString = _global.HashedString;
 const Environment = _global.Environment;
 const strings = _global.strings;
 const MutableString = _global.MutableString;
 const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
 const C = _global.C;
-
+const StoredFileDescriptorType = _global.StoredFileDescriptorType;
 const DirInfo = @import("./resolver/dir_info.zig");
 const Fs = @import("./fs.zig");
 const Options = @import("./options.zig");
@@ -435,7 +437,7 @@ const RouteLoader = struct {
                             if (strings.eql(extname[1..], _extname)) {
                                 // length is extended by one
                                 // entry.dir is a string with a trailing slash
-                                if (comptime isDebug) {
+                                if (comptime Environment.isDebug) {
                                     std.debug.assert(entry.dir.ptr[fs.top_level_dir.len - 1] == '/');
                                 }
 
@@ -496,7 +498,7 @@ pub const TinyPtr = packed struct {
 
         const right = @ptrToInt(in.ptr) + in.len;
         const end = @ptrToInt(parent.ptr) + parent.len;
-        if (comptime isDebug) {
+        if (comptime Environment.isDebug) {
             std.debug.assert(end < right);
         }
 

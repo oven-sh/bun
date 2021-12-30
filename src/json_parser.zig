@@ -258,7 +258,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                     }
 
                     try p.lexer.unexpected();
-                    if (comptime isDebug) {
+                    if (comptime Environment.isDebug) {
                         std.io.getStdErr().writeAll("\nThis range: \n") catch {};
                         std.io.getStdErr().writeAll(
                             p.lexer.source.contents[p.lexer.range().loc.toUsize()..p.lexer.range().end().toUsize()],
@@ -451,7 +451,7 @@ pub const PackageJSONVersionChecker = struct {
             },
             else => {
                 try p.lexer.unexpected();
-                if (comptime isDebug) {
+                if (comptime Environment.isDebug) {
                     @breakpoint();
                 }
                 return error.ParserError;

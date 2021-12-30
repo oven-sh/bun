@@ -518,15 +518,6 @@ pub const Version = extern struct {
         }
     };
 
-    inline fn atPart(i: u8) u32 {
-        return switch (i) {
-            0 => self.major,
-            1 => self.minor,
-            2 => self.patch,
-            else => unreachable,
-        };
-    }
-
     pub fn eql(lhs: Version, rhs: Version) bool {
         return lhs.major == rhs.major and lhs.minor == rhs.minor and lhs.patch == rhs.patch and rhs.tag.eql(lhs.tag);
     }

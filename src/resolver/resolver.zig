@@ -5,6 +5,8 @@ const Global = _global.Global;
 const Environment = _global.Environment;
 const strings = _global.strings;
 const MutableString = _global.MutableString;
+const FeatureFlags = _global.FeatureFlags;
+const PathString = _global.PathString;
 const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
 const StoredFileDescriptorType = _global.StoredFileDescriptorType;
@@ -22,7 +24,7 @@ const MacroRemap = @import("./package_json.zig").MacroMap;
 const ESModule = @import("./package_json.zig").ESModule;
 const BrowserMap = @import("./package_json.zig").BrowserMap;
 const CacheSet = cache.Set;
-usingnamespace @import("./data_url.zig");
+const DataURL = @import("./data_url.zig").DataURL;
 pub const DirInfo = @import("./dir_info.zig");
 const HTTPWatcher = if (Environment.isTest) void else @import("../http.zig").Watcher;
 const Wyhash = std.hash.Wyhash;
@@ -30,6 +32,7 @@ const ResolvePath = @import("./resolve_path.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const Mutex = @import("../lock.zig").Lock;
 const StringBoolMap = std.StringHashMap(bool);
+const FileDescriptorType = _global.FileDescriptorType;
 
 const allocators = @import("../allocators.zig");
 const Msg = logger.Msg;
@@ -277,39 +280,6 @@ pub const DebugLogs = struct {
     pub fn addNoteFmt(d: *DebugLogs, comptime fmt: string, args: anytype) !void {
         @setCold(true);
         return try d.addNote(try std.fmt.allocPrint(d.notes.allocator, fmt, args));
-    }
-};
-
-pub const TSConfigExtender = struct {
-    visited: *StringBoolMap,
-    file_dir: string,
-    r: *ThisResolver,
-
-    pub fn extends(ctx: *TSConfigExtender, ext: String, range: logger.Range) ?*TSConfigJSON {
-        unreachable;
-        // if (isPackagePath(extends)) {
-        //     // // If this is a package path, try to resolve it to a "node_modules"
-        //     // // folder. This doesn't use the normal node module resolution algorithm
-        //     // // both because it's different (e.g. we don't want to match a directory)
-        //     // // and because it would deadlock since we're currently in the middle of
-        //     // // populating the directory info cache.
-        //     // var current = ctx.file_dir;
-        //     // while (true) {
-        //     //     // Skip "node_modules" folders
-        //     //     if (!strings.eql(std.fs.path.basename(current), "node_modules")) {
-        //     //         var paths1 = [_]string{ current, "node_modules", extends };
-        //     //         var join1 = r.fs.absAlloc(ctx.r.allocator, &paths1) catch unreachable;
-        //     //         const res = ctx.r.parseTSConfig(join1, ctx.1) catch |err| {
-        //     //             if (err == error.ENOENT) {
-        //     //                 continue;
-        //     //             } else if (err == error.ParseErrorImportCycle) {} else if (err != error.ParseErrorAlreadyLogged) {}
-        //     //             return null;
-        //     //         };
-        //     //         return res;
-
-        //     //     }
-        //     // }
-        // }
     }
 };
 
@@ -1471,7 +1441,7 @@ pub const Resolver = struct {
             .hash = 0,
             .status = .not_found,
         };
-        const root_path = if (comptime isWindows)
+        const root_path = if (comptime Environment.isWindows)
             std.fs.path.diskDesignator(path)
         else
             // we cannot just use "/"
@@ -2212,7 +2182,7 @@ pub const Resolver = struct {
         }
 
         const dir_info = (r.dirInfoCached(path) catch |err| {
-            if (comptime isDebug) Output.prettyErrorln("err: {s} reading {s}", .{ @errorName(err), path });
+            if (comptime Environment.isDebug) Output.prettyErrorln("err: {s} reading {s}", .{ @errorName(err), path });
             return null;
         }) orelse return null;
         var package_json: ?*PackageJSON = null;

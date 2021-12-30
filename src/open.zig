@@ -17,7 +17,7 @@ const opener = switch (std.Target.current.os.tag) {
 };
 
 pub fn openURL(url: string) !void {
-    if (comptime isWasi) {
+    if (comptime Environment.isWasi) {
         Output.prettyln("-> {s}", .{url});
         Output.flush();
         return;

@@ -3,6 +3,7 @@ const string = _global.string;
 const Output = _global.Output;
 const Global = _global.Global;
 const Environment = _global.Environment;
+const FeatureFlags = _global.FeatureFlags;
 const strings = _global.strings;
 const MutableString = _global.MutableString;
 const stringZ = _global.stringZ;
@@ -139,7 +140,7 @@ pub const BuildCommand = struct {
             }
         }
 
-        if (isDebug) {
+        if (Environment.isDebug) {
             err_writer.print("\nExpr count:       {d}\n", .{js_ast.Expr.icount}) catch {};
             err_writer.print("Stmt count:       {d}\n", .{js_ast.Stmt.icount}) catch {};
             err_writer.print("Binding count:    {d}\n", .{js_ast.Binding.icount}) catch {};

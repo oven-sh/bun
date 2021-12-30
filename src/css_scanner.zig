@@ -7,6 +7,9 @@ const Global = _global.Global;
 const Environment = _global.Environment;
 const strings = _global.strings;
 const MutableString = _global.MutableString;
+const CodePoint = _global.CodePoint;
+const StoredFileDescriptorType = _global.StoredFileDescriptorType;
+const FeatureFlags = _global.FeatureFlags;
 const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
 const C = _global.C;
@@ -16,6 +19,7 @@ const logger = @import("./logger.zig");
 const Options = options;
 const resolver = @import("./resolver/resolver.zig");
 const _linker = @import("./linker.zig");
+
 const replacementCharacter: CodePoint = 0xFFFD;
 
 pub const Chunk = struct {

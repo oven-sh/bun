@@ -10,10 +10,17 @@ const MutableString = _global.MutableString;
 const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
 const C = _global.C;
-usingnamespace @import("./javascript.zig");
-usingnamespace @import("./webcore/response.zig");
+const JavaScript = @import("./javascript.zig");
+const ResolveError = JavaScript.ResolveError;
+const BuildError = JavaScript.BuildError;
+const WebCore = @import("./webcore/response.zig");
+const Fetch = WebCore.Fetch;
+const Response = WebCore.Response;
+const Request = WebCore.Request;
 const Router = @import("./api/router.zig");
-
+const FetchEvent = WebCore.FetchEvent;
+const Headers = WebCore.Headers;
+const Body = WebCore.Body;
 const TaggedPointerTypes = @import("../../tagged_pointer.zig");
 const TaggedPointerUnion = TaggedPointerTypes.TaggedPointerUnion;
 
@@ -300,7 +307,7 @@ pub const Properties = struct {
                 @field(UTF8, name).len,
             );
 
-            if (comptime isDebug) {
+            if (comptime Environment.isDebug) {
                 std.debug.assert(
                     js.JSStringIsEqualToString(@field(Refs, name), @field(UTF8, name).ptr, @field(UTF8, name).len),
                 );
@@ -853,7 +860,7 @@ pub fn NewClass(
 
         pub fn make(ctx: js.JSContextRef, ptr: *ZigType) js.JSObjectRef {
             var real_ptr = JSPrivateDataPtr.init(ptr).ptr();
-            if (comptime isDebug) {
+            if (comptime Environment.allow_assert) {
                 std.debug.assert(JSPrivateDataPtr.isValidPtr(real_ptr));
                 std.debug.assert(JSPrivateDataPtr.from(real_ptr).get(ZigType).? == ptr);
             }
@@ -864,7 +871,7 @@ pub fn NewClass(
                 real_ptr,
             );
 
-            if (comptime isDebug) {
+            if (comptime Environment.allow_assert) {
                 std.debug.assert(JSPrivateDataPtr.from(js.JSObjectGetPrivate(result)).ptr() == real_ptr);
             }
 
@@ -908,21 +915,19 @@ pub fn NewClass(
                         return instance_functions[i];
                     }
                 }
-                if (comptime std.meta.trait.hasFn("onMissingProperty")(ZigType)) {
-                    return ptr.onMissingProperty(ctx, obj, prop, exception);
-                }
+                unreachable;
             } else {
                 inline for (property_names) |propname, i| {
                     if (js.JSStringIsEqual(prop, property_name_refs[i])) {
                         return @field(
                             properties,
                             propname,
-                        )(ptr, ctx, obj, exception);
+                        )(pointer, ctx, obj, exception);
                     }
                 }
 
                 if (comptime std.meta.trait.hasFn("onMissingProperty")(ZigType)) {
-                    return ptr.onMissingProperty(ctx, obj, prop, exception);
+                    return pointer.onMissingProperty(ctx, obj, prop, exception);
                 }
             }
 
@@ -1551,7 +1556,7 @@ pub const MarkedArrayBuffer = struct {
 export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, ctx_: *anyopaque) void {
     var ctx = @ptrCast(*MarkedArrayBuffer, @alignCast(@alignOf(*MarkedArrayBuffer), ctx_));
 
-    if (comptime isDebug) std.debug.assert(ctx.buffer.ptr == @ptrCast([*]u8, bytes_));
+    if (comptime Environment.allow_assert) std.debug.assert(ctx.buffer.ptr == @ptrCast([*]u8, bytes_));
     ctx.destroy();
 }
 

@@ -1,5 +1,4 @@
 const options = @import("./options.zig");
-usingnamespace @import("ast/base.zig");
 const _global = @import("global.zig");
 const string = _global.string;
 const Output = _global.Output;

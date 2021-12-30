@@ -18,8 +18,6 @@ const options = @import("../options.zig");
 const js_parser = @import("../js_parser.zig");
 const js_ast = @import("../js_ast.zig");
 const linker = @import("../linker.zig");
-usingnamespace @import("../ast/base.zig");
-usingnamespace @import("../defines.zig");
 const panicky = @import("../panic_handler.zig");
 const allocators = @import("../allocators.zig");
 const sync = @import("../sync.zig");
@@ -30,6 +28,7 @@ const Command = @import("../cli.zig").Command;
 const bundler = @import("../bundler.zig");
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const fs = @import("../fs.zig");
+const constStrToU8 = _global.constStrToU8;
 
 pub const BuildCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
@@ -119,7 +118,7 @@ pub const BuildCommand = struct {
                         .copy => |value| {
                             rel_path = value.pathname;
 
-                            try f.copyTo(result.outbase, allocators.constStrToU8(rel_path), root_dir.fd);
+                            try f.copyTo(result.outbase, constStrToU8(rel_path), root_dir.fd);
                         },
                         .noop => {},
                         .pending => |value| {

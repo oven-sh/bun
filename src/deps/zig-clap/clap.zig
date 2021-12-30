@@ -291,7 +291,7 @@ pub fn parse(
     // Let's reuse the arena from the `OSIterator` since we already have
     // it.
     res.clap = try parseEx(Id, params, &iter, .{
-        .allocator = &res.arena.allocator,
+        .allocator = res.arena.allocator(),
         .diagnostic = opt.diagnostic,
     });
     return res;

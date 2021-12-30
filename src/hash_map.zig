@@ -411,7 +411,7 @@ pub fn HashMapUnmanaged(
             index: Size = 0,
 
             pub fn next(it: *Iterator) ?*Entry {
-                if (std.builtin.mode != .ReleaseFast) assert(it.index <= it.hm.capacity());
+                if (@import("builtin").mode != .ReleaseFast) assert(it.index <= it.hm.capacity());
                 if (it.hm.size == 0) return null;
 
                 const cap = it.hm.capacity();
@@ -525,7 +525,7 @@ pub fn HashMapUnmanaged(
 
         /// Insert an entry in the map. Assumes it is not already present.
         pub fn putNoClobber(self: *Self, allocator: Allocator, key: K, value: V) !void {
-            if (std.builtin.mode != .ReleaseFast) assert(!self.contains(key));
+            if (@import("builtin").mode != .ReleaseFast) assert(!self.contains(key));
             try self.growIfNeeded(allocator, 1);
 
             self.putAssumeCapacityNoClobber(key, value);
@@ -542,7 +542,7 @@ pub fn HashMapUnmanaged(
         /// Insert an entry in the map. Assumes it is not already present,
         /// and that no allocation is needed.
         pub fn putAssumeCapacityNoClobber(self: *Self, key: K, value: V) void {
-            if (std.builtin.mode != .ReleaseFast) assert(!self.contains(key));
+            if (@import("builtin").mode != .ReleaseFast) assert(!self.contains(key));
 
             const hash = hashFn(key);
             putAssumeCapacityNoClobberWithHash(self, key, hash, value);
@@ -561,7 +561,7 @@ pub fn HashMapUnmanaged(
             }
 
             if (!metadata[0].isTombstone()) {
-                if (std.builtin.mode != .ReleaseFast) assert(self.available > 0);
+                if (@import("builtin").mode != .ReleaseFast) assert(self.available > 0);
                 self.available -= 1;
             }
 
@@ -796,7 +796,7 @@ pub fn HashMapUnmanaged(
         /// Asserts there is an `Entry` with matching key, deletes it from the hash map,
         /// and discards it.
         pub fn removeAssertDiscard(self: *Self, key: K) void {
-            if (std.builtin.mode != .ReleaseFast) assert(self.contains(key));
+            if (@import("builtin").mode != .ReleaseFast) assert(self.contains(key));
 
             const hash = hashFn(key);
             const mask = self.capacity() - 1;
@@ -829,7 +829,7 @@ pub fn HashMapUnmanaged(
         // what has to stay under the max_load_percentage of capacity.
         fn load(self: *const Self) Size {
             const max_load = (self.capacity() * max_load_percentage) / 100;
-            if (std.builtin.mode != .ReleaseFast) assert(max_load >= self.available);
+            if (@import("builtin").mode != .ReleaseFast) assert(max_load >= self.available);
             return @truncate(Size, max_load - self.available);
         }
 
@@ -866,8 +866,8 @@ pub fn HashMapUnmanaged(
 
         fn grow(self: *Self, allocator: Allocator, new_capacity: Size) !void {
             const new_cap = std.math.max(new_capacity, minimal_capacity);
-            if (std.builtin.mode != .ReleaseFast) assert(new_cap > self.capacity());
-            if (std.builtin.mode != .ReleaseFast) assert(std.math.isPowerOfTwo(new_cap));
+            if (@import("builtin").mode != .ReleaseFast) assert(new_cap > self.capacity());
+            if (@import("builtin").mode != .ReleaseFast) assert(std.math.isPowerOfTwo(new_cap));
 
             var map = Self{};
             defer map.deinit(allocator);
@@ -908,7 +908,7 @@ pub fn HashMapUnmanaged(
             const metadata = ptr + @sizeOf(Header);
             var entry_ptr = ptr + meta_size;
             entry_ptr = (entry_ptr + alignment) & ~@as(usize, alignment);
-            if (std.builtin.mode != .ReleaseFast) assert(entry_ptr + @as(usize, new_capacity) * @sizeOf(Entry) <= ptr + total_size);
+            if (@import("builtin").mode != .ReleaseFast) assert(entry_ptr + @as(usize, new_capacity) * @sizeOf(Entry) <= ptr + total_size);
 
             const hdr = @intToPtr(*Header, ptr);
             hdr.entries = @intToPtr([*]Entry, entry_ptr);

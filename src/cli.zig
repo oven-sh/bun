@@ -10,7 +10,6 @@ const default_allocator = _global.default_allocator;
 const constStrToU8 = _global.constStrToU8;
 const FeatureFlags = _global.FeatureFlags;
 const C = _global.C;
-usingnamespace @import("./http.zig");
 
 const std = @import("std");
 const lex = @import("js_lexer.zig");
@@ -21,8 +20,6 @@ const json_parser = @import("json_parser.zig");
 const js_printer = @import("js_printer.zig");
 const js_ast = @import("js_ast.zig");
 const linker = @import("linker.zig");
-usingnamespace @import("ast/base.zig");
-usingnamespace @import("defines.zig");
 const panicky = @import("panic_handler.zig");
 const sync = @import("./sync.zig");
 const Api = @import("api/schema.zig").Api;
@@ -515,9 +512,9 @@ pub const HelpCommand = struct {
             \\
         ;
 
-        var rand = std.rand.DefaultPrng.init(@intCast(u64, @maximum(std.time.milliTimestamp(), 0)));
-        const package_add_i = rand.random.uintAtMost(usize, packages_to_add_filler.len - 1);
-        const package_remove_i = rand.random.uintAtMost(usize, packages_to_remove_filler.len - 1);
+        var rand = std.rand.DefaultPrng.init(@intCast(u64, @maximum(std.time.milliTimestamp(), 0))).random();
+        const package_add_i = rand.uintAtMost(usize, packages_to_add_filler.len - 1);
+        const package_remove_i = rand.uintAtMost(usize, packages_to_remove_filler.len - 1);
 
         const args = .{
             packages_to_add_filler[package_add_i],
@@ -618,9 +615,9 @@ pub const Command = struct {
             return .AutoCommand;
         }
 
-        var next_arg = (args_iter.next(allocator) orelse return .AutoCommand) catch unreachable;
+        var next_arg = ((args_iter.next(allocator) catch null) orelse return .AutoCommand);
         while (next_arg[0] == '-') {
-            next_arg = (args_iter.next(allocator) orelse return .AutoCommand) catch unreachable;
+            next_arg = ((args_iter.next(allocator) catch null) orelse return .AutoCommand);
         }
 
         const first_arg_name = std.mem.span(next_arg);

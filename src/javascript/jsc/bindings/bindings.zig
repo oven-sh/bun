@@ -1,12 +1,10 @@
-usingnamespace @import("./shared.zig");
-usingnamespace @import("./headers.zig");
 pub const Shimmer = @import("./shimmer.zig").Shimmer;
 const std = @import("std");
 const _global = @import("../../../global.zig");
 const string = _global.string;
 const Output = _global.Output;
 const hasRef = std.meta.trait.hasField("ref");
-const C_API = @import("../JavascriptCore.zig");
+const C_API = @import("../../../jsc.zig").C;
 const StringPointer = @import("../../../api/schema.zig").Api.StringPointer;
 const Exports = @import("./exports.zig");
 
@@ -1525,8 +1523,6 @@ pub const JSValue = enum(i64) {
 extern "c" fn Microtask__run(*Microtask, *JSGlobalObject) void;
 
 pub const Microtask = opaque {
-    pub const name = "Zig::JSMicrotaskCallback";
-
     pub fn run(this: *Microtask, global_object: *JSGlobalObject) void {
         if (comptime is_bindgen) {
             return;
@@ -2147,8 +2143,6 @@ pub const StringView = extern struct {
         "characters16",
     };
 };
-
-pub usingnamespace @import("exports.zig");
 
 pub const Callback = struct {
     // zig: Value,

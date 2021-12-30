@@ -4,7 +4,6 @@ const tables = @import("js_lexer_tables.zig");
 const build_options = @import("build_options");
 const js_ast = @import("js_ast.zig");
 
-usingnamespace @import("ast/base.zig");
 const _global = @import("global.zig");
 const string = _global.string;
 const Output = _global.Output;
@@ -935,7 +934,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
 
         pub fn expectContextualKeyword(self: *LexerType, comptime keyword: string) !void {
             if (!self.isContextualKeyword(keyword)) {
-                if (std.builtin.mode == std.builtin.Mode.Debug) {
+                if (@import("builtin").mode == std.builtin.Mode.Debug) {
                     self.addError(self.start, "Expected \"{s}\" but found \"{s}\" (token: {s})", .{
                         keyword,
                         self.raw(),

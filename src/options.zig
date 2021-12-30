@@ -53,7 +53,7 @@ pub fn validatePath(log: *logger.Log, fs: *Fs.FileSystem.Implementation, cwd: st
 pub fn stringHashMapFromArrays(comptime t: type, allocator: std.mem.Allocator, keys: anytype, values: anytype) !t {
     var hash_map = t.init(allocator);
     if (keys.len > 0) {
-        try hash_map.ensureCapacity(@intCast(u32, keys.len));
+        try hash_map.ensureTotalCapacity(@intCast(u32, keys.len));
         for (keys) |key, i| {
             hash_map.putAssumeCapacity(key, values[i]);
         }
@@ -107,7 +107,7 @@ pub const ExternalModules = struct {
         switch (platform) {
             .node => {
                 // TODO: fix this stupid copy
-                result.node_modules.hash_map.ensureCapacity(NodeBuiltinPatterns.len) catch unreachable;
+                result.node_modules.hash_map.ensureTotalCapacity(NodeBuiltinPatterns.len) catch unreachable;
                 for (NodeBuiltinPatterns) |pattern| {
                     result.node_modules.insert(pattern) catch unreachable;
                 }
@@ -115,7 +115,7 @@ pub const ExternalModules = struct {
             .bun => {
 
                 // // TODO: fix this stupid copy
-                // result.node_modules.hash_map.ensureCapacity(BunNodeBuiltinPatternsCompat.len) catch unreachable;
+                // result.node_modules.hash_map.ensureTotalCapacity(BunNodeBuiltinPatternsCompat.len) catch unreachable;
                 // for (BunNodeBuiltinPatternsCompat) |pattern| {
                 //     result.node_modules.insert(pattern) catch unreachable;
                 // }
@@ -1445,7 +1445,7 @@ pub const TransformOptions = struct {
         }
 
         var define = std.StringHashMap(string).init(allocator);
-        try define.ensureCapacity(1);
+        try define.ensureTotalCapacity(1);
 
         define.putAssumeCapacity("process.env.NODE_ENV", "development");
 
@@ -1593,14 +1593,14 @@ pub const OutputFile = struct {
 
         const os = std.os;
 
-        if (comptime std.Target.current.isDarwin()) {
+        if (comptime @import("builtin").target.isDarwin()) {
             const rc = os.system.fcopyfile(fd_in, fd_out, null, os.system.COPYFILE_DATA);
             if (rc == 0) {
                 return;
             }
         }
 
-        if (std.Target.current.os.tag == .linux) {
+        if (@import("builtin").target.os.tag == .linux) {
             // Try copy_file_range first as that works at the FS level and is the
             // most efficient method (if available).
             var offset: u64 = 0;

@@ -89,12 +89,12 @@ pub const NodeModuleBundle = struct {
 
         // this.package_has_multiple_versions = try std.bit_set.DynamicBitSet.initFull(package_count, this.allocator);
 
-        try this.package_id_map.ensureCapacity(
+        try this.package_id_map.ensureTotalCapacity(
             package_count,
         );
         this.package_name_ids_ptr = try this.allocator.alloc(BundledPackageID, this.bundle.packages.len);
         var remaining_names = this.package_name_ids_ptr;
-        try this.package_name_map.ensureCapacity(
+        try this.package_name_map.ensureTotalCapacity(
             package_count,
         );
         var prev_package_ids_for_name: []u32 = &[_]u32{};
@@ -425,9 +425,9 @@ pub const NodeModuleBundle = struct {
             }
         };
 
-        if (Environment.isMac) {
+        if (comptime Environment.isMac) {
             // darwin only allows reading ahead on/off, not specific amount
-            _ = std.os.fcntl(input.handle, std.os.F_RDAHEAD, 1) catch 0;
+            _ = std.os.fcntl(input.handle, std.os.F.RDAHEAD, 1) catch 0;
         }
         const end = (try getCodeEndPosition(input, false)) - @intCast(u32, jsbundle_prefix.len);
 

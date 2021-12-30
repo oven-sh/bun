@@ -1,7 +1,8 @@
 const Bindings = @import("bindings.zig");
+const Exports = @import("exports.zig");
 const HeaderGen = @import("./header-gen.zig").HeaderGen;
 const std = @import("std");
-const builtin = std.builtin;
+const builtin = @import("builtin");
 const io = std.io;
 const fs = std.fs;
 const process = std.process;
@@ -27,6 +28,7 @@ pub fn main() anyerror!void {
 
     const HeaderGenerator = HeaderGen(
         Bindings,
+        Exports,
         "src/javascript/jsc/bindings/bindings.zig",
     );
     HeaderGenerator.exec(HeaderGenerator{}, file, cpp);

@@ -1,5 +1,6 @@
 const _global = @import("../global.zig");
 const string = _global.string;
+const constStrToU8 = _global.constStrToU8;
 const Output = _global.Output;
 const Global = _global.Global;
 const Environment = _global.Environment;
@@ -17,8 +18,6 @@ const options = @import("../options.zig");
 const js_parser = @import("../js_parser.zig");
 const js_ast = @import("../js_ast.zig");
 const linker = @import("../linker.zig");
-usingnamespace @import("../ast/base.zig");
-usingnamespace @import("../defines.zig");
 const panicky = @import("../panic_handler.zig");
 const allocators = @import("../allocators.zig");
 const sync = @import("../sync.zig");
@@ -45,6 +44,7 @@ const Headers = @import("../javascript/jsc/webcore/response.zig").Headers;
 const CopyFile = @import("../copy_file.zig");
 var bun_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 const Futex = @import("../futex.zig");
+
 
 const target_nextjs_version = "12.0.2";
 pub var initialized_store = false;
@@ -845,7 +845,7 @@ pub const CreateCommand = struct {
                                 needs.bun_bun_for_nextjs = true;
 
                                 const original_version = next_q.expr.data.e_string.utf8;
-                                next_q.expr.data.e_string.utf8 = allocators.constStrToU8(target_nextjs_version);
+                                next_q.expr.data.e_string.utf8 = constStrToU8(target_nextjs_version);
                             }
 
                             has_bun_framework_next = has_bun_framework_next or property.hasAnyPropertyNamed(&.{"bun-framework-next"});

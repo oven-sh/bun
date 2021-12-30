@@ -47,8 +47,10 @@ pub fn NewBlockQueue(comptime Value: type, comptime block_size: comptime_int, co
         pub fn get(this: *BlockQueue) ?Value {
             if (this.len.fetchMax(-1, .SeqCst) <= 0) return null;
 
+            const rand = this.rand.random();
+
             while (@atomicRmw(bool, &this.write_lock, .Xchg, true, .SeqCst)) {
-                const end = this.rand.random.uintAtMost(u8, 64);
+                const end = rand.uintAtMost(u8, 64);
                 var i: u8 = 0;
                 while (i < end) : (i += 1) {}
                 std.atomic.spinLoopHint();
@@ -86,8 +88,9 @@ pub fn NewBlockQueue(comptime Value: type, comptime block_size: comptime_int, co
         }
 
         pub fn enqueue(this: *BlockQueue, value: Value) !void {
+            const rand = this.rand.random();
             while (@atomicRmw(bool, &this.write_lock, .Xchg, true, .SeqCst)) {
-                const end = this.rand.random.uintAtMost(u8, 32);
+                const end = rand.uintAtMost(u8, 32);
                 var i: u8 = 0;
                 while (i < end) : (i += 1) {}
                 std.atomic.spinLoopHint();

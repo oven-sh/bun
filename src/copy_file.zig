@@ -8,7 +8,7 @@ const CopyFileError = error{SystemResources} || os.CopyFileRangeError || os.Send
 // The copy starts at offset 0, the initial offsets are preserved.
 // No metadata is transferred over.
 pub fn copy(fd_in: os.fd_t, fd_out: os.fd_t) CopyFileError!void {
-    if (comptime std.Target.current.isDarwin()) {
+    if (comptime @import("builtin").target.isDarwin()) {
         const rc = os.system.fcopyfile(fd_in, fd_out, null, os.system.COPYFILE_DATA);
         switch (os.errno(rc)) {
             .SUCCESS => return,
@@ -21,7 +21,7 @@ pub fn copy(fd_in: os.fd_t, fd_out: os.fd_t) CopyFileError!void {
         }
     }
 
-    if (comptime std.Target.current.os.tag == .linux) {
+    if (comptime @import("builtin").target.os.tag == .linux) {
         // Try copy_file_range first as that works at the FS level and is the
         // most efficient method (if available).
         var offset: u64 = 0;

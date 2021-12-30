@@ -1,4 +1,4 @@
-pub const js = @import("./JavascriptCore.zig");
+pub const js = @import("../../jsc.zig").C;
 const std = @import("std");
 const _global = @import("../../global.zig");
 const string = _global.string;

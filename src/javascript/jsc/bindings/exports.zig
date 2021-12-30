@@ -1,7 +1,7 @@
 const JSC = @import("./bindings.zig");
 usingnamespace @import("./shared.zig");
 const Fs = @import("../../../fs.zig");
-const CAPI = @import("../JavascriptCore.zig");
+const CAPI = @import("../../../jsc.zig").C;
 const JS = @import("../javascript.zig");
 const JSBase = @import("../base.zig");
 const ZigURL = @import("../../../query_string_map.zig").URL;
@@ -26,6 +26,7 @@ const Exception = JSC.Exception;
 const JSModuleLoader = JSC.JSModuleLoader;
 const JSModuleRecord = JSC.JSModuleRecord;
 const Microtask = JSC.Microtask;
+const JSPrivateDataPtr = @import("../base.zig").JSPrivateDataPtr;
 
 const Handler = struct {
     pub export fn global_signal_handler_fn(sig: i32, info: *const std.os.siginfo_t, ctx_ptr: ?*const anyopaque) callconv(.C) void {
@@ -65,9 +66,9 @@ pub const ZigGlobalObject = extern struct {
             sigaction = std.mem.zeroes(std.os.Sigaction);
             sigaction.handler = .{ .sigaction = Handler.global_signal_handler_fn };
 
-            std.os.sigaction(std.os.SIGABRT, &sigaction, null);
+            std.os.sigaction(std.os.SIG.ABRT, &sigaction, null);
             if (comptime !Environment.isDebug) {
-                std.os.sigaction(std.os.SIGTRAP, &sigaction, null);
+                std.os.sigaction(std.os.SIG.TRAP, &sigaction, null);
             }
         }
 
@@ -254,7 +255,7 @@ pub const ResolvedSource = extern struct {
 };
 
 export fn ZigString__free(ptr: [*]const u8, len: usize, allocator_: ?*anyopaque) void {
-    var allocator: std.mem.Allocator = @ptrCast(std.mem.Allocator, @alignCast(@alignOf(std.mem.Allocator), allocator_ orelse return));
+    var allocator: std.mem.Allocator = @ptrCast(*std.mem.Allocator, @alignCast(@alignOf(*std.mem.Allocator), allocator_ orelse return)).*;
 
     var str = ptr[0..len];
     allocator.free(str);
@@ -791,7 +792,7 @@ pub const ZigConsoleClient = struct {
 
             if (value.isCell()) {
                 if (CAPI.JSObjectGetPrivate(value.asRef())) |private_data_ptr| {
-                    const priv_data = JS.JSPrivateDataPtr.from(private_data_ptr);
+                    const priv_data = JSPrivateDataPtr.from(private_data_ptr);
                     switch (priv_data.tag()) {
                         .BuildError => {
                             const build_error = priv_data.as(JS.BuildError);

@@ -12,7 +12,6 @@ const MutableString = _global.MutableString;
 const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
 const C = _global.C;
-usingnamespace @import("ast/base.zig");
 const Ref = @import("ast/base.zig").Ref;
 const RefHashCtx = @import("ast/base.zig").RefHashCtx;
 
@@ -2911,9 +2910,9 @@ pub const Expr = struct {
 
     pub fn isOptionalChain(self: *const @This()) bool {
         return switch (self.data) {
-            .e_dot => self.getDot().optional_chain != null,
-            .e_index => self.getIndex().optional_chain != null,
-            .e_call => self.getCall().optional_chain != null,
+            .e_dot => self.data.e_dot.optional_chain != null,
+            .e_index => self.data.e_index.optional_chain != null,
+            .e_call => self.data.e_call.optional_chain != null,
             else => false,
         };
     }
@@ -3809,7 +3808,7 @@ pub const Macro = struct {
     const isPackagePath = @import("./resolver/resolver.zig").isPackagePath;
     const ResolveResult = @import("./resolver/resolver.zig").Result;
     const DotEnv = @import("./env_loader.zig");
-    const js = @import("./javascript/jsc/JavascriptCore.zig");
+    const js = @import("./javascript/jsc/javascript_core_c_api.zig");
     const Zig = @import("./javascript/jsc/bindings/exports.zig");
     const Bundler = @import("./bundler.zig").Bundler;
     const MacroEntryPoint = @import("./bundler.zig").MacroEntryPoint;

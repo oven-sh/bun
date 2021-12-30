@@ -503,7 +503,7 @@ pub const FileSystem = struct {
 
         pub var tmpdir_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
-        const PLATFORM_TMP_DIR: string = switch (std.Target.current.os.tag) {
+        const PLATFORM_TMP_DIR: string = switch (@import("builtin").target.os.tag) {
             .windows => "TMPDIR",
             .macos => "/private/tmp",
             else => "/tmp",
@@ -551,9 +551,9 @@ pub const FileSystem = struct {
             pub fn create(this: *Tmpfile, rfs: *RealFS, name: [*:0]const u8) !void {
                 var tmpdir_ = try rfs.openTmpDir();
 
-                const flags = std.os.O_CREAT | std.os.O_RDWR | std.os.O_CLOEXEC;
+                const flags = std.os.O.CREAT | std.os.O.RDWR | std.os.O.CLOEXEC;
                 this.dir_fd = tmpdir_.fd;
-                this.fd = try std.os.openatZ(tmpdir_.fd, name, flags, std.os.S_IRWXO);
+                this.fd = try std.os.openatZ(tmpdir_.fd, name, flags, std.os.S.IRWXO);
             }
 
             pub fn promote(this: *Tmpfile, from_name: [*:0]const u8, destination_fd: std.os.fd_t, name: [*:0]const u8) !void {
@@ -848,10 +848,6 @@ pub const FileSystem = struct {
             shared_buffer: *MutableString,
         ) !File {
             FileSystem.setMaxFd(file.handle);
-
-            if (comptime FeatureFlags.disable_filesystem_cache) {
-                _ = std.os.fcntl(file.handle, std.os.F_NOCACHE, 1) catch 0;
-            }
 
             // Skip the extra file.stat() call when possible
             var size = _size orelse (file.getEndPos() catch |err| {

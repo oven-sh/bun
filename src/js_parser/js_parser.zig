@@ -601,7 +601,7 @@ pub const ImportScanner = struct {
                         if (decl.value) |val| {
                             while (true) {
                                 if (@as(Expr.Tag, val.data) == .e_dot) {
-                                    value = val.getDot().target;
+                                    value = val.data.e_dot.target;
                                 } else {
                                     break;
                                 }
@@ -1687,7 +1687,7 @@ const TempRef = struct {
 };
 
 const ImportNamespaceCallOrConstruct = struct {
-    ref: js_ast.Ref,
+    ref: Ref,
     is_construct: bool = false,
 };
 
@@ -1725,11 +1725,11 @@ const List = std.ArrayList;
 const LocList = List(logger.Loc);
 const StmtList = List(Stmt);
 
-const SymbolUseMap = Map(js_ast.Ref, js_ast.Symbol.Use);
-const StringRefMap = StringHashMap(js_ast.Ref);
+const SymbolUseMap = Map(Ref, js_ast.Symbol.Use);
+const StringRefMap = StringHashMap(Ref);
 const StringBoolMap = StringHashMap(bool);
-const RefBoolMap = Map(js_ast.Ref, bool);
-const RefRefMap = Map(js_ast.Ref, js_ast.Ref);
+const RefBoolMap = Map(Ref, bool);
+const RefRefMap = Map(Ref, Ref);
 const ImportRecord = importRecord.ImportRecord;
 const Flags = js_ast.Flags;
 const ScopeOrder = struct {
@@ -1780,7 +1780,7 @@ const FnOrArrowDataParse = struct {
 // restored on the call stack around code that parses nested functions and
 // arrow expressions.
 const FnOrArrowDataVisit = struct {
-    // super_index_ref: ?*js_ast.Ref = null,
+    // super_index_ref: ?*Ref = null,
 
     is_arrow: bool = false,
     is_async: bool = false,
@@ -1801,18 +1801,18 @@ const FnOnlyDataVisit = struct {
     // This is a reference to the magic "arguments" variable that exists inside
     // functions in JavaScript. It will be non-nil inside functions and nil
     // otherwise.
-    arguments_ref: ?js_ast.Ref = null,
+    arguments_ref: ?Ref = null,
 
     // Arrow functions don't capture the value of "this" and "arguments". Instead,
     // the values are inherited from the surrounding context. If arrow functions
     // are turned into regular functions due to lowering, we will need to generate
     // local variables to capture these values so they are preserved correctly.
-    this_capture_ref: ?js_ast.Ref = null,
-    arguments_capture_ref: ?js_ast.Ref = null,
+    this_capture_ref: ?Ref = null,
+    arguments_capture_ref: ?Ref = null,
 
     // Inside a static class property initializer, "this" expressions should be
     // replaced with the class name.
-    this_class_static_ref: ?js_ast.Ref = null,
+    this_class_static_ref: ?Ref = null,
 
     // If we're inside an async arrow function and async functions are not
     // supported, then we will have to convert that arrow function to a generator
@@ -2903,12 +2903,12 @@ pub fn NewParser(
         scopes_for_current_part: List(*js_ast.Scope),
         symbols: List(js_ast.Symbol),
         ts_use_counts: List(u32),
-        exports_ref: js_ast.Ref = js_ast.Ref.None,
-        require_ref: js_ast.Ref = js_ast.Ref.None,
-        module_ref: js_ast.Ref = js_ast.Ref.None,
-        buffer_ref: js_ast.Ref = js_ast.Ref.None,
-        import_meta_ref: js_ast.Ref = js_ast.Ref.None,
-        promise_ref: ?js_ast.Ref = null,
+        exports_ref: Ref = Ref.None,
+        require_ref: Ref = Ref.None,
+        module_ref: Ref = Ref.None,
+        buffer_ref: Ref = Ref.None,
+        import_meta_ref: Ref = Ref.None,
+        promise_ref: ?Ref = null,
         scopes_in_order_visitor_index: usize = 0,
         has_classic_runtime_warned: bool = false,
 
@@ -2930,8 +2930,8 @@ pub fn NewParser(
         // legacy_octal_literals:      map[js_ast.E]logger.Range,
 
         // For lowering private methods
-        // weak_map_ref: ?js_ast.Ref,
-        // weak_set_ref: ?js_ast.Ref,
+        // weak_map_ref: ?Ref,
+        // weak_set_ref: ?Ref,
         // private_getters: RefRefMap,
         // private_setters: RefRefMap,
 
@@ -2939,7 +2939,7 @@ pub fn NewParser(
         should_fold_numeric_constants: bool = false,
         emitted_namespace_vars: RefBoolMap,
         is_exported_inside_namespace: RefRefMap,
-        known_enum_values: Map(js_ast.Ref, StringHashMap(f64)),
+        known_enum_values: Map(Ref, StringHashMap(f64)),
         local_type_names: StringBoolMap,
 
         // This is the reference to the generated function argument for the namespace,
@@ -2956,7 +2956,7 @@ pub fn NewParser(
         //
         // This variable is "ns2" not "ns1". It is only used during the second
         // "visit" pass.
-        enclosing_namespace_arg_ref: ?js_ast.Ref = null,
+        enclosing_namespace_arg_ref: ?Ref = null,
 
         jsx_filename: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
         jsx_runtime: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
@@ -2979,11 +2979,11 @@ pub fn NewParser(
         es6_import_keyword: logger.Range = logger.Range.None,
         es6_export_keyword: logger.Range = logger.Range.None,
         enclosing_class_keyword: logger.Range = logger.Range.None,
-        import_items_for_namespace: std.AutoHashMap(js_ast.Ref, ImportItemForNamespaceMap),
+        import_items_for_namespace: std.AutoHashMap(Ref, ImportItemForNamespaceMap),
         is_import_item: RefBoolMap,
         named_imports: NamedImportsType,
         named_exports: js_ast.Ast.NamedExports,
-        top_level_symbol_to_parts: Map(js_ast.Ref, List(u32)),
+        top_level_symbol_to_parts: Map(Ref, List(u32)),
         import_namespace_cc_map: Map(ImportNamespaceCallOrConstruct, bool),
 
         // When we're only scanning the imports
@@ -3449,7 +3449,7 @@ pub fn NewParser(
             }
         }
 
-        pub fn recordUsage(p: *P, ref: js_ast.Ref) void {
+        pub fn recordUsage(p: *P, ref: Ref) void {
             // The use count stored in the symbol is used for generating symbol names
             // during minification. These counts shouldn't include references inside dead
             // code regions since those will be culled.
@@ -5080,7 +5080,7 @@ pub fn NewParser(
             return name;
         }
 
-        pub fn newSymbol(p: *P, kind: Symbol.Kind, identifier: string) !js_ast.Ref {
+        pub fn newSymbol(p: *P, kind: Symbol.Kind, identifier: string) !Ref {
             const inner_index = Ref.toInt(p.symbols.items.len);
             try p.symbols.append(Symbol{
                 .kind = kind,
@@ -5092,7 +5092,7 @@ pub fn NewParser(
                 try p.ts_use_counts.append(0);
             }
 
-            return js_ast.Ref{
+            return Ref{
                 .source_index = Ref.toInt(p.source.index),
                 .inner_index = inner_index,
             };
@@ -5364,7 +5364,7 @@ pub fn NewParser(
                                         return stmt;
                                     }
 
-                                    if (stmt.getFunction().func.name) |name| {
+                                    if (stmt.data.s_function.func.name) |name| {
                                         defaultName = js_ast.LocRef{ .loc = defaultLoc, .ref = name.ref };
                                     } else {
                                         defaultName = try p.createDefaultName(defaultLoc);
@@ -5512,7 +5512,7 @@ pub fn NewParser(
                             }
 
                             try p.lexer.next();
-                            var namespace_ref: js_ast.Ref = js_ast.Ref.None;
+                            var namespace_ref: Ref = Ref.None;
                             var alias: ?js_ast.G.ExportStarAlias = null;
                             var path: ParsedPath = undefined;
 
@@ -5993,7 +5993,7 @@ pub fn NewParser(
                     if (init_) |init_stmt| {
                         switch (init_stmt.data) {
                             .s_local => {
-                                if (init_stmt.getLocal().kind == .k_const) {
+                                if (init_stmt.data.s_local.kind == .k_const) {
                                     try p.requireInitializers(decls);
                                 }
                             },
@@ -7934,7 +7934,7 @@ pub fn NewParser(
             return self.mm(@TypeOf(kind), kind);
         }
 
-        pub fn storeNameInRef(p: *P, name: string) !js_ast.Ref {
+        pub fn storeNameInRef(p: *P, name: string) !Ref {
             if (comptime ParsePassSymbolUsageType != void) {
                 if (p.parse_pass_symbol_uses.getPtr(name)) |res| {
                     res.used = true;
@@ -7944,19 +7944,19 @@ pub fn NewParser(
             if (@ptrToInt(p.source.contents.ptr) <= @ptrToInt(name.ptr) and (@ptrToInt(name.ptr) + name.len) <= (@ptrToInt(p.source.contents.ptr) + p.source.contents.len)) {
                 const start = Ref.toInt(@ptrToInt(name.ptr) - @ptrToInt(p.source.contents.ptr));
                 const end = Ref.toInt(name.len);
-                return js_ast.Ref{ .source_index = start, .inner_index = end, .is_source_contents_slice = true };
+                return Ref{ .source_index = start, .inner_index = end, .is_source_contents_slice = true };
             } else if (p.allocated_names.capacity > 0) {
                 const inner_index = Ref.toInt(p.allocated_names.items.len);
                 try p.allocated_names.append(name);
-                return js_ast.Ref{ .source_index = std.math.maxInt(Ref.Int), .inner_index = inner_index };
+                return Ref{ .source_index = std.math.maxInt(Ref.Int), .inner_index = inner_index };
             } else {
                 p.allocated_names = try @TypeOf(p.allocated_names).initCapacity(p.allocator, 1);
                 p.allocated_names.appendAssumeCapacity(name);
-                return js_ast.Ref{ .source_index = std.math.maxInt(Ref.Int), .inner_index = 0 };
+                return Ref{ .source_index = std.math.maxInt(Ref.Int), .inner_index = 0 };
             }
         }
 
-        pub fn loadNameFromRef(p: *P, ref: js_ast.Ref) string {
+        pub fn loadNameFromRef(p: *P, ref: Ref) string {
             if (ref.is_source_contents_slice) {
                 return p.source.contents[ref.source_index .. ref.source_index + ref.inner_index];
             } else if (ref.source_index == std.math.maxInt(Ref.Int)) {
@@ -12181,7 +12181,7 @@ pub fn NewParser(
                     // const could_be_require_resolve = (e_.args.len == 1 and @as(
                     //     Expr.Tag,
                     //     e_.target.data,
-                    // ) == .e_dot and e_.target.getDot().optional_chain == null and strings.eql(
+                    // ) == .e_dot and e_.target.data.e_dot.optional_chain == null and strings.eql(
                     //     e_.target.dat.e_dot.name,
                     //     "resolve",
                     // ));
@@ -12799,7 +12799,7 @@ pub fn NewParser(
                         // because Safari doesn't support it and I've seen cases where this breaks
 
                         p.recordUsage(data.namespace_ref);
-                        try stmts.ensureCapacity(stmts.items.len + 2);
+                        try stmts.ensureTotalCapacity(stmts.items.len + 2);
                         stmts.appendAssumeCapacity(p.s(S.Import{ .namespace_ref = data.namespace_ref, .star_name_loc = alias.loc, .import_record_index = data.import_record_index }, stmt.loc));
 
                         var items = try List(js_ast.ClauseItem).initCapacity(p.allocator, 1);
@@ -13999,7 +13999,7 @@ pub fn NewParser(
             const has_if_scope = has_if: {
                 switch (stmt.data) {
                     .s_function => {
-                        break :has_if stmt.getFunction().func.flags.has_if_scope;
+                        break :has_if stmt.data.s_function.func.flags.has_if_scope;
                     },
                     else => {
                         break :has_if false;
@@ -14029,7 +14029,7 @@ pub fn NewParser(
                 return Stmt{ .data = Prefill.Data.SEmpty, .loc = loc };
             }
 
-            if (stmts.len == 1 and std.meta.activeTag(stmts[0].data) != .s_local or (std.meta.activeTag(stmts[0].data) == .s_local and stmts[0].getLocal().kind == S.Local.Kind.k_var)) {
+            if (stmts.len == 1 and std.meta.activeTag(stmts[0].data) != .s_local or (std.meta.activeTag(stmts[0].data) == .s_local and stmts[0].data.s_local.kind == S.Local.Kind.k_var)) {
                 // "let" and "const" must be put in a block when in a single-statement context
                 return stmts[0];
             }
@@ -14115,7 +14115,7 @@ pub fn NewParser(
                 // Special-case EPrivateIdentifier to allow it here
 
                 if (is_private) {
-                    p.recordDeclaredSymbol(property.key.?.getPrivateIdentifier().ref) catch unreachable;
+                    p.recordDeclaredSymbol(property.key.?.data.e_private_identifier.ref) catch unreachable;
                 } else if (property.key) |key| {
                     class.properties[i].key = p.visitExpr(key);
                 }

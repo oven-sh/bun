@@ -472,7 +472,7 @@ pub const Loader = struct {
                 errdefer allocator.free(e_strings);
                 errdefer allocator.free(key_buf);
                 var key_fixed_allocator = std.heap.FixedBufferAllocator.init(key_buf);
-                var key_allocator = &key_fixed_allocator.allocator;
+                var key_allocator = key_fixed_allocator.allocator();
 
                 if (behavior == .prefix) {
                     while (iter.next()) |entry| {

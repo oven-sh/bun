@@ -200,7 +200,7 @@ pub const GenerateHeader = struct {
                 .machine_id = GenerateMachineID.forMac() catch Analytics.Uint64{},
                 .platform = GeneratePlatform.forMac(),
                 .build_id = comptime @truncate(u32, Global.build_id),
-                .session_id = random.random.int(u32),
+                .session_id = random.random().int(u32),
                 .project_id = project_id,
             };
         }
@@ -210,7 +210,7 @@ pub const GenerateHeader = struct {
                 .machine_id = GenerateMachineID.forLinux() catch Analytics.Uint64{},
                 .platform = GeneratePlatform.forLinux(),
                 .build_id = comptime @truncate(u32, Global.build_id),
-                .session_id = random.random.int(u32),
+                .session_id = random.random().int(u32),
                 .project_id = project_id,
             };
         }
@@ -475,6 +475,7 @@ pub const EventList = struct {
         this.events.clearRetainingCapacity();
 
         var retry_remaining: usize = 10;
+        const rand = random.random();
         retry: while (retry_remaining > 0) {
             const response = this.async_http.sendSync() catch |err| {
                 if (FeatureFlags.verbose_analytics) {
@@ -485,7 +486,7 @@ pub const EventList = struct {
                 @atomicStore(bool, &is_stuck, true, .Release);
                 const min_delay = (11 - retry_remaining) * std.time.ns_per_s / 2;
                 Output.flush();
-                std.time.sleep(random.random.intRangeAtMost(u64, min_delay, min_delay * 2));
+                std.time.sleep(rand.intRangeAtMost(u64, min_delay, min_delay * 2));
                 continue :retry;
             };
 
@@ -498,7 +499,7 @@ pub const EventList = struct {
                 @atomicStore(bool, &is_stuck, true, .Release);
                 const min_delay = (11 - retry_remaining) * std.time.ns_per_s / 2;
                 Output.flush();
-                std.time.sleep(random.random.intRangeAtMost(u64, min_delay, min_delay * 2));
+                std.time.sleep(rand.intRangeAtMost(u64, min_delay, min_delay * 2));
                 continue :retry;
             }
 

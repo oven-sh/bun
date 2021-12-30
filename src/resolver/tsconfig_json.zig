@@ -189,7 +189,7 @@ pub const TSConfigJSON = struct {
             if (compiler_opts.expr.asProperty("paths")) |paths_prop| {
                 switch (paths_prop.expr.data) {
                     .e_object => {
-                        var paths = paths_prop.expr.getObject();
+                        var paths = paths_prop.expr.data.e_object;
                         result.base_url_for_paths = if (result.base_url.len > 0) result.base_url else ".";
                         result.paths = PathsMap.init(allocator);
                         for (paths.properties) |property| {
@@ -225,7 +225,7 @@ pub const TSConfigJSON = struct {
                             // and then, if that didn't work, also check "projectRoot/generated/folder1/file2".
                             switch (value_prop.data) {
                                 .e_array => {
-                                    const array = value_prop.getArray();
+                                    const array = value_prop.data.e_array;
 
                                     if (array.items.len > 0) {
                                         var values = allocator.alloc(string, array.items.len) catch unreachable;

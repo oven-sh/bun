@@ -430,7 +430,7 @@ pub const Platform = enum {
         };
     }
 
-    pub const current: Platform = switch (std.Target.current.os.tag) {
+    pub const current: Platform = switch (@import("builtin").target.os.tag) {
         .windows => Platform.windows,
         else => Platform.posix,
     };
@@ -506,7 +506,7 @@ pub const Platform = enum {
 
     pub fn resolve(comptime _platform: Platform) Platform {
         if (comptime _platform == .auto) {
-            return switch (std.Target.current.os.tag) {
+            return switch (@import("builtin").target.os.tag) {
                 .windows => Platform.windows,
 
                 .freestanding, .emscripten, .other => Platform.loose,
@@ -526,14 +526,19 @@ pub fn normalizeString(str: []const u8, comptime allow_above_root: bool, comptim
 pub fn normalizeStringBuf(str: []const u8, buf: []u8, comptime allow_above_root: bool, comptime _platform: Platform, comptime preserve_trailing_slash: anytype) []u8 {
     const platform = comptime _platform.resolve();
 
-    switch (platform) {
+    switch (comptime platform) {
         .auto => unreachable,
 
         .windows => {
             @compileError("Not implemented");
         },
         .posix => {
-            @compileError("Not implemented");
+            return normalizeStringLooseBuf(
+                str,
+                buf,
+                allow_above_root,
+                preserve_trailing_slash,
+            );
         },
 
         .loose => {
@@ -617,19 +622,18 @@ pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [
 
     // Preserve leading separator
     if (_parts[0].len > 0 and _parts[0][0] == _platform.separator()) {
-        const out = switch (platform) {
-            .loose => normalizeStringLooseBuf(parser_join_input_buffer[0..written], buf[1..], false, false),
+        const out = switch (comptime platform) {
+            // .loose =>
             .windows => @compileError("Not implemented yet"),
-            else => @compileError("Not implemented yet"),
+            else => normalizeStringLooseBuf(parser_join_input_buffer[0..written], buf[1..], false, false),
         };
         buf[0] = _platform.separator();
 
         return buf[0 .. out.len + 1];
     } else {
         return switch (platform) {
-            .loose => normalizeStringLooseBuf(parser_join_input_buffer[0..written], buf[0..], false, false),
+            else => normalizeStringLooseBuf(parser_join_input_buffer[0..written], buf[0..], false, false),
             .windows => @compileError("Not implemented yet"),
-            else => @compileError("Not implemented yet"),
         };
     }
 }

@@ -12,6 +12,7 @@ const StoredFileDescriptorType = _global.StoredFileDescriptorType;
 const FeatureFlags = _global.FeatureFlags;
 const default_allocator = _global.default_allocator;
 const C = _global.C;
+const c = std.c;
 const options = @import("./options.zig");
 const IndexType = @import("./allocators.zig").IndexType;
 
@@ -26,8 +27,8 @@ const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const WATCHER_MAX_LIST = 8096;
 
 pub const INotify = struct {
-    pub const IN_CLOEXEC = std.os.O_CLOEXEC;
-    pub const IN_NONBLOCK = std.os.O_NONBLOCK;
+    pub const IN_CLOEXEC = std.os.O.CLOEXEC;
+    pub const IN_NONBLOCK = std.os.O.NONBLOCK;
 
     pub const IN_ACCESS = 0x00000001;
     pub const IN_MODIFY = 0x00000002;
@@ -229,10 +230,10 @@ pub const WatchEvent = struct {
         this.* =
             WatchEvent{
             .op = Op{
-                .delete = (kevent.fflags & std.os.NOTE_DELETE) > 0,
-                .metadata = (kevent.fflags & std.os.NOTE_ATTRIB) > 0,
-                .rename = (kevent.fflags & std.os.NOTE_RENAME) > 0,
-                .write = (kevent.fflags & std.os.NOTE_WRITE) > 0,
+                .delete = (kevent.fflags & std.c.NOTE_DELETE) > 0,
+                .metadata = (kevent.fflags & std.c.NOTE_ATTRIB) > 0,
+                .rename = (kevent.fflags & std.c.NOTE_RENAME) > 0,
+                .write = (kevent.fflags & std.c.NOTE_WRITE) > 0,
             },
             .index = @truncate(WatchItemIndex, kevent.udata),
         };
@@ -525,11 +526,11 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
                 var event = std.mem.zeroes(KEvent);
 
-                event.flags = os.EV_ADD | os.EV_CLEAR | os.EV_ENABLE;
+                event.flags = c.EV_ADD | c.EV_CLEAR | c.EV_ENABLE;
                 // we want to know about the vnode
-                event.filter = std.os.EVFILT_VNODE;
+                event.filter = std.c.EVFILT_VNODE;
 
-                event.fflags = std.os.NOTE_WRITE | std.os.NOTE_RENAME | std.os.NOTE_DELETE;
+                event.fflags = std.c.NOTE_WRITE | std.c.NOTE_RENAME | std.c.NOTE_DELETE;
 
                 // id
                 event.ident = @intCast(usize, fd);
@@ -608,15 +609,15 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
                 var event = std.mem.zeroes(KEvent);
 
-                event.flags = os.EV_ADD | os.EV_CLEAR | os.EV_ENABLE;
+                event.flags = c.EV_ADD | c.EV_CLEAR | c.EV_ENABLE;
                 // we want to know about the vnode
-                event.filter = std.os.EVFILT_VNODE;
+                event.filter = std.c.EVFILT_VNODE;
 
                 // monitor:
                 // - Write
                 // - Rename
                 // - Delete
-                event.fflags = std.os.NOTE_WRITE | std.os.NOTE_RENAME | std.os.NOTE_DELETE;
+                event.fflags = std.c.NOTE_WRITE | std.c.NOTE_RENAME | std.c.NOTE_DELETE;
 
                 // id
                 event.ident = @intCast(usize, fd);

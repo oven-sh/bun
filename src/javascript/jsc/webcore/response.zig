@@ -1,14 +1,13 @@
-usingnamespace @import("../base.zig");
 const std = @import("std");
 const Api = @import("../../../api/schema.zig").Api;
 const RequestContext = @import("../../../http.zig").RequestContext;
 const MimeType = @import("../../../http.zig").MimeType;
-usingnamespace @import("../javascript.zig");
-usingnamespace @import("../bindings/bindings.zig");
 const ZigURL = @import("../../../query_string_map.zig").URL;
 const HTTPClient = @import("http");
 const NetworkThread = @import("network_thread");
-const js = @import("../JavaScriptCore.zig");
+
+const JSC = @import("../../../jsc.zig");
+const js = JSC.C;
 
 const Method = @import("../../../http/method.zig").Method;
 
@@ -29,12 +28,12 @@ const getAllocator = @import("../base.zig").getAllocator;
 const JSPrivateDataPtr = @import("../base.zig").JSPrivateDataPtr;
 const GetJSPrivateData = @import("../base.zig").GetJSPrivateData;
 
-const ZigString = @import("../bindings/bindings.zig").ZigString;
-const JSInternalPromise = @import("../bindings/bindings.zig").JSInternalPromise;
-const JSPromise = @import("../bindings/bindings.zig").JSPromise;
-const JSValue = @import("../bindings/bindings.zig").JSValue;
-const JSError = @import("../bindings/bindings.zig").JSError;
-const JSGlobalObject = @import("../bindings/bindings.zig").JSGlobalObject;
+const ZigString = JSC.ZigString;
+const JSInternalPromise = JSC.JSInternalPromise;
+const JSPromise = JSC.JSPromise;
+const JSValue = JSC.JSValue;
+const JSError = JSC.JSError;
+const JSGlobalObject = JSC.JSGlobalObject;
 
 const VirtualMachine = @import("../javascript.zig").VirtualMachine;
 const Task = @import("../javascript.zig").Task;

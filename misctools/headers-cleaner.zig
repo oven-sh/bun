@@ -9,17 +9,17 @@ pub fn main() anyerror!void {
     var contents = try headers_zig.readToEndAlloc(std.heap.page_allocator, headers_zig.getEndPos() catch unreachable);
     const last_extern_i = std.mem.lastIndexOf(u8, contents, "pub extern fn") orelse @panic("Expected contents");
     const last_newline = std.mem.indexOf(u8, contents[last_extern_i..], "\n") orelse @panic("Expected newline");
-    const to_splice = "usingnamespace @import(\"./headers-replacements.zig\");\n";
+    const to_splice = "// GENERATED CODE - DO NOT MODIFY BY HAND\n\n";
     var new_contents = try std.heap.page_allocator.alloc(u8, contents.len + to_splice.len);
     std.mem.copy(u8, new_contents, to_splice);
     std.mem.copy(u8, new_contents[to_splice.len..], contents);
     var i: usize = to_splice.len;
     var remainder = new_contents[i..];
     while (remainder.len > 0) {
-        i = std.mem.indexOf(u8, remainder, "\npub const struct_b") orelse break + "\npub const struct_b".len;
+        i = (std.mem.indexOf(u8, remainder, "\npub const struct_b") orelse break);
         var begin = remainder[i..];
-        const end_line = std.mem.indexOf(u8, begin, "extern struct {") orelse break;
-        const end_struct = std.mem.indexOf(u8, begin, "\n};\n") orelse break + "\n};\n".len;
+        const end_line = (std.mem.indexOf(u8, begin, "extern struct {") orelse break);
+        const end_struct = (std.mem.indexOf(u8, begin, "\n};\n") orelse break) + "\n};\n".len;
 
         std.mem.set(u8, begin[1 .. end_struct + 3], ' ');
         remainder = begin[end_struct..];
@@ -27,10 +27,10 @@ pub fn main() anyerror!void {
     i = to_splice.len;
     remainder = new_contents[i..];
     while (remainder.len > 0) {
-        i = std.mem.indexOf(u8, remainder, "\npub const struct_") orelse break + "\npub const struct_".len;
+        i = (std.mem.indexOf(u8, remainder, "\npub const struct_") orelse break);
         var begin = remainder[i..];
-        var end_struct = std.mem.indexOf(u8, begin, "opaque {};") orelse break;
-        end_struct += std.mem.indexOf(u8, begin[end_struct..], "\n") orelse break;
+        var end_struct = (std.mem.indexOf(u8, begin, "opaque {};") orelse break);
+        end_struct += (std.mem.indexOf(u8, begin[end_struct..], "\n") orelse break);
         i = 0;
 
         std.mem.set(u8, begin[1..end_struct], ' ');

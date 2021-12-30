@@ -36,11 +36,7 @@ const http = @import("../../http.zig");
 const NodeFallbackModules = @import("../../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../../analytics/analytics_thread.zig");
-usingnamespace @import("./base.zig");
-usingnamespace @import("./webcore/response.zig");
-usingnamespace @import("./config.zig");
-usingnamespace @import("./bindings/bindings.zig");
-const ZigString = @import("./bindings/bindings.zig").ZigString;
+const ZigString = @import("javascript_core").ZigString;
 const Runtime = @import("../../runtime.zig");
 const Router = @import("./api/router.zig");
 const ImportRecord = ast.ImportRecord;
@@ -48,35 +44,36 @@ const DotEnv = @import("../../env_loader.zig");
 const ParseResult = @import("../../bundler.zig").ParseResult;
 const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../../resolver/package_json.zig").MacroMap;
-const Request = @import("./webcore/response.zig").Request;
-const Response = @import("./webcore/response.zig").Response;
-const Headers = @import("./webcore/response.zig").Headers;
-const Fetch = @import("./webcore/response.zig").Fetch;
-const FetchEvent = @import("./webcore/response.zig").FetchEvent;
-const js = @import("./JavaScriptCore.zig");
+const WebCore = @import("javascript_core").WebCore;
+const Request = WebCore.Request;
+const Response = WebCore.Response;
+const Headers = WebCore.Headers;
+const Fetch = WebCore.Fetch;
+const FetchEvent = WebCore.FetchEvent;
+const js = @import("javascript_core").C;
 const JSError = @import("./base.zig").JSError;
 const d = @import("./base.zig").d;
 const MarkedArrayBuffer = @import("./base.zig").MarkedArrayBuffer;
 const getAllocator = @import("./base.zig").getAllocator;
-const JSValue = @import("./bindings/bindings.zig").JSValue;
+const JSValue = @import("javascript_core").JSValue;
 const NewClass = @import("./base.zig").NewClass;
-const Microtask = @import("./bindings/bindings.zig").Microtask;
-const JSGlobalObject = @import("./bindings/bindings.zig").JSGlobalObject;
-const ExceptionValueRef = @import("./base.zig").ExceptionValueRef;
-const JSPrivateDataPtr = @import("./base.zig").JSPrivateDataPtr;
-const ZigConsoleClient = @import("./bindings/exports.zig").ZigConsoleClient;
-const ZigException = @import("./bindings/exports.zig").ZigException;
-const ZigStackTrace = @import("./bindings/exports.zig").ZigStackTrace;
-const ErrorableResolvedSource = @import("./bindings/exports.zig").ErrorableResolvedSource;
-const ResolvedSource = @import("./bindings/exports.zig").ResolvedSource;
-const JSPromise = @import("./bindings/bindings.zig").JSPromise;
-const JSInternalPromise = @import("./bindings/bindings.zig").JSInternalPromise;
-const JSModuleLoader = @import("./bindings/bindings.zig").JSModuleLoader;
-const JSPromiseRejectionOperation = @import("./bindings/bindings.zig").JSPromiseRejectionOperation;
-const Exception = @import("./bindings/bindings.zig").Exception;
-const ErrorableZigString = @import("./bindings/bindings.zig").ErrorableZigString;
-const ZigGlobalObject = @import("./bindings/bindings.zig").ZigGlobalObject;
-const VM = @import("./bindings/bindings.zig").VM;
+const Microtask = @import("javascript_core").Microtask;
+const JSGlobalObject = @import("javascript_core").JSGlobalObject;
+const ExceptionValueRef = @import("javascript_core").ExceptionValueRef;
+const JSPrivateDataPtr = @import("javascript_core").JSPrivateDataPtr;
+const ZigConsoleClient = @import("javascript_core").ZigConsoleClient;
+const ZigException = @import("javascript_core").ZigException;
+const ZigStackTrace = @import("javascript_core").ZigStackTrace;
+const ErrorableResolvedSource = @import("javascript_core").ErrorableResolvedSource;
+const ResolvedSource = @import("javascript_core").ResolvedSource;
+const JSPromise = @import("javascript_core").JSPromise;
+const JSInternalPromise = @import("javascript_core").JSInternalPromise;
+const JSModuleLoader = @import("javascript_core").JSModuleLoader;
+const JSPromiseRejectionOperation = @import("javascript_core").JSPromiseRejectionOperation;
+const Exception = @import("javascript_core").Exception;
+const ErrorableZigString = @import("javascript_core").ErrorableZigString;
+const ZigGlobalObject = @import("javascript_core").ZigGlobalObject;
+const VM = @import("javascript_core").VM;
 const Config = @import("./config.zig");
 
 pub const GlobalClasses = [_]type{
@@ -1131,7 +1128,7 @@ pub const VirtualMachine = struct {
                 vm.bundler.resetStore();
                 const hash = http.Watcher.getHash(path.text);
 
-                var allocator = if (vm.has_loaded) &vm.arena.allocator else vm.allocator;
+                var allocator = if (vm.has_loaded) vm.arena.allocator() else vm.allocator;
 
                 var fd: ?StoredFileDescriptorType = null;
                 var package_json: ?*PackageJSON = null;
@@ -1226,7 +1223,7 @@ pub const VirtualMachine = struct {
                 }
 
                 return ResolvedSource{
-                    .allocator = if (vm.has_loaded) vm.allocator else null,
+                    .allocator = if (vm.has_loaded) &vm.allocator else null,
                     .source_code = ZigString.init(vm.allocator.dupe(u8, source_code_printer.ctx.written) catch unreachable),
                     .specifier = ZigString.init(specifier),
                     .source_url = ZigString.init(path.text),
@@ -1236,7 +1233,7 @@ pub const VirtualMachine = struct {
             },
             else => {
                 return ResolvedSource{
-                    .allocator = vm.allocator,
+                    .allocator = &vm.allocator,
                     .source_code = ZigString.init(try strings.quotedAlloc(VirtualMachine.vm.allocator, path.pretty)),
                     .specifier = ZigString.init(path.text),
                     .source_url = ZigString.init(path.text),

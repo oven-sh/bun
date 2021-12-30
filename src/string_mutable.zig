@@ -1,7 +1,6 @@
 const std = @import("std");
 const expect = std.testing.expect;
 
-usingnamespace @import("string_types.zig");
 const strings = @import("string_immutable.zig");
 const js_lexer = @import("js_lexer.zig");
 
@@ -132,7 +131,7 @@ pub const MutableString = struct {
     }
 
     pub fn copy(self: *MutableString, str: anytype) !void {
-        try self.list.ensureCapacity(self.allocator, std.mem.len(str[0..]));
+        try self.list.ensureTotalCapacity(self.allocator, std.mem.len(str[0..]));
 
         if (self.list.items.len == 0) {
             try self.list.insertSlice(self.allocator, 0, str);

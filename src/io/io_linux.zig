@@ -247,7 +247,7 @@ pub const Completion = struct {
                     op.socket,
                     &op.address,
                     &op.address_size,
-                    os.SOCK_CLOEXEC,
+                    os.SOCK.CLOEXEC,
                 );
             },
             .close => |op| {
@@ -945,7 +945,7 @@ fn buffer_limit(buffer_len: usize) usize {
     // stuffing the errno codes into the last `4096` values.
     // Darwin limits writes to `0x7fffffff` bytes, more than that returns `EINVAL`.
     // The corresponding POSIX limit is `std.math.maxInt(isize)`.
-    const limit = switch (std.Target.current.os.tag) {
+    const limit = switch (@import("builtin").target.os.tag) {
         .linux => 0x7ffff000,
         .macos, .ios, .watchos, .tvos => std.math.maxInt(i32),
         else => std.math.maxInt(isize),

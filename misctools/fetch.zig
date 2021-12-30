@@ -183,7 +183,7 @@ pub fn main() anyerror!void {
     var request_body_string = try default_allocator.create(MutableString);
     request_body_string.* = body_in_str;
 
-    try channel.buffer.ensureCapacity(1);
+    try channel.buffer.ensureTotalCapacity(1);
 
     try NetworkThread.init();
 

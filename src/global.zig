@@ -12,8 +12,6 @@ pub const C = @import("c.zig");
 
 pub const FeatureFlags = @import("feature_flags.zig");
 const root = @import("root");
-const stringZ = StringTypes.stringZ;
-const string = StringTypes.string;
 
 pub const Output = struct {
     // These are threadlocal so we don't have stdout/stderr writing on top of each other
@@ -56,7 +54,7 @@ pub const Output = struct {
             stream: StreamType,
             err: StreamType,
         ) Source {
-            if (comptime Environment.Environment.isDebug) {
+            if (comptime Environment.isDebug) {
                 if (comptime use_mimalloc) {
                     if (!source_set) {
                         const Mimalloc = @import("./allocators/mimalloc.zig");
@@ -80,7 +78,7 @@ pub const Output = struct {
             source = Source.init(stdout_stream, stderr_stream);
         }
 
-        pub fn configureNamedThread(thread: std.Thread, name: stringZ) void {
+        pub fn configureNamedThread(thread: std.Thread, name: StringTypes.stringZ) void {
             if (source_set) return;
             configureThread();
 
@@ -573,8 +571,12 @@ pub const FileDescriptorType = if (Environment.isBrowser) u0 else std.os.fd_t;
 // As a useful optimization, we can store file descriptors and just keep them open...forever
 pub const StoredFileDescriptorType = if (Environment.isWindows or Environment.isBrowser) u0 else std.os.fd_t;
 
-const StringTypes = @import("string_types.zig");
-pub usingnamespace StringTypes;
+pub const StringTypes = @import("string_types.zig");
+pub const stringZ = StringTypes.stringZ;
+pub const string = StringTypes.string;
+pub const CodePoint = StringTypes.CodePoint;
+pub const PathString = StringTypes.PathString;
+pub const HashedString = StringTypes.HashedString;
 pub const strings = @import("string_immutable.zig");
 pub const MutableString = @import("string_mutable.zig").MutableString;
 

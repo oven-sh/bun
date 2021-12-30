@@ -121,6 +121,99 @@ extern "C" JSC__JSGlobalObject *Zig__GlobalObject__create(JSClassRef *globalObje
   return globalObject;
 }
 
+extern "C" void *Zig__GlobalObject__getModuleRegistryMap(JSC__JSGlobalObject *arg0) {
+  if (JSC::JSObject *loader =
+        JSC::jsDynamicCast<JSC::JSObject *>(arg0->vm(), arg0->moduleLoader())) {
+    JSC::JSMap *map = JSC::jsDynamicCast<JSC::JSMap *>(
+      arg0->vm(),
+      loader->getDirect(arg0->vm(), JSC::Identifier::fromString(arg0->vm(), "registry")));
+
+    JSC::JSMap *cloned = map->clone(arg0, arg0->vm(), arg0->mapStructure());
+    JSC::gcProtect(cloned);
+
+    return cloned;
+  }
+
+  return nullptr;
+}
+
+extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject *globalObject,
+                                                          void *map_ptr) {
+  if (map_ptr == nullptr) return false;
+  JSC::JSMap *map = reinterpret_cast<JSC::JSMap *>(map_ptr);
+  JSC::VM &vm = globalObject->vm();
+  if (JSC::JSObject *obj =
+        JSC::jsDynamicCast<JSC::JSObject *>(globalObject->vm(), globalObject->moduleLoader())) {
+    auto identifier = JSC::Identifier::fromString(globalObject->vm(), "registry");
+
+    if (JSC::JSMap *oldMap = JSC::jsDynamicCast<JSC::JSMap *>(
+          globalObject->vm(), obj->getDirect(globalObject->vm(), identifier))) {
+      oldMap->clear(globalObject);
+      // vm.finalizeSynchronousJSExecution();
+
+      obj->putDirect(globalObject->vm(), identifier,
+                     map->clone(globalObject, globalObject->vm(), globalObject->mapStructure()));
+
+      // vm.deleteAllLinkedCode(JSC::DeleteAllCodeEffort::DeleteAllCodeIfNotCollecting);
+      // JSC::Heap::PreventCollectionScope(vm.heap);
+
+      // vm.heap.completeAllJITPlans();
+
+      // vm.forEachScriptExecutableSpace([&](auto &spaceAndSet) {
+      //   JSC::HeapIterationScope heapIterationScope(vm.heap);
+      //   auto &set = spaceAndSet.set;
+      //   set.forEachLiveCell([&](JSC::HeapCell *cell, JSC::HeapCell::Kind) {
+      //     if (JSC::ModuleProgramExecutable *executable =
+      //           JSC::jsDynamicCast<JSC::ModuleProgramExecutable *>(cell)) {
+      //       executable->clearCode(set);
+      //     }
+      //   });
+      // });
+    }
+    // globalObject->vm().heap.deleteAllUnlinkedCodeBlocks(
+    //   JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
+    // vm.whenIdle([globalObject, oldMap, map]() {
+    //   auto recordIdentifier = JSC::Identifier::fromString(globalObject->vm(), "module");
+
+    //   JSC::JSModuleRecord *record;
+    //   JSC::JSValue key;
+    //   JSC::JSValue value;
+    //   JSC::JSObject *mod;
+    //   JSC::JSObject *nextObject;
+    //   JSC::forEachInIterable(
+    //     globalObject, oldMap,
+    //     [&](JSC::VM &vm, JSC::JSGlobalObject *globalObject, JSC::JSValue nextValue) {
+    //       nextObject = JSC::jsDynamicCast<JSC::JSObject *>(vm, nextValue);
+    //       key = nextObject->getIndex(globalObject, static_cast<unsigned>(0));
+
+    //       if (!map->has(globalObject, key)) {
+    //         value = nextObject->getIndex(globalObject, static_cast<unsigned>(1));
+    //         mod = JSC::jsDynamicCast<JSC::JSObject *>(vm, value);
+    //         if (mod) {
+    //           record = JSC::jsDynamicCast<JSC::JSModuleRecord *>(
+    //             vm, mod->getDirect(vm, recordIdentifier));
+    //           if (record) {
+    //             auto code = &record->sourceCode();
+    //             if (code) {
+
+    //               Zig::SourceProvider *provider =
+    //                 reinterpret_cast<Zig::SourceProvider *>(code->provider());
+    //               // code->~SourceCode();
+    //               if (provider) { provider->freeSourceCode(); }
+    //             }
+    //           }
+    //         }
+    //       }
+    //     });
+
+    //   oldMap->clear(globalObject);
+    //   }
+    // }
+    // map
+  }
+  return true;
+}
+
 namespace Zig {
 
 const JSC::ClassInfo GlobalObject::s_info = {"GlobalObject", &Base::s_info, nullptr, nullptr,
@@ -274,98 +367,6 @@ JSC::JSInternalPromise *GlobalObject::moduleLoaderImportModule(JSGlobalObject *g
   return result;
 }
 
-extern "C" void *Zig__GlobalObject__getModuleRegistryMap(JSC__JSGlobalObject *arg0) {
-  if (JSC::JSObject *loader =
-        JSC::jsDynamicCast<JSC::JSObject *>(arg0->vm(), arg0->moduleLoader())) {
-    JSC::JSMap *map = JSC::jsDynamicCast<JSC::JSMap *>(
-      arg0->vm(),
-      loader->getDirect(arg0->vm(), JSC::Identifier::fromString(arg0->vm(), "registry")));
-
-    JSC::JSMap *cloned = map->clone(arg0, arg0->vm(), arg0->mapStructure());
-    JSC::gcProtect(cloned);
-
-    return cloned;
-  }
-
-  return nullptr;
-}
-
-extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject *globalObject,
-                                                          void *map_ptr) {
-  if (map_ptr == nullptr) return false;
-  JSC::JSMap *map = reinterpret_cast<JSC::JSMap *>(map_ptr);
-  JSC::VM &vm = globalObject->vm();
-  if (JSC::JSObject *obj =
-        JSC::jsDynamicCast<JSC::JSObject *>(globalObject->vm(), globalObject->moduleLoader())) {
-    auto identifier = JSC::Identifier::fromString(globalObject->vm(), "registry");
-
-    if (JSC::JSMap *oldMap = JSC::jsDynamicCast<JSC::JSMap *>(
-          globalObject->vm(), obj->getDirect(globalObject->vm(), identifier))) {
-      oldMap->clear(globalObject);
-      // vm.finalizeSynchronousJSExecution();
-
-      obj->putDirect(globalObject->vm(), identifier,
-                     map->clone(globalObject, globalObject->vm(), globalObject->mapStructure()));
-
-      // vm.deleteAllLinkedCode(JSC::DeleteAllCodeEffort::DeleteAllCodeIfNotCollecting);
-      // JSC::Heap::PreventCollectionScope(vm.heap);
-
-      // vm.heap.completeAllJITPlans();
-
-      // vm.forEachScriptExecutableSpace([&](auto &spaceAndSet) {
-      //   JSC::HeapIterationScope heapIterationScope(vm.heap);
-      //   auto &set = spaceAndSet.set;
-      //   set.forEachLiveCell([&](JSC::HeapCell *cell, JSC::HeapCell::Kind) {
-      //     if (JSC::ModuleProgramExecutable *executable =
-      //           JSC::jsDynamicCast<JSC::ModuleProgramExecutable *>(cell)) {
-      //       executable->clearCode(set);
-      //     }
-      //   });
-      // });
-    }
-    // globalObject->vm().heap.deleteAllUnlinkedCodeBlocks(
-    //   JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
-    // vm.whenIdle([globalObject, oldMap, map]() {
-    //   auto recordIdentifier = JSC::Identifier::fromString(globalObject->vm(), "module");
-
-    //   JSC::JSModuleRecord *record;
-    //   JSC::JSValue key;
-    //   JSC::JSValue value;
-    //   JSC::JSObject *mod;
-    //   JSC::JSObject *nextObject;
-    //   JSC::forEachInIterable(
-    //     globalObject, oldMap,
-    //     [&](JSC::VM &vm, JSC::JSGlobalObject *globalObject, JSC::JSValue nextValue) {
-    //       nextObject = JSC::jsDynamicCast<JSC::JSObject *>(vm, nextValue);
-    //       key = nextObject->getIndex(globalObject, static_cast<unsigned>(0));
-
-    //       if (!map->has(globalObject, key)) {
-    //         value = nextObject->getIndex(globalObject, static_cast<unsigned>(1));
-    //         mod = JSC::jsDynamicCast<JSC::JSObject *>(vm, value);
-    //         if (mod) {
-    //           record = JSC::jsDynamicCast<JSC::JSModuleRecord *>(
-    //             vm, mod->getDirect(vm, recordIdentifier));
-    //           if (record) {
-    //             auto code = &record->sourceCode();
-    //             if (code) {
-
-    //               Zig::SourceProvider *provider =
-    //                 reinterpret_cast<Zig::SourceProvider *>(code->provider());
-    //               // code->~SourceCode();
-    //               if (provider) { provider->freeSourceCode(); }
-    //             }
-    //           }
-    //         }
-    //       }
-    //     });
-
-    //   oldMap->clear(globalObject);
-    //   }
-    // }
-    // map
-  }
-  return true;
-}
 JSC::JSInternalPromise *GlobalObject::moduleLoaderFetch(JSGlobalObject *globalObject,
                                                         JSModuleLoader *loader, JSValue key,
                                                         JSValue value1, JSValue value2) {

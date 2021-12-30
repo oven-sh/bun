@@ -24,12 +24,14 @@ const ThreadPool = @import("thread_pool");
 const boring = @import("boringssl");
 const NetworkThread = @import("network_thread");
 
-const SOCKET_FLAGS: u32 = if (Environment.isLinux)
-    os.SOCK_CLOEXEC | os.MSG_NOSIGNAL
-else
-    os.SOCK_CLOEXEC;
+const SOCK = os.SOCK;
 
-const OPEN_SOCKET_FLAGS = os.SOCK_CLOEXEC;
+const SOCKET_FLAGS: u32 = if (Environment.isLinux)
+    SOCK.CLOEXEC | os.MSG_NOSIGNAL
+else
+    SOCK.CLOEXEC;
+
+const OPEN_SOCKET_FLAGS = SOCK.CLOEXEC;
 
 const extremely_verbose = false;
 
@@ -629,7 +631,7 @@ const AsyncSocket = struct {
     }
 
     fn connectToAddress(this: *AsyncSocket, address: std.net.Address) ConnectError!void {
-        const sockfd = AsyncIO.openSocket(address.any.family, OPEN_SOCKET_FLAGS | std.os.SOCK_STREAM, std.os.IPPROTO_TCP) catch |err| {
+        const sockfd = AsyncIO.openSocket(address.any.family, OPEN_SOCKET_FLAGS | std.os.SOCK.STREAM, std.os.IPPROTO.TCP) catch |err| {
             if (extremely_verbose) {
                 Output.prettyErrorln("openSocket error: {s}", .{@errorName(err)});
             }
@@ -1472,7 +1474,7 @@ pub fn connect(
     try connector.connect(this.url.hostname, port);
     var client = std.x.net.tcp.Client{ .socket = std.x.os.Socket.from(this.socket.socket.socket) };
     client.setReadBufferSize(BufferPool.len) catch {};
-    client.setQuickACK(true) catch {};
+    // client.setQuickACK(true) catch {};
 
     this.tcp_client = client;
     if (this.timeout > 0) {

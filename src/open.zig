@@ -10,7 +10,7 @@ const default_allocator = _global.default_allocator;
 const C = _global.C;
 const std = @import("std");
 
-const opener = switch (std.Target.current.os.tag) {
+const opener = switch (@import("builtin").target.os.tag) {
     .macos => "/usr/bin/open",
     .windows => "start",
     else => "xdg-open",

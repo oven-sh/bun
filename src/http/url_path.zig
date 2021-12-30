@@ -1,6 +1,7 @@
 const _global = @import("../global.zig");
 const string = _global.string;
 const Output = _global.Output;
+const toMutable = _global.constStrToU8;
 const Global = _global.Global;
 const Environment = _global.Environment;
 const strings = _global.strings;
@@ -20,7 +21,6 @@ pathname: string = "",
 first_segment: string = "",
 query_string: string = "",
 needs_redirect: bool = false,
-const toMutable = allocators.constStrToU8;
 
 // TODO: use a real URL parser
 // this treats a URL like /_next/ identically to /

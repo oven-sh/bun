@@ -1,7 +1,7 @@
 // This code is based on https://github.com/frmdstryr/zhp/blob/a4b5700c289c3619647206144e10fb414113a888/src/websocket.zig
 // Thank you @frmdstryr.
 const std = @import("std");
-const native_endian = std.Target.current.cpu.arch.endian();
+const native_endian = @import("builtin").target.cpu.arch.endian();
 
 const tcp = std.x.net.tcp;
 const ip = std.x.net.ip;

@@ -106,14 +106,14 @@ pub const SourceMapChunk = struct {
 
 pub const Options = struct {
     transform_imports: bool = true,
-    to_module_ref: js_ast.Ref = js_ast.Ref.None,
-    require_ref: ?js_ast.Ref = null,
+    to_module_ref: Ref = Ref.None,
+    require_ref: ?Ref = null,
     indent: usize = 0,
     externals: []u32 = &[_]u32{},
     runtime_imports: runtime.Runtime.Imports = runtime.Runtime.Imports{},
     module_hash: u32 = 0,
     source_path: ?fs.Path = null,
-    bundle_export_ref: ?js_ast.Ref = null,
+    bundle_export_ref: ?Ref = null,
     rewrite_require_resolve: bool = true,
 
     css_import_behavior: Api.CssInJsBehavior = Api.CssInJsBehavior.facade,
@@ -1289,7 +1289,7 @@ pub fn NewPrinter(
 
                     switch (e.index.data) {
                         .e_private_identifier => {
-                            const priv = e.index.getPrivateIdentifier();
+                            const priv = e.index.data.e_private_identifier;
                             if (is_optional_chain_start) {
                                 p.print(".");
                             }
@@ -1356,7 +1356,7 @@ pub fn NewPrinter(
                     if (e.body.stmts.len == 1 and e.prefer_expr) {
                         switch (e.body.stmts[0].data) {
                             .s_return => {
-                                if (e.body.stmts[0].getReturn().value) |val| {
+                                if (e.body.stmts[0].data.s_return.value) |val| {
                                     p.arrow_expr_start = p.writer.written;
                                     p.printExpr(val, .comma, ExprFlag{ .forbid_in = true });
                                     wasPrinted = true;
@@ -1768,7 +1768,7 @@ pub fn NewPrinter(
                         .bin_nullish_coalescing => {
                             switch (e.left.data) {
                                 .e_binary => {
-                                    const left = e.left.getBinary();
+                                    const left = e.left.data.e_binary;
                                     switch (left.op) {
                                         .bin_logical_and, .bin_logical_or => {
                                             left_level = .prefix;
@@ -1781,7 +1781,7 @@ pub fn NewPrinter(
 
                             switch (e.right.data) {
                                 .e_binary => {
-                                    const right = e.right.getBinary();
+                                    const right = e.right.data.e_binary;
                                     switch (right.op) {
                                         .bin_logical_and, .bin_logical_or => {
                                             right_level = .prefix;
@@ -1796,7 +1796,7 @@ pub fn NewPrinter(
                         .bin_pow => {
                             switch (e.left.data) {
                                 .e_unary => {
-                                    const left = e.left.getUnary();
+                                    const left = e.left.data.e_unary;
                                     if (left.op.unaryAssignTarget() == .none) {
                                         left_level = .call;
                                     }
@@ -1812,7 +1812,7 @@ pub fn NewPrinter(
 
                     // Special-case "#foo in bar"
                     if (e.op == .bin_in and @as(Expr.Tag, e.left.data) == .e_private_identifier) {
-                        p.printSymbol(e.left.getPrivateIdentifier().ref);
+                        p.printSymbol(e.left.data.e_private_identifier.ref);
                     } else {
                         flags.forbid_in = true;
                         p.printExpr(e.left, left_level, flags);

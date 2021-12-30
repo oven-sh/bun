@@ -269,8 +269,8 @@ pub const Define = struct {
         define.allocator = allocator;
         define.identifiers = std.StringHashMap(IdentifierDefine).init(allocator);
         define.dots = std.StringHashMap([]DotDefine).init(allocator);
-        try define.identifiers.ensureCapacity(641 + 2 + 1);
-        try define.dots.ensureCapacity(64);
+        try define.identifiers.ensureTotalCapacity(641 + 2 + 1);
+        try define.dots.ensureTotalCapacity(64);
 
         var val = js_ast.Expr.Data{ .e_undefined = .{} };
         var ident_define = IdentifierDefine{

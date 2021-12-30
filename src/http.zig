@@ -61,10 +61,8 @@ const watcher = @import("./watcher.zig");
 threadlocal var req_headers_buf: [100]picohttp.Header = undefined;
 threadlocal var res_headers_buf: [100]picohttp.Header = undefined;
 const sync = @import("./sync.zig");
-const JavaScript = @import("./javascript/jsc/javascript.zig");
-const JavaScriptCore = @import("./javascript/jsc/JavascriptCore.zig");
-usingnamespace @import("./javascript/jsc/bindings/bindings.zig");
-usingnamespace @import("./javascript/jsc/bindings/exports.zig");
+const JavaScript = @import("javascript_core");
+const JavaScriptCore = JavaScriptCore.C;
 const Router = @import("./router.zig");
 pub const Watcher = watcher.NewWatcher(*Server);
 const ZigURL = @import("./query_string_map.zig").URL;
@@ -74,9 +72,9 @@ const URLPath = @import("./http/url_path.zig");
 const Method = @import("./http/method.zig").Method;
 
 const SOCKET_FLAGS: u32 = if (Environment.isLinux)
-    os.SOCK_CLOEXEC | os.MSG_NOSIGNAL
+    os.SOCK.CLOEXEC | os.MSG_NOSIGNAL
 else
-    os.SOCK_CLOEXEC;
+    os.SOCK.CLOEXEC;
 
 pub const RequestContext = struct {
     request: Request,
@@ -542,7 +540,7 @@ pub const RequestContext = struct {
             .log = undefined,
             .url = try URLPath.parse(req.path),
             .conn = conn,
-            .allocator = &arena.allocator,
+            .allocator = arena.allocator(),
             .method = Method.which(req.method) orelse return error.InvalidMethod,
             .watcher = watcher_,
             .timer = timer,
@@ -986,7 +984,7 @@ pub const RequestContext = struct {
 
             pub fn handleJSErrorFmt(this: *HandlerThread, comptime step: Api.FallbackStep, err: anyerror, comptime fmt: string, args: anytype) !void {
                 var arena = std.heap.ArenaAllocator.init(default_allocator);
-                var allocator = &arena.allocator;
+                var allocator = arena.allocator();
                 defer arena.deinit();
 
                 defer this.log.msgs.clearRetainingCapacity();
@@ -1024,7 +1022,7 @@ pub const RequestContext = struct {
 
             pub fn handleRuntimeJSError(this: *HandlerThread, js_value: JavaScript.JSValue, comptime step: Api.FallbackStep, comptime fmt: string, args: anytype) !void {
                 var arena = std.heap.ArenaAllocator.init(default_allocator);
-                var allocator = &arena.allocator;
+                var allocator = arena.allocator();
                 defer arena.deinit();
                 defer this.log.msgs.clearRetainingCapacity();
 
@@ -1070,7 +1068,7 @@ pub const RequestContext = struct {
 
             pub fn handleFetchEventError(this: *HandlerThread, err: anyerror, js_value: JavaScript.JSValue, ctx: *RequestContext) !void {
                 var arena = std.heap.ArenaAllocator.init(default_allocator);
-                var allocator = &arena.allocator;
+                var allocator = arena.allocator();
                 defer arena.deinit();
 
                 defer this.log.msgs.clearRetainingCapacity();
@@ -1138,7 +1136,7 @@ pub const RequestContext = struct {
             var start_timer = std.time.Timer.start() catch unreachable;
 
             Output.Source.configureThread();
-            @import("javascript/jsc/JavascriptCore.zig").JSCInitialize();
+            @import("javascript/jsc/javascript_core_c_api.zig").JSCInitialize();
 
             js_ast.Stmt.Data.Store.create(std.heap.c_allocator);
             js_ast.Expr.Data.Store.create(std.heap.c_allocator);
@@ -1638,7 +1636,7 @@ pub const RequestContext = struct {
                                 var arena = std.heap.ArenaAllocator.init(default_allocator);
                                 defer arena.deinit();
 
-                                var build_result = try handler.builder.build(request.id, cmd.timestamp, &arena.allocator);
+                                var build_result = try handler.builder.build(request.id, cmd.timestamp, arena.allocator());
                                 const file_path = switch (build_result.value) {
                                     .fail => |fail| fail.module_path,
                                     .success => |fail| fail.module_path,
@@ -1769,7 +1767,7 @@ pub const RequestContext = struct {
             hash.final(&out);
 
             // Encode it
-            return std.base64.standard_encoder.encode(&self.accept_key, &out);
+            return std.base64.standard.Encoder.encode(&self.accept_key, &out);
         }
     };
 
@@ -1842,7 +1840,7 @@ pub const RequestContext = struct {
                     }
 
                     pub fn advanceBy(rctx: *SocketPrinterInternal, count: u32) void {
-                        if (comptime Environment.isDebug) std.debug.assert(buffer.list.items.len + count < buffer.list.capacity);
+                        if (comptime Environment.isDebug) std.debug.assert(buffer.list.items.len + count <= buffer.list.capacity);
 
                         buffer.list.items = buffer.list.items.ptr[0 .. buffer.list.items.len + count];
                     }
@@ -2616,7 +2614,7 @@ pub const Server = struct {
 
         listener.setReuseAddress(true) catch {};
         listener.setReusePort(false) catch {};
-        listener.setFastOpen(true) catch {};
+        // listener.setFastOpen(true) catch {};
         // listener.setNoDelay(true) catch {};
         // listener.setQuickACK(true) catch {};
 
@@ -2662,7 +2660,7 @@ pub const Server = struct {
                         default_port,
                         default_port,
                         port,
-                        random_number.random.intRangeAtMost(u16, 3011, 65535),
+                        random_number.random().intRangeAtMost(u16, 3011, 65535),
                     },
                 );
                 Output.flush();

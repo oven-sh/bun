@@ -443,6 +443,8 @@ jsc-bindings-headers:
 	$(SED) -i '/pub const max_align_t/{N;N;N;d;}' src/javascript/jsc/bindings/headers.zig
 	$(SED) -i '/pub const ZigErrorCode/d' src/javascript/jsc/bindings/headers.zig
 	$(SED) -i '/pub const JSClassRef/d' src/javascript/jsc/bindings/headers.zig
+	cat src/javascript/jsc/bindings/headers.zig > /tmp/headers.zig
+	cat src/javascript/jsc/bindings/headers-replacements.zig /tmp/headers.zig > src/javascript/jsc/bindings/headers.zig
 	$(ZIG) fmt src/javascript/jsc/bindings/headers.zig
 	
 

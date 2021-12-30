@@ -88,7 +88,7 @@ pub const UpgradeCheckerThread = struct {
 
     fn _run(env_loader: *DotEnv.Loader) anyerror!void {
         var rand = std.rand.DefaultPrng.init(@intCast(u64, @maximum(std.time.milliTimestamp(), 0)));
-        const delay = rand.random.intRangeAtMost(u64, 100, 10000);
+        const delay = rand.random().intRangeAtMost(u64, 100, 10000);
         std.time.sleep(std.time.ns_per_ms * delay);
 
         Output.Source.configureThread();

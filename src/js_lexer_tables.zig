@@ -1,4 +1,3 @@
-usingnamespace @import("string_types.zig");
 const std = @import("std");
 const expectString = std.testing.expectEqualStrings;
 const expect = std.testing.expect;
@@ -580,7 +579,7 @@ pub fn initJSXEntityMap() !void {
     has_loaded_jsx_map = true;
     jsxEntity = JSXEntityMap.init(default_allocator);
     // return jsxEntity;
-    jsxEntity.ensureCapacity(255) catch unreachable;
+    jsxEntity.ensureTotalCapacity(255) catch unreachable;
 
     jsxEntity.putAssumeCapacity("quot", @as(CodePoint, 0x0022));
     jsxEntity.putAssumeCapacity("amp", @as(CodePoint, 0x0026));

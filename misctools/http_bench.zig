@@ -201,7 +201,7 @@ pub fn main() anyerror!void {
     var channel = try default_allocator.create(HTTP.HTTPChannel);
     channel.* = HTTP.HTTPChannel.init();
 
-    try channel.buffer.ensureCapacity(args.count);
+    try channel.buffer.ensureTotalCapacity(args.count);
 
     try NetworkThread.init();
     if (args.concurrency > 0) HTTP.AsyncHTTP.max_simultaneous_requests = args.concurrency;
@@ -297,16 +297,16 @@ pub fn main() anyerror!void {
 
             Output.flush();
         }
-    }
-    Output.prettyErrorln("\n<d>------<r>\n\n", .{});
-    Output.prettyErrorln("Success: <b><green>{d}<r>\nFailure: <b><red>{d}<r>\n\n", .{
-        success_count,
-        fail_count,
-    });
+        Output.prettyErrorln("\n<d>------<r>\n\n", .{});
+        Output.prettyErrorln("Success: <b><green>{d}<r>\nFailure: <b><red>{d}<r>\n\n", .{
+            success_count,
+            fail_count,
+        });
 
-    Output.printElapsed(@floatCast(f64, @intToFloat(f128, timer.read()) / std.time.ns_per_ms));
-    Output.prettyErrorln(" {d} requests", .{
-        read_count,
-    });
-    Output.flush();
+        Output.printElapsed(@floatCast(f64, @intToFloat(f128, timer.read()) / std.time.ns_per_ms));
+        Output.prettyErrorln(" {d} requests", .{
+            read_count,
+        });
+        Output.flush();
+    }
 }

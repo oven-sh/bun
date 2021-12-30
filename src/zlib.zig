@@ -425,7 +425,7 @@ pub const ZlibReaderArrayList = struct {
 
     pub fn alloc(ctx: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
         var this = @ptrCast(*ZlibReader, @alignCast(@alignOf(*ZlibReader), ctx));
-        const buf = this.arena.allocator.alloc(u8, items * len) catch unreachable;
+        const buf = this.allocator.alloc(u8, items * len) catch unreachable;
         return buf.ptr;
     }
 

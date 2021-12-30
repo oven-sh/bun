@@ -521,16 +521,16 @@ pub fn Channel(
     };
 }
 
-pub const RwLock = if (std.builtin.os.tag != .windows and std.builtin.link_libc)
+pub const RwLock = if (@import("builtin").os.tag != .windows and @import("builtin").link_libc)
     struct {
-        rwlock: if (std.builtin.os.tag != .windows) pthread_rwlock_t else void,
+        rwlock: if (@import("builtin").os.tag != .windows) pthread_rwlock_t else void,
 
         pub fn init() RwLock {
             return .{ .rwlock = PTHREAD_RWLOCK_INITIALIZER };
         }
 
         pub fn deinit(self: *RwLock) void {
-            const safe_rc = switch (std.builtin.os.tag) {
+            const safe_rc = switch (@import("builtin").os.tag) {
                 .dragonfly, .netbsd => std.os.EAGAIN,
                 else => 0,
             };
@@ -570,12 +570,12 @@ pub const RwLock = if (std.builtin.os.tag != .windows and std.builtin.link_libc)
         }
 
         const PTHREAD_RWLOCK_INITIALIZER = pthread_rwlock_t{};
-        const pthread_rwlock_t = switch (std.builtin.os.tag) {
+        const pthread_rwlock_t = switch (@import("builtin").os.tag) {
             .macos, .ios, .watchos, .tvos => extern struct {
                 __sig: c_long = 0x2DA8B3B4,
                 __opaque: [192]u8 = [_]u8{0} ** 192,
             },
-            .linux => switch (std.builtin.abi) {
+            .linux => switch (@import("builtin").abi) {
                 .android => switch (@sizeOf(usize)) {
                     4 => extern struct {
                         lock: std.c.pthread_mutex_t = std.c.PTHREAD_MUTEX_INITIALIZER,
@@ -609,7 +609,7 @@ pub const RwLock = if (std.builtin.os.tag != .windows and std.builtin.link_libc)
             },
             .netbsd => extern struct {
                 ptr_magic: c_uint = 0x99990009,
-                ptr_interlock: switch (std.Target.current.cpu.arch) {
+                ptr_interlock: switch (@import("builtin").target.cpu.arch) {
                     .aarch64, .sparc, .x86_64, .i386 => u8,
                     .arm, .powerpc => c_int,
                     else => unreachable,
@@ -835,7 +835,7 @@ pub const Semaphore = struct {
     }
 };
 
-pub const Mutex = if (std.builtin.os.tag == .windows)
+pub const Mutex = if (@import("builtin").os.tag == .windows)
     struct {
         srwlock: SRWLOCK,
 
@@ -866,16 +866,16 @@ pub const Mutex = if (std.builtin.os.tag == .windows)
         extern "kernel32" fn AcquireSRWLockExclusive(s: *SRWLOCK) callconv(system.WINAPI) void;
         extern "kernel32" fn ReleaseSRWLockExclusive(s: *SRWLOCK) callconv(system.WINAPI) void;
     }
-else if (std.builtin.link_libc)
+else if (@import("builtin").link_libc)
     struct {
-        mutex: if (std.builtin.link_libc) std.c.pthread_mutex_t else void,
+        mutex: if (@import("builtin").link_libc) std.c.pthread_mutex_t else void,
 
         pub fn init() Mutex {
             return .{ .mutex = std.c.PTHREAD_MUTEX_INITIALIZER };
         }
 
         pub fn deinit(self: *Mutex) void {
-            const safe_rc = switch (std.builtin.os.tag) {
+            const safe_rc = switch (@import("builtin").os.tag) {
                 .dragonfly, .netbsd => std.os.EAGAIN,
                 else => 0,
             };
@@ -902,7 +902,7 @@ else if (std.builtin.link_libc)
 
         extern "c" fn pthread_mutex_trylock(m: *std.c.pthread_mutex_t) callconv(.C) c_int;
     }
-else if (std.builtin.os.tag == .linux)
+else if (@import("builtin").os.tag == .linux)
     struct {
         state: State,
 
@@ -1018,7 +1018,7 @@ else
         }
     };
 
-pub const Condvar = if (std.builtin.os.tag == .windows)
+pub const Condvar = if (@import("builtin").os.tag == .windows)
     struct {
         cond: CONDITION_VARIABLE,
 
@@ -1062,16 +1062,16 @@ pub const Condvar = if (std.builtin.os.tag == .windows)
             f: system.ULONG,
         ) callconv(system.WINAPI) system.BOOL;
     }
-else if (std.builtin.link_libc)
+else if (@import("builtin").link_libc)
     struct {
-        cond: if (std.builtin.link_libc) std.c.pthread_cond_t else void,
+        cond: if (@import("builtin").link_libc) std.c.pthread_cond_t else void,
 
         pub fn init() Condvar {
             return .{ .cond = std.c.PTHREAD_COND_INITIALIZER };
         }
 
         pub fn deinit(self: *Condvar) void {
-            const safe_rc = switch (std.builtin.os.tag) {
+            const safe_rc = switch (@import("builtin").os.tag) {
                 .dragonfly, .netbsd => std.os.EAGAIN,
                 else => 0,
             };
@@ -1181,7 +1181,7 @@ else
         };
     };
 
-const Futex = switch (std.builtin.os.tag) {
+const Futex = switch (@import("builtin").os.tag) {
     .linux => struct {
         fn wait(ptr: *const i32, cmp: i32) void {
             switch (system.getErrno(system.futex_wait(
@@ -1213,7 +1213,7 @@ const Futex = switch (std.builtin.os.tag) {
 };
 
 fn spinLoopHint() void {
-    switch (std.builtin.cpu.arch) {
+    switch (@import("builtin").cpu.arch) {
         .i386, .x86_64 => asm volatile ("pause" ::: "memory"),
         .arm, .aarch64 => asm volatile ("yield" ::: "memory"),
         else => {},

@@ -10,6 +10,7 @@ const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
 const C = _global.C;
 const std = @import("std");
+const Ref = @import("./ast/base.zig").Ref;
 const logger = @import("logger.zig");
 
 // This is...poorly named
@@ -23,7 +24,7 @@ pub const Renamer = struct {
         return Renamer{ .symbols = symbols, .source = source };
     }
 
-    pub fn nameForSymbol(renamer: *Renamer, ref: js_ast.Ref) string {
+    pub fn nameForSymbol(renamer: *Renamer, ref: Ref) string {
         if (ref.is_source_contents_slice) {
             return renamer.source.contents[ref.source_index .. ref.source_index + ref.inner_index];
         }

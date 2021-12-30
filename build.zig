@@ -89,7 +89,21 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: std.mem.Alloca
         .name = "network_thread",
         .path = pkgPath("src/http/network_thread.zig"),
     };
+    var javascript_core: std.build.Pkg = .{
+        .name = "javascript_core",
+        .path = pkgPath("src/jsc.zig"),
+    };
 
+    http.dependencies = &.{
+        network_thread,
+        http,
+        strings,
+        picohttp,
+        javascript_core,
+        io,
+        boringssl,
+        thread_pool,
+    };
     thread_pool.dependencies = &.{ io, http };
 
     network_thread.dependencies = &.{
@@ -97,9 +111,25 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: std.mem.Alloca
         thread_pool,
     };
     http.dependencies = &.{ io, network_thread, strings, boringssl, picohttp };
+    javascript_core.dependencies = &.{
+        network_thread,
+        http,
+        strings,
+    };
 
     thread_pool.dependencies = &.{ io, http };
     http.dependencies = &.{ io, network_thread, thread_pool, strings, boringssl, picohttp };
+    javascript_core.dependencies = &.{ network_thread, http, strings, picohttp };
+    http.dependencies = &.{
+        network_thread,
+        http,
+        strings,
+        picohttp,
+        javascript_core,
+        io,
+        boringssl,
+        thread_pool,
+    };
 
     step.addPackage(thread_pool);
     step.addPackage(picohttp);
@@ -109,6 +139,7 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: std.mem.Alloca
     step.addPackage(http);
     step.addPackage(network_thread);
     step.addPackage(boringssl);
+    step.addPackage(javascript_core);
 }
 var output_dir: []const u8 = "";
 fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
@@ -195,7 +226,6 @@ pub fn build(b: *std.build.Builder) !void {
     const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{s}{s}", .{ bin_label, triplet });
     output_dir = b.pathFromRoot(output_dir_base);
     const bun_executable_name = if (mode == std.builtin.Mode.Debug) "bun-debug" else "bun";
-
     exe = b.addExecutable(bun_executable_name, "src/main.zig");
     // exe.setLibCFile("libc.txt");
     exe.linkLibC();
@@ -213,17 +243,15 @@ pub fn build(b: *std.build.Builder) !void {
     typings_exe.setMainPkgPath(b.pathFromRoot("."));
 
     // exe.want_lto = true;
-
-    {
-        b.default_step.dependOn(&b.addLog(
-            "Build {s} v{} - v{}",
-            .{
-                triplet,
-                target.getOsVersionMin().semver,
-                target.getOsVersionMax().semver,
-            },
-        ).step);
-    }
+    defer b.default_step.dependOn(&b.addLog("Output: {s}/{s}\n", .{ output_dir, bun_executable_name }).step);
+    defer b.default_step.dependOn(&b.addLog(
+        "Build {s} v{} - v{}\n",
+        .{
+            triplet,
+            target.getOsVersionMin().semver,
+            target.getOsVersionMax().semver,
+        },
+    ).step);
 
     var obj_step = b.step("obj", "Build Bun as a .o file");
     var obj = b.addObject(bun_executable_name, exe.root_src.?.path);

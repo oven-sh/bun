@@ -1,6 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const is_darwin = std.Target.current.isDarwin();
+const is_darwin = @import("builtin").target.isDarwin();
 
 pub const Time = struct {
     const Self = @This();

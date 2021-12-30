@@ -407,7 +407,7 @@ pub const Bundler = struct {
                 var entry = this.fs.absBuf(&paths, &pages_dir_buf);
 
                 if (std.fs.path.extension(entry).len == 0) {
-                    allocators.constStrToU8(entry).ptr[entry.len] = '/';
+                    _global.constStrToU8(entry).ptr[entry.len] = '/';
 
                     // Only throw if they actually passed in a route config and the directory failed to load
                     var dir_info_ = this.resolver.readDirInfo(entry) catch return;

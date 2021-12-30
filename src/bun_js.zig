@@ -38,7 +38,7 @@ pub const Run = struct {
     vm: *VirtualMachine,
     entry_path: string,
     pub fn boot(ctx: Command.Context, file: std.fs.File, entry_path: string) !void {
-        @import("javascript/jsc/JavascriptCore.zig").JSCInitialize();
+        @import("javascript/jsc/javascript_core_c_api.zig").JSCInitialize();
 
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);

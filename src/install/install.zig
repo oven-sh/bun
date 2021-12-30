@@ -977,7 +977,7 @@ pub const Lockfile = struct {
     pub const Printer = struct {
         lockfile: *Lockfile,
         options: PackageManager.Options,
-        successfully_installed: ?std.DynamicBitSetUnmanaged = null,
+        successfully_installed: ?Bitset = null,
 
         pub const Format = enum { yarn };
 
@@ -1413,7 +1413,7 @@ pub const Lockfile = struct {
         std.mem.writeIntNative(u64, secret[0..8], @intCast(u64, std.time.milliTimestamp()));
         var rng = std.rand.Gimli.init(secret);
         var base64_bytes: [64]u8 = undefined;
-        rng.random.bytes(&base64_bytes);
+        rng.random().bytes(&base64_bytes);
 
         const tmpname__ = std.fmt.bufPrint(tmpname_buf[8..], "{s}", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
         tmpname_buf[tmpname__.len + 8] = 0;
@@ -3118,7 +3118,7 @@ const PackageInstall = struct {
         fail: u32 = 0,
         success: u32 = 0,
         skipped: u32 = 0,
-        successfully_installed: ?std.DynamicBitSetUnmanaged = null,
+        successfully_installed: ?Bitset = null,
     };
 
     pub const Method = enum {
@@ -4056,9 +4056,9 @@ pub const PackageManager = struct {
         var tmpfile = FileSystem.RealFS.Tmpfile{};
         var secret: [32]u8 = undefined;
         std.mem.writeIntNative(u64, secret[0..8], @intCast(u64, std.time.milliTimestamp()));
-        var rng = std.rand.Gimli.init(secret);
+        var rng = std.rand.Gimli.init(secret).random();
         var base64_bytes: [64]u8 = undefined;
-        rng.random.bytes(&base64_bytes);
+        rng.bytes(&base64_bytes);
 
         const tmpname__ = std.fmt.bufPrint(tmpname_buf[8..], "{s}", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
         tmpname_buf[tmpname__.len + 8] = 0;
@@ -6004,7 +6004,7 @@ pub const PackageManager = struct {
         has_created_bin: bool = false,
         destination_dir_subpath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
         install_count: usize = 0,
-        successfully_installed: std.DynamicBitSetUnmanaged,
+        successfully_installed: Bitset,
 
         // For linking native binaries, we only want to link after we've installed the companion dependencies
         // We don't want to introduce dependent callbacks like that for every single package
@@ -6326,7 +6326,7 @@ pub const PackageManager = struct {
                 .summary = &summary,
                 .force_install = force_install,
                 .install_count = lockfile.buffers.hoisted_packages.items.len,
-                .successfully_installed = try std.DynamicBitSetUnmanaged.initEmpty(lockfile.packages.len, this.allocator),
+                .successfully_installed = try Bitset.initEmpty(lockfile.packages.len, this.allocator),
             };
 
             const cwd = std.fs.cwd();

@@ -87,7 +87,7 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
 
     var network_thread: std.build.Pkg = .{
         .name = "network_thread",
-        .path = pkgPath("src/http/network_thread.zig"),
+        .path = pkgPath("src/network_thread.zig"),
     };
     var javascript_core: std.build.Pkg = .{
         .name = "javascript_core",

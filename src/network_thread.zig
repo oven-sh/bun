@@ -3,8 +3,8 @@ pub const Batch = ThreadPool.Batch;
 pub const Task = ThreadPool.Task;
 const std = @import("std");
 const AsyncIO = @import("io");
-const Output = @import("../global.zig").Output;
-const IdentityContext = @import("../identity_context.zig").IdentityContext;
+const Output = @import("./global.zig").Output;
+const IdentityContext = @import("./identity_context.zig").IdentityContext;
 
 const NetworkThread = @This();
 
@@ -83,5 +83,5 @@ pub fn init() !void {
     };
 
     global.pool.io = &AsyncIO.global;
-    address_list_cached = AddressListCache.init(@import("../global.zig").default_allocator);
+    address_list_cached = AddressListCache.init(@import("./global.zig").default_allocator);
 }

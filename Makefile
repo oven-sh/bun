@@ -602,9 +602,15 @@ test-dev: test-dev-with-hmr
 jsc-copy-headers:
 	find $(WEBKIT_RELEASE_DIR)/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/ \;
 
-jsc-build-mac-compile:
-	cd $(WEBKIT_DIR) && ICU_INCLUDE_DIRS="$(HOMEBREW_PREFIX)opt/icu4c/include" ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo -DUSE_PTHREAD_JIT_PERMISSIONS_API=ON $(CMAKE_FLAGS_WITHOUT_RELEASE)"
+# This is a workaround for a JSC bug that impacts aarch64
+# on macOS, it never requests JIT permissions 
+jsc-force-fastjit:
+	$(SED) -i "s/USE(PTHREAD_JIT_PERMISSIONS_API)/CPU(ARM64)/g" $(WEBKIT_DIR)/Source/JavaScriptCore/jit/ExecutableAllocator.h
+	$(SED) -i "s/USE(PTHREAD_JIT_PERMISSIONS_API)/CPU(ARM64)/g" $(WEBKIT_DIR)/Source/JavaScriptCore/assembler/FastJITPermissions.h
+	$(SED) -i "s/USE(PTHREAD_JIT_PERMISSIONS_API)/CPU(ARM64)/g" $(WEBKIT_DIR)/Source/JavaScriptCore/jit/ExecutableAllocator.cpp
 
+jsc-build-mac-compile:
+	cd $(WEBKIT_DIR) && ICU_INCLUDE_DIRS="$(HOMEBREW_PREFIX)opt/icu4c/include" ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo -DPTHREAD_JIT_PERMISSIONS_API=1 -DUSE_PTHREAD_JIT_PERMISSIONS_API=ON $(CMAKE_FLAGS_WITHOUT_RELEASE)"
 jsc-build-linux-compile-config:
 	mkdir -p $(WEBKIT_RELEASE_DIR)
 	cd $(WEBKIT_RELEASE_DIR) && \
@@ -630,7 +636,7 @@ jsc-build-linux-compile-build:
 		cmake --build $(WEBKIT_RELEASE_DIR) --config relwithdebuginfo --target jsc
 
 
-jsc-build-mac: jsc-build-mac-compile jsc-build-mac-copy
+jsc-build-mac: jsc-force-fastjit jsc-build-mac-compile jsc-build-mac-copy
 
 jsc-build-linux: jsc-build-linux-compile-config jsc-build-linux-compile-build jsc-build-mac-copy
 

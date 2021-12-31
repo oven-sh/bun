@@ -43,7 +43,6 @@ threadlocal var big_temp_path_buf: [16384]u8 = undefined;
 pub fn parse(possibly_encoded_pathname_: string) !URLPath {
     var decoded_pathname = possibly_encoded_pathname_;
     var needs_redirect = false;
-    var invalid_uri = false;
 
     if (strings.indexOfChar(decoded_pathname, '%') != null) {
         var possibly_encoded_pathname = switch (decoded_pathname.len) {

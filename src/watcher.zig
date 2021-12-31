@@ -213,7 +213,7 @@ pub const WatchEvent = struct {
 
     pub const Sorter = void;
 
-    pub fn sortByIndex(context: Sorter, event: WatchEvent, rhs: WatchEvent) bool {
+    pub fn sortByIndex(_: Sorter, event: WatchEvent, rhs: WatchEvent) bool {
         return event.index < rhs.index;
     }
 
@@ -336,14 +336,14 @@ pub fn NewWatcher(comptime ContextType: type) type {
         }
 
         var evict_list_i: WatchItemIndex = 0;
-        pub fn removeAtIndex(this: *Watcher, index: WatchItemIndex, hash: HashType, parents: []HashType, comptime kind: WatchItem.Kind) void {
+        pub fn removeAtIndex(_: *Watcher, index: WatchItemIndex, hash: HashType, parents: []HashType, comptime kind: WatchItem.Kind) void {
             std.debug.assert(index != NoWatchItem);
 
             evict_list[evict_list_i] = index;
             evict_list_i += 1;
 
             if (comptime kind == .directory) {
-                for (parents) |parent, i| {
+                for (parents) |parent| {
                     if (parent == hash) {
                         evict_list[evict_list_i] = @truncate(WatchItemIndex, parent);
                         evict_list_i += 1;
@@ -370,10 +370,9 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
             var slice = this.watchlist.slice();
             var fds = slice.items(.fd);
-            var event_list_ids = slice.items(.eventlist_index);
             var last_item = NoWatchItem;
 
-            for (evict_list[0..evict_list_i]) |item, i| {
+            for (evict_list[0..evict_list_i]) |item| {
                 // catch duplicates, since the list is sorted, duplicates will appear right after each other
                 if (item == last_item) continue;
 
@@ -389,7 +388,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
             last_item = NoWatchItem;
             // This is split into two passes because reading the slice while modified is potentially unsafe.
-            for (evict_list[0..evict_list_i]) |item, i| {
+            for (evict_list[0..evict_list_i]) |item| {
                 if (item == last_item) continue;
                 this.watchlist.swapRemove(item);
                 last_item = item;
@@ -397,8 +396,6 @@ pub fn NewWatcher(comptime ContextType: type) type {
         }
 
         fn _watchLoop(this: *Watcher) !void {
-            const time = std.time;
-
             if (Environment.isMac) {
                 std.debug.assert(DarwinWatcher.fd > 0);
                 const KEvent = std.c.Kevent;
@@ -592,8 +589,6 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
             const parent_hash = Watcher.getHash(Fs.PathName.init(file_path).dirWithTrailingSlash());
             var index: PlatformWatcher.EventListIndex = undefined;
-            const file_path_ptr = @intToPtr([*]const u8, @ptrToInt(file_path.ptr));
-            const file_path_len = file_path.len;
 
             const file_path_: string = if (comptime copy_file_path)
                 std.mem.span(try this.allocator.dupeZ(u8, file_path))

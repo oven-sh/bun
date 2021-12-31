@@ -293,7 +293,7 @@ pub const TSConfigJSON = struct {
 
     pub fn isValidTSConfigPathPattern(text: string, log: *logger.Log, source: *const logger.Source, loc: logger.Loc, allocator: std.mem.Allocator) bool {
         var found_asterisk = false;
-        for (text) |c, i| {
+        for (text) |c| {
             if (c == '*') {
                 if (found_asterisk) {
                     const r = source.rangeOfString(loc);

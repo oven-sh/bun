@@ -18,6 +18,4 @@ pub const NPMClient = struct {
     pub const Tag = enum {
         bun,
     };
-
-    pub fn detect(allocator: std.mem.Allocator, realpath_buf: *[std.fs.MAX_PATH_BYTES]u8, PATH: string, cwd: string, comptime allow_yarn: bool) !NPMClient {}
 };

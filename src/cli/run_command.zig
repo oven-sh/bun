@@ -104,7 +104,6 @@ pub const RunCommand = struct {
                 'y' => {
                     if (delimiter > 0) {
                         if (entry_i + "arn".len < script.len) {
-                            const yarn_i = entry_i + "arn ".len;
                             var remainder = script[start..];
                             if (remainder.len > "yarn ".len and strings.eqlComptimeIgnoreLen(remainder[0.."yarn ".len], "yarn ")) {
                                 const next = remainder["yarn ".len..];
@@ -228,7 +227,7 @@ pub const RunCommand = struct {
 
         if (passthrough.len > 0) {
             var combined_script_len: usize = script.len;
-            for (passthrough) |p, i| {
+            for (passthrough) |p| {
                 combined_script_len += p.len + 1;
             }
             var combined_script_buf = try ctx.allocator.alloc(u8, combined_script_len);
@@ -392,7 +391,6 @@ pub const RunCommand = struct {
                     if (bin_dir.getEntriesConst()) |entries| {
                         var iter = entries.data.iterator();
                         var has_copied = false;
-                        var path_slice: string = "";
                         var dir_slice: string = "";
                         while (iter.next()) |entry| {
                             if (entry.value.kind(&this_bundler.fs.fs) == .file) {
@@ -553,7 +551,7 @@ pub const RunCommand = struct {
                     if (strings.eqlComptime(std.mem.span(argv), "--")) {
                         if (std.os.argv.len > i + 1) {
                             var count: usize = 0;
-                            for (std.os.argv[i + 1 ..]) |arg| {
+                            for (std.os.argv[i + 1 ..]) |_| {
                                 count += 1;
                             }
                             try passthrough_list.ensureTotalCapacity(count);
@@ -807,7 +805,6 @@ pub const RunCommand = struct {
                             did_print = true;
 
                             Output.prettyln("<r><blue><b>{s}<r> scripts:<r>\n", .{display_name});
-                            var is_first = true;
                             while (iterator.next()) |entry| {
                                 Output.prettyln("\n", .{});
                                 Output.prettyln(" bun run <blue>{s}<r>\n", .{entry.key_ptr.*});

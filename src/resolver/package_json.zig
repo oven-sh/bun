@@ -372,7 +372,6 @@ pub const PackageJSON = struct {
 
                 if (router.expr.asProperty("extensions")) |extensions_expr| {
                     if (extensions_expr.expr.asArray()) |*array| {
-                        const count = array.array.items.len;
                         var valid_count: usize = 0;
 
                         while (array.next()) |expr| {
@@ -570,7 +569,6 @@ pub const PackageJSON = struct {
 
             if (bun_json.expr.asProperty("macros")) |macros| {
                 if (macros.expr.data == .e_object) {
-                    var always_bundle_count: u16 = 0;
                     const properties = macros.expr.data.e_object.properties;
 
                     for (properties) |property| {
@@ -959,7 +957,7 @@ pub const ExportsMap = struct {
 
         pub fn valueForKey(this: *const Entry, key_: string) ?Entry {
             switch (this.data) {
-                .map => |map| {
+                .map => {
                     var slice = this.data.map.list.slice();
                     const keys = slice.items(.key);
                     for (keys) |key, i| {
@@ -1435,7 +1433,7 @@ pub const ESModule = struct {
                 var last_exception = Status.Undefined;
                 var last_debug = Resolution.Debug{ .token = target.first_token };
 
-                for (array) |targetValue, i| {
+                for (array) |targetValue| {
                     // Let resolved be the result, continuing the loop on any Invalid Package Target error.
                     const result = r.resolveTarget(package_url, targetValue, subpath, pattern);
                     if (result.status == .InvalidPackageTarget or result.status == .Null) {

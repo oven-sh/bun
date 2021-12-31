@@ -423,12 +423,12 @@ pub const UpgradeCommand = struct {
             const version_name = version.name().?;
 
             var save_dir_ = filesystem.tmpdir();
-            var save_dir = save_dir_.makeOpenPath(version_name, .{ .iterate = true }) catch |err| {
+            var save_dir = save_dir_.makeOpenPath(version_name, .{ .iterate = true }) catch {
                 Output.prettyErrorln("<r><red>error:<r> Failed to open temporary directory", .{});
                 Output.flush();
                 std.os.exit(1);
             };
-            var tmpdir_path = std.os.getFdPath(save_dir.fd, &tmpdir_path_buf) catch |err| {
+            var tmpdir_path = std.os.getFdPath(save_dir.fd, &tmpdir_path_buf) catch {
                 Output.prettyErrorln("<r><red>error:<r> Failed to read temporary directory", .{});
                 Output.flush();
                 std.os.exit(1);

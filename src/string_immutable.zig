@@ -86,7 +86,7 @@ pub const StringOrTinyString = struct {
         };
     }
 
-    pub fn deinit(this: *StringOrTinyString, allocator: std.mem.Allocator) void {
+    pub fn deinit(this: *StringOrTinyString, _: std.mem.Allocator) void {
         if (this.is_tiny_string == 1) return;
 
         // var slice_ = this.slice();
@@ -291,8 +291,6 @@ pub fn endsWithAny(self: string, str: string) bool {
     return false;
 }
 
-pub fn lastNonwhitespace(self: string, str: string) bool {}
-
 pub fn quotedAlloc(allocator: std.mem.Allocator, self: string) !string {
     var count: usize = 0;
     for (self) |char| {
@@ -452,7 +450,6 @@ pub fn eqlLong(a_: string, b: string, comptime check_len: bool) bool {
     }
 
     if ((len & 2) != 0) {
-        const slice = b.ptr;
         if (@bitCast(u16, a[b_ptr..len][0..@sizeOf(u16)].*) != @bitCast(u16, b.ptr[b_ptr..len][0..@sizeOf(u16)].*))
             return false;
 
@@ -765,11 +762,11 @@ pub fn join(slices: []const string, delimiter: string, allocator: std.mem.Alloca
     return try std.mem.join(allocator, delimiter, slices);
 }
 
-pub fn cmpStringsAsc(ctx: void, a: string, b: string) bool {
+pub fn cmpStringsAsc(_: void, a: string, b: string) bool {
     return std.mem.order(u8, a, b) == .lt;
 }
 
-pub fn cmpStringsDesc(ctx: void, a: string, b: string) bool {
+pub fn cmpStringsDesc(_: void, a: string, b: string) bool {
     return std.mem.order(u8, a, b) == .gt;
 }
 
@@ -946,7 +943,7 @@ pub const UnsignedCodepointIterator = NewCodePointIterator(u32, 0);
 pub fn NewLengthSorter(comptime Type: type, comptime field: string) type {
     return struct {
         const LengthSorter = @This();
-        pub fn lessThan(context: LengthSorter, lhs: Type, rhs: Type) bool {
+        pub fn lessThan(_: LengthSorter, lhs: Type, rhs: Type) bool {
             return @field(lhs, field).len < @field(rhs, field).len;
         }
     };

@@ -18820,14 +18820,14 @@ pub const SSL = opaque {
         var rbio = SSL_get_rbio(this);
         const start_len = rbio.slice().len;
         const written = try this.read(buf);
-        return rbio.slice()[start_len..];
+        return rbio.slice()[start_len..][0..written];
     }
 
     pub fn writeAll(this: *SSL, buf: []const u8) Error![]const u8 {
         var rbio = SSL_get_wbio(this);
         const start_len = rbio.slice().len;
         const written = try this.write(buf);
-        return rbio.slice()[start_len..];
+        return rbio.slice()[start_len..][0..written];
     }
 };
 

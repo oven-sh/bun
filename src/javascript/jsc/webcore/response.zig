@@ -84,9 +84,9 @@ pub const Response = struct {
     pub fn getOK(
         this: *Response,
         ctx: js.JSContextRef,
-        thisObject: js.JSValueRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: js.JSValueRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/ok
         return js.JSValueMakeBoolean(ctx, this.body.init.status_code == 304 or (this.body.init.status_code >= 200 and this.body.init.status_code <= 299));
@@ -94,11 +94,11 @@ pub const Response = struct {
 
     pub fn getText(
         this: *Response,
-        ctx: js.JSContextRef,
-        function: js.JSObjectRef,
-        thisObject: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
+        _: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        _: []const js.JSValueRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/text
         defer this.body.value = .Empty;
@@ -138,9 +138,9 @@ pub const Response = struct {
     pub fn getJson(
         this: *Response,
         ctx: js.JSContextRef,
-        function: js.JSObjectRef,
-        thisObject: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        _: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
         var zig_string = ZigString.init("");

@@ -1289,7 +1289,7 @@ test "std.hash_map getOrPut" {
 
     i = 0;
     while (i < 20) : (i += 1) {
-        var n = try map.getOrPutValue(i, 1);
+        _ = try map.getOrPutValue(i, 1);
     }
 
     i = 0;

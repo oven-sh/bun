@@ -246,7 +246,7 @@ pub const Output = struct {
 
     pub const debug = if (Environment.isDebug) _debug else _noop;
 
-    fn _noop(comptime fmt: string, args: anytype) void {}
+    fn _noop(comptime _: string, _: anytype) void {}
 
     pub fn _debug(comptime fmt: string, args: anytype) void {
         std.debug.assert(source_set);
@@ -509,7 +509,7 @@ pub const Global = struct {
     // Keeping this code for:
     // 1. documentation that an attempt was made
     // 2. if I want to configure allocator later
-    pub inline fn configureAllocator(config: AllocatorConfiguration) void {
+    pub inline fn configureAllocator(_: AllocatorConfiguration) void {
         // if (comptime !use_mimalloc) return;
         // const Mimalloc = @import("./allocators/mimalloc.zig");
         // Mimalloc.mi_option_set_enabled(Mimalloc.mi_option_verbose, config.verbose);

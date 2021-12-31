@@ -18,10 +18,10 @@ len: usize,
 
 pub const Map = struct {
     const MapContext = struct {
-        pub fn hash(self: @This(), s: u64) u32 {
+        pub fn hash(_: @This(), s: u64) u32 {
             return @truncate(u32, s);
         }
-        pub fn eql(self: @This(), a: u64, b: u64) bool {
+        pub fn eql(_: @This(), a: u64, b: u64) bool {
             return a == b;
         }
     };

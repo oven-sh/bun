@@ -50,7 +50,7 @@ pub const Run = struct {
             .entry_path = entry_path,
         };
 
-        run.vm.bundler.configureRouter(false) catch |err| {
+        run.vm.bundler.configureRouter(false) catch {
             if (Output.enable_ansi_colors) {
                 run.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
             } else {
@@ -60,7 +60,7 @@ pub const Run = struct {
             Output.flush();
             std.os.exit(1);
         };
-        run.vm.bundler.configureDefines() catch |err| {
+        run.vm.bundler.configureDefines() catch {
             if (Output.enable_ansi_colors) {
                 run.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
             } else {

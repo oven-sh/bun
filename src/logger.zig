@@ -112,7 +112,7 @@ pub const Location = struct {
     }
 
     // don't really know what's safe to deinit here!
-    pub fn deinit(l: *Location, allocator: std.mem.Allocator) void {}
+    pub fn deinit(_: *Location, _: std.mem.Allocator) void {}
 
     pub fn init(file: []u8, namespace: []u8, line: i32, column: i32, length: u32, line_text: ?[]u8, suggestion: ?[]u8) Location {
         return Location{
@@ -424,7 +424,7 @@ pub const Msg = struct {
         msg: *const Msg,
         comptime Writer: type,
         writer: Writer,
-        comptime allow_colors: bool,
+        comptime _: bool,
     ) !void {
         if (msg.data.location) |location| {
             try writer.print("{s}: {s}\n{s}\n{s}:{}:{} ({d})", .{
@@ -488,7 +488,7 @@ pub const Log = struct {
     pub fn toAPI(this: *const Log, allocator: std.mem.Allocator) !Api.Log {
         var warnings: u32 = 0;
         var errors: u32 = 0;
-        for (this.msgs.items) |msg, i| {
+        for (this.msgs.items) |msg| {
             errors += @intCast(u32, @boolToInt(msg.kind == .err));
             warnings += @intCast(u32, @boolToInt(msg.kind == .warn));
         }
@@ -937,9 +937,7 @@ pub const Source = struct {
         return Source{ .path = path, .key_path = path, .index = 0, .contents = "" };
     }
 
-    pub fn initFile(file: fs.File, allocator: std.mem.Allocator) !Source {
-        var name = file.path.name;
-
+    pub fn initFile(file: fs.File, _: std.mem.Allocator) !Source {
         var source = Source{
             .path = file.path,
             .key_path = fs.Path.init(file.path.text),
@@ -949,9 +947,7 @@ pub const Source = struct {
         return source;
     }
 
-    pub fn initRecycledFile(file: fs.File, allocator: std.mem.Allocator) !Source {
-        var name = file.path.name;
-
+    pub fn initRecycledFile(file: fs.File, _: std.mem.Allocator) !Source {
         var source = Source{
             .path = file.path,
             .key_path = fs.Path.init(file.path.text),

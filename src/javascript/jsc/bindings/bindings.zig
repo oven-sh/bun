@@ -1729,7 +1729,7 @@ pub const ThrowScope = extern struct {
 
     pub fn declare(
         vm: *VM,
-        function_name: [*]u8,
+        _: [*]u8,
         file: [*]u8,
         line: usize,
     ) ThrowScope {
@@ -1772,7 +1772,7 @@ pub const CatchScope = extern struct {
         file: [*]u8,
         line: usize,
     ) CatchScope {
-        return cppFn("declare", .{ vm, file, line });
+        return cppFn("declare", .{ vm, function_name, file, line });
     }
 
     pub fn exception(this: *CatchScope) ?*Exception {
@@ -1810,6 +1810,7 @@ pub const CallFrame = extern struct {
     pub inline fn argument(call_frame: *const CallFrame, i: u16) JSValue {
         return cppFn("argument", .{
             call_frame,
+            i,
         });
     }
     pub inline fn thisValue(call_frame: *const CallFrame) ?JSValue {

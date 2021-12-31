@@ -28,7 +28,6 @@ pub const ErrorCSS = struct {
 
     pub inline fn sourceContent() string {
         if (comptime Environment.isDebug) {
-            var env = std.process.getEnvMap(default_allocator) catch unreachable;
             var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
             var dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
             var paths = [_]string{ dirname, BUN_ROOT, ErrorCSSPathDev };
@@ -53,7 +52,6 @@ pub const ErrorJS = struct {
 
     pub inline fn sourceContent() string {
         if (comptime Environment.isDebug) {
-            var env = std.process.getEnvMap(default_allocator) catch unreachable;
             var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
             var dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
             var paths = [_]string{ dirname, BUN_ROOT, ErrorJSPath };
@@ -78,7 +76,7 @@ pub const Fallback = struct {
     const Base64FallbackMessage = struct {
         msg: *const Api.FallbackMessageContainer,
         allocator: std.mem.Allocator,
-        pub fn format(this: Base64FallbackMessage, comptime fmt: []const u8, opts_: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: Base64FallbackMessage, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             var bb = std.ArrayList(u8).init(this.allocator);
             defer bb.deinit();
             var bb_writer = bb.writer();

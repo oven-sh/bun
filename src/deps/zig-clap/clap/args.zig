@@ -11,7 +11,7 @@ const testing = std.testing;
 pub const ExampleArgIterator = struct {
     const Error = error{};
 
-    pub fn next(iter: *ExampleArgIterator) Error!?[]const u8 {
+    pub fn next(_: *ExampleArgIterator) Error!?[]const u8 {
         return "2";
     }
 };

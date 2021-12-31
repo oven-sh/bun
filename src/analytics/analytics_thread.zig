@@ -224,8 +224,6 @@ pub const GenerateHeader = struct {
             std.mem.set(u8, std.mem.span(&osversion_name), 0);
 
             var platform = Analytics.Platform{ .os = Analytics.OperatingSystem.macos, .version = &[_]u8{}, .arch = platform_arch };
-            var osversion_name_buf: [2]c_int = undefined;
-            var osversion_name_ptr = osversion_name.len - 1;
             var len = osversion_name.len - 1;
             if (std.c.sysctlbyname("kern.osrelease", &osversion_name, &len, null, 0) == -1) return platform;
 
@@ -287,7 +285,7 @@ pub const GenerateHeader = struct {
         pub var linux_machine_id: [256]u8 = undefined;
 
         pub fn forLinux() !Analytics.Uint64 {
-            var file = std.fs.openFileAbsoluteZ("/var/lib/dbus/machine-id", .{ .read = true }) catch |err| brk: {
+            var file = std.fs.openFileAbsoluteZ("/var/lib/dbus/machine-id", .{ .read = true }) catch brk: {
                 break :brk try std.fs.openFileAbsoluteZ("/etc/machine-id", .{ .read = true });
             };
             defer file.close();

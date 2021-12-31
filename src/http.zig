@@ -283,7 +283,6 @@ pub const RequestContext = struct {
             try this.writeStatus(500);
         }
 
-        const route_name = if (route_index > -1) this.matched_route.?.name else this.url.pathname;
         if (comptime fmt.len > 0) Output.prettyErrorln(fmt, args);
         Output.flush();
 
@@ -336,13 +335,13 @@ pub const RequestContext = struct {
                 relative_unrooted_path = &(index_path);
                 _file = file;
                 extension = "html";
-            } else |err| {}
+            } else |_| {}
 
             // Okay is it actually a full path?
         } else if (extension.len > 0) {
             if (public_dir.openFile(relative_unrooted_path, .{})) |file| {
                 _file = file;
-            } else |err| {}
+            } else |_| {}
         }
 
         // Try some weird stuff.
@@ -356,7 +355,7 @@ pub const RequestContext = struct {
                     _file = file;
                     extension = "html";
                     break;
-                } else |err| {}
+                } else |_| {}
 
                 var _path: []u8 = undefined;
                 if (relative_unrooted_path[relative_unrooted_path.len - 1] == '/') {
@@ -376,7 +375,7 @@ pub const RequestContext = struct {
                     extension = "html";
                     _file = file;
                     break;
-                } else |err| {}
+                } else |_| {}
             }
 
             break;
@@ -488,7 +487,7 @@ pub const RequestContext = struct {
         _ = try ctx.writeSocket(writer.getWritten(), SOCKET_FLAGS);
     }
 
-    pub fn writeSocket(ctx: *RequestContext, buf: anytype, flags: anytype) !usize {
+    pub fn writeSocket(ctx: *RequestContext, buf: anytype, _: anytype) !usize {
         // ctx.conn.client.setWriteBufferSize(@intCast(u32, buf.len)) catch {};
         const written = ctx.conn.client.write(buf, SOCKET_FLAGS) catch |err| {
             Output.printError("Write error: {s}", .{@errorName(err)});
@@ -799,27 +798,7 @@ pub const RequestContext = struct {
                             &parse_result,
                             .absolute_url,
                             false,
-                        ) catch |err| {
-                            return WatchBuildResult{
-                                .value = .{
-                                    .fail = .{
-                                        .id = id,
-                                        .from_timestamp = from_timestamp,
-                                        .loader = loader.toAPI(),
-                                        .module_path = this.bundler.fs.relativeTo(file_path_str),
-                                        .log = try log.toAPI(allocator),
-                                    },
-                                },
-
-                                .id = id,
-                                .timestamp = WebsocketHandler.toTimestamp(Server.global_start_time.read()),
-                                .log = log,
-                            };
-                        };
-                    }
-
-                    var written = this.bundler.print(parse_result, @TypeOf(&this.printer), &this.printer, .esm) catch |err| {
-                        return WatchBuildResult{
+                        ) catch return WatchBuildResult{
                             .value = .{
                                 .fail = .{
                                     .id = id,
@@ -829,10 +808,27 @@ pub const RequestContext = struct {
                                     .log = try log.toAPI(allocator),
                                 },
                             },
+
                             .id = id,
                             .timestamp = WebsocketHandler.toTimestamp(Server.global_start_time.read()),
                             .log = log,
                         };
+                    }
+
+                    var written = this.bundler.print(parse_result, @TypeOf(&this.printer), &this.printer, .esm) catch
+                        return WatchBuildResult{
+                        .value = .{
+                            .fail = .{
+                                .id = id,
+                                .from_timestamp = from_timestamp,
+                                .loader = loader.toAPI(),
+                                .module_path = this.bundler.fs.relativeTo(file_path_str),
+                                .log = try log.toAPI(allocator),
+                            },
+                        },
+                        .id = id,
+                        .timestamp = WebsocketHandler.toTimestamp(Server.global_start_time.read()),
+                        .log = log,
                     };
 
                     return WatchBuildResult{
@@ -1237,8 +1233,7 @@ pub const RequestContext = struct {
             js_ast.Stmt.Data.Store.reset();
             js_ast.Expr.Data.Store.reset();
             JavaScript.Bun.flushCSSImports();
-            const resolved_count = vm.resolved_count;
-            const transpiled_count = vm.transpiled_count;
+
             vm.flush();
 
             Output.printElapsed(@intToFloat(f64, (start_timer.read())) / std.time.ns_per_ms);
@@ -1306,7 +1301,7 @@ pub const RequestContext = struct {
                     HandlerThread,
                     thread,
                     HandlerThread.handleFetchEventError,
-                ) catch |err| {};
+                ) catch {};
                 JavaScript.VirtualMachine.vm.tick();
             }
         }
@@ -1834,12 +1829,12 @@ pub const RequestContext = struct {
                     threadlocal var buffer: MutableString = undefined;
                     threadlocal var has_loaded_buffer: bool = false;
 
-                    pub fn reserveNext(rctx: *SocketPrinterInternal, count: u32) anyerror![*]u8 {
+                    pub fn reserveNext(_: *SocketPrinterInternal, count: u32) anyerror![*]u8 {
                         try buffer.growIfNeeded(count);
                         return @ptrCast([*]u8, &buffer.list.items.ptr[buffer.list.items.len]);
                     }
 
-                    pub fn advanceBy(rctx: *SocketPrinterInternal, count: u32) void {
+                    pub fn advanceBy(_: *SocketPrinterInternal, count: u32) void {
                         if (comptime Environment.isDebug) std.debug.assert(buffer.list.items.len + count <= buffer.list.capacity);
 
                         buffer.list.items = buffer.list.items.ptr[0 .. buffer.list.items.len + count];
@@ -1858,24 +1853,24 @@ pub const RequestContext = struct {
                             ._loader = _loader,
                         };
                     }
-                    pub fn writeByte(_ctx: *SocketPrinterInternal, byte: u8) anyerror!usize {
+                    pub fn writeByte(_: *SocketPrinterInternal, byte: u8) anyerror!usize {
                         try buffer.appendChar(byte);
                         return 1;
                     }
-                    pub fn writeAll(_ctx: *SocketPrinterInternal, bytes: anytype) anyerror!usize {
+                    pub fn writeAll(_: *SocketPrinterInternal, bytes: anytype) anyerror!usize {
                         try buffer.append(bytes);
                         return bytes.len;
                     }
 
-                    pub fn slice(_ctx: *SocketPrinterInternal) string {
+                    pub fn slice(_: *SocketPrinterInternal) string {
                         return buffer.list.items;
                     }
 
-                    pub fn getLastByte(_ctx: *const SocketPrinterInternal) u8 {
+                    pub fn getLastByte(_: *const SocketPrinterInternal) u8 {
                         return if (buffer.list.items.len > 0) buffer.list.items[buffer.list.items.len - 1] else 0;
                     }
 
-                    pub fn getLastLastByte(_ctx: *const SocketPrinterInternal) u8 {
+                    pub fn getLastLastByte(_: *const SocketPrinterInternal) u8 {
                         return if (buffer.list.items.len > 1) buffer.list.items[buffer.list.items.len - 2] else 0;
                     }
 
@@ -1920,7 +1915,7 @@ pub const RequestContext = struct {
                     }
 
                     pub fn flush(
-                        _ctx: *SocketPrinterInternal,
+                        _: *SocketPrinterInternal,
                     ) anyerror!void {}
                 };
 
@@ -2050,7 +2045,7 @@ pub const RequestContext = struct {
                                     Output.prettyErrorln("Failed to start watcher: {s}", .{@errorName(err)});
                                 };
                             }
-                        } else |err| {}
+                        } else |_| {}
                     }
                 }
 
@@ -2138,7 +2133,7 @@ pub const RequestContext = struct {
         }
     }
 
-    fn handleBlobURL(ctx: *RequestContext, server: *Server) !void {
+    fn handleBlobURL(ctx: *RequestContext, _: *Server) !void {
         var id = ctx.url.path["blob:".len..];
         // This makes it Just Work if you pass a line/column number
         if (strings.indexOfChar(id, ':')) |colon| {
@@ -2250,7 +2245,7 @@ pub const RequestContext = struct {
             strings.eqlComptime(header_.value, "style");
     }
 
-    fn handleSrcURL(ctx: *RequestContext, server: *Server) !void {
+    fn handleSrcURL(ctx: *RequestContext, _: *Server) !void {
         var input_path = ctx.url.path["src:".len..];
         while (std.mem.indexOfScalar(u8, input_path, ':')) |i| {
             input_path = input_path[0..i];
@@ -2314,7 +2309,7 @@ pub const RequestContext = struct {
         }
     }
 
-    fn handleAbsURL(ctx: *RequestContext, server: *Server) !void {
+    fn handleAbsURL(ctx: *RequestContext, _: *Server) !void {
         const extname = ctx.url.extname;
         switch (extname.len) {
             3 => {
@@ -2525,8 +2520,6 @@ pub const Server = struct {
         const file_paths = slice.items(.file_path);
         var counts = slice.items(.count);
         const kinds = slice.items(.kind);
-        const hashes = slice.items(.hash);
-        const parent_hashes = slice.items(.parent_hash);
         var header = fbs.getWritten();
         defer ctx.watcher.flushEvictions();
         defer Output.flush();
@@ -2726,9 +2719,8 @@ pub const Server = struct {
         var did_init = false;
         while (!did_init) {
             defer Output.flush();
-            var conn = listener.accept(.{ .close_on_exec = true }) catch |err| {
+            var conn = listener.accept(.{ .close_on_exec = true }) catch
                 continue;
-            };
 
             // We want to bind to the network socket as quickly as possible so that opening the URL works
             // We use a secondary loop so that we avoid the extra branch in a hot code path
@@ -2744,9 +2736,8 @@ pub const Server = struct {
 
         while (true) {
             defer Output.flush();
-            var conn = listener.accept(.{ .close_on_exec = true }) catch |err| {
+            var conn = listener.accept(.{ .close_on_exec = true }) catch
                 continue;
-            };
 
             server.handleConnection(&conn, comptime features);
         }
@@ -2768,7 +2759,7 @@ pub const Server = struct {
     pub fn handleConnection(server: *Server, conn: *tcp.Connection, comptime features: ConnectionFeatures) void {
 
         // https://stackoverflow.com/questions/686217/maximum-on-http-header-values
-        var read_size = conn.client.read(&req_buf, SOCKET_FLAGS) catch |err| {
+        var read_size = conn.client.read(&req_buf, SOCKET_FLAGS) catch {
             _ = conn.client.write(RequestContext.printStatusLine(400) ++ "\r\n\r\n", SOCKET_FLAGS) catch {};
             return;
         };
@@ -3008,7 +2999,7 @@ pub const Server = struct {
         defer this.bundler.resetStore();
 
         // 1. Try react refresh
-        _ = this.bundler.resolver.resolve(this.bundler.fs.top_level_dir, this.bundler.options.jsx.refresh_runtime, .internal) catch |err| {
+        _ = this.bundler.resolver.resolve(this.bundler.fs.top_level_dir, this.bundler.options.jsx.refresh_runtime, .internal) catch {
             // 2. Try react refresh from import source perspective
             this.bundler.options.jsx.supports_fast_refresh = false;
             return;

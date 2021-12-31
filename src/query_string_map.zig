@@ -30,7 +30,7 @@ pub const URL = struct {
     port_was_automatically_set: bool = false,
 
     pub fn isDomainName(this: *const URL) bool {
-        for (this.hostname) |c, i| {
+        for (this.hostname) |c| {
             switch (c) {
                 '0'...'9', '.', ':' => {},
                 else => {
@@ -435,7 +435,6 @@ pub const QueryStringMap = struct {
             while (this.visited.isSet(this.i)) : (this.i += 1) {}
             if (this.i >= this.map.list.len) return null;
 
-            var count: usize = 0;
             var slice = this.map.list.slice();
             const hash = slice.items(.name_hash)[this.i];
             var result = Result{ .name = this.map.str(slice.items(.name)[this.i]), .values = target[0..1] };
@@ -561,7 +560,6 @@ pub const QueryStringMap = struct {
 
         const Writer = @TypeOf(writer);
         while (scanner.pathname.next()) |result| {
-            var list_slice = list.slice();
             var name = result.name;
             var value = result.value;
             const name_slice = result.rawName(scanner.pathname.routename);
@@ -1064,7 +1062,6 @@ test "PercentEncoding.decode" {
 
     {
         const correct = "hello my name is ?????";
-        const input = "hello%20my%20name%20is%20%3F%3F%3F%3F%3F";
         const written = try PercentEncoding.decode(Writer, writer, correct);
         try expect(written == correct.len);
         try expectString(buffer[0..written], correct);

@@ -61,7 +61,7 @@ pub const ThreadPool = struct {
             fn runFn(runnable: *Runnable) void {
                 const run_node = @fieldParentPtr(RunNode, "data", runnable);
                 const closure = @fieldParentPtr(@This(), "run_node", run_node);
-                const result = @call(.{}, func, closure.func_args);
+                _ = @call(.{}, func, closure.func_args);
                 closure.allocator.destroy(closure);
             }
         };
@@ -322,7 +322,7 @@ pub const ThreadPool = struct {
             return self.popFrom(.head);
         }
 
-        fn steal(self: *Queue, target: *Queue, mode: enum { fair, unfair }) ?*RunNode {
+        fn steal(_: *Queue, target: *Queue, mode: enum { fair, unfair }) ?*RunNode {
             return target.popFrom(switch (mode) {
                 .fair => .tail,
                 .unfair => .head,

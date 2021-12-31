@@ -27,11 +27,11 @@ pub const IndexType = packed struct {
 
 const HashKeyType = u64;
 const IndexMapContext = struct {
-    pub fn hash(ctx: @This(), key: HashKeyType) HashKeyType {
+    pub fn hash(_: @This(), key: HashKeyType) HashKeyType {
         return key;
     }
 
-    pub fn eql(ctx: @This(), a: HashKeyType, b: HashKeyType) bool {
+    pub fn eql(_: @This(), a: HashKeyType, b: HashKeyType) bool {
         return a == b;
     }
 };
@@ -72,7 +72,6 @@ pub const ItemStatus = enum(u3) {
 pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
     const count = _count * 2;
     const max_index = count - 1;
-    const overflow_init_count = std.math.max(count / 8, 32);
     return struct {
         pub var backing_buf: [count]ValueType = undefined;
         const ChunkSize = 256;
@@ -122,7 +121,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
             return used >= @as(u16, count);
         }
 
-        pub fn exists(self: *Self, value: ValueType) bool {
+        pub fn exists(_: *Self, value: ValueType) bool {
             return isSliceInBuffer(value, backing_buf);
         }
 
@@ -208,7 +207,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             return slice_buf_used >= @as(u16, count);
         }
 
-        pub fn exists(self: *const Self, value: ValueType) bool {
+        pub fn exists(_: *const Self, value: ValueType) bool {
             return isSliceInBuffer(value, &backing_buf);
         }
 
@@ -338,7 +337,6 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
 
             if (result.is_overflow) {
                 if (self.overflow_list.items.len == result.index) {
-                    const real_index = self.overflow_list.items.len;
                     try self.overflow_list.append(self.allocator, value);
                 } else {
                     self.overflow_list.items[result.index] = value;
@@ -350,33 +348,6 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
 
                 return slice_buf[result.index];
             }
-        }
-
-        pub fn remove(self: *Self, index: IndexType) void {
-            // @compileError("Not implemented yet.");
-            // switch (index) {
-            //     Unassigned.index => {
-            //         self.index.remove(_key);
-            //     },
-            //     NotFound.index => {
-            //         self.index.remove(_key);
-            //     },
-            //     0...max_index => {
-            //         if (hasDeinit(ValueType)) {
-            //             slice_buf[index].deinit();
-            //         }
-            //         slice_buf[index] = undefined;
-            //     },
-            //     else => {
-            //         const i = index - count;
-            //         if (hasDeinit(ValueType)) {
-            //             self.overflow_list.items[i].deinit();
-            //         }
-            //         self.overflow_list.items[index - count] = undefined;
-            //     },
-            // }
-
-            // return index;
         }
     };
 }
@@ -491,7 +462,6 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
 
             if (result.index.is_overflow) {
                 if (self.overflow_list.items.len == result.index.index) {
-                    const real_index = self.overflow_list.items.len;
                     try self.overflow_list.append(self.allocator, value);
                 } else {
                     self.overflow_list.items[result.index.index] = value;
@@ -574,7 +544,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
             return @call(.{ .modifier = .always_inline }, BSSMapType.atIndex, .{ self.map, index });
         }
 
-        pub fn keyAtIndex(self: *Self, index: IndexType) ?[]const u8 {
+        pub fn keyAtIndex(_: *Self, index: IndexType) ?[]const u8 {
             return switch (index.index) {
                 Unassigned.index, NotFound.index => null,
                 else => {

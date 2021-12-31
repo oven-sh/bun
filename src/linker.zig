@@ -196,11 +196,9 @@ pub const Linker = struct {
         comptime import_path_format: Options.BundleOptions.ImportPathFormat,
         comptime ignore_runtime: bool,
     ) !void {
-        var needs_runtime = result.ast.uses_exports_ref or result.ast.uses_module_ref or result.ast.runtime_imports.hasAny();
         const source_dir = file_path.sourceDir();
         var externals = std.ArrayList(u32).init(linker.allocator);
         var needs_bundle = false;
-        var first_bundled_index: ?u32 = null;
         var had_resolve_errors = false;
         var needs_require = false;
 
@@ -453,58 +451,6 @@ pub const Linker = struct {
             };
             result.ast.prepend_part = js_ast.Part{ .stmts = std.mem.span(&require_part_stmts) };
         }
-
-        // This is a bad idea
-        // I don't think it's safe to do this
-        const ImportStatementSorter = struct {
-            import_records: []ImportRecord,
-            pub fn lessThan(ctx: @This(), lhs: js_ast.Stmt, rhs: js_ast.Stmt) bool {
-                switch (lhs.data) {
-                    .s_import => |li| {
-                        switch (rhs.data) {
-                            .s_import => |ri| {
-                                const a = ctx.import_records[li.import_record_index];
-                                const b = ctx.import_records[ri.import_record_index];
-                                if (a.is_bundled and !b.is_bundled) {
-                                    return false;
-                                } else {
-                                    return true;
-                                }
-                            },
-                            else => {
-                                return true;
-                            },
-                        }
-                    },
-                    else => {
-                        switch (rhs.data) {
-                            .s_import => |ri| {
-                                const a = ctx.import_records[ri.import_record_index];
-                                if (!a.is_bundled) {
-                                    return false;
-                                } else {
-                                    return true;
-                                }
-                            },
-                            else => {
-                                return true;
-                            },
-                        }
-                    },
-                }
-            }
-        };
-
-        // std.sort.sort(comptime T: type, items: []T, context: anytype, comptime lessThan: fn(context:@TypeOf(context), lhs:T, rhs:T)bool)
-
-        // Change the import order so that any bundled imports appear last
-        // This is to make it so the bundle (which should be quite large) is least likely to block rendering
-        // if (needs_bundle) {
-        //     const sorter = ImportStatementSorter{ .import_records = result.ast.import_records };
-        //     for (result.ast.parts) |*part, i| {
-        //         std.sort.sort(js_ast.Stmt, part.stmts, sorter, ImportStatementSorter.lessThan);
-        //     }
-        // }
     }
 
     const ImportPathsList = allocators.BSSStringList(512, 128);
@@ -514,7 +460,7 @@ pub const Linker = struct {
         linker: *ThisLinker,
         source_dir: string,
         source_path: string,
-        package_version: ?string,
+        _: ?string,
         use_hashed_name: bool,
         namespace: string,
         comptime import_path_format: Options.BundleOptions.ImportPathFormat,
@@ -572,7 +518,6 @@ pub const Linker = struct {
                     relative_name = pretty;
                 }
 
-                var pathname = Fs.PathName.init(pretty);
                 var path = Fs.Path.initWithPretty(pretty, relative_name);
                 path.text = path.text[0 .. path.text.len - path.name.ext.len];
                 return path;

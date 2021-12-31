@@ -509,12 +509,6 @@ pub const JSString = struct {
         return this._ref;
     }
 
-    pub fn fromStringRef(string_ref: JSStringRef) JSString {}
-
-    pub fn init(str: []const u8) JSString {}
-
-    pub fn static(str: []const u8) JSString {}
-
     pub fn finalize(this: *JSString) void {
         this.loaded = false;
     }
@@ -535,13 +529,6 @@ pub const JSString = struct {
 
     // }
 
-    pub fn eqlJS(this: *const JSString, ctx: JSContextRef, comptime Type: type, that: Type) bool {
-        switch (comptime Type) {
-            JSValueRef => {},
-            JSStringRef => {},
-            JSString => {},
-        }
-    }
 };
 
 // not official api functions

@@ -55,8 +55,8 @@ var start_time: i128 = undefined;
 
 pub const Cli = struct {
     var wait_group: sync.WaitGroup = undefined;
-    pub fn startTransform(allocator: std.mem.Allocator, args: Api.TransformOptions, log: *logger.Log) anyerror!void {}
-    pub fn start(allocator: std.mem.Allocator, stdout: anytype, stderr: anytype, comptime MainPanicHandler: type) anyerror!void {
+    pub fn startTransform(_: std.mem.Allocator, _: Api.TransformOptions, _: *logger.Log) anyerror!void {}
+    pub fn start(allocator: std.mem.Allocator, _: anytype, _: anytype, comptime MainPanicHandler: type) anyerror!void {
         start_time = std.time.nanoTimestamp();
         var log = try allocator.create(logger.Log);
         log.* = logger.Log.init(allocator);
@@ -258,10 +258,6 @@ pub const Arguments = struct {
         // var output_dir = args.option("--outdir");
         var output_dir: ?string = null;
 
-        var define_keys = defines_tuple.keys;
-        var define_values = defines_tuple.values;
-        var loader_keys = loader_tuple.keys;
-        var loader_values = loader_tuple.values;
         var entry_points = args.positionals();
 
         switch (comptime cmd) {
@@ -354,7 +350,7 @@ pub const Arguments = struct {
             else => {},
         }
 
-        const ResolveMatcher = strings.ExactSizeMatcher(8);
+        // const ResolveMatcher = strings.ExactSizeMatcher(8);
 
         opts.resolve = Api.ResolveMode.lazy;
 
@@ -451,7 +447,7 @@ const AutoCommand = struct {
     }
 };
 const InitCommand = struct {
-    pub fn exec(allocator: std.mem.Allocator) !void {}
+    pub fn exec(_: std.mem.Allocator) !void {}
 };
 pub const HelpCommand = struct {
     pub fn exec(allocator: std.mem.Allocator) !void {
@@ -491,10 +487,6 @@ pub const HelpCommand = struct {
     };
 
     pub fn printWithReason(comptime reason: Reason) void {
-        var cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-        const cwd = std.os.getcwd(&cwd_buf) catch unreachable;
-        const dirname = std.fs.path.basename(cwd);
-
         const fmt =
             \\> <r> <b><green>dev     <r><d>  ./a.ts ./b.jsx<r>        Start a Bun Dev Server
             \\> <r> <b><magenta>bun     <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
@@ -534,7 +526,7 @@ pub const HelpCommand = struct {
 
         Output.flush();
     }
-    pub fn execWithReason(allocator: std.mem.Allocator, comptime reason: Reason) void {
+    pub fn execWithReason(_: std.mem.Allocator, comptime reason: Reason) void {
         @setCold(true);
         printWithReason(reason);
 
@@ -552,12 +544,12 @@ pub const PrintBundleCommand = struct {
         var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         var stdout = std.io.getStdOut();
 
-        var input = try std.fs.openFileAbsolute(try std.os.realpath(ctx.args.entry_points[0], &out_buffer), .{ .read = true });
+        var input = try std.fs.openFileAbsolute(try std.os.realpath(entry_point, &out_buffer), .{ .read = true });
         const params = comptime [_]Arguments.ParamType{
             clap.parseParam("--summary  Peek inside the .bun") catch unreachable,
         };
 
-        var jsBundleArgs = clap.parse(clap.Help, &params, .{ .allocator = ctx.allocator }) catch |err| {
+        var jsBundleArgs = clap.parse(clap.Help, &params, .{ .allocator = ctx.allocator }) catch {
             try NodeModuleBundle.printBundle(std.fs.File, input, @TypeOf(stdout), stdout);
             return;
         };
@@ -817,7 +809,6 @@ pub const Command = struct {
                 if (args.len > 2) {
                     var remainder = args[2..];
                     var remainder_i: usize = 0;
-                    var i: usize = 0;
                     while (remainder_i < remainder.len and positional_i < positionals.len) : (remainder_i += 1) {
                         var slice = std.mem.trim(u8, std.mem.span(remainder[remainder_i]), " \t\n;");
                         if (slice.len > 0) {

@@ -79,11 +79,7 @@ pub fn NewBlockQueue(comptime Value: type, comptime block_size: comptime_int, co
                     const ptr = @atomicLoad(*Block, &this.blocks[current_block], .SeqCst);
                     return ptr[index];
                 },
-                else => {
-                    const is_overflowing = current_block > block_count;
-
-                    unreachable;
-                },
+                else => unreachable,
             }
         }
 
@@ -421,7 +417,7 @@ test "BunQueue: Single-threaded" {
 
     const end_offset = queue.getOffset().len;
 
-    for (greet) |ing, i| {
+    for (greet) |ing| {
         const key = @truncate(u32, hash(0, ing));
         try queue.upsert(
             key,
@@ -476,10 +472,9 @@ test "BunQueue: Dedupes" {
     var deduped = std.BufSet.init(default_allocator);
     var consumed = std.BufSet.init(default_allocator);
 
-    for (greet) |ing, i| {
+    for (greet) |ing| {
         const key = @truncate(u32, hash(0, ing));
 
-        const is_new = !deduped.contains(ing);
         try deduped.insert(ing);
         try queue.upsert(key, ing);
     }

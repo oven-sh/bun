@@ -54,16 +54,16 @@ const HashMapPool = struct {
     threadlocal var loaded: bool = false;
 
     const IdentityContext = struct {
-        pub fn eql(this: @This(), a: u64, b: u64) bool {
+        pub fn eql(_: @This(), a: u64, b: u64) bool {
             return a == b;
         }
 
-        pub fn hash(this: @This(), a: u64) u64 {
+        pub fn hash(_: @This(), a: u64) u64 {
             return a;
         }
     };
 
-    pub fn get(allocator: std.mem.Allocator) *LinkedList.Node {
+    pub fn get(_: std.mem.Allocator) *LinkedList.Node {
         if (loaded) {
             if (list.popFirst()) |node| {
                 node.data.clearRetainingCapacity();
@@ -109,7 +109,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
 
         const Parser = @This();
 
-        pub fn e(p: *Parser, t: anytype, loc: logger.Loc) Expr {
+        pub fn e(_: *Parser, t: anytype, loc: logger.Loc) Expr {
             const Type = @TypeOf(t);
             if (@typeInfo(Type) == .Pointer) {
                 return Expr.init(std.meta.Child(Type), t.*, loc);
@@ -332,7 +332,7 @@ pub const PackageJSONVersionChecker = struct {
 
     const Parser = @This();
 
-    pub fn e(p: *Parser, t: anytype, loc: logger.Loc) Expr {
+    pub fn e(_: *Parser, t: anytype, loc: logger.Loc) Expr {
         const Type = @TypeOf(t);
         if (@typeInfo(Type) == .Pointer) {
             return Expr.init(std.meta.Child(Type), t.*, loc);

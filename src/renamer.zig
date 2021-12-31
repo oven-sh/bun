@@ -40,8 +40,8 @@ pub const Renamer = struct {
 };
 
 pub const DisabledRenamer = struct {
-    pub fn init(symbols: js_ast.Symbol.Map) DisabledRenamer {}
-    pub inline fn nameForSymbol(renamer: *Renamer, ref: js_ast.Ref) string {
+    pub fn init(_: js_ast.Symbol.Map) DisabledRenamer {}
+    pub inline fn nameForSymbol(_: *Renamer, _: js_ast.Ref) string {
         @compileError("DisabledRunner called");
     }
 };

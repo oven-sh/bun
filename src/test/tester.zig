@@ -156,7 +156,7 @@ pub const Tester = struct {
                     RESET,
                 }) catch unreachable;
                 std.fmt.format(stderr.writer(), RESET, .{}) catch unreachable;
-                std.testing.expect(false) catch std.debug.panic("Test failure", .{});
+                std.testing.expect(false) catch std.debug.panic("Test failure in {s}: {s}:{d}:{d}", .{ src.fn_name, src.file, src.line, src.column });
             },
         }
     }

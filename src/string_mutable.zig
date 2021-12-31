@@ -93,8 +93,6 @@ pub const MutableString = struct {
             var mutable = try MutableString.initCopy(allocator, str[0..start_i]);
             needs_gap = false;
 
-            var i: usize = 0;
-
             var slice = str[start_i..];
             iterator = strings.CodepointIterator.init(slice);
             cursor = strings.CodepointIterator.Cursor{};

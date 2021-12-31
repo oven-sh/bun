@@ -143,7 +143,7 @@ pub const Scanner = struct {
         scanner.codepoint = scanner.nextCodepoint();
         scanner.approximate_newline_count += @boolToInt(scanner.codepoint == '\n');
     }
-    pub fn raw(scanner: *Scanner) string {}
+    pub fn raw(_: *Scanner) string {}
 
     pub fn isValidEscape(scanner: *Scanner) bool {
         if (scanner.codepoint != '\\') return false;
@@ -570,8 +570,6 @@ pub const Scanner = struct {
                         // We want to avoid messing with other rules
                         scanner.start = start;
 
-                        var url_token_start = scanner.current;
-                        var url_token_end = scanner.current;
                         // "Imported rules must precede all other types of rule"
                         // https://developer.mozilla.org/en-US/docs/Web/CSS/@import
                         // @import url;
@@ -579,8 +577,6 @@ pub const Scanner = struct {
                         // @import url supports( supports-query );
                         // @import url supports( supports-query ) list-of-media-queries;
 
-                        var is_url_token = false;
-                        var quote: CodePoint = -1;
                         while (isWhitespace(scanner.codepoint)) {
                             scanner.step();
                         }
@@ -1017,7 +1013,7 @@ pub fn NewWriter(
 
         pub fn scanChunk(writer: *Writer, chunk: Chunk) !void {
             switch (chunk.content) {
-                .t_url => |url| {},
+                .t_url => {},
                 .t_import => |import| {
                     const resolved = writer.linker.resolveCSS(
                         writer.source.path,
@@ -1050,7 +1046,7 @@ pub fn NewWriter(
 
                     try writer.buildCtx.addCSSImport(resolved);
                 },
-                .t_verbatim => |verbatim| {},
+                .t_verbatim => {},
             }
         }
 
@@ -1102,7 +1098,7 @@ pub fn NewWriter(
                         writer.written += 1;
                     }
                 },
-                .t_verbatim => |verbatim| {
+                .t_verbatim => {
                     defer writer.written += @intCast(usize, chunk.range.len);
                     if (comptime std.meta.trait.hasFn("copyFileRange")(WriterType)) {
                         try writer.ctx.copyFileRange(
@@ -1166,7 +1162,7 @@ pub fn NewBundler(
             watcher: *Watcher,
             fs_reader: FileReader,
             hash: u32,
-            input_fd: ?StoredFileDescriptorType,
+            _: ?StoredFileDescriptorType,
             allocator: std.mem.Allocator,
             log: *logger.Log,
             linker: Linker,

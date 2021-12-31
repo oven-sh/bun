@@ -44,7 +44,7 @@ const CopyFile = @import("../copy_file.zig");
 const ShellCompletions = @import("./shell_completions.zig");
 
 pub const InstallCompletionsCommand = struct {
-    pub fn testPath(completions_dir: string) !std.fs.Dir {}
+    pub fn testPath(_: string) !std.fs.Dir {}
     pub fn exec(allocator: std.mem.Allocator) !void {
         var shell = ShellCompletions.Shell.unknown;
         if (std.os.getenvZ("SHELL")) |shell_name| {
@@ -124,9 +124,8 @@ pub const InstallCompletionsCommand = struct {
                         outer: {
                             var paths = [_]string{ std.mem.span(config_dir), "./fish/completions" };
                             completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
-                            break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch |err| {
+                            break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch
                                 break :outer;
-                            };
                         }
                     }
 
@@ -135,9 +134,8 @@ pub const InstallCompletionsCommand = struct {
                             var paths = [_]string{ std.mem.span(data_dir), "./fish/completions" };
                             completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
 
-                            break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch |err| {
+                            break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch
                                 break :outer;
-                            };
                         }
                     }
 
@@ -145,9 +143,8 @@ pub const InstallCompletionsCommand = struct {
                         outer: {
                             var paths = [_]string{ std.mem.span(home_dir), "./.config/fish/completions" };
                             completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
-                            break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch |err| {
+                            break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch
                                 break :outer;
-                            };
                         }
                     }
 
@@ -156,15 +153,13 @@ pub const InstallCompletionsCommand = struct {
                             if (!Environment.isAarch64) {
                                 // homebrew fish
                                 completions_dir = "/usr/local/share/fish/completions";
-                                break :found std.fs.openDirAbsoluteZ("/usr/local/share/fish/completions", .{ .iterate = true }) catch |err| {
+                                break :found std.fs.openDirAbsoluteZ("/usr/local/share/fish/completions", .{ .iterate = true }) catch
                                     break :outer;
-                                };
                             } else {
                                 // homebrew fish
                                 completions_dir = "/opt/homebrew/share/fish/completions";
-                                break :found std.fs.openDirAbsoluteZ("/opt/homebrew/share/fish/completions", .{ .iterate = true }) catch |err| {
+                                break :found std.fs.openDirAbsoluteZ("/opt/homebrew/share/fish/completions", .{ .iterate = true }) catch
                                     break :outer;
-                                };
                             }
                         }
                     }
@@ -189,18 +184,16 @@ pub const InstallCompletionsCommand = struct {
                             var paths = [_]string{ std.mem.span(data_dir), "./zsh-completions" };
                             completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
 
-                            break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch |err| {
+                            break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch
                                 break :outer;
-                            };
                         }
                     }
 
                     if (std.os.getenvZ("BUN_INSTALL")) |home_dir| {
                         outer: {
                             completions_dir = home_dir;
-                            break :found std.fs.openDirAbsolute(home_dir, .{ .iterate = true }) catch |err| {
+                            break :found std.fs.openDirAbsolute(home_dir, .{ .iterate = true }) catch
                                 break :outer;
-                            };
                         }
                     }
 
@@ -209,9 +202,8 @@ pub const InstallCompletionsCommand = struct {
                             outer: {
                                 var paths = [_]string{ std.mem.span(home_dir), "./.oh-my-zsh/completions" };
                                 completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
-                                break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch |err| {
+                                break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch
                                     break :outer;
-                                };
                             }
                         }
 
@@ -219,9 +211,8 @@ pub const InstallCompletionsCommand = struct {
                             outer: {
                                 var paths = [_]string{ std.mem.span(home_dir), "./.bun" };
                                 completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
-                                break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch |err| {
+                                break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch
                                     break :outer;
-                                };
                             }
                         }
                     }

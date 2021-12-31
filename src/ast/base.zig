@@ -24,11 +24,11 @@ pub const NodeIndexNone = 4294967293;
 // all inner arrays from all parsed files.
 
 pub const RefHashCtx = struct {
-    pub fn hash(ctx: @This(), key: Ref) u32 {
+    pub fn hash(_: @This(), key: Ref) u32 {
         return @truncate(u32, std.hash.Wyhash.hash(0, std.mem.asBytes(&key)));
     }
 
-    pub fn eql(ctx: @This(), ref: Ref, b: Ref) bool {
+    pub fn eql(_: @This(), ref: Ref, b: Ref) bool {
         return std.mem.readIntNative(u64, std.mem.asBytes(&ref)) == std.mem.readIntNative(u64, std.mem.asBytes(&b));
     }
 };
@@ -85,11 +85,3 @@ pub const RequireOrImportMeta = struct {
     exports_ref: Ref = Ref.None,
     is_wrapper_async: bool = false,
 };
-pub inline fn debug(comptime fmt: []const u8, args: anytype) void {
-    // Output.print(fmt, args);
-}
-pub inline fn debugl(
-    comptime fmt: []const u8,
-) void {
-    // Output.print("{s}\n", .{fmt});
-}

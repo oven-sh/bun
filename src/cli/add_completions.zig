@@ -37,8 +37,7 @@ pub const index: Index = if (Environment.isDebug) Index.initFill(&.{"OOMWorkArou
 
     var i: u8 = 'a';
     var tokenizer = std.mem.tokenize(u8, add_completions, "\n");
-    var last_index: usize = 0;
-    var last_len: usize = 0;
+
     while (i <= 'z') {
         var init_tokenizer = tokenizer;
         var count: usize = 0;

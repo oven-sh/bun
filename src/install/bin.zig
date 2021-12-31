@@ -157,7 +157,6 @@ pub const Bin = extern struct {
             remain = remain[name.len..];
             remain[0] = std.fs.path.sep;
             remain = remain[1..];
-            const base_len = @ptrToInt(remain.ptr) - @ptrToInt(&path_buf);
 
             if (comptime Environment.isWindows) {
                 @compileError("Bin.Linker.link() needs to be updated to generate .cmd files on Windows");

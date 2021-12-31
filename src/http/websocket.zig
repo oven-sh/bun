@@ -321,7 +321,7 @@ pub const Websocket = struct {
         if (header.mask) {
             const mask = buf[0..4];
             // Decode data in place
-            for (data) |c, i| {
+            for (data) |_, i| {
                 data[i] ^= mask[i % 4];
             }
         }

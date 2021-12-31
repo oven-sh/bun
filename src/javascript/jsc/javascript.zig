@@ -105,7 +105,7 @@ pub const Bun = struct {
     pub fn onImportCSS(
         resolve_result: *const Resolver.Result,
         import_record: *ImportRecord,
-        source_dir: string,
+        _: string,
     ) void {
         if (!css_imports_buf_loaded) {
             css_imports_buf = std.ArrayList(u8).initCapacity(
@@ -144,10 +144,13 @@ pub const Bun = struct {
     }
 
     pub fn registerMacro(
-        this: void,
+        // this
+        _: void,
         ctx: js.JSContextRef,
-        function: js.JSObjectRef,
-        thisObject: js.JSObjectRef,
+        // function
+        _: js.JSObjectRef,
+        // thisObject
+        _: js.JSObjectRef,
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
@@ -179,60 +182,60 @@ pub const Bun = struct {
     }
 
     pub fn getCWD(
-        this: void,
-        ctx: js.JSContextRef,
-        thisObject: js.JSValueRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: void,
+        _: js.JSContextRef,
+        _: js.JSValueRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(VirtualMachine.vm.bundler.fs.top_level_dir).toValue(VirtualMachine.vm.global).asRef();
+        return ZigString.init(VirtualMachine.vm.bundler.fs.top_level_dir).toValue(VirtualMachine.vm.ctx).asRef();
     }
 
     pub fn getOrigin(
-        this: void,
-        ctx: js.JSContextRef,
-        thisObject: js.JSValueRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: void,
+        _: js.JSContextRef,
+        _: js.JSValueRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         return ZigString.init(VirtualMachine.vm.bundler.options.origin.origin).toValue(VirtualMachine.vm.global).asRef();
     }
 
     pub fn enableANSIColors(
-        this: void,
+        _: void,
         ctx: js.JSContextRef,
-        thisObject: js.JSValueRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: js.JSValueRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         return js.JSValueMakeBoolean(ctx, Output.enable_ansi_colors);
     }
     pub fn getMain(
-        this: void,
-        ctx: js.JSContextRef,
-        thisObject: js.JSValueRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: void,
+        _: js.JSContextRef,
+        _: js.JSValueRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         return ZigString.init(VirtualMachine.vm.main).toValue(VirtualMachine.vm.global).asRef();
     }
 
     pub fn getAssetPrefix(
-        this: void,
-        ctx: js.JSContextRef,
-        thisObject: js.JSValueRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: void,
+        _: js.JSContextRef,
+        _: js.JSValueRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         return ZigString.init(VirtualMachine.vm.bundler.options.routes.asset_prefix_path).toValue(VirtualMachine.vm.global).asRef();
     }
 
     pub fn getArgv(
-        this: void,
+        _: void,
         ctx: js.JSContextRef,
-        thisObject: js.JSValueRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: js.JSValueRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         if (comptime Environment.isWindows) {
             @compileError("argv not supported on windows");
@@ -250,11 +253,11 @@ pub const Bun = struct {
     }
 
     pub fn getRoutesDir(
-        this: void,
+        _: void,
         ctx: js.JSContextRef,
-        thisObject: js.JSValueRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: js.JSValueRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         if (!VirtualMachine.vm.bundler.options.routes.routes_enabled or VirtualMachine.vm.bundler.options.routes.dir.len == 0) {
             return js.JSValueMakeUndefined(ctx);
@@ -332,12 +335,12 @@ pub const Bun = struct {
     }
 
     pub fn getImportedStyles(
-        this: void,
+        _: void,
         ctx: js.JSContextRef,
-        function: js.JSObjectRef,
-        thisObject: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        _: []const js.JSValueRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         defer flushCSSImports();
         const styles = getCSSImports();
@@ -431,12 +434,12 @@ pub const Bun = struct {
     }
 
     pub fn getRouteFiles(
-        this: void,
+        _: void,
         ctx: js.JSContextRef,
-        function: js.JSObjectRef,
-        thisObject: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        _: []const js.JSValueRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         if (VirtualMachine.vm.bundler.router == null) return js.JSValueMakeNull(ctx);
 
@@ -452,12 +455,12 @@ pub const Bun = struct {
     }
 
     pub fn getRouteNames(
-        this: void,
+        _: void,
         ctx: js.JSContextRef,
-        function: js.JSObjectRef,
-        thisObject: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        _: []const js.JSValueRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         if (VirtualMachine.vm.bundler.router == null) return js.JSValueMakeNull(ctx);
 
@@ -473,10 +476,10 @@ pub const Bun = struct {
     }
 
     pub fn readFileAsBytes(
-        this: void,
+        _: void,
         ctx: js.JSContextRef,
-        function: js.JSObjectRef,
-        thisObject: js.JSObjectRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
@@ -490,10 +493,10 @@ pub const Bun = struct {
     }
 
     pub fn readFileAsString(
-        this: void,
+        _: void,
         ctx: js.JSContextRef,
-        function: js.JSObjectRef,
-        thisObject: js.JSObjectRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
@@ -523,12 +526,12 @@ pub const Bun = struct {
     }
 
     pub fn sleepSync(
-        this: void,
+        _: void,
         ctx: js.JSContextRef,
-        function: js.JSObjectRef,
-        thisObject: js.JSObjectRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
         arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         if (js.JSValueIsNumber(ctx, arguments[0])) {
             const ms = JSValue.fromRef(arguments[0]).asNumber();
@@ -541,12 +544,12 @@ pub const Bun = struct {
     var public_path_temp_str: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
     pub fn getPublicPathJS(
-        this: void,
-        ctx: js.JSContextRef,
-        function: js.JSObjectRef,
-        thisObject: js.JSObjectRef,
+        _: void,
+        _: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
         arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         var zig_str: ZigString = ZigString.Empty;
         JSValue.toZigString(JSValue.fromRef(arguments[0]), &zig_str, VirtualMachine.vm.global);
@@ -692,11 +695,11 @@ pub const Bun = struct {
         );
 
         pub fn getter(
-            this: void,
+            _: void,
             ctx: js.JSContextRef,
-            thisObject: js.JSValueRef,
-            prop: js.JSStringRef,
-            exception: js.ExceptionRef,
+            _: js.JSValueRef,
+            _: js.JSStringRef,
+            _: js.ExceptionRef,
         ) js.JSValueRef {
             return js.JSObjectMake(ctx, EnvironmentVariables.Class.get().*, null);
         }
@@ -708,9 +711,9 @@ pub const Bun = struct {
 
         pub fn getProperty(
             ctx: js.JSContextRef,
-            thisObject: js.JSObjectRef,
+            _: js.JSObjectRef,
             propertyName: js.JSStringRef,
-            exception: js.ExceptionRef,
+            _: js.ExceptionRef,
         ) callconv(.C) js.JSValueRef {
             const len = js.JSStringGetLength(propertyName);
             var ptr = js.JSStringGetCharacters8Ptr(propertyName);
@@ -730,8 +733,8 @@ pub const Bun = struct {
         }
 
         pub fn hasProperty(
-            ctx: js.JSContextRef,
-            thisObject: js.JSObjectRef,
+            _: js.JSContextRef,
+            _: js.JSObjectRef,
             propertyName: js.JSStringRef,
         ) callconv(.C) bool {
             const len = js.JSStringGetLength(propertyName);
@@ -741,8 +744,8 @@ pub const Bun = struct {
         }
 
         pub fn getPropertyNames(
-            ctx: js.JSContextRef,
-            thisObject: js.JSObjectRef,
+            _: js.JSContextRef,
+            _: js.JSObjectRef,
             props: js.JSPropertyNameAccumulatorRef,
         ) callconv(.C) void {
             var iter = VirtualMachine.vm.bundler.env.map.iter();
@@ -771,12 +774,12 @@ pub const Performance = struct {
     );
 
     pub fn now(
-        this: void,
+        _: void,
         ctx: js.JSContextRef,
-        function: js.JSObjectRef,
-        thisObject: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        _: []const js.JSValueRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         return js.JSValueMakeNumber(
             ctx,
@@ -1002,7 +1005,7 @@ pub const VirtualMachine = struct {
     inline fn _fetch(
         global: *JSGlobalObject,
         _specifier: string,
-        source: string,
+        _: string,
         log: *logger.Log,
     ) !ResolvedSource {
         std.debug.assert(VirtualMachine.vm_loaded);
@@ -1401,7 +1404,7 @@ pub const VirtualMachine = struct {
     }
 
     // This double prints
-    pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, rejection: JSPromiseRejectionOperation) callconv(.C) JSValue {
+    pub fn promiseRejectionTracker(_: *JSGlobalObject, _: *JSPromise, _: JSPromiseRejectionOperation) callconv(.C) JSValue {
         // VirtualMachine.vm.defaultErrorHandler(promise.result(global.vm()), null);
         return JSValue.jsUndefined();
     }
@@ -1508,7 +1511,7 @@ pub const VirtualMachine = struct {
     }
 
     // TODO:
-    pub fn deinit(this: *VirtualMachine) void {}
+    pub fn deinit(_: *VirtualMachine) void {}
 
     pub const ExceptionList = std.ArrayList(Api.JsException);
 
@@ -1639,7 +1642,7 @@ pub const VirtualMachine = struct {
                 pub fn iteratorWithOutColor(_vm: [*c]VM, globalObject: [*c]JSGlobalObject, nextValue: JSValue) callconv(.C) void {
                     iterator(_vm, globalObject, nextValue, false);
                 }
-                inline fn iterator(_vm: [*c]VM, globalObject: [*c]JSGlobalObject, nextValue: JSValue, comptime color: bool) void {
+                inline fn iterator(_: [*c]VM, _: [*c]JSGlobalObject, nextValue: JSValue, comptime color: bool) void {
                     VirtualMachine.vm.printErrorlikeObject(nextValue, null, current_exception_list, color);
                 }
             };
@@ -2011,8 +2014,6 @@ pub const EventListenerMixin = struct {
 
         var fetch_args: [1]js.JSObjectRef = undefined;
         for (listeners.items) |listener_ref| {
-            var listener = @intToEnum(JSValue, @intCast(i64, @ptrToInt(listener_ref)));
-
             fetch_args[0] = FetchEvent.Class.make(vm.global.ref(), fetch_event);
 
             var result = js.JSObjectCallAsFunctionReturnValue(vm.global.ref(), listener_ref, null, 1, &fetch_args);
@@ -2047,11 +2048,11 @@ pub const EventListenerMixin = struct {
         const Handler = struct {
             pub fn addListener(
                 ctx: js.JSContextRef,
-                function: js.JSObjectRef,
-                thisObject: js.JSObjectRef,
+                _: js.JSObjectRef,
+                _: js.JSObjectRef,
                 argumentCount: usize,
                 _arguments: [*c]const js.JSValueRef,
-                exception: js.ExceptionRef,
+                _: js.ExceptionRef,
             ) callconv(.C) js.JSValueRef {
                 const arguments = _arguments[0..argumentCount];
                 if (arguments.len == 0 or arguments.len == 1 or !js.JSValueIsString(ctx, arguments[0]) or !js.JSValueIsObject(ctx, arguments[arguments.len - 1]) or !js.JSObjectIsFunction(ctx, arguments[arguments.len - 1])) {
@@ -2182,8 +2183,8 @@ pub const ResolveError = struct {
     pub fn getPosition(
         this: *ResolveError,
         ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
         return BuildError.generatePositionObject(this.msg, ctx, exception);
@@ -2191,30 +2192,30 @@ pub const ResolveError = struct {
 
     pub fn getMessage(
         this: *ResolveError,
-        ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         return ZigString.init(this.msg.data.text).toValue(VirtualMachine.vm.global).asRef();
     }
 
     pub fn getSpecifier(
         this: *ResolveError,
-        ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         return ZigString.init(this.msg.metadata.resolve.specifier.slice(this.msg.data.text)).toValue(VirtualMachine.vm.global).asRef();
     }
 
     pub fn getImportKind(
         this: *ResolveError,
-        ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         return ZigString.init(@tagName(this.msg.metadata.resolve.import_kind)).toValue(VirtualMachine.vm.global).asRef();
     }
@@ -2222,9 +2223,9 @@ pub const ResolveError = struct {
     pub fn getReferrer(
         this: *ResolveError,
         ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         if (this.referrer) |referrer| {
             return ZigString.init(referrer.text).toValue(VirtualMachine.vm.global).asRef();
@@ -2235,11 +2236,11 @@ pub const ResolveError = struct {
 
     const BuildErrorName = "ResolveError";
     pub fn getName(
-        this: *ResolveError,
-        ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: *ResolveError,
+        _: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         return ZigString.init(BuildErrorName).toValue(VirtualMachine.vm.global).asRef();
     }
@@ -2295,8 +2296,8 @@ pub const BuildError = struct {
     pub fn getPosition(
         this: *BuildError,
         ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
         return generatePositionObject(this.msg, ctx, exception);
@@ -2428,21 +2429,21 @@ pub const BuildError = struct {
 
     pub fn getMessage(
         this: *BuildError,
-        ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         return ZigString.init(this.msg.data.text).toValue(VirtualMachine.vm.global).asRef();
     }
 
     const BuildErrorName = "BuildError";
     pub fn getName(
-        this: *BuildError,
-        ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: *BuildError,
+        _: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         return ZigString.init(BuildErrorName).toValue(VirtualMachine.vm.global).asRef();
     }

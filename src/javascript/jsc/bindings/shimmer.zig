@@ -9,8 +9,6 @@ fn isNullableType(comptime Type: type) bool {
 }
 
 pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comptime Parent: type) type {
-    const extern_count: usize = if (@hasDecl(Parent, "Extern")) Parent.Extern.len else 0;
-
     return struct {
         pub const namespace = _namespace;
         pub const name = _name;

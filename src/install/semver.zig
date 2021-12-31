@@ -35,7 +35,7 @@ pub const String = extern struct {
         str: *const String,
         buf: string,
 
-        pub fn format(formatter: Formatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             const str = formatter.str;
             try writer.writeAll(str.slice(formatter.buf));
         }
@@ -500,7 +500,7 @@ pub const Version = extern struct {
         version: Version,
         input: string,
 
-        pub fn format(formatter: Formatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             const self = formatter.version;
             try std.fmt.format(writer, "{d}.{d}.{d}", .{ self.major, self.minor, self.patch });
 
@@ -523,11 +523,11 @@ pub const Version = extern struct {
     }
 
     pub const HashContext = struct {
-        pub fn hash(this: @This(), lhs: Version) u32 {
+        pub fn hash(_: @This(), lhs: Version) u32 {
             return @truncate(u32, lhs.hash());
         }
 
-        pub fn eql(this: @This(), lhs: Version, rhs: Version) bool {
+        pub fn eql(_: @This(), lhs: Version, rhs: Version) bool {
             return lhs.eql(rhs);
         }
     };
@@ -628,7 +628,7 @@ pub const Version = extern struct {
 
         var multi_tag_warn = false;
         // TODO: support multiple tags
-        pub fn parse(allocator: std.mem.Allocator, sliced_string: SlicedString) TagResult {
+        pub fn parse(_: std.mem.Allocator, sliced_string: SlicedString) TagResult {
             var input = sliced_string.slice;
             var build_count: u32 = 0;
             var pre_count: u32 = 0;
@@ -657,9 +657,6 @@ pub const Version = extern struct {
             // Common case: no allocation is necessary.
             var state = State.none;
             var start: usize = 0;
-
-            var tag_i: usize = 0;
-            var had_content = false;
 
             var i: usize = 0;
 
@@ -918,7 +915,7 @@ pub const Version = extern struct {
 
         std.debug.assert(input[0] != '.');
 
-        for (input) |char, i| {
+        for (input) |char| {
             switch (char) {
                 'X', 'x', '*' => return 0,
                 '0'...'9' => {
@@ -1448,9 +1445,6 @@ pub const Query = struct {
         var count: u8 = 0;
         var skip_round = false;
         var is_or = false;
-        var enable_hyphen = false;
-
-        var last_non_whitespace: usize = 0;
 
         while (i < input.len) {
             skip_round = false;

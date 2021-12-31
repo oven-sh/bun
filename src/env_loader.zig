@@ -54,7 +54,7 @@ pub const Lexer = struct {
     }
 
     pub fn eatNestedValue(
-        lexer: *Lexer,
+        _: *Lexer,
         comptime ContextType: type,
         ctx: *ContextType,
         comptime Writer: type,
@@ -163,7 +163,6 @@ pub const Lexer = struct {
                 },
 
                 '#' => {
-                    const end = lexer.current;
                     lexer.step();
                     lexer.eatComment();
 
@@ -441,7 +440,6 @@ pub const Loader = struct {
                 std.debug.assert(prefix.len > 0);
 
                 while (iter.next()) |entry| {
-                    const value = entry.value_ptr.*;
                     if (strings.startsWith(entry.key_ptr.*, prefix)) {
                         key_buf_len += entry.key_ptr.len;
                         key_count += 1;
@@ -465,8 +463,6 @@ pub const Loader = struct {
                 iter.reset();
                 key_buf = try allocator.alloc(u8, key_buf_len + key_count * "process.env.".len);
                 const js_ast = @import("./js_ast.zig");
-
-                const EString = js_ast.E.String;
 
                 var e_strings = try allocator.alloc(js_ast.E.String, e_strings_to_allocate * 2);
                 errdefer allocator.free(e_strings);
@@ -615,7 +611,6 @@ pub const Loader = struct {
     ) !void {
         const start = std.time.nanoTimestamp();
         var dir_handle: std.fs.Dir = std.fs.cwd();
-        var can_auto_close = false;
 
         if (dir.hasComptimeQuery(".env.local")) {
             try this.loadEnvFile(fs, dir_handle, ".env.local", false);
@@ -744,8 +739,6 @@ pub const Parser = struct {
         var lexer = Lexer.init(source);
         var fbs = std.io.fixedBufferStream(&temporary_nested_value_buffer);
         var writer = fbs.writer();
-        var temp_variable_i: u16 = 0;
-        var total_alloc_len: usize = 0;
 
         while (lexer.next(is_process)) |variable| {
             if (variable.has_nested_value) {

@@ -194,7 +194,7 @@ pub const Result = struct {
         }
     };
 
-    pub fn hash(this: *const Result, root_dir: string, loader: options.Loader) u32 {
+    pub fn hash(this: *const Result, _: string, _: options.Loader) u32 {
         const module = this.path_pair.primary.text;
         const node_module_root = std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str;
         if (strings.lastIndexOf(module, node_module_root)) |end_| {
@@ -248,7 +248,6 @@ pub const DebugLogs = struct {
     }
 
     pub fn deinit(d: DebugLogs) void {
-        var allocator = d.notes.allocator;
         d.notes.deinit();
         // d.indent.deinit();
     }
@@ -1022,7 +1021,7 @@ pub const Resolver = struct {
                     return result;
                 }
 
-                if (res.package_json) |pkg| {
+                if (res.package_json != null) {
                     var base_dir_info = res.dir_info orelse (r.readDirInfo(res.path_pair.primary.name.dir) catch null) orelse return result;
                     if (base_dir_info.getEnclosingBrowserScope()) |browser_scope| {
                         if (r.checkBrowserMap(
@@ -1367,11 +1366,11 @@ pub const Resolver = struct {
     }
 
     // TODO:
-    pub fn prettyPath(r: *ThisResolver, path: Path) string {
+    pub fn prettyPath(_: *ThisResolver, path: Path) string {
         return path.text;
     }
 
-    pub fn binDirs(r: *const ThisResolver) []const string {
+    pub fn binDirs(_: *const ThisResolver) []const string {
         if (!bin_folders_loaded) return &[_]string{};
         return bin_folders.constSlice();
     }
@@ -1710,7 +1709,6 @@ pub const Resolver = struct {
                 if (strings.eql(key, path)) {
                     for (entry.value_ptr.*) |original_path| {
                         var absolute_original_path = original_path;
-                        var was_alloc = false;
 
                         if (!std.fs.path.isAbsolute(absolute_original_path)) {
                             const parts = [_]string{ abs_base_url, original_path };
@@ -2356,7 +2354,7 @@ pub const Resolver = struct {
 
         // Try the path with extensions
         std.mem.copy(u8, &load_as_file_buf, path);
-        for (r.extension_order) |ext| {
+        for (extension_order) |ext| {
             var buffer = load_as_file_buf[0 .. path.len + ext.len];
             std.mem.copy(u8, buffer[path.len..buffer.len], ext);
             const file_name = buffer[path.len - base.len .. buffer.len];
@@ -2502,7 +2500,7 @@ pub const Resolver = struct {
         if (r.care_about_bin_folder) {
             append_bin_dir: {
                 if (info.has_node_modules) {
-                    if (entries.getComptimeQuery("node_modules")) |q| {
+                    if (entries.hasComptimeQuery("node_modules")) {
                         if (!bin_folders_loaded) {
                             bin_folders_loaded = true;
                             bin_folders = BinFolderArray.init(0) catch unreachable;

@@ -273,9 +273,7 @@ pub const Define = struct {
         try define.dots.ensureTotalCapacity(64);
 
         var val = js_ast.Expr.Data{ .e_undefined = .{} };
-        var ident_define = IdentifierDefine{
-            .value = val,
-        };
+
         var value_define = DefineData{ .value = val, .valueless = true };
         // Step 1. Load the globals into the hash tables
         for (GlobalDefinesKey) |global| {

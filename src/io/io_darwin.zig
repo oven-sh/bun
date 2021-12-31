@@ -58,8 +58,8 @@ pub fn run_for_ns(self: *IO, nanoseconds: u63) !void {
     const on_timeout = struct {
         fn callback(
             timed_out_ptr: *bool,
-            _completion: *Completion,
-            _result: TimeoutError!void,
+            _: *Completion,
+            _: TimeoutError!void,
         ) void {
             timed_out_ptr.* = true;
         }
@@ -140,7 +140,7 @@ fn flush(self: *IO, wait_for_completions: bool) !void {
     }
 }
 
-fn flush_io(self: *IO, events: []os.Kevent, io_pending_top: *?*Completion) usize {
+fn flush_io(_: *IO, events: []os.Kevent, io_pending_top: *?*Completion) usize {
     for (events) |*kevent, flushed| {
         const completion = io_pending_top.* orelse return flushed;
         io_pending_top.* = completion.next;
@@ -390,7 +390,7 @@ pub fn event(
             .fd = fd,
         },
         struct {
-            fn doOperation(op: anytype) void {}
+            fn doOperation(_: anytype) void {}
         },
     );
 }

@@ -95,7 +95,7 @@ pub const FileSystem = struct {
         return tmpdir_handle.?;
     }
 
-    pub fn tmpname(fs: *const FileSystem, extname: string, buf: []u8, hash: u64) ![*:0]u8 {
+    pub fn tmpname(_: *const FileSystem, extname: string, buf: []u8, hash: u64) ![*:0]u8 {
         // PRNG was...not so random
         return try std.fmt.bufPrintZ(buf, "{x}{s}", .{ @truncate(u64, @intCast(u128, hash) * @intCast(u128, std.time.nanoTimestamp())), extname });
     }
@@ -257,12 +257,6 @@ pub const FileSystem = struct {
 
         pub fn deinit(d: *DirEntry) void {
             d.data.allocator.free(d.dir);
-
-            var iter = d.data.iterator();
-            while (iter.next()) |file_entry| {
-                // EntryStore.instance.at(file_entry.value).?.deinit(d.data.allocator);
-            }
-
             d.data.deinit();
         }
 
@@ -403,15 +397,15 @@ pub const FileSystem = struct {
     // pub fn readDir(fs: *FileSystemEntry, path: string) ?[]string {
 
     // }
-    pub fn normalize(f: *@This(), str: string) string {
+    pub fn normalize(_: *@This(), str: string) string {
         return @call(.{ .modifier = .always_inline }, path_handler.normalizeString, .{ str, true, .auto });
     }
 
-    pub fn normalizeBuf(f: *@This(), buf: []u8, str: string) string {
+    pub fn normalizeBuf(_: *@This(), buf: []u8, str: string) string {
         return @call(.{ .modifier = .always_inline }, path_handler.normalizeStringBuf, .{ str, buf, false, .auto, false });
     }
 
-    pub fn join(f: *@This(), parts: anytype) string {
+    pub fn join(_: *@This(), parts: anytype) string {
         return @call(.{ .modifier = .always_inline }, path_handler.joinStringBuf, .{
             &join_buf,
             parts,
@@ -419,7 +413,7 @@ pub const FileSystem = struct {
         });
     }
 
-    pub fn joinBuf(f: *@This(), parts: anytype, buf: []u8) string {
+    pub fn joinBuf(_: *@This(), parts: anytype, buf: []u8) string {
         return @call(.{ .modifier = .always_inline }, path_handler.joinStringBuf, .{
             buf,
             parts,
@@ -427,7 +421,7 @@ pub const FileSystem = struct {
         });
     }
 
-    pub fn relative(f: *@This(), from: string, to: string) string {
+    pub fn relative(_: *@This(), from: string, to: string) string {
         return @call(.{ .modifier = .always_inline }, path_handler.relative, .{
             from,
             to,
@@ -511,7 +505,7 @@ pub const FileSystem = struct {
 
         pub var tmpdir_path: []const u8 = undefined;
         pub var tmpdir_path_set = false;
-        pub fn openTmpDir(fs: *const RealFS) !std.fs.Dir {
+        pub fn openTmpDir(_: *const RealFS) !std.fs.Dir {
             if (!tmpdir_path_set) {
                 tmpdir_path = std.os.getenvZ("BUN_TMPDIR") orelse std.os.getenvZ("TMPDIR") orelse PLATFORM_TMP_DIR;
                 tmpdir_path_set = true;
@@ -578,7 +572,7 @@ pub const FileSystem = struct {
         inline fn _fetchCacheFile(fs: *RealFS, basename: string) !std.fs.File {
             var parts = [_]string{ "node_modules", ".cache", basename };
             var path = fs.parent_fs.join(&parts);
-            return std.fs.cwd().openFile(path, .{ .write = true, .read = true, .lock = .Shared }) catch |err| {
+            return std.fs.cwd().openFile(path, .{ .write = true, .read = true, .lock = .Shared }) catch {
                 path = fs.parent_fs.join(parts[0..2]);
                 try std.fs.cwd().makePath(path);
 
@@ -679,7 +673,7 @@ pub const FileSystem = struct {
                 );
             }
 
-            pub fn generate(fs: *RealFS, path: string, file: std.fs.File) anyerror!ModKey {
+            pub fn generate(_: *RealFS, _: string, file: std.fs.File) anyerror!ModKey {
                 const stat = try file.stat();
 
                 const seconds = @divTrunc(stat.mtime, @as(@TypeOf(stat.mtime), std.time.ns_per_s));
@@ -736,7 +730,7 @@ pub const FileSystem = struct {
             pub const Map = allocators.BSSMap(EntriesOption, Preallocate.Counts.dir_entry, false, 128, true);
         };
 
-        pub fn openDir(fs: *RealFS, unsafe_dir_string: string) std.fs.File.OpenError!std.fs.Dir {
+        pub fn openDir(_: *RealFS, unsafe_dir_string: string) std.fs.File.OpenError!std.fs.Dir {
             return try std.fs.openDirAbsolute(unsafe_dir_string, std.fs.Dir.OpenDirOptions{ .iterate = true, .access_sub_paths = true, .no_follow = false });
         }
 
@@ -837,7 +831,7 @@ pub const FileSystem = struct {
             return &temp_entries_option;
         }
 
-        fn readFileError(fs: *RealFS, path: string, err: anyerror) void {}
+        fn readFileError(_: *RealFS, _: string, _: anyerror) void {}
 
         pub fn readFileWithHandle(
             fs: *RealFS,

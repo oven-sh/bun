@@ -93,7 +93,7 @@ const UnsupportedPackages = struct {
 };
 
 var bun_path: ?[:0]const u8 = null;
-fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, PATH: string, npm_client: ?NPMClient) void {
+fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string, npm_client: ?NPMClient) void {
     const task = std.mem.trim(u8, task_, " \n\r\t");
     if (task.len == 0) return;
 
@@ -246,7 +246,7 @@ const CreateOptions = struct {
 const BUN_CREATE_DIR = ".bun-create";
 var home_dir_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 pub const CreateCommand = struct {
-    pub fn exec(ctx: Command.Context, positionals_: []const []const u8) !void {
+    pub fn exec(ctx: Command.Context, _: []const []const u8) !void {
         Global.configureAllocator(.{ .long_running = false });
         try NetworkThread.init();
 
@@ -373,7 +373,6 @@ pub const CreateCommand = struct {
             break :brk positionals[1];
         };
 
-        var filename_writer = filesystem.dirname_store;
         const destination = try filesystem.dirname_store.append([]const u8, resolve_path.joinAbs(filesystem.top_level_dir, .auto, dirname));
 
         var progress = std.Progress{};
@@ -535,7 +534,7 @@ pub const CreateCommand = struct {
                     }
                 }
 
-                const extracted_file_count = try Archive.extractToDisk(
+                _ = try Archive.extractToDisk(
                     tarball_buf_list.items,
                     destination,
                     &archive_context,
@@ -587,8 +586,6 @@ pub const CreateCommand = struct {
                 const Walker = @import("../walker_skippable.zig");
                 var walker_ = try Walker.walk(template_dir, ctx.allocator, skip_files, skip_dirs);
                 defer walker_.deinit();
-
-                var count: usize = 0;
 
                 const FileCopier = struct {
                     pub fn copy(
@@ -720,7 +717,7 @@ pub const CreateCommand = struct {
 
                 var source = logger.Source.initPathString("package.json", package_json_contents.list.items);
 
-                var package_json_expr = ParseJSON(&source, ctx.log, ctx.allocator) catch |err| {
+                var package_json_expr = ParseJSON(&source, ctx.log, ctx.allocator) catch {
                     package_json_file = null;
                     break :process_package_json;
                 };
@@ -843,7 +840,6 @@ pub const CreateCommand = struct {
                                 is_nextjs = true;
                                 needs.bun_bun_for_nextjs = true;
 
-                                const original_version = next_q.expr.data.e_string.utf8;
                                 next_q.expr.data.e_string.utf8 = constStrToU8(target_nextjs_version);
                             }
 
@@ -1494,7 +1490,7 @@ pub const CreateCommand = struct {
         }
 
         if (npm_client_ != null and preinstall_tasks.items.len > 0) {
-            for (preinstall_tasks.items) |task, i| {
+            for (preinstall_tasks.items) |task| {
                 execTask(ctx.allocator, task, destination, PATH, npm_client_.?);
             }
         }
@@ -1504,7 +1500,6 @@ pub const CreateCommand = struct {
             const install_args = &[_]string{ npm_client.bin, "install" };
             Output.flush();
             Output.pretty("\n<r><d>$ <b><cyan>{s}<r><d> install", .{@tagName(npm_client.tag)});
-            var writer = Output.writer();
 
             if (install_args.len > 2) {
                 for (install_args[2..]) |arg| {
@@ -1530,13 +1525,13 @@ pub const CreateCommand = struct {
             }
             defer process.deinit();
 
-            var term = try process.spawnAndWait();
+            _ = try process.spawnAndWait();
 
             _ = process.kill() catch undefined;
         }
 
         if (postinstall_tasks.items.len > 0) {
-            for (postinstall_tasks.items) |task, i| {
+            for (postinstall_tasks.items) |task| {
                 execTask(ctx.allocator, task, destination, PATH, npm_client_);
             }
         }
@@ -1696,7 +1691,7 @@ pub const Example = struct {
 
     var app_name_buf: [512]u8 = undefined;
     pub fn print(examples: []const Example, default_app_name: ?string) void {
-        for (examples) |example, i| {
+        for (examples) |example| {
             var app_name = default_app_name orelse (std.fmt.bufPrint(&app_name_buf, "./{s}-app", .{example.name[0..std.math.min(example.name.len, 492)]}) catch unreachable);
 
             if (example.description.len > 0) {
@@ -1907,7 +1902,6 @@ pub const Example = struct {
         progress.name = "Fetching package.json";
         refresher.refresh();
 
-        const example_start = std.time.nanoTimestamp();
         var url_buf: [1024]u8 = undefined;
         var mutable = try ctx.allocator.create(MutableString);
         mutable.* = try MutableString.init(ctx.allocator, 2048);
@@ -2080,10 +2074,7 @@ pub const Example = struct {
 
         if (examples_object.asProperty("examples")) |q| {
             if (q.expr.data == .e_object) {
-                var count: usize = 0;
-                for (q.expr.data.e_object.properties) |property| {
-                    count += 1;
-                }
+                const count = q.expr.data.e_object.properties.len;
 
                 var list = try ctx.allocator.alloc(Example, count);
                 for (q.expr.data.e_object.properties) |property, i| {
@@ -2238,7 +2229,7 @@ const GitHandler = struct {
                 process.stderr_behavior = .Inherit;
                 defer process.deinit();
 
-                var term = try process.spawnAndWait();
+                _ = try process.spawnAndWait();
                 _ = process.kill() catch undefined;
             }
 

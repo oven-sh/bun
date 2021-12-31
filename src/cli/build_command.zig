@@ -57,8 +57,7 @@ pub const BuildCommand = struct {
             },
         }
         var did_write = false;
-        var stderr_writer = Output.errorWriter();
-        var buffered_writer = Output.errorWriter();
+
         defer Output.flush();
         var writer = Output.writer();
         var err_writer = writer;
@@ -69,18 +68,17 @@ pub const BuildCommand = struct {
                 const root_dir = result.root_dir orelse unreachable;
                 if (std.os.getrlimit(.NOFILE)) |limit| {
                     open_file_limit = limit.cur;
-                } else |err| {}
+                } else |_| {}
 
                 var all_paths = try ctx.allocator.alloc([]const u8, result.output_files.len);
                 var max_path_len: usize = 0;
-                var max_padded_size: usize = 0;
                 for (result.output_files) |f, i| {
                     all_paths[i] = f.input.text;
                 }
 
                 var from_path = resolve_path.longestCommonPath(all_paths);
 
-                for (result.output_files) |f, i| {
+                for (result.output_files) |f| {
                     max_path_len = std.math.max(
                         std.math.max(from_path.len, f.input.text.len) + 2 - from_path.len,
                         max_path_len,
@@ -92,13 +90,13 @@ pub const BuildCommand = struct {
                 // On posix, file handles automatically close on process exit by the OS
                 // Closing files shows up in profiling.
                 // So don't do that unless we actually need to.
-                const do_we_need_to_close = !FeatureFlags.store_file_descriptors or (@intCast(usize, root_dir.fd) + open_file_limit) < result.output_files.len;
+                // const do_we_need_to_close = !FeatureFlags.store_file_descriptors or (@intCast(usize, root_dir.fd) + open_file_limit) < result.output_files.len;
 
                 var filepath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
                 filepath_buf[0] = '.';
                 filepath_buf[1] = '/';
 
-                for (result.output_files) |f, i| {
+                for (result.output_files) |f| {
                     var rel_path: []const u8 = undefined;
                     switch (f.value) {
                         // easy mode: write the buffer
@@ -121,9 +119,7 @@ pub const BuildCommand = struct {
                             try f.copyTo(result.outbase, constStrToU8(rel_path), root_dir.fd);
                         },
                         .noop => {},
-                        .pending => |value| {
-                            unreachable;
-                        },
+                        .pending => unreachable,
                     }
 
                     // Print summary

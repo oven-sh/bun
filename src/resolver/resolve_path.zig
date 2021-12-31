@@ -29,8 +29,6 @@ pub fn longestCommonPathGeneric(strings: []const []const u8, comptime separator:
         min_length = @minimum(str.len, min_length);
     }
 
-    var last_common_separator_is_at_end = false;
-
     var index: usize = 0;
     var last_common_separator: usize = 0;
 
@@ -597,8 +595,6 @@ pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [
         return std.fs.path.join(&alloc.allocator, _parts) catch unreachable;
     }
 
-    var parts = _parts;
-
     var written: usize = 0;
     const platform = comptime _platform.resolve();
 
@@ -666,7 +662,6 @@ inline fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: typ
     var cwd = _cwd;
     var out: usize = 0;
     // When parts[0] is absolute, we treat that as, effectively, the cwd
-    var ignore_cwd = cwd.len == 0;
 
     // Windows leading separators can be a lot of things...
     // So we need to do this instead of just checking the first char.
@@ -702,7 +697,7 @@ inline fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: typ
     std.debug.assert(out < buf.len);
     std.mem.copy(u8, buf[0..out], start);
 
-    for (parts) |part, i| {
+    for (parts) |part| {
         // Do not normalize here
         // It will break stuff!
         var normalized_part = part;
@@ -957,15 +952,6 @@ test "relative" {
     var t = tester.Tester.t(default_allocator);
     defer t.report(@src());
 
-    const strs = [_][]const u8{
-        "/var/boo/foo/",
-        "/var/boo/foo/baz/",
-        "/var/boo/foo/beep/",
-        "/var/boo/foo/beep/bleep",
-        "/bar/baz",
-        "/bar/not-related",
-        "/bar/file.txt",
-    };
     _ = t.expect("var/foo", try relativeAlloc(default_allocator, "/", "/var/foo/"), @src());
     _ = t.expect("index.js", try relativeAlloc(default_allocator, "/app/public/", "/app/public/index.js"), @src());
     _ = t.expect("..", try relativeAlloc(default_allocator, "/app/public/index.js", "/app/public/"), @src());

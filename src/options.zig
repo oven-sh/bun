@@ -37,13 +37,26 @@ pub const WriteDestination = enum {
     // eventaully: wasm
 };
 
-pub fn validatePath(log: *logger.Log, fs: *Fs.FileSystem.Implementation, cwd: string, rel_path: string, allocator: std.mem.Allocator, path_kind: string) string {
+pub fn validatePath(
+    log: *logger.Log,
+    _: *Fs.FileSystem.Implementation,
+    cwd: string,
+    rel_path: string,
+    allocator: std.mem.Allocator,
+    _: string,
+) string {
     if (rel_path.len == 0) {
         return "";
     }
     const paths = [_]string{ cwd, rel_path };
+    // TODO: switch to getFdPath()-based implemetation
     const out = std.fs.path.resolve(allocator, &paths) catch |err| {
-        Global.invariant(false, "<r><red>{s}<r> resolving external: <b>\"{s}\"<r>", .{ @errorName(err), rel_path });
+        log.addErrorFmt(
+            null,
+            logger.Loc.Empty,
+            "<r><red>{s}<r> resolving external: <b>\"{s}\"<r>",
+            .{ @errorName(err), rel_path },
+        ) catch unreachable;
         return "";
     };
 
@@ -1022,8 +1035,6 @@ pub const BundleOptions = struct {
         return this.loaders.get(ext) orelse .file;
     }
 
-    pub fn asJavascriptBundleConfig(this: *const BundleOptions) Api.JavascriptBundleConfig {}
-
     pub fn isFrontendFrameworkEnabled(this: *const BundleOptions) bool {
         const framework: *const Framework = &(this.framework orelse return false);
         return framework.resolved and (framework.client.isEnabled() or framework.fallback.isEnabled());
@@ -1299,7 +1310,7 @@ pub const BundleOptions = struct {
                                 break :choice "";
                             },
                         }
-                    } else |err| {
+                    } else |_| {
                         break :choice "";
                     }
                 };
@@ -1314,7 +1325,6 @@ pub const BundleOptions = struct {
                 var _dirs = [_]string{chosen_dir};
                 opts.routes.static_dir = try fs.absAlloc(allocator, &_dirs);
                 opts.routes.static_dir_handle = std.fs.openDirAbsolute(opts.routes.static_dir, .{ .iterate = true }) catch |err| brk: {
-                    var did_warn = false;
                     switch (err) {
                         error.FileNotFound => {
                             opts.routes.static_dir_enabled = false;
@@ -1519,7 +1529,7 @@ pub const OutputFile = struct {
 
     pub fn initPending(loader: Loader, pending: resolver.Result) OutputFile {
         return .{
-            .loader = .file,
+            .loader = loader,
             .input = pending.pathConst().?.*,
             .size = 0,
             .value = .{ .pending = pending },
@@ -1550,26 +1560,7 @@ pub const OutputFile = struct {
         };
     }
 
-    pub fn moveTo(file: *const OutputFile, base_path: string, rel_path: []u8, dir: FileDescriptorType) !void {
-        var move = file.value.move;
-        if (move.dir > 0) {
-            std.os.renameat(move.dir, move.pathname, dir, rel_path) catch |err| {
-                const dir_ = std.fs.Dir{ .fd = dir };
-                if (std.fs.path.dirname(rel_path)) |dirname| {
-                    dir_.makePath(dirname) catch {};
-                    std.os.renameat(move.dir, move.pathname, dir, rel_path) catch {};
-                    return;
-                }
-            };
-            return;
-        }
-
-        try std.os.rename(move.pathname, resolve_path.joinAbs(base_path, .auto, rel_path));
-    }
-
-    pub fn copyTo(file: *const OutputFile, base_path: string, rel_path: []u8, dir: FileDescriptorType) !void {
-        var copy = file.value.copy;
-
+    pub fn copyTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
         var dir_obj = std.fs.Dir{ .fd = dir };
         const file_out = (try dir_obj.createFile(rel_path, .{}));
 
@@ -1754,7 +1745,7 @@ pub const Env = struct {
     pub fn getOrPutValue(this: *Env, key: string, value: string) !void {
         var slice = this.defaults.slice();
         const keys = slice.items(.key);
-        for (keys) |_key, i| {
+        for (keys) |_key| {
             if (strings.eql(key, _key)) {
                 return;
             }

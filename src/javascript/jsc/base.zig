@@ -34,7 +34,7 @@ fn ObjectPtrType(comptime Type: type) type {
 
 pub const To = struct {
     pub const JS = struct {
-        pub inline fn str(ref: anytype, val: anytype) js.JSStringRef {
+        pub inline fn str(_: anytype, val: anytype) js.JSStringRef {
             return js.JSStringCreateWithUTF8CString(val[0.. :0]);
         }
 
@@ -148,8 +148,6 @@ pub const To = struct {
                     arguments: [*c]const js.JSValueRef,
                     exception: js.ExceptionRef,
                 ) callconv(.C) js.JSValueRef {
-                    var object_ptr: *anyopaque = undefined;
-
                     if (comptime ZigContextType == anyopaque) {
                         return ctxfn(
                             js.JSObjectGetPrivate(function) or js.jsObjectGetPrivate(thisObject),
@@ -623,7 +621,6 @@ pub const d = struct {
                         }
 
                         const qualifier = if (!klass.default_export) "export " else "";
-                        var stmt: string = qualifier;
 
                         if (klass.interface) {
                             buf = buf ++ printIndented("export interface {s} {{\n", .{klass.name}, indent);
@@ -634,7 +631,7 @@ pub const d = struct {
                         indent += indent_level;
 
                         var did_print_constructor = false;
-                        for (klass.functions) |func, i| {
+                        for (klass.functions) |func| {
                             if (!strings.eqlComptime(func.name, "constructor")) continue;
                             did_print_constructor = true;
                             buf = buf ++ printInstanceFunction(
@@ -797,7 +794,7 @@ pub fn NewClass(
             pub fn rfn(
                 ctx: js.JSContextRef,
                 function: js.JSObjectRef,
-                thisObject: js.JSObjectRef,
+                _: js.JSObjectRef,
                 argumentCount: usize,
                 arguments: [*c]const js.JSValueRef,
                 exception: js.ExceptionRef,
@@ -806,17 +803,17 @@ pub fn NewClass(
             }
         };
 
-        pub fn throwInvalidConstructorError(ctx: js.JSContextRef, obj: js.JSObjectRef, c: usize, a: [*c]const js.JSValueRef, exception: js.ExceptionRef) callconv(.C) js.JSObjectRef {
+        pub fn throwInvalidConstructorError(ctx: js.JSContextRef, _: js.JSObjectRef, _: usize, _: [*c]const js.JSValueRef, exception: js.ExceptionRef) callconv(.C) js.JSObjectRef {
             JSError(getAllocator(ctx), "" ++ name ++ " is not a constructor", .{}, ctx, exception);
             return null;
         }
 
         pub fn throwInvalidFunctionError(
             ctx: js.JSContextRef,
-            function: js.JSObjectRef,
-            thisObject: js.JSObjectRef,
-            argumentCount: usize,
-            arguments: [*c]const js.JSValueRef,
+            _: js.JSObjectRef,
+            _: js.JSObjectRef,
+            _: usize,
+            _: [*c]const js.JSValueRef,
             exception: js.ExceptionRef,
         ) callconv(.C) js.JSValueRef {
             JSError(getAllocator(ctx), "" ++ name ++ " is not a function", .{}, ctx, exception);
@@ -839,22 +836,7 @@ pub fn NewClass(
             return &ref;
         }
 
-        pub fn RawGetter(comptime ReceiverType: type) type {
-            const ClassGetter = struct {
-                pub fn getter(
-                    ctx: js.JSContextRef,
-                    obj: js.JSObjectRef,
-                    prop: js.JSStringRef,
-                    exception: js.ExceptionRef,
-                ) callconv(.C) js.JSValueRef {
-                    return js.JSObjectMake(ctx, get().*, null);
-                }
-            };
-
-            return ClassGetter;
-        }
-
-        pub fn customHasInstance(ctx: js.JSContextRef, obj: js.JSObjectRef, value: js.JSValueRef, exception: js.ExceptionRef) callconv(.C) bool {
+        pub fn customHasInstance(ctx: js.JSContextRef, _: js.JSObjectRef, value: js.JSValueRef, _: js.ExceptionRef) callconv(.C) bool {
             return js.JSValueIsObjectOfClass(ctx, value, get().*);
         }
 
@@ -889,10 +871,10 @@ pub fn NewClass(
                 pub const ts = typescriptDeclaration();
 
                 pub fn rfn(
-                    receiver: *ReceiverType,
+                    _: *ReceiverType,
                     ctx: js.JSContextRef,
-                    obj: js.JSObjectRef,
-                    exception: js.ExceptionRef,
+                    _: js.JSObjectRef,
+                    _: js.ExceptionRef,
                 ) js.JSValueRef {
                     return js.JSObjectMake(ctx, get().*, null);
                 }
@@ -910,7 +892,7 @@ pub fn NewClass(
             var pointer = GetJSPrivateData(ZigType, obj) orelse return js.JSValueMakeUndefined(ctx);
 
             if (singleton) {
-                inline for (function_names) |propname, i| {
+                inline for (function_names) |_, i| {
                     if (js.JSStringIsEqual(prop, function_name_refs[i])) {
                         return instance_functions[i];
                     }
@@ -944,7 +926,6 @@ pub fn NewClass(
                 ) callconv(.C) js.JSValueRef {
                     var this: ObjectPtrType(ZigType) = if (comptime ZigType == void) void{} else GetJSPrivateData(ZigType, obj) orelse return js.JSValueMakeUndefined(ctx);
 
-                    var exc: js.JSValueRef = null;
                     const Field = @TypeOf(@field(
                         properties,
                         property_names[id],
@@ -979,13 +960,6 @@ pub fn NewClass(
                                 js.ExceptionRef,
                             ) js.JSValueRef;
 
-                            const WithoutPropFn = fn (
-                                ObjectPtrType(ZigType),
-                                js.JSContextRef,
-                                js.JSObjectRef,
-                                js.ExceptionRef,
-                            ) js.JSValueRef;
-
                             if (Func.Fn.args.len == @typeInfo(WithPropFn).Fn.args.len) {
                                 return func(
                                     this,
@@ -1015,8 +989,6 @@ pub fn NewClass(
                     exception: js.ExceptionRef,
                 ) callconv(.C) bool {
                     var this = GetJSPrivateData(ZigType, obj) orelse return js.JSValueMakeUndefined(ctx);
-
-                    var exc: js.ExceptionRef = null;
 
                     switch (comptime @typeInfo(@TypeOf(@field(
                         properties,
@@ -1054,7 +1026,7 @@ pub fn NewClass(
 
                 if (static_functions.len > 0) {
                     var count: usize = 0;
-                    inline for (function_name_literals) |function_name, i| {
+                    inline for (function_name_literals) |_, i| {
                         const func = @field(staticFunctions, function_names[i]);
                         const Func = @TypeOf(func);
 
@@ -1076,7 +1048,7 @@ pub fn NewClass(
                     class.functions = std.mem.span(&funcs);
                     var func_i: usize = 0;
 
-                    inline for (function_name_literals) |function_name, i| {
+                    inline for (function_name_literals) |_, i| {
                         const func = @field(staticFunctions, function_names[i]);
                         const Func = @TypeOf(func);
 
@@ -1118,7 +1090,7 @@ pub fn NewClass(
                     var count: usize = 0;
                     var class_count: usize = 0;
 
-                    inline for (property_names) |property_name, i| {
+                    inline for (property_names) |_, i| {
                         const field = @field(properties, property_names[i]);
                         const Field = @TypeOf(field);
 
@@ -1223,7 +1195,7 @@ pub fn NewClass(
 
                 if (static_functions.len > 0) {
                     var count: usize = 0;
-                    inline for (function_name_literals) |function_name, i| {
+                    inline for (function_name_literals) |_, i| {
                         const func = @field(staticFunctions, function_names[i]);
                         const Func = @TypeOf(func);
 
@@ -1245,7 +1217,7 @@ pub fn NewClass(
                     class.functions = std.mem.span(&funcs);
                     var func_i: usize = 0;
 
-                    inline for (function_name_literals) |function_name, i| {
+                    inline for (function_name_literals) |_, i| {
                         const func = @field(staticFunctions, function_names[i]);
                         const Func = @TypeOf(func);
 
@@ -1289,7 +1261,7 @@ pub fn NewClass(
 
                 if (property_names.len > 0) {
                     var count: usize = 0;
-                    inline for (property_names) |property_name, i| {
+                    inline for (property_names) |_, i| {
                         const field = @field(properties, property_names[i]);
 
                         if (hasTypeScript(@TypeOf(field))) {
@@ -1353,7 +1325,7 @@ pub fn NewClass(
             if (static_functions.len > 0) {
                 std.mem.set(js.JSStaticFunction, &static_functions, std.mem.zeroes(js.JSStaticFunction));
                 var count: usize = 0;
-                inline for (function_name_literals) |function_name, i| {
+                inline for (function_name_literals) |_, i| {
                     switch (comptime @typeInfo(@TypeOf(@field(staticFunctions, function_names[i])))) {
                         .Struct => {
                             if (comptime strings.eqlComptime(function_names[i], "constructor")) {
@@ -1503,7 +1475,7 @@ pub fn JSError(
     }
 }
 
-pub fn getAllocator(ctx: js.JSContextRef) std.mem.Allocator {
+pub fn getAllocator(_: js.JSContextRef) std.mem.Allocator {
     return default_allocator;
 }
 

@@ -247,7 +247,7 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
         }
 
         // we free manually all at once
-        pub fn free(ctx: *anyopaque, ptr: *anyopaque) callconv(.C) void {}
+        pub fn free(_: *anyopaque, _: *anyopaque) callconv(.C) void {}
 
         pub fn deinit(this: *ZlibReader) void {
             var allocator = this.allocator;
@@ -430,7 +430,7 @@ pub const ZlibReaderArrayList = struct {
     }
 
     // we free manually all at once
-    pub fn free(ctx: *anyopaque, ptr: *anyopaque) callconv(.C) void {}
+    pub fn free(_: *anyopaque, _: *anyopaque) callconv(.C) void {}
 
     pub fn deinit(this: *ZlibReader) void {
         var allocator = this.allocator;

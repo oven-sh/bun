@@ -290,7 +290,7 @@ pub const Bundler = struct {
         if (this.env.map.get("CI") orelse
             this.env.map.get("TDDIUM") orelse
             this.env.map.get("JENKINS_URL") orelse
-            this.env.map.get("bamboo.buildKey")) |IS_CI|
+            this.env.map.get("bamboo.buildKey")) |_|
         {
             Analytics.is_ci = true;
         }
@@ -449,12 +449,12 @@ pub const Bundler = struct {
         }
     }
 
-    pub fn resetStore(bundler: *ThisBundler) void {
+    pub fn resetStore(_: *const ThisBundler) void {
         js_ast.Expr.Data.Store.reset();
         js_ast.Stmt.Data.Store.reset();
     }
 
-    pub noinline fn dumpEnvironmentVariables(bundler: *ThisBundler) void {
+    pub noinline fn dumpEnvironmentVariables(bundler: *const ThisBundler) void {
         @setCold(true);
         const opts = std.json.StringifyOptions{
             .whitespace = std.json.StringifyOptions.Whitespace{
@@ -462,7 +462,6 @@ pub const Bundler = struct {
             },
         };
         Output.flush();
-        var writer = Output.writer();
         std.json.stringify(bundler.env.map.*, opts, Output.writer()) catch unreachable;
         Output.flush();
     }
@@ -486,7 +485,7 @@ pub const Bundler = struct {
                 if (generator.bundler.env.map.get("GOMAXPROCS")) |max_procs| {
                     if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count| {
                         this.cpu_count = std.math.min(this.cpu_count, cpu_count);
-                    } else |err| {}
+                    } else |_| {}
                 }
 
                 if (this.cpu_count <= 1) return;
@@ -776,7 +775,7 @@ pub const Bundler = struct {
             destination: [*:0]const u8,
             estimated_input_lines_of_code: *usize,
         ) !?Api.JavascriptBundleContainer {
-            var tmpdir: std.fs.Dir = try bundler.fs.fs.openTmpDir();
+            _ = try bundler.fs.fs.openTmpDir();
             var tmpname_buf: [64]u8 = undefined;
             bundler.resetStore();
             try bundler.configureDefines();
@@ -824,8 +823,6 @@ pub const Bundler = struct {
             var this = generator;
             // Always inline the runtime into the bundle
             try generator.appendBytes(&initial_header);
-            // If we try to be smart and rely on .written, it turns out incorrect
-            const code_start_pos = try this.tmpfile.getPos();
             if (Environment.isDebug) {
                 try generator.appendBytes(runtime.Runtime.sourceContent());
                 try generator.appendBytes("\n\n");
@@ -840,7 +837,7 @@ pub const Bundler = struct {
             Analytics.Features.bun_bun = true;
 
             always_bundled: {
-                const root_package_json_resolved: _resolver.Result = bundler.resolver.resolve(bundler.fs.top_level_dir, "./package.json", .stmt) catch |err| {
+                const root_package_json_resolved: _resolver.Result = bundler.resolver.resolve(bundler.fs.top_level_dir, "./package.json", .stmt) catch {
                     generator.log.addWarning(null, logger.Loc.Empty, "Please run `bun bun` from a directory containing a package.json.") catch unreachable;
                     break :always_bundled;
                 };
@@ -912,11 +909,6 @@ pub const Bundler = struct {
 
             Analytics.Features.fast_refresh = this.bundler.options.jsx.supports_fast_refresh;
 
-            const resolve_queue_estimate = bundler.options.entry_points.len +
-                @intCast(usize, @boolToInt(framework_config != null)) +
-                @intCast(usize, @boolToInt(include_refresh_runtime)) +
-                @intCast(usize, @boolToInt(bundler.options.jsx.parse));
-
             if (bundler.router) |router| {
                 defer this.bundler.resetStore();
                 Analytics.Features.filesystem_router = true;
@@ -938,7 +930,7 @@ pub const Bundler = struct {
                 try this.enqueueItem(resolved);
             }
 
-            if (framework_config) |conf| {
+            if (framework_config != null) {
                 defer this.bundler.resetStore();
 
                 try this.bundler.configureFramework(true);
@@ -993,7 +985,7 @@ pub const Bundler = struct {
                     .require,
                 )) |new_jsx_runtime| {
                     try this.enqueueItem(new_jsx_runtime);
-                } else |err| {}
+                } else |_| {}
             }
 
             var refresh_runtime_module_id: u32 = 0;
@@ -1009,7 +1001,7 @@ pub const Bundler = struct {
                     if (BundledModuleData.get(this, &refresh_runtime)) |mod| {
                         refresh_runtime_module_id = mod.module_id;
                     }
-                } else |err| {}
+                } else |_| {}
             }
 
             this.bundler.resetStore();
@@ -1417,7 +1409,7 @@ pub const Bundler = struct {
             return code_offset;
         }
 
-        fn processImportRecord(this: *GenerateNodeModuleBundle, import_record: ImportRecord) !void {}
+        fn processImportRecord(_: *GenerateNodeModuleBundle, _: ImportRecord) !void {}
         var json_ast_symbols = [_]js_ast.Symbol{
             js_ast.Symbol{ .original_name = "$$m" },
             js_ast.Symbol{ .original_name = "exports" },
@@ -1507,7 +1499,6 @@ pub const Bundler = struct {
 
             // If we're in a node_module, build that almost normally
             if (is_from_node_modules) {
-                var written: usize = undefined;
                 var code_offset: u32 = 0;
 
                 const module_data = BundledModuleData.getForceBundleForMain(this, &resolve) orelse {
@@ -1618,7 +1609,7 @@ pub const Bundler = struct {
 
                             approximate_newline_count = ast.approximate_newline_count;
                             if (ast.import_records.len > 0) {
-                                for (ast.import_records) |*import_record, record_id| {
+                                for (ast.import_records) |*import_record| {
 
                                     // Don't resolve the runtime
                                     if (import_record.is_internal or import_record.is_unused) {
@@ -1750,7 +1741,7 @@ pub const Bundler = struct {
                                     }
                                 };
 
-                                var stmt = js_ast.Stmt.alloc(worker.allocator, js_ast.S.ExportDefault, js_ast.S.ExportDefault{
+                                var stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
                                     .value = js_ast.StmtOrExpr{ .expr = expr },
                                     .default_name = js_ast.LocRef{ .loc = logger.Loc{}, .ref = Ref{} },
                                 }, logger.Loc{ .start = 0 });
@@ -2011,7 +2002,7 @@ pub const Bundler = struct {
                         worker.data.estimated_input_lines_of_code += scan_pass_result.approximate_newline_count;
 
                         {
-                            for (scan_pass_result.import_records.items) |*import_record, i| {
+                            for (scan_pass_result.import_records.items) |*import_record| {
                                 if (import_record.is_internal or import_record.is_unused) {
                                     continue;
                                 }
@@ -2603,7 +2594,6 @@ pub const Bundler = struct {
                 bundler.elapsed += bundler.timer.read();
             }
         }
-        var result: ParseResult = undefined;
         var input_fd: ?StoredFileDescriptorType = null;
 
         const source: logger.Source = brk: {
@@ -2698,7 +2688,7 @@ pub const Bundler = struct {
             },
             .json => {
                 var expr = json_parser.ParseJSON(&source, bundler.log, allocator) catch return null;
-                var stmt = js_ast.Stmt.alloc(allocator, js_ast.S.ExportDefault, js_ast.S.ExportDefault{
+                var stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
                     .value = js_ast.StmtOrExpr{ .expr = expr },
                     .default_name = js_ast.LocRef{ .loc = logger.Loc{}, .ref = Ref{} },
                 }, logger.Loc{ .start = 0 });
@@ -2731,15 +2721,13 @@ pub const Bundler = struct {
     pub fn buildFile(
         bundler: *ThisBundler,
         log: *logger.Log,
-        allocator: std.mem.Allocator,
+        _: std.mem.Allocator,
         path_to_use_: string,
-        _extension: string,
+        _: string,
         comptime client_entry_point_enabled: bool,
-        comptime serve_as_package_path: bool,
+        comptime _: bool,
     ) !ServeResult {
-        var extension = _extension;
         var old_log = bundler.log;
-        var old_allocator = bundler.allocator;
 
         bundler.setLog(log);
         defer bundler.setLog(old_log);
@@ -2841,9 +2829,8 @@ pub const Bundler = struct {
         var paths = [_]string{_entry};
         var entry = bundler.fs.abs(&paths);
 
-        std.fs.accessAbsolute(entry, .{}) catch |err| {
+        std.fs.accessAbsolute(entry, .{}) catch
             return _entry;
-        };
 
         entry = bundler.fs.relativeTo(entry);
 
@@ -3139,11 +3126,6 @@ pub const Transformer = struct {
 
         var jsx = if (opts.jsx) |_jsx| try options.JSX.Pragma.fromApi(_jsx, allocator) else options.JSX.Pragma{};
 
-        var output_i: usize = 0;
-        var chosen_alloc: std.mem.Allocator = allocator;
-        var arena: std.heap.ArenaAllocator = undefined;
-        const use_arenas = opts.entry_points.len > 8;
-
         var ulimit: usize = Fs.FileSystem.RealFS.adjustUlimit() catch unreachable;
         var care_about_closing_files = !(FeatureFlags.store_file_descriptors and opts.entry_points.len * 2 < ulimit);
 
@@ -3201,7 +3183,7 @@ pub const Transformer = struct {
     pub fn processEntryPoint(
         transformer: *Transformer,
         entry_point: string,
-        i: usize,
+        _: usize,
         output_files: *std.ArrayList(options.OutputFile),
         _output_dir: ?std.fs.Dir,
         comptime write_destination_type: options.WriteDestination,
@@ -3214,7 +3196,6 @@ pub const Transformer = struct {
         var log = transformer.log;
 
         var _log = logger.Log.init(allocator);
-        var __log = &_log;
         const absolutePath = resolve_path.joinAbs(transformer.cwd, .auto, entry_point);
 
         const file = try std.fs.openFileAbsolute(absolutePath, std.fs.File.OpenFlags{ .read = true });
@@ -3331,7 +3312,7 @@ pub const Transformer = struct {
         switch (loader) {
             .json => {
                 var expr = try json_parser.ParseJSON(source, log, allocator);
-                var stmt = js_ast.Stmt.alloc(allocator, js_ast.S.ExportDefault{
+                var stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault{
                     .value = js_ast.StmtOrExpr{ .expr = expr },
                     .default_name = js_ast.LocRef{ .loc = logger.Loc{}, .ref = Ref{} },
                 }, logger.Loc{ .start = 0 });
@@ -3402,7 +3383,6 @@ pub const FallbackEntryPoint = struct {
         // We go through the steps of printing the code -- only to then parse/transpile it because
         // we want it to go through the linker and the rest of the transpilation process
 
-        const dir_to_use: string = bundler.fs.top_level_dir;
         const disable_css_imports = bundler.options.framework.?.client_css_in_js != .auto_onimportcss;
 
         var code: string = undefined;
@@ -3539,7 +3519,7 @@ pub const ServerEntryPoint = struct {
     pub fn generate(
         entry: *ServerEntryPoint,
         comptime BundlerType: type,
-        bundler: *BundlerType,
+        _: *BundlerType,
         original_path: Fs.PathName,
         name: string,
     ) !void {
@@ -3617,7 +3597,7 @@ pub const MacroEntryPoint = struct {
 
     pub fn generate(
         entry: *MacroEntryPoint,
-        bundler: *Bundler,
+        _: *Bundler,
         import_path: Fs.PathName,
         function_name: string,
         macro_id: i32,

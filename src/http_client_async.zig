@@ -47,7 +47,7 @@ fn writeRequest(
     _ = writer.write(request.path);
     _ = writer.write(" HTTP/1.1\r\n");
 
-    for (request.headers) |header, i| {
+    for (request.headers) |header| {
         _ = writer.write(header.name);
         _ = writer.write(": ");
         _ = writer.write(header.value);
@@ -713,7 +713,7 @@ const AsyncSocket = struct {
         }
     }
 
-    fn on_send(msg: *AsyncMessage, completion: *Completion, result: SendError!usize) void {
+    fn on_send(msg: *AsyncMessage, _: *Completion, result: SendError!usize) void {
         var this = @ptrCast(*AsyncSocket, @alignCast(@alignOf(*AsyncSocket), msg.context));
         const written = result catch |err| {
             this.err = err;
@@ -770,7 +770,6 @@ const AsyncSocket = struct {
     pub const SendError = AsyncIO.SendError;
 
     pub fn deinit(this: *AsyncSocket) void {
-        var node = this.head;
         this.head.release();
     }
 
@@ -817,7 +816,7 @@ const AsyncSocket = struct {
     pub const RecvError = AsyncIO.RecvError;
 
     const Reader = struct {
-        pub fn on_read(ctx: *AsyncSocket, completion: *AsyncIO.Completion, result: RecvError!usize) void {
+        pub fn on_read(ctx: *AsyncSocket, _: *AsyncIO.Completion, result: RecvError!usize) void {
             const len = result catch |err| {
                 ctx.err = err;
                 resume ctx.read_frame;
@@ -994,7 +993,6 @@ const AsyncSocket = struct {
 
         pub fn read(this: *SSL, buf_: []u8, offset: u64) !u64 {
             var buf = buf_[offset..];
-            var bio_ = this.read_bio;
             var len: usize = 0;
             while (buf.len > 0) {
                 len = this.ssl.read(buf) catch |err| {
@@ -1053,8 +1051,6 @@ const AsyncSocket = struct {
         }
 
         pub inline fn init(allocator: std.mem.Allocator, io: *AsyncIO) !SSL {
-            var head = AsyncMessage.get(allocator);
-
             return SSL{
                 .socket = try AsyncSocket.init(io, 0, allocator),
             };
@@ -1356,7 +1352,7 @@ pub const AsyncBIO = struct {
             }
             unreachable;
         }
-        pub fn ctrl(this_bio: *boring.BIO, cmd: c_int, larg: c_long, pargs: ?*anyopaque) callconv(.C) c_long {
+        pub fn ctrl(_: *boring.BIO, cmd: c_int, _: c_long, _: ?*anyopaque) callconv(.C) c_long {
             return switch (cmd) {
                 boring.BIO_CTRL_PENDING, boring.BIO_CTRL_WPENDING => 0,
                 else => 1,
@@ -1541,14 +1537,12 @@ pub fn sendHTTP(this: *HTTPClient, body: []const u8, body_out_str: *MutableStrin
     if (this.progress_node == null) {
         return this.processResponse(
             false,
-            false,
             @TypeOf(socket),
             socket,
             body_out_str,
         );
     } else {
         return this.processResponse(
-            false,
             true,
             @TypeOf(socket),
             socket,
@@ -1680,13 +1674,13 @@ const ZlibPool = struct {
             AsyncIO.triggerEvent(this.event_fd, &this.completion) catch {};
         }
 
-        pub fn finished(this: *DecompressionTask, completion: *Completion, _: void) void {
+        pub fn finished(this: *DecompressionTask, _: *Completion, _: void) void {
             resume this.frame;
         }
     };
 };
 
-pub fn processResponse(this: *HTTPClient, comptime is_https: bool, comptime report_progress: bool, comptime Client: type, client: Client, body_out_str: *MutableString) !picohttp.Response {
+pub fn processResponse(this: *HTTPClient, comptime report_progress: bool, comptime Client: type, client: Client, body_out_str: *MutableString) !picohttp.Response {
     defer if (this.verbose) Output.flush();
     var response: picohttp.Response = undefined;
     var request_message = AsyncMessage.get(this.allocator);
@@ -2029,14 +2023,12 @@ pub fn sendHTTPS(this: *HTTPClient, body_str: []const u8, body_out_str: *Mutable
     if (this.progress_node == null) {
         return this.processResponse(
             false,
-            false,
             @TypeOf(socket),
             socket,
             body_out_str,
         );
     } else {
         return this.processResponse(
-            false,
             true,
             @TypeOf(socket),
             socket,

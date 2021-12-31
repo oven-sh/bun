@@ -4,6 +4,7 @@ pub const Task = ThreadPool.Task;
 const std = @import("std");
 const AsyncIO = @import("io");
 const Output = @import("../global.zig").Output;
+const IdentityContext = @import("../identity_context.zig").IdentityContext;
 
 const NetworkThread = @This();
 
@@ -42,17 +43,7 @@ const CachedAddressList = struct {
     }
 };
 
-const IdentityContext = struct {
-    pub fn eql(this: @This(), a: u64, b: u64) bool {
-        return a == b;
-    }
-
-    pub fn hash(this: @This(), a: u64) u64 {
-        return a;
-    }
-};
-
-const AddressListCache = std.HashMap(u64, CachedAddressList, IdentityContext, 80);
+const AddressListCache = std.HashMap(u64, CachedAddressList, IdentityContext(u64), 80);
 var address_list_cached: AddressListCache = undefined;
 pub fn getAddressList(allocator: std.mem.Allocator, name: []const u8, port: u16) !*CachedAddressList {
     const hash = CachedAddressList.hash(name, port);

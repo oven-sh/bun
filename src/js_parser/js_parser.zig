@@ -414,7 +414,7 @@ pub const ImportScanner = struct {
                         }
 
                         // Remove the star import if it's unused
-                        if (st.star_name_loc) |star_name| {
+                        if (st.star_name_loc) |_| {
                             found_imports = true;
                             const symbol = p.symbols.items[st.namespace_ref.inner_index];
 
@@ -3308,7 +3308,7 @@ pub fn NewParser(
 
                 return Stmt.init(std.meta.Child(Type), t, loc);
             } else {
-                return Stmt.alloc(p.allocator, Type, t, loc);
+                return Stmt.alloc(Type, t, loc);
             }
         }
 
@@ -10054,6 +10054,7 @@ pub fn NewParser(
                     // Special-case the weird "new.target" expression here
                     if (p.lexer.token == .t_dot) {
                         try p.lexer.next();
+
                         if (p.lexer.token != .t_identifier or !strings.eqlComptime(p.lexer.raw(), "target")) {
                             try p.lexer.unexpected();
                             return error.SyntaxError;
@@ -14717,6 +14718,7 @@ pub fn NewParser(
                 for (part.stmts) |_, i| {
                     switch (part.stmts[i].data) {
                         .s_import => {
+                            var also_unused = true;
                             imports_list[imports_list_i] = part.stmts[i];
                             part.stmts[i] = Stmt.empty();
                             part.stmts[i].loc = imports_list[imports_list_i].loc;
@@ -15045,11 +15047,7 @@ pub fn NewParser(
                 if (is_react_fast_refresh_enabled) {
                     new_call_args[2] = p.e(E.Identifier{ .ref = p.jsx_refresh_runtime.ref }, logger.Loc.Empty);
                 }
-                var exports_dot = p.e(E.Dot{
-                    .target = hmr_module_ident,
-                    .name = ExportsStringName,
-                    .name_loc = logger.Loc.Empty,
-                }, logger.Loc.Empty);
+
                 var hmr_module_class_ident = p.e(E.Identifier{ .ref = p.runtime_imports.__HMRClient.?.ref }, logger.Loc.Empty);
                 var toplevel_stmts_i: u8 = 0;
                 // HMRClient.activate(true)

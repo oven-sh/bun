@@ -183,18 +183,6 @@ pub const NodeModuleBundle = struct {
         );
     }
 
-    pub fn findModuleInPackageByPathWithoutPackageName(
-        this: *const NodeModuleBundle,
-        package: *const Api.JavascriptBundledPackage,
-        query: ModuleQuery,
-    ) ?Api.JavascriptBundledModule {
-        // const ModuleSearcher = struct {
-        //     ctx: *const NodeModuleBundle,
-        //     query: ModuleQuery,
-        // };
-        // std.sort.binarySearch(comptime T: type, key: T, items: []const T, context: anytype, comptime compareFn: fn(context:@TypeOf(context), lhs:T, rhs:T)math.Order)
-    }
-
     pub fn findModuleInPackage(
         this: *const NodeModuleBundle,
         package: *const Api.JavascriptBundledPackage,
@@ -241,7 +229,6 @@ pub const NodeModuleBundle = struct {
                 // Comapre the module name
                 const lhs_name = context.moduleName(&lhs);
                 const rhs_name = context.moduleName(&rhs);
-                const VoidType = void;
 
                 const traversal_length = std.math.min(lhs_name.len, rhs_name.len);
 
@@ -331,9 +318,8 @@ pub const NodeModuleBundle = struct {
     }
 
     pub fn printSummary(this: *const NodeModuleBundle) void {
-        const last = std.math.max(this.bundle.packages.len, 1) - 1;
         const indent = comptime "   ";
-        for (this.bundle.packages) |pkg, i| {
+        for (this.bundle.packages) |pkg| {
             const modules = this.bundle.modules[pkg.modules_offset .. pkg.modules_offset + pkg.modules_length];
 
             Output.prettyln(
@@ -372,7 +358,7 @@ pub const NodeModuleBundle = struct {
         Output.prettyln(indent ++ "<b>{d:6} packages", .{this.bundle.packages.len});
     }
 
-    pub inline fn codeStartOffset(this: *const NodeModuleBundle) u32 {
+    pub inline fn codeStartOffset(_: *const NodeModuleBundle) u32 {
         return @intCast(u32, jsbundle_prefix.len);
     }
 
@@ -380,7 +366,7 @@ pub const NodeModuleBundle = struct {
         comptime StreamType: type,
         input: StreamType,
         comptime DestinationStreamType: type,
-        output: DestinationStreamType,
+        _: DestinationStreamType,
         allocator: std.mem.Allocator,
     ) !void {
         const this = try loadBundle(allocator, input);

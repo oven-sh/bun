@@ -90,7 +90,7 @@ pub fn parseParam(line: []const u8) !Param(Help) {
         break :blk short_name;
     } else null;
 
-    const long_name = if (mem.startsWith(u8, param_str, "--")) blk: {
+    _ = if (mem.startsWith(u8, param_str, "--")) blk: {
         if (param_str[param_str.len - 1] == ',')
             return error.TrailingComma;
 

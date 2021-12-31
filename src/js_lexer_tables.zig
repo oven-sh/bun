@@ -377,8 +377,6 @@ pub const tokenToString = brk: {
 
     var tokenEnums = TokenEnumType.initUndefined();
 
-    var eof = "end of file";
-
     tokenEnums.set(T.t_end_of_file, &TEndOfFile);
     tokenEnums.set(T.t_syntax_error, &TSyntaxError);
     tokenEnums.set(T.t_hashbang, &THashbang);

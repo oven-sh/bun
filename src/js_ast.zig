@@ -3635,6 +3635,93 @@ pub const Scope = struct {
         }
     };
 
+    pub const SymbolMergeResult = enum {
+        forbidden,
+        replace_with_new,
+        overwrite_with_new,
+        keep_existing,
+        become_private_get_set_pair,
+        become_private_static_get_set_pair,
+    };
+    pub fn canMergeSymbols(
+        scope: *Scope,
+        existing: Symbol.Kind,
+        new: Symbol.Kind,
+        comptime is_typescript_enabled: bool,
+    ) SymbolMergeResult {
+        if (existing == .unbound) {
+            return .replace_with_new;
+        }
+
+        // In TypeScript, imports are allowed to silently collide with symbols within
+        // the module. Presumably this is because the imports may be type-only:
+        //
+        //   import {Foo} from 'bar'
+        //   class Foo {}
+        //
+        if (is_typescript_enabled and existing == .import) {
+            return .replace_with_new;
+        }
+
+        // "enum Foo {} enum Foo {}"
+        // "namespace Foo { ... } enum Foo {}"
+        if (new == .ts_enum and (existing == .ts_enum or existing == .ts_namespace)) {
+            return .replace_with_new;
+        }
+
+        // "namespace Foo { ... } namespace Foo { ... }"
+        // "function Foo() {} namespace Foo { ... }"
+        // "enum Foo {} namespace Foo { ... }"
+        if (new == .ts_namespace) {
+            switch (existing) {
+                .ts_namespace, .hoisted_function, .generator_or_async_function, .ts_enum, .class => {
+                    return .keep_existing;
+                },
+                else => {},
+            }
+        }
+
+        // "var foo; var foo;"
+        // "var foo; function foo() {}"
+        // "function foo() {} var foo;"
+        // "function *foo() {} function *foo() {}" but not "{ function *foo() {} function *foo() {} }"
+        if (Symbol.isKindHoistedOrFunction(new) and Symbol.isKindHoistedOrFunction(existing) and (scope.kind == .entry or scope.kind == .function_body or
+            (Symbol.isKindHoisted(new) and Symbol.isKindHoisted(existing))))
+        {
+            return .keep_existing;
+        }
+
+        // "get #foo() {} set #foo() {}"
+        // "set #foo() {} get #foo() {}"
+        if ((existing == .private_get and new == .private_set) or
+            (existing == .private_set and new == .private_get))
+        {
+            return .become_private_get_set_pair;
+        }
+        if ((existing == .private_static_get and new == .private_static_set) or
+            (existing == .private_static_set and new == .private_static_get))
+        {
+            return .become_private_static_get_set_pair;
+        }
+
+        // "try {} catch (e) { var e }"
+        if (existing == .catch_identifier and new == .hoisted) {
+            return .replace_with_new;
+        }
+
+        // "function() { var arguments }"
+        if (existing == .arguments and new == .hoisted) {
+            return .keep_existing;
+        }
+
+        // "function() { let arguments }"
+        if (existing == .arguments and new != .hoisted) {
+            return .overwrite_with_new;
+        }
+
+        return .forbidden;
+    }
+
     pub const Kind = enum(u8) {
         block,
         with,

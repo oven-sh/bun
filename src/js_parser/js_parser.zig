@@ -313,12 +313,12 @@ pub const ImportScanner = struct {
 
     kept_import_equals: bool = false,
     removed_import_equals: bool = false,
-    pub fn scan(comptime P: type, p: P, stmts: []Stmt, comptime convert_exports: bool) !ImportScanner {
+    pub fn scan(comptime P: type, p: P, stmts: []Stmt) !ImportScanner {
         var scanner = ImportScanner{};
         var stmts_end: usize = 0;
         const allocator = p.allocator;
 
-        for (stmts) |_stmt, _stmt_i| {
+        for (stmts) |_stmt| {
             // zls needs the hint, it seems.
             var stmt: Stmt = _stmt;
             switch (stmt.data) {
@@ -1163,7 +1163,7 @@ pub const SideEffects = enum(u2) {
     // Returns "equal, ok". If "ok" is false, then nothing is known about the two
     // values. If "ok" is true, the equality or inequality of the two values is
     // stored in "equal".
-    pub fn eql(left: Expr.Data, right: Expr.Data, p: anytype) Equality {
+    pub fn eql(left: Expr.Data, right: Expr.Data, _: anytype) Equality {
         var equality = Equality{};
         switch (left) {
             .e_null => {
@@ -1711,15 +1711,6 @@ const StrictModeFeature = enum {
     legacy_octal_literal,
     legacy_octal_escape,
     if_else_function_stmt,
-};
-
-const SymbolMergeResult = enum {
-    forbidden,
-    replace_with_new,
-    overwrite_with_new,
-    keep_existing,
-    become_private_get_set_pair,
-    become_private_static_get_set_pair,
 };
 
 const Map = _hash_map.AutoHashMapUnmanaged;
@@ -3174,7 +3165,6 @@ pub fn NewParser(
                 if (p.is_control_flow_dead) {
                     return p.e(E.Null{}, arg.loc);
                 }
-                const str = arg.data.e_string;
 
                 const import_record_index = p.addImportRecord(.dynamic, arg.loc, arg.data.e_string.string(p.allocator) catch unreachable);
                 p.import_records.items[import_record_index].handles_import_errors = (state.is_await_target and p.fn_or_arrow_data_visit.try_body_count != 0) or state.is_then_catch_target;
@@ -3198,11 +3188,11 @@ pub fn NewParser(
             }, state.loc);
         }
 
-        pub fn transposeRequireResolve(p: *P, arg: Expr, transpose_state: anytype) Expr {
+        pub fn transposeRequireResolve(_: *P, arg: Expr, _: anytype) Expr {
             return arg;
         }
 
-        pub fn transposeRequire(p: *P, arg: Expr, transpose_state: anytype) Expr {
+        pub fn transposeRequire(p: *P, arg: Expr, _: anytype) Expr {
             switch (arg.data) {
                 .e_string => |str| {
 
@@ -3285,7 +3275,7 @@ pub fn NewParser(
             pub const Hoisted = Binding.ToExpr(P, P.wrapIdentifierHoisting);
         };
 
-        pub fn s(p: *P, t: anytype, loc: logger.Loc) Stmt {
+        pub fn s(_: *P, t: anytype, loc: logger.Loc) Stmt {
             const Type = @TypeOf(t);
             // Output.print("\nStmt: {s} - {d}\n", .{ @typeName(@TypeOf(t)), loc.start });
             if (@typeInfo(Type) == .Pointer) {
@@ -3537,80 +3527,6 @@ pub fn NewParser(
                     return "property";
                 },
             }
-        }
-
-        fn canMergeSymbols(p: *P, scope: *js_ast.Scope, existing: Symbol.Kind, new: Symbol.Kind) SymbolMergeResult {
-            if (existing == .unbound) {
-                return .replace_with_new;
-            }
-
-            // In TypeScript, imports are allowed to silently collide with symbols within
-            // the module. Presumably this is because the imports may be type-only:
-            //
-            //   import {Foo} from 'bar'
-            //   class Foo {}
-            //
-            if (is_typescript_enabled and existing == .import) {
-                return .replace_with_new;
-            }
-
-            // "enum Foo {} enum Foo {}"
-            // "namespace Foo { ... } enum Foo {}"
-            if (new == .ts_enum and (existing == .ts_enum or existing == .ts_namespace)) {
-                return .replace_with_new;
-            }
-
-            // "namespace Foo { ... } namespace Foo { ... }"
-            // "function Foo() {} namespace Foo { ... }"
-            // "enum Foo {} namespace Foo { ... }"
-            if (new == .ts_namespace) {
-                switch (existing) {
-                    .ts_namespace, .hoisted_function, .generator_or_async_function, .ts_enum, .class => {
-                        return .keep_existing;
-                    },
-                    else => {},
-                }
-            }
-
-            // "var foo; var foo;"
-            // "var foo; function foo() {}"
-            // "function foo() {} var foo;"
-            // "function *foo() {} function *foo() {}" but not "{ function *foo() {} function *foo() {} }"
-            if (Symbol.isKindHoistedOrFunction(new) and Symbol.isKindHoistedOrFunction(existing) and (scope.kind == .entry or scope.kind == .function_body or
-                (Symbol.isKindHoisted(new) and Symbol.isKindHoisted(existing))))
-            {
-                return .keep_existing;
-            }
-
-            // "get #foo() {} set #foo() {}"
-            // "set #foo() {} get #foo() {}"
-            if ((existing == .private_get and new == .private_set) or
-                (existing == .private_set and new == .private_get))
-            {
-                return .become_private_get_set_pair;
-            }
-            if ((existing == .private_static_get and new == .private_static_set) or
-                (existing == .private_static_set and new == .private_static_get))
-            {
-                return .become_private_static_get_set_pair;
-            }
-
-            // "try {} catch (e) { var e }"
-            if (existing == .catch_identifier and new == .hoisted) {
-                return .replace_with_new;
-            }
-
-            // "function() { var arguments }"
-            if (existing == .arguments and new == .hoisted) {
-                return .keep_existing;
-            }
-
-            // "function() { let arguments }"
-            if (existing == .arguments and new != .hoisted) {
-                return .overwrite_with_new;
-            }
-
-            return .forbidden;
         }
 
         pub fn handleIdentifier(p: *P, loc: logger.Loc, ident: E.Identifier, _original_name: ?string, opts: IdentifierOpts) Expr {
@@ -3999,7 +3915,7 @@ pub fn NewParser(
                 }
             }
 
-            for (scope.children.items) |_item, i| {
+            for (scope.children.items) |_, i| {
                 p.hoistSymbols(scope.children.items[i]);
             }
         }
@@ -4112,7 +4028,6 @@ pub fn NewParser(
                     var is_spread = false;
                     for (ex.items) |_, i| {
                         var item = ex.items[i];
-                        var _expr = item;
                         if (item.data == .e_spread) {
                             is_spread = true;
                             item = item.data.e_spread.value;
@@ -4207,7 +4122,7 @@ pub fn NewParser(
         }
 
         fn forbidLexicalDecl(p: *P, loc: logger.Loc) !void {
-            try p.log.addRangeError(p.source, p.lexer.range(), "Cannot use a declaration in a single-statement context");
+            try p.log.addError(p.source, loc, "Cannot use a declaration in a single-statement context");
         }
 
         fn logExprErrors(p: *P, errors: *DeferredErrors) void {
@@ -5466,7 +5381,7 @@ pub fn NewParser(
                             // Handle the default export of an abstract class in TypeScript
                             if (is_typescript_enabled and is_identifier and (p.lexer.token == .t_class or opts.ts_decorators != null) and strings.eqlComptime(name, "abstract")) {
                                 switch (expr.data) {
-                                    .e_identifier => |ident| {
+                                    .e_identifier => {
                                         var stmtOpts = ParseStatementOptions{
                                             .ts_decorators = opts.ts_decorators,
                                             .is_name_optional = true,
@@ -6007,7 +5922,7 @@ pub fn NewParser(
                         }
 
                         if (isForAwait and !p.lexer.isContextualKeyword("of")) {
-                            if (init_) |init_stmt| {
+                            if (init_ != null) {
                                 try p.lexer.expectedString("\"of\"");
                             } else {
                                 try p.lexer.unexpected();
@@ -6870,7 +6785,7 @@ pub fn NewParser(
                     return p.lexer.string_literal_slice;
                 } else if (p.lexer.utf16ToStringWithValidation(p.lexer.string_literal)) |alias| {
                     return alias;
-                } else |err| {
+                } else |_| {
                     const r = p.source.rangeOfString(loc);
                     // TODO: improve error message
                     try p.log.addRangeErrorFmt(p.source, r, p.allocator, "Invalid {s} alias because it contains an unpaired Unicode surrogate (like emoji)", .{kind});
@@ -7516,7 +7431,7 @@ pub fn NewParser(
         }
 
         // TODO:
-        pub fn checkForNonBMPCodePoint(p: *P, loc: logger.Loc, name: string) void {}
+        pub fn checkForNonBMPCodePoint(_: *P, _: logger.Loc, _: string) void {}
 
         fn parseStmtsUpTo(p: *P, eend: js_lexer.T, _opts: *ParseStatementOptions) ![]Stmt {
             var opts = _opts.*;
@@ -7594,7 +7509,7 @@ pub fn NewParser(
 
                     if (needsCheck and returnWithoutSemicolonStart != -1) {
                         switch (stmt.data) {
-                            .s_expr => |exp| {
+                            .s_expr => {
                                 try p.log.addWarning(
                                     p.source,
                                     logger.Loc{ .start = returnWithoutSemicolonStart + 6 },
@@ -7631,7 +7546,6 @@ pub fn NewParser(
             var scope = p.current_scope;
             if (p.isStrictMode()) {
                 var why: string = "";
-                var notes: []logger.Data = &[_]logger.Data{};
                 var where: logger.Range = logger.Range.None;
                 switch (scope.strict_mode) {
                     .implicit_strict_mode_import => {
@@ -7663,7 +7577,7 @@ pub fn NewParser(
             return p.current_scope.strict_mode != .sloppy_mode;
         }
 
-        pub inline fn isStrictModeOutputFormat(p: *P) bool {
+        pub inline fn isStrictModeOutputFormat(_: *P) bool {
             return true;
         }
 
@@ -7745,7 +7659,7 @@ pub fn NewParser(
                 var symbol: *Symbol = &p.symbols.items[@intCast(usize, existing.ref.inner_index)];
 
                 if (comptime !is_generated) {
-                    switch (p.canMergeSymbols(scope, symbol.kind, kind)) {
+                    switch (scope.canMergeSymbols(symbol.kind, kind, is_typescript_enabled)) {
                         .forbidden => {
                             const r = js_lexer.rangeOfIdentifier(p.source, loc);
                             var notes = try p.allocator.alloc(logger.Data, 1);
@@ -7926,7 +7840,7 @@ pub fn NewParser(
                 },
 
                 .b_array => |bind| {
-                    for (bind.items) |item, i| {
+                    for (bind.items) |_, i| {
                         p.declareBinding(kind, &bind.items[i].binding, opts) catch unreachable;
                     }
                 },
@@ -8110,9 +8024,8 @@ pub fn NewParser(
 
             pub fn skipTypeScriptArrowArgsWithBacktracking(p: *P) anyerror!void {
                 try p.skipTypescriptFnArgs();
-                p.lexer.expect(.t_equals_greater_than) catch |err| {
+                p.lexer.expect(.t_equals_greater_than) catch
                     return error.Backtrack;
-                };
             }
 
             pub fn skipTypeScriptTypeArgumentsWithBacktracking(p: *P) anyerror!void {
@@ -8126,9 +8039,9 @@ pub fn NewParser(
             }
 
             pub fn skipTypeScriptArrowReturnTypeWithBacktracking(p: *P) anyerror!void {
-                p.lexer.expect(.t_colon) catch |err| {
+                p.lexer.expect(.t_colon) catch
                     return error.Backtrack;
-                };
+
                 try p.skipTypescriptReturnType();
                 // Check the token after this and backtrack if it's the wrong one
                 if (p.lexer.token != .t_equals_greater_than) {
@@ -8265,7 +8178,7 @@ pub fn NewParser(
             p.current_scope = current_scope.parent orelse p.panic("Internal error: attempted to call popScope() on the topmost scope", .{});
         }
 
-        pub fn markExprAsParenthesized(p: *P, expr: *Expr) void {
+        pub fn markExprAsParenthesized(_: *P, expr: *Expr) void {
             switch (expr.data) {
                 .e_array => |ex| {
                     ex.is_parenthesized = true;
@@ -8346,7 +8259,7 @@ pub fn NewParser(
                     // Handle index signatures
                     if (is_typescript_enabled and p.lexer.token == .t_colon and wasIdentifier and opts.is_class) {
                         switch (expr.data) {
-                            .e_identifier => |ident| {
+                            .e_identifier => {
                                 try p.lexer.next();
                                 try p.skipTypeScriptType(.lowest);
                                 try p.lexer.expect(.t_close_bracket);
@@ -8833,7 +8746,7 @@ pub fn NewParser(
             return true;
         }
 
-        pub fn parseTemplateParts(p: *P, include_raw: bool) ![]E.TemplatePart {
+        pub fn parseTemplateParts(p: *P, _: bool) ![]E.TemplatePart {
             var parts = ListManaged(E.TemplatePart).initCapacity(p.allocator, 1) catch unreachable;
             // Allow "in" inside template literals
             var oldAllowIn = p.allow_in;
@@ -8911,9 +8824,7 @@ pub fn NewParser(
             return _parseSuffix(p, left, level, errors orelse &DeferredErrors.None, flags);
         }
         pub fn _parseSuffix(p: *P, _left: Expr, level: Level, errors: *DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
-            var expr: Expr = Expr{ .loc = logger.Loc.Empty, .data = Prefill.Data.EMissing };
             var left = _left;
-            var loc = p.lexer.loc();
             var optional_chain: ?js_ast.OptionalChain = null;
             while (true) {
                 if (p.lexer.loc().start == p.after_arrow_body_loc.start) {
@@ -10068,7 +9979,6 @@ pub fn NewParser(
                             return error.SyntaxError;
                         }
 
-                        const r = logger.Range{ .loc = loc, .len = p.lexer.range().end().start - loc.start };
                         try p.lexer.next();
                         return p.e(E.NewTarget{}, loc);
                     }
@@ -10355,7 +10265,6 @@ pub fn NewParser(
                 p.es6_import_keyword = js_lexer.rangeOfIdentifier(p.source, loc);
                 try p.lexer.next();
                 if (p.lexer.isContextualKeyword("meta")) {
-                    const r = p.lexer.range();
                     try p.lexer.next();
                     p.has_import_meta = true;
                     return p.e(E.ImportMeta{}, loc);
@@ -10835,7 +10744,7 @@ pub fn NewParser(
                     // check if the imported file is marked as "sideEffects: false" before we
                     // can remove a SImport statement. Otherwise the import must be kept for
                     // its side effects.
-                    .s_import => |st| {},
+                    .s_import => {},
                     .s_class => |st| {
                         if (!p.classCanBeRemovedIfUnused(&st.class)) {
                             return false;
@@ -10904,8 +10813,6 @@ pub fn NewParser(
                 @compileError("only_scan_imports_and_do_not_visit must not run this.");
             }
 
-            var old_temp_refs = p.temp_refs_to_declare;
-            var old_temp_ref_count = p.temp_ref_count;
             p.temp_refs_to_declare.deinit(p.allocator);
             p.temp_refs_to_declare = @TypeOf(p.temp_refs_to_declare){};
             p.temp_ref_count = 0;
@@ -11021,12 +10928,12 @@ pub fn NewParser(
             // Output.print("\nVisit: {s} - {d}\n", .{ @tagName(expr.data), expr.loc.start });
             switch (expr.data) {
                 .e_null, .e_super, .e_boolean, .e_big_int, .e_reg_exp, .e_new_target, .e_undefined => {},
-                .e_string => |e_| {
+                .e_string => {
 
                     // If you're using this, you're probably not using 0-prefixed legacy octal notation
                     // if e.LegacyOctalLoc.Start > 0 {
                 },
-                .e_number => |e_| {
+                .e_number => {
 
                     // idc about legacy octal loc
                 },
@@ -11352,7 +11259,6 @@ pub fn NewParser(
                                 if (p.macro.refs.get(ref)) |import_record_id| {
                                     const name = p.symbols.items[ref.inner_index].original_name;
                                     const record = &p.import_records.items[import_record_id];
-                                    const prepend_offset = p.macro.prepend_stmts.items.len;
                                     // We must visit it to convert inline_identifiers and record usage
                                     const macro_result = (p.options.macro_context.call(
                                         record.path.text,
@@ -11423,7 +11329,7 @@ pub fn NewParser(
                     }
 
                     const is_call_target = @as(Expr.Tag, p.call_target) == .e_binary and expr.data.e_binary == p.call_target.e_binary;
-                    const is_stmt_expr = @as(Expr.Tag, p.stmt_expr_value) == .e_binary and expr.data.e_binary == p.stmt_expr_value.e_binary;
+                    // const is_stmt_expr = @as(Expr.Tag, p.stmt_expr_value) == .e_binary and expr.data.e_binary == p.stmt_expr_value.e_binary;
                     const was_anonymous_named_expr = p.isAnonymousNamedExpr(e_.right);
 
                     if (comptime jsx_transform_type == .macro) {
@@ -12098,7 +12004,6 @@ pub fn NewParser(
                         }
                     }
 
-                    var has_spread = false;
                     for (e_.items) |*item| {
                         switch (item.data) {
                             .e_missing => {},
@@ -12411,7 +12316,7 @@ pub fn NewParser(
             return decs;
         }
 
-        pub fn keepExprSymbolName(p: *P, _value: Expr, name: string) Expr {
+        pub fn keepExprSymbolName(_: *P, _value: Expr, _: string) Expr {
             return _value;
             // var start = p.expr_list.items.len;
             // p.expr_list.ensureUnusedCapacity(2) catch unreachable;
@@ -12541,7 +12446,7 @@ pub fn NewParser(
                         return true;
                     }
                 },
-                .e_import_identifier => |ex| {
+                .e_import_identifier => {
 
                     // References to an ES6 import item are always side-effect free in an
                     // ECMAScript environment.
@@ -12696,8 +12601,8 @@ pub fn NewParser(
         fn maybeRewritePropertyAccess(
             p: *P,
             loc: logger.Loc,
-            assign_target: js_ast.AssignTarget,
-            is_delete_target: bool,
+            _: js_ast.AssignTarget,
+            _: bool,
             target: js_ast.Expr,
             name: string,
             name_loc: logger.Loc,
@@ -12750,12 +12655,12 @@ pub fn NewParser(
                 // These don't contain anything to traverse
 
                 .s_debugger, .s_empty, .s_comment => {},
-                .s_type_script => |data| {
+                .s_type_script => {
 
                     // Erase TypeScript constructs from the output completely
                     return;
                 },
-                .s_directive => |data| {
+                .s_directive => {
 
                     //         	if p.isStrictMode() && s.LegacyOctalLoc.Start > 0 {
                     // 	p.markStrictModeFeature(legacyOctalEscape, p.source.RangeOfLegacyOctalEscape(s.LegacyOctalLoc), "")
@@ -14302,7 +14207,7 @@ pub fn NewParser(
             defer visited.deinit();
             defer after.deinit();
 
-            for (stmts.items) |*stmt, i| {
+            for (stmts.items) |*stmt| {
                 const list = list_getter: {
                     switch (stmt.data) {
                         .s_export_equals => {
@@ -14331,7 +14236,7 @@ pub fn NewParser(
             var visited_count = visited.items.len;
             if (p.is_control_flow_dead) {
                 var end: usize = 0;
-                for (visited.items) |item, i| {
+                for (visited.items) |item| {
                     if (!SideEffects.shouldKeepStmtInDeadControlFlow(item)) {
                         continue;
                     }
@@ -14419,7 +14324,6 @@ pub fn NewParser(
 
             // Scan over the comma-separated arguments or expressions
             while (p.lexer.token != .t_close_paren) {
-                const item_loc = p.lexer.loc();
                 const is_spread = p.lexer.token == .t_dot_dot_dot;
 
                 if (is_spread) {
@@ -14632,17 +14536,7 @@ pub fn NewParser(
                     p.import_records_for_current_part.shrinkRetainingCapacity(0);
                     p.declared_symbols.shrinkRetainingCapacity(0);
 
-                    var result = if (p.options.features.hot_module_reloading) try ImportScanner.scan(
-                        *P,
-                        p,
-                        part.stmts,
-                        true,
-                    ) else try ImportScanner.scan(
-                        *P,
-                        p,
-                        part.stmts,
-                        false,
-                    );
+                    var result = try ImportScanner.scan(*P, p, part.stmts);
                     kept_import_equals = kept_import_equals or result.kept_import_equals;
                     removed_import_equals = removed_import_equals or result.removed_import_equals;
                     part.import_record_indices = part.import_record_indices;
@@ -14693,10 +14587,8 @@ pub fn NewParser(
                 // We have to also move export from, since we will preserve those
                 var exports_from_count: u32 = 0;
 
-                var additional_stmts_because_of_exports: u32 = 0;
-
                 // Two passes. First pass just counts.
-                for (parts[parts.len - 1].stmts) |stmt, i| {
+                for (parts[parts.len - 1].stmts) |stmt| {
                     imports_count += switch (stmt.data) {
                         .s_import => @as(u32, 1),
                         else => @as(u32, 0),
@@ -14713,12 +14605,8 @@ pub fn NewParser(
 
                 var exports_list = if (exports_from_count > 0) new_stmts_list[imports_list.len + 1 ..] else &[_]Stmt{};
 
-                const name_ref = null;
                 require_function_args[0] = G.Arg{ .binding = p.b(B.Identifier{ .ref = p.module_ref }, logger.Loc.Empty) };
                 require_function_args[1] = G.Arg{ .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty) };
-                var exports_identifier: ExprNodeIndex = undefined;
-                var exports_identifier_set = false;
-                const default_name_loc_ref = LocRef{ .ref = name_ref, .loc = logger.Loc.Empty };
 
                 var imports_list_i: u32 = 0;
                 var exports_list_i: u32 = 0;
@@ -14726,173 +14614,12 @@ pub fn NewParser(
                 for (part.stmts) |_, i| {
                     switch (part.stmts[i].data) {
                         .s_import => {
-                            var also_unused = true;
                             imports_list[imports_list_i] = part.stmts[i];
                             part.stmts[i] = Stmt.empty();
                             part.stmts[i].loc = imports_list[imports_list_i].loc;
                             imports_list_i += 1;
                         },
 
-                        // .s_export_default => |s_export| {
-                        //     if (!exports_identifier_set) {
-                        //         exports_identifier = p.e(E.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty);
-                        //         exports_identifier_set = true;
-                        //     }
-
-                        //     switch (s_export.value) {
-                        //         .expr => |default_expr| {
-                        //             part.stmts[i] = Expr.assignStmt(p.e(
-                        //                 E.Dot{ .name = "default", .name_loc = part.stmts[i].loc, .target = exports_identifier },
-                        //                 part.stmts[i].loc,
-                        //             ), default_expr, allocator);
-                        //         },
-                        //         .stmt => |default_stmt| {
-                        //             switch (default_stmt.data) {
-                        //                 .s_function => |func| {
-                        //                     part.stmts[i] = Expr.assignStmt(p.e(
-                        //                         E.Dot{ .name = "default", .name_loc = part.stmts[i].loc, .target = exports_identifier },
-                        //                         part.stmts[i].loc,
-                        //                     ), p.e(
-                        //                         E.Function{ .func = func.func },
-                        //                         default_stmt.loc,
-                        //                     ), allocator);
-                        //                 },
-                        //                 .s_class => |class| {
-                        //                     part.stmts[i] = Expr.assignStmt(
-                        //                         p.e(
-                        //                             E.Dot{ .name = "default", .name_loc = part.stmts[i].loc, .target = exports_identifier },
-                        //                             part.stmts[i].loc,
-                        //                         ),
-                        //                         p.e(
-                        //                             default_stmt.data.s_class.class,
-                        //                             default_stmt.loc,
-                        //                         ),
-                        //                         allocator,
-                        //                     );
-                        //                 },
-                        //                 else => unreachable,
-                        //             }
-                        //         },
-                        //     }
-                        // },
-
-                        // .s_function => |func| {
-                        //     if (!exports_identifier_set) {
-                        //         exports_identifier = p.e(E.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty);
-                        //         exports_identifier_set = true;
-                        //     }
-
-                        //     part.stmts[i] = Expr.assignStmt(p.e(
-                        //         E.Dot{ .name = "default", .name_loc = part.stmts[i].loc, .target = exports_identifier },
-                        //         part.stmts[i].loc,
-                        //     ), default_expr, allocator);
-                        // },
-                        // .s_local => |local| {
-                        //     if (!exports_identifier_set) {
-                        //         exports_identifier = p.e(E.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty);
-                        //         exports_identifier_set = true;
-                        //     }
-
-                        //     const items = local.decls;
-
-                        //     for (items[1..]) |item| {
-                        //         assignment = Expr.joinWithComma(assignment, Expr.assign(
-                        //             p.e(E.Dot{
-                        //                 .name = item.alias,
-                        //                 .target = exports_identifier,
-                        //                 .name_loc = item.alias_loc,
-                        //             }, item.alias_loc),
-                        //             p.e(
-                        //                 E.Identifier{
-                        //                     .ref = item.name.ref.?,
-                        //                 },
-                        //                 item.name.loc,
-                        //             ),
-                        //             allocator,
-                        //         ), allocator);
-                        //     }
-
-                        //     const original_loc = part.stmts[i].loc;
-                        //     part.stmts[i] = p.s(S.SExpr{
-                        //         .value = assignment,
-                        //     }, original_loc);
-
-                        // },
-                        // .s_class => |class| {
-                        //     if (!exports_identifier_set) {
-                        //         exports_identifier = p.e(E.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty);
-                        //         exports_identifier_set = true;
-                        //     }
-
-                        //     part.stmts[i] = Expr.assignStmt(
-                        // },
-
-                        // .s_export_clause => |s_export| {
-                        //     const items = s_export.items;
-                        //     switch (items.len) {
-                        //         0 => {
-                        //             part.stmts[i] = Stmt.empty();
-                        //         },
-                        //         1 => {
-                        //             if (!exports_identifier_set) {
-                        //                 exports_identifier = p.e(E.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty);
-                        //                 exports_identifier_set = true;
-                        //             }
-
-                        //             part.stmts[i] = Expr.assignStmt(p.e(
-                        //                 E.Dot{
-                        //                     .name = items[0].alias,
-                        //                     .target = exports_identifier,
-                        //                     .name_loc = items[0].alias_loc,
-                        //                 },
-                        //                 items[0].alias_loc,
-                        //             ), p.e(
-                        //                 E.Identifier{
-                        //                     .ref = items[0].name.ref.?,
-                        //                 },
-                        //                 items[0].name.loc,
-                        //             ), allocator);
-                        //         },
-                        //         else => {
-                        //             if (!exports_identifier_set) {
-                        //                 exports_identifier = p.e(E.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty);
-                        //                 exports_identifier_set = true;
-                        //             }
-                        //             var assignment = Expr.assign(p.e(
-                        //                 E.Dot{
-                        //                     .name = items[0].alias,
-                        //                     .target = exports_identifier,
-                        //                     .name_loc = items[0].alias_loc,
-                        //                 },
-                        //                 items[0].alias_loc,
-                        //             ), p.e(E.Identifier{
-                        //                 .ref = items[0].name.ref.?,
-                        //             }, items[0].name.loc), allocator);
-
-                        //             for (items[1..]) |item| {
-                        //                 assignment = Expr.joinWithComma(assignment, Expr.assign(
-                        //                     p.e(E.Dot{
-                        //                         .name = item.alias,
-                        //                         .target = exports_identifier,
-                        //                         .name_loc = item.alias_loc,
-                        //                     }, item.alias_loc),
-                        //                     p.e(
-                        //                         E.Identifier{
-                        //                             .ref = item.name.ref.?,
-                        //                         },
-                        //                         item.name.loc,
-                        //                     ),
-                        //                     allocator,
-                        //                 ), allocator);
-                        //             }
-
-                        //             const original_loc = part.stmts[i].loc;
-                        //             part.stmts[i] = p.s(S.SExpr{
-                        //                 .value = assignment,
-                        //             }, original_loc);
-                        //         },
-                        //     }
-                        // },
                         .s_export_star, .s_export_from => {
                             exports_list[exports_list_i] = part.stmts[i];
                             part.stmts[i] = Stmt.empty();
@@ -14955,7 +14682,7 @@ pub fn NewParser(
                 // We have to also move export from, since we will preserve those
                 var exports_from_count: usize = 0;
                 // Two passes. First pass just counts.
-                for (parts[parts.len - 1].stmts) |stmt, i| {
+                for (parts[parts.len - 1].stmts) |stmt| {
                     imports_count += switch (stmt.data) {
                         .s_import => @as(usize, 1),
                         else => @as(usize, 0),
@@ -15025,7 +14752,7 @@ pub fn NewParser(
                 var export_list_i: usize = 0;
 
                 // We must always copy it into the new stmts array
-                for (part.stmts) |stmt, i| {
+                for (part.stmts) |stmt| {
                     switch (stmt.data) {
                         .s_import => {
                             imports_list[import_list_i] = stmt;
@@ -15106,7 +14833,6 @@ pub fn NewParser(
 
                 var export_clauses = try allocator.alloc(js_ast.ClauseItem, named_exports_count);
                 var named_export_i: usize = 0;
-                var decl_i: usize = 1;
                 var named_exports_iter = p.named_exports.iterator();
                 var export_properties = try allocator.alloc(G.Property, named_exports_count);
 

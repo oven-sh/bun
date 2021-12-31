@@ -33,7 +33,7 @@ pub fn NewBlockQueue(comptime Value: type, comptime block_size: comptime_int, co
         allocator: std.mem.Allocator,
         empty_queue: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(1),
         rand: std.rand.DefaultPrng = std.rand.DefaultPrng.init(100),
-
+        random: std.rand.Random = undefined,
         pub fn new(this: *BlockQueue, allocator: std.mem.Allocator) void {
             this.* = BlockQueue{
                 .allocator = allocator,
@@ -42,15 +42,14 @@ pub fn NewBlockQueue(comptime Value: type, comptime block_size: comptime_int, co
             };
             this.blocks[0] = &this.first;
             this.allocator = allocator;
+            this.random = this.rand.random();
         }
 
         pub fn get(this: *BlockQueue) ?Value {
             if (this.len.fetchMax(-1, .SeqCst) <= 0) return null;
 
-            const rand = this.rand.random();
-
             while (@atomicRmw(bool, &this.write_lock, .Xchg, true, .SeqCst)) {
-                const end = rand.uintAtMost(u8, 64);
+                const end = this.random.uintAtMost(u8, 64);
                 var i: u8 = 0;
                 while (i < end) : (i += 1) {}
                 std.atomic.spinLoopHint();
@@ -468,7 +467,7 @@ test "BunQueue: Dedupes" {
         "uniq30",
     } ++ [_]string{ "dup20", "dup21", "dup27", "dup2", "dup12", "dup15", "dup4", "dup12", "dup10", "dup7", "dup26", "dup22", "dup1", "dup23", "dup11", "dup8", "dup11", "dup29", "dup28", "dup25", "dup20", "dup2", "dup6", "dup16", "dup22", "dup13", "dup30", "dup9", "dup3", "dup17", "dup14", "dup18", "dup8", "dup3", "dup28", "dup30", "dup24", "dup18", "dup24", "dup5", "dup23", "dup10", "dup13", "dup26", "dup27", "dup29", "dup25", "dup4", "dup19", "dup15", "dup6", "dup17", "dup1", "dup16", "dup19", "dup7", "dup9", "dup21", "dup14", "dup5" };
     var prng = std.rand.DefaultPrng.init(100);
-    prng.random.shuffle(string, &greet);
+    prng.random().shuffle(string, &greet);
     var deduped = std.BufSet.init(default_allocator);
     var consumed = std.BufSet.init(default_allocator);
 
@@ -616,8 +615,8 @@ test "BunQueue: SCMP Threaded" {
         "uniq119",
         "uniq120",
     } ++ [_]string{ "dup1", "dup1", "dup10", "dup10", "dup11", "dup11", "dup12", "dup2", "dup20", "dup20", "dup21", "dup21", "dup22", "dup22", "dup23", "dup23", "dup12", "dup13", "dup13", "dup14", "dup14", "dup15", "dup15", "dup16", "dup16", "dup17", "dup17", "dup18", "dup18", "dup19", "dup19", "dup2", "dup2", "dup20", "dup20", "dup21", "dup21", "dup22", "dup22", "dup23", "dup23", "dup24", "dup24", "dup25", "dup3", "dup30", "dup30", "dup4", "dup4", "dup5", "dup5", "dup6", "dup23", "dup23", "dup12", "dup13", "dup13", "dup14", "dup14", "dup15", "dup15", "dup16", "dup16", "dup17", "dup17", "dup18", "dup18", "dup19", "dup19", "dup2", "dup2", "dup20", "dup20", "dup21", "dup21", "dup22", "dup22", "dup23", "dup23", "dup24", "dup24", "dup6", "dup7", "dup7", "dup8", "dup8", "dup9", "dup9", "dup25", "dup26", "dup26", "dup3", "dup30", "dup30", "dup4", "dup4", "dup5", "dup5", "dup6", "dup6", "dup7", "dup7", "dup8", "dup8", "dup9", "dup9", "dup27", "dup27", "dup28", "dup28", "dup29", "dup29", "dup3", "dup3", "dup30", "dup30", "dup4", "dup4", "dup5", "dup5", "dup6", "dup6", "dup7", "dup7", "dup8", "dup8", "dup9", "dup9" };
-    var prng = std.rand.DefaultPrng.init(100);
-    prng.random.shuffle(string, &greet);
+    var prng = std.rand.DefaultPrng.init(100).random();
+    prng.shuffle(string, &greet);
     var in = try default_allocator.create(std.BufSet);
     in.* = std.BufSet.init(default_allocator);
     for (greet) |i| {
@@ -690,7 +689,7 @@ test "BunQueue: MPMC Threaded" {
             var copy = val;
             @setEvalBranchQuota(99999);
             var rand = std.rand.DefaultPrng.init(100);
-            rand.random.shuffle(string, &copy);
+            rand.random().shuffle(string, &copy);
             return copy;
         }
         const three_all = shuffle(@TypeOf(@import("./test/project.zig").three), @import("./test/project.zig").three);

@@ -1004,3 +1004,11 @@ pub const unicode_replacement_str = brk: {
     _ = std.unicode.utf8Encode(unicode_replacement, &out) catch unreachable;
     break :brk out;
 };
+
+test "eqlCaseInsensitiveASCII" {
+    try std.testing.expect(eqlCaseInsensitiveASCII("abc", "ABC", true));
+    try std.testing.expect(eqlCaseInsensitiveASCII("abc", "abc", true));
+    try std.testing.expect(eqlCaseInsensitiveASCII("aBcD", "aBcD", true));
+    try std.testing.expect(!eqlCaseInsensitiveASCII("aBcD", "NOOO", true));
+    try std.testing.expect(!eqlCaseInsensitiveASCII("aBcD", "LENGTH CHECK", true));
+}

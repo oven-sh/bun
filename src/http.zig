@@ -1723,7 +1723,7 @@ pub const RequestContext = struct {
             var it = std.mem.split(u8, connection_header.value, ",");
             while (it.next()) |part| {
                 const conn = std.mem.trim(u8, part, " ");
-                if (strings.eqlCaseInsensitiveASCII(conn, "upgrade")) {
+                if (strings.eqlCaseInsensitiveASCII(conn, "upgrade", true)) {
                     return;
                 }
             }

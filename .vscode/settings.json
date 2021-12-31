@@ -6,7 +6,7 @@
   "search.exclude": {},
   "search.followSymlinks": false,
   "search.useIgnoreFiles": true,
-  "zig.buildOnSave": true,
+  "zig.buildOnSave": false,
   "[zig]": {
     "editor.defaultFormatter": "tiehuis.zig"
   },

@@ -1713,7 +1713,7 @@ pub const RequestContext = struct {
             var request: *RequestContext = &self.ctx;
             const upgrade_header = request.header("Upgrade") orelse return error.BadRequest;
 
-            if (!std.ascii.eqlIgnoreCase(upgrade_header.value, "websocket")) {
+            if (!strings.eqlComptime(upgrade_header.value, "websocket")) {
                 return error.BadRequest; // Can only upgrade to websocket
             }
 
@@ -1723,7 +1723,7 @@ pub const RequestContext = struct {
             var it = std.mem.split(u8, connection_header.value, ",");
             while (it.next()) |part| {
                 const conn = std.mem.trim(u8, part, " ");
-                if (std.ascii.eqlIgnoreCase(conn, "upgrade")) {
+                if (strings.eqlCaseInsensitiveASCII(conn, "upgrade")) {
                     return;
                 }
             }

@@ -51,6 +51,8 @@ pub const ZigException = bindings.ZigException;
 pub const ResolvedSource = bindings.ResolvedSource;
 pub const ZigStackTrace = bindings.ZigStackTrace;
 pub const ReturnableException = bindings.ReturnableException;
+pub const struct_Zig__JSMicrotaskCallback = bindings.Microtask;
+pub const bZig__JSMicrotaskCallback = struct_Zig__JSMicrotaskCallback;
 const JSClassRef = bindings.C.JSClassRef;
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
@@ -102,6 +104,8 @@ pub const JSC__JSPromise = bJSC__JSPromise;
 
 pub const JSC__SetIteratorPrototype = struct_JSC__SetIteratorPrototype;
 pub const JSC__SourceCode = bJSC__SourceCode;
+
+pub const Zig__JSMicrotaskCallback = struct_Zig__JSMicrotaskCallback;
 pub const JSC__JSCell = bJSC__JSCell;
 
 pub const JSC__BigIntPrototype = struct_JSC__BigIntPrototype;

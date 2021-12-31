@@ -1523,6 +1523,9 @@ pub const JSValue = enum(i64) {
 extern "c" fn Microtask__run(*Microtask, *JSGlobalObject) void;
 
 pub const Microtask = opaque {
+    pub const name = "Zig::JSMicrotaskCallback";
+    pub const namespace = "Zig";
+
     pub fn run(this: *Microtask, global_object: *JSGlobalObject) void {
         if (comptime is_bindgen) {
             return;

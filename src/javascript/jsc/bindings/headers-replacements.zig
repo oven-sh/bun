@@ -51,4 +51,6 @@ pub const ZigException = bindings.ZigException;
 pub const ResolvedSource = bindings.ResolvedSource;
 pub const ZigStackTrace = bindings.ZigStackTrace;
 pub const ReturnableException = bindings.ReturnableException;
+pub const struct_Zig__JSMicrotaskCallback = bindings.Microtask;
+pub const bZig__JSMicrotaskCallback = struct_Zig__JSMicrotaskCallback;
 const JSClassRef = bindings.C.JSClassRef;

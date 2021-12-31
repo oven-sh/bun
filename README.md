@@ -1123,10 +1123,10 @@ It is very similar to my own development environment.
 
 ### MacOS
 
-Install LLVM 12 and homebrew dependencies:
+Install LLVM 13 and homebrew dependencies:
 
 ```bash
-brew install llvm@12 coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config
+brew install llvm@13 coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config
 ```
 
 Bun (& the version of Zig) need LLVM 13 and Clang 13 (clang is part of LLVM). Weird build & runtime errors will happen otherwise.

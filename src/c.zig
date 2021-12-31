@@ -122,7 +122,7 @@ pub fn moveFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, dest
     defer std.os.close(out_handle);
     if (comptime Enviroment.isLinux) {
         _ = std.os.system.fallocate(out_handle, 0, 0, @intCast(i64, stat_.size));
-        _ = try std.os.sendfile(out_handle, in_handle, 0, @intCast(usize, stat_.size), &[_]std.os.iovec_const{}, &[_]std.c.iovec_const{}, 0);
+        _ = try std.os.sendfile(out_handle, in_handle, 0, @intCast(usize, stat_.size), &[_]std.os.iovec_const{}, &[_]std.os.iovec_const{}, 0);
     } else {
         if (comptime Enviroment.isMac) {
             // if this fails, it doesn't matter

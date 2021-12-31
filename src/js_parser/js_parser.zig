@@ -5783,8 +5783,16 @@ pub fn NewParser(
                     try p.lexer.next();
                     try p.lexer.expect(.t_open_paren);
                     const test_ = try p.parseExpr(.lowest);
-                    const body_loc = p.lexer.loc();
                     try p.lexer.expect(.t_close_paren);
+
+                    const body_loc = p.lexer.loc();
+                    _ = try p.pushScopeForParsePass(.block, body_loc);
+                    defer p.popScope();
+
+                    var stmtOpts = ParseStatementOptions{};
+                    const body = try p.parseStmt(&stmtOpts);
+
+                    return p.s(S.With{ .body = body, .test_ = test_ }, loc);
                 },
                 .t_switch => {
                     try p.lexer.next();

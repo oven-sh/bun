@@ -1,6 +1,15 @@
 const std = @import("std");
 const Lock = @import("./lock.zig").Lock;
-usingnamespace @import("./global.zig");
+const _global = @import("./global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 
 const Blob = @This();
 
@@ -9,10 +18,10 @@ len: usize,
 
 pub const Map = struct {
     const MapContext = struct {
-        pub fn hash(self: @This(), s: u64) u32 {
+        pub fn hash(_: @This(), s: u64) u32 {
             return @truncate(u32, s);
         }
-        pub fn eql(self: @This(), a: u64, b: u64) bool {
+        pub fn eql(_: @This(), a: u64, b: u64) bool {
             return a == b;
         }
     };
@@ -20,9 +29,9 @@ pub const Map = struct {
     const HashMap = std.ArrayHashMap(u64, Blob, MapContext, false);
     lock: Lock,
     map: HashMap,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 
-    pub fn init(allocator: *std.mem.Allocator) Map {
+    pub fn init(allocator: std.mem.Allocator) Map {
         return Map{
             .lock = Lock.init(),
             .map = HashMap.init(allocator),
@@ -53,9 +62,9 @@ pub const Map = struct {
 pub const Group = struct {
     persistent: Map,
     temporary: Map,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 
-    pub fn init(allocator: *std.mem.Allocator) !*Group {
+    pub fn init(allocator: std.mem.Allocator) !*Group {
         var group = try allocator.create(Group);
         group.* = Group{ .persistent = Map.init(allocator), .temporary = Map.init(allocator), .allocator = allocator };
         return group;

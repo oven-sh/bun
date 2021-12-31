@@ -1,7 +1,7 @@
 // This code is based on https://github.com/frmdstryr/zhp/blob/a4b5700c289c3619647206144e10fb414113a888/src/websocket.zig
 // Thank you @frmdstryr.
 const std = @import("std");
-const native_endian = std.Target.current.cpu.arch.endian();
+const native_endian = @import("builtin").target.cpu.arch.endian();
 
 const tcp = std.x.net.tcp;
 const ip = std.x.net.ip;
@@ -11,7 +11,16 @@ const IPv6 = std.x.os.IPv6;
 const Socket = std.x.os.Socket;
 const os = std.os;
 usingnamespace @import("../http.zig");
-usingnamespace @import("../global.zig");
+const _global = @import("../global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 
 pub const Opcode = enum(u4) {
     Continue = 0x0,
@@ -202,35 +211,6 @@ pub const Websocket = struct {
 
     }
 
-    pub fn writeIterator(self: *Websocket, header: WebsocketHeader, count: usize, comptime BodyIterator: type, body_iter: BodyIterator) anyerror!usize {
-        var stream = self.conn.client.writer(self.flags);
-
-        if (!dataframe.isValid()) return error.InvalidMessage;
-
-        try stream.writeIntBig(u16, @bitCast(u16, header));
-
-        // Write extended length if needed
-        const n = count;
-        switch (n) {
-            0...126 => {}, // Included in header
-            127...0xFFFF => try stream.writeIntBig(u16, @truncate(u16, n)),
-            else => try stream.writeIntBig(u64, n),
-        }
-
-        // TODO: Handle compression
-        if (dataframe.header.compressed) return error.InvalidMessage;
-
-        std.debug.assert(header.mask == false);
-
-        while (body_iter.next()) |chunk| {
-            try stream.writeAll(chunk);
-        }
-
-        // try self.io.flush();
-
-        return count;
-    }
-
     // Write a raw data frame
     pub fn writeDataFrame(self: *Websocket, dataframe: WebsocketDataFrame) anyerror!usize {
         var stream = self.conn.client.writer(self.flags);
@@ -341,7 +321,7 @@ pub const Websocket = struct {
         if (header.mask) {
             const mask = buf[0..4];
             // Decode data in place
-            for (data) |c, i| {
+            for (data) |_, i| {
                 data[i] ^= mask[i % 4];
             }
         }

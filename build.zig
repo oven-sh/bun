@@ -40,7 +40,7 @@ const color_map = std.ComptimeStringMap([]const u8, .{
     &.{ "yellow", "33m" },
 });
 
-fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: *std.mem.Allocator, target: anytype) !void {
+fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, target: anytype) !void {
     var boringssl: std.build.Pkg = .{
         .name = "boringssl",
         .path = pkgPath("src/deps/boringssl.zig"),
@@ -87,19 +87,30 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: *std.mem.Alloc
 
     var network_thread: std.build.Pkg = .{
         .name = "network_thread",
-        .path = pkgPath("src/http/network_thread.zig"),
+        .path = pkgPath("src/network_thread.zig"),
     };
-
-    thread_pool.dependencies = &.{ io, http };
+    var javascript_core: std.build.Pkg = .{
+        .name = "javascript_core",
+        .path = pkgPath("src/jsc.zig"),
+    };
+    javascript_core.dependencies = &.{ network_thread, http, strings, picohttp };
+    thread_pool.dependencies = &.{ io, http, network_thread };
+    http.dependencies = &.{
+        network_thread,
+        strings,
+        picohttp,
+        io,
+        boringssl,
+        thread_pool,
+    };
+    thread_pool.dependencies = &.{ io, http, network_thread };
 
     network_thread.dependencies = &.{
         io,
         thread_pool,
     };
-    http.dependencies = &.{ io, network_thread, strings, boringssl, picohttp };
 
     thread_pool.dependencies = &.{ io, http };
-    http.dependencies = &.{ io, network_thread, thread_pool, strings, boringssl, picohttp };
 
     step.addPackage(thread_pool);
     step.addPackage(picohttp);
@@ -109,6 +120,7 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: *std.mem.Alloc
     step.addPackage(http);
     step.addPackage(network_thread);
     step.addPackage(boringssl);
+    step.addPackage(javascript_core);
 }
 var output_dir: []const u8 = "";
 fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
@@ -154,7 +166,6 @@ pub fn build(b: *std.build.Builder) !void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     mode = b.standardReleaseOptions();
 
-    var cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     const cwd: []const u8 = b.pathFromRoot(".");
     var exe: *std.build.LibExeObjStep = undefined;
     var output_dir_buf = std.mem.zeroes([4096]u8);
@@ -168,9 +179,9 @@ pub fn build(b: *std.build.Builder) !void {
     if (std.mem.eql(u8, os_tagname, "macos")) {
         os_tagname = "darwin";
         if (arch.isAARCH64()) {
-            target.os_version_min = std.build.Target.OsVersion{ .semver = .{ .major = 11, .minor = 0, .patch = 0 } };
+            target.os_version_min = std.zig.CrossTarget.OsVersion{ .semver = .{ .major = 11, .minor = 0, .patch = 0 } };
         } else if (arch.isX86()) {
-            target.os_version_min = std.build.Target.OsVersion{ .semver = .{ .major = 10, .minor = 14, .patch = 0 } };
+            target.os_version_min = std.zig.CrossTarget.OsVersion{ .semver = .{ .major = 10, .minor = 14, .patch = 0 } };
         }
     }
 
@@ -195,67 +206,12 @@ pub fn build(b: *std.build.Builder) !void {
     const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{s}{s}", .{ bin_label, triplet });
     output_dir = b.pathFromRoot(output_dir_base);
     const bun_executable_name = if (mode == std.builtin.Mode.Debug) "bun-debug" else "bun";
-
-    if (target.getOsTag() == .wasi) {
-        exe.enable_wasmtime = true;
-        exe = b.addExecutable(bun_executable_name, "src/main_wasi.zig");
-        exe.linkage = .dynamic;
-        exe.setOutputDir(output_dir);
-    } else if (target.getCpuArch().isWasm()) {
-        // exe = b.addExecutable(
-        //     "bun",
-        //     "src/main_wasm.zig",
-        // );
-        // exe.is_linking_libc = false;
-        // exe.is_dynamic = true;
-        var lib = b.addExecutable(bun_executable_name, "src/main_wasm.zig");
-        lib.single_threaded = true;
-        // exe.want_lto = true;
-        // exe.linkLibrary(lib);
-
-        if (mode == std.builtin.Mode.Debug) {
-            // exception_handling
-            var features = target.getCpuFeatures();
-            features.addFeature(2);
-            target.updateCpuFeatures(&features);
-        } else {
-            // lib.strip = true;
-        }
-
-        lib.setOutputDir(output_dir);
-        lib.want_lto = true;
-        b.install_path = lib.getOutputSource().getPath(b);
-
-        std.debug.print("Build: ./{s}\n", .{b.install_path});
-        b.default_step.dependOn(&lib.step);
-        b.verbose_link = true;
-        lib.setTarget(target);
-        lib.setBuildMode(mode);
-
-        std.fs.deleteTreeAbsolute(std.fs.path.join(b.allocator, &.{ cwd, lib.getOutputSource().getPath(b) }) catch unreachable) catch {};
-        var install = b.getInstallStep();
-        lib.strip = false;
-        lib.install();
-
-        const run_cmd = lib.run();
-        run_cmd.step.dependOn(b.getInstallStep());
-        if (b.args) |args| {
-            run_cmd.addArgs(args);
-        }
-
-        const run_step = b.step("run", "Run the app");
-        run_step.dependOn(&run_cmd.step);
-
-        return;
-    } else {
-        exe = b.addExecutable(bun_executable_name, "src/main.zig");
-    }
+    exe = b.addExecutable(bun_executable_name, "src/main.zig");
     // exe.setLibCFile("libc.txt");
     exe.linkLibC();
     // exe.linkLibCpp();
 
     exe.setOutputDir(output_dir);
-    var cwd_dir = std.fs.cwd();
     updateRuntime() catch {};
 
     exe.setTarget(target);
@@ -266,17 +222,15 @@ pub fn build(b: *std.build.Builder) !void {
     typings_exe.setMainPkgPath(b.pathFromRoot("."));
 
     // exe.want_lto = true;
-
-    {
-        b.default_step.dependOn(&b.addLog(
-            "Build {s} v{} - v{}",
-            .{
-                triplet,
-                target.getOsVersionMin().semver,
-                target.getOsVersionMax().semver,
-            },
-        ).step);
-    }
+    defer b.default_step.dependOn(&b.addLog("Output: {s}/{s}\n", .{ output_dir, bun_executable_name }).step);
+    defer b.default_step.dependOn(&b.addLog(
+        "Build {s} v{} - v{}\n",
+        .{
+            triplet,
+            target.getOsVersionMin().semver,
+            target.getOsVersionMax().semver,
+        },
+    ).step);
 
     var obj_step = b.step("obj", "Build Bun as a .o file");
     var obj = b.addObject(bun_executable_name, exe.root_src.?.path);
@@ -453,7 +407,7 @@ pub fn linkObjectFiles(b: *std.build.Builder, obj: *std.build.LibExeObjStep, tar
     });
 
     for (dirs_to_search.slice()) |deps_path| {
-        var deps_dir = std.fs.cwd().openDir(deps_path, .{ .iterate = true }) catch |err| @panic("Failed to open dependencies directory");
+        var deps_dir = std.fs.cwd().openDir(deps_path, .{ .iterate = true }) catch @panic("Failed to open dependencies directory");
         var iterator = deps_dir.iterate();
 
         while (iterator.next() catch null) |entr| {

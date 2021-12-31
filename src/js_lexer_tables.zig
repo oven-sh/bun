@@ -1,10 +1,12 @@
-usingnamespace @import("string_types.zig");
 const std = @import("std");
 const expectString = std.testing.expectEqualStrings;
 const expect = std.testing.expect;
 const logger = @import("logger.zig");
 const unicode = std.unicode;
 const default_allocator = @import("./global.zig").default_allocator;
+const string = @import("string_types.zig").string;
+const CodePoint = @import("string_types.zig").CodePoint;
+
 pub const T = enum(u8) {
     t_end_of_file,
     t_syntax_error,
@@ -375,8 +377,6 @@ pub const tokenToString = brk: {
 
     var tokenEnums = TokenEnumType.initUndefined();
 
-    var eof = "end of file";
-
     tokenEnums.set(T.t_end_of_file, &TEndOfFile);
     tokenEnums.set(T.t_syntax_error, &TSyntaxError);
     tokenEnums.set(T.t_hashbang, &THashbang);
@@ -577,7 +577,7 @@ pub fn initJSXEntityMap() !void {
     has_loaded_jsx_map = true;
     jsxEntity = JSXEntityMap.init(default_allocator);
     // return jsxEntity;
-    jsxEntity.ensureCapacity(255) catch unreachable;
+    jsxEntity.ensureTotalCapacity(255) catch unreachable;
 
     jsxEntity.putAssumeCapacity("quot", @as(CodePoint, 0x0022));
     jsxEntity.putAssumeCapacity("amp", @as(CodePoint, 0x0026));

@@ -1,4 +1,4 @@
-usingnamespace @import("string_types.zig");
+const string = @import("string_types.zig").string;
 const Allocator = @import("std").mem.Allocator;
 const assert = @import("std").debug.assert;
 const copy = @import("std").mem.copy;
@@ -13,7 +13,7 @@ pub fn count(this: *StringBuilder, slice: string) void {
     this.cap += slice.len;
 }
 
-pub fn allocate(this: *StringBuilder, allocator: *Allocator) !void {
+pub fn allocate(this: *StringBuilder, allocator: Allocator) !void {
     var slice = try allocator.alloc(u8, this.cap);
     this.ptr = slice.ptr;
     this.len = 0;

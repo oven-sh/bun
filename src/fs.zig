@@ -1,11 +1,23 @@
 const std = @import("std");
-usingnamespace @import("global.zig");
+const _global = @import("global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const StoredFileDescriptorType = _global.StoredFileDescriptorType;
+const FileDescriptorType = _global.FileDescriptorType;
+const FeatureFlags = _global.FeatureFlags;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 const sync = @import("sync.zig");
 const Mutex = @import("./lock.zig").Lock;
 const Semaphore = sync.Semaphore;
 const Fs = @This();
 const path_handler = @import("./resolver/resolve_path.zig");
-
+const PathString = _global.PathString;
 const allocators = @import("./allocators.zig");
 const hash_map = @import("hash_map.zig");
 
@@ -64,7 +76,7 @@ pub const BytecodeCacheFetcher = struct {
 };
 
 pub const FileSystem = struct {
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     top_level_dir: string = "/",
     fs: Implementation,
 
@@ -83,7 +95,7 @@ pub const FileSystem = struct {
         return tmpdir_handle.?;
     }
 
-    pub fn tmpname(fs: *const FileSystem, extname: string, buf: []u8, hash: u64) ![*:0]u8 {
+    pub fn tmpname(_: *const FileSystem, extname: string, buf: []u8, hash: u64) ![*:0]u8 {
         // PRNG was...not so random
         return try std.fmt.bufPrintZ(buf, "{x}{s}", .{ @truncate(u64, @intCast(u128, hash) * @intCast(u128, std.time.nanoTimestamp())), extname });
     }
@@ -111,18 +123,18 @@ pub const FileSystem = struct {
     };
 
     pub fn init1(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         top_level_dir: ?string,
     ) !*FileSystem {
         return init1WithForce(allocator, top_level_dir, false);
     }
 
     pub fn init1WithForce(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         top_level_dir: ?string,
         comptime force: bool,
     ) !*FileSystem {
-        var _top_level_dir = top_level_dir orelse (if (isBrowser) "/project/" else try std.process.getCwdAlloc(allocator));
+        var _top_level_dir = top_level_dir orelse (if (Environment.isBrowser) "/project/" else try std.process.getCwdAlloc(allocator));
 
         // Ensure there's a trailing separator in the top level directory
         // This makes path resolution more reliable
@@ -226,11 +238,11 @@ pub const FileSystem = struct {
             }
         }
 
-        pub fn empty(dir: string, allocator: *std.mem.Allocator) DirEntry {
+        pub fn empty(dir: string, allocator: std.mem.Allocator) DirEntry {
             return DirEntry{ .dir = dir, .data = EntryMap.init(allocator) };
         }
 
-        pub fn init(dir: string, allocator: *std.mem.Allocator) DirEntry {
+        pub fn init(dir: string, allocator: std.mem.Allocator) DirEntry {
             if (comptime FeatureFlags.verbose_fs) {
                 Output.prettyln("\n  {s}", .{dir});
             }
@@ -245,12 +257,6 @@ pub const FileSystem = struct {
 
         pub fn deinit(d: *DirEntry) void {
             d.data.allocator.free(d.dir);
-
-            var iter = d.data.iterator();
-            while (iter.next()) |file_entry| {
-                // EntryStore.instance.at(file_entry.value).?.deinit(d.data.allocator);
-            }
-
             d.data.deinit();
         }
 
@@ -343,7 +349,7 @@ pub const FileSystem = struct {
             };
         };
 
-        pub fn deinit(e: *Entry, allocator: *std.mem.Allocator) void {
+        pub fn deinit(e: *Entry, allocator: std.mem.Allocator) void {
             e.base_.deinit(allocator);
 
             allocator.free(e.dir);
@@ -391,15 +397,15 @@ pub const FileSystem = struct {
     // pub fn readDir(fs: *FileSystemEntry, path: string) ?[]string {
 
     // }
-    pub fn normalize(f: *@This(), str: string) string {
+    pub fn normalize(_: *@This(), str: string) string {
         return @call(.{ .modifier = .always_inline }, path_handler.normalizeString, .{ str, true, .auto });
     }
 
-    pub fn normalizeBuf(f: *@This(), buf: []u8, str: string) string {
+    pub fn normalizeBuf(_: *@This(), buf: []u8, str: string) string {
         return @call(.{ .modifier = .always_inline }, path_handler.normalizeStringBuf, .{ str, buf, false, .auto, false });
     }
 
-    pub fn join(f: *@This(), parts: anytype) string {
+    pub fn join(_: *@This(), parts: anytype) string {
         return @call(.{ .modifier = .always_inline }, path_handler.joinStringBuf, .{
             &join_buf,
             parts,
@@ -407,7 +413,7 @@ pub const FileSystem = struct {
         });
     }
 
-    pub fn joinBuf(f: *@This(), parts: anytype, buf: []u8) string {
+    pub fn joinBuf(_: *@This(), parts: anytype, buf: []u8) string {
         return @call(.{ .modifier = .always_inline }, path_handler.joinStringBuf, .{
             buf,
             parts,
@@ -415,7 +421,7 @@ pub const FileSystem = struct {
         });
     }
 
-    pub fn relative(f: *@This(), from: string, to: string) string {
+    pub fn relative(_: *@This(), from: string, to: string) string {
         return @call(.{ .modifier = .always_inline }, path_handler.relative, .{
             from,
             to,
@@ -436,7 +442,7 @@ pub const FileSystem = struct {
         });
     }
 
-    pub fn absAlloc(f: *@This(), allocator: *std.mem.Allocator, parts: anytype) !string {
+    pub fn absAlloc(f: *@This(), allocator: std.mem.Allocator, parts: anytype) !string {
         const joined = path_handler.joinAbsString(
             f.top_level_dir,
             parts,
@@ -457,7 +463,7 @@ pub const FileSystem = struct {
         return path_handler.joinAbsStringBuf(f.top_level_dir, buf, parts, .auto);
     }
 
-    pub fn joinAlloc(f: *@This(), allocator: *std.mem.Allocator, parts: anytype) !string {
+    pub fn joinAlloc(f: *@This(), allocator: std.mem.Allocator, parts: anytype) !string {
         const joined = f.join(parts);
         return try allocator.dupe(u8, joined);
     }
@@ -483,7 +489,7 @@ pub const FileSystem = struct {
     pub const RealFS = struct {
         entries_mutex: Mutex = Mutex.init(),
         entries: *EntriesOption.Map,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         cwd: string,
         parent_fs: *FileSystem = undefined,
         file_limit: usize = 32,
@@ -491,7 +497,7 @@ pub const FileSystem = struct {
 
         pub var tmpdir_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
-        const PLATFORM_TMP_DIR: string = switch (std.Target.current.os.tag) {
+        const PLATFORM_TMP_DIR: string = switch (@import("builtin").target.os.tag) {
             .windows => "TMPDIR",
             .macos => "/private/tmp",
             else => "/tmp",
@@ -499,7 +505,7 @@ pub const FileSystem = struct {
 
         pub var tmpdir_path: []const u8 = undefined;
         pub var tmpdir_path_set = false;
-        pub fn openTmpDir(fs: *const RealFS) !std.fs.Dir {
+        pub fn openTmpDir(_: *const RealFS) !std.fs.Dir {
             if (!tmpdir_path_set) {
                 tmpdir_path = std.os.getenvZ("BUN_TMPDIR") orelse std.os.getenvZ("TMPDIR") orelse PLATFORM_TMP_DIR;
                 tmpdir_path_set = true;
@@ -539,9 +545,9 @@ pub const FileSystem = struct {
             pub fn create(this: *Tmpfile, rfs: *RealFS, name: [*:0]const u8) !void {
                 var tmpdir_ = try rfs.openTmpDir();
 
-                const flags = std.os.O_CREAT | std.os.O_RDWR | std.os.O_CLOEXEC;
+                const flags = std.os.O.CREAT | std.os.O.RDWR | std.os.O.CLOEXEC;
                 this.dir_fd = tmpdir_.fd;
-                this.fd = try std.os.openatZ(tmpdir_.fd, name, flags, std.os.S_IRWXO);
+                this.fd = try std.os.openatZ(tmpdir_.fd, name, flags, std.os.S.IRWXO);
             }
 
             pub fn promote(this: *Tmpfile, from_name: [*:0]const u8, destination_fd: std.os.fd_t, name: [*:0]const u8) !void {
@@ -566,7 +572,7 @@ pub const FileSystem = struct {
         inline fn _fetchCacheFile(fs: *RealFS, basename: string) !std.fs.File {
             var parts = [_]string{ "node_modules", ".cache", basename };
             var path = fs.parent_fs.join(&parts);
-            return std.fs.cwd().openFile(path, .{ .write = true, .read = true, .lock = .Shared }) catch |err| {
+            return std.fs.cwd().openFile(path, .{ .write = true, .read = true, .lock = .Shared }) catch {
                 path = fs.parent_fs.join(parts[0..2]);
                 try std.fs.cwd().makePath(path);
 
@@ -611,7 +617,7 @@ pub const FileSystem = struct {
         var _entries_option_map: *EntriesOption.Map = undefined;
         var _entries_option_map_loaded: bool = false;
         pub fn init(
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             cwd: string,
         ) RealFS {
             const file_limit = adjustUlimit() catch unreachable;
@@ -667,7 +673,7 @@ pub const FileSystem = struct {
                 );
             }
 
-            pub fn generate(fs: *RealFS, path: string, file: std.fs.File) anyerror!ModKey {
+            pub fn generate(_: *RealFS, _: string, file: std.fs.File) anyerror!ModKey {
                 const stat = try file.stat();
 
                 const seconds = @divTrunc(stat.mtime, @as(@TypeOf(stat.mtime), std.time.ns_per_s));
@@ -724,7 +730,7 @@ pub const FileSystem = struct {
             pub const Map = allocators.BSSMap(EntriesOption, Preallocate.Counts.dir_entry, false, 128, true);
         };
 
-        pub fn openDir(fs: *RealFS, unsafe_dir_string: string) std.fs.File.OpenError!std.fs.Dir {
+        pub fn openDir(_: *RealFS, unsafe_dir_string: string) std.fs.File.OpenError!std.fs.Dir {
             return try std.fs.openDirAbsolute(unsafe_dir_string, std.fs.Dir.OpenDirOptions{ .iterate = true, .access_sub_paths = true, .no_follow = false });
         }
 
@@ -825,7 +831,7 @@ pub const FileSystem = struct {
             return &temp_entries_option;
         }
 
-        fn readFileError(fs: *RealFS, path: string, err: anyerror) void {}
+        fn readFileError(_: *RealFS, _: string, _: anyerror) void {}
 
         pub fn readFileWithHandle(
             fs: *RealFS,
@@ -836,10 +842,6 @@ pub const FileSystem = struct {
             shared_buffer: *MutableString,
         ) !File {
             FileSystem.setMaxFd(file.handle);
-
-            if (comptime FeatureFlags.disable_filesystem_cache) {
-                _ = std.os.fcntl(file.handle, std.os.F_NOCACHE, 1) catch 0;
-            }
 
             // Skip the extra file.stat() call when possible
             var size = _size orelse (file.getEndPos() catch |err| {
@@ -976,7 +978,7 @@ pub const PathName = struct {
     // the code as far as avoiding symbol name collisions. These names still go
     // through the renaming logic that all other symbols go through to avoid name
     // collisions.
-    pub fn nonUniqueNameString(self: *const PathName, allocator: *std.mem.Allocator) !string {
+    pub fn nonUniqueNameString(self: *const PathName, allocator: std.mem.Allocator) !string {
         if (strings.eqlComptime(self.base, "index")) {
             if (self.dir.len > 0) {
                 return MutableString.ensureValidIdentifier(PathName.init(self.dir).base, allocator);
@@ -1073,7 +1075,7 @@ pub const Path = struct {
 
     // This duplicates but only when strictly necessary
     // This will skip allocating if it's already in FilenameStore or DirnameStore
-    pub fn dupeAlloc(this: *const Path, allocator: *std.mem.Allocator) !Fs.Path {
+    pub fn dupeAlloc(this: *const Path, allocator: std.mem.Allocator) !Fs.Path {
         if (this.text.ptr == this.pretty.ptr and this.text.len == this.text.len) {
             if (FileSystem.FilenameStore.instance.exists(this.text) or FileSystem.DirnameStore.instance.exists(this.text)) {
                 return this.*;
@@ -1149,7 +1151,7 @@ pub const Path = struct {
         return try std.json.stringify(self.text, options, writer);
     }
 
-    pub fn generateKey(p: *Path, allocator: *std.mem.Allocator) !string {
+    pub fn generateKey(p: *Path, allocator: std.mem.Allocator) !string {
         return try std.fmt.allocPrint(allocator, "{s}://{s}", .{ p.namespace, p.text });
     }
 

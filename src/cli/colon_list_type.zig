@@ -1,9 +1,18 @@
-usingnamespace @import("../global.zig");
+const _global = @import("../global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 const std = @import("std");
 
 pub fn ColonListType(comptime t: type, value_resolver: anytype) type {
     return struct {
-        pub fn init(allocator: *std.mem.Allocator, count: usize) !@This() {
+        pub fn init(allocator: std.mem.Allocator, count: usize) !@This() {
             var keys = try allocator.alloc(string, count);
             var values = try allocator.alloc(t, count);
 
@@ -27,7 +36,7 @@ pub fn ColonListType(comptime t: type, value_resolver: anytype) type {
             }
         }
 
-        pub fn resolve(allocator: *std.mem.Allocator, input: []const string) !@This() {
+        pub fn resolve(allocator: std.mem.Allocator, input: []const string) !@This() {
             var list = try init(allocator, input.len);
             try list.load(input);
             return list;

@@ -1,13 +1,35 @@
-usingnamespace @import("./bindings.zig");
+const JSC = @import("./bindings.zig");
 usingnamespace @import("./shared.zig");
 const Fs = @import("../../../fs.zig");
-const CAPI = @import("../JavascriptCore.zig");
+const CAPI = @import("../../../jsc.zig").C;
 const JS = @import("../javascript.zig");
 const JSBase = @import("../base.zig");
 const ZigURL = @import("../../../query_string_map.zig").URL;
 const Api = @import("../../../api/schema.zig").Api;
+const _global = @import("../../../global.zig");
+const std = @import("std");
+const Shimmer = @import("./shimmer.zig").Shimmer;
+const strings = @import("strings");
+const default_allocator = _global.default_allocator;
+const NewGlobalObject = JSC.NewGlobalObject;
+const JSGlobalObject = JSC.JSGlobalObject;
+const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
+const ZigString = JSC.ZigString;
+const string = _global.string;
+const JSValue = JSC.JSValue;
+const Output = _global.Output;
+const Environment = _global.Environment;
+const ScriptArguments = JSC.ScriptArguments;
+const JSPromise = JSC.JSPromise;
+const JSPromiseRejectionOperation = JSC.JSPromiseRejectionOperation;
+const Exception = JSC.Exception;
+const JSModuleLoader = JSC.JSModuleLoader;
+const JSModuleRecord = JSC.JSModuleRecord;
+const Microtask = JSC.Microtask;
+const JSPrivateDataPtr = @import("../base.zig").JSPrivateDataPtr;
+
 const Handler = struct {
-    pub export fn global_signal_handler_fn(sig: i32, info: *const std.os.siginfo_t, ctx_ptr: ?*const c_void) callconv(.C) void {
+    pub export fn global_signal_handler_fn(_: i32, _: *const std.os.siginfo_t, _: ?*const anyopaque) callconv(.C) void {
         var stdout = std.io.getStdOut();
         var stderr = std.io.getStdErr();
         var source = Output.Source.init(stdout, stderr);
@@ -28,7 +50,7 @@ const Handler = struct {
 pub const ZigGlobalObject = extern struct {
     pub const shim = Shimmer("Zig", "GlobalObject", @This());
     bytes: shim.Bytes,
-    pub const Type = *c_void;
+    pub const Type = *anyopaque;
     pub const name = "Zig::GlobalObject";
     pub const include = "\"ZigGlobalObject.h\"";
     pub const namespace = shim.namespace;
@@ -37,27 +59,27 @@ pub const ZigGlobalObject = extern struct {
     pub var sigaction: std.os.Sigaction = undefined;
     pub var sigaction_installed = false;
 
-    pub fn create(class_ref: [*]CAPI.JSClassRef, count: i32, console: *c_void) *JSGlobalObject {
+    pub fn create(class_ref: [*]CAPI.JSClassRef, count: i32, console: *anyopaque) *JSGlobalObject {
         if (!sigaction_installed) {
             sigaction_installed = true;
 
             sigaction = std.mem.zeroes(std.os.Sigaction);
             sigaction.handler = .{ .sigaction = Handler.global_signal_handler_fn };
 
-            std.os.sigaction(std.os.SIGABRT, &sigaction, null);
-            if (comptime !isDebug) {
-                std.os.sigaction(std.os.SIGTRAP, &sigaction, null);
+            std.os.sigaction(std.os.SIG.ABRT, &sigaction, null);
+            if (comptime !Environment.isDebug) {
+                std.os.sigaction(std.os.SIG.TRAP, &sigaction, null);
             }
         }
 
         return shim.cppFn("create", .{ class_ref, count, console });
     }
 
-    pub fn getModuleRegistryMap(global: *JSGlobalObject) *c_void {
+    pub fn getModuleRegistryMap(global: *JSGlobalObject) *anyopaque {
         return shim.cppFn("getModuleRegistryMap", .{global});
     }
 
-    pub fn resetModuleRegistryMap(global: *JSGlobalObject, map: *c_void) bool {
+    pub fn resetModuleRegistryMap(global: *JSGlobalObject, map: *anyopaque) bool {
         return shim.cppFn("resetModuleRegistryMap", .{ global, map });
     }
 
@@ -165,9 +187,9 @@ pub const ZigErrorType = extern struct {
     pub const namespace = shim.namespace;
 
     code: ErrorCode,
-    ptr: ?*c_void,
+    ptr: ?*anyopaque,
 
-    pub fn isPrivateData(ptr: ?*c_void) callconv(.C) bool {
+    pub fn isPrivateData(ptr: ?*anyopaque) callconv(.C) bool {
         return JSBase.JSPrivateDataPtr.isValidPtr(ptr);
     }
 
@@ -202,7 +224,7 @@ pub fn Errorable(comptime Type: type) type {
         }
 
         threadlocal var err_buf: [4096]u8 = undefined;
-        pub fn err(code: anyerror, ptr: *c_void) @This() {
+        pub fn err(code: anyerror, ptr: *anyopaque) @This() {
             return @This(){
                 .result = .{
                     .err = .{
@@ -226,14 +248,14 @@ pub const ResolvedSource = extern struct {
     source_url: ZigString,
     hash: u32,
 
-    allocator: ?*c_void,
+    allocator: ?*anyopaque,
 
     // 0 means disabled
     bytecodecache_fd: u64,
 };
 
-export fn ZigString__free(ptr: [*]const u8, len: usize, allocator_: ?*c_void) void {
-    var allocator: *std.mem.Allocator = @ptrCast(*std.mem.Allocator, @alignCast(@alignOf(*std.mem.Allocator), allocator_ orelse return));
+export fn ZigString__free(ptr: [*]const u8, len: usize, allocator_: ?*anyopaque) void {
+    var allocator: std.mem.Allocator = @ptrCast(*std.mem.Allocator, @alignCast(@alignOf(*std.mem.Allocator), allocator_ orelse return)).*;
 
     var str = ptr[0..len];
     allocator.free(str);
@@ -323,7 +345,7 @@ pub const ZigStackTrace = extern struct {
     frames_ptr: [*c]ZigStackFrame,
     frames_len: u8,
 
-    pub fn toAPI(this: *const ZigStackTrace, allocator: *std.mem.Allocator) !Api.StackTrace {
+    pub fn toAPI(this: *const ZigStackTrace, allocator: std.mem.Allocator) !Api.StackTrace {
         var stack_trace: Api.StackTrace = std.mem.zeroes(Api.StackTrace);
         {
             var source_lines_iter = this.sourceLineIterator();
@@ -414,7 +436,7 @@ pub const ZigStackFrame = extern struct {
     position: ZigStackFramePosition,
     code_type: ZigStackFrameCode,
 
-    pub fn toAPI(this: *const ZigStackFrame, allocator: *std.mem.Allocator) !Api.StackFrame {
+    pub fn toAPI(this: *const ZigStackFrame, allocator: std.mem.Allocator) !Api.StackFrame {
         var frame: Api.StackFrame = std.mem.zeroes(Api.StackFrame);
         if (this.function_name.len > 0) {
             frame.function_name = try allocator.dupe(u8, this.function_name.slice());
@@ -443,7 +465,7 @@ pub const ZigStackFrame = extern struct {
         enable_color: bool,
         origin: *const ZigURL,
         root_path: string = "",
-        pub fn format(this: SourceURLFormatter, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: SourceURLFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             try writer.writeAll(this.origin.displayProtocol());
             try writer.writeAll("://");
             try writer.writeAll(this.origin.displayHostname());
@@ -472,7 +494,7 @@ pub const ZigStackFrame = extern struct {
         code_type: ZigStackFrameCode,
         enable_color: bool,
 
-        pub fn format(this: NameFormatter, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: NameFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             const name = this.function_name.slice();
 
             switch (this.code_type) {
@@ -555,7 +577,7 @@ pub const ZigException = extern struct {
     message: ZigString,
     stack: ZigStackTrace,
 
-    exception: ?*c_void,
+    exception: ?*anyopaque,
 
     pub const shim = Shimmer("Zig", "Exception", @This());
     pub const name = "ZigException";
@@ -662,7 +684,7 @@ pub const ErrorableJSValue = Errorable(JSValue);
 
 pub const ZigConsoleClient = struct {
     pub const shim = Shimmer("Zig", "ConsoleClient", @This());
-    pub const Type = *c_void;
+    pub const Type = *anyopaque;
     pub const name = "Zig::ConsoleClient";
     pub const include = "\"ZigConsoleClient.h\"";
     pub const namespace = shim.namespace;
@@ -675,7 +697,7 @@ pub const ZigConsoleClient = struct {
             pub const List = std.MultiArrayList(Entry);
         };
         counts: Entry.List,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
     };
     const BufferedWriter = std.io.BufferedWriter(4096, Output.WriterType);
     error_writer: BufferedWriter,
@@ -691,9 +713,12 @@ pub const ZigConsoleClient = struct {
     /// TODO: support %s %d %f %o %O
     /// https://console.spec.whatwg.org/#formatter
     pub fn messageWithTypeAndLevel(
-        console_: ZigConsoleClient.Type,
-        message_type: u32,
-        message_level: u32,
+        //console_: ZigConsoleClient.Type,
+        _: ZigConsoleClient.Type,
+        //message_type: u32,
+        _: u32,
+        //message_level: u32,
+        _: u32,
         global: *JSGlobalObject,
         vals: [*]JSValue,
         len: usize,
@@ -733,8 +758,6 @@ pub const ZigConsoleClient = struct {
 
         var values = vals[0..len];
         defer buffered_writer.flush() catch {};
-        var last_count: usize = 0;
-        var tail: u8 = 0;
 
         if (Output.enable_ansi_colors) {
             while (i < len) : (i += 1) {
@@ -770,7 +793,7 @@ pub const ZigConsoleClient = struct {
 
             if (value.isCell()) {
                 if (CAPI.JSObjectGetPrivate(value.asRef())) |private_data_ptr| {
-                    const priv_data = JS.JSPrivateDataPtr.from(private_data_ptr);
+                    const priv_data = JSPrivateDataPtr.from(private_data_ptr);
                     switch (priv_data.tag()) {
                         .BuildError => {
                             const build_error = priv_data.as(JS.BuildError);
@@ -831,14 +854,39 @@ pub const ZigConsoleClient = struct {
         }
     };
 
-    pub fn count(console: ZigConsoleClient.Type, global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {}
-    pub fn countReset(console: ZigConsoleClient.Type, global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {}
+    pub fn count(
+        // console
+        _: ZigConsoleClient.Type,
+        // global
+        _: *JSGlobalObject,
+        // chars
+        _: [*]const u8,
+        // len
+        _: usize,
+    ) callconv(.C) void {}
+    pub fn countReset(
+        // console
+        _: ZigConsoleClient.Type,
+        // global
+        _: *JSGlobalObject,
+        // chars
+        _: [*]const u8,
+        // len
+        _: usize,
+    ) callconv(.C) void {}
 
     const PendingTimers = std.AutoHashMap(u64, ?std.time.Timer);
     threadlocal var pending_time_logs: PendingTimers = undefined;
     threadlocal var pending_time_logs_loaded = false;
 
-    pub fn time(console: ZigConsoleClient.Type, global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {
+    pub fn time(
+        // console
+        _: ZigConsoleClient.Type,
+        // global
+        _: *JSGlobalObject,
+        chars: [*]const u8,
+        len: usize,
+    ) callconv(.C) void {
         const id = std.hash.Wyhash.hash(0, chars[0..len]);
         if (!pending_time_logs_loaded) {
             pending_time_logs = PendingTimers.init(default_allocator);
@@ -851,7 +899,14 @@ pub const ZigConsoleClient = struct {
             result.value_ptr.* = std.time.Timer.start() catch unreachable;
         }
     }
-    pub fn timeEnd(console: ZigConsoleClient.Type, global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {
+    pub fn timeEnd(
+        // console
+        _: ZigConsoleClient.Type,
+        // global
+        _: *JSGlobalObject,
+        chars: [*]const u8,
+        len: usize,
+    ) callconv(.C) void {
         if (!pending_time_logs_loaded) {
             return;
         }
@@ -870,14 +925,80 @@ pub const ZigConsoleClient = struct {
         Output.flush();
     }
 
-    pub fn timeLog(console: ZigConsoleClient.Type, global: *JSGlobalObject, chars: [*]const u8, len: usize, args: *ScriptArguments) callconv(.C) void {}
-    pub fn profile(console: ZigConsoleClient.Type, global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {}
-    pub fn profileEnd(console: ZigConsoleClient.Type, global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {}
-    pub fn takeHeapSnapshot(console: ZigConsoleClient.Type, global: *JSGlobalObject, chars: [*]const u8, len: usize) callconv(.C) void {}
-    pub fn timeStamp(console: ZigConsoleClient.Type, global: *JSGlobalObject, args: *ScriptArguments) callconv(.C) void {}
-    pub fn record(console: ZigConsoleClient.Type, global: *JSGlobalObject, args: *ScriptArguments) callconv(.C) void {}
-    pub fn recordEnd(console: ZigConsoleClient.Type, global: *JSGlobalObject, args: *ScriptArguments) callconv(.C) void {}
-    pub fn screenshot(console: ZigConsoleClient.Type, global: *JSGlobalObject, args: *ScriptArguments) callconv(.C) void {}
+    pub fn timeLog(
+        // console
+        _: ZigConsoleClient.Type,
+        // global
+        _: *JSGlobalObject,
+        // chars
+        _: [*]const u8,
+        // len
+        _: usize,
+        // args
+        _: *ScriptArguments,
+    ) callconv(.C) void {}
+    pub fn profile(
+        // console
+        _: ZigConsoleClient.Type,
+        // global
+        _: *JSGlobalObject,
+        // chars
+        _: [*]const u8,
+        // len
+        _: usize,
+    ) callconv(.C) void {}
+    pub fn profileEnd(
+        // console
+        _: ZigConsoleClient.Type,
+        // global
+        _: *JSGlobalObject,
+        // chars
+        _: [*]const u8,
+        // len
+        _: usize,
+    ) callconv(.C) void {}
+    pub fn takeHeapSnapshot(
+        // console
+        _: ZigConsoleClient.Type,
+        // global
+        _: *JSGlobalObject,
+        // chars
+        _: [*]const u8,
+        // len
+        _: usize,
+    ) callconv(.C) void {}
+    pub fn timeStamp(
+        // console
+        _: ZigConsoleClient.Type,
+        // global
+        _: *JSGlobalObject,
+        // args
+        _: *ScriptArguments,
+    ) callconv(.C) void {}
+    pub fn record(
+        // console
+        _: ZigConsoleClient.Type,
+        // global
+        _: *JSGlobalObject,
+        // args
+        _: *ScriptArguments,
+    ) callconv(.C) void {}
+    pub fn recordEnd(
+        // console
+        _: ZigConsoleClient.Type,
+        // global
+        _: *JSGlobalObject,
+        // args
+        _: *ScriptArguments,
+    ) callconv(.C) void {}
+    pub fn screenshot(
+        // console
+        _: ZigConsoleClient.Type,
+        // global
+        _: *JSGlobalObject,
+        // args
+        _: *ScriptArguments,
+    ) callconv(.C) void {}
 
     pub const Export = shim.exportFunctions(.{
         .@"messageWithTypeAndLevel" = messageWithTypeAndLevel,
@@ -958,7 +1079,7 @@ pub const ZigConsoleClient = struct {
 
 // pub const CommonJSModule = struct {
 //     pub const shim = Shimmer("Zig", "CommonJSModule", @This());
-//     pub const Type = *c_void;
+//     pub const Type = *anyopaque;
 //     pub const name = "Zig::CommonJSModule";
 //     pub const include = "\"CommonJSModule.h\"";
 //     pub const namespace = shim.namespace;

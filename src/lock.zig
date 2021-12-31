@@ -9,7 +9,7 @@ pub const Mutex = struct {
     const UNLOCKED = 0;
     const LOCKED = 0b01;
     const CONTENDED = 0b11;
-    const is_x86 = std.Target.current.cpu.arch.isX86();
+    const is_x86 = @import("builtin").target.cpu.arch.isX86();
 
     pub fn tryAcquire(self: *Mutex) bool {
         return self.acquireFast(true);

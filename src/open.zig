@@ -1,14 +1,23 @@
-usingnamespace @import("./global.zig");
+const _global = @import("./global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 const std = @import("std");
 
-const opener = switch (std.Target.current.os.tag) {
+const opener = switch (@import("builtin").target.os.tag) {
     .macos => "/usr/bin/open",
     .windows => "start",
     else => "xdg-open",
 };
 
 pub fn openURL(url: string) !void {
-    if (comptime isWasi) {
+    if (comptime Environment.isWasi) {
         Output.prettyln("-> {s}", .{url});
         Output.flush();
         return;

@@ -1,12 +1,25 @@
 const Fs = @import("fs.zig");
 const std = @import("std");
-usingnamespace @import("global.zig");
+const _global = @import("global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const CodePoint = _global.CodePoint;
+const StoredFileDescriptorType = _global.StoredFileDescriptorType;
+const FeatureFlags = _global.FeatureFlags;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 const options = @import("./options.zig");
 const import_record = @import("import_record.zig");
 const logger = @import("./logger.zig");
 const Options = options;
 const resolver = @import("./resolver/resolver.zig");
 const _linker = @import("./linker.zig");
+
 const replacementCharacter: CodePoint = 0xFFFD;
 
 pub const Chunk = struct {
@@ -107,7 +120,7 @@ pub const Scanner = struct {
 
     has_newline_before: bool = false,
     has_delimiter_before: bool = false,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 
     source: *const logger.Source,
     codepoint: CodePoint = -1,
@@ -115,7 +128,7 @@ pub const Scanner = struct {
 
     did_warn_tailwind: bool = false,
 
-    pub fn init(log: *logger.Log, allocator: *std.mem.Allocator, source: *const logger.Source) Scanner {
+    pub fn init(log: *logger.Log, allocator: std.mem.Allocator, source: *const logger.Source) Scanner {
         return Scanner{ .log = log, .source = source, .allocator = allocator };
     }
 
@@ -130,7 +143,7 @@ pub const Scanner = struct {
         scanner.codepoint = scanner.nextCodepoint();
         scanner.approximate_newline_count += @boolToInt(scanner.codepoint == '\n');
     }
-    pub fn raw(scanner: *Scanner) string {}
+    pub fn raw(_: *Scanner) string {}
 
     pub fn isValidEscape(scanner: *Scanner) bool {
         if (scanner.codepoint != '\\') return false;
@@ -557,8 +570,6 @@ pub const Scanner = struct {
                         // We want to avoid messing with other rules
                         scanner.start = start;
 
-                        var url_token_start = scanner.current;
-                        var url_token_end = scanner.current;
                         // "Imported rules must precede all other types of rule"
                         // https://developer.mozilla.org/en-US/docs/Web/CSS/@import
                         // @import url;
@@ -566,8 +577,6 @@ pub const Scanner = struct {
                         // @import url supports( supports-query );
                         // @import url supports( supports-query ) list-of-media-queries;
 
-                        var is_url_token = false;
-                        var quote: CodePoint = -1;
                         while (isWhitespace(scanner.codepoint)) {
                             scanner.step();
                         }
@@ -889,7 +898,7 @@ pub fn NewWriter(
         pub fn scan(
             writer: *Writer,
             log: *logger.Log,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             did_warn_tailwind: *bool,
         ) !void {
             var scanner = Scanner.init(
@@ -907,7 +916,7 @@ pub fn NewWriter(
         pub fn append(
             writer: *Writer,
             log: *logger.Log,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             did_warn_tailwind: *bool,
         ) !usize {
             var scanner = Scanner.init(
@@ -928,7 +937,7 @@ pub fn NewWriter(
         pub fn run(
             writer: *Writer,
             log: *logger.Log,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             did_warn_tailwind: *bool,
         ) !void {
             var scanner = Scanner.init(
@@ -1004,7 +1013,7 @@ pub fn NewWriter(
 
         pub fn scanChunk(writer: *Writer, chunk: Chunk) !void {
             switch (chunk.content) {
-                .t_url => |url| {},
+                .t_url => {},
                 .t_import => |import| {
                     const resolved = writer.linker.resolveCSS(
                         writer.source.path,
@@ -1037,7 +1046,7 @@ pub fn NewWriter(
 
                     try writer.buildCtx.addCSSImport(resolved);
                 },
-                .t_verbatim => |verbatim| {},
+                .t_verbatim => {},
             }
         }
 
@@ -1089,7 +1098,7 @@ pub fn NewWriter(
                         writer.written += 1;
                     }
                 },
-                .t_verbatim => |verbatim| {
+                .t_verbatim => {
                     defer writer.written += @intCast(usize, chunk.range.len);
                     if (comptime std.meta.trait.hasFn("copyFileRange")(WriterType)) {
                         try writer.ctx.copyFileRange(
@@ -1145,7 +1154,7 @@ pub fn NewBundler(
         watcher: *Watcher,
         fs_reader: FileReader,
         fs: FSType,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         pub fn bundle(
             absolute_path: string,
             fs: FSType,
@@ -1153,8 +1162,8 @@ pub fn NewBundler(
             watcher: *Watcher,
             fs_reader: FileReader,
             hash: u32,
-            input_fd: ?StoredFileDescriptorType,
-            allocator: *std.mem.Allocator,
+            _: ?StoredFileDescriptorType,
+            allocator: std.mem.Allocator,
             log: *logger.Log,
             linker: Linker,
         ) !CodeCount {

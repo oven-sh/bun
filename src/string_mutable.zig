@@ -1,15 +1,18 @@
 const std = @import("std");
 const expect = std.testing.expect;
 
-usingnamespace @import("string_types.zig");
 const strings = @import("string_immutable.zig");
 const js_lexer = @import("js_lexer.zig");
 
+const string = @import("string_types.zig").string;
+const stringZ = @import("string_types.zig").stringZ;
+const CodePoint = @import("string_types.zig").CodePoint;
+
 pub const MutableString = struct {
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     list: std.ArrayListUnmanaged(u8),
 
-    pub fn init2048(allocator: *std.mem.Allocator) !MutableString {
+    pub fn init2048(allocator: std.mem.Allocator) !MutableString {
         return MutableString.init(allocator, 2048);
     }
 
@@ -39,11 +42,11 @@ pub const MutableString = struct {
         return self.list.items.len;
     }
 
-    pub fn init(allocator: *std.mem.Allocator, capacity: usize) !MutableString {
+    pub fn init(allocator: std.mem.Allocator, capacity: usize) !MutableString {
         return MutableString{ .allocator = allocator, .list = try std.ArrayListUnmanaged(u8).initCapacity(allocator, capacity) };
     }
 
-    pub fn initCopy(allocator: *std.mem.Allocator, str: anytype) !MutableString {
+    pub fn initCopy(allocator: std.mem.Allocator, str: anytype) !MutableString {
         var mutable = try MutableString.init(allocator, std.mem.len(str));
         try mutable.copy(str);
         return mutable;
@@ -53,7 +56,7 @@ pub const MutableString = struct {
     // identifier, you're going to potentially cause trouble with non-BMP code
     // points in target environments that don't support bracketed Unicode escapes.
 
-    pub fn ensureValidIdentifier(str: string, allocator: *std.mem.Allocator) !string {
+    pub fn ensureValidIdentifier(str: string, allocator: std.mem.Allocator) !string {
         if (str.len == 0) {
             return "_";
         }
@@ -89,8 +92,6 @@ pub const MutableString = struct {
         if (needs_gap) {
             var mutable = try MutableString.initCopy(allocator, str[0..start_i]);
             needs_gap = false;
-
-            var i: usize = 0;
 
             var slice = str[start_i..];
             iterator = strings.CodepointIterator.init(slice);
@@ -128,7 +129,7 @@ pub const MutableString = struct {
     }
 
     pub fn copy(self: *MutableString, str: anytype) !void {
-        try self.list.ensureCapacity(self.allocator, std.mem.len(str[0..]));
+        try self.list.ensureTotalCapacity(self.allocator, std.mem.len(str[0..]));
 
         if (self.list.items.len == 0) {
             try self.list.insertSlice(self.allocator, 0, str);

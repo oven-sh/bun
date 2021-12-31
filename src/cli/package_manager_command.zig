@@ -4,7 +4,7 @@ const std = @import("std");
 const strings = @import("strings");
 
 pub const PackageManagerCommand = struct {
-    pub fn printHelp(allocator: *std.mem.Allocator) void {}
+    pub fn printHelp(_: std.mem.Allocator) void {}
     pub fn exec(ctx: Command.Context) !void {
         var args = try std.process.argsAlloc(ctx.allocator);
         args = args[1..];

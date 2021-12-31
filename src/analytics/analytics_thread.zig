@@ -1,4 +1,14 @@
-usingnamespace @import("../global.zig");
+const _global = @import("../global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const FeatureFlags = _global.FeatureFlags;
+const C = _global.C;
 
 const sync = @import("../sync.zig");
 const std = @import("std");
@@ -8,7 +18,7 @@ const URL = @import("../query_string_map.zig").URL;
 const Fs = @import("../fs.zig");
 const Analytics = @import("./analytics_schema.zig").analytics;
 const Writer = @import("./analytics_schema.zig").Writer;
-const Headers = @import("../javascript/jsc/webcore/response.zig").Headers;
+const Headers = @import("http").Headers;
 const Futex = @import("../futex.zig");
 
 fn NewUint64(val: u64) Analytics.Uint64 {
@@ -179,7 +189,7 @@ var event_queue: EventQueue = undefined;
 
 pub const GenerateHeader = struct {
     pub fn generate() Analytics.EventListHeader {
-        if (comptime isDebug) {
+        if (comptime Environment.isDebug) {
             if (project_id.first == 0 and project_id.second == 0) {
                 Output.prettyErrorln("warn: project_id is 0", .{});
             }
@@ -190,7 +200,7 @@ pub const GenerateHeader = struct {
                 .machine_id = GenerateMachineID.forMac() catch Analytics.Uint64{},
                 .platform = GeneratePlatform.forMac(),
                 .build_id = comptime @truncate(u32, Global.build_id),
-                .session_id = random.random.int(u32),
+                .session_id = random.random().int(u32),
                 .project_id = project_id,
             };
         }
@@ -200,7 +210,7 @@ pub const GenerateHeader = struct {
                 .machine_id = GenerateMachineID.forLinux() catch Analytics.Uint64{},
                 .platform = GeneratePlatform.forLinux(),
                 .build_id = comptime @truncate(u32, Global.build_id),
-                .session_id = random.random.int(u32),
+                .session_id = random.random().int(u32),
                 .project_id = project_id,
             };
         }
@@ -214,8 +224,6 @@ pub const GenerateHeader = struct {
             std.mem.set(u8, std.mem.span(&osversion_name), 0);
 
             var platform = Analytics.Platform{ .os = Analytics.OperatingSystem.macos, .version = &[_]u8{}, .arch = platform_arch };
-            var osversion_name_buf: [2]c_int = undefined;
-            var osversion_name_ptr = osversion_name.len - 1;
             var len = osversion_name.len - 1;
             if (std.c.sysctlbyname("kern.osrelease", &osversion_name, &len, null, 0) == -1) return platform;
 
@@ -277,7 +285,7 @@ pub const GenerateHeader = struct {
         pub var linux_machine_id: [256]u8 = undefined;
 
         pub fn forLinux() !Analytics.Uint64 {
-            var file = std.fs.openFileAbsoluteZ("/var/lib/dbus/machine-id", .{ .read = true }) catch |err| brk: {
+            var file = std.fs.openFileAbsoluteZ("/var/lib/dbus/machine-id", .{ .read = true }) catch brk: {
                 break :brk try std.fs.openFileAbsoluteZ("/etc/machine-id", .{ .read = true });
             };
             defer file.close();
@@ -318,7 +326,7 @@ fn start() bool {
 
     event_queue = EventQueue.init(std.heap.c_allocator);
     spawn() catch |err| {
-        if (comptime isDebug) {
+        if (comptime Environment.isDebug) {
             Output.prettyErrorln("[Analytics] error spawning thread {s}", .{@errorName(err)});
             Output.flush();
         }
@@ -465,6 +473,7 @@ pub const EventList = struct {
         this.events.clearRetainingCapacity();
 
         var retry_remaining: usize = 10;
+        const rand = random.random();
         retry: while (retry_remaining > 0) {
             const response = this.async_http.sendSync() catch |err| {
                 if (FeatureFlags.verbose_analytics) {
@@ -475,7 +484,7 @@ pub const EventList = struct {
                 @atomicStore(bool, &is_stuck, true, .Release);
                 const min_delay = (11 - retry_remaining) * std.time.ns_per_s / 2;
                 Output.flush();
-                std.time.sleep(random.random.intRangeAtMost(u64, min_delay, min_delay * 2));
+                std.time.sleep(rand.intRangeAtMost(u64, min_delay, min_delay * 2));
                 continue :retry;
             };
 
@@ -488,7 +497,7 @@ pub const EventList = struct {
                 @atomicStore(bool, &is_stuck, true, .Release);
                 const min_delay = (11 - retry_remaining) * std.time.ns_per_s / 2;
                 Output.flush();
-                std.time.sleep(random.random.intRangeAtMost(u64, min_delay, min_delay * 2));
+                std.time.sleep(rand.intRangeAtMost(u64, min_delay, min_delay * 2));
                 continue :retry;
             }
 

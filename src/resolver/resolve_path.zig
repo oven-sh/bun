@@ -29,8 +29,6 @@ pub fn longestCommonPathGeneric(strings: []const []const u8, comptime separator:
         min_length = @minimum(str.len, min_length);
     }
 
-    var last_common_separator_is_at_end = false;
-
     var index: usize = 0;
     var last_common_separator: usize = 0;
 
@@ -316,7 +314,7 @@ pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Pla
     return relativeNormalized(normalized_from, normalized_to, platform, always_copy);
 }
 
-pub fn relativeAlloc(allocator: *std.mem.Allocator, from: []const u8, to: []const u8) ![]const u8 {
+pub fn relativeAlloc(allocator: std.mem.Allocator, from: []const u8, to: []const u8) ![]const u8 {
     if (comptime FeatureFlags.use_std_path_relative) {
         return try std.fs.path.relative(allocator, from, to);
     } else {
@@ -430,7 +428,7 @@ pub const Platform = enum {
         };
     }
 
-    pub const current: Platform = switch (std.Target.current.os.tag) {
+    pub const current: Platform = switch (@import("builtin").target.os.tag) {
         .windows => Platform.windows,
         else => Platform.posix,
     };
@@ -506,7 +504,7 @@ pub const Platform = enum {
 
     pub fn resolve(comptime _platform: Platform) Platform {
         if (comptime _platform == .auto) {
-            return switch (std.Target.current.os.tag) {
+            return switch (@import("builtin").target.os.tag) {
                 .windows => Platform.windows,
 
                 .freestanding, .emscripten, .other => Platform.loose,
@@ -526,19 +524,14 @@ pub fn normalizeString(str: []const u8, comptime allow_above_root: bool, comptim
 pub fn normalizeStringBuf(str: []const u8, buf: []u8, comptime allow_above_root: bool, comptime _platform: Platform, comptime preserve_trailing_slash: anytype) []u8 {
     const platform = comptime _platform.resolve();
 
-    switch (platform) {
+    switch (comptime platform) {
         .auto => unreachable,
 
         .windows => {
-            return normalizeStringWindowsBuf(
-                str,
-                buf,
-                allow_above_root,
-                preserve_trailing_slash,
-            );
+            @compileError("Not implemented");
         },
         .posix => {
-            return normalizeStringPosixBuf(
+            return normalizeStringLooseBuf(
                 str,
                 buf,
                 allow_above_root,
@@ -557,7 +550,7 @@ pub fn normalizeStringBuf(str: []const u8, buf: []u8, comptime allow_above_root:
     }
 }
 
-pub fn normalizeStringAlloc(allocator: *std.mem.Allocator, str: []const u8, comptime allow_above_root: bool, comptime _platform: Platform) ![]const u8 {
+pub fn normalizeStringAlloc(allocator: std.mem.Allocator, str: []const u8, comptime allow_above_root: bool, comptime _platform: Platform) ![]const u8 {
     return try allocator.dupe(u8, normalizeString(str, allow_above_root, _platform));
 }
 
@@ -602,12 +595,6 @@ pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [
         return std.fs.path.join(&alloc.allocator, _parts) catch unreachable;
     }
 
-    if (_parts.len == 0) {
-        return _cwd;
-    }
-
-    var parts = _parts;
-
     var written: usize = 0;
     const platform = comptime _platform.resolve();
 
@@ -631,19 +618,18 @@ pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [
 
     // Preserve leading separator
     if (_parts[0].len > 0 and _parts[0][0] == _platform.separator()) {
-        const out = switch (platform) {
-            .loose => normalizeStringLooseBuf(parser_join_input_buffer[0..written], buf[1..], false, false),
-            .windows => normalizeStringWindows(parser_join_input_buffer[0..written], buf[1..], false, false),
-            else => normalizeStringPosixBuf(parser_join_input_buffer[0..written], buf[1..], false, false),
+        const out = switch (comptime platform) {
+            // .loose =>
+            .windows => @compileError("Not implemented yet"),
+            else => normalizeStringLooseBuf(parser_join_input_buffer[0..written], buf[1..], false, false),
         };
         buf[0] = _platform.separator();
 
         return buf[0 .. out.len + 1];
     } else {
         return switch (platform) {
-            .loose => normalizeStringLooseBuf(parser_join_input_buffer[0..written], buf[0..], false, false),
-            .windows => normalizeStringWindows(parser_join_input_buffer[0..written], buf[0..], false, false),
-            else => normalizeStringPosixBuf(parser_join_input_buffer[0..written], buf[0..], false, false),
+            else => normalizeStringLooseBuf(parser_join_input_buffer[0..written], buf[0..], false, false),
+            .windows => @compileError("Not implemented yet"),
         };
     }
 }
@@ -676,7 +662,6 @@ inline fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: typ
     var cwd = _cwd;
     var out: usize = 0;
     // When parts[0] is absolute, we treat that as, effectively, the cwd
-    var ignore_cwd = cwd.len == 0;
 
     // Windows leading separators can be a lot of things...
     // So we need to do this instead of just checking the first char.
@@ -712,7 +697,7 @@ inline fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: typ
     std.debug.assert(out < buf.len);
     std.mem.copy(u8, buf[0..out], start);
 
-    for (parts) |part, i| {
+    for (parts) |part| {
         // Do not normalize here
         // It will break stuff!
         var normalized_part = part;
@@ -772,71 +757,6 @@ pub fn lastIndexOfSeparatorPosix(slice: []const u8) ?usize {
 
 pub fn lastIndexOfSeparatorLoose(slice: []const u8) ?usize {
     return std.mem.lastIndexOfAny(u8, slice, "/\\");
-}
-
-pub fn normalizeStringPosix(str: []const u8, comptime allow_above_root: bool, comptime preserve_trailing_slash: bool) []u8 {
-    return normalizeStringGenericBuf(
-        str,
-        &parser_buffer,
-        allow_above_root,
-        std.fs.path.sep_posix,
-        isSepPosix,
-        lastIndexOfSeparatorPosix,
-        preserve_trailing_slash,
-    );
-}
-
-pub fn normalizeStringPosixBuf(
-    str: []const u8,
-    buf: []u8,
-    comptime allow_above_root: bool,
-    comptime preserve_trailing_slash: bool,
-) []u8 {
-    return normalizeStringGeneric(
-        str,
-        buf,
-        allow_above_root,
-        std.fs.path.sep_posix,
-        isSepPosix,
-        lastIndexOfSeparatorPosix,
-        preserve_trailing_slash,
-    );
-}
-
-pub fn normalizeStringWindows(str: []const u8, comptime allow_above_root: bool, comptime preserve_trailing_slash: bool) []u8 {
-    return normalizeStringGenericBuf(
-        str,
-        &parser_buffer,
-        allow_above_root,
-        std.fs.path.sep_windows,
-        isSepWin32,
-        lastIndexOfSeparatorWindows,
-        preserve_trailing_slash,
-    );
-}
-
-pub fn normalizeStringWindowsBuf(str: []const u8, buf: []u8, comptime allow_above_root: bool, comptime preserve_trailing_slash: bool) []u8 {
-    return normalizeStringGeneric(
-        str,
-        buf,
-        allow_above_root,
-        std.fs.path.sep_windows,
-        isSepWin32,
-        lastIndexOfSeparatorWindows,
-        preserve_trailing_slash,
-    );
-}
-
-pub fn normalizeStringLoose(str: []const u8, comptime allow_above_root: bool, comptime preserve_trailing_slash: bool) []u8 {
-    return normalizeStringGenericBuf(
-        str,
-        &parser_buffer,
-        allow_above_root,
-        std.fs.path.sep_posix,
-        isSepAny,
-        lastIndexOfSeparatorLoose,
-        preserve_trailing_slash,
-    );
 }
 
 pub fn normalizeStringLooseBuf(str: []const u8, buf: []u8, comptime allow_above_root: bool, comptime preserve_trailing_slash: bool) []u8 {
@@ -1032,15 +952,6 @@ test "relative" {
     var t = tester.Tester.t(default_allocator);
     defer t.report(@src());
 
-    const strs = [_][]const u8{
-        "/var/boo/foo/",
-        "/var/boo/foo/baz/",
-        "/var/boo/foo/beep/",
-        "/var/boo/foo/beep/bleep",
-        "/bar/baz",
-        "/bar/not-related",
-        "/bar/file.txt",
-    };
     _ = t.expect("var/foo", try relativeAlloc(default_allocator, "/", "/var/foo/"), @src());
     _ = t.expect("index.js", try relativeAlloc(default_allocator, "/app/public/", "/app/public/index.js"), @src());
     _ = t.expect("..", try relativeAlloc(default_allocator, "/app/public/index.js", "/app/public/"), @src());

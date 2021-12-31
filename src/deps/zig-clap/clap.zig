@@ -90,11 +90,9 @@ pub fn parseParam(line: []const u8) !Param(Help) {
         break :blk short_name;
     } else null;
 
-    const long_name = if (mem.startsWith(u8, param_str, "--")) blk: {
+    _ = if (mem.startsWith(u8, param_str, "--")) {
         if (param_str[param_str.len - 1] == ',')
             return error.TrailingComma;
-
-        break :blk param_str[2..];
     } else if (found_comma) {
         return error.TrailingComma;
     } else if (short_name == null) {
@@ -271,7 +269,7 @@ pub const ParseOptions = struct {
     ///       `parse`, `parseEx` does not wrap the allocator so the heap allocator can be
     ///       quite expensive. (TODO: Can we pick a better default? For `parse`, this allocator
     ///       is fine, as it wraps it in an arena)
-    allocator: *mem.Allocator = heap.page_allocator,
+    allocator: mem.Allocator = heap.page_allocator,
     diagnostic: ?*Diagnostic = null,
 };
 
@@ -291,7 +289,7 @@ pub fn parse(
     // Let's reuse the arena from the `OSIterator` since we already have
     // it.
     res.clap = try parseEx(Id, params, &iter, .{
-        .allocator = &res.arena.allocator,
+        .allocator = res.arena.allocator(),
         .diagnostic = opt.diagnostic,
     });
     return res;

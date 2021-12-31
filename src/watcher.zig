@@ -1,6 +1,18 @@
 const Fs = @import("./fs.zig");
 const std = @import("std");
-usingnamespace @import("global.zig");
+const _global = @import("global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const StoredFileDescriptorType = _global.StoredFileDescriptorType;
+const FeatureFlags = _global.FeatureFlags;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
+const c = std.c;
 const options = @import("./options.zig");
 const IndexType = @import("./allocators.zig").IndexType;
 
@@ -15,8 +27,8 @@ const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const WATCHER_MAX_LIST = 8096;
 
 pub const INotify = struct {
-    pub const IN_CLOEXEC = std.os.O_CLOEXEC;
-    pub const IN_NONBLOCK = std.os.O_NONBLOCK;
+    pub const IN_CLOEXEC = std.os.O.CLOEXEC;
+    pub const IN_NONBLOCK = std.os.O.NONBLOCK;
 
     pub const IN_ACCESS = 0x00000001;
     pub const IN_MODIFY = 0x00000002;
@@ -201,7 +213,7 @@ pub const WatchEvent = struct {
 
     pub const Sorter = void;
 
-    pub fn sortByIndex(context: Sorter, event: WatchEvent, rhs: WatchEvent) bool {
+    pub fn sortByIndex(_: Sorter, event: WatchEvent, rhs: WatchEvent) bool {
         return event.index < rhs.index;
     }
 
@@ -218,10 +230,10 @@ pub const WatchEvent = struct {
         this.* =
             WatchEvent{
             .op = Op{
-                .delete = (kevent.fflags & std.os.NOTE_DELETE) > 0,
-                .metadata = (kevent.fflags & std.os.NOTE_ATTRIB) > 0,
-                .rename = (kevent.fflags & std.os.NOTE_RENAME) > 0,
-                .write = (kevent.fflags & std.os.NOTE_WRITE) > 0,
+                .delete = (kevent.fflags & std.c.NOTE_DELETE) > 0,
+                .metadata = (kevent.fflags & std.c.NOTE_ATTRIB) > 0,
+                .rename = (kevent.fflags & std.c.NOTE_RENAME) > 0,
+                .write = (kevent.fflags & std.c.NOTE_WRITE) > 0,
             },
             .index = @truncate(WatchItemIndex, kevent.udata),
         };
@@ -270,7 +282,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         // this is what kqueue knows about
         fd: StoredFileDescriptorType,
         ctx: ContextType,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         watchloop_handle: ?std.Thread.Id = null,
         cwd: string,
         thread: std.Thread = undefined,
@@ -283,7 +295,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             return @truncate(HashType, std.hash.Wyhash.hash(0, filepath));
         }
 
-        pub fn init(ctx: ContextType, fs: *Fs.FileSystem, allocator: *std.mem.Allocator) !*Watcher {
+        pub fn init(ctx: ContextType, fs: *Fs.FileSystem, allocator: std.mem.Allocator) !*Watcher {
             var watcher = try allocator.create(Watcher);
             try PlatformWatcher.init();
 
@@ -324,14 +336,14 @@ pub fn NewWatcher(comptime ContextType: type) type {
         }
 
         var evict_list_i: WatchItemIndex = 0;
-        pub fn removeAtIndex(this: *Watcher, index: WatchItemIndex, hash: HashType, parents: []HashType, comptime kind: WatchItem.Kind) void {
+        pub fn removeAtIndex(_: *Watcher, index: WatchItemIndex, hash: HashType, parents: []HashType, comptime kind: WatchItem.Kind) void {
             std.debug.assert(index != NoWatchItem);
 
             evict_list[evict_list_i] = index;
             evict_list_i += 1;
 
             if (comptime kind == .directory) {
-                for (parents) |parent, i| {
+                for (parents) |parent| {
                     if (parent == hash) {
                         evict_list[evict_list_i] = @truncate(WatchItemIndex, parent);
                         evict_list_i += 1;
@@ -358,10 +370,9 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
             var slice = this.watchlist.slice();
             var fds = slice.items(.fd);
-            var event_list_ids = slice.items(.eventlist_index);
             var last_item = NoWatchItem;
 
-            for (evict_list[0..evict_list_i]) |item, i| {
+            for (evict_list[0..evict_list_i]) |item| {
                 // catch duplicates, since the list is sorted, duplicates will appear right after each other
                 if (item == last_item) continue;
 
@@ -377,7 +388,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
             last_item = NoWatchItem;
             // This is split into two passes because reading the slice while modified is potentially unsafe.
-            for (evict_list[0..evict_list_i]) |item, i| {
+            for (evict_list[0..evict_list_i]) |item| {
                 if (item == last_item) continue;
                 this.watchlist.swapRemove(item);
                 last_item = item;
@@ -385,8 +396,6 @@ pub fn NewWatcher(comptime ContextType: type) type {
         }
 
         fn _watchLoop(this: *Watcher) !void {
-            const time = std.time;
-
             if (Environment.isMac) {
                 std.debug.assert(DarwinWatcher.fd > 0);
                 const KEvent = std.c.Kevent;
@@ -514,11 +523,11 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
                 var event = std.mem.zeroes(KEvent);
 
-                event.flags = os.EV_ADD | os.EV_CLEAR | os.EV_ENABLE;
+                event.flags = c.EV_ADD | c.EV_CLEAR | c.EV_ENABLE;
                 // we want to know about the vnode
-                event.filter = std.os.EVFILT_VNODE;
+                event.filter = std.c.EVFILT_VNODE;
 
-                event.fflags = std.os.NOTE_WRITE | std.os.NOTE_RENAME | std.os.NOTE_DELETE;
+                event.fflags = std.c.NOTE_WRITE | std.c.NOTE_RENAME | std.c.NOTE_DELETE;
 
                 // id
                 event.ident = @intCast(usize, fd);
@@ -580,8 +589,6 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
             const parent_hash = Watcher.getHash(Fs.PathName.init(file_path).dirWithTrailingSlash());
             var index: PlatformWatcher.EventListIndex = undefined;
-            const file_path_ptr = @intToPtr([*]const u8, @ptrToInt(file_path.ptr));
-            const file_path_len = file_path.len;
 
             const file_path_: string = if (comptime copy_file_path)
                 std.mem.span(try this.allocator.dupeZ(u8, file_path))
@@ -597,15 +604,15 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
                 var event = std.mem.zeroes(KEvent);
 
-                event.flags = os.EV_ADD | os.EV_CLEAR | os.EV_ENABLE;
+                event.flags = c.EV_ADD | c.EV_CLEAR | c.EV_ENABLE;
                 // we want to know about the vnode
-                event.filter = std.os.EVFILT_VNODE;
+                event.filter = std.c.EVFILT_VNODE;
 
                 // monitor:
                 // - Write
                 // - Rename
                 // - Delete
-                event.fflags = std.os.NOTE_WRITE | std.os.NOTE_RENAME | std.os.NOTE_DELETE;
+                event.fflags = std.c.NOTE_WRITE | std.c.NOTE_RENAME | std.c.NOTE_DELETE;
 
                 // id
                 event.ident = @intCast(usize, fd);

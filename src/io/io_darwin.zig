@@ -17,6 +17,7 @@ const os = struct {
 };
 const mem = std.mem;
 const assert = std.debug.assert;
+const c = std.c;
 
 const FIFO = @import("./fifo.zig").FIFO;
 const Time = @import("./time.zig").Time;
@@ -57,8 +58,8 @@ pub fn run_for_ns(self: *IO, nanoseconds: u63) !void {
     const on_timeout = struct {
         fn callback(
             timed_out_ptr: *bool,
-            _completion: *Completion,
-            _result: TimeoutError!void,
+            _: *Completion,
+            _: TimeoutError!void,
         ) void {
             timed_out_ptr.* = true;
         }
@@ -139,7 +140,7 @@ fn flush(self: *IO, wait_for_completions: bool) !void {
     }
 }
 
-fn flush_io(self: *IO, events: []os.Kevent, io_pending_top: *?*Completion) usize {
+fn flush_io(_: *IO, events: []os.Kevent, io_pending_top: *?*Completion) usize {
     for (events) |*kevent, flushed| {
         const completion = io_pending_top.* orelse return flushed;
         io_pending_top.* = completion.next;
@@ -147,38 +148,38 @@ fn flush_io(self: *IO, events: []os.Kevent, io_pending_top: *?*Completion) usize
         const event_info = switch (completion.operation) {
             .accept => |op| [3]c_int{
                 op.socket,
-                os.EVFILT_READ,
-                os.EV_ADD | os.EV_ENABLE | os.EV_ONESHOT,
+                c.EVFILT_READ,
+                c.EV_ADD | c.EV_ENABLE | c.EV_ONESHOT,
             },
             .connect => |op| [3]c_int{
                 op.socket,
-                os.EVFILT_WRITE,
-                os.EV_ADD | os.EV_ENABLE | os.EV_ONESHOT,
+                c.EVFILT_WRITE,
+                c.EV_ADD | c.EV_ENABLE | c.EV_ONESHOT,
             },
             .read => |op| [3]c_int{
                 op.fd,
-                os.EVFILT_READ,
-                os.EV_ADD | os.EV_ENABLE | os.EV_ONESHOT,
+                c.EVFILT_READ,
+                c.EV_ADD | c.EV_ENABLE | c.EV_ONESHOT,
             },
             .write => |op| [3]c_int{
                 op.fd,
-                os.EVFILT_WRITE,
-                os.EV_ADD | os.EV_ENABLE | os.EV_ONESHOT,
+                c.EVFILT_WRITE,
+                c.EV_ADD | c.EV_ENABLE | c.EV_ONESHOT,
             },
             .recv => |op| [3]c_int{
                 op.socket,
-                os.EVFILT_READ,
-                os.EV_ADD | os.EV_ENABLE | os.EV_ONESHOT,
+                c.EVFILT_READ,
+                c.EV_ADD | c.EV_ENABLE | c.EV_ONESHOT,
             },
             .send => |op| [3]c_int{
                 op.socket,
-                os.EVFILT_WRITE,
-                os.EV_ADD | os.EV_ENABLE | os.EV_ONESHOT,
+                c.EVFILT_WRITE,
+                c.EV_ADD | c.EV_ENABLE | c.EV_ONESHOT,
             },
             .event => |op| [3]c_int{
                 op.fd,
-                os.EVFILT_USER,
-                os.EV_ADD | os.EV_ENABLE | os.EV_ONESHOT,
+                c.EVFILT_USER,
+                c.EV_ADD | c.EV_ENABLE | c.EV_ONESHOT,
             },
             else => @panic("invalid completion operation queued for io"),
         };
@@ -227,7 +228,7 @@ fn flush_timeouts(self: *IO) ?u64 {
 /// This struct holds the data needed for a single IO operation
 pub const Completion = struct {
     next: ?*Completion,
-    context: ?*c_void,
+    context: ?*anyopaque,
     callback: fn (*IO, *Completion) void,
     operation: Operation,
 };
@@ -342,8 +343,8 @@ pub fn triggerEvent(event_fd: os.fd_t, completion: *Completion) !void {
     var kevents = [1]os.Kevent{
         .{
             .ident = @intCast(usize, event_fd),
-            .filter = os.EVFILT_USER,
-            .flags = os.EV_ADD | os.EV_ENABLE | os.EV_ONESHOT,
+            .filter = c.EVFILT_USER,
+            .flags = c.EV_ADD | c.EV_ENABLE | c.EV_ONESHOT,
             .fflags = 0,
             .data = 0,
             .udata = @ptrToInt(completion),
@@ -353,8 +354,8 @@ pub fn triggerEvent(event_fd: os.fd_t, completion: *Completion) !void {
     var change_events = [1]os.Kevent{
         .{
             .ident = @intCast(usize, event_fd),
-            .filter = os.EVFILT_USER,
-            .flags = os.EV_ADD | os.EV_ENABLE | os.EV_ONESHOT,
+            .filter = c.EVFILT_USER,
+            .flags = c.EV_ADD | c.EV_ENABLE | c.EV_ONESHOT,
             .fflags = 0,
             .data = 0,
             .udata = @ptrToInt(completion),
@@ -389,7 +390,7 @@ pub fn event(
             .fd = fd,
         },
         struct {
-            fn doOperation(op: anytype) void {}
+            fn doOperation(_: anytype) void {}
         },
     );
 }
@@ -420,7 +421,7 @@ pub fn accept(
                     op.socket,
                     null,
                     null,
-                    os.SOCK_NONBLOCK | os.SOCK_CLOEXEC,
+                    os.SOCK.NONBLOCK | os.SOCK.CLOEXEC,
                 );
                 errdefer os.close(fd);
 
@@ -754,11 +755,11 @@ pub fn write(
 }
 
 pub fn openSocket(family: u32, sock_type: u32, protocol: u32) !os.socket_t {
-    const fd = try os.socket(family, sock_type | os.SOCK_NONBLOCK, protocol);
+    const fd = try os.socket(family, sock_type | os.SOCK.NONBLOCK, protocol);
     errdefer os.close(fd);
 
     // darwin doesn't support os.MSG_NOSIGNAL, but instead a socket option to avoid SIGPIPE.
-    try os.setsockopt(fd, os.SOL_SOCKET, os.SO_NOSIGPIPE, &mem.toBytes(@as(c_int, 1)));
+    try os.setsockopt(fd, os.SOL.SOCKET, os.SO.NOSIGPIPE, &mem.toBytes(@as(c_int, 1)));
     return fd;
 }
 
@@ -769,7 +770,7 @@ fn buffer_limit(buffer_len: usize) usize {
     // stuffing the errno codes into the last `4096` values.
     // Darwin limits writes to `0x7fffffff` bytes, more than that returns `EINVAL`.
     // The corresponding POSIX limit is `std.math.maxInt(isize)`.
-    const limit = switch (std.Target.current.os.tag) {
+    const limit = switch (@import("builtin").target.os.tag) {
         .linux => 0x7ffff000,
         .macos, .ios, .watchos, .tvos => std.math.maxInt(i32),
         else => std.math.maxInt(isize),

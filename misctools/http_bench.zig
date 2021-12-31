@@ -1,5 +1,14 @@
 const std = @import("std");
-usingnamespace @import("../src/global.zig");
+const _global = @import("../src/global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 const clap = @import("../src/deps/zig-clap/clap.zig");
 
 const URL = @import("../src/query_string_map.zig").URL;
@@ -70,7 +79,7 @@ pub const Arguments = struct {
     repeat: usize = 0,
     concurrency: u16 = 32,
 
-    pub fn parse(allocator: *std.mem.Allocator) !Arguments {
+    pub fn parse(allocator: std.mem.Allocator) !Arguments {
         var diag = clap.Diagnostic{};
 
         var args = clap.parse(clap.Help, &params, .{
@@ -192,7 +201,7 @@ pub fn main() anyerror!void {
     var channel = try default_allocator.create(HTTP.HTTPChannel);
     channel.* = HTTP.HTTPChannel.init();
 
-    try channel.buffer.ensureCapacity(args.count);
+    try channel.buffer.ensureTotalCapacity(args.count);
 
     try NetworkThread.init();
     if (args.concurrency > 0) HTTP.AsyncHTTP.max_simultaneous_requests = args.concurrency;
@@ -288,16 +297,16 @@ pub fn main() anyerror!void {
 
             Output.flush();
         }
-    }
-    Output.prettyErrorln("\n<d>------<r>\n\n", .{});
-    Output.prettyErrorln("Success: <b><green>{d}<r>\nFailure: <b><red>{d}<r>\n\n", .{
-        success_count,
-        fail_count,
-    });
+        Output.prettyErrorln("\n<d>------<r>\n\n", .{});
+        Output.prettyErrorln("Success: <b><green>{d}<r>\nFailure: <b><red>{d}<r>\n\n", .{
+            success_count,
+            fail_count,
+        });
 
-    Output.printElapsed(@floatCast(f64, @intToFloat(f128, timer.read()) / std.time.ns_per_ms));
-    Output.prettyErrorln(" {d} requests", .{
-        read_count,
-    });
-    Output.flush();
+        Output.printElapsed(@floatCast(f64, @intToFloat(f128, timer.read()) / std.time.ns_per_ms));
+        Output.prettyErrorln(" {d} requests", .{
+            read_count,
+        });
+        Output.flush();
+    }
 }

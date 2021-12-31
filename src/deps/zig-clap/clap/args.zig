@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const builtin = std.builtin;
+const builtin = @import("builtin");
 const debug = std.debug;
 const heap = std.heap;
 const mem = std.mem;
@@ -11,7 +11,7 @@ const testing = std.testing;
 pub const ExampleArgIterator = struct {
     const Error = error{};
 
-    pub fn next(iter: *ExampleArgIterator) Error!?[]const u8 {
+    pub fn next(_: *ExampleArgIterator) Error!?[]const u8 {
         return "2";
     }
 };
@@ -56,7 +56,7 @@ pub const OsIterator = struct {
     ///       return an error when we have no exe.
     exe_arg: ?[:0]const u8,
 
-    pub fn init(allocator: *mem.Allocator) Error!OsIterator {
+    pub fn init(allocator: mem.Allocator) Error!OsIterator {
         var res = OsIterator{
             .arena = heap.ArenaAllocator.init(allocator),
             .args = process.args(),
@@ -90,7 +90,7 @@ pub const ShellIterator = struct {
     arena: heap.ArenaAllocator,
     str: []const u8,
 
-    pub fn init(allocator: *mem.Allocator, str: []const u8) ShellIterator {
+    pub fn init(allocator: mem.Allocator, str: []const u8) ShellIterator {
         return .{
             .arena = heap.ArenaAllocator.init(allocator),
             .str = str,

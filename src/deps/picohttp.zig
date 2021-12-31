@@ -16,7 +16,7 @@ pub const Header = struct {
         return @ptrToInt(self.name.ptr) == 0;
     }
 
-    pub fn format(self: Header, comptime layout: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: Header, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
         if (Output.enable_ansi_colors) {
             if (self.isMultiline()) {
                 try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{s}", true), .{self.value});
@@ -44,7 +44,7 @@ pub const Request = struct {
     minor_version: usize,
     headers: []const Header,
 
-    pub fn format(self: Request, comptime layout: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: Request, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
         try fmt.format(writer, "{s} {s}\n", .{ self.method, self.path });
         for (self.headers) |header| {
             _ = try writer.write("\t");
@@ -77,7 +77,7 @@ pub const Request = struct {
         return switch (rc) {
             -1 => error.BadRequest,
             -2 => error.ShortRead,
-            else => |bytes_read| Request{
+            else => Request{
                 .method = method,
                 .path = path,
                 .minor_version = @intCast(usize, minor_version),
@@ -94,7 +94,7 @@ pub const Response = struct {
     headers: []const Header,
     bytes_read: c_int = 0,
 
-    pub fn format(self: Response, comptime layout: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: Response, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
         try fmt.format(writer, "< {d} {s}\n", .{ self.status_code, self.status });
         for (self.headers) |header| {
             _ = try writer.write("< \t");
@@ -127,7 +127,7 @@ pub const Response = struct {
 
                 break :brk error.ShortRead;
             },
-            else => |bytes_read| Response{
+            else => Response{
                 .minor_version = @intCast(usize, minor_version),
                 .status_code = @intCast(usize, status_code),
                 .status = status,
@@ -185,7 +185,7 @@ pub const Headers = struct {
         return switch (rc) {
             -1 => error.BadHeaders,
             -2 => error.ShortRead,
-            else => |bytes_read| Headers{
+            else => Headers{
                 .headers = src[0..num_headers],
             },
         };

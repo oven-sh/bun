@@ -32,7 +32,7 @@ pub const FolderResolution = union(Tag) {
     pub const Resolver = struct {
         folder_path: string,
 
-        pub fn resolve(this: Resolver, comptime Builder: type, builder: Builder, json: JSAst.Expr) !Resolution {
+        pub fn resolve(this: Resolver, comptime Builder: type, builder: Builder, _: JSAst.Expr) !Resolution {
             return Resolution{
                 .tag = .folder,
                 .value = .{
@@ -41,7 +41,7 @@ pub const FolderResolution = union(Tag) {
             };
         }
 
-        pub fn count(this: Resolver, comptime Builder: type, builder: Builder, json: JSAst.Expr) void {
+        pub fn count(this: Resolver, comptime Builder: type, builder: Builder, _: JSAst.Expr) void {
             builder.count(this.folder_path);
         }
     };
@@ -51,7 +51,6 @@ pub const FolderResolution = union(Tag) {
         // We consider it valid if there is a package.json in the folder
         const normalized = std.mem.trimRight(u8, normalize(non_normalized_path), std.fs.path.sep_str);
         var joined: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-        var rel_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         var abs: string = "";
         var rel: string = "";
         if (strings.startsWithChar(normalized, '.')) {
@@ -86,7 +85,6 @@ pub const FolderResolution = union(Tag) {
         var body = Npm.Registry.BodyPool.get(manager.allocator);
 
         defer Npm.Registry.BodyPool.release(body);
-        const initial_errors_count = manager.log.errors;
         const len = package_json.getEndPos() catch |err| {
             entry.value_ptr.* = .{ .err = err };
             return entry.value_ptr.*;

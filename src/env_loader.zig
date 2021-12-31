@@ -1,6 +1,16 @@
 const std = @import("std");
 const logger = @import("./logger.zig");
-usingnamespace @import("./global.zig");
+const _global = @import("./global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const CodePoint = _global.CodePoint;
+const C = _global.C;
 const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const Fs = @import("./fs.zig");
@@ -44,7 +54,7 @@ pub const Lexer = struct {
     }
 
     pub fn eatNestedValue(
-        lexer: *Lexer,
+        _: *Lexer,
         comptime ContextType: type,
         ctx: *ContextType,
         comptime Writer: type,
@@ -153,7 +163,6 @@ pub const Lexer = struct {
                 },
 
                 '#' => {
-                    const end = lexer.current;
                     lexer.step();
                     lexer.eatComment();
 
@@ -374,7 +383,7 @@ pub const Lexer = struct {
 
 pub const Loader = struct {
     map: *Map,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 
     @".env.local": ?logger.Source = null,
     @".env.development": ?logger.Source = null,
@@ -403,7 +412,7 @@ pub const Loader = struct {
         framework_defaults: Api.StringMap,
         behavior: Api.DotEnvBehavior,
         prefix: string,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
     ) ![]u8 {
         var iter = this.map.iter();
         var key_count: usize = 0;
@@ -431,7 +440,6 @@ pub const Loader = struct {
                 std.debug.assert(prefix.len > 0);
 
                 while (iter.next()) |entry| {
-                    const value = entry.value_ptr.*;
                     if (strings.startsWith(entry.key_ptr.*, prefix)) {
                         key_buf_len += entry.key_ptr.len;
                         key_count += 1;
@@ -456,13 +464,11 @@ pub const Loader = struct {
                 key_buf = try allocator.alloc(u8, key_buf_len + key_count * "process.env.".len);
                 const js_ast = @import("./js_ast.zig");
 
-                const EString = js_ast.E.String;
-
                 var e_strings = try allocator.alloc(js_ast.E.String, e_strings_to_allocate * 2);
                 errdefer allocator.free(e_strings);
                 errdefer allocator.free(key_buf);
                 var key_fixed_allocator = std.heap.FixedBufferAllocator.init(key_buf);
-                var key_allocator = &key_fixed_allocator.allocator;
+                var key_allocator = key_fixed_allocator.allocator();
 
                 if (behavior == .prefix) {
                     while (iter.next()) |entry| {
@@ -561,7 +567,7 @@ pub const Loader = struct {
         return key_buf;
     }
 
-    pub fn init(map: *Map, allocator: *std.mem.Allocator) Loader {
+    pub fn init(map: *Map, allocator: std.mem.Allocator) Loader {
         return Loader{
             .map = map,
             .allocator = allocator,
@@ -605,7 +611,6 @@ pub const Loader = struct {
     ) !void {
         const start = std.time.nanoTimestamp();
         var dir_handle: std.fs.Dir = std.fs.cwd();
-        var can_auto_close = false;
 
         if (dir.hasComptimeQuery(".env.local")) {
             try this.loadEnvFile(fs, dir_handle, ".env.local", false);
@@ -726,7 +731,7 @@ pub const Loader = struct {
 pub const Parser = struct {
     pub fn parse(
         source: *const logger.Source,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         map: *Map,
         comptime override: bool,
         comptime is_process: bool,
@@ -734,8 +739,6 @@ pub const Parser = struct {
         var lexer = Lexer.init(source);
         var fbs = std.io.fixedBufferStream(&temporary_nested_value_buffer);
         var writer = fbs.writer();
-        var temp_variable_i: u16 = 0;
-        var total_alloc_len: usize = 0;
 
         while (lexer.next(is_process)) |variable| {
             if (variable.has_nested_value) {
@@ -769,7 +772,7 @@ pub const Map = struct {
 
     map: HashTable,
 
-    pub fn cloneToBufMap(this: *Map, allocator: *std.mem.Allocator) !std.BufMap {
+    pub fn cloneToBufMap(this: *Map, allocator: std.mem.Allocator) !std.BufMap {
         var buf_map = std.BufMap.init(allocator);
 
         const Convert = struct {
@@ -786,7 +789,7 @@ pub const Map = struct {
         return buf_map;
     }
 
-    pub inline fn init(allocator: *std.mem.Allocator) Map {
+    pub inline fn init(allocator: std.mem.Allocator) Map {
         return Map{ .map = HashTable.init(allocator) };
     }
 

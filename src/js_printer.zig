@@ -9,8 +9,20 @@ const runtime = @import("runtime.zig");
 const Lock = @import("./lock.zig").Lock;
 const Api = @import("./api/schema.zig").Api;
 const fs = @import("fs.zig");
-usingnamespace @import("global.zig");
-usingnamespace @import("ast/base.zig");
+const _global = @import("global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
+const Ref = @import("ast/base.zig").Ref;
+const StoredFileDescriptorType = _global.StoredFileDescriptorType;
+const FeatureFlags = _global.FeatureFlags;
+const FileDescriptorType = _global.FileDescriptorType;
 usingnamespace js_ast.G;
 
 const expect = std.testing.expect;
@@ -51,7 +63,7 @@ fn notimpl() void {
     Global.panic("Not implemented yet!", .{});
 }
 
-fn formatUnsignedIntegerBetween(comptime len: u16, buf: *[len]u8, val: u64, comptime min: u32, comptime max: u32) void {
+fn formatUnsignedIntegerBetween(comptime len: u16, buf: *[len]u8, val: u64) void {
     comptime var i: u16 = len;
     var remainder = val;
     // Write out the number from the end to the front
@@ -94,14 +106,14 @@ pub const SourceMapChunk = struct {
 
 pub const Options = struct {
     transform_imports: bool = true,
-    to_module_ref: js_ast.Ref = js_ast.Ref.None,
-    require_ref: ?js_ast.Ref = null,
+    to_module_ref: Ref = Ref.None,
+    require_ref: ?Ref = null,
     indent: usize = 0,
     externals: []u32 = &[_]u32{},
     runtime_imports: runtime.Runtime.Imports = runtime.Runtime.Imports{},
     module_hash: u32 = 0,
     source_path: ?fs.Path = null,
-    bundle_export_ref: ?js_ast.Ref = null,
+    bundle_export_ref: ?Ref = null,
     rewrite_require_resolve: bool = true,
 
     css_import_behavior: Api.CssInJsBehavior = Api.CssInJsBehavior.facade,
@@ -119,7 +131,7 @@ pub const Options = struct {
 
     // The temporary fix here is to tag a stmts ptr as the one we want to prepend to
     // Then, when we're JUST about to print it, we print the body of prepend_part_value first
-    prepend_part_key: ?*c_void = null,
+    prepend_part_key: ?*anyopaque = null,
     prepend_part_value: ?*js_ast.Part = null,
 
     // If we're writing out a source map, this table of line start indices lets
@@ -198,7 +210,7 @@ const ImportVariant = enum {
         };
     }
 
-    pub fn determine(record: *const importRecord.ImportRecord, namespace: *const Symbol, s_import: *const S.Import) ImportVariant {
+    pub fn determine(record: *const importRecord.ImportRecord, _: *const Symbol, s_import: *const S.Import) ImportVariant {
         var variant = ImportVariant.path_only;
 
         if (record.contains_import_star) {
@@ -370,7 +382,7 @@ pub fn NewPrinter(
             return .comma;
         }
 
-        pub inline fn printUndefined(p: *Printer, level: Level) void {
+        pub inline fn printUndefined(p: *Printer, _: Level) void {
             // void 0 is more efficient in output size
             // however, "void 0" is the same as "undefined" is a point of confusion for many
             // since we are optimizing for development, undefined is more clear.
@@ -430,9 +442,7 @@ pub fn NewPrinter(
             p.print("}");
         }
 
-        pub fn printDecls(p: *Printer, comptime keyword: string, decls: []G.Decl, flags: ExprFlag) void {
-            debug("<printDecls>\n   {s}", .{decls});
-            defer debug("</printDecls>", .{});
+        pub fn printDecls(p: *Printer, comptime keyword: string, decls: []G.Decl, _: ExprFlag) void {
             p.print(keyword);
             p.printSpace();
 
@@ -454,7 +464,7 @@ pub fn NewPrinter(
         }
 
         // noop for now
-        pub fn addSourceMapping(p: *Printer, loc: logger.Loc) void {}
+        pub fn addSourceMapping(_: *Printer, _: logger.Loc) void {}
 
         pub fn printSymbol(p: *Printer, ref: Ref) void {
             const name = p.renamer.nameForSymbol(ref);
@@ -470,7 +480,13 @@ pub fn NewPrinter(
             }
         }
 
-        pub fn printFnArgs(p: *Printer, args: []G.Arg, has_rest_arg: bool, is_arrow: bool) void {
+        pub fn printFnArgs(
+            p: *Printer,
+            args: []G.Arg,
+            has_rest_arg: bool,
+            // is_arrow can be used for minifying later
+            _: bool,
+        ) void {
             const wrap = true;
 
             if (wrap) {
@@ -547,7 +563,7 @@ pub fn NewPrinter(
             }
         }
 
-        pub fn bestQuoteCharForString(p: *Printer, str: anytype, allow_backtick_: bool) u8 {
+        pub fn bestQuoteCharForString(_: *Printer, str: anytype, allow_backtick_: bool) u8 {
             if (comptime is_json) return '"';
 
             const allow_backtick = allow_backtick_;
@@ -625,7 +641,7 @@ pub fn NewPrinter(
                     },
                     11...99 => {
                         var buf: *[2]u8 = (p.writer.reserve(2) catch unreachable)[0..2];
-                        formatUnsignedIntegerBetween(2, buf, val, 11, 99);
+                        formatUnsignedIntegerBetween(2, buf, val);
                         p.writer.advance(2);
                     },
                     100 => {
@@ -633,7 +649,7 @@ pub fn NewPrinter(
                     },
                     101...999 => {
                         var buf: *[3]u8 = (p.writer.reserve(3) catch unreachable)[0..3];
-                        formatUnsignedIntegerBetween(3, buf, val, 101, 999);
+                        formatUnsignedIntegerBetween(3, buf, val);
                         p.writer.advance(3);
                     },
 
@@ -642,7 +658,7 @@ pub fn NewPrinter(
                     },
                     1001...9999 => {
                         var buf: *[4]u8 = (p.writer.reserve(4) catch unreachable)[0..4];
-                        formatUnsignedIntegerBetween(4, buf, val, 1001, 9999);
+                        formatUnsignedIntegerBetween(4, buf, val);
                         p.writer.advance(4);
                     },
                     10000 => {
@@ -666,32 +682,32 @@ pub fn NewPrinter(
 
                     10001...99999 => {
                         var buf: *[5]u8 = (p.writer.reserve(5) catch unreachable)[0..5];
-                        formatUnsignedIntegerBetween(5, buf, val, 10001, 99999);
+                        formatUnsignedIntegerBetween(5, buf, val);
                         p.writer.advance(5);
                     },
                     100001...999999 => {
                         var buf: *[6]u8 = (p.writer.reserve(6) catch unreachable)[0..6];
-                        formatUnsignedIntegerBetween(6, buf, val, 100001, 999999);
+                        formatUnsignedIntegerBetween(6, buf, val);
                         p.writer.advance(6);
                     },
                     1_000_001...9_999_999 => {
                         var buf: *[7]u8 = (p.writer.reserve(7) catch unreachable)[0..7];
-                        formatUnsignedIntegerBetween(7, buf, val, 1_000_001, 9_999_999);
+                        formatUnsignedIntegerBetween(7, buf, val);
                         p.writer.advance(7);
                     },
                     10_000_001...99_999_999 => {
                         var buf: *[8]u8 = (p.writer.reserve(8) catch unreachable)[0..8];
-                        formatUnsignedIntegerBetween(8, buf, val, 10_000_001, 99_999_999);
+                        formatUnsignedIntegerBetween(8, buf, val);
                         p.writer.advance(8);
                     },
                     100_000_001...999_999_999 => {
                         var buf: *[9]u8 = (p.writer.reserve(9) catch unreachable)[0..9];
-                        formatUnsignedIntegerBetween(9, buf, val, 100_000_001, 999_999_999);
+                        formatUnsignedIntegerBetween(9, buf, val);
                         p.writer.advance(9);
                     },
                     1_000_000_001...9_999_999_999 => {
                         var buf: *[10]u8 = (p.writer.reserve(10) catch unreachable)[0..10];
-                        formatUnsignedIntegerBetween(10, buf, val, 100_000_001, 999_999_999);
+                        formatUnsignedIntegerBetween(10, buf, val);
                         p.writer.advance(10);
                     },
                     else => std.fmt.formatInt(val, 10, .lower, .{}, p) catch unreachable,
@@ -718,7 +734,6 @@ pub fn NewPrinter(
 
                 const c: CodeUnitType = text[i];
                 i += 1;
-                var width: u3 = 0;
 
                 // TODO: here
                 switch (c) {
@@ -934,8 +949,17 @@ pub fn NewPrinter(
             p.print("'`)); } )()");
         }
 
-        pub fn printRequireOrImportExpr(p: *Printer, import_record_index: u32, leading_interior_comments: []G.Comment, _level: Level, flags: ExprFlag) void {
-            var level = _level;
+        pub fn printRequireOrImportExpr(
+            p: *Printer,
+            import_record_index: u32,
+            leading_interior_comments: []G.Comment,
+            level: Level,
+            flags: ExprFlag,
+        ) void {
+            const wrap = level.gte(.new) or flags.forbid_call;
+            if (wrap) p.print("(");
+            defer if (wrap) p.print(")");
+
             assert(p.import_records.len > import_record_index);
             const record = p.import_records[import_record_index];
 
@@ -987,7 +1011,7 @@ pub fn NewPrinter(
         }
 
         // noop for now
-        pub inline fn printPure(p: *Printer) void {}
+        pub inline fn printPure(_: *Printer) void {}
 
         pub fn printQuotedUTF8(p: *Printer, str: string, allow_backtick: bool) void {
             const quote = p.bestQuoteCharForString(str, allow_backtick);
@@ -996,7 +1020,7 @@ pub fn NewPrinter(
             p.print(quote);
         }
 
-        pub inline fn canPrintIdentifier(p: *Printer, name: string) bool {
+        pub inline fn canPrintIdentifier(_: *Printer, name: string) bool {
             if (comptime is_json) return false;
 
             if (comptime ascii_only) {
@@ -1006,7 +1030,7 @@ pub fn NewPrinter(
             }
         }
 
-        pub inline fn canPrintIdentifierUTF16(p: *Printer, name: []const u16) bool {
+        pub inline fn canPrintIdentifierUTF16(_: *Printer, name: []const u16) bool {
             if (comptime ascii_only) {
                 return js_lexer.isLatin1Identifier([]const u16, name);
             } else {
@@ -1072,7 +1096,7 @@ pub fn NewPrinter(
                         if (e.args.len > 0) {
                             p.printExpr(e.args[0], .comma, ExprFlag.None());
 
-                            for (e.args[1..]) |arg, i| {
+                            for (e.args[1..]) |arg| {
                                 p.print(",");
                                 p.printSpace();
                                 p.printExpr(arg, .comma, ExprFlag.None());
@@ -1128,7 +1152,7 @@ pub fn NewPrinter(
 
                     if (e.args.len > 0) {
                         p.printExpr(e.args[0], .comma, ExprFlag.None());
-                        for (e.args[1..]) |arg, i| {
+                        for (e.args[1..]) |arg| {
                             p.print(",");
                             p.printSpace();
                             p.printExpr(arg, .comma, ExprFlag.None());
@@ -1279,7 +1303,7 @@ pub fn NewPrinter(
 
                     switch (e.index.data) {
                         .e_private_identifier => {
-                            const priv = e.index.getPrivateIdentifier();
+                            const priv = e.index.data.e_private_identifier;
                             if (is_optional_chain_start) {
                                 p.print(".");
                             }
@@ -1346,7 +1370,7 @@ pub fn NewPrinter(
                     if (e.body.stmts.len == 1 and e.prefer_expr) {
                         switch (e.body.stmts[0].data) {
                             .s_return => {
-                                if (e.body.stmts[0].getReturn().value) |val| {
+                                if (e.body.stmts[0].data.s_return.value) |val| {
                                     p.arrow_expr_start = p.writer.written;
                                     p.printExpr(val, .comma, ExprFlag{ .forbid_in = true });
                                     wasPrinted = true;
@@ -1758,7 +1782,7 @@ pub fn NewPrinter(
                         .bin_nullish_coalescing => {
                             switch (e.left.data) {
                                 .e_binary => {
-                                    const left = e.left.getBinary();
+                                    const left = e.left.data.e_binary;
                                     switch (left.op) {
                                         .bin_logical_and, .bin_logical_or => {
                                             left_level = .prefix;
@@ -1771,7 +1795,7 @@ pub fn NewPrinter(
 
                             switch (e.right.data) {
                                 .e_binary => {
-                                    const right = e.right.getBinary();
+                                    const right = e.right.data.e_binary;
                                     switch (right.op) {
                                         .bin_logical_and, .bin_logical_or => {
                                             right_level = .prefix;
@@ -1786,7 +1810,7 @@ pub fn NewPrinter(
                         .bin_pow => {
                             switch (e.left.data) {
                                 .e_unary => {
-                                    const left = e.left.getUnary();
+                                    const left = e.left.data.e_unary;
                                     if (left.op.unaryAssignTarget() == .none) {
                                         left_level = .call;
                                     }
@@ -1802,7 +1826,7 @@ pub fn NewPrinter(
 
                     // Special-case "#foo in bar"
                     if (e.op == .bin_in and @as(Expr.Tag, e.left.data) == .e_private_identifier) {
-                        p.printSymbol(e.left.getPrivateIdentifier().ref);
+                        p.printSymbol(e.left.data.e_private_identifier.ref);
                     } else {
                         flags.forbid_in = true;
                         p.printExpr(e.left, left_level, flags);
@@ -1939,8 +1963,6 @@ pub fn NewPrinter(
         }
 
         pub fn printProperty(p: *Printer, item: G.Property) void {
-            debugl("<printProperty>");
-            defer debugl("</printProperty>");
             if (item.kind == .spread) {
                 p.print("...");
                 p.printExpr(item.value.?, .comma, ExprFlag.None());
@@ -2171,8 +2193,6 @@ pub fn NewPrinter(
         }
 
         pub fn printBinding(p: *Printer, binding: Binding) void {
-            debug("<printBinding>\n   {s}", .{binding});
-            defer debugl("</printBinding>");
             p.addSourceMapping(binding.loc);
 
             switch (binding.data) {
@@ -2212,7 +2232,7 @@ pub fn NewPrinter(
                             // Make sure there's a comma after trailing missing items
                             if (is_last) {
                                 switch (item.binding.data) {
-                                    .b_missing => |ok| {
+                                    .b_missing => {
                                         p.print(",");
                                     },
                                     else => {},
@@ -2359,9 +2379,6 @@ pub fn NewPrinter(
                 p.prev_stmt_tag = std.meta.activeTag(stmt.data);
             }
 
-            debug("<printStmt>: {s}\n", .{stmt});
-            defer debug("</printStmt>: {s}\n", .{stmt});
-
             p.addSourceMapping(stmt.loc);
             switch (stmt.data) {
                 .s_comment => |s| {
@@ -2440,7 +2457,7 @@ pub fn NewPrinter(
                         }
                     }
                 },
-                .s_empty => |s| {
+                .s_empty => {
                     p.printIndent();
                     p.print(";");
                     p.printNewline();
@@ -2480,11 +2497,7 @@ pub fn NewPrinter(
                                 .s_function => |func| {
                                     p.printSpaceBeforeIdentifier();
                                     if (is_inside_bundle) {
-                                        if (func.func.name) |name| {
-                                            // p.print("var ");
-                                            // p.printSymbol(name.ref.?);
-                                            // p.print(" = ");
-                                        } else {
+                                        if (func.func.name == null) {
                                             p.printModuleExportSymbol();
                                             p.print(" = ");
                                         }
@@ -2524,11 +2537,7 @@ pub fn NewPrinter(
                                     p.printSpaceBeforeIdentifier();
 
                                     if (is_inside_bundle) {
-                                        if (class.class.class_name) |name| {
-                                            // p.print("var ");
-                                            // p.printSymbol(name.ref.?);
-                                            // p.print(" = ");
-                                        } else {
+                                        if (class.class.class_name == null) {
                                             p.printModuleExportSymbol();
                                             p.print(" = ");
                                         }
@@ -2785,7 +2794,6 @@ pub fn NewPrinter(
                 },
                 .s_export_from => |s| {
                     if (is_inside_bundle) {
-                        const record = p.import_records[s.import_record_index];
 
                         // $$lz(export, $React(), {default: "React"});
                         if (s.items.len == 1) {
@@ -2896,7 +2904,7 @@ pub fn NewPrinter(
                     switch (s.body.data) {
                         .s_block => {
                             p.printSpace();
-                            p.printBlock(s.body.loc, s.body.getBlock().stmts);
+                            p.printBlock(s.body.loc, s.body.data.s_block.stmts);
                             p.printSpace();
                         },
                         else => {
@@ -3063,9 +3071,9 @@ pub fn NewPrinter(
 
                         if (c.body.len == 1) {
                             switch (c.body[0].data) {
-                                .s_block => |block| {
+                                .s_block => {
                                     p.printSpace();
-                                    p.printBlock(c.body[0].loc, c.body[0].getBlock().stmts);
+                                    p.printBlock(c.body[0].loc, c.body[0].data.s_block.stmts);
                                     p.printNewline();
                                     continue;
                                 },
@@ -3154,7 +3162,7 @@ pub fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
 
                     if (is_inside_bundle) {
-                        return p.printBundledImport(record, s, stmt);
+                        return p.printBundledImport(record, s);
                     }
 
                     if (record.wrap_with_to_module) {
@@ -3278,7 +3286,7 @@ pub fn NewPrinter(
                             p.print(" = () => ({default: {}});\n");
                         }
 
-                        p.printBundledImport(record, s, stmt);
+                        p.printBundledImport(record, s);
                         return;
                     }
 
@@ -3337,7 +3345,7 @@ pub fn NewPrinter(
                         item_count += 1;
                     }
 
-                    if (s.star_name_loc) |star| {
+                    if (s.star_name_loc != null) {
                         if (item_count > 0) {
                             p.print(",");
                             p.printSpace();
@@ -3365,7 +3373,7 @@ pub fn NewPrinter(
                     p.printBlock(stmt.loc, s.stmts);
                     p.printNewline();
                 },
-                .s_debugger => |s| {
+                .s_debugger => {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print("debugger");
@@ -3444,7 +3452,7 @@ pub fn NewPrinter(
             p.print("module.exports");
         }
 
-        pub fn printBundledImport(p: *Printer, record: importRecord.ImportRecord, s: *S.Import, stmt: Stmt) void {
+        pub fn printBundledImport(p: *Printer, record: importRecord.ImportRecord, s: *S.Import) void {
             if (record.is_internal) {
                 return;
             }
@@ -3658,7 +3666,7 @@ pub fn NewPrinter(
             switch (s.yes.data) {
                 .s_block => |block| {
                     p.printSpace();
-                    p.printBlock(s.yes.loc, s.yes.getBlock().stmts);
+                    p.printBlock(s.yes.loc, block.stmts);
 
                     if (s.no != null) {
                         p.printSpace();
@@ -3704,13 +3712,13 @@ pub fn NewPrinter(
                 p.print("else");
 
                 switch (no_block.data) {
-                    .s_block => |no| {
+                    .s_block => {
                         p.printSpace();
-                        p.printBlock(no_block.loc, no_block.getBlock().stmts);
+                        p.printBlock(no_block.loc, no_block.data.s_block.stmts);
                         p.printNewline();
                     },
-                    .s_if => |no| {
-                        p.printIf(no_block.getIf());
+                    .s_if => {
+                        p.printIf(no_block.data.s_if);
                     },
                     else => {
                         p.printNewline();
@@ -4117,33 +4125,33 @@ const FileWriterInternal = struct {
             .file = file,
         };
     }
-    pub fn writeByte(ctx: *FileWriterInternal, byte: u8) anyerror!usize {
+    pub fn writeByte(_: *FileWriterInternal, byte: u8) anyerror!usize {
         try buffer.appendChar(byte);
         return 1;
     }
-    pub fn writeAll(ctx: *FileWriterInternal, bytes: anytype) anyerror!usize {
+    pub fn writeAll(_: *FileWriterInternal, bytes: anytype) anyerror!usize {
         try buffer.append(bytes);
         return bytes.len;
     }
 
-    pub fn slice(this: *@This()) string {
+    pub fn slice(_: *@This()) string {
         return buffer.list.items;
     }
 
-    pub fn getLastByte(_ctx: *const FileWriterInternal) u8 {
+    pub fn getLastByte(_: *const FileWriterInternal) u8 {
         return if (buffer.list.items.len > 0) buffer.list.items[buffer.list.items.len - 1] else 0;
     }
 
-    pub fn getLastLastByte(_ctx: *const FileWriterInternal) u8 {
+    pub fn getLastLastByte(_: *const FileWriterInternal) u8 {
         return if (buffer.list.items.len > 1) buffer.list.items[buffer.list.items.len - 2] else 0;
     }
 
-    pub fn reserveNext(ctx: *FileWriterInternal, count: u32) anyerror![*]u8 {
+    pub fn reserveNext(_: *FileWriterInternal, count: u32) anyerror![*]u8 {
         try buffer.growIfNeeded(count);
         return @ptrCast([*]u8, &buffer.list.items.ptr[buffer.list.items.len]);
     }
-    pub fn advanceBy(ctx: *FileWriterInternal, count: u32) void {
-        if (comptime Environment.isDebug) std.debug.assert(buffer.list.items.len + count < buffer.list.capacity);
+    pub fn advanceBy(_: *FileWriterInternal, count: u32) void {
+        if (comptime Environment.isDebug) std.debug.assert(buffer.list.items.len + count <= buffer.list.capacity);
 
         buffer.list.items = buffer.list.items.ptr[0 .. buffer.list.items.len + count];
     }
@@ -4192,7 +4200,7 @@ const FileWriterInternal = struct {
     }
 
     pub fn flush(
-        ctx: *FileWriterInternal,
+        _: *FileWriterInternal,
     ) anyerror!void {}
 };
 
@@ -4203,7 +4211,7 @@ pub const BufferWriter = struct {
     append_null_byte: bool = false,
     approximate_newline_count: usize = 0,
 
-    pub fn init(allocator: *std.mem.Allocator) !BufferWriter {
+    pub fn init(allocator: std.mem.Allocator) !BufferWriter {
         return BufferWriter{
             .buffer = MutableString.init(
                 allocator,
@@ -4261,7 +4269,7 @@ pub const BufferWriter = struct {
     }
 
     pub fn flush(
-        ctx: *BufferWriter,
+        _: *BufferWriter,
     ) anyerror!void {}
 };
 pub const BufferPrinter = NewWriter(
@@ -4485,10 +4493,10 @@ pub fn printCommonJSThreaded(
         defer lock.unlock();
         lock.lock();
         result.off = @truncate(u32, try getPos(getter));
-        if (comptime isMac or isLinux) {
+        if (comptime Environment.isMac or Environment.isLinux) {
             // Don't bother preallocate the file if it's less than 1 KB. Preallocating is potentially two syscalls
             if (printer.writer.written > 1024) {
-                if (comptime isMac) {
+                if (comptime Environment.isMac) {
                     try C.preallocate_file(
                         getter.handle,
                         @intCast(std.os.off_t, 0),
@@ -4496,7 +4504,7 @@ pub fn printCommonJSThreaded(
                     );
                 }
 
-                if (comptime isLinux) {
+                if (comptime Environment.isLinux) {
                     _ = std.os.system.fallocate(getter.handle, 0, @intCast(i64, result.off), printer.writer.written);
                 }
             }

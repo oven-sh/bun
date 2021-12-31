@@ -4,8 +4,17 @@ const logger = @import("logger.zig");
 const js_lexer = @import("js_lexer.zig");
 const json_parser = @import("json_parser.zig");
 const fs = @import("fs.zig");
-usingnamespace @import("global.zig");
-usingnamespace @import("ast/base.zig");
+const _global = @import("global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
+const Ref = @import("ast/base.zig").Ref;
 
 const GlobalDefinesKey = @import("./defines-table.zig").GlobalDefinesKey;
 
@@ -66,7 +75,7 @@ pub const DefineData = struct {
         };
     }
 
-    pub fn from_mergable_input(defines: RawDefines, user_defines: *UserDefines, log: *logger.Log, allocator: *std.mem.Allocator) !void {
+    pub fn from_mergable_input(defines: RawDefines, user_defines: *UserDefines, log: *logger.Log, allocator: std.mem.Allocator) !void {
         try user_defines.ensureUnusedCapacity(@truncate(u32, defines.count()));
         var iter = defines.iterator();
         while (iter.next()) |entry| {
@@ -157,7 +166,7 @@ pub const DefineData = struct {
         }
     }
 
-    pub fn from_input(defines: RawDefines, log: *logger.Log, allocator: *std.mem.Allocator) !UserDefines {
+    pub fn from_input(defines: RawDefines, log: *logger.Log, allocator: std.mem.Allocator) !UserDefines {
         var user_defines = UserDefines.init(allocator);
         try from_mergable_input(defines, &user_defines, log, allocator);
 
@@ -199,9 +208,9 @@ var __filename = js_ast.E.String{ .utf8 = __filename_str };
 pub const Define = struct {
     identifiers: std.StringHashMap(IdentifierDefine),
     dots: std.StringHashMap([]DotDefine),
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 
-    pub fn insertFromIterator(define: *Define, allocator: *std.mem.Allocator, comptime Iterator: type, iter: Iterator) !void {
+    pub fn insertFromIterator(define: *Define, allocator: std.mem.Allocator, comptime Iterator: type, iter: Iterator) !void {
         while (iter.next()) |user_define| {
             const user_define_key = user_define.key_ptr.*;
             // If it has a dot, then it's a DotDefine.
@@ -255,18 +264,16 @@ pub const Define = struct {
         }
     }
 
-    pub fn init(allocator: *std.mem.Allocator, _user_defines: ?UserDefines, string_defines: ?UserDefinesArray) !*@This() {
+    pub fn init(allocator: std.mem.Allocator, _user_defines: ?UserDefines, string_defines: ?UserDefinesArray) !*@This() {
         var define = try allocator.create(Define);
         define.allocator = allocator;
         define.identifiers = std.StringHashMap(IdentifierDefine).init(allocator);
         define.dots = std.StringHashMap([]DotDefine).init(allocator);
-        try define.identifiers.ensureCapacity(641 + 2 + 1);
-        try define.dots.ensureCapacity(64);
+        try define.identifiers.ensureTotalCapacity(641 + 2 + 1);
+        try define.dots.ensureTotalCapacity(64);
 
         var val = js_ast.Expr.Data{ .e_undefined = .{} };
-        var ident_define = IdentifierDefine{
-            .value = val,
-        };
+
         var value_define = DefineData{ .value = val, .valueless = true };
         // Step 1. Load the globals into the hash tables
         for (GlobalDefinesKey) |global| {

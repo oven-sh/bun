@@ -1,6 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const is_darwin = std.Target.current.isDarwin();
+const is_darwin = @import("builtin").target.isDarwin();
 
 pub const Time = struct {
     const Self = @This();
@@ -51,7 +51,7 @@ pub const Time = struct {
 
     /// A timestamp to measure real (i.e. wall clock) time, meaningful across systems, and reboots.
     /// This clock is affected by discontinuous jumps in the system time.
-    pub fn realtime(self: *Self) i64 {
+    pub fn realtime(_: *Self) i64 {
         // macos has supported clock_gettime() since 10.12:
         // https://opensource.apple.com/source/Libc/Libc-1158.1.2/gen/clock_gettime.3.auto.html
 
@@ -60,5 +60,5 @@ pub const Time = struct {
         return @as(i64, ts.tv_sec) * std.time.ns_per_s + ts.tv_nsec;
     }
 
-    pub fn tick(self: *Self) void {}
+    pub fn tick(_: *Self) void {}
 };

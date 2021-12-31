@@ -1,7 +1,17 @@
 // @link "../deps/libarchive.a"
 
 const lib = @import("./libarchive-bindings.zig");
-usingnamespace @import("../global.zig");
+const _global = @import("../global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const FileDescriptorType = _global.FileDescriptorType;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 const std = @import("std");
 const struct_archive = lib.struct_archive;
 pub const Seek = enum(c_int) {
@@ -172,79 +182,6 @@ pub const Status = enum(c_int) {
     fatal = lib.ARCHIVE_FATAL,
 };
 
-pub fn NewStream(comptime SeekableStream: type) type {
-    return struct {
-        const Stream = @This();
-        source: SeekableStream,
-
-        pub inline fn fromCtx(ctx: *c_void) *Stream {
-            return @ptrCast(*Stream, @alignCast(@alignOf(*Stream), ctx));
-        }
-
-        pub fn archive_read_callback(
-            archive: *struct_archive,
-            ctx_: *c_void,
-            buffer: [*c]*const c_void,
-        ) callconv(.C) lib.la_ssize_t {
-            var this = fromCtx(ctx_);
-        }
-
-        pub fn archive_skip_callback(
-            archive: *struct_archive,
-            ctx_: *c_void,
-            offset: lib.la_int64_,
-        ) callconv(.C) lib.la_int64_t {
-            var this = fromCtx(ctx_);
-        }
-
-        pub fn archive_seek_callback(
-            archive: *struct_archive,
-            ctx_: *c_void,
-            offset: lib.la_int64_t,
-            whence: c_int,
-        ) callconv(.C) lib.la_int64_t {
-            var this = fromCtx(ctx_);
-        }
-
-        pub fn archive_write_callback(
-            archive: *struct_archive,
-            ctx_: *c_void,
-            buffer: *const c_void,
-            len: usize,
-        ) callconv(.C) lib.la_ssize_t {
-            var this = fromCtx(ctx_);
-        }
-        pub fn archive_open_callback(
-            archive: *struct_archive,
-            ctx_: *c_void,
-        ) callconv(.C) c_int {
-            var this = fromCtx(ctx_);
-        }
-
-        pub fn archive_close_callback(
-            archive: *struct_archive,
-            ctx_: *c_void,
-        ) callconv(.C) c_int {
-            var this = fromCtx(ctx_);
-        }
-        pub fn archive_free_callback(
-            archive: *struct_archive,
-            ctx_: *c_void,
-        ) callconv(.C) c_int {
-            var this = fromCtx(ctx_);
-        }
-
-        pub fn archive_switch_callback(
-            archive: *struct_archive,
-            ctx1: *c_void,
-            ctx2: *c_void,
-        ) callconv(.C) c_int {
-            var this = fromCtx(ctx1);
-            var that = fromCtx(ctx2);
-        }
-    };
-}
-
 pub const BufferReadStream = struct {
     const Stream = @This();
     buf: []const u8,
@@ -299,21 +236,21 @@ pub const BufferReadStream = struct {
         return this.buf[this.pos..];
     }
 
-    pub inline fn fromCtx(ctx: *c_void) *Stream {
+    pub inline fn fromCtx(ctx: *anyopaque) *Stream {
         return @ptrCast(*Stream, @alignCast(@alignOf(*Stream), ctx));
     }
 
     pub fn archive_close_callback(
-        archive: *struct_archive,
-        ctx_: *c_void,
+        _: *struct_archive,
+        _: *anyopaque,
     ) callconv(.C) c_int {
         return 0;
     }
 
     pub fn archive_read_callback(
-        archive: *struct_archive,
-        ctx_: *c_void,
-        buffer: [*c]*const c_void,
+        _: *struct_archive,
+        ctx_: *anyopaque,
+        buffer: [*c]*const anyopaque,
     ) callconv(.C) lib.la_ssize_t {
         var this = fromCtx(ctx_);
         const remaining = this.bufLeft();
@@ -326,8 +263,8 @@ pub const BufferReadStream = struct {
     }
 
     pub fn archive_skip_callback(
-        archive: *struct_archive,
-        ctx_: *c_void,
+        _: *struct_archive,
+        ctx_: *anyopaque,
         offset: lib.la_int64_t,
     ) callconv(.C) lib.la_int64_t {
         var this = fromCtx(ctx_);
@@ -342,8 +279,8 @@ pub const BufferReadStream = struct {
     }
 
     pub fn archive_seek_callback(
-        archive: *struct_archive,
-        ctx_: *c_void,
+        _: *struct_archive,
+        ctx_: *anyopaque,
         offset: lib.la_int64_t,
         whence: c_int,
     ) callconv(.C) lib.la_int64_t {
@@ -373,8 +310,8 @@ pub const BufferReadStream = struct {
 
     // pub fn archive_write_callback(
     //     archive: *struct_archive,
-    //     ctx_: *c_void,
-    //     buffer: *const c_void,
+    //     ctx_: *anyopaque,
+    //     buffer: *const anyopaque,
     //     len: usize,
     // ) callconv(.C) lib.la_ssize_t {
     //     var this = fromCtx(ctx_);
@@ -382,21 +319,21 @@ pub const BufferReadStream = struct {
 
     // pub fn archive_close_callback(
     //     archive: *struct_archive,
-    //     ctx_: *c_void,
+    //     ctx_: *anyopaque,
     // ) callconv(.C) c_int {
     //     var this = fromCtx(ctx_);
     // }
     // pub fn archive_free_callback(
     //     archive: *struct_archive,
-    //     ctx_: *c_void,
+    //     ctx_: *anyopaque,
     // ) callconv(.C) c_int {
     //     var this = fromCtx(ctx_);
     // }
 
     // pub fn archive_switch_callback(
     //     archive: *struct_archive,
-    //     ctx1: *c_void,
-    //     ctx2: *c_void,
+    //     ctx1: *anyopaque,
+    //     ctx2: *anyopaque,
     // ) callconv(.C) c_int {
     //     var this = fromCtx(ctx1);
     //     var that = fromCtx(ctx2);
@@ -415,10 +352,10 @@ pub const Archive = struct {
         pub const EntryMap = std.ArrayHashMap(u64, [*c]u8, U64Context, false);
 
         pub const U64Context = struct {
-            pub fn hash(ctx: @This(), k: u64) u32 {
+            pub fn hash(_: @This(), k: u64) u32 {
                 return @truncate(u32, k);
             }
-            pub fn eql(ctx: @This(), a: u64, b: u64) bool {
+            pub fn eql(_: @This(), a: u64, b: u64) bool {
                 return a == b;
             }
         };
@@ -429,7 +366,7 @@ pub const Archive = struct {
         filename_hash: u64 = 0,
         found: bool = false,
         fd: FileDescriptorType = 0,
-        pub fn init(filepath: string, estimated_size: usize, allocator: *std.mem.Allocator) !Plucker {
+        pub fn init(filepath: string, estimated_size: usize, allocator: std.mem.Allocator) !Plucker {
             return Plucker{
                 .contents = try MutableString.init(allocator, estimated_size),
                 .filename_hash = std.hash.Wyhash.hash(0, filepath),
@@ -448,9 +385,7 @@ pub const Archive = struct {
         comptime depth_to_skip: usize,
     ) !void {
         var entry: *lib.archive_entry = undefined;
-        var ext: *lib.archive = undefined;
 
-        const flags = @enumToInt(Flags.Extract.time) | @enumToInt(Flags.Extract.perm) | @enumToInt(Flags.Extract.acl) | @enumToInt(Flags.Extract.fflags);
         var stream: BufferReadStream = undefined;
         stream.init(file_buffer);
         defer stream.deinit();
@@ -533,9 +468,7 @@ pub const Archive = struct {
         comptime log: bool,
     ) !u32 {
         var entry: *lib.archive_entry = undefined;
-        var ext: *lib.archive = undefined;
 
-        const flags = @enumToInt(Flags.Extract.time) | @enumToInt(Flags.Extract.perm) | @enumToInt(Flags.Extract.acl) | @enumToInt(Flags.Extract.fflags);
         var stream: BufferReadStream = undefined;
         stream.init(file_buffer);
         defer stream.deinit();
@@ -576,7 +509,6 @@ pub const Archive = struct {
                     var pathname_ = tokenizer.rest();
                     pathname = @intToPtr([*]const u8, @ptrToInt(pathname_.ptr))[0..pathname_.len :0];
 
-                    const mask = lib.archive_entry_filetype(entry);
                     const size = @intCast(usize, @maximum(lib.archive_entry_size(entry), 0));
                     if (size > 0) {
                         const slice = std.mem.span(pathname);

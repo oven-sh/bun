@@ -1,7 +1,70 @@
-usingnamespace @import("./headers-replacements.zig");
-pub usingnamespace @import("std").zig.c_builtins;
+// GENERATED FILE - do not modify!
+const bindings = @import("../../../jsc.zig");
+
+pub const struct_JSC__StringPrototype = bindings.StringPrototype;
+pub const struct_JSC__SetIteratorPrototype = bindings.SetIteratorPrototype;
+pub const struct_JSC__RegExpPrototype = bindings.RegExpPrototype;
+pub const struct_JSC__ObjectPrototype = bindings.ObjectPrototype;
+pub const struct_JSC__MapIteratorPrototype = bindings.MapIteratorPrototype;
+pub const struct_JSC__JSPromisePrototype = bindings.JSPromisePrototype;
+pub const struct_JSC__IteratorPrototype = bindings.IteratorPrototype;
+pub const struct_JSC__GeneratorPrototype = bindings.GeneratorPrototype;
+pub const struct_JSC__GeneratorFunctionPrototype = bindings.GeneratorFunctionPrototype;
+pub const struct_JSC__FunctionPrototype = bindings.FunctionPrototype;
+pub const struct_JSC__BigIntPrototype = bindings.BigIntPrototype;
+pub const struct_JSC__AsyncIteratorPrototype = bindings.AsyncIteratorPrototype;
+pub const struct_JSC__AsyncGeneratorPrototype = bindings.AsyncGeneratorPrototype;
+pub const struct_JSC__AsyncGeneratorFunctionPrototype = bindings.AsyncGeneratorFunctionPrototype;
+pub const struct_JSC__AsyncFunctionPrototype = bindings.AsyncFunctionPrototype;
+pub const struct_JSC__ArrayPrototype = bindings.ArrayPrototype;
+pub const struct_JSC__ArrayIteratorPrototype = bindings.ArrayIteratorPrototype;
+pub const bWTF__URL = bindings.URL;
+pub const bWTF__StringView = bindings.StringView;
+pub const bWTF__StringImpl = bindings.StringImpl;
+pub const bWTF__String = bindings.String;
+pub const bWTF__ExternalStringImpl = bindings.ExternalStringImpl;
+pub const bJSC__VM = bindings.VM;
+pub const bJSC__ThrowScope = bindings.ThrowScope;
+pub const bJSC__SourceOrigin = bindings.SourceOrigin;
+pub const bJSC__SourceCode = bindings.SourceCode;
+pub const bJSC__PropertyName = bindings.PropertyName;
+pub const bJSC__JSString = bindings.JSString;
+pub const bJSC__JSPromise = bindings.JSPromise;
+pub const bJSC__JSObject = bindings.JSObject;
+pub const bJSC__JSModuleRecord = bindings.JSModuleRecord;
+pub const bJSC__JSModuleLoader = bindings.JSModuleLoader;
+pub const bJSC__JSLock = bindings.JSLock;
+pub const bJSC__JSInternalPromise = bindings.JSInternalPromise;
+pub const bJSC__JSGlobalObject = bindings.JSGlobalObject;
+pub const bJSC__JSFunction = bindings.JSFunction;
+pub const bJSC__JSCell = bindings.JSCell;
+pub const bJSC__Identifier = bindings.Identifier;
+pub const bJSC__Exception = bindings.Exception;
+pub const bJSC__CatchScope = bindings.CatchScope;
+pub const bJSC__CallFrame = bindings.CallFrame;
+pub const bInspector__ScriptArguments = bindings.ScriptArguments;
+pub const JSC__JSValue = bindings.JSValue;
+
+// Inlined types
+pub const ZigString = bindings.ZigString;
+pub const ZigException = bindings.ZigException;
+pub const ResolvedSource = bindings.ResolvedSource;
+pub const ZigStackTrace = bindings.ZigStackTrace;
+pub const ReturnableException = bindings.ReturnableException;
+const JSClassRef = bindings.C.JSClassRef;
+// GENERATED CODE - DO NOT MODIFY BY HAND
+
 pub const ptrdiff_t = c_long;
-pub const wchar_t = c_uint;
+pub const wchar_t = c_int;
+pub const __uint16_t = c_ushort;
+pub const __int32_t = c_int;
+pub const __uint32_t = c_uint;
+pub const __int64_t = c_longlong;
+pub const __uint64_t = c_ulonglong;
+pub const __mbstate_t = extern union {
+    __mbstate8: [128]u8,
+    _mbstateL: c_longlong,
+};
 
 pub const JSC__RegExpPrototype = struct_JSC__RegExpPrototype;
 
@@ -39,8 +102,6 @@ pub const JSC__JSPromise = bJSC__JSPromise;
 
 pub const JSC__SetIteratorPrototype = struct_JSC__SetIteratorPrototype;
 pub const JSC__SourceCode = bJSC__SourceCode;
-
-pub const Zig__JSMicrotaskCallback = struct_Zig__JSMicrotaskCallback;
 pub const JSC__JSCell = bJSC__JSCell;
 
 pub const JSC__BigIntPrototype = struct_JSC__BigIntPrototype;
@@ -63,7 +124,7 @@ pub const JSC__ObjectPrototype = struct_JSC__ObjectPrototype;
 pub const JSC__CallFrame = bJSC__CallFrame;
 
 pub const JSC__MapIteratorPrototype = struct_JSC__MapIteratorPrototype;
-pub extern fn JSC__JSObject__create(arg0: [*c]JSC__JSGlobalObject, arg1: usize, arg2: ?*c_void, ArgFn3: ?fn (?*c_void, [*c]JSC__JSObject, [*c]JSC__JSGlobalObject) callconv(.C) void) JSC__JSValue;
+pub extern fn JSC__JSObject__create(arg0: [*c]JSC__JSGlobalObject, arg1: usize, arg2: ?*anyopaque, ArgFn3: ?fn (?*anyopaque, [*c]JSC__JSObject, [*c]JSC__JSGlobalObject) callconv(.C) void) JSC__JSValue;
 pub extern fn JSC__JSObject__getArrayLength(arg0: [*c]JSC__JSObject) usize;
 pub extern fn JSC__JSObject__getDirect(arg0: [*c]JSC__JSObject, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]const ZigString) JSC__JSValue;
 pub extern fn JSC__JSObject__getIndex(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: u32) JSC__JSValue;
@@ -129,7 +190,7 @@ pub extern fn JSC__JSFunction__constructWithArguments(JSValue0: JSC__JSValue, ar
 pub extern fn JSC__JSFunction__constructWithArgumentsAndNewTarget(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, arg2: [*c]JSC__JSGlobalObject, arg3: [*c]JSC__JSValue, arg4: usize, arg5: *?*JSC__Exception, arg6: [*c]const u8) JSC__JSValue;
 pub extern fn JSC__JSFunction__constructWithNewTarget(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, JSValue2: JSC__JSValue, arg3: *?*JSC__Exception, arg4: [*c]const u8) JSC__JSValue;
 pub extern fn JSC__JSFunction__constructWithoutAnyArgumentsOrNewTarget(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: *?*JSC__Exception, arg3: [*c]const u8) JSC__JSValue;
-pub extern fn JSC__JSFunction__createFromNative(arg0: [*c]JSC__JSGlobalObject, arg1: u16, arg2: [*c]const WTF__String, arg3: ?*c_void, ArgFn4: ?fn (?*c_void, [*c]JSC__JSGlobalObject, [*c]JSC__CallFrame) callconv(.C) JSC__JSValue) [*c]JSC__JSFunction;
+pub extern fn JSC__JSFunction__createFromNative(arg0: [*c]JSC__JSGlobalObject, arg1: u16, arg2: [*c]const WTF__String, arg3: ?*anyopaque, ArgFn4: ?fn (?*anyopaque, [*c]JSC__JSGlobalObject, [*c]JSC__CallFrame) callconv(.C) JSC__JSValue) [*c]JSC__JSFunction;
 pub extern fn JSC__JSFunction__displayName(arg0: [*c]JSC__JSFunction, arg1: [*c]JSC__VM) bWTF__String;
 pub extern fn JSC__JSFunction__getName(arg0: [*c]JSC__JSFunction, arg1: [*c]JSC__VM) bWTF__String;
 pub extern fn JSC__JSGlobalObject__arrayIteratorPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__ArrayIteratorPrototype;
@@ -140,7 +201,7 @@ pub extern fn JSC__JSGlobalObject__asyncGeneratorPrototype(arg0: [*c]JSC__JSGlob
 pub extern fn JSC__JSGlobalObject__asyncIteratorPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__AsyncIteratorPrototype;
 pub extern fn JSC__JSGlobalObject__bigIntPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__BigIntPrototype;
 pub extern fn JSC__JSGlobalObject__booleanPrototype(arg0: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;
-pub extern fn JSC__JSGlobalObject__createAggregateError(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]*c_void, arg2: u16, arg3: [*c]const ZigString) JSC__JSValue;
+pub extern fn JSC__JSGlobalObject__createAggregateError(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]*anyopaque, arg2: u16, arg3: [*c]const ZigString) JSC__JSValue;
 pub extern fn JSC__JSGlobalObject__datePrototype(arg0: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__errorPrototype(arg0: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__functionPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__FunctionPrototype;
@@ -319,7 +380,7 @@ pub extern fn WTF__StringImpl__isStatic(arg0: [*c]const WTF__StringImpl) bool;
 pub extern fn WTF__StringImpl__length(arg0: [*c]const WTF__StringImpl) usize;
 pub extern fn WTF__ExternalStringImpl__characters16(arg0: [*c]const WTF__ExternalStringImpl) [*c]const u16;
 pub extern fn WTF__ExternalStringImpl__characters8(arg0: [*c]const WTF__ExternalStringImpl) [*c]const u8;
-pub extern fn WTF__ExternalStringImpl__create(arg0: [*c]const u8, arg1: usize, ArgFn2: ?fn (?*c_void, [*c]u8, usize) callconv(.C) void) bWTF__ExternalStringImpl;
+pub extern fn WTF__ExternalStringImpl__create(arg0: [*c]const u8, arg1: usize, ArgFn2: ?fn (?*anyopaque, [*c]u8, usize) callconv(.C) void) bWTF__ExternalStringImpl;
 pub extern fn WTF__ExternalStringImpl__is16Bit(arg0: [*c]const WTF__ExternalStringImpl) bool;
 pub extern fn WTF__ExternalStringImpl__is8Bit(arg0: [*c]const WTF__ExternalStringImpl) bool;
 pub extern fn WTF__ExternalStringImpl__isEmpty(arg0: [*c]const WTF__ExternalStringImpl) bool;
@@ -331,7 +392,7 @@ pub extern fn WTF__StringView__is16Bit(arg0: [*c]const WTF__StringView) bool;
 pub extern fn WTF__StringView__is8Bit(arg0: [*c]const WTF__StringView) bool;
 pub extern fn WTF__StringView__isEmpty(arg0: [*c]const WTF__StringView) bool;
 pub extern fn WTF__StringView__length(arg0: [*c]const WTF__StringView) usize;
-pub extern fn Zig__GlobalObject__create(arg0: [*c]JSClassRef, arg1: i32, arg2: ?*c_void) [*c]JSC__JSGlobalObject;
-pub extern fn Zig__GlobalObject__getModuleRegistryMap(arg0: [*c]JSC__JSGlobalObject) ?*c_void;
-pub extern fn Zig__GlobalObject__resetModuleRegistryMap(arg0: [*c]JSC__JSGlobalObject, arg1: ?*c_void) bool;
+pub extern fn Zig__GlobalObject__create(arg0: [*c]JSClassRef, arg1: i32, arg2: ?*anyopaque) [*c]JSC__JSGlobalObject;
+pub extern fn Zig__GlobalObject__getModuleRegistryMap(arg0: [*c]JSC__JSGlobalObject) ?*anyopaque;
+pub extern fn Zig__GlobalObject__resetModuleRegistryMap(arg0: [*c]JSC__JSGlobalObject, arg1: ?*anyopaque) bool;
 pub extern fn ZigException__fromException(arg0: [*c]JSC__Exception) ZigException;

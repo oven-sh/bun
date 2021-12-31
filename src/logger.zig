@@ -1,8 +1,17 @@
 const std = @import("std");
 const Api = @import("./api/schema.zig").Api;
-const js = @import("./javascript/jsc/bindings/bindings.zig");
+const js = @import("javascript_core");
 const ImportKind = @import("./import_record.zig").ImportKind;
-usingnamespace @import("global.zig");
+const _global = @import("./global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 
 const fs = @import("fs.zig");
 const unicode = std.unicode;
@@ -34,7 +43,7 @@ pub const Kind = enum(i8) {
         };
     }
 
-    pub inline fn string(self: Kind) string {
+    pub inline fn string(self: Kind) _global.string {
         return switch (self) {
             .err => "error",
             .warn => "warn",
@@ -103,7 +112,7 @@ pub const Location = struct {
     }
 
     // don't really know what's safe to deinit here!
-    pub fn deinit(l: *Location, allocator: *std.mem.Allocator) void {}
+    pub fn deinit(_: *Location, _: std.mem.Allocator) void {}
 
     pub fn init(file: []u8, namespace: []u8, line: i32, column: i32, length: u32, line_text: ?[]u8, suggestion: ?[]u8) Location {
         return Location{
@@ -158,12 +167,12 @@ pub const Location = struct {
 pub const Data = struct {
     text: string,
     location: ?Location = null,
-    pub fn deinit(d: *Data, allocator: *std.mem.Allocator) void {
+    pub fn deinit(d: *Data, allocator: std.mem.Allocator) void {
         if (d.location) |loc| {
             loc.deinit(allocator);
         }
 
-        allocator.free(text);
+        allocator.free(d.text);
     }
 
     pub fn toAPI(this: *const Data) Api.MessageData {
@@ -351,7 +360,7 @@ pub const Msg = struct {
         };
     };
 
-    pub fn toAPI(this: *const Msg, allocator: *std.mem.Allocator) !Api.Message {
+    pub fn toAPI(this: *const Msg, allocator: std.mem.Allocator) !Api.Message {
         const notes_len = if (this.notes != null) this.notes.?.len else 0;
         var _notes = try allocator.alloc(
             Api.MessageData,
@@ -378,7 +387,7 @@ pub const Msg = struct {
         return msg;
     }
 
-    pub fn toAPIFromList(comptime ListType: type, list: ListType, allocator: *std.mem.Allocator) ![]Api.Message {
+    pub fn toAPIFromList(comptime ListType: type, list: ListType, allocator: std.mem.Allocator) ![]Api.Message {
         var out_list = try allocator.alloc(Api.Message, list.items.len);
         for (list.items) |item, i| {
             out_list[i] = try item.toAPI(allocator);
@@ -387,7 +396,7 @@ pub const Msg = struct {
         return out_list;
     }
 
-    pub fn deinit(msg: *Msg, allocator: *std.mem.Allocator) void {
+    pub fn deinit(msg: *Msg, allocator: std.mem.Allocator) void {
         msg.data.deinit(allocator);
         if (msg.notes) |notes| {
             for (notes) |note| {
@@ -415,7 +424,7 @@ pub const Msg = struct {
         msg: *const Msg,
         comptime Writer: type,
         writer: Writer,
-        comptime allow_colors: bool,
+        comptime _: bool,
     ) !void {
         if (msg.data.location) |location| {
             try writer.print("{s}: {s}\n{s}\n{s}:{}:{} ({d})", .{
@@ -474,12 +483,12 @@ pub const Log = struct {
     warnings: usize = 0,
     errors: usize = 0,
     msgs: ArrayList(Msg),
-    level: Level = if (isDebug) Level.info else Level.warn,
+    level: Level = if (Environment.isDebug) Level.info else Level.warn,
 
-    pub fn toAPI(this: *const Log, allocator: *std.mem.Allocator) !Api.Log {
+    pub fn toAPI(this: *const Log, allocator: std.mem.Allocator) !Api.Log {
         var warnings: u32 = 0;
         var errors: u32 = 0;
-        for (this.msgs.items) |msg, i| {
+        for (this.msgs.items) |msg| {
             errors += @intCast(u32, @boolToInt(msg.kind == .err));
             warnings += @intCast(u32, @boolToInt(msg.kind == .warn));
         }
@@ -499,7 +508,7 @@ pub const Log = struct {
         err,
     };
 
-    pub fn init(allocator: *std.mem.Allocator) Log {
+    pub fn init(allocator: std.mem.Allocator) Log {
         return Log{
             .msgs = ArrayList(Msg).init(allocator),
         };
@@ -636,7 +645,7 @@ pub const Log = struct {
         });
     }
 
-    inline fn _addResolveError(log: *Log, source: *const Source, r: Range, allocator: *std.mem.Allocator, comptime fmt: string, args: anytype, import_kind: ImportKind, comptime dupe_text: bool) !void {
+    inline fn _addResolveError(log: *Log, source: *const Source, r: Range, allocator: std.mem.Allocator, comptime fmt: string, args: anytype, import_kind: ImportKind, comptime dupe_text: bool) !void {
         const text = try std.fmt.allocPrint(allocator, fmt, args);
         // TODO: fix this. this is stupid, it should be returned in allocPrint.
         const specifier = BabyString.in(text, args.@"0");
@@ -673,7 +682,7 @@ pub const Log = struct {
         log: *Log,
         source: *const Source,
         r: Range,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         comptime fmt: string,
         args: anytype,
         import_kind: ImportKind,
@@ -686,7 +695,7 @@ pub const Log = struct {
         log: *Log,
         source: *const Source,
         r: Range,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         comptime fmt: string,
         args: anytype,
         import_kind: ImportKind,
@@ -704,7 +713,7 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRangeErrorFmt(log: *Log, source: ?*const Source, r: Range, allocator: *std.mem.Allocator, comptime text: string, args: anytype) !void {
+    pub fn addRangeErrorFmt(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
         @setCold(true);
         log.errors += 1;
         try log.addMsg(Msg{
@@ -713,7 +722,7 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRangeErrorFmtWithNotes(log: *Log, source: ?*const Source, r: Range, allocator: *std.mem.Allocator, notes: []Data, comptime text: string, args: anytype) !void {
+    pub fn addRangeErrorFmtWithNotes(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, notes: []Data, comptime text: string, args: anytype) !void {
         @setCold(true);
         log.errors += 1;
         try log.addMsg(Msg{
@@ -723,7 +732,7 @@ pub const Log = struct {
         });
     }
 
-    pub fn addErrorFmt(log: *Log, source: ?*const Source, l: Loc, allocator: *std.mem.Allocator, comptime text: string, args: anytype) !void {
+    pub fn addErrorFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
         @setCold(true);
         log.errors += 1;
         try log.addMsg(Msg{
@@ -742,7 +751,7 @@ pub const Log = struct {
         });
     }
 
-    pub fn addWarningFmt(log: *Log, source: ?*const Source, l: Loc, allocator: *std.mem.Allocator, comptime text: string, args: anytype) !void {
+    pub fn addWarningFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
         @setCold(true);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
@@ -752,7 +761,7 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRangeWarningFmt(log: *Log, source: ?*const Source, r: Range, allocator: *std.mem.Allocator, comptime text: string, args: anytype) !void {
+    pub fn addRangeWarningFmt(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
         @setCold(true);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
@@ -766,7 +775,7 @@ pub const Log = struct {
         log: *Log,
         source: ?*const Source,
         r: Range,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         comptime fmt: string,
         args: anytype,
         comptime note_fmt: string,
@@ -895,7 +904,7 @@ pub const Log = struct {
         if (printed) _ = try to.write("\n");
     }
 
-    pub fn toZigException(this: *const Log, allocator: *std.mem.Allocator) *js.ZigException.Holder {
+    pub fn toZigException(this: *const Log, allocator: std.mem.Allocator) *js.ZigException.Holder {
         var holder = try allocator.create(js.ZigException.Holder);
         holder.* = js.ZigException.Holder.init();
         var zig_exception: *js.ZigException = holder.zigException();
@@ -928,9 +937,7 @@ pub const Source = struct {
         return Source{ .path = path, .key_path = path, .index = 0, .contents = "" };
     }
 
-    pub fn initFile(file: fs.File, allocator: *std.mem.Allocator) !Source {
-        var name = file.path.name;
-
+    pub fn initFile(file: fs.File, _: std.mem.Allocator) !Source {
         var source = Source{
             .path = file.path,
             .key_path = fs.Path.init(file.path.text),
@@ -940,9 +947,7 @@ pub const Source = struct {
         return source;
     }
 
-    pub fn initRecycledFile(file: fs.File, allocator: *std.mem.Allocator) !Source {
-        var name = file.path.name;
-
+    pub fn initRecycledFile(file: fs.File, _: std.mem.Allocator) !Source {
         var source = Source{
             .path = file.path,
             .key_path = fs.Path.init(file.path.text),

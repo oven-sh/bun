@@ -1,4 +1,13 @@
-usingnamespace @import("../global.zig");
+const _global = @import("../global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 const std = @import("std");
 
 const lex = @import("../js_lexer.zig");
@@ -30,7 +39,7 @@ const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const clap = @import("clap");
 const Lock = @import("../lock.zig").Lock;
-const Headers = @import("../javascript/jsc/webcore/response.zig").Headers;
+const Headers = @import("http").Headers;
 const CopyFile = @import("../copy_file.zig");
 const NetworkThread = @import("network_thread");
 
@@ -79,7 +88,7 @@ pub const UpgradeCheckerThread = struct {
 
     fn _run(env_loader: *DotEnv.Loader) anyerror!void {
         var rand = std.rand.DefaultPrng.init(@intCast(u64, @maximum(std.time.milliTimestamp(), 0)));
-        const delay = rand.random.intRangeAtMost(u64, 100, 10000);
+        const delay = rand.random().intRangeAtMost(u64, 100, 10000);
         std.time.sleep(std.time.ns_per_ms * delay);
 
         Output.Source.configureThread();
@@ -113,7 +122,7 @@ pub const UpgradeCommand = struct {
     var tmpdir_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
     pub fn getLatestVersion(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         env_loader: *DotEnv.Loader,
         refresher: *std.Progress,
         progress: *std.Progress.Node,
@@ -268,7 +277,7 @@ pub const UpgradeCommand = struct {
             while (assets.next()) |asset| {
                 if (asset.asProperty("content_type")) |content_type| {
                     const content_type_ = (content_type.expr.asString(allocator)) orelse continue;
-                    if (comptime isDebug) {
+                    if (comptime Environment.isDebug) {
                         Output.prettyln("Content-type: {s}", .{content_type_});
                         Output.flush();
                     }
@@ -278,13 +287,13 @@ pub const UpgradeCommand = struct {
 
                 if (asset.asProperty("name")) |name_| {
                     if (name_.expr.asString(allocator)) |name| {
-                        if (comptime isDebug) {
+                        if (comptime Environment.isDebug) {
                             Output.prettyln("Comparing {s} vs {s}", .{ name, Version.zip_filename });
                             Output.flush();
                         }
                         if (strings.eqlComptime(name, Version.zip_filename)) {
                             version.zip_url = (asset.asProperty("browser_download_url") orelse break :get_asset).expr.asString(allocator) orelse break :get_asset;
-                            if (comptime isDebug) {
+                            if (comptime Environment.isDebug) {
                                 Output.prettyln("Found Zip {s}", .{version.zip_url});
                                 Output.flush();
                             }
@@ -414,12 +423,12 @@ pub const UpgradeCommand = struct {
             const version_name = version.name().?;
 
             var save_dir_ = filesystem.tmpdir();
-            var save_dir = save_dir_.makeOpenPath(version_name, .{ .iterate = true }) catch |err| {
+            var save_dir = save_dir_.makeOpenPath(version_name, .{ .iterate = true }) catch {
                 Output.prettyErrorln("<r><red>error:<r> Failed to open temporary directory", .{});
                 Output.flush();
                 std.os.exit(1);
             };
-            var tmpdir_path = std.os.getFdPath(save_dir.fd, &tmpdir_path_buf) catch |err| {
+            var tmpdir_path = std.os.getFdPath(save_dir.fd, &tmpdir_path_buf) catch {
                 Output.prettyErrorln("<r><red>error:<r> Failed to read temporary directory", .{});
                 Output.flush();
                 std.os.exit(1);

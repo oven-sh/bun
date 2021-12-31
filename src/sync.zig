@@ -1,4 +1,5 @@
 const std = @import("std");
+const system = std.system;
 
 // https://gist.github.com/kprotty/0d2dc3da4840341d6ff361b27bdac7dc
 pub const ThreadPool = struct {
@@ -6,11 +7,11 @@ pub const ThreadPool = struct {
     spawned: usize = 0,
     run_queue: Queue,
     idle_semaphore: Semaphore,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     workers: []Worker = &[_]Worker{},
 
     pub const InitConfig = struct {
-        allocator: ?*std.mem.Allocator = null,
+        allocator: ?std.mem.Allocator = null,
         max_threads: ?usize = null,
 
         var default_gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -54,13 +55,13 @@ pub const ThreadPool = struct {
         const Args = @TypeOf(args);
         const Closure = struct {
             func_args: Args,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             run_node: RunNode = .{ .data = .{ .runFn = runFn } },
 
             fn runFn(runnable: *Runnable) void {
                 const run_node = @fieldParentPtr(RunNode, "data", runnable);
                 const closure = @fieldParentPtr(@This(), "run_node", run_node);
-                const result = @call(.{}, func, closure.func_args);
+                _ = @call(.{}, func, closure.func_args);
                 closure.allocator.destroy(closure);
             }
         };
@@ -321,7 +322,7 @@ pub const ThreadPool = struct {
             return self.popFrom(.head);
         }
 
-        fn steal(self: *Queue, target: *Queue, mode: enum { fair, unfair }) ?*RunNode {
+        fn steal(_: *Queue, target: *Queue, mode: enum { fair, unfair }) ?*RunNode {
             return target.popFrom(switch (mode) {
                 .fair => .tail,
                 .unfair => .head,
@@ -381,7 +382,7 @@ pub fn Channel(
                 }
             },
             .Dynamic => struct {
-                pub fn init(allocator: *std.mem.Allocator) Self {
+                pub fn init(allocator: std.mem.Allocator) Self {
                     return Self.withBuffer(Buffer.init(allocator));
                 }
             },
@@ -520,16 +521,16 @@ pub fn Channel(
     };
 }
 
-pub const RwLock = if (std.builtin.os.tag != .windows and std.builtin.link_libc)
+pub const RwLock = if (@import("builtin").os.tag != .windows and @import("builtin").link_libc)
     struct {
-        rwlock: if (std.builtin.os.tag != .windows) pthread_rwlock_t else void,
+        rwlock: if (@import("builtin").os.tag != .windows) pthread_rwlock_t else void,
 
         pub fn init() RwLock {
             return .{ .rwlock = PTHREAD_RWLOCK_INITIALIZER };
         }
 
         pub fn deinit(self: *RwLock) void {
-            const safe_rc = switch (std.builtin.os.tag) {
+            const safe_rc = switch (@import("builtin").os.tag) {
                 .dragonfly, .netbsd => std.os.EAGAIN,
                 else => 0,
             };
@@ -569,12 +570,12 @@ pub const RwLock = if (std.builtin.os.tag != .windows and std.builtin.link_libc)
         }
 
         const PTHREAD_RWLOCK_INITIALIZER = pthread_rwlock_t{};
-        const pthread_rwlock_t = switch (std.builtin.os.tag) {
+        const pthread_rwlock_t = switch (@import("builtin").os.tag) {
             .macos, .ios, .watchos, .tvos => extern struct {
                 __sig: c_long = 0x2DA8B3B4,
                 __opaque: [192]u8 = [_]u8{0} ** 192,
             },
-            .linux => switch (std.builtin.abi) {
+            .linux => switch (@import("builtin").abi) {
                 .android => switch (@sizeOf(usize)) {
                     4 => extern struct {
                         lock: std.c.pthread_mutex_t = std.c.PTHREAD_MUTEX_INITIALIZER,
@@ -608,7 +609,7 @@ pub const RwLock = if (std.builtin.os.tag != .windows and std.builtin.link_libc)
             },
             .netbsd => extern struct {
                 ptr_magic: c_uint = 0x99990009,
-                ptr_interlock: switch (std.Target.current.cpu.arch) {
+                ptr_interlock: switch (@import("builtin").target.cpu.arch) {
                     .aarch64, .sparc, .x86_64, .i386 => u8,
                     .arm, .powerpc => c_int,
                     else => unreachable,
@@ -619,7 +620,7 @@ pub const RwLock = if (std.builtin.os.tag != .windows and std.builtin.link_libc)
                 ptr_wblocked_last: ?*u8 = null,
                 ptr_nreaders: c_uint = 0,
                 ptr_owner: std.c.pthread_t = null,
-                ptr_private: ?*c_void = null,
+                ptr_private: ?*anyopaque = null,
             },
             .haiku => extern struct {
                 flags: u32 = 0,
@@ -628,10 +629,10 @@ pub const RwLock = if (std.builtin.os.tag != .windows and std.builtin.link_libc)
                 lock_count: i32 = 0,
                 reader_count: i32 = 0,
                 writer_count: i32 = 0,
-                waiters: [2]?*c_void = [_]?*c_void{ null, null },
+                waiters: [2]?*anyopaque = [_]?*anyopaque{ null, null },
             },
             .kfreebsd, .freebsd, .openbsd => extern struct {
-                ptr: ?*c_void = null,
+                ptr: ?*anyopaque = null,
             },
             .hermit => extern struct {
                 ptr: usize = std.math.maxInt(usize),
@@ -834,7 +835,7 @@ pub const Semaphore = struct {
     }
 };
 
-pub const Mutex = if (std.builtin.os.tag == .windows)
+pub const Mutex = if (@import("builtin").os.tag == .windows)
     struct {
         srwlock: SRWLOCK,
 
@@ -865,16 +866,16 @@ pub const Mutex = if (std.builtin.os.tag == .windows)
         extern "kernel32" fn AcquireSRWLockExclusive(s: *SRWLOCK) callconv(system.WINAPI) void;
         extern "kernel32" fn ReleaseSRWLockExclusive(s: *SRWLOCK) callconv(system.WINAPI) void;
     }
-else if (std.builtin.link_libc)
+else if (@import("builtin").link_libc)
     struct {
-        mutex: if (std.builtin.link_libc) std.c.pthread_mutex_t else void,
+        mutex: if (@import("builtin").link_libc) std.c.pthread_mutex_t else void,
 
         pub fn init() Mutex {
             return .{ .mutex = std.c.PTHREAD_MUTEX_INITIALIZER };
         }
 
         pub fn deinit(self: *Mutex) void {
-            const safe_rc = switch (std.builtin.os.tag) {
+            const safe_rc = switch (@import("builtin").os.tag) {
                 .dragonfly, .netbsd => std.os.EAGAIN,
                 else => 0,
             };
@@ -901,7 +902,7 @@ else if (std.builtin.link_libc)
 
         extern "c" fn pthread_mutex_trylock(m: *std.c.pthread_mutex_t) callconv(.C) c_int;
     }
-else if (std.builtin.os.tag == .linux)
+else if (@import("builtin").os.tag == .linux)
     struct {
         state: State,
 
@@ -1017,7 +1018,7 @@ else
         }
     };
 
-pub const Condvar = if (std.builtin.os.tag == .windows)
+pub const Condvar = if (@import("builtin").os.tag == .windows)
     struct {
         cond: CONDITION_VARIABLE,
 
@@ -1061,16 +1062,16 @@ pub const Condvar = if (std.builtin.os.tag == .windows)
             f: system.ULONG,
         ) callconv(system.WINAPI) system.BOOL;
     }
-else if (std.builtin.link_libc)
+else if (@import("builtin").link_libc)
     struct {
-        cond: if (std.builtin.link_libc) std.c.pthread_cond_t else void,
+        cond: if (@import("builtin").link_libc) std.c.pthread_cond_t else void,
 
         pub fn init() Condvar {
             return .{ .cond = std.c.PTHREAD_COND_INITIALIZER };
         }
 
         pub fn deinit(self: *Condvar) void {
-            const safe_rc = switch (std.builtin.os.tag) {
+            const safe_rc = switch (@import("builtin").os.tag) {
                 .dragonfly, .netbsd => std.os.EAGAIN,
                 else => 0,
             };
@@ -1180,7 +1181,7 @@ else
         };
     };
 
-const Futex = switch (std.builtin.os.tag) {
+const Futex = switch (@import("builtin").os.tag) {
     .linux => struct {
         fn wait(ptr: *const i32, cmp: i32) void {
             switch (system.getErrno(system.futex_wait(
@@ -1212,7 +1213,7 @@ const Futex = switch (std.builtin.os.tag) {
 };
 
 fn spinLoopHint() void {
-    switch (std.builtin.cpu.arch) {
+    switch (@import("builtin").cpu.arch) {
         .i386, .x86_64 => asm volatile ("pause" ::: "memory"),
         .arm, .aarch64 => asm volatile ("yield" ::: "memory"),
         else => {},

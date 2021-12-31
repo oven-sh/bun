@@ -1,4 +1,13 @@
-usingnamespace @import("global.zig");
+const _global = @import("global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 const std = @import("std");
 
 const lex = @import("js_lexer.zig");
@@ -29,7 +38,7 @@ pub const Run = struct {
     vm: *VirtualMachine,
     entry_path: string,
     pub fn boot(ctx: Command.Context, file: std.fs.File, entry_path: string) !void {
-        @import("javascript/jsc/JavascriptCore.zig").JSCInitialize();
+        @import("javascript/jsc/javascript_core_c_api.zig").JSCInitialize();
 
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);
@@ -41,7 +50,7 @@ pub const Run = struct {
             .entry_path = entry_path,
         };
 
-        run.vm.bundler.configureRouter(false) catch |err| {
+        run.vm.bundler.configureRouter(false) catch {
             if (Output.enable_ansi_colors) {
                 run.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
             } else {
@@ -51,7 +60,7 @@ pub const Run = struct {
             Output.flush();
             std.os.exit(1);
         };
-        run.vm.bundler.configureDefines() catch |err| {
+        run.vm.bundler.configureDefines() catch {
             if (Output.enable_ansi_colors) {
                 run.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
             } else {

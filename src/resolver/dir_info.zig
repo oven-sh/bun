@@ -1,4 +1,15 @@
-usingnamespace @import("../global.zig");
+const _global = @import("../global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
+const StoredFileDescriptorType = _global.StoredFileDescriptorType;
+const FeatureFlags = _global.FeatureFlags;
 
 const allocators = @import("../allocators.zig");
 const DirInfo = @This();
@@ -50,7 +61,7 @@ pub fn getFileDescriptor(dirinfo: *const DirInfo) StoredFileDescriptorType {
 pub fn getEntries(dirinfo: *const DirInfo) ?*Fs.FileSystem.DirEntry {
     var entries_ptr = Fs.FileSystem.instance.fs.entries.atIndex(dirinfo.entries) orelse return null;
     switch (entries_ptr.*) {
-        .entries => |entr| {
+        .entries => {
             return &entries_ptr.entries;
         },
         .err => {
@@ -62,7 +73,7 @@ pub fn getEntries(dirinfo: *const DirInfo) ?*Fs.FileSystem.DirEntry {
 pub fn getEntriesConst(dirinfo: *const DirInfo) ?*const Fs.FileSystem.DirEntry {
     const entries_ptr = Fs.FileSystem.instance.fs.entries.atIndex(dirinfo.entries) orelse return null;
     switch (entries_ptr.*) {
-        .entries => |entr| {
+        .entries => {
             return &entries_ptr.entries;
         },
         .err => {

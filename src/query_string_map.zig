@@ -1,7 +1,16 @@
 const std = @import("std");
 const Api = @import("./api/schema.zig").Api;
 const resolve_path = @import("./resolver/resolve_path.zig");
-usingnamespace @import("./global.zig");
+const _global = @import("./global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 
 // This is close to WHATWG URL, but we don't want the validation errors
 pub const URL = struct {
@@ -21,7 +30,7 @@ pub const URL = struct {
     port_was_automatically_set: bool = false,
 
     pub fn isDomainName(this: *const URL) bool {
-        for (this.hostname) |c, i| {
+        for (this.hostname) |c| {
             switch (c) {
                 '0'...'9', '.', ':' => {},
                 else => {
@@ -158,7 +167,7 @@ pub const URL = struct {
         try writer.print("{s}/{s}", .{ this.origin, normalized_path });
     }
 
-    pub fn joinAlloc(this: *const URL, allocator: *std.mem.Allocator, prefix: string, dirname: string, basename: string, extname: string, absolute_path: string) !string {
+    pub fn joinAlloc(this: *const URL, allocator: std.mem.Allocator, prefix: string, dirname: string, basename: string, extname: string, absolute_path: string) !string {
         const has_uplevels = std.mem.indexOf(u8, dirname, "../") != null;
 
         if (has_uplevels) {
@@ -381,7 +390,7 @@ pub const URL = struct {
 
 /// QueryString array-backed hash table that does few allocations and preserves the original order
 pub const QueryStringMap = struct {
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     slice: string,
     buffer: []u8,
     list: Param.List,
@@ -426,7 +435,6 @@ pub const QueryStringMap = struct {
             while (this.visited.isSet(this.i)) : (this.i += 1) {}
             if (this.i >= this.map.list.len) return null;
 
-            var count: usize = 0;
             var slice = this.map.list.slice();
             const hash = slice.items(.name_hash)[this.i];
             var result = Result{ .name = this.map.str(slice.items(.name)[this.i]), .values = target[0..1] };
@@ -443,7 +451,7 @@ pub const QueryStringMap = struct {
 
             while (std.mem.indexOfScalar(u64, remainder_hashes[current_i..], hash)) |next_index| {
                 const real_i = current_i + next_index + this.i;
-                if (comptime isDebug) {
+                if (comptime Environment.isDebug) {
                     std.debug.assert(!this.visited.isSet(real_i));
                 }
 
@@ -510,7 +518,7 @@ pub const QueryStringMap = struct {
     };
 
     pub fn initWithScanner(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         _scanner: CombinedScanner,
     ) !?QueryStringMap {
         var list = Param.List{};
@@ -552,7 +560,6 @@ pub const QueryStringMap = struct {
 
         const Writer = @TypeOf(writer);
         while (scanner.pathname.next()) |result| {
-            var list_slice = list.slice();
             var name = result.name;
             var value = result.value;
             const name_slice = result.rawName(scanner.pathname.routename);
@@ -619,7 +626,7 @@ pub const QueryStringMap = struct {
     }
 
     pub fn init(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         query_string: string,
     ) !?QueryStringMap {
         var list = Param.List{};
@@ -1055,7 +1062,6 @@ test "PercentEncoding.decode" {
 
     {
         const correct = "hello my name is ?????";
-        const input = "hello%20my%20name%20is%20%3F%3F%3F%3F%3F";
         const written = try PercentEncoding.decode(Writer, writer, correct);
         try expect(written == correct.len);
         try expectString(buffer[0..written], correct);

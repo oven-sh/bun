@@ -2,8 +2,18 @@ const std = @import("std");
 const logger = @import("logger.zig");
 const JSXRuntime = @import("options.zig").JSX.Runtime;
 const Runtime = @import("runtime.zig").Runtime;
-usingnamespace @import("global.zig");
-usingnamespace @import("ast/base.zig");
+const _global = @import("global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
+const Ref = @import("ast/base.zig").Ref;
+const RefHashCtx = @import("ast/base.zig").RefHashCtx;
 
 const ImportRecord = @import("import_record.zig").ImportRecord;
 const allocators = @import("allocators.zig");
@@ -11,6 +21,7 @@ const allocators = @import("allocators.zig");
 const _hash_map = @import("hash_map.zig");
 const StringHashMap = _hash_map.StringHashMap;
 const AutoHashMap = _hash_map.AutoHashMap;
+const StringHashMapUnmanaged = _hash_map.StringHashMapUnmanaged;
 pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
     var max_size = 0;
     var max_align = 1;
@@ -20,55 +31,86 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
     }
 
     const UnionValueType = [max_size]u8;
+    const SizeType = std.math.IntFittingRange(0, (count + 1));
     const MaxAlign = max_align;
-    const total_items_len = max_size * count;
+
     return struct {
         const Allocator = std.mem.Allocator;
         const Self = @This();
 
         const Block = struct {
+            used: SizeType = 0,
             items: [count]UnionValueType align(MaxAlign) = undefined,
-            used: usize = 0,
-            allocator: *std.mem.Allocator,
 
             pub inline fn isFull(block: *const Block) bool {
-                return block.used >= block.items.len;
+                return block.used >= @as(SizeType, count);
             }
 
-            pub fn append(block: *Block, value: anytype) *UnionValueType {
-                std.debug.assert(block.used < count);
+            pub fn append(block: *Block, comptime ValueType: type, value: ValueType) *UnionValueType {
+                if (comptime Environment.allow_assert) std.debug.assert(block.used < count);
                 const index = block.used;
-                std.mem.copy(u8, &block.items[index], value);
-
+                block.items[index][0..value.len].* = value.*;
                 block.used += 1;
                 return &block.items[index];
             }
         };
 
-        block: Block,
-        overflow_ptrs: [4096 * 3]*Block = undefined,
-        overflow: []*Block = &([_]*Block{}),
-        overflow_used: usize = 0,
-        allocator: *Allocator,
+        const Overflow = struct {
+            const max = 4096 * 3;
+            const UsedSize = std.math.IntFittingRange(0, max + 1);
+            used: UsedSize = 0,
+            allocated: UsedSize = 0,
+            allocator: Allocator,
+            ptrs: [max]*Block = undefined,
 
-        pub threadlocal var instance: Self = undefined;
+            pub fn tail(this: *Overflow) *Block {
+                if (this.ptrs[this.used].isFull()) {
+                    this.used += 1;
+                    if (this.allocated > this.used) {
+                        this.ptrs[this.used].used = 0;
+                    }
+                }
+
+                if (this.allocated <= this.used) {
+                    var new_ptrs = this.allocator.alloc(Block, 2) catch unreachable;
+                    new_ptrs[0] = Block{};
+                    new_ptrs[1] = Block{};
+                    this.ptrs[this.allocated] = &new_ptrs[0];
+                    this.ptrs[this.allocated + 1] = &new_ptrs[1];
+                    this.allocated += 2;
+                }
+
+                return this.ptrs[this.used];
+            }
+
+            pub inline fn slice(this: *Overflow) []*Block {
+                return this.ptrs[0..this.used];
+            }
+        };
+
+        block: Block = Block{ .used = 0 },
+        overflow: Overflow = Overflow{},
+
         pub threadlocal var _self: *Self = undefined;
 
         pub fn reset() void {
-            _self.block.used = 0;
-            for (_self.overflow[0.._self.overflow_used]) |b| {
+            for (_self.overflow.slice()) |b| {
                 b.used = 0;
             }
-            _self.overflow_used = 0;
+            _self.overflow.used = 0;
         }
 
-        pub fn init(allocator: *std.mem.Allocator) *Self {
-            instance = Self{
-                .allocator = allocator,
-                .block = Block{ .allocator = allocator },
+        pub fn init(allocator: std.mem.Allocator) *Self {
+            var instance = allocator.create(Self) catch unreachable;
+            instance.* = Self{
+                .overflow = Overflow{ .allocator = allocator },
+                .block = Block{},
             };
+            instance.overflow.ptrs[0] = &instance.block;
+            instance.overflow.allocated = 1;
 
-            _self = &instance;
+            _self = instance;
+
             return _self;
         }
 
@@ -76,39 +118,37 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
             return _self._append(ValueType, value);
         }
 
-        fn _append(self: *Self, comptime ValueType: type, value: ValueType) *ValueType {
-            if (!self.block.isFull()) {
-                var ptr = self.block.append(std.mem.asBytes(&value));
-                var aligned_slice = @alignCast(@alignOf(ValueType), ptr);
+        inline fn _append(self: *Self, comptime ValueType: type, value: ValueType) *ValueType {
+            const bytes = std.mem.asBytes(&value);
+            const BytesAsSlice = @TypeOf(bytes);
 
-                return @ptrCast(
-                    *ValueType,
-                    aligned_slice,
-                );
-            }
+            // if (self.overflow_used >= self.overflow.len or self.overflow[self.overflow_used].isFull()) {
+            //     var slice = self.allocator.alloc(Block, 2) catch unreachable;
+            //     slice[0] = Block{
+            //         .used = 0,
+            //         .items = undefined,
+            //     };
+            //     slice[1] = Block{
+            //         .used = 0,
+            //         .items = undefined,
+            //     };
 
-            if (self.overflow_used >= self.overflow.len or self.overflow[self.overflow_used].isFull()) {
-                var slice = self.allocator.alloc(Block, 2) catch unreachable;
-                for (slice) |*block| {
-                    block.allocator = self.allocator;
-                    block.used = 0;
-                    block.items = undefined;
-                    self.overflow_ptrs[self.overflow.len] = block;
-                    self.overflow = self.overflow_ptrs[0 .. self.overflow.len + 1];
-                }
-            }
+            //     self.overflow_ptrs[self.overflow.len] = &slice[0];
+            //     self.overflow_ptrs[self.overflow.len + 1] = &slice[1];
+            //     self.overflow = self.overflow_ptrs[0 .. self.overflow.len + 2];
+            //     if (self.overflow[self.overflow_used].isFull()) {
+            //         self.overflow_used += 1;
+            //     }
+            // }
 
-            var block = self.overflow[self.overflow_used];
-            var ptr = block.append(std.mem.asBytes(&value));
-            if (block.isFull()) {
-                self.overflow_used += 1;
-            }
-
-            var aligned_slice = @alignCast(@alignOf(ValueType), ptr);
+            var block = self.overflow.tail();
 
             return @ptrCast(
                 *ValueType,
-                aligned_slice,
+                @alignCast(
+                    @alignOf(ValueType),
+                    @alignCast(@alignOf(ValueType), block.append(BytesAsSlice, bytes)),
+                ),
             );
         }
     };
@@ -229,7 +269,7 @@ pub const Binding = struct {
         const ExprType = expr_type;
         return struct {
             context: *ExprType,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             pub const Context = @This();
 
             pub fn wrapIdentifier(ctx: *const Context, loc: logger.Loc, ref: Ref) Expr {
@@ -330,7 +370,7 @@ pub const Binding = struct {
         }
     }
 
-    pub fn alloc(allocator: *std.mem.Allocator, t: anytype, loc: logger.Loc) Binding {
+    pub fn alloc(allocator: std.mem.Allocator, t: anytype, loc: logger.Loc) Binding {
         icount += 1;
         switch (@TypeOf(t)) {
             B.Identifier => {
@@ -737,7 +777,7 @@ pub const Symbol = struct {
             return &self.symbols_for_source[ref.source_index][ref.inner_index];
         }
 
-        pub fn init(sourceCount: usize, allocator: *std.mem.Allocator) !Map {
+        pub fn init(sourceCount: usize, allocator: std.mem.Allocator) !Map {
             var symbols_for_source: [][]Symbol = try allocator.alloc([]Symbol, sourceCount);
             return Map{ .symbols_for_source = symbols_for_source };
         }
@@ -1050,7 +1090,7 @@ pub const E = struct {
     };
 
     pub const Missing = struct {
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+        pub fn jsonStringify(_: *const @This(), opts: anytype, o: anytype) !void {
             return try std.json.stringify(null, opts, o);
         }
     };
@@ -1156,7 +1196,7 @@ pub const E = struct {
         // A version of this where `utf8` and `value` are stored in a packed union, with len as a single u32 was attempted.
         // It did not improve benchmarks. Neither did converting this from a heap-allocated type to a stack-allocated type.
         value: []const u16 = &.{},
-        utf8: string = &([_]u8{}),
+        utf8: _global.string = &([_]u8{}),
         prefer_template: bool = false,
 
         pub var empty = String{};
@@ -1165,7 +1205,7 @@ pub const E = struct {
         pub var @"null" = String{ .utf8 = "null" };
         pub var @"undefined" = String{ .utf8 = "undefined" };
 
-        pub fn clone(str: *const String, allocator: *std.mem.Allocator) !String {
+        pub fn clone(str: *const String, allocator: std.mem.Allocator) !String {
             if (str.isUTF8()) {
                 return String{
                     .utf8 = try allocator.dupe(u8, str.utf8),
@@ -1205,7 +1245,7 @@ pub const E = struct {
                             return strings.utf16EqlString(other.value, s.utf8);
                         }
                     },
-                    string => {
+                    _global.string => {
                         return strings.eql(s.utf8, other);
                     },
                     []u16, []const u16 => {
@@ -1224,7 +1264,7 @@ pub const E = struct {
                             return std.mem.eql(u16, other.value, s.value);
                         }
                     },
-                    string => {
+                    _global.string => {
                         return strings.utf16EqlString(s.value, other);
                     },
                     []u16, []const u16 => {
@@ -1237,7 +1277,7 @@ pub const E = struct {
             }
         }
 
-        pub fn string(s: *const String, allocator: *std.mem.Allocator) !string {
+        pub fn string(s: *const String, allocator: std.mem.Allocator) !_global.string {
             if (s.isUTF8()) {
                 return s.utf8;
             } else {
@@ -1399,333 +1439,93 @@ pub const Stmt = struct {
 
     const None = S.Empty{};
 
-    pub inline fn getBlock(self: *const @This()) *S.Block {
-        return self.data.s_block;
-    }
-    pub inline fn getBreak(self: *const @This()) *S.Break {
-        return self.data.s_break;
-    }
-    pub inline fn getClass(self: *const @This()) *S.Class {
-        return self.data.s_class;
-    }
-    pub inline fn getComment(self: *const @This()) *S.Comment {
-        return self.data.s_comment;
-    }
-    pub inline fn getContinue(self: *const @This()) *S.Continue {
-        return self.data.s_continue;
-    }
-    pub inline fn getDebugger(self: *const @This()) S.Debugger {
-        return S.Debugger{};
-    }
-    pub inline fn getDirective(self: *const @This()) *S.Directive {
-        return self.data.s_directive;
-    }
-    pub inline fn getDoWhile(self: *const @This()) *S.DoWhile {
-        return self.data.s_do_while;
-    }
-    pub inline fn getEmpty(self: *const @This()) S.Empty {
-        return S.Empty{};
-    }
-    pub inline fn getEnum(self: *const @This()) *S.Enum {
-        return self.data.s_enum;
-    }
-    pub inline fn getExportClause(self: *const @This()) *S.ExportClause {
-        return self.data.s_export_clause;
-    }
-    pub inline fn getExportDefault(self: *const @This()) *S.ExportDefault {
-        return self.data.s_export_default;
-    }
-    pub inline fn getExportEquals(self: *const @This()) *S.ExportEquals {
-        return self.data.s_export_equals;
-    }
-    pub inline fn getExportFrom(self: *const @This()) *S.ExportFrom {
-        return self.data.s_export_from;
-    }
-    pub inline fn getExportStar(self: *const @This()) *S.ExportStar {
-        return self.data.s_export_star;
-    }
-    pub inline fn getExpr(self: *const @This()) *S.SExpr {
-        return self.data.s_expr;
-    }
-    pub inline fn getForIn(self: *const @This()) *S.ForIn {
-        return self.data.s_for_in;
-    }
-    pub inline fn getForOf(self: *const @This()) *S.ForOf {
-        return self.data.s_for_of;
-    }
-    pub inline fn getFor(self: *const @This()) *S.For {
-        return self.data.s_for;
-    }
-    pub inline fn getFunction(self: *const @This()) *S.Function {
-        return self.data.s_function;
-    }
-    pub inline fn getIf(self: *const @This()) *S.If {
-        return self.data.s_if;
-    }
-    pub inline fn getImport(self: *const @This()) *S.Import {
-        return self.data.s_import;
-    }
-    pub inline fn getLabel(self: *const @This()) *S.Label {
-        return self.data.s_label;
-    }
-    pub inline fn getLazyExport(self: *const @This()) *S.LazyExport {
-        return self.data.s_lazy_export;
-    }
-    pub inline fn getLocal(self: *const @This()) *S.Local {
-        return self.data.s_local;
-    }
-    pub inline fn getNamespace(self: *const @This()) *S.Namespace {
-        return self.data.s_namespace;
-    }
-    pub inline fn getReturn(self: *const @This()) *S.Return {
-        return self.data.s_return;
-    }
-    pub inline fn getSwitch(self: *const @This()) *S.Switch {
-        return self.data.s_switch;
-    }
-    pub inline fn getThrow(self: *const @This()) *S.Throw {
-        return self.data.s_throw;
-    }
-    pub inline fn getTry(self: *const @This()) *S.Try {
-        return self.data.s_try;
-    }
-    pub inline fn getTypeScript(self: *const @This()) S.TypeScript {
-        return S.TypeScript{};
-    }
-    pub inline fn getWhile(self: *const @This()) *S.While {
-        return self.data.s_while;
-    }
-    pub inline fn getWith(self: *const @This()) *S.With {
-        return self.data.s_with;
-    }
     pub var icount: usize = 0;
     pub fn init(comptime StatementType: type, origData: *StatementType, loc: logger.Loc) Stmt {
         icount += 1;
-
-        if (StatementType == S.Empty) {
-            return Stmt{ .loc = loc, .data = Data{ .s_empty = S.Empty{} } };
-        }
-
-        switch (StatementType) {
-            S.Block => {
-                return Stmt.comptime_init("s_block", S.Block, origData, loc);
-            },
-            S.Break => {
-                return Stmt.comptime_init("s_break", S.Break, origData, loc);
-            },
-            S.Class => {
-                return Stmt.comptime_init("s_class", S.Class, origData, loc);
-            },
-            S.Comment => {
-                return Stmt.comptime_init("s_comment", S.Comment, origData, loc);
-            },
-            S.Continue => {
-                return Stmt.comptime_init("s_continue", S.Continue, origData, loc);
-            },
-            S.Debugger => {
-                return Stmt.comptime_init("s_debugger", S.Debugger, origData, loc);
-            },
-            S.Directive => {
-                return Stmt.comptime_init("s_directive", S.Directive, origData, loc);
-            },
-            S.DoWhile => {
-                return Stmt.comptime_init("s_do_while", S.DoWhile, origData, loc);
-            },
-            S.Empty => {
-                return Stmt.comptime_init("s_empty", S.Empty, origData, loc);
-            },
-            S.Enum => {
-                return Stmt.comptime_init("s_enum", S.Enum, origData, loc);
-            },
-            S.ExportClause => {
-                return Stmt.comptime_init("s_export_clause", S.ExportClause, origData, loc);
-            },
-            S.ExportDefault => {
-                return Stmt.comptime_init("s_export_default", S.ExportDefault, origData, loc);
-            },
-            S.ExportEquals => {
-                return Stmt.comptime_init("s_export_equals", S.ExportEquals, origData, loc);
-            },
-            S.ExportFrom => {
-                return Stmt.comptime_init("s_export_from", S.ExportFrom, origData, loc);
-            },
-            S.ExportStar => {
-                return Stmt.comptime_init("s_export_star", S.ExportStar, origData, loc);
-            },
-            S.SExpr => {
-                return Stmt.comptime_init("s_expr", S.SExpr, origData, loc);
-            },
-            S.ForIn => {
-                return Stmt.comptime_init("s_for_in", S.ForIn, origData, loc);
-            },
-            S.ForOf => {
-                return Stmt.comptime_init("s_for_of", S.ForOf, origData, loc);
-            },
-            S.For => {
-                return Stmt.comptime_init("s_for", S.For, origData, loc);
-            },
-            S.Function => {
-                return Stmt.comptime_init("s_function", S.Function, origData, loc);
-            },
-            S.If => {
-                return Stmt.comptime_init("s_if", S.If, origData, loc);
-            },
-            S.Import => {
-                return Stmt.comptime_init("s_import", S.Import, origData, loc);
-            },
-            S.Label => {
-                return Stmt.comptime_init("s_label", S.Label, origData, loc);
-            },
-            S.LazyExport => {
-                return Stmt.comptime_init("s_lazy_export", S.LazyExport, origData, loc);
-            },
-            S.Local => {
-                return Stmt.comptime_init("s_local", S.Local, origData, loc);
-            },
-            S.Namespace => {
-                return Stmt.comptime_init("s_namespace", S.Namespace, origData, loc);
-            },
-            S.Return => {
-                return Stmt.comptime_init("s_return", S.Return, origData, loc);
-            },
-            S.Switch => {
-                return Stmt.comptime_init("s_switch", S.Switch, origData, loc);
-            },
-            S.Throw => {
-                return Stmt.comptime_init("s_throw", S.Throw, origData, loc);
-            },
-            S.Try => {
-                return Stmt.comptime_init("s_try", S.Try, origData, loc);
-            },
-            S.TypeScript => {
-                return Stmt.comptime_init("s_type_script", S.TypeScript, origData, loc);
-            },
-            S.While => {
-                return Stmt.comptime_init("s_while", S.While, origData, loc);
-            },
-            S.With => {
-                return Stmt.comptime_init("s_with", S.With, origData, loc);
-            },
-            else => {
-                @compileError("Invalid type in Stmt.init");
-            },
-        }
+        return switch (comptime StatementType) {
+            S.Empty => Stmt{ .loc = loc, .data = Data{ .s_empty = S.Empty{} } },
+            S.Block => Stmt.comptime_init("s_block", S.Block, origData, loc),
+            S.Break => Stmt.comptime_init("s_break", S.Break, origData, loc),
+            S.Class => Stmt.comptime_init("s_class", S.Class, origData, loc),
+            S.Comment => Stmt.comptime_init("s_comment", S.Comment, origData, loc),
+            S.Continue => Stmt.comptime_init("s_continue", S.Continue, origData, loc),
+            S.Debugger => Stmt.comptime_init("s_debugger", S.Debugger, origData, loc),
+            S.Directive => Stmt.comptime_init("s_directive", S.Directive, origData, loc),
+            S.DoWhile => Stmt.comptime_init("s_do_while", S.DoWhile, origData, loc),
+            S.Empty => Stmt.comptime_init("s_empty", S.Empty, origData, loc),
+            S.Enum => Stmt.comptime_init("s_enum", S.Enum, origData, loc),
+            S.ExportClause => Stmt.comptime_init("s_export_clause", S.ExportClause, origData, loc),
+            S.ExportDefault => Stmt.comptime_init("s_export_default", S.ExportDefault, origData, loc),
+            S.ExportEquals => Stmt.comptime_init("s_export_equals", S.ExportEquals, origData, loc),
+            S.ExportFrom => Stmt.comptime_init("s_export_from", S.ExportFrom, origData, loc),
+            S.ExportStar => Stmt.comptime_init("s_export_star", S.ExportStar, origData, loc),
+            S.SExpr => Stmt.comptime_init("s_expr", S.SExpr, origData, loc),
+            S.ForIn => Stmt.comptime_init("s_for_in", S.ForIn, origData, loc),
+            S.ForOf => Stmt.comptime_init("s_for_of", S.ForOf, origData, loc),
+            S.For => Stmt.comptime_init("s_for", S.For, origData, loc),
+            S.Function => Stmt.comptime_init("s_function", S.Function, origData, loc),
+            S.If => Stmt.comptime_init("s_if", S.If, origData, loc),
+            S.Import => Stmt.comptime_init("s_import", S.Import, origData, loc),
+            S.Label => Stmt.comptime_init("s_label", S.Label, origData, loc),
+            S.LazyExport => Stmt.comptime_init("s_lazy_export", S.LazyExport, origData, loc),
+            S.Local => Stmt.comptime_init("s_local", S.Local, origData, loc),
+            S.Namespace => Stmt.comptime_init("s_namespace", S.Namespace, origData, loc),
+            S.Return => Stmt.comptime_init("s_return", S.Return, origData, loc),
+            S.Switch => Stmt.comptime_init("s_switch", S.Switch, origData, loc),
+            S.Throw => Stmt.comptime_init("s_throw", S.Throw, origData, loc),
+            S.Try => Stmt.comptime_init("s_try", S.Try, origData, loc),
+            S.TypeScript => Stmt.comptime_init("s_type_script", S.TypeScript, origData, loc),
+            S.While => Stmt.comptime_init("s_while", S.While, origData, loc),
+            S.With => Stmt.comptime_init("s_with", S.With, origData, loc),
+            else => @compileError("Invalid type in Stmt.init"),
+        };
     }
-    inline fn comptime_alloc(allocator: *std.mem.Allocator, comptime tag_name: string, comptime typename: type, origData: anytype, loc: logger.Loc) Stmt {
+    inline fn comptime_alloc(comptime tag_name: string, comptime typename: type, origData: anytype, loc: logger.Loc) Stmt {
         return Stmt{ .loc = loc, .data = @unionInit(Data, tag_name, Data.Store.append(typename, origData)) };
     }
 
-    inline fn comptime_init(comptime tag_name: string, comptime TypeName: type, origData: anytype, loc: logger.Loc) Stmt {
+    inline fn comptime_init(comptime tag_name: string, comptime TypeName: type, origData: TypeName, loc: logger.Loc) Stmt {
         return Stmt{ .loc = loc, .data = @unionInit(Data, tag_name, origData) };
     }
 
-    pub fn alloc(allocator: *std.mem.Allocator, comptime StatementData: type, origData: StatementData, loc: logger.Loc) Stmt {
+    pub fn alloc(comptime StatementData: type, origData: StatementData, loc: logger.Loc) Stmt {
         icount += 1;
-        switch (StatementData) {
-            S.Block => {
-                return Stmt.comptime_alloc(allocator, "s_block", S.Block, origData, loc);
-            },
-            S.Break => {
-                return Stmt.comptime_alloc(allocator, "s_break", S.Break, origData, loc);
-            },
-            S.Class => {
-                return Stmt.comptime_alloc(allocator, "s_class", S.Class, origData, loc);
-            },
-            S.Comment => {
-                return Stmt.comptime_alloc(allocator, "s_comment", S.Comment, origData, loc);
-            },
-            S.Continue => {
-                return Stmt.comptime_alloc(allocator, "s_continue", S.Continue, origData, loc);
-            },
-            S.Debugger => {
-                return Stmt{ .loc = loc, .data = .{ .s_debugger = origData } };
-            },
-            S.Directive => {
-                return Stmt.comptime_alloc(allocator, "s_directive", S.Directive, origData, loc);
-            },
-            S.DoWhile => {
-                return Stmt.comptime_alloc(allocator, "s_do_while", S.DoWhile, origData, loc);
-            },
-            S.Empty => {
-                return Stmt{ .loc = loc, .data = Data{ .s_empty = S.Empty{} } };
-            },
-            S.Enum => {
-                return Stmt.comptime_alloc(allocator, "s_enum", S.Enum, origData, loc);
-            },
-            S.ExportClause => {
-                return Stmt.comptime_alloc(allocator, "s_export_clause", S.ExportClause, origData, loc);
-            },
-            S.ExportDefault => {
-                return Stmt.comptime_alloc(allocator, "s_export_default", S.ExportDefault, origData, loc);
-            },
-            S.ExportEquals => {
-                return Stmt.comptime_alloc(allocator, "s_export_equals", S.ExportEquals, origData, loc);
-            },
-            S.ExportFrom => {
-                return Stmt.comptime_alloc(allocator, "s_export_from", S.ExportFrom, origData, loc);
-            },
-            S.ExportStar => {
-                return Stmt.comptime_alloc(allocator, "s_export_star", S.ExportStar, origData, loc);
-            },
-            S.SExpr => {
-                return Stmt.comptime_alloc(allocator, "s_expr", S.SExpr, origData, loc);
-            },
-            S.ForIn => {
-                return Stmt.comptime_alloc(allocator, "s_for_in", S.ForIn, origData, loc);
-            },
-            S.ForOf => {
-                return Stmt.comptime_alloc(allocator, "s_for_of", S.ForOf, origData, loc);
-            },
-            S.For => {
-                return Stmt.comptime_alloc(allocator, "s_for", S.For, origData, loc);
-            },
-            S.Function => {
-                return Stmt.comptime_alloc(allocator, "s_function", S.Function, origData, loc);
-            },
-            S.If => {
-                return Stmt.comptime_alloc(allocator, "s_if", S.If, origData, loc);
-            },
-            S.Import => {
-                return Stmt.comptime_alloc(allocator, "s_import", S.Import, origData, loc);
-            },
-            S.Label => {
-                return Stmt.comptime_alloc(allocator, "s_label", S.Label, origData, loc);
-            },
-            S.LazyExport => {
-                return Stmt.comptime_alloc(allocator, "s_lazy_export", S.LazyExport, origData, loc);
-            },
-            S.Local => {
-                return Stmt.comptime_alloc(allocator, "s_local", S.Local, origData, loc);
-            },
-            S.Namespace => {
-                return Stmt.comptime_alloc(allocator, "s_namespace", S.Namespace, origData, loc);
-            },
-            S.Return => {
-                return Stmt.comptime_alloc(allocator, "s_return", S.Return, origData, loc);
-            },
-            S.Switch => {
-                return Stmt.comptime_alloc(allocator, "s_switch", S.Switch, origData, loc);
-            },
-            S.Throw => {
-                return Stmt.comptime_alloc(allocator, "s_throw", S.Throw, origData, loc);
-            },
-            S.Try => {
-                return Stmt.comptime_alloc(allocator, "s_try", S.Try, origData, loc);
-            },
-            S.TypeScript => {
-                return Stmt{ .loc = loc, .data = Data{ .s_type_script = S.TypeScript{} } };
-            },
-            S.While => {
-                return Stmt.comptime_alloc(allocator, "s_while", S.While, origData, loc);
-            },
-            S.With => {
-                return Stmt.comptime_alloc(allocator, "s_with", S.With, origData, loc);
-            },
-
-            else => {
-                @compileError("Invalid type in Stmt.init");
-            },
-        }
+        return switch (StatementData) {
+            S.Block => Stmt.comptime_alloc("s_block", S.Block, origData, loc),
+            S.Break => Stmt.comptime_alloc("s_break", S.Break, origData, loc),
+            S.Class => Stmt.comptime_alloc("s_class", S.Class, origData, loc),
+            S.Comment => Stmt.comptime_alloc("s_comment", S.Comment, origData, loc),
+            S.Continue => Stmt.comptime_alloc("s_continue", S.Continue, origData, loc),
+            S.Debugger => Stmt{ .loc = loc, .data = .{ .s_debugger = origData } },
+            S.Directive => Stmt.comptime_alloc("s_directive", S.Directive, origData, loc),
+            S.DoWhile => Stmt.comptime_alloc("s_do_while", S.DoWhile, origData, loc),
+            S.Empty => Stmt{ .loc = loc, .data = Data{ .s_empty = S.Empty{} } },
+            S.Enum => Stmt.comptime_alloc("s_enum", S.Enum, origData, loc),
+            S.ExportClause => Stmt.comptime_alloc("s_export_clause", S.ExportClause, origData, loc),
+            S.ExportDefault => Stmt.comptime_alloc("s_export_default", S.ExportDefault, origData, loc),
+            S.ExportEquals => Stmt.comptime_alloc("s_export_equals", S.ExportEquals, origData, loc),
+            S.ExportFrom => Stmt.comptime_alloc("s_export_from", S.ExportFrom, origData, loc),
+            S.ExportStar => Stmt.comptime_alloc("s_export_star", S.ExportStar, origData, loc),
+            S.SExpr => Stmt.comptime_alloc("s_expr", S.SExpr, origData, loc),
+            S.ForIn => Stmt.comptime_alloc("s_for_in", S.ForIn, origData, loc),
+            S.ForOf => Stmt.comptime_alloc("s_for_of", S.ForOf, origData, loc),
+            S.For => Stmt.comptime_alloc("s_for", S.For, origData, loc),
+            S.Function => Stmt.comptime_alloc("s_function", S.Function, origData, loc),
+            S.If => Stmt.comptime_alloc("s_if", S.If, origData, loc),
+            S.Import => Stmt.comptime_alloc("s_import", S.Import, origData, loc),
+            S.Label => Stmt.comptime_alloc("s_label", S.Label, origData, loc),
+            S.LazyExport => Stmt.comptime_alloc("s_lazy_export", S.LazyExport, origData, loc),
+            S.Local => Stmt.comptime_alloc("s_local", S.Local, origData, loc),
+            S.Namespace => Stmt.comptime_alloc("s_namespace", S.Namespace, origData, loc),
+            S.Return => Stmt.comptime_alloc("s_return", S.Return, origData, loc),
+            S.Switch => Stmt.comptime_alloc("s_switch", S.Switch, origData, loc),
+            S.Throw => Stmt.comptime_alloc("s_throw", S.Throw, origData, loc),
+            S.Try => Stmt.comptime_alloc("s_try", S.Try, origData, loc),
+            S.TypeScript => Stmt{ .loc = loc, .data = Data{ .s_type_script = S.TypeScript{} } },
+            S.While => Stmt.comptime_alloc("s_while", S.While, origData, loc),
+            S.With => Stmt.comptime_alloc("s_with", S.With, origData, loc),
+            else => @compileError("Invalid type in Stmt.init"),
+        };
     }
 
     pub const Tag = enum(u6) {
@@ -1849,7 +1649,7 @@ pub const Stmt = struct {
 
             threadlocal var has_inited = false;
             pub threadlocal var disable_reset = false;
-            pub fn create(allocator: *std.mem.Allocator) void {
+            pub fn create(allocator: std.mem.Allocator) void {
                 if (has_inited) {
                     return;
                 }
@@ -1867,122 +1667,6 @@ pub const Stmt = struct {
                 return All.append(ValueType, value);
             }
         };
-
-        pub inline fn set(data: *Data, value: anytype) void {
-            const ValueType = @TypeOf(value);
-            if (@typeInfo(ValueType) == .Pointer) {
-                data.setValue(@TypeOf(value.*), value.*);
-            } else {
-                data.setValue(@TypeOf(value), value);
-            }
-        }
-
-        pub inline fn setValue(data: *Data, comptime ValueType: type, value: ValueType) void {
-            switch (comptime ValueType) {
-                S.Block => {
-                    data.s_block = Block.append(value);
-                },
-                S.Break => {
-                    data.s_break = Break.append(value);
-                },
-                S.Class => {
-                    data.s_class = Class.append(value);
-                },
-                S.Comment => {
-                    data.s_comment = Comment.append(value);
-                },
-                S.Continue => {
-                    data.s_continue = Continue.append(value);
-                },
-                S.Debugger => {
-                    data.s_debugger = Debugger.append(value);
-                },
-                S.Directive => {
-                    data.s_directive = Directive.append(value);
-                },
-                S.DoWhile => {
-                    data.s_do_while = DoWhile.append(value);
-                },
-                S.Empty => {
-                    data.s_empty = Empty.append(value);
-                },
-                S.Enum => {
-                    data.s_enum = Enum.append(value);
-                },
-                S.ExportClause => {
-                    data.s_export_clause = ExportClause.append(value);
-                },
-                S.ExportDefault => {
-                    data.s_export_default = ExportDefault.append(value);
-                },
-                S.ExportEquals => {
-                    data.s_export_equals = ExportEquals.append(value);
-                },
-                S.ExportFrom => {
-                    data.s_export_from = ExportFrom.append(value);
-                },
-                S.ExportStar => {
-                    data.s_export_star = ExportStar.append(value);
-                },
-                S.SExpr => {
-                    data.s_s_expr = SExpr.append(value);
-                },
-                S.ForIn => {
-                    data.s_for_in = ForIn.append(value);
-                },
-                S.ForOf => {
-                    data.s_for_of = ForOf.append(value);
-                },
-                S.For => {
-                    data.s_for = For.append(value);
-                },
-                S.Function => {
-                    data.s_function = Function.append(value);
-                },
-                S.If => {
-                    data.s_if = If.append(value);
-                },
-                S.Import => {
-                    data.s_import = Import.append(value);
-                },
-                S.Label => {
-                    data.s_label = Label.append(value);
-                },
-                S.LazyExport => {
-                    data.s_lazy_export = LazyExport.append(value);
-                },
-                S.Local => {
-                    data.s_local = Local.append(value);
-                },
-                S.Namespace => {
-                    data.s_namespace = Namespace.append(value);
-                },
-                S.Return => {
-                    data.s_return = Return.append(value);
-                },
-                S.Switch => {
-                    data.s_switch = Switch.append(value);
-                },
-                S.Throw => {
-                    data.s_throw = Throw.append(value);
-                },
-                S.Try => {
-                    data.s_try = Try.append(value);
-                },
-                S.TypeScript => {
-                    data.s_type_script = value;
-                },
-                S.While => {
-                    data.s_while = While.append(value);
-                },
-                S.With => {
-                    data.s_with = With.append(value);
-                },
-                else => {
-                    @compileError("Invalid type passed to Stmt.Data.set " ++ @typeName(ValueType));
-                },
-            }
-        }
     };
 
     pub fn caresAboutScope(self: *Stmt) bool {
@@ -1992,7 +1676,7 @@ pub const Stmt = struct {
             },
 
             .s_local => |local| {
-                return local.kind != Kind.k_var;
+                return local.kind != S.Kind.k_var;
             },
             else => {
                 return true;
@@ -2022,114 +1706,13 @@ pub const Expr = struct {
     }
     pub const Query = struct { expr: Expr, loc: logger.Loc, i: u32 = 0 };
 
-    pub fn getArray(exp: *const Expr) *E.Array {
-        return exp.data.e_array;
-    }
-    pub fn getUnary(exp: *const Expr) *E.Unary {
-        return exp.data.e_unary;
-    }
-    pub fn getBinary(exp: *const Expr) *E.Binary {
-        return exp.data.e_binary;
-    }
-    pub fn getThis(exp: *const Expr) *E.This {
-        return E.This{};
-    }
-    pub fn getClass(exp: *const Expr) *E.Class {
-        return exp.data.e_class;
-    }
-    pub fn getBoolean(exp: *const Expr) *E.Boolean {
-        return exp.data.e_boolean;
-    }
-    pub fn getSuper(exp: *const Expr) *E.Super {
-        return exp.data.e_super;
-    }
-    pub fn getNull(exp: *const Expr) *E.Null {
-        return exp.data.e_null;
-    }
-    pub fn getUndefined(exp: *const Expr) *E.Undefined {
-        return exp.data.e_undefined;
-    }
-    pub fn getNew(exp: *const Expr) *E.New {
-        return exp.data.e_new;
-    }
-    pub fn getNewTarget(exp: *const Expr) *E.NewTarget {
-        return &E.NewTarget{};
-    }
-    pub fn getFunction(exp: *const Expr) *E.Function {
-        return exp.data.e_function;
-    }
-
-    pub fn getCall(exp: *const Expr) *E.Call {
-        return exp.data.e_call;
-    }
-    pub fn getDot(exp: *const Expr) *E.Dot {
-        return exp.data.e_dot;
-    }
-    pub fn getIndex(exp: *const Expr) *E.Index {
-        return exp.data.e_index;
-    }
-    pub fn getArrow(exp: *const Expr) *E.Arrow {
-        return exp.data.e_arrow;
-    }
-    pub fn getPrivateIdentifier(exp: *const Expr) *E.PrivateIdentifier {
-        return exp.data.e_private_identifier;
-    }
-    pub fn getJsxElement(exp: *const Expr) *E.JSXElement {
-        return exp.data.e_jsx_element;
-    }
-    pub fn getMissing(exp: *const Expr) *E.Missing {
-        return exp.data.e_missing;
-    }
-    pub fn getNumber(exp: *const Expr) E.Number {
-        return exp.data.e_number;
-    }
-    pub fn getBigInt(exp: *const Expr) E.BigInt {
-        return exp.data.e_big_int;
-    }
-    pub fn getObject(exp: *const Expr) *E.Object {
-        return exp.data.e_object;
-    }
-    pub fn getSpread(exp: *const Expr) *E.Spread {
-        return exp.data.e_spread;
-    }
-    pub fn getString(exp: *const Expr) E.String {
-        return exp.data.e_string;
-    }
-    pub fn getTemplatePart(exp: *const Expr) *E.TemplatePart {
-        return exp.data.e_template_part;
-    }
-    pub fn getTemplate(exp: *const Expr) *E.Template {
-        return exp.data.e_template;
-    }
-    pub fn getRegExp(exp: *const Expr) *E.RegExp {
-        return exp.data.e_reg_exp;
-    }
-    pub fn getAwait(exp: *const Expr) *E.Await {
-        return exp.data.e_await;
-    }
-    pub fn getYield(exp: *const Expr) *E.Yield {
-        return exp.data.e_yield;
-    }
-    pub fn getIf(exp: *const Expr) *E.If {
-        return exp.data.e_if;
-    }
-    pub fn getRequire(exp: *const Expr) *E.Require {
-        return exp.data.e_require;
-    }
-    pub fn getRequireOrRequireResolve(exp: *const Expr) *E.RequireOrRequireResolve {
-        return exp.data.e_require_or_require_resolve;
-    }
-    pub fn getImport(exp: *const Expr) *E.Import {
-        return exp.data.e_import;
-    }
-
     pub fn hasAnyPropertyNamed(expr: *const Expr, comptime names: []const string) bool {
         if (std.meta.activeTag(expr.data) != .e_object) return false;
         const obj = expr.data.e_object;
         if (@ptrToInt(obj.properties.ptr) == 0) return false;
 
         for (obj.properties) |prop| {
-            const value = prop.value orelse continue;
+            if (prop.value == null) continue;
             const key = prop.key orelse continue;
             if (std.meta.activeTag(key.data) != .e_string) continue;
             const key_str = key.data.e_string;
@@ -2183,7 +1766,7 @@ pub const Expr = struct {
         return ArrayIterator{ .array = array, .index = 0 };
     }
 
-    pub inline fn asString(expr: *const Expr, allocator: *std.mem.Allocator) ?string {
+    pub inline fn asString(expr: *const Expr, allocator: std.mem.Allocator) ?string {
         if (std.meta.activeTag(expr.data) != .e_string) return null;
 
         const key_str = expr.data.e_string;
@@ -2222,7 +1805,7 @@ pub const Expr = struct {
         comptime op: Op.Code,
         a: Expr,
         b: Expr,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
     ) Expr {
         // "(a, b) op c" => "a, b op c"
         switch (a.data) {
@@ -2255,7 +1838,7 @@ pub const Expr = struct {
         return Expr.init(E.Binary, E.Binary{ .op = op, .left = a, .right = b }, a.loc);
     }
 
-    pub fn joinWithComma(a: Expr, b: Expr, allocator: *std.mem.Allocator) Expr {
+    pub fn joinWithComma(a: Expr, b: Expr, _: std.mem.Allocator) Expr {
         if (a.isMissing()) {
             return b;
         }
@@ -2267,7 +1850,7 @@ pub const Expr = struct {
         return Expr.init(E.Binary, E.Binary{ .op = .bin_comma, .left = a, .right = b }, a.loc);
     }
 
-    pub fn joinAllWithComma(all: []Expr, allocator: *std.mem.Allocator) Expr {
+    pub fn joinAllWithComma(all: []Expr, allocator: std.mem.Allocator) Expr {
         std.debug.assert(all.len > 0);
         switch (all.len) {
             1 => {
@@ -2288,7 +1871,7 @@ pub const Expr = struct {
         }
     }
 
-    pub fn joinAllWithCommaCallback(all: []Expr, comptime Context: type, ctx: Context, callback: (fn (ctx: anytype, expr: anytype) ?Expr), allocator: *std.mem.Allocator) ?Expr {
+    pub fn joinAllWithCommaCallback(all: []Expr, comptime Context: type, ctx: Context, callback: (fn (ctx: anytype, expr: anytype) ?Expr), allocator: std.mem.Allocator) ?Expr {
         std.debug.assert(all.len > 0);
         switch (all.len) {
             1 => {
@@ -2578,7 +2161,7 @@ pub const Expr = struct {
                 };
             },
             E.String => {
-                if (comptime isDebug) {
+                if (comptime Environment.isDebug) {
                     // Sanity check: assert string is not a null ptr
                     if (st.isUTF8() and st.utf8.len > 0) {
                         std.debug.assert(@ptrToInt(st.utf8.ptr) > 0);
@@ -3110,14 +2693,14 @@ pub const Expr = struct {
         return false;
     }
 
-    pub fn assign(a: Expr, b: Expr, allocator: *std.mem.Allocator) Expr {
+    pub fn assign(a: Expr, b: Expr, _: std.mem.Allocator) Expr {
         return init(E.Binary, E.Binary{
             .op = .bin_assign,
             .left = a,
             .right = b,
         }, a.loc);
     }
-    pub inline fn at(expr: Expr, comptime Type: type, t: Type, allocator: *std.mem.Allocator) Expr {
+    pub inline fn at(expr: Expr, comptime Type: type, t: Type, _: std.mem.Allocator) Expr {
         return init(Type, t, expr.loc);
     }
 
@@ -3125,7 +2708,7 @@ pub const Expr = struct {
     // will potentially be simplified to avoid generating unnecessary extra "!"
     // operators. For example, calling this with "!!x" will return "!x" instead
     // of returning "!!!x".
-    pub fn not(expr: *Expr, allocator: *std.mem.Allocator) Expr {
+    pub fn not(expr: *Expr, allocator: std.mem.Allocator) Expr {
         return maybeSimplifyNot(expr, allocator) orelse expr.*;
     }
 
@@ -3141,7 +2724,7 @@ pub const Expr = struct {
     // whole operator (i.e. the "!x") if it can be simplified, or false if not.
     // It's separate from "Not()" above to avoid allocation on failure in case
     // that is undesired.
-    pub fn maybeSimplifyNot(expr: *Expr, allocator: *std.mem.Allocator) ?Expr {
+    pub fn maybeSimplifyNot(expr: *Expr, allocator: std.mem.Allocator) ?Expr {
         switch (expr.data) {
             .e_null, .e_undefined => {
                 return expr.at(E.Boolean, E.Boolean{ .value = true }, allocator);
@@ -3203,9 +2786,8 @@ pub const Expr = struct {
         return null;
     }
 
-    pub fn assignStmt(a: Expr, b: Expr, allocator: *std.mem.Allocator) Stmt {
+    pub fn assignStmt(a: Expr, b: Expr, allocator: std.mem.Allocator) Stmt {
         return Stmt.alloc(
-            allocator,
             S.SExpr,
             S.SExpr{
                 .value = Expr.assign(a, b, allocator),
@@ -3216,9 +2798,9 @@ pub const Expr = struct {
 
     pub fn isOptionalChain(self: *const @This()) bool {
         return switch (self.data) {
-            .e_dot => self.getDot().optional_chain != null,
-            .e_index => self.getIndex().optional_chain != null,
-            .e_call => self.getCall().optional_chain != null,
+            .e_dot => self.data.e_dot.optional_chain != null,
+            .e_index => self.data.e_index.optional_chain != null,
+            .e_call => self.data.e_call.optional_chain != null,
             else => false,
         };
     }
@@ -3308,7 +2890,7 @@ pub const Expr = struct {
 
             threadlocal var has_inited = false;
             pub threadlocal var disable_reset = false;
-            pub fn create(allocator: *std.mem.Allocator) void {
+            pub fn create(allocator: std.mem.Allocator) void {
                 if (has_inited) {
                     return;
                 }
@@ -3324,29 +2906,13 @@ pub const Expr = struct {
 
             pub fn append(comptime ValueType: type, value: anytype) *ValueType {
                 if (ValueType == E.Identifier) {
-                    return Identifier.append(ValueType, value);
+                    return E.Identifier.append(ValueType, value);
                 } else {
                     return All.append(ValueType, value);
                 }
             }
         };
 
-        pub fn isBooleanValue(self: *Expr) bool {
-            // TODO:
-            return false;
-            // return switch (self) {
-            //     Expr.e_boolean => |dot| true,
-            //     Expr.e_if => |dot| dot.optional_chain != OptionalChain.none,
-            //     Expr.e_call => |dot| dot.optional_chain != OptionalChain.none,
-            //     else => false,
-            // };
-        }
-
-        pub fn isNumericValue(self: *Expr) bool {
-            // TODO:
-
-            return false;
-        }
         pub inline fn isStringValue(self: Data) bool {
             return @as(Expr.Tag, self) == .e_string;
         }
@@ -3408,8 +2974,10 @@ pub const S = struct {
         is_single_line: bool,
     };
 
-    pub const ExportDefault = struct { default_name: LocRef, // value may be a SFunction or SClass
-    value: StmtOrExpr };
+    pub const ExportDefault = struct {
+        default_name: LocRef, // value may be a SFunction or SClass
+        value: StmtOrExpr,
+    };
 
     pub const Enum = struct {
         name: LocRef,
@@ -3438,12 +3006,19 @@ pub const S = struct {
     };
 
     pub const For = struct {
-    // May be a SConst, SLet, SVar, or SExpr
-    init: ?StmtNodeIndex = null, test_: ?ExprNodeIndex = null, update: ?ExprNodeIndex = null, body: StmtNodeIndex };
+        // May be a SConst, SLet, SVar, or SExpr
+        init: ?StmtNodeIndex = null,
+        test_: ?ExprNodeIndex = null,
+        update: ?ExprNodeIndex = null,
+        body: StmtNodeIndex,
+    };
 
     pub const ForIn = struct {
-    // May be a SConst, SLet, SVar, or SExpr
-    init: StmtNodeIndex, value: ExprNodeIndex, body: StmtNodeIndex };
+        // May be a SConst, SLet, SVar, or SExpr
+        init: StmtNodeIndex,
+        value: ExprNodeIndex,
+        body: StmtNodeIndex,
+    };
 
     pub const ForOf = struct {
         is_await: bool = false,
@@ -3840,7 +3415,6 @@ pub const Ast = struct {
     // is conveniently fully parallelized.
     named_imports: NamedImports = undefined,
     named_exports: NamedExports = undefined,
-    top_level_symbol_to_parts: AutoHashMap(Ref, std.ArrayList(u32)) = undefined,
     export_star_import_records: []u32 = &([_]u32{}),
 
     pub const NamedImports = std.ArrayHashMap(Ref, NamedImport, RefHashCtx, true);
@@ -3855,7 +3429,7 @@ pub const Ast = struct {
 
     pub const empty = Ast{ .parts = &[_]Part{}, .runtime_imports = undefined };
 
-    pub fn toJSON(self: *const Ast, allocator: *std.mem.Allocator, stream: anytype) !void {
+    pub fn toJSON(self: *const Ast, _: std.mem.Allocator, stream: anytype) !void {
         const opts = std.json.StringifyOptions{ .whitespace = std.json.StringifyOptions.Whitespace{
             .separator = true,
         } };
@@ -3899,10 +3473,6 @@ pub const ExportsKind = enum {
         return try std.json.stringify(@tagName(self), opts, o);
     }
 };
-
-pub fn isDynamicExport(exp: ExportsKind) bool {
-    return kind == .cjs || kind == .esm_with_dyn;
-}
 
 pub const DeclaredSymbol = struct {
     ref: Ref,
@@ -3964,7 +3534,7 @@ pub const Part = struct {
         jsx_import,
     };
 
-    pub const SymbolUseMap = AutoHashMap(Ref, Symbol.Use);
+    pub const SymbolUseMap = _hash_map.AutoHashMapUnmanaged(Ref, Symbol.Use);
     pub fn jsonStringify(self: *const Part, options: std.json.StringifyOptions, writer: anytype) !void {
         return std.json.stringify(self.stmts, options, writer);
     }
@@ -4021,9 +3591,9 @@ pub const Scope = struct {
     id: usize = 0,
     kind: Kind = Kind.block,
     parent: ?*Scope,
-    children: std.ArrayList(*Scope),
-    members: StringHashMap(Member),
-    generated: std.ArrayList(Ref),
+    children: std.ArrayListUnmanaged(*Scope) = .{},
+    members: StringHashMapUnmanaged(Member) = .{},
+    generated: std.ArrayListUnmanaged(Ref) = .{},
 
     // This is used to store the ref of the label symbol for ScopeLabel scopes.
     label_ref: ?Ref = null,
@@ -4063,6 +3633,95 @@ pub const Scope = struct {
             return @call(.{ .modifier = .always_inline }, Ref.eql, .{ a.ref, b.ref }) and a.loc.start == b.loc.start;
         }
     };
+
+    pub const SymbolMergeResult = enum {
+        forbidden,
+        replace_with_new,
+        overwrite_with_new,
+        keep_existing,
+        become_private_get_set_pair,
+        become_private_static_get_set_pair,
+    };
+    pub fn canMergeSymbols(
+        scope: *Scope,
+        existing: Symbol.Kind,
+        new: Symbol.Kind,
+        comptime is_typescript_enabled: bool,
+    ) SymbolMergeResult {
+        if (existing == .unbound) {
+            return .replace_with_new;
+        }
+
+        if (comptime is_typescript_enabled) {
+            // In TypeScript, imports are allowed to silently collide with symbols within
+            // the module. Presumably this is because the imports may be type-only:
+            //
+            //   import {Foo} from 'bar'
+            //   class Foo {}
+            //
+            if (existing == .import) {
+                return .replace_with_new;
+            }
+
+            // "enum Foo {} enum Foo {}"
+            // "namespace Foo { ... } enum Foo {}"
+            if (new == .ts_enum and (existing == .ts_enum or existing == .ts_namespace)) {
+                return .replace_with_new;
+            }
+
+            // "namespace Foo { ... } namespace Foo { ... }"
+            // "function Foo() {} namespace Foo { ... }"
+            // "enum Foo {} namespace Foo { ... }"
+            if (new == .ts_namespace) {
+                switch (existing) {
+                    .ts_namespace, .hoisted_function, .generator_or_async_function, .ts_enum, .class => {
+                        return .keep_existing;
+                    },
+                    else => {},
+                }
+            }
+        }
+
+        // "var foo; var foo;"
+        // "var foo; function foo() {}"
+        // "function foo() {} var foo;"
+        // "function *foo() {} function *foo() {}" but not "{ function *foo() {} function *foo() {} }"
+        if (Symbol.isKindHoistedOrFunction(new) and Symbol.isKindHoistedOrFunction(existing) and (scope.kind == .entry or scope.kind == .function_body or
+            (Symbol.isKindHoisted(new) and Symbol.isKindHoisted(existing))))
+        {
+            return .keep_existing;
+        }
+
+        // "get #foo() {} set #foo() {}"
+        // "set #foo() {} get #foo() {}"
+        if ((existing == .private_get and new == .private_set) or
+            (existing == .private_set and new == .private_get))
+        {
+            return .become_private_get_set_pair;
+        }
+        if ((existing == .private_static_get and new == .private_static_set) or
+            (existing == .private_static_set and new == .private_static_get))
+        {
+            return .become_private_static_get_set_pair;
+        }
+
+        // "try {} catch (e) { var e }"
+        if (existing == .catch_identifier and new == .hoisted) {
+            return .replace_with_new;
+        }
+
+        // "function() { var arguments }"
+        if (existing == .arguments and new == .hoisted) {
+            return .keep_existing;
+        }
+
+        // "function() { let arguments }"
+        if (existing == .arguments and new != .hoisted) {
+            return .overwrite_with_new;
+        }
+
+        return .forbidden;
+    }
 
     pub const Kind = enum(u8) {
         block,
@@ -4109,7 +3768,7 @@ pub const Macro = struct {
     const isPackagePath = @import("./resolver/resolver.zig").isPackagePath;
     const ResolveResult = @import("./resolver/resolver.zig").Result;
     const DotEnv = @import("./env_loader.zig");
-    const js = @import("./javascript/jsc/JavascriptCore.zig");
+    const js = @import("./javascript/jsc/javascript_core_c_api.zig");
     const Zig = @import("./javascript/jsc/bindings/exports.zig");
     const Bundler = @import("./bundler.zig").Bundler;
     const MacroEntryPoint = @import("./bundler.zig").MacroEntryPoint;
@@ -4316,7 +3975,7 @@ pub const Macro = struct {
             },
         );
 
-        pub fn makeFromExpr(allocator: *std.mem.Allocator, expr: Expr) js.JSObjectRef {
+        pub fn makeFromExpr(allocator: std.mem.Allocator, expr: Expr) js.JSObjectRef {
             var ptr = allocator.create(JSNode) catch unreachable;
             ptr.* = JSNode.initExpr(expr);
             // If we look at JSObjectMake, we can see that all it does with the ctx value is lookup what the global object is
@@ -4354,8 +4013,8 @@ pub const Macro = struct {
             pub fn getCallArgs(
                 this: *JSNode,
                 ctx: js.JSContextRef,
-                thisObject: js.JSValueRef,
-                prop: js.JSStringRef,
+                _: js.JSValueRef,
+                _: js.JSStringRef,
                 exception: js.ExceptionRef,
             ) js.JSObjectRef {
                 const args = this.data.callArgs();
@@ -4382,9 +4041,9 @@ pub const Macro = struct {
             pub fn getProperties(
                 this: *JSNode,
                 ctx: js.JSContextRef,
-                thisObject: js.JSValueRef,
-                prop: js.JSStringRef,
-                exception: js.ExceptionRef,
+                _: js.JSValueRef,
+                _: js.JSStringRef,
+                _: js.ExceptionRef,
             ) js.JSObjectRef {
                 if (this.data != .e_object) {
                     return js.JSObjectMake(ctx, null, null);
@@ -4398,8 +4057,8 @@ pub const Macro = struct {
             pub fn getPropertyNodes(
                 this: *JSNode,
                 ctx: js.JSContextRef,
-                thisObject: js.JSValueRef,
-                prop: js.JSStringRef,
+                _: js.JSValueRef,
+                _: js.JSStringRef,
                 exception: js.ExceptionRef,
             ) js.JSObjectRef {
                 const args = if (this.data == .e_object) this.data.e_object.properties else &[_]G.Property{};
@@ -4424,9 +4083,9 @@ pub const Macro = struct {
             pub fn getModuleNamespace(
                 this: *JSNode,
                 ctx: js.JSContextRef,
-                thisObject: js.JSValueRef,
-                prop: js.JSStringRef,
-                exception: js.ExceptionRef,
+                _: js.JSValueRef,
+                _: js.JSStringRef,
+                _: js.ExceptionRef,
             ) js.JSObjectRef {
                 if (this.data != .s_import) return js.JSValueMakeUndefined(ctx);
 
@@ -4435,11 +4094,11 @@ pub const Macro = struct {
                 return ModuleNamespace.Class.make(ctx, module_namespace);
             }
 
-            fn toNumberValue(this: *JSNode, number: E.Number) js.JSValueRef {
+            fn toNumberValue(_: *JSNode, number: E.Number) js.JSValueRef {
                 return JSC.JSValue.jsNumberFromDouble(number.value).asRef();
             }
 
-            fn toStringValue(this: *JSNode, ctx: js.JSContextRef, str: E.String) js.JSObjectRef {
+            fn toStringValue(_: *JSNode, ctx: js.JSContextRef, str: E.String) js.JSObjectRef {
                 if (str.isBlank()) {
                     return JSC.ZigString.init("").toValue(JavaScript.VirtualMachine.vm.global).asRef();
                 }
@@ -4453,7 +4112,7 @@ pub const Macro = struct {
 
             threadlocal var regex_value_array: [2]js.JSValueRef = undefined;
 
-            fn toRegexValue(this: *JSNode, ctx: js.JSContextRef, regex: *E.RegExp, exception: js.ExceptionRef) js.JSObjectRef {
+            fn toRegexValue(_: *JSNode, ctx: js.JSContextRef, regex: *E.RegExp, exception: js.ExceptionRef) js.JSObjectRef {
                 if (regex.value.len == 0) {
                     return js.JSObjectMakeRegExp(ctx, 0, null, exception);
                 }
@@ -4464,7 +4123,7 @@ pub const Macro = struct {
                 return js.JSObjectMakeRegExp(ctx, 2, &regex_value_array, exception);
             }
 
-            fn toArrayValue(this: *JSNode, ctx: js.JSContextRef, array: E.Array, exception: js.ExceptionRef) js.JSObjectRef {
+            fn toArrayValue(_: *JSNode, ctx: js.JSContextRef, array: E.Array, exception: js.ExceptionRef) js.JSObjectRef {
                 if (array.items.len == 0) {
                     return js.JSObjectMakeArray(ctx, 0, null, exception);
                 }
@@ -4478,7 +4137,7 @@ pub const Macro = struct {
                 return js.JSObjectMakeArray(ctx, array.items.len, &temporary_call_args_array, exception);
             }
 
-            fn toArrayPrimitive(this: *JSNode, ctx: js.JSContextRef, array: E.Array, exception: js.ExceptionRef) js.JSObjectRef {
+            fn toArrayPrimitive(_: *JSNode, ctx: js.JSContextRef, array: E.Array, exception: js.ExceptionRef) js.JSObjectRef {
                 if (array.items.len == 0) {
                     return js.JSObjectMakeArray(ctx, 0, null, exception);
                 }
@@ -4523,13 +4182,13 @@ pub const Macro = struct {
                 return js.JSObjectMakeArray(ctx, properties_list.len, properties_list.ptr, exception);
             }
 
-            fn toObjectPrimitive(this: *JSNode, ctx: js.JSContextRef, obj: E.Object, exception: js.ExceptionRef) js.JSObjectRef {
+            fn toObjectPrimitive(this: *JSNode, ctx: js.JSContextRef, _: E.Object, _: js.ExceptionRef) js.JSObjectRef {
                 var lazy = getAllocator(ctx).create(LazyPropertiesObject) catch unreachable;
                 lazy.* = LazyPropertiesObject{ .node = this.* };
                 return LazyPropertiesObject.Class.make(ctx, lazy);
             }
 
-            fn toPropertyPrimitive(this: *JSNode, ctx: js.JSContextRef, prop: G.Property, exception: js.ExceptionRef) js.JSObjectRef {
+            fn toPropertyPrimitive(_: *JSNode, ctx: js.JSContextRef, prop: G.Property, exception: js.ExceptionRef) js.JSObjectRef {
                 var entries: [3]js.JSValueRef = undefined;
 
                 entries[0] = js.JSValueMakeUndefined(ctx);
@@ -4572,10 +4231,10 @@ pub const Macro = struct {
             pub fn toString(
                 this: *JSNode,
                 ctx: js.JSContextRef,
-                function: js.JSObjectRef,
-                thisObject: js.JSObjectRef,
-                arguments: []const js.JSValueRef,
-                exception: js.ExceptionRef,
+                _: js.JSObjectRef,
+                _: js.JSObjectRef,
+                _: []const js.JSValueRef,
+                _: js.ExceptionRef,
             ) js.JSObjectRef {
                 switch (this.data) {
                     .e_string => |str| {
@@ -4619,7 +4278,7 @@ pub const Macro = struct {
                 return @call(.{ .modifier = .always_inline }, toPrimitiveAllowRecursion, .{ this, ctx, exception, true });
             }
 
-            fn toPrimitiveAllowRecursion(this: *JSNode, ctx: js.JSContextRef, exception: js.ExceptionRef, comptime allow_recursion: bool) js.JSValueRef {
+            fn toPrimitiveAllowRecursion(this: *JSNode, ctx: js.JSContextRef, exception: js.ExceptionRef, comptime _: bool) js.JSValueRef {
                 switch (this.data) {
                     .e_string => |str| {
                         return JSBindings.toStringValue(this, ctx, str.*);
@@ -4686,7 +4345,7 @@ pub const Macro = struct {
                 this: *JSNode,
                 ctx: js.JSContextRef,
                 thisObject: js.JSValueRef,
-                prop: js.JSStringRef,
+                _: js.JSStringRef,
                 exception: js.ExceptionRef,
             ) js.JSObjectRef {
                 return toValue(this, ctx, exception) orelse return thisObject;
@@ -4695,9 +4354,9 @@ pub const Macro = struct {
             pub fn get(
                 this: *JSNode,
                 ctx: js.JSContextRef,
-                function: js.JSObjectRef,
-                thisObject: js.JSObjectRef,
-                arguments: []const js.JSValueRef,
+                _: js.JSObjectRef,
+                _: js.JSObjectRef,
+                _: []const js.JSValueRef,
                 exception: js.ExceptionRef,
             ) js.JSObjectRef {
                 return toPrimitiveWithRecursion(this, ctx, exception) orelse return js.JSValueMakeUndefined(ctx);
@@ -4705,28 +4364,28 @@ pub const Macro = struct {
 
             pub fn getTag(
                 this: *JSNode,
-                ctx: js.JSContextRef,
-                thisObject: js.JSValueRef,
-                prop: js.JSStringRef,
-                exception: js.ExceptionRef,
+                _: js.JSContextRef,
+                _: js.JSValueRef,
+                _: js.JSStringRef,
+                _: js.ExceptionRef,
             ) js.JSObjectRef {
                 return JSC.JSValue.jsNumberFromU16(@intCast(u16, @enumToInt(std.meta.activeTag(this.data)))).asRef();
             }
             pub fn getTagName(
                 this: *JSNode,
-                ctx: js.JSContextRef,
-                thisObject: js.JSValueRef,
-                prop: js.JSStringRef,
-                exception: js.ExceptionRef,
+                _: js.JSContextRef,
+                _: js.JSValueRef,
+                _: js.JSStringRef,
+                _: js.ExceptionRef,
             ) js.JSObjectRef {
                 return JSC.ZigString.init(@tagName(this.data)).toValue(JavaScript.VirtualMachine.vm.global).asRef();
             }
             pub fn getPosition(
                 this: *JSNode,
-                ctx: js.JSContextRef,
-                thisObject: js.JSValueRef,
-                prop: js.JSStringRef,
-                exception: js.ExceptionRef,
+                _: js.JSContextRef,
+                _: js.JSValueRef,
+                _: js.JSStringRef,
+                _: js.ExceptionRef,
             ) js.JSObjectRef {
                 return JSC.JSValue.jsNumberFromInt32(this.loc.start).asRef();
             }
@@ -4843,7 +4502,7 @@ pub const Macro = struct {
                     return JSNode{ .loc = this.loc, .data = .{ .inline_identifier = value } };
                 },
                 else => {
-                    if (comptime isDebug) {
+                    if (comptime Environment.isDebug) {
                         Output.prettyWarnln("initExpr fail: {s}", .{@tagName(this.data)});
                     }
                     return JSNode{ .loc = this.loc, .data = .{ .e_missing = .{} } };
@@ -5314,7 +4973,7 @@ pub const Macro = struct {
                 log: *logger.Log,
                 args: ExprList,
                 bun_identifier: *E.Identifier,
-                allocator: *std.mem.Allocator,
+                allocator: std.mem.Allocator,
                 parent_tag: Tag = Tag.e_missing,
 
                 pub fn initWriter(p: *P, bun_identifier: *E.Identifier) JSXWriter {
@@ -5351,8 +5010,6 @@ pub const Macro = struct {
 
                     return null;
                 }
-
-                pub fn writeExprType(self: *JSXWriter, expr: Expr) bool {}
 
                 pub fn writeNodeType(self: *JSXWriter, tag: JSNode.Tag, props: []G.Property, children: []Expr, loc: logger.Loc) bool {
                     switch (tag) {
@@ -5480,7 +5137,7 @@ pub const Macro = struct {
                                 .e_string => |str| {
                                     self.args.appendAssumeCapacity(Expr.init(E.BigInt, E.BigInt{ .value = std.mem.trimRight(u8, str.utf8, "n") }, value.loc));
                                 },
-                                .e_big_int => |bigint| {
+                                .e_big_int => {
                                     self.args.appendAssumeCapacity(value);
                                 },
                                 .e_missing => {
@@ -5512,7 +5169,7 @@ pub const Macro = struct {
                             var old_parent = self.parent_tag;
                             self.parent_tag = Tag.e_array;
                             defer self.parent_tag = old_parent;
-                            for (children) |child, i| {
+                            for (children) |child| {
                                 switch (child.data) {
                                     .e_jsx_element => |el| {
                                         if (!self.writeElement(el.*)) return false;
@@ -5552,7 +5209,7 @@ pub const Macro = struct {
                             self.parent_tag = Tag.e_object;
                             defer self.parent_tag = old_parent;
 
-                            for (children) |child, i| {
+                            for (children) |child| {
                                 switch (child.data) {
                                     .e_jsx_element => |el| {
                                         if (!self.writeElementWithValidTagList(el.*, comptime Tag.Validator.valid_object_tags)) return false;
@@ -5595,7 +5252,6 @@ pub const Macro = struct {
                             self.parent_tag = Tag.g_property;
                             defer self.parent_tag = old_parent;
 
-                            var is_spread = false;
                             if (value_property) |prop| {
                                 switch (prop.data) {
                                     .e_jsx_element => |el| {
@@ -5636,7 +5292,7 @@ pub const Macro = struct {
                                     .e_jsx_element => |el| {
                                         if (!self.writeElement(el.*)) return false;
                                     },
-                                    .e_string => |str| {
+                                    .e_string => {
                                         self.args.append(prop) catch unreachable;
                                     },
                                     .e_template, .e_if, .e_spread, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
@@ -5933,7 +5589,7 @@ pub const Macro = struct {
                                 },
                             });
 
-                            for (children) |child, i| {
+                            for (children) |child| {
                                 switch (child.data) {
                                     .e_jsx_element => |el| {
                                         if (!self.writeElement(el.*)) return false;
@@ -6017,7 +5673,7 @@ pub const Macro = struct {
                 pub fn writeFunctionCall(self: *JSXWriter, element: E.JSXElement) Expr {
                     if (element.tag) |tag_expr| {
                         switch (tag_expr.data) {
-                            .e_string => |str| {
+                            .e_string => {
                                 self.p.recordUsage(self.bun_jsx_ref);
                                 _ = self.writeElement(element);
                                 var call_args = self.p.allocator.alloc(Expr, 1) catch unreachable;
@@ -6064,14 +5720,6 @@ pub const Macro = struct {
                     }
 
                     return Expr{ .data = .{ .e_missing = .{} }, .loc = logger.Loc.Empty };
-                }
-
-                pub fn writeRootElement(self: JSXWriter, element: E.JSXElement) Expr {
-                    var tag = element.tag orelse E.Array{ .items = &.{} };
-                    switch (tag.data) {
-                        .e_string, .e_array => {},
-                        else => {},
-                    }
                 }
 
                 fn writeElementWithValidTagList(self: *JSXWriter, element: E.JSXElement, comptime valid_tags: Tag.Validator.List) bool {
@@ -6131,7 +5779,7 @@ pub const Macro = struct {
             exception: JSCBase.ExceptionValueRef = null,
             ctx: js.JSContextRef,
             errored: bool = false,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             loc: logger.Loc,
             args_value: JSC.JSValue,
             args_i: u32 = 0,
@@ -6370,7 +6018,6 @@ pub const Macro = struct {
                                 const ptr = js.JSStringGetCharacters8Ptr(prop);
                                 const len = js.JSStringGetLength(prop);
                                 const name = ptr[0..len];
-                                const i = iter.i - 1;
 
                                 const property_value = JSC.JSValue.fromRef(js.JSObjectGetProperty(writer.ctx, object_ref, prop, writer.exception));
 
@@ -6456,9 +6103,7 @@ pub const Macro = struct {
                                         TagOrJSNode.node => |node_| {
                                             const node: JSNode = node_;
                                             switch (node.data) {
-                                                JSNode.Tag.s_import => |import| {
-                                                    return false;
-                                                },
+                                                JSNode.Tag.s_import => return false,
                                                 else => {
                                                     items.items[i] = node.toExpr();
                                                 },
@@ -6479,9 +6124,7 @@ pub const Macro = struct {
                                     TagOrJSNode.node => |node_| {
                                         const node: JSNode = node_;
                                         switch (node.data) {
-                                            JSNode.Tag.s_import => |import| {
-                                                return false;
-                                            },
+                                            JSNode.Tag.s_import => return false,
                                             else => {
                                                 items.items[i] = node.toExpr();
                                             },
@@ -6761,10 +6404,10 @@ pub const Macro = struct {
         );
 
         pub fn isNodeType(
-            this: void,
+            _: void,
             ctx: js.JSContextRef,
-            function: js.JSObjectRef,
-            thisObject: js.JSObjectRef,
+            _: js.JSObjectRef,
+            _: js.JSObjectRef,
             arguments: []const js.JSValueRef,
             exception: js.ExceptionRef,
         ) js.JSObjectRef {
@@ -6798,10 +6441,10 @@ pub const Macro = struct {
         }
 
         pub fn createFromJavaScript(
-            this: void,
+            _: void,
             ctx: js.JSContextRef,
-            function: js.JSObjectRef,
-            thisObject: js.JSObjectRef,
+            _: js.JSObjectRef,
+            _: js.JSObjectRef,
             arguments: []const js.JSValueRef,
             exception: js.ExceptionRef,
         ) js.JSObjectRef {
@@ -6891,7 +6534,7 @@ pub const Macro = struct {
         }
 
         pub fn hasProperty(
-            ctx: js.JSContextRef,
+            _: js.JSContextRef,
             thisObject: js.JSObjectRef,
             propertyName: js.JSStringRef,
         ) callconv(.C) bool {
@@ -6914,7 +6557,7 @@ pub const Macro = struct {
         }
 
         pub fn getPropertyNames(
-            ctx: js.JSContextRef,
+            _: js.JSContextRef,
             thisObject: js.JSObjectRef,
             props: js.JSPropertyNameAccumulatorRef,
         ) callconv(.C) void {
@@ -6958,7 +6601,7 @@ pub const Macro = struct {
             ctx: js.JSContextRef,
             thisObject: js.JSObjectRef,
             propertyName: js.JSStringRef,
-            exception: js.ExceptionRef,
+            _: js.ExceptionRef,
         ) callconv(.C) js.JSValueRef {
             var this: *ModuleNamespace = JSCBase.GetJSPrivateData(ModuleNamespace, thisObject) orelse return null;
 
@@ -6966,7 +6609,6 @@ pub const Macro = struct {
             const properties = this.import_data.import.items;
             var ptr = js.JSStringGetCharacters8Ptr(propertyName);
             var property_slice = ptr[0..len];
-            var value_node: JSNode = undefined;
 
             for (properties) |property| {
                 if (strings.eql(property.original_name, property_slice)) {
@@ -6978,7 +6620,7 @@ pub const Macro = struct {
         }
 
         pub fn hasProperty(
-            ctx: js.JSContextRef,
+            _: js.JSContextRef,
             thisObject: js.JSObjectRef,
             propertyName: js.JSStringRef,
         ) callconv(.C) bool {
@@ -6997,7 +6639,7 @@ pub const Macro = struct {
         }
 
         pub fn getPropertyNames(
-            ctx: js.JSContextRef,
+            _: js.JSContextRef,
             thisObject: js.JSObjectRef,
             props: js.JSPropertyNameAccumulatorRef,
         ) callconv(.C) void {
@@ -7019,7 +6661,7 @@ pub const Macro = struct {
     disabled: bool = false,
 
     pub fn init(
-        allocator: *std.mem.Allocator,
+        _: std.mem.Allocator,
         resolver: *Resolver,
         resolved: ResolveResult,
         log: *logger.Log,
@@ -7075,17 +6717,17 @@ pub const Macro = struct {
         threadlocal var exception_holder: Zig.ZigException.Holder = undefined;
         pub fn run(
             macro: Macro,
-            log: *logger.Log,
-            allocator: *std.mem.Allocator,
+            _: *logger.Log,
+            _: std.mem.Allocator,
             function_name: string,
             caller: Expr,
             args: []Expr,
-            source: *const logger.Source,
+            _: *const logger.Source,
             id: i32,
             comptime Visitor: type,
             visitor: Visitor,
         ) Expr {
-            if (comptime isDebug) Output.prettyln("<r><d>[macro]<r> call <d><b>{s}<r>", .{function_name});
+            if (comptime Environment.isDebug) Output.prettyln("<r><d>[macro]<r> call <d><b>{s}<r>", .{function_name});
 
             exception_holder = Zig.ZigException.Holder.init();
             expr_nodes_buf[0] = JSNode.initExpr(caller);

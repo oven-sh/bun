@@ -1,4 +1,14 @@
-usingnamespace @import("../global.zig");
+const _global = @import("../global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const toMutable = _global.constStrToU8;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 
 const PercentEncoding = @import("../query_string_map.zig").PercentEncoding;
 const std = @import("std");
@@ -11,7 +21,6 @@ pathname: string = "",
 first_segment: string = "",
 query_string: string = "",
 needs_redirect: bool = false,
-const toMutable = allocators.constStrToU8;
 
 // TODO: use a real URL parser
 // this treats a URL like /_next/ identically to /
@@ -34,7 +43,6 @@ threadlocal var big_temp_path_buf: [16384]u8 = undefined;
 pub fn parse(possibly_encoded_pathname_: string) !URLPath {
     var decoded_pathname = possibly_encoded_pathname_;
     var needs_redirect = false;
-    var invalid_uri = false;
 
     if (strings.indexOfChar(decoded_pathname, '%') != null) {
         var possibly_encoded_pathname = switch (decoded_pathname.len) {

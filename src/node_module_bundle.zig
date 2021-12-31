@@ -2,7 +2,18 @@ const schema = @import("./api/schema.zig");
 const Api = schema.Api;
 const std = @import("std");
 const Fs = @import("./fs.zig");
-usingnamespace @import("global.zig");
+const _global = @import("global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const FileDescriptorType = _global.FileDescriptorType;
+const StoredFileDescriptorType = _global.StoredFileDescriptorType;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 
 pub fn modulesIn(bundle: *const Api.JavascriptBundle, pkg: *const Api.JavascriptBundledPackage) []const Api.JavascriptBundledModule {
     return bundle.modules[pkg.modules_offset .. pkg.modules_offset + pkg.modules_length];
@@ -20,13 +31,13 @@ const PackageNameMap = std.StringHashMap([]BundledPackageID);
 pub const AllocatedString = struct {
     str: string,
     len: u32,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 };
 
 pub const NodeModuleBundle = struct {
     container: Api.JavascriptBundleContainer,
     bundle: Api.JavascriptBundle,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     bytes_ptr: []u8 = undefined,
     bytes: []u8 = &[_]u8{},
     fd: FileDescriptorType = 0,
@@ -57,7 +68,7 @@ pub const NodeModuleBundle = struct {
         return this.bytecode_cache_fetcher.fetch(basename, fs);
     }
 
-    pub fn readCodeAsStringSlow(this: *NodeModuleBundle, allocator: *std.mem.Allocator) !string {
+    pub fn readCodeAsStringSlow(this: *NodeModuleBundle, allocator: std.mem.Allocator) !string {
         if (this.code_string) |code| {
             return code.str;
         }
@@ -78,12 +89,12 @@ pub const NodeModuleBundle = struct {
 
         // this.package_has_multiple_versions = try std.bit_set.DynamicBitSet.initFull(package_count, this.allocator);
 
-        try this.package_id_map.ensureCapacity(
+        try this.package_id_map.ensureTotalCapacity(
             package_count,
         );
         this.package_name_ids_ptr = try this.allocator.alloc(BundledPackageID, this.bundle.packages.len);
         var remaining_names = this.package_name_ids_ptr;
-        try this.package_name_map.ensureCapacity(
+        try this.package_name_map.ensureTotalCapacity(
             package_count,
         );
         var prev_package_ids_for_name: []u32 = &[_]u32{};
@@ -159,7 +170,7 @@ pub const NodeModuleBundle = struct {
     pub fn allocModuleImport(
         this: *const NodeModuleBundle,
         to: *const Api.JavascriptBundledModule,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
     ) !string {
         return try std.fmt.allocPrint(
             allocator,
@@ -170,18 +181,6 @@ pub const NodeModuleBundle = struct {
                 123,
             },
         );
-    }
-
-    pub fn findModuleInPackageByPathWithoutPackageName(
-        this: *const NodeModuleBundle,
-        package: *const Api.JavascriptBundledPackage,
-        query: ModuleQuery,
-    ) ?Api.JavascriptBundledModule {
-        // const ModuleSearcher = struct {
-        //     ctx: *const NodeModuleBundle,
-        //     query: ModuleQuery,
-        // };
-        // std.sort.binarySearch(comptime T: type, key: T, items: []const T, context: anytype, comptime compareFn: fn(context:@TypeOf(context), lhs:T, rhs:T)math.Order)
     }
 
     pub fn findModuleInPackage(
@@ -230,7 +229,6 @@ pub const NodeModuleBundle = struct {
                 // Comapre the module name
                 const lhs_name = context.moduleName(&lhs);
                 const rhs_name = context.moduleName(&rhs);
-                const VoidType = void;
 
                 const traversal_length = std.math.min(lhs_name.len, rhs_name.len);
 
@@ -266,7 +264,7 @@ pub const NodeModuleBundle = struct {
         ) orelse return null) + package.modules_offset;
     }
 
-    pub fn init(container: Api.JavascriptBundleContainer, allocator: *std.mem.Allocator) NodeModuleBundle {
+    pub fn init(container: Api.JavascriptBundleContainer, allocator: std.mem.Allocator) NodeModuleBundle {
         return NodeModuleBundle{
             .container = container,
             .bundle = container.bundle.?,
@@ -288,7 +286,7 @@ pub const NodeModuleBundle = struct {
         return std.mem.readIntNative(u32, jsbundle_prefix[magic_bytes.len .. magic_bytes.len + 4]);
     }
 
-    pub fn loadBundle(allocator: *std.mem.Allocator, stream: anytype) !NodeModuleBundle {
+    pub fn loadBundle(allocator: std.mem.Allocator, stream: anytype) !NodeModuleBundle {
         const end = try getCodeEndPosition(stream, false);
         try stream.seekTo(end);
         const file_end = try stream.getEndPos();
@@ -319,26 +317,9 @@ pub const NodeModuleBundle = struct {
         return bundle.bundle.manifest_string[pointer.offset .. pointer.offset + pointer.length];
     }
 
-    pub fn getPackageSize(this: *const NodeModuleBundle, pkg: Api.JavascriptBundledPackage) usize {
-        var size: usize = 0;
-        for (modules) |module| {
-            size += module.code.length;
-        }
-        return size;
-    }
-
-    pub fn isPackageBigger(
-        this: *const NodeModuleBundle,
-        a: Api.JavascriptBundledPackage,
-        b: Api.JavascriptBundledPackage,
-    ) bool {
-        return this.getPackageSize(a) < this.getPackageSize(b);
-    }
-
     pub fn printSummary(this: *const NodeModuleBundle) void {
-        const last = std.math.max(this.bundle.packages.len, 1) - 1;
         const indent = comptime "   ";
-        for (this.bundle.packages) |pkg, i| {
+        for (this.bundle.packages) |pkg| {
             const modules = this.bundle.modules[pkg.modules_offset .. pkg.modules_offset + pkg.modules_length];
 
             Output.prettyln(
@@ -377,7 +358,7 @@ pub const NodeModuleBundle = struct {
         Output.prettyln(indent ++ "<b>{d:6} packages", .{this.bundle.packages.len});
     }
 
-    pub inline fn codeStartOffset(this: *const NodeModuleBundle) u32 {
+    pub inline fn codeStartOffset(_: *const NodeModuleBundle) u32 {
         return @intCast(u32, jsbundle_prefix.len);
     }
 
@@ -385,8 +366,8 @@ pub const NodeModuleBundle = struct {
         comptime StreamType: type,
         input: StreamType,
         comptime DestinationStreamType: type,
-        output: DestinationStreamType,
-        allocator: *std.mem.Allocator,
+        _: DestinationStreamType,
+        allocator: std.mem.Allocator,
     ) !void {
         const this = try loadBundle(allocator, input);
         this.printSummary();
@@ -430,9 +411,9 @@ pub const NodeModuleBundle = struct {
             }
         };
 
-        if (isMac) {
+        if (comptime Environment.isMac) {
             // darwin only allows reading ahead on/off, not specific amount
-            _ = std.os.fcntl(input.handle, std.os.F_RDAHEAD, 1) catch 0;
+            _ = std.os.fcntl(input.handle, std.os.F.RDAHEAD, 1) catch 0;
         }
         const end = (try getCodeEndPosition(input, false)) - @intCast(u32, jsbundle_prefix.len);
 

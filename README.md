@@ -1020,6 +1020,7 @@ If you want to copy the completions manually, run `bun completions > path-to-fil
 ## Credits
 
 - While written in Zig instead of Go, Bun’s JS transpiler, CSS lexer, and node module resolver source code is based off of @evanw’s esbuild project. @evanw did a fantastic job with esbuild.
+- The idea for the name "Bun" came from [@kipply](https://github.com/kipply)
 
 ## License
 
@@ -1038,8 +1039,6 @@ You can find the patched version of WebKit used by Bun here: <https://github.com
 - `zig build`
 
 This compiles JavaScriptCore, compiles Bun’s `.cpp` bindings for JavaScriptCore (which are the object files using JavaScriptCore) and outputs a new `bun` binary with your changes.
-
-To successfully run `zig build`, you will need to install a patched version of Zig available here: <https://github.com/jarred-sumner/zig/tree/jarred/zig-sloppy>.
 
 Bun also statically links these libraries:
 
@@ -1130,38 +1129,25 @@ Install LLVM 12 and homebrew dependencies:
 brew install llvm@12 coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config
 ```
 
-Bun (& the version of Zig) need LLVM 12 and Clang 12 (clang is part of LLVM). Weird build & runtime errors will happen otherwise.
+Bun (& the version of Zig) need LLVM 13 and Clang 13 (clang is part of LLVM). Weird build & runtime errors will happen otherwise.
 
-Make sure LLVM 12 is in your `$PATH`:
+Make sure LLVM 13 is in your `$PATH`:
 
 ```bash
-which clang-12
+which clang-13
 ```
 
 If it is not, you will have to run this to link it:
 
 ```bash
-export PATH=$(brew --prefix llvm@12)/bin:$PATH
-export LDFLAGS="$LDFLAGS -L$(brew --prefix llvm@12)/lib"
-export CPPFLAGS="$CPPFLAGS -I$(brew --prefix llvm@12)/include"
+export PATH=$(brew --prefix llvm@13)/bin:$PATH
+export LDFLAGS="$LDFLAGS -L$(brew --prefix llvm@13)/lib"
+export CPPFLAGS="$CPPFLAGS -I$(brew --prefix llvm@13)/include"
 ```
 
-On fish that looks like `fish_add_path (brew --prefix llvm@12)/bin`
+On fish that looks like `fish_add_path (brew --prefix llvm@13)/bin`
 
-#### Compile Zig (macOS)
-
-```bash
-git clone https://github.com/jarred-sumner/zig
-cd zig
-git checkout jarred/zig-sloppy-with-small-structs
-cmake . -DCMAKE_PREFIX_PATH=$(brew --prefix llvm@12) -DZIG_STATIC_LLVM=ON -DCMAKE_BUILD_TYPE=Release && make -j 16
-```
-
-Note that `brew install zig` won’t work. Bun uses a build of Zig with a couple patches.
-
-Additionally, you’ll need `cmake`, `npm` and `esbuild` installed globally.
-
-You’ll want to make sure `zig` is in `$PATH`. The `zig` binary wil be in the same folder as the newly-cloned `zig` repo. If you use fish, you can run `fish_add_path (pwd)`.
+You’ll want to make sure `zig` is in `$PATH`.
 
 #### Build bun (macOS)
 

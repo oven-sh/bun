@@ -7,8 +7,19 @@ const Router = @This();
 
 const Api = @import("./api/schema.zig").Api;
 const std = @import("std");
-usingnamespace @import("global.zig");
-
+const _global = @import("global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const PathString = _global.PathString;
+const HashedString = _global.HashedString;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
+const StoredFileDescriptorType = _global.StoredFileDescriptorType;
 const DirInfo = @import("./resolver/dir_info.zig");
 const Fs = @import("./fs.zig");
 const Options = @import("./options.zig");
@@ -30,13 +41,13 @@ pub const Param = struct {
 dir: StoredFileDescriptorType = 0,
 routes: Routes,
 loaded_routes: bool = false,
-allocator: *std.mem.Allocator,
+allocator: std.mem.Allocator,
 fs: *Fs.FileSystem,
 config: Options.RouteConfig,
 
 pub fn init(
     fs: *Fs.FileSystem,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     config: Options.RouteConfig,
 ) !Router {
     return Router{
@@ -103,14 +114,14 @@ pub const Routes = struct {
     index: ?*Route = null,
     index_id: ?usize = 0,
 
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     config: Options.RouteConfig,
 
     // This is passed here and propagated through Match
     // We put this here to avoid loading the FrameworkConfig for the client, on the server.
     client_framework_enabled: bool = false,
 
-    pub fn matchPage(this: *Routes, routes_dir: string, url_path: URLPath, params: *Param.List) ?Match {
+    pub fn matchPage(this: *Routes, _: string, url_path: URLPath, params: *Param.List) ?Match {
         // Trim trailing slash
         var path = url_path.path;
         var redirect = false;
@@ -187,13 +198,12 @@ pub const Routes = struct {
         return null;
     }
 
-    fn matchDynamic(this: *Routes, allocator: *std.mem.Allocator, path: string, comptime MatchContext: type, ctx: MatchContext) ?*Route {
+    fn matchDynamic(this: *Routes, allocator: std.mem.Allocator, path: string, comptime MatchContext: type, ctx: MatchContext) ?*Route {
         // its cleaned, so now we search the big list of strings
         var i: usize = 0;
         while (i < this.dynamic_names.len) : (i += 1) {
             const name = this.dynamic_match_names[i];
             const case_sensitive_name_without_leading_slash = this.dynamic_names[i][1..];
-            var offset: u32 = 0;
             if (Pattern.match(path, case_sensitive_name_without_leading_slash, name, allocator, *@TypeOf(ctx.params), &ctx.params, true)) {
                 return this.dynamic[i];
             }
@@ -202,7 +212,7 @@ pub const Routes = struct {
         return null;
     }
 
-    fn match(this: *Routes, allocator: *std.mem.Allocator, pathname_: string, comptime MatchContext: type, ctx: MatchContext) ?*Route {
+    fn match(this: *Routes, allocator: std.mem.Allocator, pathname_: string, comptime MatchContext: type, ctx: MatchContext) ?*Route {
         var pathname = std.mem.trimLeft(u8, pathname_, "/");
 
         if (pathname.len == 0) {
@@ -215,7 +225,7 @@ pub const Routes = struct {
 };
 
 const RouteLoader = struct {
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     fs: *FileSystem,
     config: Options.RouteConfig,
     route_dirname_len: u16 = 0,
@@ -308,7 +318,7 @@ const RouteLoader = struct {
         }
     }
 
-    pub fn loadAll(allocator: *std.mem.Allocator, config: Options.RouteConfig, log: *Logger.Log, comptime ResolverType: type, resolver: *ResolverType, root_dir_info: *const DirInfo) Routes {
+    pub fn loadAll(allocator: std.mem.Allocator, config: Options.RouteConfig, log: *Logger.Log, comptime ResolverType: type, resolver: *ResolverType, root_dir_info: *const DirInfo) Routes {
         var this = RouteLoader{
             .allocator = allocator,
             .log = log,
@@ -335,7 +345,6 @@ const RouteLoader = struct {
         var dynamic_start: ?usize = null;
         var index_id: ?usize = null;
 
-        const public_dir_is_in_top_level_dir = strings.startsWith(this.config.dir, this.fs.top_level_dir);
         for (this.all_routes.items) |route, i| {
             if (@enumToInt(route.kind) > @enumToInt(Pattern.Tag.static) and dynamic_start == null) {
                 dynamic_start = i;
@@ -426,7 +435,7 @@ const RouteLoader = struct {
                             if (strings.eql(extname[1..], _extname)) {
                                 // length is extended by one
                                 // entry.dir is a string with a trailing slash
-                                if (comptime isDebug) {
+                                if (comptime Environment.isDebug) {
                                     std.debug.assert(entry.dir.ptr[fs.top_level_dir.len - 1] == '/');
                                 }
 
@@ -487,7 +496,7 @@ pub const TinyPtr = packed struct {
 
         const right = @ptrToInt(in.ptr) + in.len;
         const end = @ptrToInt(parent.ptr) + parent.len;
-        if (comptime isDebug) {
+        if (comptime Environment.isDebug) {
             std.debug.assert(end < right);
         }
 
@@ -546,7 +555,7 @@ pub const Route = struct {
             break :brk table;
         };
 
-        pub fn sortByNameString(ctx: @This(), lhs: string, rhs: string) bool {
+        pub fn sortByNameString(_: @This(), lhs: string, rhs: string) bool {
             const math = std.math;
 
             const n = @minimum(lhs.len, rhs.len);
@@ -607,7 +616,7 @@ pub const Route = struct {
         extname: string,
         entry: *Fs.FileSystem.Entry,
         log: *Logger.Log,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         public_dir_: string,
         routes_dirname_len: u16,
     ) ?Route {
@@ -849,12 +858,12 @@ const MockRequestContextType = struct {
         this.handle_request_called = true;
     }
 
-    pub fn handleRedirect(this: *MockRequestContextType, pathname: string) !void {
+    pub fn handleRedirect(this: *MockRequestContextType, _: string) !void {
         this.redirect_called = true;
     }
 
     pub const JavaScriptHandler = struct {
-        pub fn enqueue(ctx: *MockRequestContextType, server: *MockServer, params: *Router.Param.List) !void {}
+        pub fn enqueue(_: *MockRequestContextType, _: *MockServer, _: *Router.Param.List) !void {}
     };
 };
 
@@ -864,7 +873,7 @@ pub const MockServer = struct {
 
     pub const Watcher = struct {
         watchloop_handle: ?StoredFileDescriptorType = null,
-        pub fn start(this: *Watcher) anyerror!void {}
+        pub fn start(_: *Watcher) anyerror!void {}
     };
 };
 
@@ -948,7 +957,6 @@ pub const Test = struct {
         var resolver = Resolver.init1(default_allocator, &logger, &FileSystem.instance, opts);
 
         var root_dir = (try resolver.readDirInfo(pages_dir)).?;
-        var entries = root_dir.getEntries().?;
         return RouteLoader.loadAll(default_allocator, opts.routes, &logger, Resolver, &resolver, root_dir);
         // try router.loadRoutes(root_dir, Resolver, &resolver, 0, true);
         // var entry_points = try router.getEntryPoints(default_allocator);
@@ -1006,7 +1014,6 @@ pub const Test = struct {
         var resolver = Resolver.init1(default_allocator, &logger, &FileSystem.instance, opts);
 
         var root_dir = (try resolver.readDirInfo(pages_dir)).?;
-        var entries = root_dir.getEntries().?;
         try router.loadRoutes(&logger, root_dir, Resolver, &resolver);
         var entry_points = try router.getEntryPoints();
 
@@ -1027,7 +1034,7 @@ const Pattern = struct {
         name: string,
         /// case-insensitive, must not have a leading slash
         match_name: string,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         comptime ParamsListType: type,
         params: ParamsListType,
         comptime allow_optional_catch_all: bool,
@@ -1127,7 +1134,7 @@ const Pattern = struct {
     /// Validate a Route pattern, returning the number of route parameters.
     /// `null` means invalid. Error messages are logged. 
     /// That way, we can provide a list of all invalid routes rather than failing the first time.
-    pub fn validate(input: string, allocator: *std.mem.Allocator, log: *Logger.Log) ?ValidationResult {
+    pub fn validate(input: string, allocator: std.mem.Allocator, log: *Logger.Log) ?ValidationResult {
         if (CodepointIterator.needsUTF8Decoding(input)) {
             const source = Logger.Source.initEmptyFile(input);
             log.addErrorFmt(
@@ -1275,7 +1282,6 @@ const Pattern = struct {
                     tag = Tag.dynamic;
 
                     var param = TinyPtr{};
-                    var catch_all_start = i;
 
                     i += 1;
 
@@ -1294,7 +1300,6 @@ const Pattern = struct {
 
                             i += 1;
 
-                            const catch_all_dot_start = i;
                             if (!strings.eqlComptimeIgnoreLen(input[i..][0..3], "...")) return error.InvalidOptionalCatchAllRoute;
                             i += 3;
                             param.offset = i;
@@ -1536,8 +1541,6 @@ test "Github API Route Loader" {
     const fixtures = @import("./test/fixtures.zig");
     var router = try Test.make("routes-github-api", fixtures.github_api_routes_list);
 
-    var parameters = Param.List{};
-
     {
         ctx = MockRequestContextType{ .url = try URLPath.parse("/organizations") };
         try router.match(*MockServer, &server, MockRequestContextType, &ctx);
@@ -1646,8 +1649,6 @@ test "Sample Route Loader" {
     };
     const fixtures = @import("./test/fixtures.zig");
     var router = try Test.make("routes-sample", fixtures.sample_route_list);
-
-    var parameters = Param.List{};
 
     {
         ctx = MockRequestContextType{ .url = try URLPath.parse("/foo") };
@@ -1800,7 +1801,6 @@ test "Dynamic routes" {
     var ctx = MockRequestContextType{
         .url = try URLPath.parse("/blog/hi"),
     };
-    var filepath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     var router = try Test.make("routes-dynamic", .{
         .@"pages/index.js" = "//index.js",
         .@"pages/blog/hi.js" = "//blog-hi",

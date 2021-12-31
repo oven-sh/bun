@@ -40,7 +40,7 @@ pub fn cTypeLabel(comptime Type: type) ?[]const u8 {
         i64 => "int64_t",
         f64 => "double",
         f32 => "float",
-        *c_void => "void*",
+        *anyopaque => "void*",
         [*]bool => "bool*",
         [*]usize => "size_t*",
         [*]isize => "int*",
@@ -301,18 +301,19 @@ pub const C_Generator = struct {
         comptime meta: UnionMeta,
         comptime static_types: anytype,
     ) void {
-        self.write("typedef union ");
+        @compileError("Not implemented");
+        // self.write("typedef union ");
 
-        self.write(name ++ " {\n");
+        // self.write(name ++ " {\n");
 
-        inline for (meta.fields) |field, i| {
-            self.write("   ");
+        // inline for (meta.fields) |field, i| {
+        //     self.write("   ");
 
-            self.writeType(comptime FieldType);
+        //     self.writeType(comptime FieldType);
 
-            self.write(" " ++ field.name ++ ";\n");
-        }
-        self.write("} " ++ name ++ ";\n\n");
+        //     self.write(" " ++ field.name ++ ";\n");
+        // }
+        // self.write("} " ++ name ++ ";\n\n");
     }
 
     fn writeType(
@@ -411,7 +412,7 @@ pub const C_Generator = struct {
     }
 };
 
-const builtin = std.builtin;
+const builtin = @import("builtin");
 const TypeInfo = builtin.TypeInfo;
 const Declaration = TypeInfo.Declaration;
 
@@ -463,8 +464,8 @@ pub fn getCStruct(comptime T: type) ?NamedStruct {
     return null;
 }
 
-pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
-    const all_decls = std.meta.declarations(import);
+pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comptime fname: []const u8) type {
+    const all_decls = comptime std.meta.declarations(first_import) ++ std.meta.declarations(second_import);
 
     return struct {
         source_file: []const u8 = fname,
@@ -552,7 +553,7 @@ pub fn HeaderGen(comptime import: type, comptime fname: []const u8) type {
                                 comptime func,
                                 comptime func,
                                 comptime &.{},
-                                comptime ENABLE_REWRITE_RETURN and @typeInfo(fn_meta.return_type) == .Struct,
+                                false, // comptime ENABLE_REWRITE_RETURN and @typeInfo(fn_meta.return_type) == .Struct,
                             );
                         },
                         else => {},

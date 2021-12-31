@@ -1,10 +1,26 @@
-pub const js = @import("./JavascriptCore.zig");
+pub const js = @import("../../jsc.zig").C;
 const std = @import("std");
-pub usingnamespace @import("../../global.zig");
-usingnamespace @import("./javascript.zig");
-usingnamespace @import("./webcore/response.zig");
+const _global = @import("../../global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
+const JavaScript = @import("./javascript.zig");
+const ResolveError = JavaScript.ResolveError;
+const BuildError = JavaScript.BuildError;
+const WebCore = @import("./webcore/response.zig");
+const Fetch = WebCore.Fetch;
+const Response = WebCore.Response;
+const Request = WebCore.Request;
 const Router = @import("./api/router.zig");
-
+const FetchEvent = WebCore.FetchEvent;
+const Headers = WebCore.Headers;
+const Body = WebCore.Body;
 const TaggedPointerTypes = @import("../../tagged_pointer.zig");
 const TaggedPointerUnion = TaggedPointerTypes.TaggedPointerUnion;
 
@@ -18,7 +34,7 @@ fn ObjectPtrType(comptime Type: type) type {
 
 pub const To = struct {
     pub const JS = struct {
-        pub inline fn str(ref: anytype, val: anytype) js.JSStringRef {
+        pub inline fn str(_: anytype, val: anytype) js.JSStringRef {
             return js.JSStringCreateWithUTF8CString(val[0.. :0]);
         }
 
@@ -132,9 +148,7 @@ pub const To = struct {
                     arguments: [*c]const js.JSValueRef,
                     exception: js.ExceptionRef,
                 ) callconv(.C) js.JSValueRef {
-                    var object_ptr: *c_void = undefined;
-
-                    if (comptime ZigContextType == c_void) {
+                    if (comptime ZigContextType == anyopaque) {
                         return ctxfn(
                             js.JSObjectGetPrivate(function) or js.jsObjectGetPrivate(thisObject),
                             ctx,
@@ -291,7 +305,7 @@ pub const Properties = struct {
                 @field(UTF8, name).len,
             );
 
-            if (comptime isDebug) {
+            if (comptime Environment.isDebug) {
                 std.debug.assert(
                     js.JSStringIsEqualToString(@field(Refs, name), @field(UTF8, name).ptr, @field(UTF8, name).len),
                 );
@@ -607,7 +621,6 @@ pub const d = struct {
                         }
 
                         const qualifier = if (!klass.default_export) "export " else "";
-                        var stmt: string = qualifier;
 
                         if (klass.interface) {
                             buf = buf ++ printIndented("export interface {s} {{\n", .{klass.name}, indent);
@@ -618,7 +631,7 @@ pub const d = struct {
                         indent += indent_level;
 
                         var did_print_constructor = false;
-                        for (klass.functions) |func, i| {
+                        for (klass.functions) |func| {
                             if (!strings.eqlComptime(func.name, "constructor")) continue;
                             did_print_constructor = true;
                             buf = buf ++ printInstanceFunction(
@@ -781,7 +794,7 @@ pub fn NewClass(
             pub fn rfn(
                 ctx: js.JSContextRef,
                 function: js.JSObjectRef,
-                thisObject: js.JSObjectRef,
+                _: js.JSObjectRef,
                 argumentCount: usize,
                 arguments: [*c]const js.JSValueRef,
                 exception: js.ExceptionRef,
@@ -790,17 +803,17 @@ pub fn NewClass(
             }
         };
 
-        pub fn throwInvalidConstructorError(ctx: js.JSContextRef, obj: js.JSObjectRef, c: usize, a: [*c]const js.JSValueRef, exception: js.ExceptionRef) callconv(.C) js.JSObjectRef {
+        pub fn throwInvalidConstructorError(ctx: js.JSContextRef, _: js.JSObjectRef, _: usize, _: [*c]const js.JSValueRef, exception: js.ExceptionRef) callconv(.C) js.JSObjectRef {
             JSError(getAllocator(ctx), "" ++ name ++ " is not a constructor", .{}, ctx, exception);
             return null;
         }
 
         pub fn throwInvalidFunctionError(
             ctx: js.JSContextRef,
-            function: js.JSObjectRef,
-            thisObject: js.JSObjectRef,
-            argumentCount: usize,
-            arguments: [*c]const js.JSValueRef,
+            _: js.JSObjectRef,
+            _: js.JSObjectRef,
+            _: usize,
+            _: [*c]const js.JSValueRef,
             exception: js.ExceptionRef,
         ) callconv(.C) js.JSValueRef {
             JSError(getAllocator(ctx), "" ++ name ++ " is not a function", .{}, ctx, exception);
@@ -823,28 +836,13 @@ pub fn NewClass(
             return &ref;
         }
 
-        pub fn RawGetter(comptime ReceiverType: type) type {
-            const ClassGetter = struct {
-                pub fn getter(
-                    ctx: js.JSContextRef,
-                    obj: js.JSObjectRef,
-                    prop: js.JSStringRef,
-                    exception: js.ExceptionRef,
-                ) callconv(.C) js.JSValueRef {
-                    return js.JSObjectMake(ctx, get().*, null);
-                }
-            };
-
-            return ClassGetter;
-        }
-
-        pub fn customHasInstance(ctx: js.JSContextRef, obj: js.JSObjectRef, value: js.JSValueRef, exception: js.ExceptionRef) callconv(.C) bool {
+        pub fn customHasInstance(ctx: js.JSContextRef, _: js.JSObjectRef, value: js.JSValueRef, _: js.ExceptionRef) callconv(.C) bool {
             return js.JSValueIsObjectOfClass(ctx, value, get().*);
         }
 
         pub fn make(ctx: js.JSContextRef, ptr: *ZigType) js.JSObjectRef {
             var real_ptr = JSPrivateDataPtr.init(ptr).ptr();
-            if (comptime isDebug) {
+            if (comptime Environment.allow_assert) {
                 std.debug.assert(JSPrivateDataPtr.isValidPtr(real_ptr));
                 std.debug.assert(JSPrivateDataPtr.from(real_ptr).get(ZigType).? == ptr);
             }
@@ -855,7 +853,7 @@ pub fn NewClass(
                 real_ptr,
             );
 
-            if (comptime isDebug) {
+            if (comptime Environment.allow_assert) {
                 std.debug.assert(JSPrivateDataPtr.from(js.JSObjectGetPrivate(result)).ptr() == real_ptr);
             }
 
@@ -873,10 +871,10 @@ pub fn NewClass(
                 pub const ts = typescriptDeclaration();
 
                 pub fn rfn(
-                    receiver: *ReceiverType,
+                    _: *ReceiverType,
                     ctx: js.JSContextRef,
-                    obj: js.JSObjectRef,
-                    exception: js.ExceptionRef,
+                    _: js.JSObjectRef,
+                    _: js.ExceptionRef,
                 ) js.JSValueRef {
                     return js.JSObjectMake(ctx, get().*, null);
                 }
@@ -894,26 +892,24 @@ pub fn NewClass(
             var pointer = GetJSPrivateData(ZigType, obj) orelse return js.JSValueMakeUndefined(ctx);
 
             if (singleton) {
-                inline for (function_names) |propname, i| {
+                inline for (function_names) |_, i| {
                     if (js.JSStringIsEqual(prop, function_name_refs[i])) {
                         return instance_functions[i];
                     }
                 }
-                if (comptime std.meta.trait.hasFn("onMissingProperty")(ZigType)) {
-                    return ptr.onMissingProperty(ctx, obj, prop, exception);
-                }
+                unreachable;
             } else {
                 inline for (property_names) |propname, i| {
                     if (js.JSStringIsEqual(prop, property_name_refs[i])) {
                         return @field(
                             properties,
                             propname,
-                        )(ptr, ctx, obj, exception);
+                        )(pointer, ctx, obj, exception);
                     }
                 }
 
                 if (comptime std.meta.trait.hasFn("onMissingProperty")(ZigType)) {
-                    return ptr.onMissingProperty(ctx, obj, prop, exception);
+                    return pointer.onMissingProperty(ctx, obj, prop, exception);
                 }
             }
 
@@ -930,7 +926,6 @@ pub fn NewClass(
                 ) callconv(.C) js.JSValueRef {
                     var this: ObjectPtrType(ZigType) = if (comptime ZigType == void) void{} else GetJSPrivateData(ZigType, obj) orelse return js.JSValueMakeUndefined(ctx);
 
-                    var exc: js.JSValueRef = null;
                     const Field = @TypeOf(@field(
                         properties,
                         property_names[id],
@@ -965,13 +960,6 @@ pub fn NewClass(
                                 js.ExceptionRef,
                             ) js.JSValueRef;
 
-                            const WithoutPropFn = fn (
-                                ObjectPtrType(ZigType),
-                                js.JSContextRef,
-                                js.JSObjectRef,
-                                js.ExceptionRef,
-                            ) js.JSValueRef;
-
                             if (Func.Fn.args.len == @typeInfo(WithPropFn).Fn.args.len) {
                                 return func(
                                     this,
@@ -1001,8 +989,6 @@ pub fn NewClass(
                     exception: js.ExceptionRef,
                 ) callconv(.C) bool {
                     var this = GetJSPrivateData(ZigType, obj) orelse return js.JSValueMakeUndefined(ctx);
-
-                    var exc: js.ExceptionRef = null;
 
                     switch (comptime @typeInfo(@TypeOf(@field(
                         properties,
@@ -1040,7 +1026,7 @@ pub fn NewClass(
 
                 if (static_functions.len > 0) {
                     var count: usize = 0;
-                    inline for (function_name_literals) |function_name, i| {
+                    inline for (function_name_literals) |_, i| {
                         const func = @field(staticFunctions, function_names[i]);
                         const Func = @TypeOf(func);
 
@@ -1062,7 +1048,7 @@ pub fn NewClass(
                     class.functions = std.mem.span(&funcs);
                     var func_i: usize = 0;
 
-                    inline for (function_name_literals) |function_name, i| {
+                    inline for (function_name_literals) |_, i| {
                         const func = @field(staticFunctions, function_names[i]);
                         const Func = @TypeOf(func);
 
@@ -1104,7 +1090,7 @@ pub fn NewClass(
                     var count: usize = 0;
                     var class_count: usize = 0;
 
-                    inline for (property_names) |property_name, i| {
+                    inline for (property_names) |_, i| {
                         const field = @field(properties, property_names[i]);
                         const Field = @TypeOf(field);
 
@@ -1209,7 +1195,7 @@ pub fn NewClass(
 
                 if (static_functions.len > 0) {
                     var count: usize = 0;
-                    inline for (function_name_literals) |function_name, i| {
+                    inline for (function_name_literals) |_, i| {
                         const func = @field(staticFunctions, function_names[i]);
                         const Func = @TypeOf(func);
 
@@ -1231,7 +1217,7 @@ pub fn NewClass(
                     class.functions = std.mem.span(&funcs);
                     var func_i: usize = 0;
 
-                    inline for (function_name_literals) |function_name, i| {
+                    inline for (function_name_literals) |_, i| {
                         const func = @field(staticFunctions, function_names[i]);
                         const Func = @TypeOf(func);
 
@@ -1275,7 +1261,7 @@ pub fn NewClass(
 
                 if (property_names.len > 0) {
                     var count: usize = 0;
-                    inline for (property_names) |property_name, i| {
+                    inline for (property_names) |_, i| {
                         const field = @field(properties, property_names[i]);
 
                         if (hasTypeScript(@TypeOf(field))) {
@@ -1339,7 +1325,7 @@ pub fn NewClass(
             if (static_functions.len > 0) {
                 std.mem.set(js.JSStaticFunction, &static_functions, std.mem.zeroes(js.JSStaticFunction));
                 var count: usize = 0;
-                inline for (function_name_literals) |function_name, i| {
+                inline for (function_name_literals) |_, i| {
                     switch (comptime @typeInfo(@TypeOf(@field(staticFunctions, function_names[i])))) {
                         .Struct => {
                             if (comptime strings.eqlComptime(function_names[i], "constructor")) {
@@ -1466,7 +1452,7 @@ pub fn NewClass(
 
 threadlocal var error_args: [1]js.JSValueRef = undefined;
 pub fn JSError(
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     comptime fmt: string,
     args: anytype,
     ctx: js.JSContextRef,
@@ -1489,7 +1475,7 @@ pub fn JSError(
     }
 }
 
-pub fn getAllocator(ctx: js.JSContextRef) *std.mem.Allocator {
+pub fn getAllocator(_: js.JSContextRef) std.mem.Allocator {
     return default_allocator;
 }
 
@@ -1512,9 +1498,9 @@ pub const ArrayBuffer = struct {
 
 pub const MarkedArrayBuffer = struct {
     buffer: ArrayBuffer,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 
-    pub fn fromBytes(bytes: []u8, allocator: *std.mem.Allocator, typed_array_type: js.JSTypedArrayType) MarkedArrayBuffer {
+    pub fn fromBytes(bytes: []u8, allocator: std.mem.Allocator, typed_array_type: js.JSTypedArrayType) MarkedArrayBuffer {
         return MarkedArrayBuffer{
             .buffer = ArrayBuffer{ .offset = 0, .len = @intCast(u32, bytes.len), .byte_len = @intCast(u32, bytes.len), .typed_array_type = typed_array_type, .ptr = bytes.ptr },
             .allocator = allocator,
@@ -1527,7 +1513,7 @@ pub const MarkedArrayBuffer = struct {
         content.allocator.destroy(this);
     }
 
-    pub fn init(allocator: *std.mem.Allocator, size: u32, typed_array_type: js.JSTypedArrayType) !*MarkedArrayBuffer {
+    pub fn init(allocator: std.mem.Allocator, size: u32, typed_array_type: js.JSTypedArrayType) !*MarkedArrayBuffer {
         const bytes = try allocator.alloc(u8, size);
         var container = try allocator.create(MarkedArrayBuffer);
         container.* = MarkedArrayBuffer.fromBytes(bytes, allocator, typed_array_type);
@@ -1539,10 +1525,10 @@ pub const MarkedArrayBuffer = struct {
     }
 };
 
-export fn MarkedArrayBuffer_deallocator(bytes_: *c_void, ctx_: *c_void) void {
+export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, ctx_: *anyopaque) void {
     var ctx = @ptrCast(*MarkedArrayBuffer, @alignCast(@alignOf(*MarkedArrayBuffer), ctx_));
 
-    if (comptime isDebug) std.debug.assert(ctx.buffer.ptr == @ptrCast([*]u8, bytes_));
+    if (comptime Environment.allow_assert) std.debug.assert(ctx.buffer.ptr == @ptrCast([*]u8, bytes_));
     ctx.destroy();
 }
 

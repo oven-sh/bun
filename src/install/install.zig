@@ -1,4 +1,13 @@
-usingnamespace @import("../global.zig");
+const _global = @import("../global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 const std = @import("std");
 
 const JSLexer = @import("../js_lexer.zig");
@@ -128,47 +137,10 @@ pub const ExternalStringMap = extern struct {
     name: ExternalStringList = ExternalStringList{},
     value: ExternalStringList = ExternalStringList{},
 
-    pub const Iterator = NewIterator(ExternalStringList);
-
     pub const Small = extern struct {
         name: SmallExternalStringList = SmallExternalStringList{},
         value: SmallExternalStringList = SmallExternalStringList{},
-
-        pub const Iterator = NewIterator(SmallExternalStringList);
-
-        pub inline fn iterator(this: Small, buf: []const String) Small.Iterator {
-            return Small.Iterator.init(buf, this.name, this.value);
-        }
     };
-
-    pub inline fn iterator(this: ExternalStringMap, buf: []const String) Iterator {
-        return Iterator.init(buf, this.name, this.value);
-    }
-
-    fn NewIterator(comptime Type: type) type {
-        return struct {
-            const ThisIterator = @This();
-
-            i: usize = 0,
-            names: []const Type.Child,
-            values: []const Type.Child,
-
-            pub fn init(all: []const Type.Child, names: Type, values: Type) ThisIterator {
-                this.names = names.get(all);
-                this.values = values.get(all);
-                return this;
-            }
-
-            pub fn next(this: *ThisIterator) ?[2]Type.Child {
-                if (this.i < this.names.len) {
-                    const ret = [2]Type.Child{ this.names[this.i], this.values[this.i] };
-                    this.i += 1;
-                }
-
-                return null;
-            }
-        };
-    }
 };
 
 pub const PackageNameHash = u64;
@@ -176,7 +148,6 @@ pub const PackageNameHash = u64;
 pub const Aligner = struct {
     pub fn write(comptime Type: type, comptime Writer: type, writer: Writer, pos: usize) !usize {
         const to_write = std.mem.alignForward(pos, @alignOf(Type)) - pos;
-        var i: usize = 0;
 
         var remainder: string = alignment_bytes_to_repeat_buffer[0..@minimum(to_write, alignment_bytes_to_repeat_buffer.len)];
         try writer.writeAll(remainder);
@@ -193,7 +164,7 @@ const NetworkTask = struct {
     http: AsyncHTTP = undefined,
     task_id: u64,
     url_buf: []const u8 = &[_]u8{},
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     request_buffer: MutableString = undefined,
     response_buffer: MutableString = undefined,
     callback: union(Task.Tag) {
@@ -214,7 +185,7 @@ const NetworkTask = struct {
     pub fn forManifest(
         this: *NetworkTask,
         name: string,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         registry_url: URL,
         loaded_manifest: ?Npm.PackageManifest,
     ) !void {
@@ -304,7 +275,7 @@ const NetworkTask = struct {
 
     pub fn forTarball(
         this: *NetworkTask,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         tarball: ExtractTarball,
     ) !void {
         this.url_buf = try ExtractTarball.buildURL(
@@ -390,7 +361,7 @@ pub const Lockfile = struct {
     package_index: PackageIndex.Map,
     unique_packages: Bitset,
     string_pool: StringPool,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     scratch: Scratch = Scratch{},
 
     const Stream = std.io.FixedBufferStream([]u8);
@@ -413,7 +384,7 @@ pub const Lockfile = struct {
         };
     };
 
-    pub fn loadFromDisk(this: *Lockfile, allocator: *std.mem.Allocator, log: *logger.Log, filename: stringZ) LoadFromDiskResult {
+    pub fn loadFromDisk(this: *Lockfile, allocator: std.mem.Allocator, log: *logger.Log, filename: stringZ) LoadFromDiskResult {
         std.debug.assert(FileSystem.instance_loaded);
         var file = std.fs.cwd().openFileZ(filename, .{ .read = true }) catch |err| {
             return switch (err) {
@@ -552,7 +523,7 @@ pub const Lockfile = struct {
         };
 
         const Builder = struct {
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             name_hashes: []const PackageNameHash,
             list: ArrayList = ArrayList{},
             resolutions: []const PackageID,
@@ -573,7 +544,6 @@ pub const Lockfile = struct {
                 var i: Id = 0;
                 var total_packages_count: u32 = 0;
 
-                var slice = this.list.slice();
                 var trees = this.list.items(.tree);
                 var packages = this.list.items(.packages);
 
@@ -653,12 +623,12 @@ pub const Lockfile = struct {
             name_hashes: []const PackageNameHash,
             lists: []Lockfile.PackageIDList,
             trees: []Tree,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
         ) Id {
             const this_packages = this.packages.get(lists[this.id].items);
             const name_hash = name_hashes[package_id];
 
-            for (this_packages) |pid, slot| {
+            for (this_packages) |pid| {
                 if (name_hashes[pid] == name_hash) {
                     if (pid != package_id) {
                         return dependency_loop;
@@ -691,17 +661,15 @@ pub const Lockfile = struct {
         }
     };
 
-    pub fn clean(old: *Lockfile, deduped: *u32, updates: []PackageManager.UpdateRequest, options: *const PackageManager.Options) !*Lockfile {
+    pub fn clean(old: *Lockfile, _: *u32, updates: []PackageManager.UpdateRequest, _: *const PackageManager.Options) !*Lockfile {
 
         // We will only shrink the number of packages here.
         // never grow
-        const max_package_id = old.packages.len;
 
         if (updates.len > 0) {
             var root_deps: []Dependency = old.packages.items(.dependencies)[0].mut(old.buffers.dependencies.items);
             const old_resolutions: []const PackageID = old.packages.items(.resolutions)[0].get(old.buffers.resolutions.items);
             const resolutions_of_yore: []const Resolution = old.packages.items(.resolution);
-            const old_names = old.packages.items(.name);
             var string_builder = old.stringBuilder();
             for (updates) |update| {
                 if (update.version.tag == .uninitialized) {
@@ -721,7 +689,6 @@ pub const Lockfile = struct {
 
             try string_builder.allocate();
             defer string_builder.clamp();
-            var full_buf = string_builder.ptr.?[0 .. string_builder.cap + old.buffers.string_bytes.items.len];
             var temp_buf: [513]u8 = undefined;
 
             for (updates) |update, update_i| {
@@ -796,11 +763,6 @@ pub const Lockfile = struct {
         try new.package_index.ensureTotalCapacity(old.package_index.capacity());
         try new.packages.ensureTotalCapacity(old.allocator, old.packages.len);
         try new.buffers.preallocate(old.buffers, old.allocator);
-
-        const InstallOrder = struct {
-            parent: PackageID,
-            children: PackageIDSlice,
-        };
 
         old.scratch.dependency_list_queue.head = 0;
 
@@ -1005,7 +967,7 @@ pub const Lockfile = struct {
     pub const Printer = struct {
         lockfile: *Lockfile,
         options: PackageManager.Options,
-        successfully_installed: ?std.DynamicBitSetUnmanaged = null,
+        successfully_installed: ?Bitset = null,
 
         pub const Format = enum { yarn };
 
@@ -1013,7 +975,7 @@ pub const Lockfile = struct {
         var lockfile_path_buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
         pub fn print(
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             log: *logger.Log,
             lockfile_path_: string,
             format: Format,
@@ -1081,7 +1043,7 @@ pub const Lockfile = struct {
         }
 
         pub fn printWithLockfile(
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             lockfile: *Lockfile,
             format: Format,
             comptime Writer: type,
@@ -1130,28 +1092,18 @@ pub const Lockfile = struct {
                 writer: Writer,
                 comptime enable_ansi_colors: bool,
             ) !void {
-                var lockfile = this.lockfile;
-
-                const IDDepthPair = struct {
-                    depth: u16 = 0,
-                    id: PackageID,
-                };
-
                 var visited = try Bitset.initEmpty(this.lockfile.packages.len, this.lockfile.allocator);
 
                 var slice = this.lockfile.packages.slice();
                 const names: []const String = slice.items(.name);
                 const resolved: []const Resolution = slice.items(.resolution);
-                const metas: []const Lockfile.Package.Meta = slice.items(.meta);
                 if (names.len == 0) return;
                 const dependency_lists = slice.items(.dependencies);
                 const resolutions_list = slice.items(.resolutions);
                 const resolutions_buffer = this.lockfile.buffers.resolutions.items;
                 const dependencies_buffer = this.lockfile.buffers.dependencies.items;
-                const package_count = @truncate(PackageID, names.len);
                 const string_buf = this.lockfile.buffers.string_bytes.items;
 
-                const root = this.lockfile.rootPackage() orelse return;
                 visited.set(0);
                 const end = @truncate(PackageID, names.len);
 
@@ -1162,8 +1114,6 @@ pub const Lockfile = struct {
                         if (package_id > end or !installed.isSet(package_id)) continue;
 
                         const package_name = names[package_id].slice(string_buf);
-
-                        const dependency_list = dependency_lists[package_id];
 
                         const fmt = comptime brk: {
                             if (enable_ansi_colors) {
@@ -1184,8 +1134,6 @@ pub const Lockfile = struct {
                 } else {
                     for (names) |name, package_id| {
                         const package_name = name.slice(string_buf);
-
-                        const dependency_list = dependency_lists[package_id];
 
                         try writer.print(
                             comptime Output.prettyFmt(" <r><b>{s}<r><d>@<b>{}<r>\n", enable_ansi_colors),
@@ -1251,7 +1199,6 @@ pub const Lockfile = struct {
                 const metas: []const Lockfile.Package.Meta = slice.items(.meta);
                 if (names.len == 0) return;
                 const dependency_lists = slice.items(.dependencies);
-                const resolutions_list = slice.items(.resolutions);
                 const resolutions_buffer = this.lockfile.buffers.resolutions.items;
                 const dependencies_buffer = this.lockfile.buffers.dependencies.items;
                 const RequestedVersion = std.HashMap(PackageID, []Dependency.Version, IdentityContext(PackageID), 80);
@@ -1364,7 +1311,7 @@ pub const Lockfile = struct {
                         if (dependencies.len > 0) {
                             var behavior = Behavior.uninitialized;
                             var dependency_behavior_change_count: u8 = 0;
-                            for (dependencies) |dep, j| {
+                            for (dependencies) |dep| {
                                 if (dep.behavior != behavior) {
                                     if (dep.behavior.isOptional()) {
                                         try writer.writeAll("  optionalDependencies:\n");
@@ -1441,7 +1388,7 @@ pub const Lockfile = struct {
         std.mem.writeIntNative(u64, secret[0..8], @intCast(u64, std.time.milliTimestamp()));
         var rng = std.rand.Gimli.init(secret);
         var base64_bytes: [64]u8 = undefined;
-        rng.random.bytes(&base64_bytes);
+        rng.random().bytes(&base64_bytes);
 
         const tmpname__ = std.fmt.bufPrint(tmpname_buf[8..], "{s}", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
         tmpname_buf[tmpname__.len + 8] = 0;
@@ -1488,14 +1435,7 @@ pub const Lockfile = struct {
         return slicable.slice(this.buffers.string_bytes.items);
     }
 
-    pub inline fn cloneString(this: *Lockfile, slicable: anytype, from: *Lockfile) string {
-        // const slice = from.str(slicable);
-        // if (this.string_pool) {
-
-        // }
-    }
-
-    pub fn initEmpty(this: *Lockfile, allocator: *std.mem.Allocator) !void {
+    pub fn initEmpty(this: *Lockfile, allocator: std.mem.Allocator) !void {
         this.* = Lockfile{
             .format = .v0,
             .packages = Lockfile.Package.List{},
@@ -1662,7 +1602,7 @@ pub const Lockfile = struct {
         duplicate_checker_map: DuplicateCheckerMap = undefined,
         dependency_list_queue: DependencyQueue = undefined,
 
-        pub fn init(allocator: *std.mem.Allocator) Scratch {
+        pub fn init(allocator: std.mem.Allocator) Scratch {
             return Scratch{
                 .dependency_list_queue = DependencyQueue.init(allocator),
                 .duplicate_checker_map = DuplicateCheckerMap.init(allocator),
@@ -1815,7 +1755,6 @@ pub const Lockfile = struct {
 
     pub const DependencySlice = ExternalSlice(Dependency);
     pub const PackageIDSlice = ExternalSlice(PackageID);
-    pub const NodeModulesFolderSlice = ExternalSlice(NodeModulesFolder);
 
     pub const PackageIDList = std.ArrayListUnmanaged(PackageID);
     pub const DependencyList = std.ArrayListUnmanaged(Dependency);
@@ -1871,7 +1810,7 @@ pub const Lockfile = struct {
             const old_dependencies: []const Dependency = this.dependencies.get(old.buffers.dependencies.items);
             const old_resolutions: []const PackageID = this.resolutions.get(old.buffers.resolutions.items);
 
-            for (old_dependencies) |dependency, i| {
+            for (old_dependencies) |dependency| {
                 dependency.count(old_string_buf, *Lockfile.StringBuilder, builder);
             }
 
@@ -1954,7 +1893,7 @@ pub const Lockfile = struct {
         }
 
         pub fn fromNPM(
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             lockfile: *Lockfile,
             log: *logger.Log,
             manifest: *const Npm.PackageManifest,
@@ -1963,7 +1902,6 @@ pub const Lockfile = struct {
             string_buf: []const u8,
             comptime features: Features,
         ) !Lockfile.Package {
-            var npm_count: u32 = 0;
             var package = Lockfile.Package{};
 
             const package_version = package_version_ptr.*;
@@ -2057,8 +1995,6 @@ pub const Lockfile = struct {
 
                 var start_dependencies = dependencies;
 
-                const off = @truncate(u32, dependencies_list.items.len);
-
                 inline for (dependency_groups) |group| {
                     const map: ExternalStringMap = @field(package_version, group.field);
                     const keys = map.name.get(manifest.external_strings);
@@ -2075,7 +2011,7 @@ pub const Lockfile = struct {
                         // Duplicate peer & dev dependencies are promoted to whichever appeared first
                         // In practice, npm validates this so it shouldn't happen
                         if (comptime group.behavior.isPeer() or group.behavior.isDev()) {
-                            for (start_dependencies[0 .. total_dependencies_count - dependencies.len]) |dependency, j| {
+                            for (start_dependencies[0 .. total_dependencies_count - dependencies.len]) |dependency| {
                                 if (dependency.name_hash == key.hash) {
                                     i += 1;
                                     continue :list;
@@ -2171,7 +2107,7 @@ pub const Lockfile = struct {
             };
 
             pub fn generate(
-                allocator: *std.mem.Allocator,
+                _: std.mem.Allocator,
                 from_lockfile: *Lockfile,
                 to_lockfile: *Lockfile,
                 from: *Lockfile.Package,
@@ -2180,8 +2116,6 @@ pub const Lockfile = struct {
             ) !Summary {
                 var summary = Summary{};
                 const to_deps = to.dependencies.get(to_lockfile.buffers.dependencies.items);
-                const to_res = to.resolutions.get(to_lockfile.buffers.resolutions.items);
-                const from_res = from.resolutions.get(from_lockfile.buffers.resolutions.items);
                 const from_deps = from.dependencies.get(from_lockfile.buffers.dependencies.items);
 
                 for (from_deps) |from_dep, i| {
@@ -2213,7 +2147,7 @@ pub const Lockfile = struct {
                 outer: for (to_deps) |to_dep, i| {
                     if (from_deps.len > i and from_deps[i].name_hash == to_dep.name_hash) continue;
 
-                    for (from_deps) |from_dep, j| {
+                    for (from_deps) |from_dep| {
                         if (from_dep.name_hash == to_dep.name_hash) continue :outer;
                     }
 
@@ -2257,7 +2191,7 @@ pub const Lockfile = struct {
         pub fn parseMain(
             lockfile: *Lockfile,
             package: *Lockfile.Package,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             log: *logger.Log,
             source: logger.Source,
             comptime features: Features,
@@ -2268,7 +2202,7 @@ pub const Lockfile = struct {
         pub fn parse(
             lockfile: *Lockfile,
             package: *Lockfile.Package,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             log: *logger.Log,
             source: logger.Source,
             comptime ResolverContext: type,
@@ -2598,7 +2532,7 @@ pub const Lockfile = struct {
 
             pub fn load(
                 stream: *Stream,
-                allocator: *std.mem.Allocator,
+                allocator: std.mem.Allocator,
             ) !Lockfile.Package.List {
                 var reader = stream.reader();
 
@@ -2649,7 +2583,7 @@ pub const Lockfile = struct {
         // node_modules_package_ids: PackageIDList = PackageIDList{},
         string_bytes: StringBuffer = StringBuffer{},
 
-        pub fn preallocate(this: *Buffers, that: Buffers, allocator: *std.mem.Allocator) !void {
+        pub fn preallocate(this: *Buffers, that: Buffers, allocator: std.mem.Allocator) !void {
             try this.trees.ensureTotalCapacity(allocator, that.trees.items.len);
             try this.resolutions.ensureTotalCapacity(allocator, that.resolutions.items.len);
             try this.dependencies.ensureTotalCapacity(allocator, that.dependencies.items.len);
@@ -2736,8 +2670,8 @@ pub const Lockfile = struct {
             }
         }
 
-        pub fn save(this: Buffers, allocator: *std.mem.Allocator, comptime StreamType: type, stream: StreamType, comptime Writer: type, writer: Writer) !void {
-            inline for (sizes.names) |name, i| {
+        pub fn save(this: Buffers, _: std.mem.Allocator, comptime StreamType: type, stream: StreamType, comptime Writer: type, writer: Writer) !void {
+            inline for (sizes.names) |name| {
                 var pos: usize = 0;
                 if (comptime Environment.isDebug) {
                     pos = try stream.getPos();
@@ -2805,7 +2739,7 @@ pub const Lockfile = struct {
             }
         }
 
-        pub fn load(stream: *Stream, allocator: *std.mem.Allocator, log: *logger.Log) !Buffers {
+        pub fn load(stream: *Stream, allocator: std.mem.Allocator, log: *logger.Log) !Buffers {
             var this = Buffers{};
             var external_dependency_list: []Dependency.External = &[_]Dependency.External{};
             inline for (sizes.names) |name, i| {
@@ -2886,7 +2820,7 @@ pub const Lockfile = struct {
         pub fn load(
             lockfile: *Lockfile,
             stream: *Stream,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             log: *logger.Log,
         ) !void {
             var reader = stream.reader();
@@ -2903,7 +2837,7 @@ pub const Lockfile = struct {
             }
             lockfile.format = .v0;
             lockfile.allocator = allocator;
-            const byte_len = try reader.readIntLittle(u64);
+            _ = try reader.readIntLittle(u64);
 
             lockfile.packages = try Lockfile.Package.Serializer.load(
                 stream,
@@ -2941,7 +2875,7 @@ const Task = struct {
 
     /// An ID that lets us register a callback without keeping the same pointer around
     pub const Id = struct {
-        pub fn forNPMPackage(tag: Task.Tag, package_name: string, package_version: Semver.Version) u64 {
+        pub fn forNPMPackage(_: Task.Tag, package_name: string, package_version: Semver.Version) u64 {
             var hasher = std.hash.Wyhash.init(0);
             hasher.update(package_name);
             hasher.update("@");
@@ -2955,7 +2889,7 @@ const Task = struct {
         }
 
         pub fn forManifest(
-            tag: Task.Tag,
+            _: Task.Tag,
             name: string,
         ) u64 {
             return @as(u64, @truncate(u63, std.hash.Wyhash.hash(0, name)));
@@ -2978,7 +2912,7 @@ const Task = struct {
                     &this.log,
                     this.request.package_manifest.name.slice(),
                     this.request.package_manifest.network.callback.package_manifest.loaded_manifest,
-                ) catch |err| {
+                ) catch {
                     this.status = Status.fail;
                     PackageManager.instance.resolve_tasks.writeItem(this.*) catch unreachable;
                     return;
@@ -3007,7 +2941,7 @@ const Task = struct {
             .extract => {
                 const result = this.request.extract.tarball.run(
                     this.request.extract.network.response_buffer.toOwnedSliceLeaky(),
-                ) catch |err| {
+                ) catch {
                     this.status = Status.fail;
                     this.data = .{ .extract = "" };
                     PackageManager.instance.resolve_tasks.writeItem(this.*) catch unreachable;
@@ -3064,7 +2998,7 @@ const PackageInstall = struct {
     destination_dir_subpath: stringZ = "",
     destination_dir_subpath_buf: []u8,
 
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 
     progress: *Progress,
 
@@ -3083,7 +3017,7 @@ const PackageInstall = struct {
         skip_verify: bool = false,
         progress: *Progress = undefined,
         cache_dir: std.fs.Dir = undefined,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
     };
 
     pub const Task = struct {
@@ -3106,7 +3040,6 @@ const PackageInstall = struct {
             var destination_dir_subpath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
             var cache_dir_subpath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
             const name = ctx.names[this.package_id].slice(ctx.string_buf);
-            const meta = ctx.metas[this.package_id];
             const resolution = ctx.resolutions[this.package_id];
             std.mem.copy(u8, &destination_dir_subpath_buf, name);
             destination_dir_subpath_buf[name.len] = 0;
@@ -3147,7 +3080,7 @@ const PackageInstall = struct {
         fail: u32 = 0,
         success: u32 = 0,
         skipped: u32 = 0,
-        successfully_installed: ?std.DynamicBitSetUnmanaged = null,
+        successfully_installed: ?Bitset = null,
     };
 
     pub const Method = enum {
@@ -3652,7 +3585,7 @@ pub const PackageManager = struct {
     cache_directory: std.fs.Dir = undefined,
     root_dir: *Fs.FileSystem.DirEntry,
     env_loader: *DotEnv.Loader,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     log: *logger.Log,
     resolve_tasks: TaskChannel,
     timestamp: u32 = 0,
@@ -4020,13 +3953,6 @@ pub const PackageManager = struct {
         }
     }
 
-    pub fn resolvePackageFromManifest(
-        this: *PackageManager,
-        semver: Semver.Version,
-        version: *const Npm.PackageVersion,
-        manifest: *const Npm.PackageManifest,
-    ) !void {}
-
     fn enqueueParseNPMPackage(
         this: *PackageManager,
         task_id: u64,
@@ -4085,9 +4011,9 @@ pub const PackageManager = struct {
         var tmpfile = FileSystem.RealFS.Tmpfile{};
         var secret: [32]u8 = undefined;
         std.mem.writeIntNative(u64, secret[0..8], @intCast(u64, std.time.milliTimestamp()));
-        var rng = std.rand.Gimli.init(secret);
+        var rng = std.rand.Gimli.init(secret).random();
         var base64_bytes: [64]u8 = undefined;
-        rng.random.bytes(&base64_bytes);
+        rng.bytes(&base64_bytes);
 
         const tmpname__ = std.fmt.bufPrint(tmpname_buf[8..], "{s}", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
         tmpname_buf[tmpname__.len + 8] = 0;
@@ -4371,13 +4297,10 @@ pub const PackageManager = struct {
         this.network_resolve_batch = .{};
     }
 
-    pub fn hoist(this: *PackageManager) !void {}
-    pub fn link(this: *PackageManager) !void {}
-
     pub fn fetchCacheDirectoryPath(
-        allocator: *std.mem.Allocator,
+        _: std.mem.Allocator,
         env_loader: *DotEnv.Loader,
-        root_dir: *Fs.FileSystem.DirEntry,
+        _: *Fs.FileSystem.DirEntry,
     ) ?string {
         if (env_loader.map.get("BUN_INSTALL_CACHE_DIR")) |dir| {
             return dir;
@@ -4580,7 +4503,7 @@ pub const PackageManager = struct {
                         continue;
                     }
                     const manifest = task.data.package_manifest;
-                    var entry = try manager.manifests.getOrPutValue(manager.allocator, @truncate(PackageNameHash, manifest.pkg.name.hash), manifest);
+                    _ = try manager.manifests.getOrPutValue(manager.allocator, @truncate(PackageNameHash, manifest.pkg.name.hash), manifest);
 
                     var dependency_list_entry = manager.task_queue.getEntry(task.id).?;
                     var dependency_list = dependency_list_entry.value_ptr.*;
@@ -4637,7 +4560,6 @@ pub const PackageManager = struct {
 
         manager.flushDependencyQueue();
 
-        const prev_total = manager.total_tasks;
         {
             const count = batch.len + manager.network_resolve_batch.len + manager.network_tarball_batch.len;
             manager.pending_tasks += @truncate(u32, count);
@@ -4721,7 +4643,7 @@ pub const PackageManager = struct {
             verbose_no_progress,
 
             pub inline fn isVerbose(this: LogLevel) bool {
-                return return switch (this) {
+                return switch (this) {
                     .verbose_no_progress, .verbose => true,
                     else => false,
                 };
@@ -4741,7 +4663,7 @@ pub const PackageManager = struct {
 
         pub fn load(
             this: *Options,
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             log: *logger.Log,
             env_loader: *DotEnv.Loader,
             cli_: ?CommandLineArguments,
@@ -4848,7 +4770,7 @@ pub const PackageManager = struct {
 
             if (env_loader.map.get("BUN_CONFIG_MAX_HTTP_REQUESTS")) |max_http_requests| {
                 load: {
-                    AsyncHTTP.max_simultaneous_requests = std.fmt.parseInt(u16, max_http_requests, 10) catch |err| {
+                    AsyncHTTP.max_simultaneous_requests = std.fmt.parseInt(u16, max_http_requests, 10) catch {
                         log.addErrorFmt(
                             null,
                             logger.Loc.Empty,
@@ -5004,7 +4926,7 @@ pub const PackageManager = struct {
 
     const PackageJSONEditor = struct {
         pub fn edit(
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             updates: []UpdateRequest,
             current_package_json: *JSAst.Expr,
             dependency_list: string,
@@ -5141,7 +5063,7 @@ pub const PackageManager = struct {
                 dependencies_object.data.e_object.packageJSONSort();
             }
 
-            for (updates) |*update, j| {
+            for (updates) |*update| {
                 var str = update.e_string.?;
 
                 if (update.version.tag == .uninitialized) {
@@ -5178,7 +5100,7 @@ pub const PackageManager = struct {
             package_json_file = file;
         } else {
             // can't use orelse due to a stage1 bug
-            package_json_file = std.fs.cwd().openFileZ("package.json", .{ .read = true, .write = true }) catch |err2| brk: {
+            package_json_file = std.fs.cwd().openFileZ("package.json", .{ .read = true, .write = true }) catch brk: {
                 var this_cwd = original_cwd;
                 outer: while (std.fs.path.dirname(this_cwd)) |parent| {
                     cwd_buf[parent.len] = 0;
@@ -5190,7 +5112,7 @@ pub const PackageManager = struct {
                         return err;
                     };
 
-                    break :brk std.fs.cwd().openFileZ("package.json", .{ .read = true, .write = true }) catch |err| {
+                    break :brk std.fs.cwd().openFileZ("package.json", .{ .read = true, .write = true }) catch {
                         this_cwd = parent;
                         continue :outer;
                     };
@@ -5253,7 +5175,7 @@ pub const PackageManager = struct {
         if (env_loader.map.get("GOMAXPROCS")) |max_procs| {
             if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count_| {
                 cpu_count = @minimum(cpu_count, cpu_count_);
-            } else |err| {}
+            } else |_| {}
         }
 
         var manager = &instance;
@@ -5405,7 +5327,7 @@ pub const PackageManager = struct {
         };
 
         pub fn parse(
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             comptime params: []const ParamType,
         ) !CommandLineArguments {
             var diag = clap.Diagnostic{};
@@ -5532,7 +5454,7 @@ pub const PackageManager = struct {
         pub const Array = std.BoundedArray(UpdateRequest, 64);
 
         pub fn parse(
-            allocator: *std.mem.Allocator,
+            allocator: std.mem.Allocator,
             log: *logger.Log,
             positionals: []const string,
             update_requests: *Array,
@@ -5968,7 +5890,7 @@ pub const PackageManager = struct {
                                     std.mem.copy(u8, &node_modules_buf, entry.name);
                                     node_modules_buf[entry.name.len] = 0;
                                     var buf: [:0]u8 = node_modules_buf[0..entry.name.len :0];
-                                    var file = node_modules_bin.openFileZ(buf, .{ .read = true }) catch |err| {
+                                    var file = node_modules_bin.openFileZ(buf, .{ .read = true }) catch {
                                         node_modules_bin.deleteFileZ(buf) catch {};
                                         continue :iterator;
                                     };
@@ -6033,7 +5955,7 @@ pub const PackageManager = struct {
         has_created_bin: bool = false,
         destination_dir_subpath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
         install_count: usize = 0,
-        successfully_installed: std.DynamicBitSetUnmanaged,
+        successfully_installed: Bitset,
 
         // For linking native binaries, we only want to link after we've installed the companion dependencies
         // We don't want to introduce dependent callbacks like that for every single package
@@ -6287,7 +6209,6 @@ pub const PackageManager = struct {
                 progress.* = .{};
             }
         }
-        const cache_dir = this.cache_directory;
 
         lockfile.unique_packages.unset(0);
 
@@ -6329,8 +6250,7 @@ pub const PackageManager = struct {
             const resolutions_buffer: []const PackageID = lockfile.buffers.resolutions.items;
             const resolution_lists: []const Lockfile.PackageIDSlice = parts.items(.resolutions);
             var resolutions = parts.items(.resolution);
-            const end = @truncate(PackageID, names.len);
-            const pending_task_offset = this.total_tasks;
+
             var iterator = Lockfile.Tree.Iterator.init(
                 lockfile.buffers.trees.items,
                 lockfile.buffers.hoisted_packages.items,
@@ -6355,7 +6275,7 @@ pub const PackageManager = struct {
                 .summary = &summary,
                 .force_install = force_install,
                 .install_count = lockfile.buffers.hoisted_packages.items.len,
-                .successfully_installed = try std.DynamicBitSetUnmanaged.initEmpty(lockfile.packages.len, this.allocator),
+                .successfully_installed = try Bitset.initEmpty(lockfile.packages.len, this.allocator),
             };
 
             const cwd = std.fs.cwd();
@@ -6426,7 +6346,7 @@ pub const PackageManager = struct {
                 const package_resolutions: []const PackageID = resolution_lists[package_id].get(resolutions_buffer);
                 const original_bin: Bin = installer.bins[package_id];
 
-                for (package_dependencies) |dependency, i| {
+                for (package_dependencies) |_, i| {
                     const resolved_id = package_resolutions[i];
                     if (resolved_id >= names.len) continue;
                     const meta: Lockfile.Package.Meta = metas[resolved_id];
@@ -6617,7 +6537,7 @@ pub const PackageManager = struct {
                         // ensure we use one pointer to reference it instead of creating new ones and potentially aliasing
                         var builder = &builder_;
 
-                        for (new_dependencies) |new_dep, i| {
+                        for (new_dependencies) |new_dep| {
                             new_dep.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
                         }
 
@@ -6626,7 +6546,6 @@ pub const PackageManager = struct {
                         var packages = manager.lockfile.packages.slice();
                         var dep_lists = packages.items(.dependencies);
                         var resolution_lists = packages.items(.resolutions);
-                        const old_dependencies_list = dep_lists[0];
                         const old_resolutions_list = resolution_lists[0];
                         dep_lists[0] = .{ .off = off, .len = len };
                         resolution_lists[0] = .{ .off = off, .len = len };

@@ -1,9 +1,19 @@
-usingnamespace @import("./shared.zig");
-usingnamespace @import("./headers.zig");
 pub const Shimmer = @import("./shimmer.zig").Shimmer;
+const std = @import("std");
+const _global = @import("../../../global.zig");
+const string = _global.string;
+const Output = _global.Output;
 const hasRef = std.meta.trait.hasField("ref");
-const C_API = @import("../JavascriptCore.zig");
+const C_API = @import("../../../jsc.zig").C;
 const StringPointer = @import("../../../api/schema.zig").Api.StringPointer;
+const Exports = @import("./exports.zig");
+
+const ErrorableZigString = Exports.ErrorableZigString;
+const ErrorableResolvedSource = Exports.ErrorableResolvedSource;
+const ZigException = Exports.ZigException;
+const ZigStackTrace = Exports.ZigStackTrace;
+const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
+
 pub const JSObject = extern struct {
     pub const shim = Shimmer("JSC", "JSObject", @This());
     bytes: shim.Bytes,
@@ -18,8 +28,8 @@ pub const JSObject = extern struct {
         });
     }
 
-    const InitializeCallback = fn (ctx: ?*c_void, obj: [*c]JSObject, global: [*c]JSGlobalObject) callconv(.C) void;
-    pub fn create(global_object: *JSGlobalObject, length: usize, ctx: *c_void, initializer: InitializeCallback) JSValue {
+    const InitializeCallback = fn (ctx: ?*anyopaque, obj: [*c]JSObject, global: [*c]JSGlobalObject) callconv(.C) void;
+    pub fn create(global_object: *JSGlobalObject, length: usize, ctx: *anyopaque, initializer: InitializeCallback) JSValue {
         return cppFn("create", .{
             global_object,
             length,
@@ -30,7 +40,7 @@ pub const JSObject = extern struct {
 
     pub fn Initializer(comptime Ctx: type, comptime func: fn (*Ctx, obj: *JSObject, global: *JSGlobalObject) void) type {
         return struct {
-            pub fn call(this: ?*c_void, obj: [*c]JSObject, global: [*c]JSGlobalObject) callconv(.C) void {
+            pub fn call(this: ?*anyopaque, obj: [*c]JSObject, global: [*c]JSGlobalObject) callconv(.C) void {
                 @call(.{ .modifier = .always_inline }, func, .{ @ptrCast(*Ctx, @alignCast(@alignOf(*Ctx), this.?)), obj.?, global.? });
             }
         };
@@ -625,7 +635,7 @@ pub const JSFunction = extern struct {
     pub const name = "JSC::JSFunction";
     pub const namespace = "JSC";
 
-    pub const NativeFunctionCallback = fn (ctx: ?*c_void, global: [*c]JSGlobalObject, call_frame: [*c]CallFrame) callconv(.C) JSValue;
+    pub const NativeFunctionCallback = fn (ctx: ?*anyopaque, global: [*c]JSGlobalObject, call_frame: [*c]CallFrame) callconv(.C) JSValue;
 
     // pub fn createFromSourceCode(
     //     global: *JSGlobalObject,
@@ -652,7 +662,7 @@ pub const JSFunction = extern struct {
         global: *JSGlobalObject,
         argument_count: u16,
         name_: ?*const String,
-        ctx: ?*c_void,
+        ctx: ?*anyopaque,
         func: NativeFunctionCallback,
     ) *JSFunction {
         return cppFn("createFromNative", .{ global, argument_count, name_, ctx, func });
@@ -921,7 +931,7 @@ pub const JSGlobalObject = extern struct {
         return cppFn("asyncGeneratorFunctionPrototype", .{this});
     }
 
-    pub fn createAggregateError(globalObject: *JSGlobalObject, errors: [*]*c_void, errors_len: u16, message: *const ZigString) JSValue {
+    pub fn createAggregateError(globalObject: *JSGlobalObject, errors: [*]*anyopaque, errors_len: u16, message: *const ZigString) JSValue {
         return cppFn("createAggregateError", .{ globalObject, errors, errors_len, message });
     }
 
@@ -1503,8 +1513,8 @@ pub const JSValue = enum(i64) {
         return @ptrCast(C_API.JSObjectRef, this.asVoid());
     }
 
-    pub inline fn asVoid(this: JSValue) *c_void {
-        return @intToPtr(*c_void, @intCast(usize, @enumToInt(this)));
+    pub inline fn asVoid(this: JSValue) *anyopaque {
+        return @intToPtr(*anyopaque, @intCast(usize, @enumToInt(this)));
     }
 
     pub const Extern = [_][]const u8{ "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "get", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
@@ -1513,8 +1523,6 @@ pub const JSValue = enum(i64) {
 extern "c" fn Microtask__run(*Microtask, *JSGlobalObject) void;
 
 pub const Microtask = opaque {
-    pub const name = "Zig::JSMicrotaskCallback";
-
     pub fn run(this: *Microtask, global_object: *JSGlobalObject) void {
         if (comptime is_bindgen) {
             return;
@@ -1721,7 +1729,7 @@ pub const ThrowScope = extern struct {
 
     pub fn declare(
         vm: *VM,
-        function_name: [*]u8,
+        _: [*]u8,
         file: [*]u8,
         line: usize,
     ) ThrowScope {
@@ -1764,7 +1772,7 @@ pub const CatchScope = extern struct {
         file: [*]u8,
         line: usize,
     ) CatchScope {
-        return cppFn("declare", .{ vm, file, line });
+        return cppFn("declare", .{ vm, function_name, file, line });
     }
 
     pub fn exception(this: *CatchScope) ?*Exception {
@@ -1802,6 +1810,7 @@ pub const CallFrame = extern struct {
     pub inline fn argument(call_frame: *const CallFrame, i: u16) JSValue {
         return cppFn("argument", .{
             call_frame,
+            i,
         });
     }
     pub inline fn thisValue(call_frame: *const CallFrame) ?JSValue {
@@ -1960,7 +1969,7 @@ pub const Identifier = extern struct {
     };
 };
 
-const DeinitFunction = fn (ctx: *c_void, buffer: [*]u8, len: usize) callconv(.C) void;
+const DeinitFunction = fn (ctx: *anyopaque, buffer: [*]u8, len: usize) callconv(.C) void;
 
 pub const StringImpl = extern struct {
     pub const shim = Shimmer("WTF", "StringImpl", @This());
@@ -2135,8 +2144,6 @@ pub const StringView = extern struct {
         "characters16",
     };
 };
-
-pub usingnamespace @import("exports.zig");
 
 pub const Callback = struct {
     // zig: Value,

@@ -9,8 +9,6 @@ fn isNullableType(comptime Type: type) bool {
 }
 
 pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comptime Parent: type) type {
-    const extern_count: usize = if (@hasDecl(Parent, "Extern")) Parent.Extern.len else 0;
-
     return struct {
         pub const namespace = _namespace;
         pub const name = _name;
@@ -18,13 +16,13 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
         // fn toCppType(comptime FromType: type) type {
         //     var NewReturnType = FromType;
 
-        //     if (NewReturnType == c_void) {
+        //     if (NewReturnType == anyopaque) {
         //         return FromType;
         //     }
 
         //     var ReturnTypeInfo: std.builtin.TypeInfo = @typeInfo(FromType);
 
-        //     if (ReturnTypeInfo == .Pointer and NewReturnType != *c_void) {
+        //     if (ReturnTypeInfo == .Pointer and NewReturnType != *anyopaque) {
         //         NewReturnType = ReturnTypeInfo.Pointer.child;
         //         ReturnTypeInfo = @typeInfo(NewReturnType);
         //     }
@@ -70,19 +68,6 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
             pub const Type = Parent;
             pub const is_return = true;
         };
-
-        pub inline fn getConvertibleType(comptime ZigType: type) type {
-            if (@typeInfo(ZigType) == .Struct) {
-                const Struct: std.builtin.TypeInfo.Struct = ChildType.Struct;
-                for (Struct.fields) |field| {
-                    if (std.mem.eql(u8, field.name, "ref")) {
-                        return field.field_type;
-                    }
-                }
-            }
-
-            return ZigType;
-        }
 
         fn pointerChild(comptime Type: type) type {
             if (@typeInfo(Type) == .Pointer) {

@@ -1,9 +1,9 @@
-usingnamespace @import("./base.zig");
+const d = @import("./base.zig").d;
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
 const Router = @import("./api/router.zig");
 const JavaScript = @import("./javascript.zig");
-const builtin = std.builtin;
+const builtin = @import("builtin");
 const io = std.io;
 const fs = std.fs;
 const process = std.process;
@@ -14,7 +14,6 @@ const mem = std.mem;
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
 const resolve_path = @import("../../resolver/resolve_path.zig");
-usingnamespace @import("./webcore/response.zig");
 
 const modules = [_]d.ts.decl{
     Router.Class.typescriptDeclaration(),

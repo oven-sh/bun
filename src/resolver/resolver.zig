@@ -1,4 +1,16 @@
-usingnamespace @import("../global.zig");
+const _global = @import("../global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const FeatureFlags = _global.FeatureFlags;
+const PathString = _global.PathString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const StoredFileDescriptorType = _global.StoredFileDescriptorType;
+const C = _global.C;
 const ast = @import("../import_record.zig");
 const logger = @import("../logger.zig");
 const options = @import("../options.zig");
@@ -12,17 +24,18 @@ const MacroRemap = @import("./package_json.zig").MacroMap;
 const ESModule = @import("./package_json.zig").ESModule;
 const BrowserMap = @import("./package_json.zig").BrowserMap;
 const CacheSet = cache.Set;
-usingnamespace @import("./data_url.zig");
+const DataURL = @import("./data_url.zig").DataURL;
 pub const DirInfo = @import("./dir_info.zig");
-const HTTPWatcher = if (isTest) void else @import("../http.zig").Watcher;
+const HTTPWatcher = if (Environment.isTest) void else @import("../http.zig").Watcher;
 const Wyhash = std.hash.Wyhash;
 const ResolvePath = @import("./resolve_path.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const Mutex = @import("../lock.zig").Lock;
 const StringBoolMap = std.StringHashMap(bool);
+const FileDescriptorType = _global.FileDescriptorType;
 
 const allocators = @import("../allocators.zig");
-
+const Msg = logger.Msg;
 const Path = Fs.Path;
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 
@@ -162,7 +175,7 @@ pub const Result = struct {
         suggestion_text: string = "",
         suggestion_message: string = "",
 
-        pub fn init(allocator: *std.mem.Allocator) DebugMeta {
+        pub fn init(allocator: std.mem.Allocator) DebugMeta {
             return DebugMeta{ .notes = std.ArrayList(logger.Data).init(allocator) };
         }
 
@@ -181,7 +194,7 @@ pub const Result = struct {
         }
     };
 
-    pub fn hash(this: *const Result, root_dir: string, loader: options.Loader) u32 {
+    pub fn hash(this: *const Result, _: string, _: options.Loader) u32 {
         const module = this.path_pair.primary.text;
         const node_module_root = std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str;
         if (strings.lastIndexOf(module, node_module_root)) |end_| {
@@ -226,7 +239,7 @@ pub const DebugLogs = struct {
 
     pub const FlushMode = enum { fail, success };
 
-    pub fn init(allocator: *std.mem.Allocator) !DebugLogs {
+    pub fn init(allocator: std.mem.Allocator) !DebugLogs {
         var mutable = try MutableString.init(allocator, 0);
         return DebugLogs{
             .indent = mutable,
@@ -235,7 +248,6 @@ pub const DebugLogs = struct {
     }
 
     pub fn deinit(d: DebugLogs) void {
-        var allocator = d.notes.allocator;
         d.notes.deinit();
         // d.indent.deinit();
     }
@@ -267,39 +279,6 @@ pub const DebugLogs = struct {
     pub fn addNoteFmt(d: *DebugLogs, comptime fmt: string, args: anytype) !void {
         @setCold(true);
         return try d.addNote(try std.fmt.allocPrint(d.notes.allocator, fmt, args));
-    }
-};
-
-pub const TSConfigExtender = struct {
-    visited: *StringBoolMap,
-    file_dir: string,
-    r: *ThisResolver,
-
-    pub fn extends(ctx: *TSConfigExtender, ext: String, range: logger.Range) ?*TSConfigJSON {
-        unreachable;
-        // if (isPackagePath(extends)) {
-        //     // // If this is a package path, try to resolve it to a "node_modules"
-        //     // // folder. This doesn't use the normal node module resolution algorithm
-        //     // // both because it's different (e.g. we don't want to match a directory)
-        //     // // and because it would deadlock since we're currently in the middle of
-        //     // // populating the directory info cache.
-        //     // var current = ctx.file_dir;
-        //     // while (true) {
-        //     //     // Skip "node_modules" folders
-        //     //     if (!strings.eql(std.fs.path.basename(current), "node_modules")) {
-        //     //         var paths1 = [_]string{ current, "node_modules", extends };
-        //     //         var join1 = r.fs.absAlloc(ctx.r.allocator, &paths1) catch unreachable;
-        //     //         const res = ctx.r.parseTSConfig(join1, ctx.1) catch |err| {
-        //     //             if (err == error.ENOENT) {
-        //     //                 continue;
-        //     //             } else if (err == error.ParseErrorImportCycle) {} else if (err != error.ParseErrorAlreadyLogged) {}
-        //     //             return null;
-        //     //         };
-        //     //         return res;
-
-        //     //     }
-        //     // }
-        // }
     }
 };
 
@@ -338,7 +317,7 @@ pub const Resolver = struct {
     opts: options.BundleOptions,
     fs: *Fs.FileSystem,
     log: *logger.Log,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     node_module_bundle: ?*NodeModuleBundle,
     extension_order: []const string = undefined,
     timer: std.time.Timer = undefined,
@@ -399,7 +378,7 @@ pub const Resolver = struct {
     dir_cache: *DirInfo.HashMap,
 
     pub fn init1(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         log: *logger.Log,
         _fs: *Fs.FileSystem,
         opts: options.BundleOptions,
@@ -1042,7 +1021,7 @@ pub const Resolver = struct {
                     return result;
                 }
 
-                if (res.package_json) |pkg| {
+                if (res.package_json != null) {
                     var base_dir_info = res.dir_info orelse (r.readDirInfo(res.path_pair.primary.name.dir) catch null) orelse return result;
                     if (base_dir_info.getEnclosingBrowserScope()) |browser_scope| {
                         if (r.checkBrowserMap(
@@ -1387,11 +1366,11 @@ pub const Resolver = struct {
     }
 
     // TODO:
-    pub fn prettyPath(r: *ThisResolver, path: Path) string {
+    pub fn prettyPath(_: *ThisResolver, path: Path) string {
         return path.text;
     }
 
-    pub fn binDirs(r: *const ThisResolver) []const string {
+    pub fn binDirs(_: *const ThisResolver) []const string {
         if (!bin_folders_loaded) return &[_]string{};
         return bin_folders.constSlice();
     }
@@ -1461,7 +1440,7 @@ pub const Resolver = struct {
             .hash = 0,
             .status = .not_found,
         };
-        const root_path = if (comptime isWindows)
+        const root_path = if (comptime Environment.isWindows)
             std.fs.path.diskDesignator(path)
         else
             // we cannot just use "/"
@@ -1730,7 +1709,6 @@ pub const Resolver = struct {
                 if (strings.eql(key, path)) {
                     for (entry.value_ptr.*) |original_path| {
                         var absolute_original_path = original_path;
-                        var was_alloc = false;
 
                         if (!std.fs.path.isAbsolute(absolute_original_path)) {
                             const parts = [_]string{ abs_base_url, original_path };
@@ -2202,7 +2180,7 @@ pub const Resolver = struct {
         }
 
         const dir_info = (r.dirInfoCached(path) catch |err| {
-            if (comptime isDebug) Output.prettyErrorln("err: {s} reading {s}", .{ @errorName(err), path });
+            if (comptime Environment.isDebug) Output.prettyErrorln("err: {s} reading {s}", .{ @errorName(err), path });
             return null;
         }) orelse return null;
         var package_json: ?*PackageJSON = null;
@@ -2376,7 +2354,7 @@ pub const Resolver = struct {
 
         // Try the path with extensions
         std.mem.copy(u8, &load_as_file_buf, path);
-        for (r.extension_order) |ext| {
+        for (extension_order) |ext| {
             var buffer = load_as_file_buf[0 .. path.len + ext.len];
             std.mem.copy(u8, buffer[path.len..buffer.len], ext);
             const file_name = buffer[path.len - base.len .. buffer.len];
@@ -2522,7 +2500,7 @@ pub const Resolver = struct {
         if (r.care_about_bin_folder) {
             append_bin_dir: {
                 if (info.has_node_modules) {
-                    if (entries.getComptimeQuery("node_modules")) |q| {
+                    if (entries.hasComptimeQuery("node_modules")) {
                         if (!bin_folders_loaded) {
                             bin_folders_loaded = true;
                             bin_folders = BinFolderArray.init(0) catch unreachable;

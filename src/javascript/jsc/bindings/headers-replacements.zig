@@ -1,5 +1,5 @@
-const bindings = @import("./bindings.zig");
-pub usingnamespace @import("../JavascriptCore.zig");
+// GENERATED FILE - do not modify!
+const bindings = @import("../../../jsc.zig");
 
 pub const struct_JSC__StringPrototype = bindings.StringPrototype;
 pub const struct_JSC__SetIteratorPrototype = bindings.SetIteratorPrototype;
@@ -51,3 +51,4 @@ pub const ZigException = bindings.ZigException;
 pub const ResolvedSource = bindings.ResolvedSource;
 pub const ZigStackTrace = bindings.ZigStackTrace;
 pub const ReturnableException = bindings.ReturnableException;
+const JSClassRef = bindings.C.JSClassRef;

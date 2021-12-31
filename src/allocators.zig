@@ -3,63 +3,7 @@ const std = @import("std");
 const FeatureFlags = @import("./feature_flags.zig");
 const Wyhash = std.hash.Wyhash;
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
-
-// https://en.wikipedia.org/wiki/.bss#BSS_in_C
-pub fn BSSSectionAllocator(comptime size: usize) type {
-    return struct {
-        var backing_buf: [size]u8 = undefined;
-        var fixed_buffer_allocator = FixedBufferAllocator.init(&backing_buf);
-        var buf_allocator = &fixed_buffer_allocator.allocator;
-        const Allocator = std.mem.Allocator;
-        const Self = @This();
-
-        allocator: Allocator,
-        fallback_allocator: *Allocator,
-
-        is_overflowed: bool = false,
-
-        pub fn get(self: *Self) *Allocator {
-            return &self.allocator;
-        }
-
-        pub fn init(fallback_allocator: *Allocator) Self {
-            return Self{ .fallback_allocator = fallback_allocator, .allocator = Allocator{
-                .allocFn = BSSSectionAllocator(size).alloc,
-                .resizeFn = BSSSectionAllocator(size).resize,
-            } };
-        }
-
-        pub fn alloc(
-            allocator: *Allocator,
-            len: usize,
-            ptr_align: u29,
-            len_align: u29,
-            return_address: usize,
-        ) error{OutOfMemory}![]u8 {
-            const self = @fieldParentPtr(Self, "allocator", allocator);
-            return buf_allocator.allocFn(buf_allocator, len, ptr_align, len_align, return_address) catch |err| {
-                self.is_overflowed = true;
-                return self.fallback_allocator.allocFn(self.fallback_allocator, len, ptr_align, len_align, return_address);
-            };
-        }
-
-        pub fn resize(
-            allocator: *Allocator,
-            buf: []u8,
-            buf_align: u29,
-            new_len: usize,
-            len_align: u29,
-            return_address: usize,
-        ) error{OutOfMemory}!usize {
-            const self = @fieldParentPtr(Self, "allocator", allocator);
-            if (fixed_buffer_allocator.ownsPtr(buf.ptr)) {
-                return fixed_buffer_allocator.allocator.resizeFn(&fixed_buffer_allocator.allocator, buf, buf_align, new_len, len_align, return_address);
-            } else {
-                return self.fallback_allocator.resizeFn(self.fallback_allocator, buf, buf_align, new_len, len_align, return_address);
-            }
-        }
-    };
-}
+const constStrToU8 = @import("./global.zig").constStrToU8;
 
 pub fn isSliceInBuffer(slice: anytype, buffer: anytype) bool {
     return (@ptrToInt(&buffer) <= @ptrToInt(slice.ptr) and (@ptrToInt(slice.ptr) + slice.len) <= (@ptrToInt(buffer) + buffer.len));
@@ -83,11 +27,11 @@ pub const IndexType = packed struct {
 
 const HashKeyType = u64;
 const IndexMapContext = struct {
-    pub fn hash(ctx: @This(), key: HashKeyType) HashKeyType {
+    pub fn hash(_: @This(), key: HashKeyType) HashKeyType {
         return key;
     }
 
-    pub fn eql(ctx: @This(), a: HashKeyType, b: HashKeyType) bool {
+    pub fn eql(_: @This(), a: HashKeyType, b: HashKeyType) bool {
         return a == b;
     }
 };
@@ -107,10 +51,6 @@ pub const Result = struct {
     pub fn isOverflowing(r: *const Result, comptime count: usize) bool {
         return r.index >= count;
     }
-
-    pub fn realIndex(r: *const Result, comptime count: anytype) IndexType {
-        return if (r.isOverflowing(count)) @intCast(IndexType, r.index - max_index) else r.index;
-    }
 };
 const Seed = 999;
 
@@ -127,12 +67,11 @@ pub const ItemStatus = enum(u3) {
     not_found,
 };
 
-const hasDeinit = std.meta.trait.hasFn("deinit")(ValueType);
+// const hasDeinit = std.meta.trait.hasFn("deinit")(ValueType);
 
 pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
     const count = _count * 2;
     const max_index = count - 1;
-    const overflow_init_count = std.math.max(count / 8, 32);
     return struct {
         pub var backing_buf: [count]ValueType = undefined;
         const ChunkSize = 256;
@@ -153,7 +92,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
         const Allocator = std.mem.Allocator;
         const Self = @This();
 
-        allocator: *Allocator,
+        allocator: Allocator,
         mutex: Mutex = Mutex.init(),
         head: *OverflowBlock = undefined,
         tail: OverflowBlock = OverflowBlock{},
@@ -165,7 +104,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
             return index / ChunkSize;
         }
 
-        pub fn init(allocator: *std.mem.Allocator) *Self {
+        pub fn init(allocator: std.mem.Allocator) *Self {
             if (!loaded) {
                 instance = Self{
                     .allocator = allocator,
@@ -182,7 +121,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
             return used >= @as(u16, count);
         }
 
-        pub fn exists(self: *Self, value: ValueType) bool {
+        pub fn exists(_: *Self, value: ValueType) bool {
             return isSliceInBuffer(value, backing_buf);
         }
 
@@ -240,7 +179,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
         const Self = @This();
 
         overflow_list: std.ArrayListUnmanaged(ValueType),
-        allocator: *Allocator,
+        allocator: Allocator,
 
         pub var instance: Self = undefined;
         var loaded: bool = false;
@@ -251,7 +190,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             len: usize = 0,
         };
 
-        pub fn init(allocator: *std.mem.Allocator) *Self {
+        pub fn init(allocator: std.mem.Allocator) *Self {
             if (!loaded) {
                 instance = Self{
                     .allocator = allocator,
@@ -268,7 +207,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             return slice_buf_used >= @as(u16, count);
         }
 
-        pub fn exists(self: *const Self, value: ValueType) bool {
+        pub fn exists(_: *const Self, value: ValueType) bool {
             return isSliceInBuffer(value, &backing_buf);
         }
 
@@ -398,7 +337,6 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
 
             if (result.is_overflow) {
                 if (self.overflow_list.items.len == result.index) {
-                    const real_index = self.overflow_list.items.len;
                     try self.overflow_list.append(self.allocator, value);
                 } else {
                     self.overflow_list.items[result.index] = value;
@@ -410,33 +348,6 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
 
                 return slice_buf[result.index];
             }
-        }
-
-        pub fn remove(self: *Self, index: IndexType) void {
-            // @compileError("Not implemented yet.");
-            // switch (index) {
-            //     Unassigned.index => {
-            //         self.index.remove(_key);
-            //     },
-            //     NotFound.index => {
-            //         self.index.remove(_key);
-            //     },
-            //     0...max_index => {
-            //         if (hasDeinit(ValueType)) {
-            //             slice_buf[index].deinit();
-            //         }
-            //         slice_buf[index] = undefined;
-            //     },
-            //     else => {
-            //         const i = index - count;
-            //         if (hasDeinit(ValueType)) {
-            //             self.overflow_list.items[i].deinit();
-            //         }
-            //         self.overflow_list.items[index - count] = undefined;
-            //     },
-            // }
-
-            // return index;
         }
     };
 }
@@ -452,14 +363,14 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
 
         index: IndexMap,
         overflow_list: std.ArrayListUnmanaged(ValueType),
-        allocator: *Allocator,
+        allocator: Allocator,
         mutex: Mutex = Mutex.init(),
 
         pub var instance: Self = undefined;
 
         var loaded: bool = false;
 
-        pub fn init(allocator: *std.mem.Allocator) *Self {
+        pub fn init(allocator: std.mem.Allocator) *Self {
             if (!loaded) {
                 instance = Self{
                     .index = IndexMap{},
@@ -551,7 +462,6 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
 
             if (result.index.is_overflow) {
                 if (self.overflow_list.items.len == result.index.index) {
-                    const real_index = self.overflow_list.items.len;
                     try self.overflow_list.append(self.allocator, value);
                 } else {
                     self.overflow_list.items[result.index.index] = value;
@@ -609,7 +519,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
         var key_list_slices: [count][]u8 = undefined;
         var key_list_overflow: std.ArrayListUnmanaged([]u8) = undefined;
         var instance_loaded = false;
-        pub fn init(allocator: *std.mem.Allocator) *Self {
+        pub fn init(allocator: std.mem.Allocator) *Self {
             if (!instance_loaded) {
                 instance = Self{
                     .map = BSSMapType.init(allocator),
@@ -634,7 +544,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
             return @call(.{ .modifier = .always_inline }, BSSMapType.atIndex, .{ self.map, index });
         }
 
-        pub fn keyAtIndex(self: *Self, index: IndexType) ?[]const u8 {
+        pub fn keyAtIndex(_: *Self, index: IndexType) ?[]const u8 {
             return switch (index.index) {
                 Unassigned.index, NotFound.index => null,
                 else => {
@@ -708,8 +618,4 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
             return self.map.remove(key);
         }
     };
-}
-
-pub inline fn constStrToU8(s: []const u8) []u8 {
-    return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
 }

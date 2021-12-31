@@ -1,6 +1,17 @@
 // const c = @import("./c.zig");
 const std = @import("std");
-usingnamespace @import("global.zig");
+const _global = @import("global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const FeatureFlags = _global.FeatureFlags;
+const stringZ = _global.stringZ;
+const StoredFileDescriptorType = _global.StoredFileDescriptorType;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 const Api = @import("./api/schema.zig").Api;
 const ApiReader = @import("./api/schema.zig").Reader;
 const ApiWriter = @import("./api/schema.zig").Writer;
@@ -22,6 +33,7 @@ const DotEnv = @import("./env_loader.zig");
 const mimalloc = @import("./allocators/mimalloc.zig");
 const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 const Analytics = @import("./analytics/analytics_thread.zig");
+
 pub fn constStrToU8(s: string) []u8 {
     return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
 }
@@ -49,10 +61,8 @@ const watcher = @import("./watcher.zig");
 threadlocal var req_headers_buf: [100]picohttp.Header = undefined;
 threadlocal var res_headers_buf: [100]picohttp.Header = undefined;
 const sync = @import("./sync.zig");
-const JavaScript = @import("./javascript/jsc/javascript.zig");
-const JavaScriptCore = @import("./javascript/jsc/JavascriptCore.zig");
-usingnamespace @import("./javascript/jsc/bindings/bindings.zig");
-usingnamespace @import("./javascript/jsc/bindings/exports.zig");
+const JavaScript = @import("javascript_core");
+const JavaScriptCore = JavaScriptCore.C;
 const Router = @import("./router.zig");
 pub const Watcher = watcher.NewWatcher(*Server);
 const ZigURL = @import("./query_string_map.zig").URL;
@@ -62,16 +72,16 @@ const URLPath = @import("./http/url_path.zig");
 const Method = @import("./http/method.zig").Method;
 
 const SOCKET_FLAGS: u32 = if (Environment.isLinux)
-    os.SOCK_CLOEXEC | os.MSG_NOSIGNAL
+    os.SOCK.CLOEXEC | os.MSG_NOSIGNAL
 else
-    os.SOCK_CLOEXEC;
+    os.SOCK.CLOEXEC;
 
 pub const RequestContext = struct {
     request: Request,
     method: Method,
     url: URLPath,
     conn: *tcp.Connection,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     arena: *std.heap.ArenaAllocator,
     log: logger.Log,
     bundler: *Bundler,
@@ -130,7 +140,7 @@ pub const RequestContext = struct {
 
     pub fn renderFallback(
         this: *RequestContext,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         bundler_: *Bundler,
         step: Api.FallbackStep,
         log: *logger.Log,
@@ -273,7 +283,6 @@ pub const RequestContext = struct {
             try this.writeStatus(500);
         }
 
-        const route_name = if (route_index > -1) this.matched_route.?.name else this.url.pathname;
         if (comptime fmt.len > 0) Output.prettyErrorln(fmt, args);
         Output.flush();
 
@@ -326,13 +335,13 @@ pub const RequestContext = struct {
                 relative_unrooted_path = &(index_path);
                 _file = file;
                 extension = "html";
-            } else |err| {}
+            } else |_| {}
 
             // Okay is it actually a full path?
         } else if (extension.len > 0) {
             if (public_dir.openFile(relative_unrooted_path, .{})) |file| {
                 _file = file;
-            } else |err| {}
+            } else |_| {}
         }
 
         // Try some weird stuff.
@@ -346,7 +355,7 @@ pub const RequestContext = struct {
                     _file = file;
                     extension = "html";
                     break;
-                } else |err| {}
+                } else |_| {}
 
                 var _path: []u8 = undefined;
                 if (relative_unrooted_path[relative_unrooted_path.len - 1] == '/') {
@@ -366,7 +375,7 @@ pub const RequestContext = struct {
                     extension = "html";
                     _file = file;
                     break;
-                } else |err| {}
+                } else |_| {}
             }
 
             break;
@@ -433,7 +442,7 @@ pub const RequestContext = struct {
         comptime chunked: bool,
     ) !void {
         defer {
-            if (Environment.isDebug or isTest) {
+            if (Environment.allow_assert) {
                 std.debug.assert(!ctx.has_written_last_header);
                 ctx.has_written_last_header = true;
             }
@@ -478,7 +487,7 @@ pub const RequestContext = struct {
         _ = try ctx.writeSocket(writer.getWritten(), SOCKET_FLAGS);
     }
 
-    pub fn writeSocket(ctx: *RequestContext, buf: anytype, flags: anytype) !usize {
+    pub fn writeSocket(ctx: *RequestContext, buf: anytype, _: anytype) !usize {
         // ctx.conn.client.setWriteBufferSize(@intCast(u32, buf.len)) catch {};
         const written = ctx.conn.client.write(buf, SOCKET_FLAGS) catch |err| {
             Output.printError("Write error: {s}", .{@errorName(err)});
@@ -530,7 +539,7 @@ pub const RequestContext = struct {
             .log = undefined,
             .url = try URLPath.parse(req.path),
             .conn = conn,
-            .allocator = &arena.allocator,
+            .allocator = arena.allocator(),
             .method = Method.which(req.method) orelse return error.InvalidMethod,
             .watcher = watcher_,
             .timer = timer,
@@ -559,7 +568,7 @@ pub const RequestContext = struct {
         defer ctx.done();
         try ctx.writeStatus(500);
         const printed = std.fmt.bufPrint(&error_buf, "Error: {s}", .{@errorName(err)}) catch |err2| brk: {
-            if (Environment.isDebug or isTest) {
+            if (Environment.isDebug or Environment.isTest) {
                 Global.panic("error while printing error: {s}", .{@errorName(err2)});
             }
 
@@ -585,8 +594,8 @@ pub const RequestContext = struct {
     }
 
     pub fn appendHeader(ctx: *RequestContext, comptime key: string, value: string) void {
-        if (comptime isDebug or isTest) std.debug.assert(!ctx.has_written_last_header);
-        if (comptime isDebug or isTest) std.debug.assert(ctx.res_headers_count < res_headers_buf.len);
+        if (comptime Environment.allow_assert) std.debug.assert(!ctx.has_written_last_header);
+        if (comptime Environment.allow_assert) std.debug.assert(ctx.res_headers_count < res_headers_buf.len);
         res_headers_buf[ctx.res_headers_count] = Header{ .name = key, .value = value };
         ctx.res_headers_count += 1;
     }
@@ -675,7 +684,7 @@ pub const RequestContext = struct {
     pub const WatchBuilder = struct {
         watcher: *Watcher,
         bundler: *Bundler,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         printer: js_printer.BufferPrinter,
         timer: std.time.Timer,
         count: usize = 0,
@@ -695,7 +704,7 @@ pub const RequestContext = struct {
                 fail,
             };
         };
-        pub fn build(this: *WatchBuilder, id: u32, from_timestamp: u32, allocator: *std.mem.Allocator) !WatchBuildResult {
+        pub fn build(this: *WatchBuilder, id: u32, from_timestamp: u32, allocator: std.mem.Allocator) !WatchBuildResult {
             if (this.count == 0) {
                 var writer = try js_printer.BufferWriter.init(this.allocator);
                 this.printer = js_printer.BufferPrinter.init(writer);
@@ -789,27 +798,7 @@ pub const RequestContext = struct {
                             &parse_result,
                             .absolute_url,
                             false,
-                        ) catch |err| {
-                            return WatchBuildResult{
-                                .value = .{
-                                    .fail = .{
-                                        .id = id,
-                                        .from_timestamp = from_timestamp,
-                                        .loader = loader.toAPI(),
-                                        .module_path = this.bundler.fs.relativeTo(file_path_str),
-                                        .log = try log.toAPI(allocator),
-                                    },
-                                },
-
-                                .id = id,
-                                .timestamp = WebsocketHandler.toTimestamp(Server.global_start_time.read()),
-                                .log = log,
-                            };
-                        };
-                    }
-
-                    var written = this.bundler.print(parse_result, @TypeOf(&this.printer), &this.printer, .esm) catch |err| {
-                        return WatchBuildResult{
+                        ) catch return WatchBuildResult{
                             .value = .{
                                 .fail = .{
                                     .id = id,
@@ -819,10 +808,27 @@ pub const RequestContext = struct {
                                     .log = try log.toAPI(allocator),
                                 },
                             },
+
                             .id = id,
                             .timestamp = WebsocketHandler.toTimestamp(Server.global_start_time.read()),
                             .log = log,
                         };
+                    }
+
+                    var written = this.bundler.print(parse_result, @TypeOf(&this.printer), &this.printer, .esm) catch
+                        return WatchBuildResult{
+                        .value = .{
+                            .fail = .{
+                                .id = id,
+                                .from_timestamp = from_timestamp,
+                                .loader = loader.toAPI(),
+                                .module_path = this.bundler.fs.relativeTo(file_path_str),
+                                .log = try log.toAPI(allocator),
+                            },
+                        },
+                        .id = id,
+                        .timestamp = WebsocketHandler.toTimestamp(Server.global_start_time.read()),
+                        .log = log,
                     };
 
                     return WatchBuildResult{
@@ -974,7 +980,7 @@ pub const RequestContext = struct {
 
             pub fn handleJSErrorFmt(this: *HandlerThread, comptime step: Api.FallbackStep, err: anyerror, comptime fmt: string, args: anytype) !void {
                 var arena = std.heap.ArenaAllocator.init(default_allocator);
-                var allocator = &arena.allocator;
+                var allocator = arena.allocator();
                 defer arena.deinit();
 
                 defer this.log.msgs.clearRetainingCapacity();
@@ -1010,9 +1016,9 @@ pub const RequestContext = struct {
                 }
             }
 
-            pub fn handleRuntimeJSError(this: *HandlerThread, js_value: JSValue, comptime step: Api.FallbackStep, comptime fmt: string, args: anytype) !void {
+            pub fn handleRuntimeJSError(this: *HandlerThread, js_value: JavaScript.JSValue, comptime step: Api.FallbackStep, comptime fmt: string, args: anytype) !void {
                 var arena = std.heap.ArenaAllocator.init(default_allocator);
-                var allocator = &arena.allocator;
+                var allocator = arena.allocator();
                 defer arena.deinit();
                 defer this.log.msgs.clearRetainingCapacity();
 
@@ -1056,9 +1062,9 @@ pub const RequestContext = struct {
                 }
             }
 
-            pub fn handleFetchEventError(this: *HandlerThread, err: anyerror, js_value: JSValue, ctx: *RequestContext) !void {
+            pub fn handleFetchEventError(this: *HandlerThread, err: anyerror, js_value: JavaScript.JSValue, ctx: *RequestContext) !void {
                 var arena = std.heap.ArenaAllocator.init(default_allocator);
-                var allocator = &arena.allocator;
+                var allocator = arena.allocator();
                 defer arena.deinit();
 
                 defer this.log.msgs.clearRetainingCapacity();
@@ -1126,7 +1132,7 @@ pub const RequestContext = struct {
             var start_timer = std.time.Timer.start() catch unreachable;
 
             Output.Source.configureThread();
-            @import("javascript/jsc/JavascriptCore.zig").JSCInitialize();
+            @import("javascript/jsc/javascript_core_c_api.zig").JSCInitialize();
 
             js_ast.Stmt.Data.Store.create(std.heap.c_allocator);
             js_ast.Expr.Data.Store.create(std.heap.c_allocator);
@@ -1199,7 +1205,7 @@ pub const RequestContext = struct {
                 };
 
                 switch (load_result.status(vm.global.vm())) {
-                    JSPromise.Status.Fulfilled => {},
+                    JavaScript.JSPromise.Status.Fulfilled => {},
                     else => {
                         var result = load_result.result(vm.global.vm());
 
@@ -1227,8 +1233,7 @@ pub const RequestContext = struct {
             js_ast.Stmt.Data.Store.reset();
             js_ast.Expr.Data.Store.reset();
             JavaScript.Bun.flushCSSImports();
-            const resolved_count = vm.resolved_count;
-            const transpiled_count = vm.transpiled_count;
+
             vm.flush();
 
             Output.printElapsed(@intToFloat(f64, (start_timer.read())) / std.time.ns_per_ms);
@@ -1257,9 +1262,9 @@ pub const RequestContext = struct {
 
         var __arena: std.heap.ArenaAllocator = undefined;
         pub fn runLoop(vm: *JavaScript.VirtualMachine, thread: *HandlerThread) !void {
-            var module_map = ZigGlobalObject.getModuleRegistryMap(vm.global);
+            var module_map = JavaScript.ZigGlobalObject.getModuleRegistryMap(vm.global);
 
-            if (!VM.isJITEnabled()) {
+            if (!JavaScript.VM.isJITEnabled()) {
                 Output.prettyErrorln("<red><r>warn:<r> JIT is disabled,,,this is a bug in Bun and/or a permissions problem. JS will run slower.", .{});
                 if (vm.bundler.env.map.get("BUN_CRASH_WITHOUT_JIT") != null) {
                     Global.crash();
@@ -1274,7 +1279,7 @@ pub const RequestContext = struct {
                 defer {
                     JavaScript.VirtualMachine.vm.flush();
                     std.debug.assert(
-                        ZigGlobalObject.resetModuleRegistryMap(vm.global, module_map),
+                        JavaScript.ZigGlobalObject.resetModuleRegistryMap(vm.global, module_map),
                     );
                     js_ast.Stmt.Data.Store.reset();
                     js_ast.Expr.Data.Store.reset();
@@ -1296,7 +1301,7 @@ pub const RequestContext = struct {
                     HandlerThread,
                     thread,
                     HandlerThread.handleFetchEventError,
-                ) catch |err| {};
+                ) catch {};
                 JavaScript.VirtualMachine.vm.tick();
             }
         }
@@ -1626,7 +1631,7 @@ pub const RequestContext = struct {
                                 var arena = std.heap.ArenaAllocator.init(default_allocator);
                                 defer arena.deinit();
 
-                                var build_result = try handler.builder.build(request.id, cmd.timestamp, &arena.allocator);
+                                var build_result = try handler.builder.build(request.id, cmd.timestamp, arena.allocator());
                                 const file_path = switch (build_result.value) {
                                     .fail => |fail| fail.module_path,
                                     .success => |fail| fail.module_path,
@@ -1757,7 +1762,7 @@ pub const RequestContext = struct {
             hash.final(&out);
 
             // Encode it
-            return std.base64.standard_encoder.encode(&self.accept_key, &out);
+            return std.base64.standard.Encoder.encode(&self.accept_key, &out);
         }
     };
 
@@ -1824,13 +1829,13 @@ pub const RequestContext = struct {
                     threadlocal var buffer: MutableString = undefined;
                     threadlocal var has_loaded_buffer: bool = false;
 
-                    pub fn reserveNext(rctx: *SocketPrinterInternal, count: u32) anyerror![*]u8 {
+                    pub fn reserveNext(_: *SocketPrinterInternal, count: u32) anyerror![*]u8 {
                         try buffer.growIfNeeded(count);
-                        return return @ptrCast([*]u8, &buffer.list.items.ptr[buffer.list.items.len]);
+                        return @ptrCast([*]u8, &buffer.list.items.ptr[buffer.list.items.len]);
                     }
 
-                    pub fn advanceBy(rctx: *SocketPrinterInternal, count: u32) void {
-                        if (comptime Environment.isDebug) std.debug.assert(buffer.list.items.len + count < buffer.list.capacity);
+                    pub fn advanceBy(_: *SocketPrinterInternal, count: u32) void {
+                        if (comptime Environment.isDebug) std.debug.assert(buffer.list.items.len + count <= buffer.list.capacity);
 
                         buffer.list.items = buffer.list.items.ptr[0 .. buffer.list.items.len + count];
                     }
@@ -1848,24 +1853,24 @@ pub const RequestContext = struct {
                             ._loader = _loader,
                         };
                     }
-                    pub fn writeByte(_ctx: *SocketPrinterInternal, byte: u8) anyerror!usize {
+                    pub fn writeByte(_: *SocketPrinterInternal, byte: u8) anyerror!usize {
                         try buffer.appendChar(byte);
                         return 1;
                     }
-                    pub fn writeAll(_ctx: *SocketPrinterInternal, bytes: anytype) anyerror!usize {
+                    pub fn writeAll(_: *SocketPrinterInternal, bytes: anytype) anyerror!usize {
                         try buffer.append(bytes);
                         return bytes.len;
                     }
 
-                    pub fn slice(_ctx: *SocketPrinterInternal) string {
+                    pub fn slice(_: *SocketPrinterInternal) string {
                         return buffer.list.items;
                     }
 
-                    pub fn getLastByte(_ctx: *const SocketPrinterInternal) u8 {
+                    pub fn getLastByte(_: *const SocketPrinterInternal) u8 {
                         return if (buffer.list.items.len > 0) buffer.list.items[buffer.list.items.len - 1] else 0;
                     }
 
-                    pub fn getLastLastByte(_ctx: *const SocketPrinterInternal) u8 {
+                    pub fn getLastLastByte(_: *const SocketPrinterInternal) u8 {
                         return if (buffer.list.items.len > 1) buffer.list.items[buffer.list.items.len - 2] else 0;
                     }
 
@@ -1910,7 +1915,7 @@ pub const RequestContext = struct {
                     }
 
                     pub fn flush(
-                        _ctx: *SocketPrinterInternal,
+                        _: *SocketPrinterInternal,
                     ) anyerror!void {}
                 };
 
@@ -2040,7 +2045,7 @@ pub const RequestContext = struct {
                                     Output.prettyErrorln("Failed to start watcher: {s}", .{@errorName(err)});
                                 };
                             }
-                        } else |err| {}
+                        } else |_| {}
                     }
                 }
 
@@ -2128,7 +2133,7 @@ pub const RequestContext = struct {
         }
     }
 
-    fn handleBlobURL(ctx: *RequestContext, server: *Server) !void {
+    fn handleBlobURL(ctx: *RequestContext, _: *Server) !void {
         var id = ctx.url.path["blob:".len..];
         // This makes it Just Work if you pass a line/column number
         if (strings.indexOfChar(id, ':')) |colon| {
@@ -2240,7 +2245,7 @@ pub const RequestContext = struct {
             strings.eqlComptime(header_.value, "style");
     }
 
-    fn handleSrcURL(ctx: *RequestContext, server: *Server) !void {
+    fn handleSrcURL(ctx: *RequestContext, _: *Server) !void {
         var input_path = ctx.url.path["src:".len..];
         while (std.mem.indexOfScalar(u8, input_path, ':')) |i| {
             input_path = input_path[0..i];
@@ -2304,7 +2309,7 @@ pub const RequestContext = struct {
         }
     }
 
-    fn handleAbsURL(ctx: *RequestContext, server: *Server) !void {
+    fn handleAbsURL(ctx: *RequestContext, _: *Server) !void {
         const extname = ctx.url.extname;
         switch (extname.len) {
             3 => {
@@ -2432,7 +2437,7 @@ var serve_as_package_path = false;
 //     channel: WatcherBuildChannel,
 //     bundler: *Bundler,
 //     watcher: *Watcher,
-//     allocator: *std.mem.Allocator,
+//     allocator: std.mem.Allocator,
 
 //     pub fn start(queue: *@This()) void {
 //         var stdout = std.io.getStdOut();
@@ -2467,30 +2472,13 @@ var serve_as_package_path = false;
 
 pub const Server = struct {
     log: logger.Log,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     bundler: *Bundler,
     watcher: *Watcher,
     timer: std.time.Timer = undefined,
     transform_options: Api.TransformOptions,
     javascript_enabled: bool = false,
     fallback_only: bool = false,
-
-    pub fn onTCPConnection(server: *Server, conn: tcp.Connection, comptime features: ConnectionFeatures) void {
-        conn.client.setNoDelay(true) catch {};
-        conn.client.setQuickACK(true) catch {};
-
-        if (comptime Environment.isMac) {
-            // Don't crash if the client disconnects.
-            std.os.setsockopt(
-                conn.client.socket.fd,
-                std.os.IPPROTO_TCP,
-                std.os.SO_NOSIGPIPE,
-                mem.asBytes(&@as(u32, @boolToInt(true))),
-            ) catch {};
-        }
-
-        server.handleConnection(&conn, comptime features);
-    }
 
     threadlocal var filechange_buf: [32]u8 = undefined;
 
@@ -2532,8 +2520,6 @@ pub const Server = struct {
         const file_paths = slice.items(.file_path);
         var counts = slice.items(.count);
         const kinds = slice.items(.kind);
-        const hashes = slice.items(.hash);
-        const parent_hashes = slice.items(.parent_hash);
         var header = fbs.getWritten();
         defer ctx.watcher.flushEvictions();
         defer Output.flush();
@@ -2621,7 +2607,7 @@ pub const Server = struct {
 
         listener.setReuseAddress(true) catch {};
         listener.setReusePort(false) catch {};
-        listener.setFastOpen(true) catch {};
+        // listener.setFastOpen(true) catch {};
         // listener.setNoDelay(true) catch {};
         // listener.setQuickACK(true) catch {};
 
@@ -2667,7 +2653,7 @@ pub const Server = struct {
                         default_port,
                         default_port,
                         port,
-                        random_number.random.intRangeAtMost(u16, 3011, 65535),
+                        random_number.random().intRangeAtMost(u16, 3011, 65535),
                     },
                 );
                 Output.flush();
@@ -2733,9 +2719,8 @@ pub const Server = struct {
         var did_init = false;
         while (!did_init) {
             defer Output.flush();
-            var conn = listener.accept(.{ .close_on_exec = true }) catch |err| {
+            var conn = listener.accept(.{ .close_on_exec = true }) catch
                 continue;
-            };
 
             // We want to bind to the network socket as quickly as possible so that opening the URL works
             // We use a secondary loop so that we avoid the extra branch in a hot code path
@@ -2751,9 +2736,8 @@ pub const Server = struct {
 
         while (true) {
             defer Output.flush();
-            var conn = listener.accept(.{ .close_on_exec = true }) catch |err| {
+            var conn = listener.accept(.{ .close_on_exec = true }) catch
                 continue;
-            };
 
             server.handleConnection(&conn, comptime features);
         }
@@ -2775,7 +2759,7 @@ pub const Server = struct {
     pub fn handleConnection(server: *Server, conn: *tcp.Connection, comptime features: ConnectionFeatures) void {
 
         // https://stackoverflow.com/questions/686217/maximum-on-http-header-values
-        var read_size = conn.client.read(&req_buf, SOCKET_FLAGS) catch |err| {
+        var read_size = conn.client.read(&req_buf, SOCKET_FLAGS) catch {
             _ = conn.client.write(RequestContext.printStatusLine(400) ++ "\r\n\r\n", SOCKET_FLAGS) catch {};
             return;
         };
@@ -2839,7 +2823,7 @@ pub const Server = struct {
         defer {
             if (!req_ctx.controlled) {
                 if (!req_ctx.has_called_done) {
-                    if (comptime isDebug) {
+                    if (comptime Environment.isDebug) {
                         if (@errorReturnTrace()) |trace| {
                             std.debug.dumpStackTrace(trace.*);
                             Output.printError("\n", .{});
@@ -3015,7 +2999,7 @@ pub const Server = struct {
         defer this.bundler.resetStore();
 
         // 1. Try react refresh
-        _ = this.bundler.resolver.resolve(this.bundler.fs.top_level_dir, this.bundler.options.jsx.refresh_runtime, .internal) catch |err| {
+        _ = this.bundler.resolver.resolve(this.bundler.fs.top_level_dir, this.bundler.options.jsx.refresh_runtime, .internal) catch {
             // 2. Try react refresh from import source perspective
             this.bundler.options.jsx.supports_fast_refresh = false;
             return;
@@ -3043,7 +3027,7 @@ pub const Server = struct {
     }
 
     pub var global_start_time: std.time.Timer = undefined;
-    pub fn start(allocator: *std.mem.Allocator, options: Api.TransformOptions, comptime DebugType: type, debug: DebugType) !void {
+    pub fn start(allocator: std.mem.Allocator, options: Api.TransformOptions, comptime DebugType: type, debug: DebugType) !void {
         var log = logger.Log.init(allocator);
         var server = try allocator.create(Server);
         server.* = Server{

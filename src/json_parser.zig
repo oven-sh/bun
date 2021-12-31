@@ -6,7 +6,16 @@ const js_ast = @import("js_ast.zig");
 const options = @import("options.zig");
 
 const fs = @import("fs.zig");
-usingnamespace @import("global.zig");
+const _global = @import("global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 usingnamespace @import("ast/base.zig");
 usingnamespace js_ast.G;
 
@@ -45,16 +54,16 @@ const HashMapPool = struct {
     threadlocal var loaded: bool = false;
 
     const IdentityContext = struct {
-        pub fn eql(this: @This(), a: u64, b: u64) bool {
+        pub fn eql(_: @This(), a: u64, b: u64) bool {
             return a == b;
         }
 
-        pub fn hash(this: @This(), a: u64) u64 {
+        pub fn hash(_: @This(), a: u64) u64 {
             return a;
         }
     };
 
-    pub fn get(allocator: *std.mem.Allocator) *LinkedList.Node {
+    pub fn get(_: std.mem.Allocator) *LinkedList.Node {
         if (loaded) {
             if (list.popFirst()) |node| {
                 node.data.clearRetainingCapacity();
@@ -83,22 +92,24 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
         const Lexer = js_lexer.NewLexer(if (LEXER_DEBUGGER_WORKAROUND) js_lexer.JSONOptions{} else opts);
 
         lexer: Lexer,
-        source: *const logger.Source,
         log: *logger.Log,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
 
-        pub fn init(allocator: *std.mem.Allocator, source: *const logger.Source, log: *logger.Log) !Parser {
+        pub fn init(allocator: std.mem.Allocator, source_: logger.Source, log: *logger.Log) !Parser {
             return Parser{
-                .lexer = try Lexer.init(log, source, allocator),
+                .lexer = try Lexer.init(log, source_, allocator),
                 .allocator = allocator,
                 .log = log,
-                .source = source,
             };
+        }
+
+        pub inline fn source(p: *const Parser) *const logger.Source {
+            return &p.lexer.source;
         }
 
         const Parser = @This();
 
-        pub fn e(p: *Parser, t: anytype, loc: logger.Loc) Expr {
+        pub fn e(_: *Parser, t: anytype, loc: logger.Loc) Expr {
             const Type = @TypeOf(t);
             if (@typeInfo(Type) == .Pointer) {
                 return Expr.init(std.meta.Child(Type), t.*, loc);
@@ -220,7 +231,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
 
                             // Warn about duplicate keys
                             if (duplicate_get_or_put.found_existing) {
-                                p.log.addRangeWarningFmt(p.source, key_range, p.allocator, "Duplicate key \"{s}\" in object literal", .{p.lexer.string_literal_slice}) catch unreachable;
+                                p.log.addRangeWarningFmt(p.source(), key_range, p.allocator, "Duplicate key \"{s}\" in object literal", .{p.lexer.string_literal_slice}) catch unreachable;
                             }
                         }
 
@@ -243,13 +254,13 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                 },
                 else => {
                     if (comptime maybe_auto_quote) {
-                        p.lexer = try Lexer.initJSON(p.log, p.source, p.allocator);
+                        p.lexer = try Lexer.initJSON(p.log, p.source().*, p.allocator);
                         try p.lexer.parseStringLiteral(0);
                         return p.parseExpr(false);
                     }
 
                     try p.lexer.unexpected();
-                    if (comptime isDebug) {
+                    if (comptime Environment.isDebug) {
                         std.io.getStdErr().writeAll("\nThis range: \n") catch {};
                         std.io.getStdErr().writeAll(
                             p.lexer.source.contents[p.lexer.range().loc.toUsize()..p.lexer.range().end().toUsize()],
@@ -268,7 +279,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
 
             if (p.lexer.token == closer) {
                 if (comptime !opts.allow_trailing_commas) {
-                    p.log.addRangeError(p.source, comma_range, "JSON does not support trailing commas") catch unreachable;
+                    p.log.addRangeError(p.source(), comma_range, "JSON does not support trailing commas") catch unreachable;
                 }
                 return false;
             }
@@ -292,7 +303,7 @@ pub const PackageJSONVersionChecker = struct {
     lexer: Lexer,
     source: *const logger.Source,
     log: *logger.Log,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     depth: usize = 0,
 
     found_version_buf: [1024]u8 = undefined,
@@ -310,9 +321,9 @@ pub const PackageJSONVersionChecker = struct {
         .allow_trailing_commas = true,
     };
 
-    pub fn init(allocator: *std.mem.Allocator, source: *const logger.Source, log: *logger.Log) !Parser {
+    pub fn init(allocator: std.mem.Allocator, source: *const logger.Source, log: *logger.Log) !Parser {
         return Parser{
-            .lexer = try Lexer.init(log, source, allocator),
+            .lexer = try Lexer.init(log, source.*, allocator),
             .allocator = allocator,
             .log = log,
             .source = source,
@@ -321,7 +332,7 @@ pub const PackageJSONVersionChecker = struct {
 
     const Parser = @This();
 
-    pub fn e(p: *Parser, t: anytype, loc: logger.Loc) Expr {
+    pub fn e(_: *Parser, t: anytype, loc: logger.Loc) Expr {
         const Type = @TypeOf(t);
         if (@typeInfo(Type) == .Pointer) {
             return Expr.init(std.meta.Child(Type), t.*, loc);
@@ -442,7 +453,7 @@ pub const PackageJSONVersionChecker = struct {
             },
             else => {
                 try p.lexer.unexpected();
-                if (comptime isDebug) {
+                if (comptime Environment.isDebug) {
                     @breakpoint();
                 }
                 return error.ParserError;
@@ -456,7 +467,7 @@ pub const PackageJSONVersionChecker = struct {
 
         if (p.lexer.token == closer) {
             if (comptime !opts.allow_trailing_commas) {
-                p.log.addRangeError(p.source, comma_range, "JSON does not support trailing commas") catch unreachable;
+                p.log.addRangeError(p.source(), comma_range, "JSON does not support trailing commas") catch unreachable;
             }
             return false;
         }
@@ -481,8 +492,8 @@ var empty_string_data = Expr.Data{ .e_string = &empty_string };
 var empty_object_data = Expr.Data{ .e_object = &empty_object };
 var empty_array_data = Expr.Data{ .e_array = &empty_array };
 
-pub fn ParseJSON(source: *const logger.Source, log: *logger.Log, allocator: *std.mem.Allocator) !Expr {
-    var parser = try JSONParser.init(allocator, source, log);
+pub fn ParseJSON(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
+    var parser = try JSONParser.init(allocator, source.*, log);
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
@@ -515,8 +526,8 @@ pub const JSONParseResult = struct {
     };
 };
 
-pub fn ParseJSONForBundling(source: *const logger.Source, log: *logger.Log, allocator: *std.mem.Allocator) !JSONParseResult {
-    var parser = try JSONParser.init(allocator, source, log);
+pub fn ParseJSONForBundling(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !JSONParseResult {
+    var parser = try JSONParser.init(allocator, source.*, log);
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
@@ -544,8 +555,8 @@ pub fn ParseJSONForBundling(source: *const logger.Source, log: *logger.Log, allo
 
 // threadlocal var env_json_auto_quote_buffer: MutableString = undefined;
 // threadlocal var env_json_auto_quote_buffer_loaded: bool = false;
-pub fn ParseEnvJSON(source: *const logger.Source, log: *logger.Log, allocator: *std.mem.Allocator) !Expr {
-    var parser = try DotEnvJSONParser.init(allocator, source, log);
+pub fn ParseEnvJSON(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
+    var parser = try DotEnvJSONParser.init(allocator, source.*, log);
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
@@ -594,7 +605,7 @@ pub fn ParseEnvJSON(source: *const logger.Source, log: *logger.Log, allocator: *
     }
 }
 
-pub fn ParseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: *std.mem.Allocator) !Expr {
+pub fn ParseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
@@ -613,7 +624,7 @@ pub fn ParseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: 
         else => {},
     }
 
-    var parser = try TSConfigParser.init(allocator, source, log);
+    var parser = try TSConfigParser.init(allocator, source.*, log);
 
     return parser.parseExpr(false);
 }

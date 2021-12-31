@@ -188,7 +188,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
         Output.flush();
         Global.crash();
     };
-    const extracted_file_count = if (PackageManager.verbose_install)
+    _ = if (PackageManager.verbose_install)
         try Archive.extractToDisk(
             zlib_pool.data.list.items,
             temp_destination,

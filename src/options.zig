@@ -12,7 +12,18 @@ const resolve_path = @import("./resolver/resolve_path.zig");
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 const URL = @import("./query_string_map.zig").URL;
 const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
-usingnamespace @import("global.zig");
+const _global = @import("global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const FileDescriptorType = _global.FileDescriptorType;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
+const StoredFileDescriptorType = _global.StoredFileDescriptorType;
 
 const Analytics = @import("./analytics/analytics_thread.zig");
 
@@ -26,23 +37,37 @@ pub const WriteDestination = enum {
     // eventaully: wasm
 };
 
-pub fn validatePath(log: *logger.Log, fs: *Fs.FileSystem.Implementation, cwd: string, rel_path: string, allocator: *std.mem.Allocator, path_kind: string) string {
+pub fn validatePath(
+    log: *logger.Log,
+    _: *Fs.FileSystem.Implementation,
+    cwd: string,
+    rel_path: string,
+    allocator: std.mem.Allocator,
+    _: string,
+) string {
     if (rel_path.len == 0) {
         return "";
     }
     const paths = [_]string{ cwd, rel_path };
+    // TODO: switch to getFdPath()-based implemetation
     const out = std.fs.path.resolve(allocator, &paths) catch |err| {
-        Global.invariant(false, "<r><red>{s}<r> resolving external: <b>\"{s}\"<r>", .{ @errorName(err), rel_path });
+        log.addErrorFmt(
+            null,
+            logger.Loc.Empty,
+            allocator,
+            "<r><red>{s}<r> resolving external: <b>\"{s}\"<r>",
+            .{ @errorName(err), rel_path },
+        ) catch unreachable;
         return "";
     };
 
     return out;
 }
 
-pub fn stringHashMapFromArrays(comptime t: type, allocator: *std.mem.Allocator, keys: anytype, values: anytype) !t {
+pub fn stringHashMapFromArrays(comptime t: type, allocator: std.mem.Allocator, keys: anytype, values: anytype) !t {
     var hash_map = t.init(allocator);
     if (keys.len > 0) {
-        try hash_map.ensureCapacity(@intCast(u32, keys.len));
+        try hash_map.ensureTotalCapacity(@intCast(u32, keys.len));
         for (keys) |key, i| {
             hash_map.putAssumeCapacity(key, values[i]);
         }
@@ -80,7 +105,7 @@ pub const ExternalModules = struct {
     };
 
     pub fn init(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         fs: *Fs.FileSystem.Implementation,
         cwd: string,
         externals: []const string,
@@ -96,7 +121,7 @@ pub const ExternalModules = struct {
         switch (platform) {
             .node => {
                 // TODO: fix this stupid copy
-                result.node_modules.hash_map.ensureCapacity(NodeBuiltinPatterns.len) catch unreachable;
+                result.node_modules.hash_map.ensureTotalCapacity(NodeBuiltinPatterns.len) catch unreachable;
                 for (NodeBuiltinPatterns) |pattern| {
                     result.node_modules.insert(pattern) catch unreachable;
                 }
@@ -104,7 +129,7 @@ pub const ExternalModules = struct {
             .bun => {
 
                 // // TODO: fix this stupid copy
-                // result.node_modules.hash_map.ensureCapacity(BunNodeBuiltinPatternsCompat.len) catch unreachable;
+                // result.node_modules.hash_map.ensureTotalCapacity(BunNodeBuiltinPatternsCompat.len) catch unreachable;
                 // for (BunNodeBuiltinPatternsCompat) |pattern| {
                 //     result.node_modules.insert(pattern) catch unreachable;
                 // }
@@ -401,7 +426,7 @@ pub const Platform = enum {
         };
     };
 
-    pub fn outExtensions(platform: Platform, allocator: *std.mem.Allocator) std.StringHashMap(string) {
+    pub fn outExtensions(platform: Platform, allocator: std.mem.Allocator) std.StringHashMap(string) {
         var exts = std.StringHashMap(string).init(allocator);
 
         const js = Extensions.Out.JavaScript[0];
@@ -628,7 +653,7 @@ pub const ESMConditions = struct {
     import: ConditionsMap = undefined,
     require: ConditionsMap = undefined,
 
-    pub fn init(allocator: *std.mem.Allocator, defaults: []const string) !ESMConditions {
+    pub fn init(allocator: std.mem.Allocator, defaults: []const string) !ESMConditions {
         var default_condition_amp = ConditionsMap.init(allocator);
 
         var import_condition_map = ConditionsMap.init(allocator);
@@ -713,7 +738,7 @@ pub const JSX = struct {
         // "React.createElement" => ["React", "createElement"]
         // ...unless new is "React.createElement" and original is ["React", "createElement"]
         // saves an allocation for the majority case
-        pub fn memberListToComponentsIfDifferent(allocator: *std.mem.Allocator, original: []const string, new: string) ![]const string {
+        pub fn memberListToComponentsIfDifferent(allocator: std.mem.Allocator, original: []const string, new: string) ![]const string {
             var splitter = std.mem.split(u8, new, ".");
 
             var needs_alloc = false;
@@ -747,7 +772,7 @@ pub const JSX = struct {
             return out;
         }
 
-        pub fn fromApi(jsx: api.Api.Jsx, allocator: *std.mem.Allocator) !Pragma {
+        pub fn fromApi(jsx: api.Api.Jsx, allocator: std.mem.Allocator) !Pragma {
             var pragma = JSX.Pragma{};
 
             if (jsx.fragment.len > 0) {
@@ -814,7 +839,7 @@ pub const DefaultUserDefines = struct {
 };
 
 pub fn definesFromTransformOptions(
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     log: *logger.Log,
     _input_define: ?Api.StringMap,
     hmr: bool,
@@ -883,7 +908,7 @@ pub fn definesFromTransformOptions(
     );
 }
 
-pub fn loadersFromTransformOptions(allocator: *std.mem.Allocator, _loaders: ?Api.LoaderMap) !std.StringHashMap(Loader) {
+pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.LoaderMap) !std.StringHashMap(Loader) {
     var input_loaders = _loaders orelse std.mem.zeroes(Api.LoaderMap);
     var loader_values = try allocator.alloc(Loader, input_loaders.loaders.len);
     for (loader_values) |_, i| {
@@ -991,7 +1016,7 @@ pub const BundleOptions = struct {
         return !this.defines_loaded;
     }
 
-    pub fn loadDefines(this: *BundleOptions, allocator: *std.mem.Allocator, loader_: ?*DotEnv.Loader, env: ?*const Env) !void {
+    pub fn loadDefines(this: *BundleOptions, allocator: std.mem.Allocator, loader_: ?*DotEnv.Loader, env: ?*const Env) !void {
         if (this.defines_loaded) {
             return;
         }
@@ -1010,8 +1035,6 @@ pub const BundleOptions = struct {
     pub fn loader(this: *const BundleOptions, ext: string) Loader {
         return this.loaders.get(ext) orelse .file;
     }
-
-    pub fn asJavascriptBundleConfig(this: *const BundleOptions) Api.JavascriptBundleConfig {}
 
     pub fn isFrontendFrameworkEnabled(this: *const BundleOptions) bool {
         const framework: *const Framework = &(this.framework orelse return false);
@@ -1059,7 +1082,7 @@ pub const BundleOptions = struct {
     };
 
     pub fn fromApi(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         fs: *Fs.FileSystem,
         log: *logger.Log,
         transform: Api.TransformOptions,
@@ -1288,7 +1311,7 @@ pub const BundleOptions = struct {
                                 break :choice "";
                             },
                         }
-                    } else |err| {
+                    } else |_| {
                         break :choice "";
                     }
                 };
@@ -1303,7 +1326,6 @@ pub const BundleOptions = struct {
                 var _dirs = [_]string{chosen_dir};
                 opts.routes.static_dir = try fs.absAlloc(allocator, &_dirs);
                 opts.routes.static_dir_handle = std.fs.openDirAbsolute(opts.routes.static_dir, .{ .iterate = true }) catch |err| brk: {
-                    var did_warn = false;
                     switch (err) {
                         error.FileNotFound => {
                             opts.routes.static_dir_enabled = false;
@@ -1353,7 +1375,7 @@ pub const BundleOptions = struct {
 
             // Windows has weird locking rules for file access.
             // so it's a bad idea to keep a file handle open for a long time on Windows.
-            if (isWindows and opts.routes.static_dir_handle != null) {
+            if (Environment.isWindows and opts.routes.static_dir_handle != null) {
                 opts.routes.static_dir_handle.?.close();
             }
             opts.hot_module_reloading = opts.platform.isWebLike();
@@ -1420,7 +1442,7 @@ pub const TransformOptions = struct {
     platform: Platform = Platform.browser,
     main_fields: []string = Platform.DefaultMainFields.get(Platform.browser),
 
-    pub fn initUncached(allocator: *std.mem.Allocator, entryPointName: string, code: string) !TransformOptions {
+    pub fn initUncached(allocator: std.mem.Allocator, entryPointName: string, code: string) !TransformOptions {
         assert(entryPointName.len > 0);
 
         var entryPoint = Fs.File{
@@ -1429,12 +1451,12 @@ pub const TransformOptions = struct {
         };
 
         var cwd: string = "/";
-        if (isWasi or isNative) {
+        if (Environment.isWasi or Environment.isWindows) {
             cwd = try std.process.getCwdAlloc(allocator);
         }
 
         var define = std.StringHashMap(string).init(allocator);
-        try define.ensureCapacity(1);
+        try define.ensureTotalCapacity(1);
 
         define.putAssumeCapacity("process.env.NODE_ENV", "development");
 
@@ -1508,7 +1530,7 @@ pub const OutputFile = struct {
 
     pub fn initPending(loader: Loader, pending: resolver.Result) OutputFile {
         return .{
-            .loader = .file,
+            .loader = loader,
             .input = pending.pathConst().?.*,
             .size = 0,
             .value = .{ .pending = pending },
@@ -1539,26 +1561,7 @@ pub const OutputFile = struct {
         };
     }
 
-    pub fn moveTo(file: *const OutputFile, base_path: string, rel_path: []u8, dir: FileDescriptorType) !void {
-        var move = file.value.move;
-        if (move.dir > 0) {
-            std.os.renameat(move.dir, move.pathname, dir, rel_path) catch |err| {
-                const dir_ = std.fs.Dir{ .fd = dir };
-                if (std.fs.path.dirname(rel_path)) |dirname| {
-                    dir_.makePath(dirname) catch {};
-                    std.os.renameat(move.dir, move.pathname, dir, rel_path) catch {};
-                    return;
-                }
-            };
-            return;
-        }
-
-        try std.os.rename(move.pathname, resolve_path.joinAbs(base_path, .auto, rel_path));
-    }
-
-    pub fn copyTo(file: *const OutputFile, base_path: string, rel_path: []u8, dir: FileDescriptorType) !void {
-        var copy = file.value.copy;
-
+    pub fn copyTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
         var dir_obj = std.fs.Dir{ .fd = dir };
         const file_out = (try dir_obj.createFile(rel_path, .{}));
 
@@ -1567,7 +1570,7 @@ pub const OutputFile = struct {
         // TODO: close file_out on error
         const fd_in = (try std.fs.openFileAbsolute(file.input.text, .{ .read = true })).handle;
 
-        if (isNative) {
+        if (Environment.isWindows) {
             Fs.FileSystem.setMaxFd(fd_out);
             Fs.FileSystem.setMaxFd(fd_in);
             do_close = Fs.FileSystem.instance.fs.needToCloseFiles();
@@ -1582,14 +1585,14 @@ pub const OutputFile = struct {
 
         const os = std.os;
 
-        if (comptime std.Target.current.isDarwin()) {
+        if (comptime @import("builtin").target.isDarwin()) {
             const rc = os.system.fcopyfile(fd_in, fd_out, null, os.system.COPYFILE_DATA);
             if (rc == 0) {
                 return;
             }
         }
 
-        if (std.Target.current.os.tag == .linux) {
+        if (@import("builtin").target.os.tag == .linux) {
             // Try copy_file_range first as that works at the FS level and is the
             // most efficient method (if available).
             var offset: u64 = 0;
@@ -1629,7 +1632,7 @@ pub const TransformResult = struct {
         outbase: string,
         output_files: []OutputFile,
         log: *logger.Log,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
     ) !TransformResult {
         var errors = try std.ArrayList(logger.Msg).initCapacity(allocator, log.errors);
         var warnings = try std.ArrayList(logger.Msg).initCapacity(allocator, log.warnings);
@@ -1664,10 +1667,10 @@ pub const Env = struct {
     behavior: Api.DotEnvBehavior = Api.DotEnvBehavior.disable,
     prefix: string = "",
     defaults: List = List{},
-    allocator: *std.mem.Allocator = undefined,
+    allocator: std.mem.Allocator = undefined,
 
     pub fn init(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
     ) Env {
         return Env{
             .allocator = allocator,
@@ -1716,7 +1719,7 @@ pub const Env = struct {
         }
     }
 
-    pub fn setFromLoaded(this: *Env, config: Api.LoadedEnvConfig, allocator: *std.mem.Allocator) !void {
+    pub fn setFromLoaded(this: *Env, config: Api.LoadedEnvConfig, allocator: std.mem.Allocator) !void {
         this.allocator = allocator;
         this.behavior = switch (config.dotenv) {
             Api.DotEnvBehavior.prefix => Api.DotEnvBehavior.prefix,
@@ -1743,7 +1746,7 @@ pub const Env = struct {
     pub fn getOrPutValue(this: *Env, key: string, value: string) !void {
         var slice = this.defaults.slice();
         const keys = slice.items(.key);
-        for (keys) |_key, i| {
+        for (keys) |_key| {
             if (strings.eql(key, _key)) {
                 return;
             }
@@ -1778,14 +1781,14 @@ pub const EntryPoint = struct {
         }
     };
 
-    pub fn toAPI(this: *const EntryPoint, allocator: *std.mem.Allocator, toplevel_path: string, kind: Kind) !?Api.FrameworkEntryPoint {
+    pub fn toAPI(this: *const EntryPoint, allocator: std.mem.Allocator, toplevel_path: string, kind: Kind) !?Api.FrameworkEntryPoint {
         if (this.kind == .disabled)
             return null;
 
         return Api.FrameworkEntryPoint{ .kind = kind.toAPI(), .env = this.env.toAPI(), .path = try this.normalizedPath(allocator, toplevel_path) };
     }
 
-    fn normalizedPath(this: *const EntryPoint, allocator: *std.mem.Allocator, toplevel_path: string) !string {
+    fn normalizedPath(this: *const EntryPoint, allocator: std.mem.Allocator, toplevel_path: string) !string {
         std.debug.assert(std.fs.path.isAbsolute(this.path));
         var str = this.path;
         if (strings.indexOf(str, toplevel_path)) |top| {
@@ -1809,7 +1812,7 @@ pub const EntryPoint = struct {
     pub fn fromLoaded(
         this: *EntryPoint,
         framework_entry_point: Api.FrameworkEntryPoint,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         kind: Kind,
     ) !void {
         this.path = framework_entry_point.path;
@@ -1820,7 +1823,7 @@ pub const EntryPoint = struct {
     pub fn fromAPI(
         this: *EntryPoint,
         framework_entry_point: Api.FrameworkEntryPointMessage,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         kind: Kind,
     ) !void {
         this.path = framework_entry_point.path orelse "";
@@ -1868,7 +1871,7 @@ pub const Framework = struct {
         return entry;
     }
 
-    pub fn fromLoadedFramework(loaded: Api.LoadedFramework, allocator: *std.mem.Allocator) !Framework {
+    pub fn fromLoadedFramework(loaded: Api.LoadedFramework, allocator: std.mem.Allocator) !Framework {
         var framework = Framework{
             .package = loaded.package,
             .development = loaded.development,
@@ -1895,7 +1898,7 @@ pub const Framework = struct {
 
     pub fn toAPI(
         this: *const Framework,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         toplevel_path: string,
     ) !?Api.LoadedFramework {
         if (this.client.kind == .disabled and this.server.kind == .disabled and this.fallback.kind == .disabled) return null;
@@ -1920,7 +1923,7 @@ pub const Framework = struct {
 
     pub fn fromApi(
         transform: Api.FrameworkConfig,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
     ) !Framework {
         var client = EntryPoint{};
         var server = EntryPoint{};
@@ -2010,7 +2013,7 @@ pub const RouteConfig = struct {
         };
     }
 
-    pub fn fromApi(router_: Api.RouteConfig, allocator: *std.mem.Allocator) !RouteConfig {
+    pub fn fromApi(router_: Api.RouteConfig, allocator: std.mem.Allocator) !RouteConfig {
         var router = zero();
 
         var static_dir: string = std.mem.trimRight(u8, router_.static_dir orelse "", "/\\");

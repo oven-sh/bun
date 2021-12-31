@@ -1,6 +1,15 @@
 const std = @import("std");
 const Command = @import("../cli.zig").Command;
-usingnamespace @import("../global.zig");
+const _global = @import("../global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 
 const lex = @import("../js_lexer.zig");
 const logger = @import("../logger.zig");
@@ -30,7 +39,7 @@ const ServerBundleGeneratorThread = struct {
     inline fn _generate(
         logs: *logger.Log,
         env_loader_: *DotEnv.Loader,
-        allocator_: *std.mem.Allocator,
+        allocator_: std.mem.Allocator,
         ctx: Command.Context,
         _filepath: [*:0]const u8,
         server_conf: Api.LoadedFramework,

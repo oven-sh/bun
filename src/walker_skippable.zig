@@ -110,7 +110,7 @@ pub fn deinit(self: *Walker) void {
 /// `self` will not be closed after walking it.
 pub fn walk(
     self: Dir,
-    allocator: *Allocator,
+    allocator: Allocator,
     skip_filenames: []const []const u8,
     skip_dirnames: []const []const u8,
 ) !Walker {

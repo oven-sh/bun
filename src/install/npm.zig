@@ -24,6 +24,7 @@ const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 const SlicedString = Semver.SlicedString;
 const FileSystem = @import("../fs.zig").FileSystem;
+const Dependency = @import("./dependency.zig");
 
 const VersionSlice = @import("./install.zig").VersionSlice;
 const ObjectPool = @import("../pool.zig").ObjectPool;
@@ -69,7 +70,7 @@ pub const Registry = struct {
 
     const Pico = @import("picohttp");
     pub fn getPackageMetadata(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         response: Pico.Response,
         body: []const u8,
         log: *logger.Log,
@@ -481,7 +482,7 @@ pub const PackageManifest = struct {
             try std.os.renameatZ(tmpdir.fd, tmp_path, cache_dir.fd, out_path);
         }
 
-        pub fn load(allocator: *std.mem.Allocator, cache_dir: std.fs.Dir, package_name: string) !?PackageManifest {
+        pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.Dir, package_name: string) !?PackageManifest {
             const file_id = std.hash.Wyhash.hash(0, package_name);
             var file_path_buf: [512 + 64]u8 = undefined;
             var file_path = try std.fmt.bufPrintZ(&file_path_buf, "{x}.npm", .{file_id});
@@ -538,11 +539,6 @@ pub const PackageManifest = struct {
     }
 
     pub fn reportSize(this: *const PackageManifest) void {
-        const versions = std.mem.sliceAsBytes(this.versions);
-        const external_strings = std.mem.sliceAsBytes(this.external_strings);
-        const package_versions = std.mem.sliceAsBytes(this.package_versions);
-        const string_buf = std.mem.sliceAsBytes(this.string_buf);
-
         Output.prettyErrorln(
             \\ Versions count:            {d} 
             \\ External Strings count:    {d} 
@@ -668,7 +664,7 @@ pub const PackageManifest = struct {
 
     /// This parses [Abbreviated metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-metadata-format)
     pub fn parse(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         log: *logger.Log,
         json_buffer: []const u8,
         expected_name: []const u8,
@@ -678,9 +674,7 @@ pub const PackageManifest = struct {
     ) !?PackageManifest {
         const source = logger.Source.initPathString(expected_name, json_buffer);
         initializeStore();
-        const json = json_parser.ParseJSON(&source, log, allocator) catch |err| {
-            return null;
-        };
+        const json = json_parser.ParseJSON(&source, log, allocator) catch return null;
 
         if (json.asProperty("error")) |error_q| {
             if (error_q.expr.asString(allocator)) |err| {
@@ -776,7 +770,7 @@ pub const PackageManifest = struct {
                                         string_builder.count(obj.properties[0].value.?.asString(allocator) orelse break :bin);
                                     }
                                 },
-                                .e_string => |str| {
+                                .e_string => {
                                     if (bin.expr.asString(allocator)) |str_| {
                                         string_builder.count(str_);
                                         break :bin;
@@ -894,7 +888,6 @@ pub const PackageManifest = struct {
             result.pkg.name = string_builder.append(ExternalString, field);
         }
 
-        var string_slice = SlicedString.init(string_buf, string_buf);
         get_versions: {
             if (json.asProperty("versions")) |versions_q| {
                 if (versions_q.expr.data != .e_object) break :get_versions;
@@ -909,7 +902,7 @@ pub const PackageManifest = struct {
                 var dependency_names = all_dependency_names_and_values;
 
                 var version_string__: String = String{};
-                for (versions) |prop, version_i| {
+                for (versions) |prop| {
                     const version_name = prop.key.?.asString(allocator) orelse continue;
 
                     var sliced_string = SlicedString.init(version_name, version_name);
@@ -1259,14 +1252,13 @@ pub const PackageManifest = struct {
                 var extern_strings_slice = extern_strings[0..dist_tags_count];
                 var dist_tag_i: usize = 0;
 
-                for (tags) |tag, i| {
+                for (tags) |tag| {
                     if (tag.key.?.asString(allocator)) |key| {
                         extern_strings_slice[dist_tag_i] = string_builder.append(ExternalString, key);
 
                         const version_name = tag.value.?.asString(allocator) orelse continue;
 
                         const dist_tag_value_literal = string_builder.append(ExternalString, version_name);
-                        const dist_tag_value_literal_slice = dist_tag_value_literal.slice(string_buf);
 
                         const sliced_string = dist_tag_value_literal.value.sliced(string_buf);
 

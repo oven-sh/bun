@@ -52,8 +52,8 @@ ZIG ?= $(shell which zig || echo -e "error: Missing zig. Please make sure zig is
 # This is easier to happen than you'd expect.
 # Using realpath here causes issues because clang uses clang++ as a symlink 
 # so if that's resolved, it won't build for C++
-CC = $(shell which clang-12 || which clang)
-CXX = $(shell which clang++-12 || which clang++)
+CC = $(shell which clang-13 || which clang)
+CXX = $(shell which clang++-13 || which clang++)
 
 # macOS sed is different
 SED = $(shell which gsed || which sed)
@@ -135,7 +135,7 @@ MACOS_MIN_FLAG=
 
 POSIX_PKG_MANAGER=sudo apt
 
-STRIP ?= $(shell which llvm-strip || which llvm-strip-12 || echo "Missing llvm-strip. Please pass it in the STRIP environment var"; exit 1;)
+STRIP ?= $(shell which llvm-strip || which llvm-strip-13 || echo "Missing llvm-strip. Please pass it in the STRIP environment var"; exit 1;)
 
 HOMEBREW_PREFIX ?= $(BREW_PREFIX_PATH)
 
@@ -443,6 +443,8 @@ jsc-bindings-headers:
 	$(SED) -i '/pub const max_align_t/{N;N;N;d;}' src/javascript/jsc/bindings/headers.zig
 	$(SED) -i '/pub const ZigErrorCode/d' src/javascript/jsc/bindings/headers.zig
 	$(SED) -i '/pub const JSClassRef/d' src/javascript/jsc/bindings/headers.zig
+	cat src/javascript/jsc/bindings/headers.zig > /tmp/headers.zig
+	cat src/javascript/jsc/bindings/headers-replacements.zig /tmp/headers.zig > src/javascript/jsc/bindings/headers.zig
 	$(ZIG) fmt src/javascript/jsc/bindings/headers.zig
 	
 

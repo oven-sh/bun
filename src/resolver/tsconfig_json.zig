@@ -1,4 +1,13 @@
-usingnamespace @import("../global.zig");
+const _global = @import("../global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 const std = @import("std");
 const options = @import("../options.zig");
 const logger = @import("../logger.zig");
@@ -77,7 +86,7 @@ pub const TSConfigJSON = struct {
     }
 
     pub fn parse(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         log: *logger.Log,
         source: logger.Source,
         json_cache: *cache.Json,
@@ -180,7 +189,7 @@ pub const TSConfigJSON = struct {
             if (compiler_opts.expr.asProperty("paths")) |paths_prop| {
                 switch (paths_prop.expr.data) {
                     .e_object => {
-                        var paths = paths_prop.expr.getObject();
+                        var paths = paths_prop.expr.data.e_object;
                         result.base_url_for_paths = if (result.base_url.len > 0) result.base_url else ".";
                         result.paths = PathsMap.init(allocator);
                         for (paths.properties) |property| {
@@ -216,7 +225,7 @@ pub const TSConfigJSON = struct {
                             // and then, if that didn't work, also check "projectRoot/generated/folder1/file2".
                             switch (value_prop.data) {
                                 .e_array => {
-                                    const array = value_prop.getArray();
+                                    const array = value_prop.data.e_array;
 
                                     if (array.items.len > 0) {
                                         var values = allocator.alloc(string, array.items.len) catch unreachable;
@@ -282,9 +291,9 @@ pub const TSConfigJSON = struct {
         return _result;
     }
 
-    pub fn isValidTSConfigPathPattern(text: string, log: *logger.Log, source: *const logger.Source, loc: logger.Loc, allocator: *std.mem.Allocator) bool {
+    pub fn isValidTSConfigPathPattern(text: string, log: *logger.Log, source: *const logger.Source, loc: logger.Loc, allocator: std.mem.Allocator) bool {
         var found_asterisk = false;
-        for (text) |c, i| {
+        for (text) |c| {
             if (c == '*') {
                 if (found_asterisk) {
                     const r = source.rangeOfString(loc);
@@ -298,7 +307,7 @@ pub const TSConfigJSON = struct {
         return true;
     }
 
-    pub fn parseMemberExpressionForJSX(log: *logger.Log, source: *const logger.Source, loc: logger.Loc, text: string, allocator: *std.mem.Allocator) ![]string {
+    pub fn parseMemberExpressionForJSX(log: *logger.Log, source: *const logger.Source, loc: logger.Loc, text: string, allocator: std.mem.Allocator) ![]string {
         if (text.len == 0) {
             return &([_]string{});
         }
@@ -323,7 +332,7 @@ pub const TSConfigJSON = struct {
         return c == '/' or c == '\\';
     }
 
-    pub fn isValidTSConfigPathNoBaseURLPattern(text: string, log: *logger.Log, source: *const logger.Source, allocator: *std.mem.Allocator, loc: logger.Loc) bool {
+    pub fn isValidTSConfigPathNoBaseURLPattern(text: string, log: *logger.Log, source: *const logger.Source, allocator: std.mem.Allocator, loc: logger.Loc) bool {
         var c0: u8 = 0;
         var c1: u8 = 0;
         var c2: u8 = 0;

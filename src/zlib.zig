@@ -52,16 +52,16 @@ const charf = u8;
 const intf = c_int;
 const uIntf = uInt;
 const uLongf = uLong;
-const voidpc = ?*const c_void;
-const voidpf = ?*c_void;
-const voidp = ?*c_void;
+const voidpc = ?*const anyopaque;
+const voidpf = ?*anyopaque;
+const voidp = ?*anyopaque;
 const z_crc_t = c_uint;
 
 // typedef voidpf (*alloc_func) OF((voidpf opaque, uInt items, uInt size));
 // typedef void   (*free_func)  OF((voidpf opaque, voidpf address));
 
-pub const z_alloc_fn = ?fn (*c_void, uInt, uInt) callconv(.C) voidpf;
-pub const z_free_fn = ?fn (*c_void, *c_void) callconv(.C) void;
+pub const z_alloc_fn = ?fn (*anyopaque, uInt, uInt) callconv(.C) voidpf;
+pub const z_free_fn = ?fn (*anyopaque, *anyopaque) callconv(.C) void;
 
 pub const struct_internal_state = extern struct {
     dummy: c_int,
@@ -113,7 +113,7 @@ pub const zStream_struct = extern struct {
     /// used to free the internal state 
     free_func: z_free_fn,
     /// private data object passed to zalloc and zfree 
-    user_data: *c_void,
+    user_data: *anyopaque,
 
     /// best guess about the data type: binary or text for deflate, or the decoding state for inflate
     data_type: DataType,
@@ -236,18 +236,18 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
         input: []const u8,
         buf: [buffer_size]u8,
         zlib: zStream_struct,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         arena: std.heap.ArenaAllocator,
         state: State = State.Uninitialized,
 
-        pub fn alloc(ctx: *c_void, items: uInt, len: uInt) callconv(.C) *c_void {
+        pub fn alloc(ctx: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
             var this = @ptrCast(*ZlibReader, @alignCast(@alignOf(*ZlibReader), ctx));
             const buf = this.arena.allocator.alloc(u8, items * len) catch unreachable;
             return buf.ptr;
         }
 
         // we free manually all at once
-        pub fn free(ctx: *c_void, ptr: *c_void) callconv(.C) void {}
+        pub fn free(_: *anyopaque, _: *anyopaque) callconv(.C) void {}
 
         pub fn deinit(this: *ZlibReader) void {
             var allocator = this.allocator;
@@ -263,7 +263,7 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
             }
         }
 
-        pub fn init(writer: Writer, input: []const u8, allocator: *std.mem.Allocator) !*ZlibReader {
+        pub fn init(writer: Writer, input: []const u8, allocator: std.mem.Allocator) !*ZlibReader {
             var zlib_reader = try allocator.create(ZlibReader);
             zlib_reader.* = ZlibReader{
                 .context = writer,
@@ -419,18 +419,18 @@ pub const ZlibReaderArrayList = struct {
     list: std.ArrayListUnmanaged(u8),
     list_ptr: *std.ArrayListUnmanaged(u8),
     zlib: zStream_struct,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
     state: State = State.Uninitialized,
 
-    pub fn alloc(ctx: *c_void, items: uInt, len: uInt) callconv(.C) *c_void {
+    pub fn alloc(ctx: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
         var this = @ptrCast(*ZlibReader, @alignCast(@alignOf(*ZlibReader), ctx));
-        const buf = this.arena.allocator.alloc(u8, items * len) catch unreachable;
+        const buf = this.allocator.alloc(u8, items * len) catch unreachable;
         return buf.ptr;
     }
 
     // we free manually all at once
-    pub fn free(ctx: *c_void, ptr: *c_void) callconv(.C) void {}
+    pub fn free(_: *anyopaque, _: *anyopaque) callconv(.C) void {}
 
     pub fn deinit(this: *ZlibReader) void {
         var allocator = this.allocator;
@@ -446,7 +446,7 @@ pub const ZlibReaderArrayList = struct {
         }
     }
 
-    pub fn init(input: []const u8, list: *std.ArrayListUnmanaged(u8), allocator: *std.mem.Allocator) ZlibError!*ZlibReader {
+    pub fn init(input: []const u8, list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator) ZlibError!*ZlibReader {
         var zlib_reader = try allocator.create(ZlibReader);
         zlib_reader.* = ZlibReader{
             .input = input,

@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub fn ObjectPool(comptime Type: type, comptime Init: (fn (allocator: *std.mem.Allocator) anyerror!Type), comptime threadsafe: bool) type {
+pub fn ObjectPool(comptime Type: type, comptime Init: (fn (allocator: std.mem.Allocator) anyerror!Type), comptime threadsafe: bool) type {
     return struct {
         const LinkedList = std.SinglyLinkedList(Type);
         const Data = if (threadsafe)
@@ -17,7 +17,7 @@ pub fn ObjectPool(comptime Type: type, comptime Init: (fn (allocator: *std.mem.A
         const data = Data;
         pub const Node = LinkedList.Node;
 
-        pub fn get(allocator: *std.mem.Allocator) *LinkedList.Node {
+        pub fn get(allocator: std.mem.Allocator) *LinkedList.Node {
             if (data.loaded) {
                 if (data.list.popFirst()) |node| {
                     node.data.reset();

@@ -1,5 +1,4 @@
 const env = @import("env.zig");
-
 pub const strong_etags_for_built_files = true;
 pub const keep_alive = true;
 
@@ -13,9 +12,6 @@ pub const disable_printing_null = false;
 
 // This was a ~5% performance improvement
 pub const store_file_descriptors = !env.isWindows and !env.isBrowser;
-
-// This doesn't really seem to do anything for us
-pub const disable_filesystem_cache = false and std.Target.current.os.tag == .macos;
 
 pub const css_in_js_import_behavior = CSSInJSImportBehavior.facade;
 

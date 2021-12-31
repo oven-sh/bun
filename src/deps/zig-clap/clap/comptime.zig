@@ -44,7 +44,7 @@ pub fn ComptimeClap(
         multi_options: [multi_options][]const []const u8,
         flags: [flags]bool,
         pos: []const []const u8,
-        allocator: *mem.Allocator,
+        allocator: mem.Allocator,
 
         pub fn parse(iter: anytype, opt: clap.ParseOptions) !@This() {
             const allocator = opt.allocator;

@@ -1,11 +1,11 @@
 const std = @import("std");
-usingnamespace std.c;
 const builtin = @import("builtin");
 const os = std.os;
 const mem = std.mem;
 const Stat = std.fs.File.Stat;
 const Kind = std.fs.File.Kind;
 const StatError = std.fs.File.StatError;
+const off_t = std.c.off_t;
 const errno = os.errno;
 const zeroes = mem.zeroes;
 
@@ -66,14 +66,14 @@ pub extern "c" fn clonefile([*c]const u8, [*c]const u8, uint32_t: c_int) c_int;
 //                 os.FILETYPE_SOCKET_STREAM, os.FILETYPE_SOCKET_DGRAM => Kind.UnixDomainSocket,
 //                 else => Kind.Unknown,
 //             },
-//             else => switch (st.mode & os.S_IFMT) {
-//                 os.S_IFBLK => Kind.BlockDevice,
-//                 os.S_IFCHR => Kind.CharacterDevice,
-//                 os.S_IFDIR => Kind.Directory,
-//                 os.S_IFIFO => Kind.NamedPipe,
-//                 os.S_IFLNK => Kind.SymLink,
-//                 os.S_IFREG => Kind.File,
-//                 os.S_IFSOCK => Kind.UnixDomainSocket,
+//             else => switch (st.mode & os.S.IFMT) {
+//                 os.S.IFBLK => Kind.BlockDevice,
+//                 os.S.IFCHR => Kind.CharacterDevice,
+//                 os.S.IFDIR => Kind.Directory,
+//                 os.S.IFIFO => Kind.NamedPipe,
+//                 os.S.IFLNK => Kind.SymLink,
+//                 os.S.IFREG => Kind.File,
+//                 os.S.IFSOCK => Kind.UnixDomainSocket,
 //                 else => Kind.Unknown,
 //             },
 //         },
@@ -105,13 +105,13 @@ pub fn preallocate_file(fd: os.fd_t, offset: off_t, len: off_t) !void {
     fstore.fst_length = len + offset;
 
     // Based on https://api.kde.org/frameworks/kcoreaddons/html/posix__fallocate__mac_8h_source.html
-    var rc = os.system.fcntl(fd, os.F_PREALLOCATE, &fstore);
+    var rc = os.system.fcntl(fd, os.F.PREALLOCATE, &fstore);
 
     switch (rc) {
         0 => return,
         else => {
             fstore.fst_flags = F_ALLOCATEALL;
-            rc = os.system.fcntl(fd, os.F_PREALLOCATE, &fstore);
+            rc = os.system.fcntl(fd, os.F.PREALLOCATE, &fstore);
         },
     }
 

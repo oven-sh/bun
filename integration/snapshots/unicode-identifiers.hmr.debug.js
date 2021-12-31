@@ -8,9 +8,9 @@ Bun.activate(true);
 
 var hmr = new HMR(1398361736, "unicode-identifiers.js"), exports = hmr.exports;
 (hmr._load = function() {
-  var ε = 1.0e-06, ε2 = ε * ε, π = Math.PI, τ = 2 * π, τε = τ - ε, halfπ = π / 2, d3_radians = π / 180, d3_degrees = 180 / π;
+  var ε = 0.000001, ε2 = ε * ε, π = Math.PI, τ = 2 * π, τε = τ - ε, halfπ = π / 2, d3_radians = π / 180, d3_degrees = 180 / π;
   function test() {
-    console.assert(ε === 1.0e-06);
+    console.assert(ε === 0.000001);
     return testDone(import.meta.url);
   }
   hmr.exportAll({

@@ -1,8 +1,6 @@
 const std = @import("std");
 
 pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
-    const a: u32 = 1000;
-
     switch (max_bytes) {
         1, 2, 4, 8, 12, 16 => {},
         else => {

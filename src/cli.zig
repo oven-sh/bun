@@ -1,5 +1,15 @@
-usingnamespace @import("global.zig");
-usingnamespace @import("./http.zig");
+const _global = @import("global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const constStrToU8 = _global.constStrToU8;
+const FeatureFlags = _global.FeatureFlags;
+const C = _global.C;
 
 const std = @import("std");
 const lex = @import("js_lexer.zig");
@@ -10,8 +20,6 @@ const json_parser = @import("json_parser.zig");
 const js_printer = @import("js_printer.zig");
 const js_ast = @import("js_ast.zig");
 const linker = @import("linker.zig");
-usingnamespace @import("ast/base.zig");
-usingnamespace @import("defines.zig");
 const panicky = @import("panic_handler.zig");
 const sync = @import("./sync.zig");
 const Api = @import("api/schema.zig").Api;
@@ -47,8 +55,8 @@ var start_time: i128 = undefined;
 
 pub const Cli = struct {
     var wait_group: sync.WaitGroup = undefined;
-    pub fn startTransform(allocator: *std.mem.Allocator, args: Api.TransformOptions, log: *logger.Log) anyerror!void {}
-    pub fn start(allocator: *std.mem.Allocator, stdout: anytype, stderr: anytype, comptime MainPanicHandler: type) anyerror!void {
+    pub fn startTransform(_: std.mem.Allocator, _: Api.TransformOptions, _: *logger.Log) anyerror!void {}
+    pub fn start(allocator: std.mem.Allocator, _: anytype, _: anytype, comptime MainPanicHandler: type) anyerror!void {
         start_time = std.time.nanoTimestamp();
         var log = try allocator.create(logger.Log);
         log.* = logger.Log.init(allocator);
@@ -102,7 +110,7 @@ pub const Arguments = struct {
     }
 
     pub fn readFile(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         cwd: string,
         filename: string,
     ) ![]u8 {
@@ -173,7 +181,7 @@ pub const Arguments = struct {
         std.os.exit(0);
     }
 
-    pub fn parse(allocator: *std.mem.Allocator, ctx: *Command.Context, comptime cmd: Command.Tag) !Api.TransformOptions {
+    pub fn parse(allocator: std.mem.Allocator, ctx: *Command.Context, comptime cmd: Command.Tag) !Api.TransformOptions {
         var diag = clap.Diagnostic{};
 
         var args = clap.parse(clap.Help, &params, .{
@@ -250,10 +258,6 @@ pub const Arguments = struct {
         // var output_dir = args.option("--outdir");
         var output_dir: ?string = null;
 
-        var define_keys = defines_tuple.keys;
-        var define_values = defines_tuple.values;
-        var loader_keys = loader_tuple.keys;
-        var loader_values = loader_tuple.values;
         var entry_points = args.positionals();
 
         switch (comptime cmd) {
@@ -346,7 +350,7 @@ pub const Arguments = struct {
             else => {},
         }
 
-        const ResolveMatcher = strings.ExactSizeMatcher(8);
+        // const ResolveMatcher = strings.ExactSizeMatcher(8);
 
         opts.resolve = Api.ResolveMode.lazy;
 
@@ -438,15 +442,15 @@ pub const Arguments = struct {
 };
 
 const AutoCommand = struct {
-    pub fn exec(allocator: *std.mem.Allocator) !void {
+    pub fn exec(allocator: std.mem.Allocator) !void {
         try HelpCommand.execWithReason(allocator, .invalid_command);
     }
 };
 const InitCommand = struct {
-    pub fn exec(allocator: *std.mem.Allocator) !void {}
+    pub fn exec(_: std.mem.Allocator) !void {}
 };
 pub const HelpCommand = struct {
-    pub fn exec(allocator: *std.mem.Allocator) !void {
+    pub fn exec(allocator: std.mem.Allocator) !void {
         @setCold(true);
         execWithReason(allocator, .explicit);
     }
@@ -483,10 +487,6 @@ pub const HelpCommand = struct {
     };
 
     pub fn printWithReason(comptime reason: Reason) void {
-        var cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-        const cwd = std.os.getcwd(&cwd_buf) catch unreachable;
-        const dirname = std.fs.path.basename(cwd);
-
         const fmt =
             \\> <r> <b><green>dev     <r><d>  ./a.ts ./b.jsx<r>        Start a Bun Dev Server
             \\> <r> <b><magenta>bun     <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
@@ -504,9 +504,9 @@ pub const HelpCommand = struct {
             \\
         ;
 
-        var rand = std.rand.DefaultPrng.init(@intCast(u64, @maximum(std.time.milliTimestamp(), 0)));
-        const package_add_i = rand.random.uintAtMost(usize, packages_to_add_filler.len - 1);
-        const package_remove_i = rand.random.uintAtMost(usize, packages_to_remove_filler.len - 1);
+        var rand = std.rand.DefaultPrng.init(@intCast(u64, @maximum(std.time.milliTimestamp(), 0))).random();
+        const package_add_i = rand.uintAtMost(usize, packages_to_add_filler.len - 1);
+        const package_remove_i = rand.uintAtMost(usize, packages_to_remove_filler.len - 1);
 
         const args = .{
             packages_to_add_filler[package_add_i],
@@ -526,7 +526,7 @@ pub const HelpCommand = struct {
 
         Output.flush();
     }
-    pub fn execWithReason(allocator: *std.mem.Allocator, comptime reason: Reason) void {
+    pub fn execWithReason(_: std.mem.Allocator, comptime reason: Reason) void {
         @setCold(true);
         printWithReason(reason);
 
@@ -544,12 +544,12 @@ pub const PrintBundleCommand = struct {
         var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         var stdout = std.io.getStdOut();
 
-        var input = try std.fs.openFileAbsolute(try std.os.realpath(ctx.args.entry_points[0], &out_buffer), .{ .read = true });
+        var input = try std.fs.openFileAbsolute(try std.os.realpath(entry_point, &out_buffer), .{ .read = true });
         const params = comptime [_]Arguments.ParamType{
             clap.parseParam("--summary  Peek inside the .bun") catch unreachable,
         };
 
-        var jsBundleArgs = clap.parse(clap.Help, &params, .{ .allocator = ctx.allocator }) catch |err| {
+        var jsBundleArgs = clap.parse(clap.Help, &params, .{ .allocator = ctx.allocator }) catch {
             try NodeModuleBundle.printBundle(std.fs.File, input, @TypeOf(stdout), stdout);
             return;
         };
@@ -577,12 +577,12 @@ pub const Command = struct {
         start_time: i128,
         args: Api.TransformOptions = std.mem.zeroes(Api.TransformOptions),
         log: *logger.Log,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         positionals: []const string = &[_]string{},
 
         debug: DebugOptions = DebugOptions{},
 
-        pub fn create(allocator: *std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
+        pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
             var ctx = Command.Context{
                 .args = std.mem.zeroes(Api.TransformOptions),
                 .log = log,
@@ -598,7 +598,7 @@ pub const Command = struct {
         }
     };
 
-    pub fn which(allocator: *std.mem.Allocator) Tag {
+    pub fn which(allocator: std.mem.Allocator) Tag {
         var args_iter = std.process.args();
         // first one is the executable name
         const skipped = args_iter.skip();
@@ -607,9 +607,9 @@ pub const Command = struct {
             return .AutoCommand;
         }
 
-        var next_arg = (args_iter.next(allocator) orelse return .AutoCommand) catch unreachable;
+        var next_arg = ((args_iter.next(allocator) catch null) orelse return .AutoCommand);
         while (next_arg[0] == '-') {
-            next_arg = (args_iter.next(allocator) orelse return .AutoCommand) catch unreachable;
+            next_arg = ((args_iter.next(allocator) catch null) orelse return .AutoCommand);
         }
 
         const first_arg_name = std.mem.span(next_arg);
@@ -660,7 +660,7 @@ pub const Command = struct {
         "help",
     };
 
-    pub fn start(allocator: *std.mem.Allocator, log: *logger.Log) !void {
+    pub fn start(allocator: std.mem.Allocator, log: *logger.Log) !void {
         const tag = which(allocator);
         switch (tag) {
             .DiscordCommand => return try DiscordCommand.exec(allocator),
@@ -809,7 +809,6 @@ pub const Command = struct {
                 if (args.len > 2) {
                     var remainder = args[2..];
                     var remainder_i: usize = 0;
-                    var i: usize = 0;
                     while (remainder_i < remainder.len and positional_i < positionals.len) : (remainder_i += 1) {
                         var slice = std.mem.trim(u8, std.mem.span(remainder[remainder_i]), " \t\n;");
                         if (slice.len > 0) {

@@ -1,4 +1,3 @@
-usingnamespace @import("../base.zig");
 const std = @import("std");
 const Api = @import("../../../api/schema.zig").Api;
 const FilesystemRouter = @import("../../../router.zig");
@@ -6,13 +5,29 @@ const http = @import("../../../http.zig");
 const JavaScript = @import("../javascript.zig");
 const QueryStringMap = @import("../../../query_string_map.zig").QueryStringMap;
 const CombinedScanner = @import("../../../query_string_map.zig").CombinedScanner;
-usingnamespace @import("../bindings/bindings.zig");
-usingnamespace @import("../webcore/response.zig");
+const _global = @import("../../../global.zig");
+const string = _global.string;
+const JSC = @import("javascript_core");
+const js = JSC.C;
+const WebCore = @import("../webcore/response.zig");
 const Router = @This();
 const Bundler = @import("../../../bundler.zig");
 const VirtualMachine = JavaScript.VirtualMachine;
 const ScriptSrcStream = std.io.FixedBufferStream([]u8);
+const ZigString = JSC.ZigString;
 const Fs = @import("../../../fs.zig");
+const Base = @import("../base.zig");
+const getAllocator = Base.getAllocator;
+const JSObject = JSC.JSObject;
+const JSError = Base.JSError;
+const JSValue = JSC.JSValue;
+const JSGlobalObject = JSC.JSGlobalObject;
+const strings = @import("strings");
+const NewClass = Base.NewClass;
+const To = Base.To;
+const Request = WebCore.Request;
+const d = Base.d;
+const FetchEvent = WebCore.FetchEvent;
 
 route: *const FilesystemRouter.Match,
 query_string_map: ?QueryStringMap = null,
@@ -24,13 +39,13 @@ script_src_buf_writer: ScriptSrcStream = undefined,
 
 pub fn importRoute(
     this: *Router,
-    ctx: js.JSContextRef,
-    function: js.JSObjectRef,
-    thisObject: js.JSObjectRef,
-    arguments: []const js.JSValueRef,
-    exception: js.ExceptionRef,
+    _: js.JSContextRef,
+    _: js.JSObjectRef,
+    _: js.JSObjectRef,
+    _: []const js.JSValueRef,
+    _: js.ExceptionRef,
 ) js.JSObjectRef {
-    const prom = JSModuleLoader.loadAndEvaluateModule(VirtualMachine.vm.global, &ZigString.init(this.route.file_path));
+    const prom = JSC.JSModuleLoader.loadAndEvaluateModule(VirtualMachine.vm.global, &ZigString.init(this.route.file_path));
 
     VirtualMachine.vm.tick();
 
@@ -38,10 +53,10 @@ pub fn importRoute(
 }
 
 pub fn match(
-    obj: void,
+    _: void,
     ctx: js.JSContextRef,
-    function: js.JSObjectRef,
-    thisObject: js.JSObjectRef,
+    _: js.JSObjectRef,
+    _: js.JSObjectRef,
     arguments: []const js.JSValueRef,
     exception: js.ExceptionRef,
 ) js.JSObjectRef {
@@ -74,15 +89,15 @@ fn matchRequest(
 }
 
 fn matchPathNameString(
-    ctx: js.JSContextRef,
-    pathname: string,
-    exception: js.ExceptionRef,
+    _: js.JSContextRef,
+    _: string,
+    _: js.ExceptionRef,
 ) js.JSObjectRef {}
 
 fn matchPathName(
-    ctx: js.JSContextRef,
-    pathname: js.JSStringRef,
-    exception: js.ExceptionRef,
+    _: js.JSContextRef,
+    _: js.JSStringRef,
+    _: js.ExceptionRef,
 ) js.JSObjectRef {
     return null;
 }
@@ -95,7 +110,7 @@ fn matchFetchEvent(
     return createRouteObject(ctx, fetch_event.request_context, exception);
 }
 
-fn createRouteObject(ctx: js.JSContextRef, req: *const http.RequestContext, exception: js.ExceptionRef) js.JSValueRef {
+fn createRouteObject(ctx: js.JSContextRef, req: *const http.RequestContext, _: js.ExceptionRef) js.JSValueRef {
     const route = &(req.matched_route orelse {
         return js.JSValueMakeNull(ctx);
     });
@@ -259,10 +274,10 @@ pub const Instance = NewClass(
 
 pub fn getFilePath(
     this: *Router,
-    ctx: js.JSContextRef,
-    thisObject: js.JSObjectRef,
-    prop: js.JSStringRef,
-    exception: js.ExceptionRef,
+    _: js.JSContextRef,
+    _: js.JSObjectRef,
+    _: js.JSStringRef,
+    _: js.ExceptionRef,
 ) js.JSValueRef {
     return ZigString.init(this.route.file_path).toValue(VirtualMachine.vm.global).asRef();
 }
@@ -277,20 +292,20 @@ pub fn finalize(
 
 pub fn getPathname(
     this: *Router,
-    ctx: js.JSContextRef,
-    thisObject: js.JSObjectRef,
-    prop: js.JSStringRef,
-    exception: js.ExceptionRef,
+    _: js.JSContextRef,
+    _: js.JSObjectRef,
+    _: js.JSStringRef,
+    _: js.ExceptionRef,
 ) js.JSValueRef {
     return ZigString.init(this.route.pathname).toValue(VirtualMachine.vm.global).asRef();
 }
 
 pub fn getRoute(
     this: *Router,
-    ctx: js.JSContextRef,
-    thisObject: js.JSObjectRef,
-    prop: js.JSStringRef,
-    exception: js.ExceptionRef,
+    _: js.JSContextRef,
+    _: js.JSObjectRef,
+    _: js.JSStringRef,
+    _: js.ExceptionRef,
 ) js.JSValueRef {
     return ZigString.init(this.route.name).toValue(VirtualMachine.vm.global).asRef();
 }
@@ -317,17 +332,17 @@ const KindEnum = struct {
 
 pub fn getKind(
     this: *Router,
-    ctx: js.JSContextRef,
-    thisObject: js.JSObjectRef,
-    prop: js.JSStringRef,
-    exception: js.ExceptionRef,
+    _: js.JSContextRef,
+    _: js.JSObjectRef,
+    _: js.JSStringRef,
+    _: js.ExceptionRef,
 ) js.JSValueRef {
     return KindEnum.init(this.route.name).toValue(VirtualMachine.vm.global).asRef();
 }
 
 threadlocal var query_string_values_buf: [256]string = undefined;
 threadlocal var query_string_value_refs_buf: [256]ZigString = undefined;
-pub fn createQueryObject(ctx: js.JSContextRef, map: *QueryStringMap, exception: js.ExceptionRef) callconv(.C) js.JSValueRef {
+pub fn createQueryObject(_: js.JSContextRef, map: *QueryStringMap, _: js.ExceptionRef) callconv(.C) js.JSValueRef {
     const QueryObjectCreator = struct {
         query: *QueryStringMap,
         pub fn create(this: *@This(), obj: *JSObject, global: *JSGlobalObject) void {
@@ -342,11 +357,11 @@ pub fn createQueryObject(ctx: js.JSContextRef, map: *QueryStringMap, exception: 
                     for (entry.values) |value, i| {
                         values[i] = ZigString.init(value);
                     }
-                    obj.putRecord(VirtualMachine.vm.global, &str, values.ptr, values.len);
+                    obj.putRecord(global, &str, values.ptr, values.len);
                 } else {
                     query_string_value_refs_buf[0] = ZigString.init(entry.values[0]);
 
-                    obj.putRecord(VirtualMachine.vm.global, &str, &query_string_value_refs_buf, 1);
+                    obj.putRecord(global, &str, &query_string_value_refs_buf, 1);
                 }
             }
         }
@@ -386,9 +401,9 @@ pub fn getScriptSrcString(
 pub fn getScriptSrc(
     this: *Router,
     ctx: js.JSContextRef,
-    thisObject: js.JSObjectRef,
-    prop: js.JSStringRef,
-    exception: js.ExceptionRef,
+    _: js.JSObjectRef,
+    _: js.JSStringRef,
+    _: js.ExceptionRef,
 ) js.JSValueRef {
     const src = this.script_src orelse brk: {
         getScriptSrcString(ScriptSrcStream.Writer, this.script_src_buf_writer.writer(), this.route.file_path, this.route.client_framework_enabled);
@@ -403,8 +418,8 @@ pub fn getScriptSrc(
 pub fn getParams(
     this: *Router,
     ctx: js.JSContextRef,
-    thisObject: js.JSObjectRef,
-    prop: js.JSStringRef,
+    _: js.JSObjectRef,
+    _: js.JSStringRef,
     exception: js.ExceptionRef,
 ) js.JSValueRef {
     if (this.param_map == null) {
@@ -416,7 +431,7 @@ pub fn getParams(
                 this.route.params,
             ))) |map| {
                 this.param_map = map;
-            } else |err| {}
+            } else |_| {}
         }
     }
 
@@ -431,8 +446,8 @@ pub fn getParams(
 pub fn getQuery(
     this: *Router,
     ctx: js.JSContextRef,
-    thisObject: js.JSObjectRef,
-    prop: js.JSStringRef,
+    _: js.JSObjectRef,
+    _: js.JSStringRef,
     exception: js.ExceptionRef,
 ) js.JSValueRef {
     if (this.query_string_map == null) {
@@ -445,11 +460,11 @@ pub fn getQuery(
                 this.route.params,
             ))) |map| {
                 this.query_string_map = map;
-            } else |err| {}
+            } else |_| {}
         } else if (this.route.query_string.len > 0) {
             if (QueryStringMap.init(getAllocator(ctx), this.route.query_string)) |map| {
                 this.query_string_map = map;
-            } else |err| {}
+            } else |_| {}
         }
     }
 

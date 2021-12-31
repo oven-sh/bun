@@ -3,18 +3,42 @@ const builtin = @import("std").builtin;
 const std = @import("std");
 
 const mimalloc = @import("./allocators/mimalloc.zig");
+const c = struct {
+    pub const malloc_size = mimalloc.mi_malloc_size;
+    pub const malloc_usable_size = mimalloc.mi_malloc_usable_size;
+    pub const malloc = mimalloc.mi_malloc;
+    pub const free = mimalloc.mi_free;
+};
 const Allocator = mem.Allocator;
 const assert = std.debug.assert;
-
 const CAllocator = struct {
     comptime {
-        if (!builtin.link_libc) {
+        if (!@import("builtin").link_libc) {
             @compileError("C allocator is only available when linking against libc");
         }
     }
-    pub const supports_malloc_size = true;
-    pub const malloc_size = mimalloc.mi_malloc_size;
-    pub const supports_posix_memalign = true;
+
+    usingnamespace if (@hasDecl(c, "malloc_size"))
+        struct {
+            pub const supports_malloc_size = true;
+            pub const malloc_size = c.malloc_size;
+        }
+    else if (@hasDecl(c, "malloc_usable_size"))
+        struct {
+            pub const supports_malloc_size = true;
+            pub const malloc_size = c.malloc_usable_size;
+        }
+    else if (@hasDecl(c, "_msize"))
+        struct {
+            pub const supports_malloc_size = true;
+            pub const malloc_size = c._msize;
+        }
+    else
+        struct {
+            pub const supports_malloc_size = false;
+        };
+
+    pub const supports_posix_memalign = @hasDecl(c, "posix_memalign");
 
     fn getHeader(ptr: [*]u8) *[*]u8 {
         return @intToPtr(*[*]u8, @ptrToInt(ptr) - @sizeOf(usize));
@@ -24,9 +48,10 @@ const CAllocator = struct {
         if (supports_posix_memalign) {
             // The posix_memalign only accepts alignment values that are a
             // multiple of the pointer size
+            const eff_alignment = std.math.max(alignment, @sizeOf(usize));
 
-            var aligned_ptr: ?*c_void = undefined;
-            if (mimalloc.mi_posix_memalign(&aligned_ptr, @maximum(alignment, @sizeOf(usize)), len) != 0)
+            var aligned_ptr: ?*anyopaque = undefined;
+            if (c.posix_memalign(&aligned_ptr, eff_alignment, len) != 0)
                 return null;
 
             return @ptrCast([*]u8, aligned_ptr);
@@ -35,7 +60,7 @@ const CAllocator = struct {
         // Thin wrapper around regular malloc, overallocate to account for
         // alignment padding and store the orignal malloc()'ed pointer before
         // the aligned address.
-        var unaligned_ptr = @ptrCast([*]u8, mimalloc.mi_malloc(len + alignment - 1 + @sizeOf(usize)) orelse return null);
+        var unaligned_ptr = @ptrCast([*]u8, c.malloc(len + alignment - 1 + @sizeOf(usize)) orelse return null);
         const unaligned_addr = @ptrToInt(unaligned_ptr);
         const aligned_addr = mem.alignForward(unaligned_addr + @sizeOf(usize), alignment);
         var aligned_ptr = unaligned_ptr + (aligned_addr - unaligned_addr);
@@ -46,31 +71,30 @@ const CAllocator = struct {
 
     fn alignedFree(ptr: [*]u8) void {
         if (supports_posix_memalign) {
-            return mimalloc.mi_free(ptr);
+            return c.free(ptr);
         }
 
         const unaligned_ptr = getHeader(ptr).*;
-        mimalloc.mi_free(unaligned_ptr);
+        c.free(unaligned_ptr);
     }
 
     fn alignedAllocSize(ptr: [*]u8) usize {
         if (supports_posix_memalign) {
-            return malloc_size(ptr);
+            return CAllocator.malloc_size(ptr);
         }
 
         const unaligned_ptr = getHeader(ptr).*;
         const delta = @ptrToInt(ptr) - @ptrToInt(unaligned_ptr);
-        return malloc_size(unaligned_ptr) - delta;
+        return CAllocator.malloc_size(unaligned_ptr) - delta;
     }
 
     fn alloc(
-        allocator: *Allocator,
+        _: *anyopaque,
         len: usize,
         alignment: u29,
         len_align: u29,
         return_address: usize,
     ) error{OutOfMemory}![]u8 {
-        _ = allocator;
         _ = return_address;
         assert(len > 0);
         assert(std.math.isPowerOfTwo(alignment));
@@ -80,7 +104,7 @@ const CAllocator = struct {
             return ptr[0..len];
         }
         const full_len = init: {
-            if (supports_malloc_size) {
+            if (CAllocator.supports_malloc_size) {
                 const s = alignedAllocSize(ptr);
                 assert(s >= len);
                 break :init s;
@@ -91,39 +115,45 @@ const CAllocator = struct {
     }
 
     fn resize(
-        allocator: *Allocator,
+        _: *anyopaque,
         buf: []u8,
         buf_align: u29,
         new_len: usize,
         len_align: u29,
         return_address: usize,
-    ) Allocator.Error!usize {
-        _ = allocator;
+    ) ?usize {
         _ = buf_align;
         _ = return_address;
-        if (new_len == 0) {
-            alignedFree(buf.ptr);
-            return 0;
-        }
         if (new_len <= buf.len) {
             return mem.alignAllocLen(buf.len, new_len, len_align);
         }
-        if (supports_malloc_size) {
+        if (CAllocator.supports_malloc_size) {
             const full_len = alignedAllocSize(buf.ptr);
             if (new_len <= full_len) {
                 return mem.alignAllocLen(full_len, new_len, len_align);
             }
         }
+        return null;
+    }
 
-        return error.OutOfMemory;
+    fn free(
+        _: *anyopaque,
+        buf: []u8,
+        buf_align: u29,
+        return_address: usize,
+    ) void {
+        _ = buf_align;
+        _ = return_address;
+        alignedFree(buf.ptr);
     }
 };
 
-/// Supports the full Allocator interface, including alignment, and exploiting
-/// `malloc_usable_size` if available. For an allocator that directly calls
-/// `malloc`/`free`, see `raw_c_allocator`.
-pub const c_allocator = &c_allocator_state;
-var c_allocator_state = Allocator{
-    .allocFn = CAllocator.alloc,
-    .resizeFn = CAllocator.resize,
+pub const c_allocator = Allocator{
+    .ptr = undefined,
+    .vtable = &c_allocator_vtable,
+};
+const c_allocator_vtable = Allocator.VTable{
+    .alloc = CAllocator.alloc,
+    .resize = CAllocator.resize,
+    .free = CAllocator.free,
 };

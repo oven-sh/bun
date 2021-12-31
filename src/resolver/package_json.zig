@@ -1,4 +1,14 @@
-usingnamespace @import("../global.zig");
+const _global = @import("../global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const StoredFileDescriptorType = _global.StoredFileDescriptorType;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const C = _global.C;
 const Api = @import("../api/schema.zig").Api;
 const std = @import("std");
 const options = @import("../options.zig");
@@ -28,7 +38,7 @@ pub const PackageJSON = struct {
     };
 
     const node_modules_path = std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str;
-    pub fn nameForImport(this: *const PackageJSON, allocator: *std.mem.Allocator) !string {
+    pub fn nameForImport(this: *const PackageJSON, allocator: std.mem.Allocator) !string {
         if (strings.indexOf(this.source.path.text, node_modules_path)) |_| {
             return this.name;
         } else {
@@ -100,7 +110,7 @@ pub const PackageJSON = struct {
     fn loadDefineDefaults(
         env: *options.Env,
         json: *const js_ast.E.Object,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
     ) !void {
         var valid_count: usize = 0;
         for (json.properties) |prop| {
@@ -123,7 +133,7 @@ pub const PackageJSON = struct {
     fn loadOverrides(
         framework: *options.Framework,
         json: *const js_ast.E.Object,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
     ) void {
         var valid_count: usize = 0;
         for (json.properties) |prop| {
@@ -146,7 +156,7 @@ pub const PackageJSON = struct {
     fn loadDefineExpression(
         env: *options.Env,
         json: *const js_ast.E.Object,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
     ) anyerror!void {
         for (json.properties) |prop| {
             switch (prop.key.?.data) {
@@ -182,7 +192,7 @@ pub const PackageJSON = struct {
     fn loadFrameworkExpression(
         framework: *options.Framework,
         json: js_ast.Expr,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         comptime read_define: bool,
     ) bool {
         if (json.asProperty("client")) |client| {
@@ -277,7 +287,7 @@ pub const PackageJSON = struct {
         package_json: *const PackageJSON,
         pair: *FrameworkRouterPair,
         json: js_ast.Expr,
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         comptime read_defines: bool,
         comptime load_framework: LoadFramework,
     ) void {
@@ -362,7 +372,6 @@ pub const PackageJSON = struct {
 
                 if (router.expr.asProperty("extensions")) |extensions_expr| {
                     if (extensions_expr.expr.asArray()) |*array| {
-                        const count = array.array.items.len;
                         var valid_count: usize = 0;
 
                         while (array.next()) |expr| {
@@ -476,7 +485,7 @@ pub const PackageJSON = struct {
         json_source.path.pretty = r.prettyPath(json_source.path);
 
         const json: js_ast.Expr = (r.caches.json.parseJSON(r.log, json_source, r.allocator) catch |err| {
-            if (isDebug) {
+            if (Environment.isDebug) {
                 Output.printError("{s}: JSON parse error: {s}", .{ package_json_path, @errorName(err) });
             }
             return null;
@@ -560,7 +569,6 @@ pub const PackageJSON = struct {
 
             if (bun_json.expr.asProperty("macros")) |macros| {
                 if (macros.expr.data == .e_object) {
-                    var always_bundle_count: u16 = 0;
                     const properties = macros.expr.data.e_object.properties;
 
                     for (properties) |property| {
@@ -764,7 +772,7 @@ pub const ExportsMap = struct {
     root: Entry,
     exports_range: logger.Range = logger.Range.None,
 
-    pub fn parse(allocator: *std.mem.Allocator, source: *const logger.Source, log: *logger.Log, json: js_ast.Expr) ?ExportsMap {
+    pub fn parse(allocator: std.mem.Allocator, source: *const logger.Source, log: *logger.Log, json: js_ast.Expr) ?ExportsMap {
         var visitor = Visitor{ .allocator = allocator, .source = source, .log = log };
 
         const root = visitor.visit(json);
@@ -780,7 +788,7 @@ pub const ExportsMap = struct {
     }
 
     pub const Visitor = struct {
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         source: *const logger.Source,
         log: *logger.Log,
 
@@ -949,7 +957,7 @@ pub const ExportsMap = struct {
 
         pub fn valueForKey(this: *const Entry, key_: string) ?Entry {
             switch (this.data) {
-                .map => |map| {
+                .map => {
                     var slice = this.data.map.list.slice();
                     const keys = slice.items(.key);
                     for (keys) |key, i| {
@@ -973,7 +981,7 @@ pub const ESModule = struct {
 
     debug_logs: ?*resolver.DebugLogs = null,
     conditions: ConditionsMap,
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 
     pub const Resolution = struct {
         status: Status = Status.Undefined,
@@ -1425,7 +1433,7 @@ pub const ESModule = struct {
                 var last_exception = Status.Undefined;
                 var last_debug = Resolution.Debug{ .token = target.first_token };
 
-                for (array) |targetValue, i| {
+                for (array) |targetValue| {
                     // Let resolved be the result, continuing the loop on any Invalid Package Target error.
                     const result = r.resolveTarget(package_url, targetValue, subpath, pattern);
                     if (result.status == .InvalidPackageTarget or result.status == .Null) {

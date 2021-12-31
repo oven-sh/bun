@@ -1,5 +1,15 @@
-usingnamespace @import("global.zig");
-usingnamespace @import("./ast/base.zig");
+const _global = @import("global.zig");
+const string = _global.string;
+const Output = _global.Output;
+const Global = _global.Global;
+const Environment = _global.Environment;
+const strings = _global.strings;
+const MutableString = _global.MutableString;
+const stringZ = _global.stringZ;
+const default_allocator = _global.default_allocator;
+const FileDescriptorType = _global.FileDescriptorType;
+const C = _global.C;
+const Ref = @import("./ast/base.zig").Ref;
 
 const std = @import("std");
 const lex = @import("js_lexer.zig");
@@ -33,7 +43,7 @@ pub const OnImportCallback = fn (resolve_result: *const Resolver.Result, import_
 pub const Linker = struct {
     const HashedFileNameMap = std.AutoHashMap(u64, string);
     const ThisLinker = @This();
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     options: *Options.BundleOptions,
     fs: *Fs.FileSystem,
     log: *logger.Log,
@@ -49,7 +59,7 @@ pub const Linker = struct {
     onImportCSS: ?OnImportCallback = null,
 
     pub fn init(
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         log: *logger.Log,
         resolve_queue: *ResolveQueue,
         options: *Options.BundleOptions,
@@ -70,12 +80,6 @@ pub const Linker = struct {
             .runtime_source_path = fs.absAlloc(allocator, &([_]string{"__runtime.js"})) catch unreachable,
             .hashed_filenames = HashedFileNameMap.init(allocator),
         };
-    }
-
-    // fs: fs.FileSystem,
-    // TODO:
-    pub fn requireOrImportMetaForSource(c: ThisLinker, source_index: Ref.Int) RequireOrImportMeta {
-        return RequireOrImportMeta{};
     }
 
     pub fn getHashedFilename(
@@ -192,11 +196,9 @@ pub const Linker = struct {
         comptime import_path_format: Options.BundleOptions.ImportPathFormat,
         comptime ignore_runtime: bool,
     ) !void {
-        var needs_runtime = result.ast.uses_exports_ref or result.ast.uses_module_ref or result.ast.runtime_imports.hasAny();
         const source_dir = file_path.sourceDir();
         var externals = std.ArrayList(u32).init(linker.allocator);
         var needs_bundle = false;
-        var first_bundled_index: ?u32 = null;
         var had_resolve_errors = false;
         var needs_require = false;
 
@@ -250,7 +252,7 @@ pub const Linker = struct {
                                     if (node_modules_bundle.getPackageIDByHash(package_json.hash)) |pkg_id| {
                                         const package = node_modules_bundle.bundle.packages[pkg_id];
 
-                                        if (comptime isDebug) {
+                                        if (comptime Environment.isDebug) {
                                             std.debug.assert(strings.eql(node_modules_bundle.str(package.name), package_json.name));
                                             std.debug.assert(strings.eql(node_modules_bundle.str(package.version), package_json.version));
                                         }
@@ -274,7 +276,7 @@ pub const Linker = struct {
                                             break :bundled;
                                         };
 
-                                        if (comptime isDebug) {
+                                        if (comptime Environment.isDebug) {
                                             const module_path = node_modules_bundle.str(found_module.path);
                                             std.debug.assert(
                                                 strings.eql(
@@ -449,58 +451,6 @@ pub const Linker = struct {
             };
             result.ast.prepend_part = js_ast.Part{ .stmts = std.mem.span(&require_part_stmts) };
         }
-
-        // This is a bad idea
-        // I don't think it's safe to do this
-        const ImportStatementSorter = struct {
-            import_records: []ImportRecord,
-            pub fn lessThan(ctx: @This(), lhs: js_ast.Stmt, rhs: js_ast.Stmt) bool {
-                switch (lhs.data) {
-                    .s_import => |li| {
-                        switch (rhs.data) {
-                            .s_import => |ri| {
-                                const a = ctx.import_records[li.import_record_index];
-                                const b = ctx.import_records[ri.import_record_index];
-                                if (a.is_bundled and !b.is_bundled) {
-                                    return false;
-                                } else {
-                                    return true;
-                                }
-                            },
-                            else => {
-                                return true;
-                            },
-                        }
-                    },
-                    else => {
-                        switch (rhs.data) {
-                            .s_import => |ri| {
-                                const a = ctx.import_records[ri.import_record_index];
-                                if (!a.is_bundled) {
-                                    return false;
-                                } else {
-                                    return true;
-                                }
-                            },
-                            else => {
-                                return true;
-                            },
-                        }
-                    },
-                }
-            }
-        };
-
-        // std.sort.sort(comptime T: type, items: []T, context: anytype, comptime lessThan: fn(context:@TypeOf(context), lhs:T, rhs:T)bool)
-
-        // Change the import order so that any bundled imports appear last
-        // This is to make it so the bundle (which should be quite large) is least likely to block rendering
-        // if (needs_bundle) {
-        //     const sorter = ImportStatementSorter{ .import_records = result.ast.import_records };
-        //     for (result.ast.parts) |*part, i| {
-        //         std.sort.sort(js_ast.Stmt, part.stmts, sorter, ImportStatementSorter.lessThan);
-        //     }
-        // }
     }
 
     const ImportPathsList = allocators.BSSStringList(512, 128);
@@ -510,7 +460,7 @@ pub const Linker = struct {
         linker: *ThisLinker,
         source_dir: string,
         source_path: string,
-        package_version: ?string,
+        _: ?string,
         use_hashed_name: bool,
         namespace: string,
         comptime import_path_format: Options.BundleOptions.ImportPathFormat,
@@ -568,7 +518,6 @@ pub const Linker = struct {
                     relative_name = pretty;
                 }
 
-                var pathname = Fs.PathName.init(pretty);
                 var path = Fs.Path.initWithPretty(pretty, relative_name);
                 path.text = path.text[0 .. path.text.len - path.name.ext.len];
                 return path;
@@ -576,7 +525,7 @@ pub const Linker = struct {
 
             .absolute_url => {
                 if (strings.eqlComptime(namespace, "node")) {
-                    if (comptime isDebug) std.debug.assert(strings.eqlComptime(source_path[0..5], "node:"));
+                    if (comptime Environment.isDebug) std.debug.assert(strings.eqlComptime(source_path[0..5], "node:"));
 
                     return Fs.Path.init(try std.fmt.allocPrint(
                         linker.allocator,

@@ -18,7 +18,7 @@ const URL = @import("../query_string_map.zig").URL;
 const Fs = @import("../fs.zig");
 const Analytics = @import("./analytics_schema.zig").analytics;
 const Writer = @import("./analytics_schema.zig").Writer;
-const Headers = @import("../javascript/jsc/webcore/response.zig").Headers;
+const Headers = @import("http").Headers;
 const Futex = @import("../futex.zig");
 
 fn NewUint64(val: u64) Analytics.Uint64 {

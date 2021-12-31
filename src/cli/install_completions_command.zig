@@ -39,7 +39,7 @@ const NPMClient = @import("../which_npm_client.zig").NPMClient;
 const which = @import("../which.zig").which;
 const clap = @import("clap");
 const Lock = @import("../lock.zig").Lock;
-const Headers = @import("../javascript/jsc/webcore/response.zig").Headers;
+const Headers = @import("http").Headers;
 const CopyFile = @import("../copy_file.zig");
 const ShellCompletions = @import("./shell_completions.zig");
 

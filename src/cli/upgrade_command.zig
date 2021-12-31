@@ -39,7 +39,7 @@ const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const clap = @import("clap");
 const Lock = @import("../lock.zig").Lock;
-const Headers = @import("../javascript/jsc/webcore/response.zig").Headers;
+const Headers = @import("http").Headers;
 const CopyFile = @import("../copy_file.zig");
 const NetworkThread = @import("network_thread");
 

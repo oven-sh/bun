@@ -11,7 +11,6 @@ const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
 const C = _global.C;
 const std = @import("std");
-const Headers = @import("./javascript/jsc/webcore/response.zig").Headers;
 const URL = @import("./query_string_map.zig").URL;
 const Method = @import("./http/method.zig").Method;
 const Api = @import("./api/schema.zig").Api;
@@ -25,6 +24,14 @@ const boring = @import("boringssl");
 const NetworkThread = @import("network_thread");
 
 const SOCK = os.SOCK;
+
+pub const Headers = struct {
+    pub const Kv = struct {
+        name: Api.StringPointer,
+        value: Api.StringPointer,
+    };
+    pub const Entries = std.MultiArrayList(Kv);
+};
 
 const SOCKET_FLAGS: u32 = if (Environment.isLinux)
     SOCK.CLOEXEC | os.MSG_NOSIGNAL

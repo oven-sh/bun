@@ -94,37 +94,23 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
         .path = pkgPath("src/jsc.zig"),
     };
     javascript_core.dependencies = &.{ network_thread, http, strings, picohttp };
+    thread_pool.dependencies = &.{ io, http, network_thread };
     http.dependencies = &.{
         network_thread,
-        http,
         strings,
         picohttp,
-        javascript_core,
         io,
         boringssl,
         thread_pool,
     };
-    thread_pool.dependencies = &.{ io, http };
+    thread_pool.dependencies = &.{ io, http, network_thread };
 
     network_thread.dependencies = &.{
         io,
         thread_pool,
     };
-    http.dependencies = &.{ io, network_thread, strings, boringssl, picohttp };
 
     thread_pool.dependencies = &.{ io, http };
-    http.dependencies = &.{ io, network_thread, thread_pool, strings, boringssl, picohttp };
-
-    http.dependencies = &.{
-        network_thread,
-        http,
-        strings,
-        picohttp,
-        javascript_core,
-        io,
-        boringssl,
-        thread_pool,
-    };
 
     step.addPackage(thread_pool);
     step.addPackage(picohttp);

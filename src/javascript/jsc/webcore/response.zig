@@ -39,6 +39,7 @@ const VirtualMachine = @import("../javascript.zig").VirtualMachine;
 const Task = @import("../javascript.zig").Task;
 
 const picohttp = @import("picohttp");
+
 pub const Response = struct {
     pub const Class = NewClass(
         Response,
@@ -778,12 +779,8 @@ pub const Fetch = struct {
 
 // https://developer.mozilla.org/en-US/docs/Web/API/Headers
 pub const Headers = struct {
-    pub const Kv = struct {
-        name: Api.StringPointer,
-        value: Api.StringPointer,
-    };
-    pub const Entries = std.MultiArrayList(Kv);
-    entries: Entries,
+    pub usingnamespace HTTPClient.Headers;
+    entries: Headers.Entries,
     buf: std.ArrayListUnmanaged(u8),
     allocator: std.mem.Allocator,
     used: u32 = 0,
@@ -1087,7 +1084,7 @@ pub const Headers = struct {
         total_len += picohttp_headers.len * 2;
         var headers = Headers{
             .allocator = allocator,
-            .entries = Entries{},
+            .entries = Headers.Entries{},
             .buf = std.ArrayListUnmanaged(u8){},
         };
         try headers.entries.ensureTotalCapacity(allocator, picohttp_headers.len);
@@ -1096,7 +1093,7 @@ pub const Headers = struct {
         headers.guard = Guard.request;
 
         for (picohttp_headers) |header| {
-            headers.entries.appendAssumeCapacity(Kv{
+            headers.entries.appendAssumeCapacity(.{
                 .name = headers.appendString(
                     string,
                     header.name,
@@ -1192,7 +1189,7 @@ pub const Headers = struct {
         headers.buf.expandToCapacity();
         headers.entries.append(
             headers.allocator,
-            Kv{
+            .{
                 .name = headers.appendString(
                     string,
                     key,
@@ -1273,7 +1270,7 @@ pub const Headers = struct {
     }
 
     pub fn appendInit(this: *Headers, ctx: js.JSContextRef, key: js.JSStringRef, comptime value_type: js.JSType, value: js.JSValueRef) !void {
-        this.entries.append(this.allocator, Kv{
+        this.entries.append(this.allocator, .{
             .name = this.appendString(js.JSStringRef, key, true, true, false),
             .value = switch (comptime value_type) {
                 js.JSType.kJSTypeNumber => this.appendNumber(js.JSValueToNumber(ctx, value, null)),

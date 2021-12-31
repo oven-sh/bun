@@ -12,7 +12,7 @@ const C = _global.C;
 const clap = @import("../src/deps/zig-clap/clap.zig");
 
 const URL = @import("../src/query_string_map.zig").URL;
-const Headers = @import("../src/javascript/jsc/webcore/response.zig").Headers;
+const Headers = @import("http").Headers;
 const Method = @import("../src/http/method.zig").Method;
 const ColonListType = @import("../src/cli/colon_list_type.zig").ColonListType;
 const HeadersTuple = ColonListType(string, noop_resolver);

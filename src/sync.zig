@@ -1186,7 +1186,7 @@ const Futex = switch (@import("builtin").os.tag) {
         fn wait(ptr: *const i32, cmp: i32) void {
             switch (system.getErrno(system.futex_wait(
                 ptr,
-                system.FUTEX_PRIVATE_FLAG | system.FUTEX_WAIT,
+                system.FUTEX.PRIVATE_FLAG | system.FUTEX.WAIT,
                 cmp,
                 null,
             ))) {
@@ -1200,7 +1200,7 @@ const Futex = switch (@import("builtin").os.tag) {
         fn wake(ptr: *const i32) void {
             switch (system.getErrno(system.futex_wake(
                 ptr,
-                system.FUTEX_PRIVATE_FLAG | system.FUTEX_WAKE,
+                system.FUTEX.PRIVATE_FLAG | system.FUTEX.WAKE,
                 @as(i32, 1),
             ))) {
                 0 => {},

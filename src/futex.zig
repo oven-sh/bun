@@ -145,7 +145,7 @@ const LinuxFutex = struct {
 
         switch (linux.getErrno(linux.futex_wait(
             @ptrCast(*const i32, ptr),
-            linux.FUTEX_PRIVATE_FLAG | linux.FUTEX_WAIT,
+            linux.FUTEX.PRIVATE_FLAG | linux.FUTEX.WAIT,
             @bitCast(i32, expect),
             ts_ptr,
         ))) {
@@ -162,7 +162,7 @@ const LinuxFutex = struct {
     fn wake(ptr: *const Atomic(u32), num_waiters: u32) void {
         switch (linux.getErrno(linux.futex_wake(
             @ptrCast(*const i32, ptr),
-            linux.FUTEX_PRIVATE_FLAG | linux.FUTEX_WAKE,
+            linux.FUTEX.PRIVATE_FLAG | linux.FUTEX.WAKE,
             std.math.cast(i32, num_waiters) catch std.math.maxInt(i32),
         ))) {
             .SUCCESS => {}, // successful wake up

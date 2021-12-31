@@ -119,7 +119,7 @@ pub fn run_for_ns(self: *IO, nanoseconds: u63) !void {
     // timeout below as an absolute value. Otherwise, we may deadlock if the clock sources are
     // dramatically different. Any kernel that supports io_uring will support CLOCK_MONOTONIC.
     var current_ts: timespec = undefined;
-    os.clock_gettime(os.CLOCK_MONOTONIC, &current_ts) catch unreachable;
+    os.clock_gettime(os.CLOCK.MONOTONIC, &current_ts) catch unreachable;
     // The absolute CLOCK_MONOTONIC time after which we may return from this function:
     const timeout_ts: timespec = .{
         .tv_sec = current_ts.tv_sec,

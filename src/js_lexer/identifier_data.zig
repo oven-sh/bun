@@ -123,13 +123,11 @@ test "Check" {
     try std.os.chdir(std.fs.path.dirname(@src().file).?);
     var start_cached = try std.fs.cwd().openFileZ("id_start_bitset.meta.blob", .{ .read = true });
     var start_cached_data = try start_cached.readToEndAlloc(std.heap.c_allocator, 4096);
-    var start_cached_correct = std.mem.asBytes(&id_start_cached_correct);
 
     try std.testing.expectEqualSlices(u8, start_cached_data, std.mem.asBytes(&id_start_cached_correct));
 
     var continue_cached = try std.fs.cwd().openFileZ("id_continue_bitset.meta.blob", .{ .read = true });
     var continue_cached_data = try continue_cached.readToEndAlloc(std.heap.c_allocator, 4096);
-    var continue_cached_correct = std.mem.asBytes(&id_continue_cached_correct);
 
     try std.testing.expectEqualSlices(u8, continue_cached_data, std.mem.asBytes(&id_continue_cached_correct));
 
@@ -151,7 +149,6 @@ test "Check #2" {
     try std.testing.expectEqualSlices(u8, start_cached_data, std.mem.asBytes(&id_start_cached_correct));
 
     var continue_cached_data = std.mem.asBytes(&Cache.id_continue_meta);
-    var continue_cached_correct = std.mem.asBytes(&id_continue_cached_correct);
 
     try std.testing.expectEqualSlices(u8, continue_cached_data, std.mem.asBytes(&id_continue_cached_correct));
 

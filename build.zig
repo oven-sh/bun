@@ -85,32 +85,32 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
         .path = pkgPath("src/http_client_async.zig"),
     };
 
-    var network_thread: std.build.Pkg = .{
-        .name = "network_thread",
-        .path = pkgPath("src/network_thread.zig"),
-    };
     var javascript_core: std.build.Pkg = .{
         .name = "javascript_core",
         .path = pkgPath("src/jsc.zig"),
     };
-    javascript_core.dependencies = &.{ network_thread, http, strings, picohttp };
-    thread_pool.dependencies = &.{ io, http, network_thread };
+    javascript_core.dependencies = &.{ http, strings, picohttp };
     http.dependencies = &.{
-        network_thread,
         strings,
         picohttp,
         io,
         boringssl,
         thread_pool,
     };
-    thread_pool.dependencies = &.{ io, http, network_thread };
-
-    network_thread.dependencies = &.{
+    thread_pool.dependencies = &.{ io, http };
+    http.dependencies = &.{
+        strings,
+        picohttp,
         io,
+        boringssl,
         thread_pool,
     };
-
     thread_pool.dependencies = &.{ io, http };
+
+    thread_pool.dependencies = &.{
+        io,
+        http,
+    };
 
     step.addPackage(thread_pool);
     step.addPackage(picohttp);
@@ -118,7 +118,6 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
     step.addPackage(strings);
     step.addPackage(clap);
     step.addPackage(http);
-    step.addPackage(network_thread);
     step.addPackage(boringssl);
     step.addPackage(javascript_core);
 }

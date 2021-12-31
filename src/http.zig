@@ -1734,8 +1734,14 @@ pub const RequestContext = struct {
             self: *WebsocketHandler,
         ) !u8 {
             var request: *RequestContext = &self.ctx;
-            const v = request.header("Sec-WebSocket-Version") orelse return error.BadRequest;
-            return std.fmt.parseInt(u8, v.value, 10) catch error.BadRequest;
+            const v = request.header("Sec-WebSocket-Version") orelse {
+                Output.prettyErrorln("HMR WebSocket error: missing Sec-WebSocket-Version header", .{});
+                return error.BadRequest;
+            };
+            return std.fmt.parseInt(u8, v.value, 10) catch {
+                Output.prettyErrorln("HMR WebSocket error: Sec-WebSocket-Version is invalid {s}", .{v.value});
+                return error.BadRequest;
+            };
         }
 
         fn getWebsocketAcceptKey(
@@ -1744,6 +1750,7 @@ pub const RequestContext = struct {
             var request: *RequestContext = &self.ctx;
             const key = (request.header("Sec-WebSocket-Key") orelse return error.BadRequest).value;
             if (key.len < 8) {
+                Output.prettyErrorln("HMR WebSocket error: Sec-WebSocket-Key is less than 8 characters long: {s}", .{key});
                 return error.BadRequest;
             }
 

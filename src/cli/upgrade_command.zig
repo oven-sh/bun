@@ -17,8 +17,6 @@ const options = @import("../options.zig");
 const js_parser = @import("../js_parser.zig");
 const js_ast = @import("../js_ast.zig");
 const linker = @import("../linker.zig");
-usingnamespace @import("../ast/base.zig");
-usingnamespace @import("../defines.zig");
 const panicky = @import("../panic_handler.zig");
 const allocators = @import("../allocators.zig");
 const sync = @import("../sync.zig");
@@ -41,7 +39,7 @@ const clap = @import("clap");
 const Lock = @import("../lock.zig").Lock;
 const Headers = @import("http").Headers;
 const CopyFile = @import("../copy_file.zig");
-const NetworkThread = @import("network_thread");
+const NetworkThread = HTTP.NetworkThread;
 
 pub var initialized_store = false;
 pub fn initializeStore() void {

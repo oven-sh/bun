@@ -44,7 +44,7 @@ PRETTIER ?= $(shell which prettier || echo "./node_modules/.bin/prettier")
 WEBKIT_DIR ?= $(realpath src/javascript/jsc/WebKit)
 WEBKIT_RELEASE_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Release
 
-NPM_CLIENT ?= $(shell which npm || which bun)
+NPM_CLIENT ?= $(shell which bun || which npm)
 ZIG ?= $(shell which zig || echo -e "error: Missing zig. Please make sure zig is in PATH. Or set ZIG=/path/to-zig-executable")
 
 # We must use the same compiler version for the JavaScriptCore bindings and JavaScriptCore

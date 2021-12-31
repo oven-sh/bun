@@ -4,7 +4,7 @@ const RequestContext = @import("../../../http.zig").RequestContext;
 const MimeType = @import("../../../http.zig").MimeType;
 const ZigURL = @import("../../../query_string_map.zig").URL;
 const HTTPClient = @import("http");
-const NetworkThread = @import("network_thread");
+const NetworkThread = HTTPClient.NetworkThread;
 
 const JSC = @import("../../../jsc.zig");
 const js = JSC.C;

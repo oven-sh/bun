@@ -39,9 +39,10 @@ const Lock = @import("../lock.zig").Lock;
 var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 var path_buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 const URL = @import("../query_string_map.zig").URL;
-const NetworkThread = @import("network_thread");
 const AsyncHTTP = @import("http").AsyncHTTP;
 const HTTPChannel = @import("http").HTTPChannel;
+const NetworkThread = @import("http").NetworkThread;
+
 const Integrity = @import("./integrity.zig").Integrity;
 const clap = @import("clap");
 const ExtractTarball = @import("./extract_tarball.zig");

@@ -161,7 +161,7 @@ pub const Reader = struct {
                             else => {},
                         }
                     },
-                    .Enum =>  {
+                    .Enum => {
                         return try this.readEnum(T);
                     },
                     else => {},

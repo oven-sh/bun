@@ -21,7 +21,7 @@ const StringBuilder = @import("./string_builder.zig");
 const AsyncIO = @import("io");
 const ThreadPool = @import("thread_pool");
 const boring = @import("boringssl");
-const NetworkThread = @import("network_thread");
+pub const NetworkThread = @import("./network_thread.zig");
 
 const SOCK = os.SOCK;
 

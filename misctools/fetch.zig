@@ -17,7 +17,7 @@ const Method = @import("../src/http/method.zig").Method;
 const ColonListType = @import("../src/cli/colon_list_type.zig").ColonListType;
 const HeadersTuple = ColonListType(string, noop_resolver);
 const path_handler = @import("../src/resolver/resolve_path.zig");
-const NetworkThread = @import("network_thread");
+const NetworkThread = @import("http").NetworkThread;
 const HTTP = @import("http");
 fn noop_resolver(in: string) !string {
     return in;

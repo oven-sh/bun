@@ -183,8 +183,8 @@ pub const Arguments = struct {
     }
 };
 
-const NetworkThread = @import("network_thread");
 const HTTP = @import("http");
+const NetworkThread = HTTP.NetworkThread;
 
 var stdout_: std.fs.File = undefined;
 var stderr_: std.fs.File = undefined;

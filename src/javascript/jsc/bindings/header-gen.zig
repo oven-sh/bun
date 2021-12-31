@@ -13,7 +13,7 @@ const TypeNameMap = std.StringHashMap([]const u8);
 fn isCppObject(comptime Type: type) bool {
     return switch (@typeInfo(Type)) {
         .Struct, .Union, .Opaque => true,
-        .Enum => |Enum| @hasDecl(Type, "Type"),
+        .Enum => @hasDecl(Type, "Type"),
         else => false,
     };
 }
@@ -88,13 +88,13 @@ pub const C_Generator = struct {
         export_zig,
     };
 
-    pub fn init(comptime src_file: []const u8, comptime Writer: type, file: Writer) Self {
+    pub fn init(comptime src_file: []const u8, comptime Writer: type, _: Writer) Self {
         var res = Self{ .filebase = src_file };
 
         return res;
     }
 
-    pub fn deinit(self: *const Self) void {
+    pub fn deinit(_: *const Self) void {
         // self.file.writeAll("\n/**** </") catch unreachable;
         // self.file.writeAll(self.filebase) catch unreachable;
         // self.file.writeAll("> ****/\n\n") catch unreachable;
@@ -105,7 +105,7 @@ pub const C_Generator = struct {
         comptime name: []const u8,
         comptime func: FnDecl,
         comptime meta: FnMeta,
-        comptime arg_names: []const []const u8,
+        comptime _: []const []const u8,
         comptime rewrite_return: bool,
     ) void {
         switch (comptime meta.calling_convention) {
@@ -296,10 +296,10 @@ pub const C_Generator = struct {
     }
 
     pub fn gen_union(
-        self: *Self,
-        comptime name: []const u8,
-        comptime meta: UnionMeta,
-        comptime static_types: anytype,
+        _: *Self,
+        comptime _: []const u8,
+        comptime _: UnionMeta,
+        comptime _: anytype,
     ) void {
         @compileError("Not implemented");
         // self.write("typedef union ");
@@ -387,7 +387,6 @@ pub const C_Generator = struct {
             switch (meta) {
                 .Pointer => |Pointer| {
                     const child = Pointer.child;
-                    const childmeta = @typeInfo(child);
                     // if (childmeta == .Struct and childmeta.Struct.layout != .Extern) {
                     //     self.write("void");
                     // } else {
@@ -407,7 +406,7 @@ pub const C_Generator = struct {
         }
     }
 
-    fn write(self: *Self, comptime str: []const u8) void {
+    fn write(_: *Self, comptime str: []const u8) void {
         _ = writer.write(str) catch {};
     }
 };
@@ -478,9 +477,9 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
         }
 
         pub fn startFile(
-            comptime self: Self,
+            comptime _: Self,
             comptime Type: type,
-            comptime prefix: []const u8,
+            comptime _: []const u8,
             file: anytype,
             other: std.fs.File,
         ) void {
@@ -514,7 +513,7 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
             }
         }
 
-        pub fn processStaticExport(comptime self: Self, file: anytype, gen: *C_Generator, comptime static_export: StaticExport) void {
+        pub fn processStaticExport(comptime _: Self, _: anytype, gen: *C_Generator, comptime static_export: StaticExport) void {
             const fn_meta = comptime @typeInfo(static_export.Type).Fn;
             gen.gen_func(
                 comptime static_export.symbol_name,
@@ -526,10 +525,10 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
         }
 
         pub fn processDecl(
-            comptime self: Self,
-            file: anytype,
+            comptime _: Self,
+            _: anytype,
             gen: *C_Generator,
-            comptime Container: type,
+            comptime _: type,
             comptime Decl: std.builtin.TypeInfo.Declaration,
             comptime name: []const u8,
             comptime prefix: []const u8,
@@ -538,7 +537,6 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                 .Type => |Type| {
                     switch (@typeInfo(Type)) {
                         .Enum => |Enum| {
-                            const layout = Enum.layout;
                             gen.gen_enum(
                                 prefix ++ "__" ++ name,
                                 Enum,
@@ -703,7 +701,7 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                                         }
                                         const ExternList = comptime brk: {
                                             const Sorder = struct {
-                                                pub fn lessThan(context: @This(), lhs: []const u8, rhs: []const u8) bool {
+                                                pub fn lessThan(_: @This(), lhs: []const u8, rhs: []const u8) bool {
                                                     return std.ascii.orderIgnoreCase(lhs, rhs) == std.math.Order.lt;
                                                 }
                                             };
@@ -736,7 +734,7 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                                     if (@hasDecl(Type, "Export")) {
                                         const ExportLIst = comptime brk: {
                                             const Sorder = struct {
-                                                pub fn lessThan(context: @This(), comptime lhs: StaticExport, comptime rhs: StaticExport) bool {
+                                                pub fn lessThan(_: @This(), comptime lhs: StaticExport, comptime rhs: StaticExport) bool {
                                                     return std.ascii.orderIgnoreCase(lhs.symbol_name, rhs.symbol_name) == std.math.Order.lt;
                                                 }
                                             };

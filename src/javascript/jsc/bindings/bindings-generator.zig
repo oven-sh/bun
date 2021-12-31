@@ -17,8 +17,6 @@ pub const bindgen = true;
 
 pub fn main() anyerror!void {
     var allocator = std.heap.c_allocator;
-    var stdout = std.io.getStdOut();
-    var writer = stdout.writer();
     const src: std.builtin.SourceLocation = @src();
     const paths = [_][]const u8{ std.fs.path.dirname(src.file) orelse return error.BadPath, "headers.h" };
     const paths2 = [_][]const u8{ std.fs.path.dirname(src.file) orelse return error.BadPath, "headers-cpp.h" };

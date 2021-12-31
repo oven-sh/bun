@@ -18,7 +18,7 @@ pub fn main() anyerror!void {
     while (remainder.len > 0) {
         i = (std.mem.indexOf(u8, remainder, "\npub const struct_b") orelse break);
         var begin = remainder[i..];
-        const end_line = (std.mem.indexOf(u8, begin, "extern struct {") orelse break);
+
         const end_struct = (std.mem.indexOf(u8, begin, "\n};\n") orelse break) + "\n};\n".len;
 
         std.mem.set(u8, begin[1 .. end_struct + 3], ' ');

@@ -621,7 +621,7 @@ const AsyncSocket = struct {
     connect_completion: AsyncIO.Completion = undefined,
     close_completion: AsyncIO.Completion = undefined,
 
-    const ConnectError = AsyncIO.ConnectError || std.os.SocketError || std.os.SetSockOptError;
+    const ConnectError = AsyncIO.ConnectError || std.os.SocketError || std.os.SetSockOptError || error{UnknownHostName};
 
     pub fn init(io: *AsyncIO, socket: std.os.socket_t, allocator: std.mem.Allocator) !AsyncSocket {
         var head = AsyncMessage.get(allocator);
@@ -707,6 +707,7 @@ const AsyncSocket = struct {
                 this.connectToAddress(address) catch |err| {
                     if (err == error.ConnectionRefused) continue;
                     address_list.invalidate();
+                    if (err == error.AddressNotAvailable or err == error.UnknownHostName) continue :outer;
                     return err;
                 };
                 address_list.index = @truncate(u32, i);

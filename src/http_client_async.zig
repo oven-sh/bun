@@ -1493,6 +1493,8 @@ pub fn sendAsync(this: *HTTPClient, body: []const u8, body_out_str: *MutableStri
 pub fn send(this: *HTTPClient, body: []const u8, body_out_str: *MutableString) !picohttp.Response {
     // this prevents stack overflow
     redirect: while (this.remaining_redirect_count >= -1) {
+        body_out_str.reset();
+
         if (this.url.isHTTPS()) {
             return this.sendHTTPS(body, body_out_str) catch |err| {
                 switch (err) {

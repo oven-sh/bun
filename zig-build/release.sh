@@ -32,7 +32,7 @@ fi
 
 # Name should be $BUILDKIT_ARCH so we only need that arg passed
 export CONTAINER_NAME=zig-linux-$BUILDKIT_ARCH
-export TAG=dec20
+export TAG=dec30
 
 temp=$(mktemp -d)
 

@@ -18,7 +18,7 @@ RUN apt-get update && \
     add-apt-repository ppa:longsleep/golang-backports && \
     wget https://apt.llvm.org/llvm.sh --no-check-certificate && \
     chmod +x llvm.sh && \
-    ./llvm.sh 12 && \
+    ./llvm.sh 13 && \
     apt-get update && \
     apt-get install --no-install-recommends -y \
     ca-certificates \
@@ -30,29 +30,29 @@ RUN apt-get update && \
     git \
     libssl-dev \
     ruby \
-    liblld-12-dev \
-    libclang-12-dev \
+    liblld-13-dev \
+    libclang-13-dev \
     nodejs \
     gcc \
     g++ \
     npm \
-    clang-12 \
-    clang-format-12 \
-    libc++-12-dev \
-    libc++abi-12-dev \
-    lld-12 \
+    clang-13 \
+    clang-format-13 \
+    libc++-13-dev \
+    libc++abi-13-dev \
+    lld-13 \
     libicu-dev \
     wget \
     unzip \
     tar \
     golang-go ninja-build pkg-config automake autoconf libtool curl && \
-    update-alternatives --install /usr/bin/cc cc /usr/bin/clang-12 90 && \
-    update-alternatives --install /usr/bin/cpp cpp /usr/bin/clang++-12 90 && \
-    update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-12 90 && \
+    update-alternatives --install /usr/bin/cc cc /usr/bin/clang-13 90 && \
+    update-alternatives --install /usr/bin/cpp cpp /usr/bin/clang++-13 90 && \
+    update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-13 90 && \
     npm install -g esbuild
 
-ENV CC=clang-12 
-ENV CXX=clang++-12
+ENV CC=clang-13 
+ENV CXX=clang++-13
 
 
 ARG BUILDARCH=amd64
@@ -88,7 +88,7 @@ ARG BUILDARCH=amd64
 WORKDIR $GITHUB_WORKSPACE
 
 RUN cd $GITHUB_WORKSPACE && \
-    curl -o zig-linux-$BUILDARCH.zip -L https://github.com/Jarred-Sumner/zig/releases/download/dec20/zig-linux-$BUILDARCH.zip && \
+    curl -o zig-linux-$BUILDARCH.zip -L https://github.com/Jarred-Sumner/zig/releases/download/dec30/zig-linux-$BUILDARCH.zip && \
     unzip -q zig-linux-$BUILDARCH.zip && \
     rm zig-linux-$BUILDARCH.zip;
 

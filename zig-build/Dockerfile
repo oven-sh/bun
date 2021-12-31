@@ -8,7 +8,7 @@ RUN curl -s https://deb.nodesource.com/gpgkey/nodesource.gpg.key | apt-key add -
 
 RUN wget https://apt.llvm.org/llvm.sh --no-check-certificate
 RUN chmod +x llvm.sh
-RUN ./llvm.sh 12
+RUN ./llvm.sh 13
 
 RUN apt-get update && apt-get install --no-install-recommends -y \
     ca-certificates \
@@ -19,25 +19,25 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     build-essential \
     git \
     libssl-dev \
-    liblld-12-dev \
-    libclang-12-dev \
+    liblld-13-dev \
+    libclang-13-dev \
     gcc \
     g++ \
-    clang-12 \
-    clang-format-12 \
-    libc++-12-dev \
-    libc++abi-12-dev \
-    lld-12 \
+    clang-13 \
+    clang-format-13 \
+    libc++-13-dev \
+    libc++abi-13-dev \
+    lld-13 \
     zip
 
-RUN update-alternatives --install /usr/bin/ld ld /usr/bin/lld-12 90 && \
-    update-alternatives --install /usr/bin/cc cc /usr/bin/clang-12 90 && \
-    update-alternatives --install /usr/bin/cpp cpp /usr/bin/clang++-12 90 && \
-    update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-12 90
+RUN update-alternatives --install /usr/bin/ld ld /usr/bin/lld-13 90 && \
+    update-alternatives --install /usr/bin/cc cc /usr/bin/clang-13 90 && \
+    update-alternatives --install /usr/bin/cpp cpp /usr/bin/clang++-13 90 && \
+    update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-13 90
 
 
-ENV CC=clang-12 
-ENV CXX=clang++-12
+ENV CC=clang-13 
+ENV CXX=clang++-13
 
 RUN mkdir /output;
 WORKDIR /output
@@ -46,9 +46,8 @@ WORKDIR /output
 RUN --mount=type=tmpfs,target=/zig-build \
     cd /zig-build && \
     mkdir -p /zig-build; \
-    git clone https://github.com/jarred-sumner/zig.git; \
+    git clone https://github.com/jarred-sumner/zig.git --depth=1; \
     cd /zig-build/zig; \
-    git checkout jarred/zig-sloppy-with-small-structs && \
     cmake . -DCMAKE_BUILD_TYPE=Release && \
     make -j$(nproc) && \
     rm -rf .git; \

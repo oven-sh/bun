@@ -52,8 +52,8 @@ ZIG ?= $(shell which zig || echo -e "error: Missing zig. Please make sure zig is
 # This is easier to happen than you'd expect.
 # Using realpath here causes issues because clang uses clang++ as a symlink 
 # so if that's resolved, it won't build for C++
-CC = $(shell which clang-13 || which clang)
-CXX = $(shell which clang++-13 || which clang++)
+CC ?= $(shell which clang-13 || which clang)
+CXX ?= $(shell which clang++-13 || which clang++)
 
 # macOS sed is different
 SED = $(shell which gsed || which sed)

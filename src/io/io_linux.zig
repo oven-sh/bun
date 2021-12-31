@@ -45,6 +45,7 @@ const os = struct {
     pub const ECANCELED = 125;
     pub const EFBIG = 27;
 };
+const timespec = std.os.system.timespec;
 const linux = os.linux;
 const IO_Uring = linux.IO_Uring;
 const io_uring_cqe = linux.io_uring_cqe;
@@ -112,15 +113,15 @@ pub fn tick(self: *IO) !void {
 
 /// Pass all queued submissions to the kernel and run for `nanoseconds`.
 /// The `nanoseconds` argument is a u63 to allow coercion to the i64 used
-/// in the __kernel_timespec struct.
+/// in the timespec struct.
 pub fn run_for_ns(self: *IO, nanoseconds: u63) !void {
     // We must use the same clock source used by io_uring (CLOCK_MONOTONIC) since we specify the
     // timeout below as an absolute value. Otherwise, we may deadlock if the clock sources are
     // dramatically different. Any kernel that supports io_uring will support CLOCK_MONOTONIC.
-    var current_ts: os.timespec = undefined;
+    var current_ts: timespec = undefined;
     os.clock_gettime(os.CLOCK_MONOTONIC, &current_ts) catch unreachable;
     // The absolute CLOCK_MONOTONIC time after which we may return from this function:
-    const timeout_ts: os.__kernel_timespec = .{
+    const timeout_ts: timespec = .{
         .tv_sec = current_ts.tv_sec,
         .tv_nsec = current_ts.tv_nsec + nanoseconds,
     };
@@ -511,7 +512,7 @@ const Operation = union(enum) {
         buffer: []const u8,
     },
     timeout: struct {
-        timespec: os.__kernel_timespec,
+        timespec: os.timespec,
     },
     write: struct {
         fd: os.fd_t,

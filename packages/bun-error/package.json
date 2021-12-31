@@ -8,7 +8,7 @@
     "build": "esbuild --define:process.env.NODE_ENV=\"'production'\"  --minify index.tsx bun-error.css --bundle --outdir=dist --platform=browser --format=esm"
   },
   "dependencies": {
-    "esbuild": "^0.12.26",
+    "esbuild": "^0.14.10",
     "preact": "^10.5.14",
     "preact-compat": "^3.19.0",
     "react": "^17.0.2",

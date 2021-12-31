@@ -17,7 +17,7 @@
     "constants-browserify": "^1.0.0",
     "crypto-browserify": "^3.12.0",
     "domain-browser": "^4.22.0",
-    "esbuild": "^0.12.25",
+    "esbuild": "^0.14.10",
     "events": "^3.3.0",
     "https-browserify": "^1.0.0",
     "os-browserify": "^0.3.0",

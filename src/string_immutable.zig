@@ -413,6 +413,27 @@ inline fn eqlComptimeCheckLen(a: string, comptime b: anytype, comptime check_len
     return true;
 }
 
+pub fn eqlCaseInsensitiveASCII(a: string, comptime b: anytype, comptime check_len: bool) bool {
+    if (comptime check_len) {
+        if (comptime b.len == 0) {
+            return a.len == 0;
+        }
+
+        switch (a.len) {
+            b.len => void{},
+            else => return false,
+        }
+    }
+
+    // pray to the auto vectorization gods
+    inline for (b) |c, i| {
+        const char = comptime std.ascii.toLower(c);
+        if (char != std.ascii.toLower(a[i])) return false;
+    }
+
+    return true;
+}
+
 pub fn eqlLong(a_: string, b: string, comptime check_len: bool) bool {
     if (comptime check_len) {
         if (a_.len == 0) {

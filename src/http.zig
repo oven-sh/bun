@@ -121,17 +121,9 @@ pub const RequestContext = struct {
     }
 
     pub fn header(ctx: *RequestContext, comptime name: anytype) ?Header {
-        if (name.len < 17) {
-            for (ctx.request.headers) |head| {
-                if (strings.eqlComptime(head.name, name)) {
-                    return head;
-                }
-            }
-        } else {
-            for (ctx.request.headers) |head| {
-                if (strings.eql(head.name, name)) {
-                    return head;
-                }
+        for (ctx.request.headers) |head| {
+            if (strings.eqlCaseInsensitiveASCII(head.name, name, true)) {
+                return head;
             }
         }
 

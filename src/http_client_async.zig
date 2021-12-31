@@ -34,7 +34,7 @@ pub const Headers = struct {
 };
 
 const SOCKET_FLAGS: u32 = if (Environment.isLinux)
-    SOCK.CLOEXEC | os.MSG_NOSIGNAL
+    SOCK.CLOEXEC | os.MSG.NOSIGNAL
 else
     SOCK.CLOEXEC;
 

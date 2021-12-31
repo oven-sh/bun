@@ -274,10 +274,10 @@ pub const Completion = struct {
                 );
             },
             .recv => |op| {
-                linux.io_uring_prep_recv(sqe, op.socket, op.buffer, os.MSG_NOSIGNAL);
+                linux.io_uring_prep_recv(sqe, op.socket, op.buffer, os.MSG.NOSIGNAL);
             },
             .send => |op| {
-                linux.io_uring_prep_send(sqe, op.socket, op.buffer, os.MSG_NOSIGNAL);
+                linux.io_uring_prep_send(sqe, op.socket, op.buffer, os.MSG.NOSIGNAL);
             },
             .timeout => |*op| {
                 linux.io_uring_prep_timeout(sqe, &op.timespec, 0, 0);

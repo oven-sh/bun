@@ -72,7 +72,7 @@ const URLPath = @import("./http/url_path.zig");
 const Method = @import("./http/method.zig").Method;
 
 const SOCKET_FLAGS: u32 = if (Environment.isLinux)
-    os.SOCK.CLOEXEC | os.MSG_NOSIGNAL
+    os.SOCK.CLOEXEC | os.MSG.NOSIGNAL
 else
     os.SOCK.CLOEXEC;
 

@@ -173,7 +173,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             return Error.SyntaxError;
         }
 
-        pub fn addError(self: *LexerType, _loc: usize, comptime format: []const u8, args: anytype, panic: bool) void {
+        pub fn addError(self: *LexerType, _loc: usize, comptime format: []const u8, args: anytype, _: bool) void {
             @setCold(true);
 
             if (self.is_log_disabled) return;
@@ -186,7 +186,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             self.prev_error_loc = __loc;
         }
 
-        pub fn addRangeError(self: *LexerType, r: logger.Range, comptime format: []const u8, args: anytype, panic: bool) !void {
+        pub fn addRangeError(self: *LexerType, r: logger.Range, comptime format: []const u8, args: anytype, _: bool) !void {
             @setCold(true);
 
             if (self.is_log_disabled) return;
@@ -195,7 +195,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             }
 
             const errorMessage = std.fmt.allocPrint(self.allocator, format, args) catch unreachable;
-            var msg = self.log.addRangeError(&self.source, r, errorMessage);
+            try self.log.addRangeError(&self.source, r, errorMessage);
             self.prev_error_loc = r.loc;
 
             // if (panic) {
@@ -224,7 +224,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             return @enumToInt(lexer.token) >= @enumToInt(T.t_identifier);
         }
 
-        pub fn deinit(this: *LexerType) void {}
+        pub fn deinit(_: *LexerType) void {}
 
         fn decodeEscapeSequences(lexer: *LexerType, start: usize, text: string, comptime BufType: type, buf_: *BufType) !void {
             var buf = buf_.*;
@@ -233,7 +233,6 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
 
             const iterator = strings.CodepointIterator{ .bytes = text[start..], .i = 0 };
             var iter = strings.CodepointIterator.Cursor{};
-            const start_length = buf.items.len;
             while (iterator.next(&iter)) {
                 const width = iter.width;
                 switch (iter.c) {
@@ -320,7 +319,6 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                                 };
 
                                 const c3: CodePoint = iter.c;
-                                const width3 = iter.width;
 
                                 switch (c3) {
                                     '0'...'7' => {
@@ -329,7 +327,6 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                                         _ = iterator.next(&iter) or return lexer.syntaxError();
 
                                         const c4 = iter.c;
-                                        const width4 = iter.width;
                                         switch (c4) {
                                             '0'...'7' => {
                                                 const temp = value * 8 + c4 - '0';
@@ -1703,7 +1700,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
 
         // TODO: implement this
         // it's too complicated to handle all the edgecases right now given the state of Zig's standard library
-        pub fn removeMultilineCommentIndent(lexer: *LexerType, _prefix: string, text: string) string {
+        pub fn removeMultilineCommentIndent(_: *LexerType, _: string, text: string) string {
             return text;
         }
 
@@ -1908,7 +1905,6 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                             },
                             '*' => {
                                 lexer.step();
-                                const start_range = lexer.range();
                                 multi_line_comment: {
                                     while (true) {
                                         switch (lexer.code_point) {
@@ -2186,7 +2182,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             return decoded.items;
         }
 
-        inline fn maybeDecodeJSXEntity(lexer: *LexerType, text: string, out: *std.ArrayList(u16), cursor: *strings.CodepointIterator.Cursor) void {
+        inline fn maybeDecodeJSXEntity(lexer: *LexerType, text: string, cursor: *strings.CodepointIterator.Cursor) void {
             if (strings.indexOfChar(text[cursor.width + cursor.i ..], ';')) |length| {
                 const end = cursor.width + cursor.i;
                 const entity = text[end .. end + length];
@@ -2225,7 +2221,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             var cursor = strings.CodepointIterator.Cursor{};
 
             while (iterator.next(&cursor)) {
-                if (cursor.c == '&') lexer.maybeDecodeJSXEntity(text, out, &cursor);
+                if (cursor.c == '&') lexer.maybeDecodeJSXEntity(text, &cursor);
 
                 if (cursor.c <= 0xFFFF) {
                     try out.append(@intCast(u16, cursor.c));
@@ -2491,7 +2487,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                     } else if (isInvalidLegacyOctalLiteral) {
                         if (std.fmt.parseFloat(f64, text)) |num| {
                             lexer.number = num;
-                        } else |err| {
+                        } else |_| {
                             try lexer.addSyntaxError(lexer.start, "Invalid number {s}", .{text});
                         }
                     }
@@ -2602,7 +2598,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                             }
                         }
                         text = bytes;
-                    } else |err| {
+                    } else |_| {
                         try lexer.addSyntaxError(lexer.start, "Out of Memory Wah Wah Wah", .{});
                         return;
                     }
@@ -2627,7 +2623,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                     // Parse a double-precision floating-point number;
                     if (std.fmt.parseFloat(f64, text)) |num| {
                         lexer.number = num;
-                    } else |err| {
+                    } else |_| {
                         try lexer.addSyntaxError(lexer.start, "Invalid number", .{});
                     }
                 }

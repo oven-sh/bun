@@ -4332,7 +4332,7 @@ pub fn NewParser(
                 var text = p.lexer.identifier;
                 var arg = try p.parseBinding();
 
-                if (is_typescript_enabled) {
+                if (comptime is_typescript_enabled) {
                     if (is_identifier and opts.is_constructor) {
                         // Skip over TypeScript accessibility modifiers, which turn this argument
                         // into a class field when used inside a class constructor. This is known
@@ -5707,7 +5707,7 @@ pub fn NewParser(
                     var stmtOpts = ParseStatementOptions{};
                     const body = try p.parseStmt(&stmtOpts);
 
-                    return p.s(S.With{ .body = body, .test_ = test_ }, loc);
+                    return p.s(S.With{ .body = body, .body_loc = body_loc, .value = test_ }, loc);
                 },
                 .t_switch => {
                     try p.lexer.next();
@@ -12844,7 +12844,8 @@ pub fn NewParser(
                                     return;
                                 },
                                 .s_class => |class| {
-                                    var shadow_ref = p.visitClass(s2.loc, &class.class);
+                                    // TODO: https://github.com/Jarred-Sumner/bun/issues/51
+                                    _ = p.visitClass(s2.loc, &class.class);
 
                                     if (p.options.enable_bundling) {
                                         var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
@@ -13063,7 +13064,14 @@ pub fn NewParser(
                     return;
                 },
                 .s_with => |data| {
-                    notimpl();
+                    // using with is forbidden in strict mode
+                    // we largely only deal with strict mode
+                    // however, old code should still technically transpile
+                    // we do not attempt to preserve all the semantics of with
+                    data.value = p.visitExpr(data.value);
+                    // This stmt should be a block
+                    if (comptime Environment.allow_assert) std.debug.assert(data.body.data == .s_block);
+                    data.body = p.visitSingleStmt(data.body, StmtsKind.none);
                 },
                 .s_while => |data| {
                     data.test_ = p.visitExpr(data.test_);
@@ -13374,7 +13382,7 @@ pub fn NewParser(
                                     has_numeric_value = true;
                                     next_numeric_value = num.value + 1.0;
                                 },
-                                .e_string => |str| {
+                                .e_string => {
                                     has_string_value = true;
                                 },
                                 else => {},
@@ -13699,7 +13707,13 @@ pub fn NewParser(
             stmts.append(closure) catch unreachable;
         }
 
-        fn lowerClass(p: *P, stmtorexpr: js_ast.StmtOrExpr, ref: Ref) []Stmt {
+        // TODO: https://github.com/Jarred-Sumner/bun/issues/51
+        fn lowerClass(
+            p: *P,
+            stmtorexpr: js_ast.StmtOrExpr,
+            // ref
+            _: Ref,
+        ) []Stmt {
             switch (stmtorexpr) {
                 .stmt => |stmt| {
                     var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
@@ -13766,7 +13780,7 @@ pub fn NewParser(
             return Expr.initIdentifier(_ref, loc);
         }
 
-        fn isAnonymousNamedExpr(p: *P, expr: ExprNodeIndex) bool {
+        fn isAnonymousNamedExpr(_: *P, expr: ExprNodeIndex) bool {
             switch (expr.data) {
                 .e_arrow => {
                     return true;
@@ -13950,15 +13964,9 @@ pub fn NewParser(
         }
 
         fn visitSingleStmt(p: *P, stmt: Stmt, kind: StmtsKind) Stmt {
-            const has_if_scope = has_if: {
-                switch (stmt.data) {
-                    .s_function => {
-                        break :has_if stmt.data.s_function.func.flags.has_if_scope;
-                    },
-                    else => {
-                        break :has_if false;
-                    },
-                }
+            const has_if_scope = switch (stmt.data) {
+                .s_function => stmt.data.s_function.func.flags.has_if_scope,
+                else => false,
             };
 
             // Introduce a fake block scope for function declarations inside if statements
@@ -14036,7 +14044,10 @@ pub fn NewParser(
             const old_enclosing_class_keyword = p.enclosing_class_keyword;
             p.enclosing_class_keyword = class.class_keyword;
             p.current_scope.recursiveSetStrictMode(.implicit_strict_mode_class);
-            var class_name_ref: Ref = if (class.class_name != null) class.class_name.?.ref.? else p.newSymbol(.other, "this") catch unreachable;
+            var class_name_ref: Ref = if (class.class_name != null)
+                class.class_name.?.ref.?
+            else
+                p.newSymbol(.other, "this") catch unreachable;
 
             var shadow_ref = Ref.None;
 
@@ -14058,7 +14069,10 @@ pub fn NewParser(
             }
 
             p.pushScopeForVisitPass(.class_body, class.body_loc) catch unreachable;
-            defer p.popScope();
+            defer {
+                p.popScope();
+                p.enclosing_class_keyword = old_enclosing_class_keyword;
+            }
 
             var i: usize = 0;
             while (i < class.properties.len) : (i += 1) {
@@ -14121,7 +14135,7 @@ pub fn NewParser(
                 if (p.symbols.items[shadow_ref.inner_index].use_count_estimate == 0) {
                     // Don't generate a shadowing name if one isn't needed
                     shadow_ref = Ref.None;
-                } else if (class.class_name) |class_name| {
+                } else if (class.class_name) |_| {
                     // If there was originally no class name but something inside needed one
                     // (e.g. there was a static property initializer that referenced "this"),
                     // store our generated name so the class expression ends up with a name.
@@ -14184,7 +14198,7 @@ pub fn NewParser(
         }
 
         // Try separating the list for appending, so that it's not a pointer.
-        fn visitStmts(p: *P, stmts: *ListManaged(Stmt), kind: StmtsKind) !void {
+        fn visitStmts(p: *P, stmts: *ListManaged(Stmt), _: StmtsKind) !void {
             if (only_scan_imports_and_do_not_visit) {
                 @compileError("only_scan_imports_and_do_not_visit must not run this.");
             }

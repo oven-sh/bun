@@ -209,9 +209,9 @@ pub const Response = struct {
     pub fn getArrayBuffer(
         this: *Response,
         ctx: js.JSContextRef,
-        function: js.JSObjectRef,
-        thisObject: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        _: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
         defer this.body.value = .Empty;
@@ -274,9 +274,9 @@ pub const Response = struct {
     pub fn getStatus(
         this: *Response,
         ctx: js.JSContextRef,
-        thisObject: js.JSValueRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: js.JSValueRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/status
         return js.JSValueMakeNumber(ctx, @intToFloat(f64, this.body.init.status_code));
@@ -322,7 +322,7 @@ pub const Response = struct {
 
     pub fn constructor(
         ctx: js.JSContextRef,
-        function: js.JSObjectRef,
+        _: js.JSObjectRef,
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSObjectRef {
@@ -462,7 +462,7 @@ pub const Fetch = struct {
             tasklet: *FetchTasklet,
         };
 
-        pub fn init(allocator: std.mem.Allocator) anyerror!FetchTasklet {
+        pub fn init(_: std.mem.Allocator) anyerror!FetchTasklet {
             return FetchTasklet{};
         }
 
@@ -492,7 +492,7 @@ pub const Fetch = struct {
             this.release();
         }
 
-        pub fn reset(this: *FetchTasklet) void {}
+        pub fn reset(_: *FetchTasklet) void {}
 
         pub fn release(this: *FetchTasklet) void {
             js.JSValueUnprotect(this.global_this.ref(), this.resolve);
@@ -515,12 +515,12 @@ pub const Fetch = struct {
 
         pub const FetchResolver = struct {
             pub fn call(
-                ctx: js.JSContextRef,
-                function: js.JSObjectRef,
-                thisObject: js.JSObjectRef,
-                arguments_len: usize,
+                _: js.JSContextRef,
+                _: js.JSObjectRef,
+                _: js.JSObjectRef,
+                _: usize,
                 arguments: [*c]const js.JSValueRef,
-                exception: js.ExceptionRef,
+                _: js.ExceptionRef,
             ) callconv(.C) js.JSObjectRef {
                 return JSPrivateDataPtr.from(js.JSObjectGetPrivate(arguments[0]))
                     .get(FetchTaskletContext).?.tasklet.onResolve().asObjectRef();
@@ -530,12 +530,12 @@ pub const Fetch = struct {
 
         pub const FetchRejecter = struct {
             pub fn call(
-                ctx: js.JSContextRef,
-                function: js.JSObjectRef,
-                thisObject: js.JSObjectRef,
-                arguments_len: usize,
+                _: js.JSContextRef,
+                _: js.JSObjectRef,
+                _: js.JSObjectRef,
+                _: usize,
                 arguments: [*c]const js.JSValueRef,
-                exception: js.ExceptionRef,
+                _: js.ExceptionRef,
             ) callconv(.C) js.JSObjectRef {
                 return JSPrivateDataPtr.from(js.JSObjectGetPrivate(arguments[0]))
                     .get(FetchTaskletContext).?.tasklet.onReject().asObjectRef();
@@ -642,10 +642,10 @@ pub const Fetch = struct {
     };
 
     pub fn call(
-        this: void,
+        _: void,
         ctx: js.JSContextRef,
-        function: js.JSObjectRef,
-        thisObject: js.JSObjectRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSObjectRef {
@@ -803,10 +803,10 @@ pub const Headers = struct {
         pub fn get(
             this: *Headers,
             ctx: js.JSContextRef,
-            function: js.JSObjectRef,
-            thisObject: js.JSObjectRef,
+            _: js.JSObjectRef,
+            _: js.JSObjectRef,
             arguments: []const js.JSValueRef,
-            exception: js.ExceptionRef,
+            _: js.ExceptionRef,
         ) js.JSValueRef {
             if (arguments.len == 0 or !js.JSValueIsString(ctx, arguments[0]) or js.JSStringIsEqual(arguments[0], Properties.Refs.empty_string)) {
                 return js.JSValueMakeNull(ctx);
@@ -830,10 +830,10 @@ pub const Headers = struct {
         pub fn set(
             this: *Headers,
             ctx: js.JSContextRef,
-            function: js.JSObjectRef,
-            thisObject: js.JSObjectRef,
+            _: js.JSObjectRef,
+            _: js.JSObjectRef,
             arguments: []const js.JSValueRef,
-            exception: js.ExceptionRef,
+            _: js.ExceptionRef,
         ) js.JSValueRef {
             if (this.guard == .request or arguments.len < 2 or !js.JSValueIsString(ctx, arguments[0]) or js.JSStringIsEqual(arguments[0], Properties.Refs.empty_string) or !js.JSValueIsString(ctx, arguments[1])) {
                 return js.JSValueMakeUndefined(ctx);
@@ -847,10 +847,10 @@ pub const Headers = struct {
         pub fn append(
             this: *Headers,
             ctx: js.JSContextRef,
-            function: js.JSObjectRef,
-            thisObject: js.JSObjectRef,
+            _: js.JSObjectRef,
+            _: js.JSObjectRef,
             arguments: []const js.JSValueRef,
-            exception: js.ExceptionRef,
+            _: js.ExceptionRef,
         ) js.JSValueRef {
             if (this.guard == .request or arguments.len < 2 or !js.JSValueIsString(ctx, arguments[0]) or js.JSStringIsEqual(arguments[0], Properties.Refs.empty_string) or !js.JSValueIsString(ctx, arguments[1])) {
                 return js.JSValueMakeUndefined(ctx);
@@ -862,10 +862,10 @@ pub const Headers = struct {
         pub fn delete(
             this: *Headers,
             ctx: js.JSContextRef,
-            function: js.JSObjectRef,
-            thisObject: js.JSObjectRef,
+            _: js.JSObjectRef,
+            _: js.JSObjectRef,
             arguments: []const js.JSValueRef,
-            exception: js.ExceptionRef,
+            _: js.ExceptionRef,
         ) js.JSValueRef {
             if (this.guard == .request or arguments.len < 1 or !js.JSValueIsString(ctx, arguments[0]) or js.JSStringIsEqual(arguments[0], Properties.Refs.empty_string)) {
                 return js.JSValueMakeUndefined(ctx);
@@ -881,34 +881,34 @@ pub const Headers = struct {
             return js.JSValueMakeUndefined(ctx);
         }
         pub fn entries(
-            this: *Headers,
+            _: *Headers,
             ctx: js.JSContextRef,
-            function: js.JSObjectRef,
-            thisObject: js.JSObjectRef,
-            arguments: []const js.JSValueRef,
-            exception: js.ExceptionRef,
+            _: js.JSObjectRef,
+            _: js.JSObjectRef,
+            _: []const js.JSValueRef,
+            _: js.ExceptionRef,
         ) js.JSValueRef {
             Output.prettyErrorln("<r><b>Headers.entries()<r> is not implemented yet - sorry!!", .{});
             return js.JSValueMakeNull(ctx);
         }
         pub fn keys(
-            this: *Headers,
+            _: *Headers,
             ctx: js.JSContextRef,
-            function: js.JSObjectRef,
-            thisObject: js.JSObjectRef,
-            arguments: []const js.JSValueRef,
-            exception: js.ExceptionRef,
+            _: js.JSObjectRef,
+            _: js.JSObjectRef,
+            _: []const js.JSValueRef,
+            _: js.ExceptionRef,
         ) js.JSValueRef {
-            Output.prettyErrorln("H<r><b>eaders.keys()<r> is not implemented yet- sorry!!", .{});
+            Output.prettyErrorln("H<r><b>Headers.keys()<r> is not implemented yet- sorry!!", .{});
             return js.JSValueMakeNull(ctx);
         }
         pub fn values(
-            this: *Headers,
+            _: *Headers,
             ctx: js.JSContextRef,
-            function: js.JSObjectRef,
-            thisObject: js.JSObjectRef,
-            arguments: []const js.JSValueRef,
-            exception: js.ExceptionRef,
+            _: js.JSObjectRef,
+            _: js.JSObjectRef,
+            _: []const js.JSValueRef,
+            _: js.ExceptionRef,
         ) js.JSValueRef {
             Output.prettyErrorln("<r><b>Headers.values()<r> is not implemented yet - sorry!!", .{});
             return js.JSValueMakeNull(ctx);
@@ -988,9 +988,9 @@ pub const Headers = struct {
         // https://developer.mozilla.org/en-US/docs/Web/API/Headers/Headers
         pub fn constructor(
             ctx: js.JSContextRef,
-            function: js.JSObjectRef,
+            _: js.JSObjectRef,
             arguments: []const js.JSValueRef,
-            exception: js.ExceptionRef,
+            _: js.ExceptionRef,
         ) js.JSObjectRef {
             var headers = getAllocator(ctx).create(Headers) catch unreachable;
             if (arguments.len > 0 and js.JSValueIsObjectOfClass(ctx, arguments[0], Headers.Class.get().*)) {
@@ -1322,7 +1322,7 @@ pub const Body = struct {
         headers: ?Headers,
         status_code: u16,
 
-        pub fn init(allocator: std.mem.Allocator, ctx: js.JSContextRef, init_ref: js.JSValueRef) !?Init {
+        pub fn init(_: std.mem.Allocator, ctx: js.JSContextRef, init_ref: js.JSValueRef) !?Init {
             var result = Init{ .headers = null, .status_code = 0 };
             var array = js.JSObjectCopyPropertyNames(ctx, init_ref);
             defer js.JSPropertyNameArrayRelease(array);
@@ -1388,7 +1388,7 @@ pub const Body = struct {
         }
     };
 
-    pub fn @"404"(ctx: js.JSContextRef) Body {
+    pub fn @"404"(_: js.JSContextRef) Body {
         return Body{ .init = Init{
             .headers = null,
             .status_code = 404,
@@ -1434,7 +1434,7 @@ pub const Body = struct {
                         if (maybeInit) |init_| {
                             body.init = init_;
                         }
-                    } else |err| {}
+                    } else |_| {}
                 }
 
                 var wtf_string = JSValue.fromRef(body_ref).toWTFString(VirtualMachine.vm.global);
@@ -1490,7 +1490,7 @@ pub const Body = struct {
                                 if (maybeInit) |init_| {
                                     body.init = init_;
                                 }
-                            } else |err| {}
+                            } else |_| {}
                         }
                         body.value = Value{ .ArrayBuffer = buffer };
                         body.ptr = buffer.ptr[buffer.offset..buffer.byte_len].ptr;
@@ -1572,38 +1572,38 @@ pub const Request = struct {
     );
 
     pub fn getCache(
-        this: *Request,
+        _: *Request,
         ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         return js.JSValueMakeString(ctx, ZigString.init(Properties.UTF8.default).toValueGC(VirtualMachine.vm.global).asRef());
     }
     pub fn getCredentials(
-        this: *Request,
+        _: *Request,
         ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         return js.JSValueMakeString(ctx, ZigString.init(Properties.UTF8.include).toValueGC(VirtualMachine.vm.global).asRef());
     }
     pub fn getDestination(
-        this: *Request,
+        _: *Request,
         ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         return js.JSValueMakeString(ctx, ZigString.init("").toValueGC(VirtualMachine.vm.global).asRef());
     }
     pub fn getHeaders(
         this: *Request,
         ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         if (this.headers == null) {
             this.headers = Headers.fromRequestCtx(getAllocator(ctx), this.request_context) catch unreachable;
@@ -1612,20 +1612,20 @@ pub const Request = struct {
         return Headers.Class.make(ctx, &this.headers.?);
     }
     pub fn getIntegrity(
-        this: *Request,
-        ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: *Request,
+        _: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         return ZigString.Empty.toValueGC(VirtualMachine.vm.global).asRef();
     }
     pub fn getMethod(
         this: *Request,
-        ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         const string_contents: string = switch (this.request_context.method) {
             .GET => Properties.UTF8.GET,
@@ -1641,29 +1641,29 @@ pub const Request = struct {
     }
 
     pub fn getMode(
-        this: *Request,
-        ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: *Request,
+        _: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         return ZigString.init(Properties.UTF8.navigate).toValueGC(VirtualMachine.vm.global).asRef();
     }
     pub fn getRedirect(
-        this: *Request,
-        ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: *Request,
+        _: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         return ZigString.init(Properties.UTF8.follow).toValueGC(VirtualMachine.vm.global).asRef();
     }
     pub fn getReferrer(
         this: *Request,
-        ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         if (this.request_context.header("Referrer")) |referrer| {
             return ZigString.init(referrer.value).toValueGC(VirtualMachine.vm.global).asRef();
@@ -1672,20 +1672,20 @@ pub const Request = struct {
         }
     }
     pub fn getReferrerPolicy(
-        this: *Request,
-        ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: *Request,
+        _: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         return ZigString.init("").toValueGC(VirtualMachine.vm.global).asRef();
     }
     pub fn getUrl(
         this: *Request,
         ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         if (this.url_string_ref == null) {
             this.url_string_ref = js.JSStringCreateWithUTF8CString(this.request_context.getFullURL());
@@ -1748,11 +1748,11 @@ pub const FetchEvent = struct {
     );
 
     pub fn getClient(
-        this: *FetchEvent,
+        _: *FetchEvent,
         ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         Output.prettyErrorln("FetchEvent.client is not implemented yet - sorry!!", .{});
         Output.flush();
@@ -1761,9 +1761,9 @@ pub const FetchEvent = struct {
     pub fn getRequest(
         this: *FetchEvent,
         ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        prop: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         return Request.Class.make(ctx, &this.request);
     }
@@ -1772,8 +1772,8 @@ pub const FetchEvent = struct {
     pub fn respondWith(
         this: *FetchEvent,
         ctx: js.JSContextRef,
-        function: js.JSObjectRef,
-        thisObject: js.JSObjectRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
@@ -1931,13 +1931,15 @@ pub const FetchEvent = struct {
         return js.JSValueMakeUndefined(ctx);
     }
 
+    // our implementation of the event listener already does this
+    // so this is a no-op for us
     pub fn waitUntil(
-        this: *FetchEvent,
+        _: *FetchEvent,
         ctx: js.JSContextRef,
-        function: js.JSObjectRef,
-        thisObject: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        _: []const js.JSValueRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
         return js.JSValueMakeUndefined(ctx);
     }

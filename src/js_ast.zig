@@ -1480,7 +1480,7 @@ pub const Stmt = struct {
             else => @compileError("Invalid type in Stmt.init"),
         };
     }
-    inline fn comptime_alloc(_: std.mem.Allocator, comptime tag_name: string, comptime typename: type, origData: anytype, loc: logger.Loc) Stmt {
+    inline fn comptime_alloc(comptime tag_name: string, comptime typename: type, origData: anytype, loc: logger.Loc) Stmt {
         return Stmt{ .loc = loc, .data = @unionInit(Data, tag_name, Data.Store.append(typename, origData)) };
     }
 
@@ -2788,7 +2788,6 @@ pub const Expr = struct {
 
     pub fn assignStmt(a: Expr, b: Expr, allocator: std.mem.Allocator) Stmt {
         return Stmt.alloc(
-            allocator,
             S.SExpr,
             S.SExpr{
                 .value = Expr.assign(a, b, allocator),
@@ -3653,31 +3652,33 @@ pub const Scope = struct {
             return .replace_with_new;
         }
 
-        // In TypeScript, imports are allowed to silently collide with symbols within
-        // the module. Presumably this is because the imports may be type-only:
-        //
-        //   import {Foo} from 'bar'
-        //   class Foo {}
-        //
-        if (is_typescript_enabled and existing == .import) {
-            return .replace_with_new;
-        }
+        if (comptime is_typescript_enabled) {
+            // In TypeScript, imports are allowed to silently collide with symbols within
+            // the module. Presumably this is because the imports may be type-only:
+            //
+            //   import {Foo} from 'bar'
+            //   class Foo {}
+            //
+            if (existing == .import) {
+                return .replace_with_new;
+            }
 
-        // "enum Foo {} enum Foo {}"
-        // "namespace Foo { ... } enum Foo {}"
-        if (new == .ts_enum and (existing == .ts_enum or existing == .ts_namespace)) {
-            return .replace_with_new;
-        }
+            // "enum Foo {} enum Foo {}"
+            // "namespace Foo { ... } enum Foo {}"
+            if (new == .ts_enum and (existing == .ts_enum or existing == .ts_namespace)) {
+                return .replace_with_new;
+            }
 
-        // "namespace Foo { ... } namespace Foo { ... }"
-        // "function Foo() {} namespace Foo { ... }"
-        // "enum Foo {} namespace Foo { ... }"
-        if (new == .ts_namespace) {
-            switch (existing) {
-                .ts_namespace, .hoisted_function, .generator_or_async_function, .ts_enum, .class => {
-                    return .keep_existing;
-                },
-                else => {},
+            // "namespace Foo { ... } namespace Foo { ... }"
+            // "function Foo() {} namespace Foo { ... }"
+            // "enum Foo {} namespace Foo { ... }"
+            if (new == .ts_namespace) {
+                switch (existing) {
+                    .ts_namespace, .hoisted_function, .generator_or_async_function, .ts_enum, .class => {
+                        return .keep_existing;
+                    },
+                    else => {},
+                }
             }
         }
 

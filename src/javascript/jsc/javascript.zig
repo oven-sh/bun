@@ -188,7 +188,7 @@ pub const Bun = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(VirtualMachine.vm.bundler.fs.top_level_dir).toValue(VirtualMachine.vm.ctx).asRef();
+        return ZigString.init(VirtualMachine.vm.bundler.fs.top_level_dir).toValue(VirtualMachine.vm.global).asRef();
     }
 
     pub fn getOrigin(

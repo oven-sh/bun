@@ -40,7 +40,7 @@ const color_map = std.ComptimeStringMap([]const u8, .{
     &.{ "yellow", "33m" },
 });
 
-fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: std.mem.Allocator, target: anytype) !void {
+fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, target: anytype) !void {
     var boringssl: std.build.Pkg = .{
         .name = "boringssl",
         .path = pkgPath("src/deps/boringssl.zig"),
@@ -93,7 +93,7 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: std.mem.Alloca
         .name = "javascript_core",
         .path = pkgPath("src/jsc.zig"),
     };
-
+    javascript_core.dependencies = &.{ network_thread, http, strings, picohttp };
     http.dependencies = &.{
         network_thread,
         http,
@@ -111,15 +111,10 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: std.mem.Alloca
         thread_pool,
     };
     http.dependencies = &.{ io, network_thread, strings, boringssl, picohttp };
-    javascript_core.dependencies = &.{
-        network_thread,
-        http,
-        strings,
-    };
 
     thread_pool.dependencies = &.{ io, http };
     http.dependencies = &.{ io, network_thread, thread_pool, strings, boringssl, picohttp };
-    javascript_core.dependencies = &.{ network_thread, http, strings, picohttp };
+
     http.dependencies = &.{
         network_thread,
         http,
@@ -185,7 +180,6 @@ pub fn build(b: *std.build.Builder) !void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     mode = b.standardReleaseOptions();
 
-    var cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     const cwd: []const u8 = b.pathFromRoot(".");
     var exe: *std.build.LibExeObjStep = undefined;
     var output_dir_buf = std.mem.zeroes([4096]u8);
@@ -232,7 +226,6 @@ pub fn build(b: *std.build.Builder) !void {
     // exe.linkLibCpp();
 
     exe.setOutputDir(output_dir);
-    var cwd_dir = std.fs.cwd();
     updateRuntime() catch {};
 
     exe.setTarget(target);
@@ -428,7 +421,7 @@ pub fn linkObjectFiles(b: *std.build.Builder, obj: *std.build.LibExeObjStep, tar
     });
 
     for (dirs_to_search.slice()) |deps_path| {
-        var deps_dir = std.fs.cwd().openDir(deps_path, .{ .iterate = true }) catch |err| @panic("Failed to open dependencies directory");
+        var deps_dir = std.fs.cwd().openDir(deps_path, .{ .iterate = true }) catch @panic("Failed to open dependencies directory");
         var iterator = deps_dir.iterate();
 
         while (iterator.next() catch null) |entr| {

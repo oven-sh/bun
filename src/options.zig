@@ -54,6 +54,7 @@ pub fn validatePath(
         log.addErrorFmt(
             null,
             logger.Loc.Empty,
+            allocator,
             "<r><red>{s}<r> resolving external: <b>\"{s}\"<r>",
             .{ @errorName(err), rel_path },
         ) catch unreachable;

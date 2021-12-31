@@ -90,11 +90,9 @@ pub fn parseParam(line: []const u8) !Param(Help) {
         break :blk short_name;
     } else null;
 
-    _ = if (mem.startsWith(u8, param_str, "--")) blk: {
+    _ = if (mem.startsWith(u8, param_str, "--")) {
         if (param_str[param_str.len - 1] == ',')
             return error.TrailingComma;
-
-        break :blk param_str[2..];
     } else if (found_comma) {
         return error.TrailingComma;
     } else if (short_name == null) {

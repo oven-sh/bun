@@ -2559,6 +2559,7 @@ pub const Server = struct {
         }
     }
 
+    var _on_file_update_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     fn _onFileUpdate(
         ctx: *Server,
         events: []watcher.WatchEvent,
@@ -2661,64 +2662,66 @@ pub const Server = struct {
                 },
                 .directory => {
                     const affected = event.names(changed_files);
-
+                    var entries_option: ?*Fs.FileSystem.RealFS.EntriesOption = null;
                     if (affected.len > 0) {
-                        if (rfs.entries.get(file_path)) |dir_ent| {
-                            var last_file_hash: Watcher.HashType = std.math.maxInt(Watcher.HashType);
-                            var already_had_all_affected = true;
-                            for (affected) |changed_name_ptr| {
-                                const changed_name: []const u8 = std.mem.span((changed_name_ptr orelse continue));
-                                const loader = (ctx.bundler.options.loaders.get(Fs.PathName.init(changed_name).ext) orelse .file);
-                                if (loader.isJavaScriptLikeOrJSON() or loader == .css) {
-                                    if (dir_ent.entries.get(changed_name)) |file_ent| {
-                                        const abs_path = file_ent.entry.abs_path.slice();
-                                        const file_hash = Watcher.getHash(abs_path);
-
-                                        // skip consecutive duplicates
-                                        if (last_file_hash == file_hash) continue;
-                                        last_file_hash = file_hash;
-
-                                        // reset the file descriptor
-                                        file_ent.entry.cache.fd = 0;
-                                        file_ent.entry.need_stat = true;
-
-                                        const change_message = Api.WebsocketMessageFileChangeNotification{
-                                            .id = file_hash,
-                                            .loader = loader.toAPI(),
-                                        };
-
-                                        var content_writer = ByteApiWriter.init(&hinted_content_fbs);
-                                        change_message.encode(&content_writer) catch unreachable;
-                                        const change_buf = hinted_content_fbs.getWritten();
-                                        const written_buf = filechange_buf_hinted[0 .. header.len + change_buf.len];
-                                        RequestContext.WebsocketHandler.broadcast(written_buf) catch |err| {
-                                            Output.prettyErrorln("Error writing change notification: {s}<r>", .{@errorName(err)});
-                                        };
-                                        if (comptime is_emoji_enabled) {
-                                            Output.prettyErrorln("<r>📜  <d>File change: {s}<r>", .{ctx.bundler.fs.relativeTo(abs_path)});
-                                        } else {
-                                            Output.prettyErrorln("<r>   <d>File change: {s}<r>", .{ctx.bundler.fs.relativeTo(abs_path)});
-                                        }
-                                    } else {
-                                        already_had_all_affected = false;
-                                    }
-                                }
-                            }
-
-                            // When the only operation in a directory was moving new files into it, and we were already watching the existing files
-                            // We don't need to invalidate the directory entries
-                            // We only need to invalidate the file descriptor
-                            if (already_had_all_affected and event.op.move_to and !event.op.delete and
-                                !event.op.rename and
-                                !event.op.write)
-                            {
-                                continue;
-                            }
-                        }
+                        entries_option = rfs.entries.get(file_path);
                     }
 
                     rfs.bustEntriesCache(file_path);
                     ctx.bundler.resolver.dir_cache.remove(file_path);
+
+                    if (entries_option) |dir_ent| {
+                        var last_file_hash: Watcher.HashType = std.math.maxInt(Watcher.HashType);
+                        for (affected) |changed_name_ptr| {
+                            const changed_name: []const u8 = std.mem.span((changed_name_ptr orelse continue));
+                            if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
+
+                            const loader = (ctx.bundler.options.loaders.get(Fs.PathName.init(changed_name).ext) orelse .file);
+                            if (loader.isJavaScriptLikeOrJSON() or loader == .css) {
+                                var path_string: _global.PathString = undefined;
+                                const abs_path: string = brk: {
+                                    if (dir_ent.entries.get(changed_name)) |file_ent| {
+                                        // reset the file descriptor
+                                        file_ent.entry.cache.fd = 0;
+                                        file_ent.entry.need_stat = true;
+                                        path_string = file_ent.entry.abs_path;
+
+                                        break :brk path_string.slice();
+                                    } else {
+                                        var file_path_without_trailing_slash = std.mem.trimRight(u8, file_path, std.fs.path.sep_str);
+                                        @memcpy(&_on_file_update_path_buf, file_path_without_trailing_slash.ptr, file_path_without_trailing_slash.len);
+                                        _on_file_update_path_buf[file_path_without_trailing_slash.len] = std.fs.path.sep;
+
+                                        @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len + 1 ..].ptr, changed_name.ptr, changed_name.len);
+                                        break :brk _on_file_update_path_buf[0 .. file_path_without_trailing_slash.len + changed_name.len + 1];
+                                    }
+                                };
+                                const file_hash = Watcher.getHash(abs_path);
+
+                                // skip consecutive duplicates
+                                if (last_file_hash == file_hash) continue;
+                                last_file_hash = file_hash;
+
+                                const change_message = Api.WebsocketMessageFileChangeNotification{
+                                    .id = file_hash,
+                                    .loader = loader.toAPI(),
+                                };
+
+                                var content_writer = ByteApiWriter.init(&hinted_content_fbs);
+                                change_message.encode(&content_writer) catch unreachable;
+                                const change_buf = hinted_content_fbs.getWritten();
+                                const written_buf = filechange_buf_hinted[0 .. header.len + change_buf.len];
+                                RequestContext.WebsocketHandler.broadcast(written_buf) catch |err| {
+                                    Output.prettyErrorln("Error writing change notification: {s}<r>", .{@errorName(err)});
+                                };
+                                if (comptime is_emoji_enabled) {
+                                    Output.prettyErrorln("<r>📜  <d>File change: {s}<r>", .{ctx.bundler.fs.relativeTo(abs_path)});
+                                } else {
+                                    Output.prettyErrorln("<r>   <d>File change: {s}<r>", .{ctx.bundler.fs.relativeTo(abs_path)});
+                                }
+                            }
+                        }
+                    }
 
                     // if (event.op.delete or event.op.rename)
                     //     ctx.watcher.removeAtIndex(event.index, hashes[event.index], parent_hashes, .directory);
@@ -3138,11 +3141,12 @@ pub const Server = struct {
         // If there's a .bun, don't even read the filesystem
         // Just use the .bun
         if (this.bundler.options.node_modules_bundle) |node_modules_bundle| {
-            const package_name = runtime[0..strings.indexOfChar(runtime, '/') orelse runtime.len];
-            if (node_modules_bundle.getPackageIDByName(package_name) != null) return;       
+            const package_name = runtime[0 .. strings.indexOfChar(runtime, '/') orelse runtime.len];
+            if (node_modules_bundle.getPackageIDByName(package_name) != null) return;
         }
 
         _ = this.bundler.resolver.resolve(this.bundler.fs.top_level_dir, runtime, .internal) catch {
+            // 2. Try react refresh from import source perspective
             this.bundler.options.jsx.supports_fast_refresh = false;
             return;
         };

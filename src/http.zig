@@ -2595,6 +2595,7 @@ pub const Server = struct {
         var counts = slice.items(.count);
         const kinds = slice.items(.kind);
         const hashes = slice.items(.hash);
+        var file_descriptors = slice.items(.fd);
         var header = fbs.getWritten();
         defer ctx.watcher.flushEvictions();
         defer Output.flush();
@@ -2679,12 +2680,20 @@ pub const Server = struct {
                             const loader = (ctx.bundler.options.loaders.get(Fs.PathName.init(changed_name).ext) orelse .file);
                             if (loader.isJavaScriptLikeOrJSON() or loader == .css) {
                                 var path_string: _global.PathString = undefined;
+                                var file_hash: Watcher.HashType = last_file_hash;
                                 const abs_path: string = brk: {
                                     if (dir_ent.entries.get(changed_name)) |file_ent| {
                                         // reset the file descriptor
                                         file_ent.entry.cache.fd = 0;
                                         file_ent.entry.need_stat = true;
                                         path_string = file_ent.entry.abs_path;
+                                        file_hash = Watcher.getHash(path_string.slice());
+                                        for (hashes) |hash, entry_id| {
+                                            if (hash == file_hash) {
+                                                file_descriptors[entry_id] = 0;
+                                                break;
+                                            }
+                                        }
 
                                         break :brk path_string.slice();
                                     } else {
@@ -2693,10 +2702,11 @@ pub const Server = struct {
                                         _on_file_update_path_buf[file_path_without_trailing_slash.len] = std.fs.path.sep;
 
                                         @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len + 1 ..].ptr, changed_name.ptr, changed_name.len);
-                                        break :brk _on_file_update_path_buf[0 .. file_path_without_trailing_slash.len + changed_name.len + 1];
+                                        const path_slice = _on_file_update_path_buf[0 .. file_path_without_trailing_slash.len + changed_name.len + 1];
+                                        file_hash = Watcher.getHash(path_slice);
+                                        break :brk path_slice;
                                     }
                                 };
-                                const file_hash = Watcher.getHash(abs_path);
 
                                 // skip consecutive duplicates
                                 if (last_file_hash == file_hash) continue;

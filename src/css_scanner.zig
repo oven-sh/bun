@@ -1206,7 +1206,7 @@ pub fn NewBundler(
             while (this.import_queue.readItem()) |item| {
                 const watcher_id = this.watcher.indexOf(item) orelse unreachable;
                 const watch_item = this.watcher.watchlist.get(watcher_id);
-                const source = try this.getSource(watch_item.file_path, watch_item.fd);
+                const source = try this.getSource(watch_item.file_path, if (watch_item.fd > 0) watch_item.fd else null);
                 css.source = &source;
                 try css.scan(log, allocator, &did_warn_tailwind);
             }
@@ -1230,7 +1230,7 @@ pub fn NewBundler(
                 const item = this.bundle_queue.items[@intCast(usize, i)];
                 const watcher_id = this.watcher.indexOf(item) orelse unreachable;
                 const watch_item = this.watcher.watchlist.get(watcher_id);
-                const source = try this.getSource(watch_item.file_path, watch_item.fd);
+                const source = try this.getSource(watch_item.file_path, if (watch_item.fd > 0) watch_item.fd else null);
                 css.source = &source;
                 const file_path = fs.relativeTo(watch_item.file_path);
                 if (hot_module_reloading and FeatureFlags.css_supports_fence) {
@@ -1255,7 +1255,7 @@ pub fn NewBundler(
             };
         }
 
-        pub fn getSource(this: *CSSBundler, url: string, input_fd: StoredFileDescriptorType) !logger.Source {
+        pub fn getSource(this: *CSSBundler, url: string, input_fd: ?StoredFileDescriptorType) !logger.Source {
             const entry = try this.fs_reader.readFile(this.fs, url, 0, true, input_fd);
             const file = Fs.File{ .path = Fs.Path.init(url), .contents = entry.contents };
             return logger.Source.initFile(file, this.allocator);

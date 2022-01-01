@@ -75,8 +75,8 @@ pub const INotify = struct {
 
     var watch_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0);
 
-    const watch_file_mask = IN_EXCL_UNLINK | IN_MOVE_SELF | IN_DELETE_SELF | IN_CLOSE_WRITE;
-    const watch_dir_mask = IN_EXCL_UNLINK | IN_DELETE | IN_DELETE_SELF | IN_CREATE | IN_MOVE_SELF | IN_ONLYDIR;
+    const watch_file_mask = IN_EXCL_UNLINK | IN_MOVE_SELF | IN_DELETE_SELF | IN_CLOSE_WRITE | IN_MOVED_TO;
+    const watch_dir_mask = IN_EXCL_UNLINK | IN_DELETE | IN_DELETE_SELF | IN_CREATE | IN_MOVE_SELF | IN_ONLYDIR | IN_MOVED_TO;
 
     pub fn watchPath(pathname: [:0]const u8) !EventListIndex {
         std.debug.assert(loaded_inotify);
@@ -222,6 +222,7 @@ pub const WatchEvent = struct {
             .delete = this.op.delete or other.op.delete,
             .metadata = this.op.metadata or other.op.metadata,
             .rename = this.op.rename or other.op.rename,
+            .move = this.op.move or other.op.move,
             .write = this.op.write or other.op.write,
         };
     }
@@ -233,6 +234,7 @@ pub const WatchEvent = struct {
                 .delete = (kevent.fflags & std.c.NOTE_DELETE) > 0,
                 .metadata = (kevent.fflags & std.c.NOTE_ATTRIB) > 0,
                 .rename = (kevent.fflags & std.c.NOTE_RENAME) > 0,
+                .move = false, // unhandled
                 .write = (kevent.fflags & std.c.NOTE_WRITE) > 0,
             },
             .index = @truncate(WatchItemIndex, kevent.udata),
@@ -245,7 +247,8 @@ pub const WatchEvent = struct {
                 .delete = (event.mask & INotify.IN_DELETE_SELF) > 0 or (event.mask & INotify.IN_DELETE) > 0,
                 .metadata = false,
                 .rename = (event.mask & INotify.IN_MOVE_SELF) > 0,
-                .write = (event.mask & INotify.IN_MODIFY) > 0 or (event.mask & INotify.IN_MOVE) > 0,
+                .move = (event.mask & INotify.IN_MOVED_TO) > 0,
+                .write = (event.mask & INotify.IN_MODIFY) > 0,
             },
             .index = index,
         };
@@ -256,6 +259,7 @@ pub const WatchEvent = struct {
         metadata: bool = false,
         rename: bool = false,
         write: bool = false,
+        move: bool = false,
     };
 };
 
@@ -472,10 +476,10 @@ pub fn NewWatcher(comptime ContextType: type) type {
             }
         }
 
-        pub fn indexOf(this: *Watcher, hash: HashType) ?usize {
+        pub fn indexOf(this: *Watcher, hash: HashType) ?u32 {
             for (this.watchlist.items(.hash)) |other, i| {
                 if (hash == other) {
-                    return i;
+                    return @truncate(u32, i);
                 }
             }
             return null;
@@ -491,7 +495,12 @@ pub fn NewWatcher(comptime ContextType: type) type {
             package_json: ?*PackageJSON,
             comptime copy_file_path: bool,
         ) !void {
-            if (this.indexOf(hash) != null) {
+            if (this.indexOf(hash)) |index| {
+                // On Linux, the file descriptor might be out of date.
+                if (fd > 0) {
+                    var fds = this.watchlist.items(.fd);
+                    fds[index] = fd;
+                }
                 return;
             }
 

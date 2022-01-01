@@ -1813,8 +1813,10 @@ pub const RequestContext = struct {
                 };
 
                 const hash = Watcher.getHash(result.file.input.text);
-                var watcher_index = ctx.watcher.indexOf(hash);
-                var input_fd = if (watcher_index) |ind| ctx.watcher.watchlist.items(.fd)[ind] else null;
+                const input_fd = if (ctx.watcher.indexOf(hash)) |ind|
+                    if (ind > 0) ctx.watcher.watchlist.items(.fd)[ind] else null
+                else
+                    null;
 
                 if (resolve_result.is_external) {
                     try ctx.sendBadRequest();
@@ -2560,6 +2562,11 @@ pub const Server = struct {
                             Output.prettyErrorln("<r><d>File changed: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
                         }
                     } else {
+                        if (event.op.move) {
+                            var fds = ctx.watcher.watchlist.items(.fd);
+                            fds[event.index] = 0;
+                        }
+
                         const change_message = Api.WebsocketMessageFileChangeNotification{
                             .id = id,
                             .loader = (ctx.bundler.options.loaders.get(path.ext) orelse .file).toAPI(),

@@ -1138,7 +1138,8 @@ pub const VirtualMachine = struct {
 
                 if (vm.watcher) |watcher| {
                     if (watcher.indexOf(hash)) |index| {
-                        fd = watcher.watchlist.items(.fd)[index];
+                        const _fd = watcher.watchlist.items(.fd)[index];
+                        fd = if (_fd > 0) _fd else null;
                         package_json = watcher.watchlist.items(.package_json)[index];
                     }
                 }

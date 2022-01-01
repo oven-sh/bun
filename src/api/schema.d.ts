@@ -231,6 +231,8 @@ export enum WebsocketMessageKind {
   build_fail = 4,
   manifest_success = 5,
   manifest_fail = 6,
+  resolve_file = 7,
+  file_change_notification_with_hint = 8,
 }
 export const WebsocketMessageKindKeys = {
   1: "welcome",
@@ -245,16 +247,23 @@ export const WebsocketMessageKindKeys = {
   manifest_success: "manifest_success",
   6: "manifest_fail",
   manifest_fail: "manifest_fail",
+  7: "resolve_file",
+  resolve_file: "resolve_file",
+  8: "file_change_notification_with_hint",
+  file_change_notification_with_hint: "file_change_notification_with_hint",
 };
 export enum WebsocketCommandKind {
   build = 1,
   manifest = 2,
+  build_with_file_path = 3,
 }
 export const WebsocketCommandKindKeys = {
   1: "build",
   build: "build",
   2: "manifest",
   manifest: "manifest",
+  3: "build_with_file_path",
+  build_with_file_path: "build_with_file_path",
 };
 export interface StackFrame {
   function_name: string;
@@ -575,37 +584,13 @@ export interface WebsocketMessageBuildFailure {
   log: Log;
 }
 
-export interface DependencyManifest {
-  ids: Uint32Array;
-}
-
-export interface FileList {
-  ptrs: StringPointer[];
-  files: string;
-}
-
-export interface WebsocketMessageResolveIDs {
-  id: Uint32Array;
-  list: FileList;
-}
-
-export interface WebsocketCommandResolveIDs {
-  ptrs: StringPointer[];
-  files: string;
-}
-
-export interface WebsocketMessageManifestSuccess {
+export interface WebsocketCommandBuildWithFilePath {
   id: uint32;
-  module_path: string;
-  loader: Loader;
-  manifest: DependencyManifest;
+  file_path: string;
 }
 
-export interface WebsocketMessageManifestFailure {
+export interface WebsocketMessageResolveID {
   id: uint32;
-  from_timestamp: uint32;
-  loader: Loader;
-  log: Log;
 }
 
 export declare function encodeStackFrame(
@@ -860,40 +845,17 @@ export declare function encodeWebsocketMessageBuildFailure(
 export declare function decodeWebsocketMessageBuildFailure(
   buffer: ByteBuffer
 ): WebsocketMessageBuildFailure;
-export declare function encodeDependencyManifest(
-  message: DependencyManifest,
+export declare function encodeWebsocketCommandBuildWithFilePath(
+  message: WebsocketCommandBuildWithFilePath,
   bb: ByteBuffer
 ): void;
-export declare function decodeDependencyManifest(
+export declare function decodeWebsocketCommandBuildWithFilePath(
   buffer: ByteBuffer
-): DependencyManifest;
-export declare function encodeFileList(message: FileList, bb: ByteBuffer): void;
-export declare function decodeFileList(buffer: ByteBuffer): FileList;
-export declare function encodeWebsocketMessageResolveIDs(
-  message: WebsocketMessageResolveIDs,
+): WebsocketCommandBuildWithFilePath;
+export declare function encodeWebsocketMessageResolveID(
+  message: WebsocketMessageResolveID,
   bb: ByteBuffer
 ): void;
-export declare function decodeWebsocketMessageResolveIDs(
+export declare function decodeWebsocketMessageResolveID(
   buffer: ByteBuffer
-): WebsocketMessageResolveIDs;
-export declare function encodeWebsocketCommandResolveIDs(
-  message: WebsocketCommandResolveIDs,
-  bb: ByteBuffer
-): void;
-export declare function decodeWebsocketCommandResolveIDs(
-  buffer: ByteBuffer
-): WebsocketCommandResolveIDs;
-export declare function encodeWebsocketMessageManifestSuccess(
-  message: WebsocketMessageManifestSuccess,
-  bb: ByteBuffer
-): void;
-export declare function decodeWebsocketMessageManifestSuccess(
-  buffer: ByteBuffer
-): WebsocketMessageManifestSuccess;
-export declare function encodeWebsocketMessageManifestFailure(
-  message: WebsocketMessageManifestFailure,
-  bb: ByteBuffer
-): void;
-export declare function decodeWebsocketMessageManifestFailure(
-  buffer: ByteBuffer
-): WebsocketMessageManifestFailure;
+): WebsocketMessageResolveID;

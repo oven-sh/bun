@@ -709,16 +709,7 @@ pub const RequestContext = struct {
 
             var watchlist_slice = this.watcher.watchlist.slice();
 
-            const index = std.mem.indexOfScalar(u32, watchlist_slice.items(.hash), id) orelse {
-
-                // log.addErrorFmt(null, logger.Loc.Empty, this, "File missing from watchlist: {d}. Please refresh :(", .{hash}) catch unreachable;
-                return WatchBuildResult{
-                    .value = .{ .fail = std.mem.zeroes(Api.WebsocketMessageBuildFailure) },
-                    .id = id,
-                    .log = log,
-                    .timestamp = WebsocketHandler.toTimestamp(Server.global_start_time.read()),
-                };
-            };
+            const index = std.mem.indexOfScalar(u32, watchlist_slice.items(.hash), id) orelse return error.MissingWatchID;
 
             const file_path_str = watchlist_slice.items(.file_path)[index];
             const fd = watchlist_slice.items(.fd)[index];
@@ -1544,6 +1535,7 @@ pub const RequestContext = struct {
             // Output.prettyErrorln("<r><green>101<r><d> Hot Module Reloading connected.<r>", .{});
             // Output.flush();
             Analytics.Features.hot_module_reloading = true;
+            var build_file_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
             var cmd: Api.WebsocketCommand = undefined;
             var msg: Api.WebsocketMessage = .{
@@ -1580,8 +1572,9 @@ pub const RequestContext = struct {
                     Output.prettyErrorln("<r><red>ERR:<r> <b>Websocket failed to write.<r>", .{});
                 }
             }
-
             while (!handler.tombstone) {
+                Output.flush();
+
                 defer Output.flush();
                 handler.conn.client.getError() catch |err| {
                     Output.prettyErrorln("<r><red>Websocket ERR:<r> <b>{s}<r>", .{err});
@@ -1617,13 +1610,74 @@ pub const RequestContext = struct {
                         cmd_reader = ApiReader.init(cnst_frame, ctx.allocator);
                         cmd = try Api.WebsocketCommand.decode(&cmd_reader);
                         switch (cmd.kind) {
-                            .build => {
-                                var request = try Api.WebsocketCommandBuild.decode(&cmd_reader);
+                            .build, .build_with_file_path => {
+                                const request_id = if (cmd.kind == .build)
+                                    (try Api.WebsocketCommandBuild.decode(&cmd_reader)).id
+                                else brk: {
+                                    const full_build = try Api.WebsocketCommandBuildWithFilePath.decode(&cmd_reader);
+                                    if (ctx.watcher.indexOf(full_build.id) != null) break :brk full_build.id;
+                                    const file_path = if (std.fs.path.isAbsolute(full_build.file_path))
+                                        full_build.file_path
+                                    else
+                                        ctx.bundler.fs.absBuf(
+                                            &[_]string{ ctx.bundler.fs.top_level_dir, full_build.file_path },
+                                            &build_file_path_buf,
+                                        );
+
+                                    if (Watcher.getHash(file_path) != full_build.id) {
+                                        Output.prettyErrorln("<r><red>ERR:<r> <b>File path hash mismatch for {s}.<r>", .{full_build.file_path});
+                                        continue;
+                                    }
+                                    // save because WebSocket's buffer is 8096
+                                    // max file path is 4096
+                                    var path_buf = _global.constStrToU8(file_path);
+                                    path_buf.ptr[path_buf.len] = 0;
+                                    var file_path_z: [:0]u8 = path_buf.ptr[0..path_buf.len :0];
+                                    const file = std.fs.openFileAbsoluteZ(file_path_z, .{ .read = true }) catch |err| {
+                                        Output.prettyErrorln("<r><red>ERR:<r>{s} opening file <b>{s}<r> <r>", .{ @errorName(err), full_build.file_path });
+                                        continue;
+                                    };
+                                    Fs.FileSystem.setMaxFd(file.handle);
+                                    try ctx.watcher.appendFile(
+                                        file.handle,
+                                        file_path,
+                                        full_build.id,
+                                        ctx.bundler.options.loader(Fs.PathName.init(file_path).ext),
+                                        0,
+                                        null,
+                                        true,
+                                    );
+                                    break :brk full_build.id;
+                                };
 
                                 var arena = std.heap.ArenaAllocator.init(default_allocator);
                                 defer arena.deinit();
 
-                                var build_result = try handler.builder.build(request.id, cmd.timestamp, arena.allocator());
+                                var head = Websocket.WebsocketHeader{
+                                    .final = true,
+                                    .opcode = .Binary,
+                                    .mask = false,
+                                    .len = 0,
+                                };
+
+                                const build_result = handler.builder.build(request_id, cmd.timestamp, arena.allocator()) catch |err| {
+                                    if (err == error.MissingWatchID) {
+                                        msg.timestamp = cmd.timestamp;
+                                        msg.kind = Api.WebsocketMessageKind.resolve_file;
+                                        handler.message_buffer.reset();
+                                        var buffer_writer = MutableStringAPIWriter.init(&handler.message_buffer);
+                                        try msg.encode(&buffer_writer);
+                                        _ = try handler.conn.client.write(handler.message_buffer.list.items, SOCKET_FLAGS);
+                                        const resolve_id = Api.WebsocketMessageResolveId{ .id = request_id };
+                                        try resolve_id.encode(&buffer_writer);
+                                        head.len = Websocket.WebsocketHeader.packLength(handler.message_buffer.list.items.len);
+                                        try handler.websocket.writeHeader(head, handler.message_buffer.list.items.len);
+                                        _ = try handler.conn.client.write(handler.message_buffer.list.items, SOCKET_FLAGS);
+                                        continue;
+                                    }
+
+                                    return err;
+                                };
                                 const file_path = switch (build_result.value) {
                                     .fail => |fail| fail.module_path,
                                     .success => |fail| fail.module_path,
@@ -1652,39 +1706,35 @@ pub const RequestContext = struct {
                                     },
                                 }
 
-                                defer Output.flush();
-                                msg.timestamp = build_result.timestamp;
-                                msg.kind = switch (build_result.value) {
-                                    .success => .build_success,
-                                    else => .build_fail,
-                                };
-                                handler.message_buffer.reset();
-                                var buffer_writer = MutableStringAPIWriter.init(&handler.message_buffer);
-                                try msg.encode(&buffer_writer);
-                                var head = Websocket.WebsocketHeader{
-                                    .final = true,
-                                    .opcode = .Binary,
-                                    .mask = false,
-                                    .len = 0,
-                                };
+                                {
+                                    defer Output.flush();
+                                    msg.timestamp = build_result.timestamp;
+                                    msg.kind = switch (build_result.value) {
+                                        .success => .build_success,
+                                        else => .build_fail,
+                                    };
+                                    handler.message_buffer.reset();
+                                    var buffer_writer = MutableStringAPIWriter.init(&handler.message_buffer);
+                                    try msg.encode(&buffer_writer);
 
-                                switch (build_result.value) {
-                                    .success => |success| {
-                                        try success.encode(&buffer_writer);
-                                        const total = handler.message_buffer.list.items.len + build_result.bytes.len;
-                                        head.len = Websocket.WebsocketHeader.packLength(total);
-                                        try handler.websocket.writeHeader(head, total);
-                                        _ = try handler.conn.client.write(handler.message_buffer.list.items, SOCKET_FLAGS);
-                                        if (build_result.bytes.len > 0) {
-                                            _ = try handler.conn.client.write(build_result.bytes, SOCKET_FLAGS);
-                                        }
-                                    },
-                                    .fail => |fail| {
-                                        try fail.encode(&buffer_writer);
-                                        head.len = Websocket.WebsocketHeader.packLength(handler.message_buffer.list.items.len);
-                                        try handler.websocket.writeHeader(head, handler.message_buffer.list.items.len);
-                                        _ = try handler.conn.client.write(handler.message_buffer.list.items, SOCKET_FLAGS);
-                                    },
+                                    switch (build_result.value) {
+                                        .success => |success| {
+                                            try success.encode(&buffer_writer);
+                                            const total = handler.message_buffer.list.items.len + build_result.bytes.len;
+                                            head.len = Websocket.WebsocketHeader.packLength(total);
+                                            try handler.websocket.writeHeader(head, total);
+                                            _ = try handler.conn.client.write(handler.message_buffer.list.items, SOCKET_FLAGS);
+                                            if (build_result.bytes.len > 0) {
+                                                _ = try handler.conn.client.write(build_result.bytes, SOCKET_FLAGS);
+                                            }
+                                        },
+                                        .fail => |fail| {
+                                            try fail.encode(&buffer_writer);
+                                            head.len = Websocket.WebsocketHeader.packLength(handler.message_buffer.list.items.len);
+                                            try handler.websocket.writeHeader(head, handler.message_buffer.list.items.len);
+                                            _ = try handler.conn.client.write(handler.message_buffer.list.items, SOCKET_FLAGS);
+                                        },
+                                    }
                                 }
                             },
                             else => {
@@ -2176,8 +2226,12 @@ pub const RequestContext = struct {
         const path = ctx.url.path["bun:".len..];
 
         if (strings.eqlComptime(path, "_api.hmr")) {
-            try ctx.handleWebsocket(server);
-            return;
+            if (ctx.header("Upgrade")) |upgrade| {
+                if (strings.eqlCaseInsensitiveASCII(upgrade.value, "websocket", true)) {
+                    try ctx.handleWebsocket(server);
+                    return;
+                }
+            }
         }
 
         if (strings.eqlComptime(path, "error.js")) {
@@ -2482,23 +2536,25 @@ pub const Server = struct {
     fallback_only: bool = false,
 
     threadlocal var filechange_buf: [32]u8 = undefined;
+    threadlocal var filechange_buf_hinted: [32]u8 = undefined;
 
     pub fn onFileUpdate(
         ctx: *Server,
         events: []watcher.WatchEvent,
+        changed_files: []?[:0]u8,
         watchlist: watcher.Watchlist,
     ) void {
         if (ctx.javascript_enabled) {
             if (Output.isEmojiEnabled()) {
-                _onFileUpdate(ctx, events, watchlist, true, true);
+                _onFileUpdate(ctx, events, changed_files, watchlist, true, true);
             } else {
-                _onFileUpdate(ctx, events, watchlist, true, false);
+                _onFileUpdate(ctx, events, changed_files, watchlist, true, false);
             }
         } else {
             if (Output.isEmojiEnabled()) {
-                _onFileUpdate(ctx, events, watchlist, false, true);
+                _onFileUpdate(ctx, events, changed_files, watchlist, false, true);
             } else {
-                _onFileUpdate(ctx, events, watchlist, false, false);
+                _onFileUpdate(ctx, events, changed_files, watchlist, false, false);
             }
         }
     }
@@ -2506,21 +2562,38 @@ pub const Server = struct {
     fn _onFileUpdate(
         ctx: *Server,
         events: []watcher.WatchEvent,
+        changed_files: []?[:0]u8,
         watchlist: watcher.Watchlist,
         comptime is_javascript_enabled: bool,
         comptime is_emoji_enabled: bool,
     ) void {
         var fbs = std.io.fixedBufferStream(&filechange_buf);
-        var writer = ByteApiWriter.init(&fbs);
-        const message_type = Api.WebsocketMessage{
-            .timestamp = RequestContext.WebsocketHandler.toTimestamp(ctx.timer.read()),
-            .kind = .file_change_notification,
-        };
-        message_type.encode(&writer) catch unreachable;
+        var hinted_fbs = std.io.fixedBufferStream(&filechange_buf_hinted);
+        {
+            var writer = ByteApiWriter.init(&fbs);
+            const message_type = Api.WebsocketMessage{
+                .timestamp = RequestContext.WebsocketHandler.toTimestamp(ctx.timer.read()),
+                .kind = .file_change_notification,
+            };
+
+            message_type.encode(&writer) catch unreachable;
+        }
+
+        {
+            var writer = ByteApiWriter.init(&hinted_fbs);
+            const message_type = Api.WebsocketMessage{
+                .timestamp = RequestContext.WebsocketHandler.toTimestamp(ctx.timer.read()),
+                .kind = Api.WebsocketMessageKind.file_change_notification_with_hint,
+            };
+
+            message_type.encode(&writer) catch unreachable;
+        }
+
         var slice = watchlist.slice();
         const file_paths = slice.items(.file_path);
         var counts = slice.items(.count);
         const kinds = slice.items(.kind);
+        const hashes = slice.items(.hash);
         var header = fbs.getWritten();
         defer ctx.watcher.flushEvictions();
         defer Output.flush();
@@ -2538,14 +2611,19 @@ pub const Server = struct {
             // so it's consistent with the rest
             // if we use .extname we might run into an issue with whether or not the "." is included.
             const path = Fs.PathName.init(file_path);
-            const id = watchlist.items(.hash)[event.index];
+            const id = hashes[event.index];
             var content_fbs = std.io.fixedBufferStream(filechange_buf[header.len..]);
+            var hinted_content_fbs = std.io.fixedBufferStream(filechange_buf_hinted[header.len..]);
 
             defer {
                 if (comptime is_javascript_enabled) {
                     // TODO: does this need a lock?
                     // RequestContext.JavaScriptHandler.javascript_vm.incrementUpdateCounter(id, update_count);
                 }
+            }
+
+            if (comptime Environment.isDebug) {
+                Output.prettyErrorln("[watcher] {s}: -- {}", .{ @tagName(kind), event.op });
             }
 
             switch (kind) {
@@ -2562,11 +2640,6 @@ pub const Server = struct {
                             Output.prettyErrorln("<r><d>File changed: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
                         }
                     } else {
-                        if (event.op.move) {
-                            var fds = ctx.watcher.watchlist.items(.fd);
-                            fds[event.index] = 0;
-                        }
-
                         const change_message = Api.WebsocketMessageFileChangeNotification{
                             .id = id,
                             .loader = (ctx.bundler.options.loaders.get(path.ext) orelse .file).toAPI(),
@@ -2587,12 +2660,68 @@ pub const Server = struct {
                     }
                 },
                 .directory => {
+                    const affected = event.names(changed_files);
+
+                    if (affected.len > 0) {
+                        if (rfs.entries.get(file_path)) |dir_ent| {
+                            var last_file_hash: Watcher.HashType = std.math.maxInt(Watcher.HashType);
+                            var already_had_all_affected = true;
+                            for (affected) |changed_name_ptr| {
+                                const changed_name: []const u8 = std.mem.span((changed_name_ptr orelse continue));
+                                const loader = (ctx.bundler.options.loaders.get(Fs.PathName.init(changed_name).ext) orelse .file);
+                                if (loader.isJavaScriptLikeOrJSON() or loader == .css) {
+                                    if (dir_ent.entries.get(changed_name)) |file_ent| {
+                                        const abs_path = file_ent.entry.abs_path.slice();
+                                        const file_hash = Watcher.getHash(abs_path);
+
+                                        // skip consecutive duplicates
+                                        if (last_file_hash == file_hash) continue;
+                                        last_file_hash = file_hash;
+
+                                        // reset the file descriptor
+                                        file_ent.entry.cache.fd = 0;
+                                        file_ent.entry.need_stat = true;
+
+                                        const change_message = Api.WebsocketMessageFileChangeNotification{
+                                            .id = file_hash,
+                                            .loader = loader.toAPI(),
+                                        };
+
+                                        var content_writer = ByteApiWriter.init(&hinted_content_fbs);
+                                        change_message.encode(&content_writer) catch unreachable;
+                                        const change_buf = hinted_content_fbs.getWritten();
+                                        const written_buf = filechange_buf_hinted[0 .. header.len + change_buf.len];
+                                        RequestContext.WebsocketHandler.broadcast(written_buf) catch |err| {
+                                            Output.prettyErrorln("Error writing change notification: {s}<r>", .{@errorName(err)});
+                                        };
+                                        if (comptime is_emoji_enabled) {
+                                            Output.prettyErrorln("<r>📜  <d>File change: {s}<r>", .{ctx.bundler.fs.relativeTo(abs_path)});
+                                        } else {
+                                            Output.prettyErrorln("<r>   <d>File change: {s}<r>", .{ctx.bundler.fs.relativeTo(abs_path)});
+                                        }
+                                    } else {
+                                        already_had_all_affected = false;
+                                    }
+                                }
+                            }
+
+                            // When the only operation in a directory was moving new files into it, and we were already watching the existing files
+                            // We don't need to invalidate the directory entries
+                            // We only need to invalidate the file descriptor
+                            if (already_had_all_affected and event.op.move_to and !event.op.delete and
+                                !event.op.rename and
+                                !event.op.write)
+                            {
+                                continue;
+                            }
+                        }
+                    }
+
                     rfs.bustEntriesCache(file_path);
                     ctx.bundler.resolver.dir_cache.remove(file_path);
 
                     // if (event.op.delete or event.op.rename)
                     //     ctx.watcher.removeAtIndex(event.index, hashes[event.index], parent_hashes, .directory);
-
                     if (comptime is_emoji_enabled) {
                         Output.prettyErrorln("<r>📁  <d>Dir change: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
                     } else {

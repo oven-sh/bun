@@ -440,11 +440,14 @@ smol WebsocketMessageKind {
   build_fail = 4;
   manifest_success = 5;
   manifest_fail = 6;
+  resolve_file = 7;
+  file_change_notification_with_hint = 8;
 }
 
 smol WebsocketCommandKind {
   build = 1;
   manifest = 2;
+  build_with_file_path = 3;
 }
 
 // Each websocket message has two messages in it!
@@ -492,7 +495,6 @@ struct WebsocketMessageBuildSuccess {
   uint32 blob_length;
 }
 
-
 struct WebsocketMessageBuildFailure {
   uint32 id;
   uint32 from_timestamp;
@@ -502,37 +504,11 @@ struct WebsocketMessageBuildFailure {
   Log log;
 }
 
-// CSS @import only for now!
-struct DependencyManifest {
-  uint32[] ids;
-}
-
-struct FileList {
-  StringPointer[] ptrs;
-  string files;
-}
-
-struct WebsocketMessageResolveIDs {
-  uint32[] id;
-  FileList list;
-}
-
-struct WebsocketCommandResolveIDs {
-  StringPointer[] ptrs;
-  string files;
-}
-
-struct WebsocketMessageManifestSuccess {
+struct WebsocketCommandBuildWithFilePath {
   uint32 id;
-  string module_path;
-  Loader loader;
-
-  DependencyManifest manifest;
+  string file_path;
 }
 
-struct WebsocketMessageManifestFailure {
+struct WebsocketMessageResolveID {
   uint32 id;
-  uint32 from_timestamp;
-  Loader loader;
-  Log log;
 }

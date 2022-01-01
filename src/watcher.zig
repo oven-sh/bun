@@ -20,7 +20,7 @@ const os = std.os;
 
 const Mutex = @import("./lock.zig").Lock;
 const Futex = @import("./futex.zig");
-const WatchItemIndex = u16;
+pub const WatchItemIndex = u16;
 const NoWatchItem: WatchItemIndex = std.math.maxInt(WatchItemIndex);
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 
@@ -65,6 +65,16 @@ pub const INotify = struct {
         mask: u32,
         cookie: u32,
         name_len: u32,
+
+        pub fn name(this: *const INotifyEvent) [:0]u8 {
+            if (comptime Environment.allow_assert) std.debug.assert(this.name_len > 0);
+
+            // the name_len field is wrong
+            // it includes alignment / padding
+            // but it is a sentineled value
+            // so we can just trim it to the first null byte
+            return std.mem.sliceTo(@intToPtr([*]u8, @ptrToInt(this) + @sizeOf(INotifyEvent))[0..this.name_len:0], 0);
+        }
     };
     pub var inotify_fd: EventListIndex = 0;
     pub var loaded_inotify = false;
@@ -208,6 +218,13 @@ pub const WatchItem = struct {
 pub const WatchEvent = struct {
     index: WatchItemIndex,
     op: Op,
+    name_off: u8 = 0,
+    name_len: u8 = 0,
+
+    pub fn names(this: WatchEvent, buf: []?[:0]u8) []?[:0]u8 {
+        if (this.name_len == 0) return &[_]?[:0]u8{};
+        return buf[this.name_off..][0..this.name_len];
+    }
 
     const KEvent = std.c.Kevent;
 
@@ -218,14 +235,16 @@ pub const WatchEvent = struct {
     }
 
     pub fn merge(this: *WatchEvent, other: WatchEvent) void {
+        this.name_len += other.name_len;
         this.op = Op{
             .delete = this.op.delete or other.op.delete,
             .metadata = this.op.metadata or other.op.metadata,
             .rename = this.op.rename or other.op.rename,
-            .move = this.op.move or other.op.move,
             .write = this.op.write or other.op.write,
         };
     }
+
+ 
 
     pub fn fromKEvent(this: *WatchEvent, kevent: KEvent) void {
         this.* =
@@ -234,12 +253,13 @@ pub const WatchEvent = struct {
                 .delete = (kevent.fflags & std.c.NOTE_DELETE) > 0,
                 .metadata = (kevent.fflags & std.c.NOTE_ATTRIB) > 0,
                 .rename = (kevent.fflags & std.c.NOTE_RENAME) > 0,
-                .move = false, // unhandled
                 .write = (kevent.fflags & std.c.NOTE_WRITE) > 0,
             },
             .index = @truncate(WatchItemIndex, kevent.udata),
         };
     }
+
+    
 
     pub fn fromINotify(this: *WatchEvent, event: INotify.INotifyEvent, index: WatchItemIndex) void {
         this.* = WatchEvent{
@@ -247,7 +267,7 @@ pub const WatchEvent = struct {
                 .delete = (event.mask & INotify.IN_DELETE_SELF) > 0 or (event.mask & INotify.IN_DELETE) > 0,
                 .metadata = false,
                 .rename = (event.mask & INotify.IN_MOVE_SELF) > 0,
-                .move = (event.mask & INotify.IN_MOVED_TO) > 0,
+                .move_to = (event.mask & INotify.IN_MOVED_TO) > 0,
                 .write = (event.mask & INotify.IN_MODIFY) > 0,
             },
             .index = index,
@@ -255,12 +275,16 @@ pub const WatchEvent = struct {
     }
 
     pub const Op = packed struct {
+        padding: u3 = 0,
+
         delete: bool = false,
         metadata: bool = false,
         rename: bool = false,
         write: bool = false,
-        move: bool = false,
+        move_to: bool = false,
     };
+
+    
 };
 
 pub const Watchlist = std.MultiArrayList(WatchItem);
@@ -281,6 +305,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         // User-facing
         watch_events: [128]WatchEvent = undefined,
+        changed_filepaths: [128]?[:0]u8 = std.mem.zeroes([128]?[:0]u8),
 
         fs: *Fs.FileSystem,
         // this is what kqueue knows about
@@ -424,7 +449,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                         watchevents[i].fromKEvent(event);
                     }
 
-                    this.ctx.onFileUpdate(watchevents, this.watchlist);
+                    this.ctx.onFileUpdate(watchevents, this.changed_filepaths[0..watchevents.len], this.watchlist);
                 }
             } else if (Environment.isLinux) {
                 restart: while (true) {
@@ -434,9 +459,12 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     // TODO: is this thread safe?
                     const eventlist_index = this.watchlist.items(.eventlist_index);
                     var remaining_events = events.len;
+                    var name_off: u8 = 0;
+                    var temp_name_list: [128]?[:0]u8 = undefined;
+                    var temp_name_off: u8 = 0;
 
                     while (remaining_events > 0) {
-                        const slice = events[0..std.math.min(remaining_events, this.watch_events.len)];
+                        const slice = events[0..@minimum(remaining_events, this.watch_events.len)];
                         var watchevents = this.watch_events[0..slice.len];
                         var watch_event_id: u32 = 0;
                         for (slice) |event| {
@@ -451,7 +479,14 @@ pub fn NewWatcher(comptime ContextType: type) type {
                                     ) orelse continue,
                                 ),
                             );
-
+                            temp_name_list[temp_name_off] = if (event.name_len > 0) 
+                                  event.name()
+                                else 
+                                    null;
+                            watchevents[watch_event_id].name_off = temp_name_off;
+                            watchevents[watch_event_id].name_len = @as(u8, @boolToInt((event.name_len > 0)));
+                            temp_name_off += @as(u8, @boolToInt((event.name_len > 0)));
+                            
                             watch_event_id += 1;
                         }
 
@@ -460,16 +495,25 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
                         var last_event_index: usize = 0;
                         var last_event_id: INotify.EventListIndex = std.math.maxInt(INotify.EventListIndex);
-                        for (all_events) |event, i| {
-                            if (event.index == last_event_id) {
-                                all_events[last_event_index].merge(event);
+
+   
+
+                        for (all_events) |_, i| {
+                            if (all_events[i].name_len > 0) {
+                                this.changed_filepaths[name_off] = temp_name_list[all_events[i].name_off];
+                                all_events[i].name_off = name_off;
+                                name_off += 1;
+                            }
+
+                            if (all_events[i].index == last_event_id) {
+                                all_events[last_event_index].merge(all_events[i]);
                                 continue;
                             }
                             last_event_index = i;
-                            last_event_id = event.index;
+                            last_event_id = all_events[i].index;
                         }
                         if (all_events.len == 0) continue :restart;
-                        this.ctx.onFileUpdate(all_events[0 .. last_event_index + 1], this.watchlist);
+                        this.ctx.onFileUpdate(all_events[0 .. last_event_index + 1], this.changed_filepaths[0..name_off + 1], this.watchlist);
                         remaining_events -= slice.len;
                     }
                 }

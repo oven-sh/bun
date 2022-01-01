@@ -321,7 +321,7 @@ var counter: std.atomic.Atomic(u32) = undefined;
 fn start() bool {
     @setCold(true);
 
-    defer has_loaded = true;
+    has_loaded = true;
     counter = std.atomic.Atomic(u32).init(0);
 
     event_queue = EventQueue.init(std.heap.c_allocator);
@@ -352,23 +352,26 @@ const header_entry = Headers.Kv{
     },
 };
 
+var out_buffer: MutableString = undefined;
+var event_list: EventList = undefined;
 fn readloop() anyerror!void {
     defer disabled = true;
     Output.Source.configureNamedThread(thread, "Analytics");
     defer Output.flush();
 
-    var event_list = try default_allocator.create(EventList);
-    event_list.* = EventList.init();
+
+    event_list = EventList.init();
 
     var headers_entries: Headers.Entries = Headers.Entries{};
     headers_entries.append(default_allocator, header_entry) catch unreachable;
+    out_buffer = try MutableString.init(default_allocator, 64);
     event_list.async_http = HTTP.AsyncHTTP.init(
         default_allocator,
         .POST,
         URL.parse(Environment.analytics_url),
         headers_entries,
         headers_buf,
-        &event_list.out_buffer,
+        &out_buffer,
         &event_list.in_buffer,
         std.time.ns_per_ms * 10000,
     ) catch return;
@@ -395,7 +398,6 @@ pub const EventList = struct {
     events: std.ArrayList(Event),
     async_http: HTTP.AsyncHTTP,
 
-    out_buffer: MutableString,
     in_buffer: MutableString,
 
     pub fn init() EventList {
@@ -405,7 +407,6 @@ pub const EventList = struct {
             .events = std.ArrayList(Event).init(default_allocator),
             .in_buffer = MutableString.init(default_allocator, 1024) catch unreachable,
             .async_http = undefined,
-            .out_buffer = MutableString.init(default_allocator, 0) catch unreachable,
         };
     }
 
@@ -510,7 +511,7 @@ pub const EventList = struct {
         disabled = disabled or stuck_count > 4;
 
         this.in_buffer.reset();
-        this.out_buffer.reset();
+out_buffer.reset();
 
         if (comptime FeatureFlags.verbose_analytics) {
             Output.prettyErrorln("[Analytics] Sent {d} events", .{count});

@@ -22,7 +22,7 @@ const AsyncIO = @import("io");
 const ThreadPool = @import("thread_pool");
 const boring = @import("boringssl");
 pub const NetworkThread = @import("./network_thread.zig");
-
+const ObjectPool = @import("./pool.zig").ObjectPool;
 const SOCK = os.SOCK;
 
 pub const Headers = struct {
@@ -222,11 +222,21 @@ pub const HeaderBuilder = struct {
 };
 
 pub const HTTPChannel = @import("./sync.zig").Channel(*AsyncHTTP, .{ .Static = 1000 });
-
 // 32 pointers much cheaper than 1000 pointers
-const SingleHTTPChannel = @import("./sync.zig").Channel(*AsyncHTTP, .{ .Static = 32 });
-var send_sync_channel: SingleHTTPChannel = undefined;
-var send_sync_channel_loaded: bool = false;
+const SingleHTTPChannel = struct {
+    const SingleHTTPCHannel_ = @import("./sync.zig").Channel(*AsyncHTTP, .{ .Static = 8 });
+    channel: SingleHTTPCHannel_,
+    pub fn reset(_: *@This()) void {
+
+    }
+    pub fn init(_: std.mem.Allocator) anyerror!SingleHTTPChannel {
+        return SingleHTTPChannel{
+            .channel = SingleHTTPCHannel_.init()
+        };
+    }
+};
+
+const SingleHTTPChannelPool = ObjectPool(SingleHTTPChannel, SingleHTTPChannel.init, false);
 
 pub const HTTPChannelContext = struct {
     http: AsyncHTTP = undefined,
@@ -270,6 +280,7 @@ pub const AsyncHTTP = struct {
     /// Callback runs when request finishes
     /// Executes on the network thread
     callback: ?CompletionCallback = null,
+    callback_ctx: ?*anyopaque = null,
 
     pub const CompletionCallback = fn (this: *AsyncHTTP, sender: *HTTPSender) void;
     pub var active_requests_count = std.atomic.Atomic(u32).init(0);
@@ -317,22 +328,26 @@ pub const AsyncHTTP = struct {
     }
 
     fn sendSyncCallback(this: *AsyncHTTP, sender: *HTTPSender) void {
-        send_sync_channel.writeItem(this) catch unreachable;
+        var pooled_node = @ptrCast(*SingleHTTPChannelPool.Node, @alignCast(@alignOf(*SingleHTTPChannelPool.Node), this.callback_ctx.?));
+        pooled_node.data.channel.writeItem(this) catch unreachable;
         sender.release();
     }
 
     pub fn sendSync(this: *AsyncHTTP) anyerror!picohttp.Response {
-        if (!send_sync_channel_loaded) {
-            send_sync_channel_loaded = true;
-            send_sync_channel = SingleHTTPChannel.init();
+        this.callback_ctx = SingleHTTPChannelPool.get(default_allocator);
+        defer {
+            var pooled_node = @ptrCast(*SingleHTTPChannelPool.Node, @alignCast(@alignOf(*SingleHTTPChannelPool.Node), this.callback_ctx.?));
+            SingleHTTPChannelPool.release(pooled_node);
+            this.callback_ctx = null;
         }
-
         this.callback = sendSyncCallback;
+
         var batch = NetworkThread.Batch{};
         this.schedule(this.allocator, &batch);
         NetworkThread.global.pool.schedule(batch);
         while (true) {
-            var async_http: *AsyncHTTP = (send_sync_channel.tryReadItem() catch unreachable) orelse {
+            var pooled = @ptrCast(*SingleHTTPChannelPool.Node, @alignCast(@alignOf(*SingleHTTPChannelPool.Node), this.callback_ctx.?));
+            var async_http: *AsyncHTTP = (pooled.data.channel.tryReadItem() catch unreachable) orelse {
                 std.atomic.spinLoopHint();
                 std.time.sleep(std.time.ns_per_us * 100);
                 continue;

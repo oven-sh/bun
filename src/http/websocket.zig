@@ -112,7 +112,7 @@ pub const Websocket = struct {
     conn: *tcp.Connection,
 
     err: ?anyerror = null,
-    buf: [4096]u8 = undefined,
+    buf: [8096]u8 = undefined,
     read_stream: ReadStream,
     reader: ReadStream.Reader,
     flags: u32 = 0,

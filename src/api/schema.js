@@ -2369,12 +2369,16 @@ const WebsocketMessageKind = {
   4: 4,
   5: 5,
   6: 6,
+  7: 7,
+  8: 8,
   welcome: 1,
   file_change_notification: 2,
   build_success: 3,
   build_fail: 4,
   manifest_success: 5,
   manifest_fail: 6,
+  resolve_file: 7,
+  file_change_notification_with_hint: 8,
 };
 const WebsocketMessageKindKeys = {
   1: "welcome",
@@ -2383,24 +2387,32 @@ const WebsocketMessageKindKeys = {
   4: "build_fail",
   5: "manifest_success",
   6: "manifest_fail",
+  7: "resolve_file",
+  8: "file_change_notification_with_hint",
   welcome: "welcome",
   file_change_notification: "file_change_notification",
   build_success: "build_success",
   build_fail: "build_fail",
   manifest_success: "manifest_success",
   manifest_fail: "manifest_fail",
+  resolve_file: "resolve_file",
+  file_change_notification_with_hint: "file_change_notification_with_hint",
 };
 const WebsocketCommandKind = {
   1: 1,
   2: 2,
+  3: 3,
   build: 1,
   manifest: 2,
+  build_with_file_path: 3,
 };
 const WebsocketCommandKindKeys = {
   1: "build",
   2: "manifest",
+  3: "build_with_file_path",
   build: "build",
   manifest: "manifest",
+  build_with_file_path: "build_with_file_path",
 };
 
 function decodeWebsocketMessage(bb) {
@@ -2669,121 +2681,15 @@ function encodeWebsocketMessageBuildFailure(message, bb) {
   }
 }
 
-function decodeDependencyManifest(bb) {
-  var result = {};
-
-  result["ids"] = bb.readUint32ByteArray();
-  return result;
-}
-
-function encodeDependencyManifest(message, bb) {
-  var value = message["ids"];
-  if (value != null) {
-    bb.writeUint32ByteArray(value);
-  } else {
-    throw new Error('Missing required field "ids"');
-  }
-}
-
-function decodeFileList(bb) {
-  var result = {};
-
-  var length = bb.readVarUint();
-  var values = (result["ptrs"] = Array(length));
-  for (var i = 0; i < length; i++) values[i] = decodeStringPointer(bb);
-  result["files"] = bb.readString();
-  return result;
-}
-
-function encodeFileList(message, bb) {
-  var value = message["ptrs"];
-  if (value != null) {
-    var values = value,
-      n = values.length;
-    bb.writeVarUint(n);
-    for (var i = 0; i < n; i++) {
-      value = values[i];
-      encodeStringPointer(value, bb);
-    }
-  } else {
-    throw new Error('Missing required field "ptrs"');
-  }
-
-  var value = message["files"];
-  if (value != null) {
-    bb.writeString(value);
-  } else {
-    throw new Error('Missing required field "files"');
-  }
-}
-
-function decodeWebsocketMessageResolveIDs(bb) {
-  var result = {};
-
-  result["id"] = bb.readUint32ByteArray();
-  result["list"] = decodeFileList(bb);
-  return result;
-}
-
-function encodeWebsocketMessageResolveIDs(message, bb) {
-  var value = message["id"];
-  if (value != null) {
-    bb.writeUint32ByteArray(value);
-  } else {
-    throw new Error('Missing required field "id"');
-  }
-
-  var value = message["list"];
-  if (value != null) {
-    encodeFileList(value, bb);
-  } else {
-    throw new Error('Missing required field "list"');
-  }
-}
-
-function decodeWebsocketCommandResolveIDs(bb) {
-  var result = {};
-
-  var length = bb.readVarUint();
-  var values = (result["ptrs"] = Array(length));
-  for (var i = 0; i < length; i++) values[i] = decodeStringPointer(bb);
-  result["files"] = bb.readString();
-  return result;
-}
-
-function encodeWebsocketCommandResolveIDs(message, bb) {
-  var value = message["ptrs"];
-  if (value != null) {
-    var values = value,
-      n = values.length;
-    bb.writeVarUint(n);
-    for (var i = 0; i < n; i++) {
-      value = values[i];
-      encodeStringPointer(value, bb);
-    }
-  } else {
-    throw new Error('Missing required field "ptrs"');
-  }
-
-  var value = message["files"];
-  if (value != null) {
-    bb.writeString(value);
-  } else {
-    throw new Error('Missing required field "files"');
-  }
-}
-
-function decodeWebsocketMessageManifestSuccess(bb) {
+function decodeWebsocketCommandBuildWithFilePath(bb) {
   var result = {};
 
   result["id"] = bb.readUint32();
-  result["module_path"] = bb.readString();
-  result["loader"] = Loader[bb.readByte()];
-  result["manifest"] = decodeDependencyManifest(bb);
+  result["file_path"] = bb.readString();
   return result;
 }
 
-function encodeWebsocketMessageManifestSuccess(message, bb) {
+function encodeWebsocketCommandBuildWithFilePath(message, bb) {
   var value = message["id"];
   if (value != null) {
     bb.writeUint32(value);
@@ -2791,75 +2697,27 @@ function encodeWebsocketMessageManifestSuccess(message, bb) {
     throw new Error('Missing required field "id"');
   }
 
-  var value = message["module_path"];
+  var value = message["file_path"];
   if (value != null) {
     bb.writeString(value);
   } else {
-    throw new Error('Missing required field "module_path"');
-  }
-
-  var value = message["loader"];
-  if (value != null) {
-    var encoded = Loader[value];
-    if (encoded === void 0)
-      throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "Loader"'
-      );
-    bb.writeByte(encoded);
-  } else {
-    throw new Error('Missing required field "loader"');
-  }
-
-  var value = message["manifest"];
-  if (value != null) {
-    encodeDependencyManifest(value, bb);
-  } else {
-    throw new Error('Missing required field "manifest"');
+    throw new Error('Missing required field "file_path"');
   }
 }
 
-function decodeWebsocketMessageManifestFailure(bb) {
+function decodeWebsocketMessageResolveID(bb) {
   var result = {};
 
   result["id"] = bb.readUint32();
-  result["from_timestamp"] = bb.readUint32();
-  result["loader"] = Loader[bb.readByte()];
-  result["log"] = decodeLog(bb);
   return result;
 }
 
-function encodeWebsocketMessageManifestFailure(message, bb) {
+function encodeWebsocketMessageResolveID(message, bb) {
   var value = message["id"];
   if (value != null) {
     bb.writeUint32(value);
   } else {
     throw new Error('Missing required field "id"');
-  }
-
-  var value = message["from_timestamp"];
-  if (value != null) {
-    bb.writeUint32(value);
-  } else {
-    throw new Error('Missing required field "from_timestamp"');
-  }
-
-  var value = message["loader"];
-  if (value != null) {
-    var encoded = Loader[value];
-    if (encoded === void 0)
-      throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "Loader"'
-      );
-    bb.writeByte(encoded);
-  } else {
-    throw new Error('Missing required field "loader"');
-  }
-
-  var value = message["log"];
-  if (value != null) {
-    encodeLog(value, bb);
-  } else {
-    throw new Error('Missing required field "log"');
   }
 }
 
@@ -2985,15 +2843,7 @@ export { decodeWebsocketMessageBuildSuccess };
 export { encodeWebsocketMessageBuildSuccess };
 export { decodeWebsocketMessageBuildFailure };
 export { encodeWebsocketMessageBuildFailure };
-export { decodeDependencyManifest };
-export { encodeDependencyManifest };
-export { decodeFileList };
-export { encodeFileList };
-export { decodeWebsocketMessageResolveIDs };
-export { encodeWebsocketMessageResolveIDs };
-export { decodeWebsocketCommandResolveIDs };
-export { encodeWebsocketCommandResolveIDs };
-export { decodeWebsocketMessageManifestSuccess };
-export { encodeWebsocketMessageManifestSuccess };
-export { decodeWebsocketMessageManifestFailure };
-export { encodeWebsocketMessageManifestFailure };
+export { decodeWebsocketCommandBuildWithFilePath };
+export { encodeWebsocketCommandBuildWithFilePath };
+export { decodeWebsocketMessageResolveID };
+export { encodeWebsocketMessageResolveID };

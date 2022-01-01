@@ -3,6 +3,7 @@ import * as API from "../api/schema";
 
 var __HMRModule, __FastRefreshModule, __HMRClient, __injectFastRefresh;
 if (typeof window !== "undefined") {
+  var textEncoder: TextEncoder; 
   // We add a scope here to minimize chances of namespace collisions
   var runOnce = false;
   var clientStartTime = 0;
@@ -185,7 +186,7 @@ if (typeof window !== "undefined") {
       return CSSLoader.cssLoadId.bundle_id;
     }
 
-    private findCSSLinkTag(id: number): CSSHMRInsertionPoint | null {
+     findCSSLinkTag(id: number): CSSHMRInsertionPoint | null {
       let count = 0;
       let match: CSSHMRInsertionPoint = null;
 
@@ -327,6 +328,7 @@ if (typeof window !== "undefined") {
       }
 
       let filepath = update.file;
+      // We cannot safely do this because the hash would change on the server
       if (filepath.startsWith(this.hmr.cwd)) {
         filepath = filepath.substring(this.hmr.cwd.length);
       }
@@ -846,10 +848,10 @@ if (typeof window !== "undefined") {
       }
     }
 
-    handleFileChangeNotification(buffer: ByteBuffer, timestamp: number) {
+    handleFileChangeNotification(buffer: ByteBuffer, timestamp: number, copy_file_path: boolean) {
       const notification =
         API.decodeWebsocketMessageFileChangeNotification(buffer);
-      let file_path = "";
+        let file_path = "";
       switch (notification.loader) {
         case API.Loader.css: {
           file_path = this.loaders.css.filePath(notification);
@@ -866,6 +868,10 @@ if (typeof window !== "undefined") {
         }
       }
 
+      return this.handleFileChangeNotificationBase(timestamp, notification, file_path, copy_file_path);
+    }
+
+    private handleFileChangeNotificationBase(timestamp: number, notification: API.WebsocketMessageFileChangeNotification, file_path: string, copy_file_path: boolean) {
       const accept = file_path && file_path.length > 0;
 
       if (!accept) {
@@ -923,12 +929,34 @@ if (typeof window !== "undefined") {
       switch (reloadBehavior) {
         // This is the same command/logic for both JS and CSS hot reloading.
         case ReloadBehavior.hotReload: {
-          this.buildCommandBuf[0] = API.WebsocketCommandKind.build;
+          if (copy_file_path && !this.buildCommandBufWithFilePath) {
+            // on Linux, max file path length is 4096 bytes
+            // on macOS & Windows, max file path length is 1024 bytes
+            // 256 is extra breathing room
+            this.buildCommandBufWithFilePath = new Uint8Array(4096 + 256);
+          }
+
+          const writeBuffer = !copy_file_path ? this.buildCommandBuf : this.buildCommandBufWithFilePath;
+          writeBuffer[0] = !copy_file_path ? API.WebsocketCommandKind.build : API.WebsocketCommandKind.build_with_file_path;
           this.buildCommandUArray[0] = timestamp;
-          this.buildCommandBuf.set(this.buildCommandUArrayEight, 1);
+          writeBuffer.set(this.buildCommandUArrayEight, 1);
           this.buildCommandUArray[0] = notification.id;
-          this.buildCommandBuf.set(this.buildCommandUArrayEight, 5);
-          this.socket.send(this.buildCommandBuf);
+          writeBuffer.set(this.buildCommandUArrayEight, 5);
+          
+          if (copy_file_path) {
+            if (!textEncoder) {
+              textEncoder = new TextEncoder();
+            }
+
+            this.buildCommandUArray[0] = file_path.length;
+            writeBuffer.set(this.buildCommandUArrayEight, 9);
+
+            const out = textEncoder.encodeInto(file_path, writeBuffer.subarray(13));
+            this.socket.send(this.buildCommandBufWithFilePath.subarray(0, 13 + out.written));
+          } else {
+            this.socket.send(this.buildCommandBuf);
+          }
+
           if (this.verbose) {
             __hmrlog.debug(`Requesting update for ${file_path}`);
           }
@@ -941,9 +969,13 @@ if (typeof window !== "undefined") {
         }
       }
     }
+
     buildCommandBuf = new Uint8Array(9);
     buildCommandUArray = new Uint32Array(1);
     buildCommandUArrayEight = new Uint8Array(this.buildCommandUArray.buffer);
+
+    // lazily allocate because it's going to be much larger than 9 bytes
+    buildCommandBufWithFilePath: Uint8Array;
 
     // On open, reset the delay for reconnecting
     handleOpen = (event: Event) => {
@@ -974,8 +1006,84 @@ if (typeof window !== "undefined") {
           break;
         }
 
+        case API.WebsocketMessageKind.resolve_file: {
+          const {id} = API.decodeWebsocketMessageResolveID(buffer);
+          const timestamp = this.builds.get(id) || 0;
+
+          if (timestamp == 0 && HotReload.VERBOSE) {
+            __hmrlog.debug(`Unknown module? ${id}`);
+            return;
+          }
+
+          const index = HMRModule.dependencies.graph.indexOf(id);
+          var file_path: string = "";
+          var loader = API.Loader.js;
+          if (index > -1) {
+            file_path = HMRModule.dependencies.modules[index].file_path;
+          } else {
+            const tag = this.loaders.css.findCSSLinkTag(id);
+            if (tag && tag.file.length) {
+              file_path = tag.file;
+            }
+          }
+
+          if (!file_path || file_path.length === 0) {
+            if (HotReload.VERBOSE) {
+              __hmrlog.debug(`Unknown module? ${id}`);
+            }
+            return;
+          }
+          
+          switch (file_path.substring(file_path.lastIndexOf("."))) {
+            case ".css": {
+              loader = API.Loader.css;
+              break;
+            }
+
+            case ".mjs":
+            case ".cjs":
+            case ".js": {
+              loader = API.Loader.js;
+              break;
+            }
+
+            case ".json": {
+              loader = API.Loader.json;
+              break;
+            }
+
+            case ".cts":
+            case ".mts":
+            case ".ts": {
+              loader = API.Loader.ts;
+              break;
+            }
+
+            case ".tsx": {
+              loader = API.Loader.tsx;
+              break;
+            }
+
+            case ".jsx": {
+              loader = API.Loader.jsx;
+              break;
+            }
+
+            default: {
+              loader = API.Loader.file;
+              break;
+            }
+          }
+
+          this.handleFileChangeNotificationBase(timestamp, {id, loader}, file_path, true);
+          break;
+        }
         case API.WebsocketMessageKind.file_change_notification: {
-          this.handleFileChangeNotification(buffer, header.timestamp);
+          this.handleFileChangeNotification(buffer, header.timestamp, false);
+          break;
+        }
+        case API.WebsocketMessageKind.file_change_notification_with_hint: {
+          this.handleFileChangeNotification(buffer, header.timestamp, true);
           break;
         }
         case API.WebsocketMessageKind.welcome: {

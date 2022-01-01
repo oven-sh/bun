@@ -2338,6 +2338,12 @@ pub const Api = struct {
         /// manifest_fail
         manifest_fail,
 
+        /// resolve_file
+        resolve_file,
+
+        /// file_change_notification_with_hint
+        file_change_notification_with_hint,
+
         _,
 
         pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
@@ -2352,6 +2358,9 @@ pub const Api = struct {
 
         /// manifest
         manifest,
+
+        /// build_with_file_path
+        build_with_file_path,
 
         _,
 
@@ -2553,144 +2562,40 @@ pub const Api = struct {
         }
     };
 
-    pub const DependencyManifest = struct {
-        /// ids
-        ids: []const u32,
-
-        pub fn decode(reader: anytype) anyerror!DependencyManifest {
-            var this = std.mem.zeroes(DependencyManifest);
-
-            this.ids = try reader.readArray(u32);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeArray(u32, this.ids);
-        }
-    };
-
-    pub const FileList = struct {
-        /// ptrs
-        ptrs: []const StringPointer,
-
-        /// files
-        files: []const u8,
-
-        pub fn decode(reader: anytype) anyerror!FileList {
-            var this = std.mem.zeroes(FileList);
-
-            this.ptrs = try reader.readArray(StringPointer);
-            this.files = try reader.readValue([]const u8);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeArray(StringPointer, this.ptrs);
-            try writer.writeValue(@TypeOf(this.files), this.files);
-        }
-    };
-
-    pub const WebsocketMessageResolveIDs = struct {
-        /// id
-        id: []const u32,
-
-        /// list
-        list: FileList,
-
-        pub fn decode(reader: anytype) anyerror!WebsocketMessageResolveIDs {
-            var this = std.mem.zeroes(WebsocketMessageResolveIDs);
-
-            this.id = try reader.readArray(u32);
-            this.list = try reader.readValue(FileList);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeArray(u32, this.id);
-            try writer.writeValue(@TypeOf(this.list), this.list);
-        }
-    };
-
-    pub const WebsocketCommandResolveIDs = struct {
-        /// ptrs
-        ptrs: []const StringPointer,
-
-        /// files
-        files: []const u8,
-
-        pub fn decode(reader: anytype) anyerror!WebsocketCommandResolveIDs {
-            var this = std.mem.zeroes(WebsocketCommandResolveIDs);
-
-            this.ptrs = try reader.readArray(StringPointer);
-            this.files = try reader.readValue([]const u8);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeArray(StringPointer, this.ptrs);
-            try writer.writeValue(@TypeOf(this.files), this.files);
-        }
-    };
-
-    pub const WebsocketMessageManifestSuccess = struct {
+    pub const WebsocketCommandBuildWithFilePath = struct {
         /// id
         id: u32 = 0,
 
-        /// module_path
-        module_path: []const u8,
+        /// file_path
+        file_path: []const u8,
 
-        /// loader
-        loader: Loader,
-
-        /// manifest
-        manifest: DependencyManifest,
-
-        pub fn decode(reader: anytype) anyerror!WebsocketMessageManifestSuccess {
-            var this = std.mem.zeroes(WebsocketMessageManifestSuccess);
+        pub fn decode(reader: anytype) anyerror!WebsocketCommandBuildWithFilePath {
+            var this = std.mem.zeroes(WebsocketCommandBuildWithFilePath);
 
             this.id = try reader.readValue(u32);
-            this.module_path = try reader.readValue([]const u8);
-            this.loader = try reader.readValue(Loader);
-            this.manifest = try reader.readValue(DependencyManifest);
+            this.file_path = try reader.readValue([]const u8);
             return this;
         }
 
         pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
             try writer.writeInt(this.id);
-            try writer.writeValue(@TypeOf(this.module_path), this.module_path);
-            try writer.writeEnum(this.loader);
-            try writer.writeValue(@TypeOf(this.manifest), this.manifest);
+            try writer.writeValue(@TypeOf(this.file_path), this.file_path);
         }
     };
 
-    pub const WebsocketMessageManifestFailure = struct {
+    pub const WebsocketMessageResolveId = packed struct {
         /// id
         id: u32 = 0,
 
-        /// from_timestamp
-        from_timestamp: u32 = 0,
-
-        /// loader
-        loader: Loader,
-
-        /// log
-        log: Log,
-
-        pub fn decode(reader: anytype) anyerror!WebsocketMessageManifestFailure {
-            var this = std.mem.zeroes(WebsocketMessageManifestFailure);
+        pub fn decode(reader: anytype) anyerror!WebsocketMessageResolveId {
+            var this = std.mem.zeroes(WebsocketMessageResolveId);
 
             this.id = try reader.readValue(u32);
-            this.from_timestamp = try reader.readValue(u32);
-            this.loader = try reader.readValue(Loader);
-            this.log = try reader.readValue(Log);
             return this;
         }
 
         pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
             try writer.writeInt(this.id);
-            try writer.writeInt(this.from_timestamp);
-            try writer.writeEnum(this.loader);
-            try writer.writeValue(@TypeOf(this.log), this.log);
         }
     };
 };

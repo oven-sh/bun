@@ -3133,9 +3133,16 @@ pub const Server = struct {
     pub fn detectFastRefresh(this: *Server) void {
         defer this.bundler.resetStore();
 
-        // 1. Try react refresh
-        _ = this.bundler.resolver.resolve(this.bundler.fs.top_level_dir, this.bundler.options.jsx.refresh_runtime, .internal) catch {
-            // 2. Try react refresh from import source perspective
+        const runtime = this.bundler.options.jsx.refresh_runtime;
+
+        // If there's a .bun, don't even read the filesystem
+        // Just use the .bun
+        if (this.bundler.options.node_modules_bundle) |node_modules_bundle| {
+            const package_name = runtime[0..strings.indexOfChar(runtime, '/') orelse runtime.len];
+            if (node_modules_bundle.getPackageIDByName(package_name) != null) return;       
+        }
+
+        _ = this.bundler.resolver.resolve(this.bundler.fs.top_level_dir, runtime, .internal) catch {
             this.bundler.options.jsx.supports_fast_refresh = false;
             return;
         };

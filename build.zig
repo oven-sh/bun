@@ -182,7 +182,7 @@ pub fn build(b: *std.build.Builder) !void {
         } else if (arch.isX86()) {
             target.os_version_min = std.zig.CrossTarget.OsVersion{ .semver = .{ .major = 10, .minor = 14, .patch = 0 } };
         }
-    } else if (target.getOs().isLinux()) {
+    } else if (target.isLinux()) {
         target.setGnuLibCVersion(2, 27, 0);
     }
 

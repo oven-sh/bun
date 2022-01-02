@@ -128,11 +128,15 @@ pub const RequestContext = struct {
 
         if (protocol == null) {
             determine_protocol: {
-                // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Upgrade-Insecure-Requests
-                if (this.header("Upgrade-Insecure-Requests") != null) {
-                    protocol = "https";
-                    break :determine_protocol;
-                }
+                // Upgrade-Insecure-Requests doesn't work
+                // Browsers send this header to clients that are not running HTTPS
+                // We need to use protocol-relative URLs in import statements and in websocket handler, we need to send the absolute URL it received
+                // That will be our fix
+                // // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Upgrade-Insecure-Requests
+                // if (this.header("Upgrade-Insecure-Requests") != null) {
+                //     protocol = "https";
+                //     break :determine_protocol;
+                // }
 
                 // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Forwarded-Proto
                 if (this.header("X-Forwarded-Proto")) |proto| {

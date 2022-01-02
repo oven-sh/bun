@@ -8,6 +8,7 @@ const c = struct {
     pub const malloc_usable_size = mimalloc.mi_malloc_usable_size;
     pub const malloc = mimalloc.mi_malloc;
     pub const free = mimalloc.mi_free;
+    pub const posix_memalign = mimalloc.mi_posix_memalign;
 };
 const Allocator = mem.Allocator;
 const assert = std.debug.assert;
@@ -38,7 +39,7 @@ const CAllocator = struct {
             pub const supports_malloc_size = false;
         };
 
-    pub const supports_posix_memalign = @hasDecl(c, "posix_memalign");
+    pub const supports_posix_memalign = true;
 
     fn getHeader(ptr: [*]u8) *[*]u8 {
         return @intToPtr(*[*]u8, @ptrToInt(ptr) - @sizeOf(usize));
@@ -48,7 +49,7 @@ const CAllocator = struct {
         if (supports_posix_memalign) {
             // The posix_memalign only accepts alignment values that are a
             // multiple of the pointer size
-            const eff_alignment = std.math.max(alignment, @sizeOf(usize));
+            const eff_alignment = @maximum(alignment, @sizeOf(usize));
 
             var aligned_ptr: ?*anyopaque = undefined;
             if (c.posix_memalign(&aligned_ptr, eff_alignment, len) != 0)

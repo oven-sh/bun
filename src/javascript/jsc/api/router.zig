@@ -390,11 +390,12 @@ pub fn getScriptSrcString(
                 &entry_point_tempbuf,
                 Fs.PathName.init(file_path),
             ),
+            VirtualMachine.vm.origin,
             ScriptSrcStream.Writer,
             writer,
         );
     } else {
-        JavaScript.Bun.getPublicPath(file_path, ScriptSrcStream.Writer, writer);
+        JavaScript.Bun.getPublicPath(file_path, VirtualMachine.vm.origin, ScriptSrcStream.Writer, writer);
     }
 }
 

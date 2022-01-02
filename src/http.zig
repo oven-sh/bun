@@ -94,6 +94,7 @@ pub const RequestContext = struct {
     watcher: *Watcher,
     timer: std.time.Timer,
     matched_route: ?Router.Match = null,
+    origin: ZigURL,
 
     full_url: [:0]const u8 = "",
     res_headers_count: usize = 0,
@@ -101,10 +102,92 @@ pub const RequestContext = struct {
     /// --disable-bun.js propagates here
     pub var fallback_only = false;
 
+    fn parseOrigin(this: *RequestContext) void {
+        var protocol: ?string = null;
+        var host: ?string = null;
+
+        // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Forwarded
+        if (this.header("Forwarded")) |forwarded| {
+            if (strings.indexOf(forwarded, "host=")) |host_start| {
+                const host_i = host_start + "host=".len;
+                const host_ = forwarded[host_i..][0 .. strings.indexOfChar(forwarded[host_i..], ';') orelse forwarded[host_i..].len];
+                if (host_.len > 0) {
+                    host = host_;
+                }
+            }
+
+            if (strings.indexOf(forwarded, "proto=")) |protocol_start| {
+                const protocol_i = protocol_start + "proto=".len;
+                if (strings.eqlComptime(forwarded[protocol_i..][0 .. strings.indexOfChar(forwarded[protocol_i..], ';') orelse forwarded[protocol_i..].len], "https")) {
+                    protocol = "https";
+                } else {
+                    protocol = "http";
+                }
+            }
+        }
+
+        if (protocol == null) {
+            // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Forwarded-Proto
+            determine_protocol: {
+                if (this.header("X-Forwarded-Proto")) |proto| {
+                    if (strings.eqlComptime(proto, "https")) {
+                        protocol = "https";
+                        break :determine_protocol;
+                    }
+                }
+
+                // Microsoft IIS
+                if (this.header("Front-End-Https")) |proto| {
+                    if (strings.eqlComptime(proto, "on")) {
+                        protocol = "https";
+                        break :determine_protocol;
+                    }
+                }
+            }
+        }
+
+        if (host == null) {
+            determine_host: {
+                if (this.header("X-Forwarded-Host")) |_host| {
+                    host = _host;
+                    break :determine_host;
+                }
+            }
+
+            if (this.header("Origin")) |origin| {
+                this.origin = ZigURL.parse(origin);
+                return;
+            }
+        }
+
+        if (host != null or protocol != null) {
+            // Proxies like Caddy might only send X-Forwarded-Proto if the host matches
+            // In that case,
+            const display_protocol = protocol orelse @as(string, "http");
+            var display_host = host orelse
+                (if (protocol != null) this.header("Host") else null) orelse
+                @as(string, this.origin.host);
+
+            var display_port = if (this.origin.port.len > 0) this.origin.port else @as(string, "3000");
+
+            if (strings.indexOfChar(display_host, ':')) |colon| {
+                display_port = display_host[colon + 1 .. display_host.len];
+                display_host = display_host[0..colon];
+            } else if (this.bundler.options.origin.port_was_automatically_set and protocol != null) {
+                if (strings.eqlComptime(display_protocol, "https")) {
+                    display_port = "443";
+                } else {
+                    display_port = "80";
+                }
+            }
+            this.origin = ZigURL.parse(std.fmt.allocPrint(this.allocator, "{s}://{s}:{s}/", .{ display_protocol, display_host, display_port }) catch unreachable);
+        }
+    }
+
     pub fn getFullURL(this: *RequestContext) [:0]const u8 {
         if (this.full_url.len == 0) {
-            if (this.bundler.options.origin.isAbsolute()) {
-                this.full_url = std.fmt.allocPrintZ(this.allocator, "{s}{s}", .{ this.bundler.options.origin.origin, this.request.path }) catch unreachable;
+            if (this.origin.isAbsolute()) {
+                this.full_url = std.fmt.allocPrintZ(this.allocator, "{s}{s}", .{ this.origin.origin, this.request.path }) catch unreachable;
             } else {
                 this.full_url = this.allocator.dupeZ(u8, this.request.path) catch unreachable;
             }
@@ -120,10 +203,26 @@ pub const RequestContext = struct {
         try this.flushHeaders();
     }
 
-    pub fn header(ctx: *RequestContext, comptime name: anytype) ?Header {
+    pub fn header(ctx: *RequestContext, comptime name: anytype) ?[]const u8 {
+        return (ctx.headerEntry(name) orelse return null).value;
+    }
+
+    pub fn headerEntry(ctx: *RequestContext, comptime name: anytype) ?Header {
         for (ctx.request.headers) |head| {
             if (strings.eqlCaseInsensitiveASCII(head.name, name, true)) {
                 return head;
+            }
+        }
+
+        return null;
+    }
+
+    pub fn headerEntryFirst(ctx: *RequestContext, comptime name: []const string) ?Header {
+        for (ctx.request.headers) |head| {
+            inline for (name) |match| {
+                if (strings.eqlCaseInsensitiveASCII(head.name, match, true)) {
+                    return head;
+                }
             }
         }
 
@@ -175,7 +274,7 @@ pub const RequestContext = struct {
                 bundler_parse_options,
                 @as(?*bundler.FallbackEntryPoint, &fallback_entry_point),
             )) |*result| {
-                try bundler_.linker.link(fallback_entry_point.source.path, result, .absolute_url, false);
+                try bundler_.linker.link(fallback_entry_point.source.path, result, this.origin, .absolute_url, false);
                 var buffer_writer = try js_printer.BufferWriter.init(default_allocator);
                 var writer = js_printer.BufferPrinter.init(buffer_writer);
                 _ = try bundler_.print(
@@ -535,6 +634,7 @@ pub const RequestContext = struct {
             .method = Method.which(req.method) orelse return error.InvalidMethod,
             .watcher = watcher_,
             .timer = timer,
+            .origin = bundler_.options.origin,
         };
 
         return ctx;
@@ -542,7 +642,7 @@ pub const RequestContext = struct {
 
     pub inline fn isBrowserNavigation(req: *RequestContext) bool {
         if (req.header("Sec-Fetch-Mode")) |mode| {
-            return strings.eqlComptime(mode.value, "navigate");
+            return strings.eqlComptime(mode, "navigate");
         }
 
         return false;
@@ -621,7 +721,7 @@ pub const RequestContext = struct {
         ctx.appendHeader("Cache-Control", "immutable, max-age=99999");
 
         if (ctx.header("If-None-Match")) |etag_header| {
-            if (std.mem.eql(u8, node_modules_bundle.bundle.etag, etag_header.value)) {
+            if (strings.eqlLong(node_modules_bundle.bundle.etag, etag_header, true)) {
                 try ctx.sendNotModified();
                 return;
             }
@@ -680,6 +780,7 @@ pub const RequestContext = struct {
         printer: js_printer.BufferPrinter,
         timer: std.time.Timer,
         count: usize = 0,
+        origin: ZigURL,
         pub const WatchBuildResult = struct {
             value: Value,
             id: u32,
@@ -779,6 +880,7 @@ pub const RequestContext = struct {
                         this.bundler.linker.link(
                             Fs.Path.init(file_path_str),
                             &parse_result,
+                            this.origin,
                             .absolute_url,
                             false,
                         ) catch return WatchBuildResult{
@@ -865,6 +967,7 @@ pub const RequestContext = struct {
                                 this.allocator,
                                 &log,
                                 &this.bundler.linker,
+                                this.origin,
                             );
                         } else {
                             break :brk CSSBundler.bundle(
@@ -878,6 +981,7 @@ pub const RequestContext = struct {
                                 this.allocator,
                                 &log,
                                 &this.bundler.linker,
+                                this.origin,
                             );
                         }
                     } catch {
@@ -1275,9 +1379,10 @@ pub const RequestContext = struct {
 
                 var handler: *JavaScriptHandler = try channel.readItem();
                 JavaScript.VirtualMachine.vm.tick();
-
                 JavaScript.VirtualMachine.vm.preflush();
-
+                const original_origin = vm.origin;
+                vm.origin = handler.ctx.origin;
+                defer vm.origin = original_origin;
                 JavaScript.EventListenerMixin.emitFetchEvent(
                     vm,
                     &handler.ctx,
@@ -1388,6 +1493,7 @@ pub const RequestContext = struct {
             clone.message_buffer = try MutableString.init(server.allocator, 0);
             clone.ctx.conn = &clone.conn;
             clone.ctx.log = logger.Log.init(server.allocator);
+            clone.ctx.origin = ZigURL.parse(server.allocator.dupe(u8, ctx.origin.href) catch unreachable);
             var printer_writer = try js_printer.BufferWriter.init(server.allocator);
 
             clone.builder = WatchBuilder{
@@ -1396,6 +1502,7 @@ pub const RequestContext = struct {
                 .printer = js_printer.BufferPrinter.init(printer_writer),
                 .timer = ctx.timer,
                 .watcher = ctx.watcher,
+                .origin = clone.ctx.origin,
             };
 
             clone.websocket = Websocket.Websocket.create(&clone.conn, SOCKET_FLAGS);
@@ -1763,14 +1870,14 @@ pub const RequestContext = struct {
             var request: *RequestContext = &self.ctx;
             const upgrade_header = request.header("Upgrade") orelse return error.BadRequest;
 
-            if (!strings.eqlComptime(upgrade_header.value, "websocket")) {
+            if (!strings.eqlComptime(upgrade_header, "websocket")) {
                 return error.BadRequest; // Can only upgrade to websocket
             }
 
             // Some proxies/load balancers will mess with the connection header
             // and browsers also send multiple values here
             const connection_header = request.header("Connection") orelse return error.BadRequest;
-            var it = std.mem.split(u8, connection_header.value, ",");
+            var it = std.mem.split(u8, connection_header, ",");
             while (it.next()) |part| {
                 const conn = std.mem.trim(u8, part, " ");
                 if (strings.eqlCaseInsensitiveASCII(conn, "upgrade", true)) {
@@ -1788,8 +1895,8 @@ pub const RequestContext = struct {
                 Output.prettyErrorln("HMR WebSocket error: missing Sec-WebSocket-Version header", .{});
                 return error.BadRequest;
             };
-            return std.fmt.parseInt(u8, v.value, 10) catch {
-                Output.prettyErrorln("HMR WebSocket error: Sec-WebSocket-Version is invalid {s}", .{v.value});
+            return std.fmt.parseInt(u8, v, 10) catch {
+                Output.prettyErrorln("HMR WebSocket error: Sec-WebSocket-Version is invalid {s}", .{v});
                 return error.BadRequest;
             };
         }
@@ -1798,7 +1905,7 @@ pub const RequestContext = struct {
             self: *WebsocketHandler,
         ) ![]const u8 {
             var request: *RequestContext = &self.ctx;
-            const key = (request.header("Sec-WebSocket-Key") orelse return error.BadRequest).value;
+            const key = (request.header("Sec-WebSocket-Key") orelse return error.BadRequest);
             if (key.len < 8) {
                 Output.prettyErrorln("HMR WebSocket error: Sec-WebSocket-Key is less than 8 characters long: {s}", .{key});
                 return error.BadRequest;
@@ -1822,7 +1929,7 @@ pub const RequestContext = struct {
         this.appendHeader("ETag", etag_content_slice);
 
         if (this.header("If-None-Match")) |etag_header| {
-            if (std.mem.eql(u8, etag_content_slice, etag_header.value)) {
+            if (strings.eqlLong(etag_content_slice, etag_header, true)) {
                 try this.sendNotModified();
                 return true;
             }
@@ -1951,7 +2058,7 @@ pub const RequestContext = struct {
                                 chunky.rctx.appendHeader("ETag", etag_content_slice);
 
                                 if (chunky.rctx.header("If-None-Match")) |etag_header| {
-                                    if (std.mem.eql(u8, etag_content_slice, etag_header.value)) {
+                                    if (std.mem.eql(u8, etag_content_slice, etag_header)) {
                                         try chunky.rctx.sendNotModified();
                                         return;
                                     }
@@ -2012,6 +2119,7 @@ pub const RequestContext = struct {
                     Watcher,
                     ctx.watcher,
                     client_entry_point_,
+                    ctx.origin,
                 ) catch |err| {
                     ctx.sendInternalError(err) catch {};
                     return;
@@ -2052,7 +2160,7 @@ pub const RequestContext = struct {
                             ctx.appendHeader("ETag", etag_content_slice);
 
                             if (ctx.header("If-None-Match")) |etag_header| {
-                                if (std.mem.eql(u8, etag_content_slice, etag_header.value)) {
+                                if (std.mem.eql(u8, etag_content_slice, etag_header)) {
                                     try ctx.sendNotModified();
                                     return;
                                 }
@@ -2120,7 +2228,7 @@ pub const RequestContext = struct {
                 ctx.appendHeader("ETag", complete_weak_etag);
 
                 if (ctx.header("If-None-Match")) |etag_header| {
-                    if (strings.eql(complete_weak_etag, etag_header.value)) {
+                    if (strings.eql(complete_weak_etag, etag_header)) {
                         try ctx.sendNotModified();
                         return;
                     }
@@ -2227,7 +2335,7 @@ pub const RequestContext = struct {
 
         if (strings.eqlComptime(path, "_api.hmr")) {
             if (ctx.header("Upgrade")) |upgrade| {
-                if (strings.eqlCaseInsensitiveASCII(upgrade.value, "websocket", true)) {
+                if (strings.eqlCaseInsensitiveASCII(upgrade, "websocket", true)) {
                     try ctx.handleWebsocket(server);
                     return;
                 }
@@ -2296,8 +2404,8 @@ pub const RequestContext = struct {
     // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Sec-Fetch-Dest
     pub fn isScriptOrStyleRequest(ctx: *RequestContext) bool {
         const header_ = ctx.header("Sec-Fetch-Dest") orelse return false;
-        return strings.eqlComptime(header_.value, "script") or
-            strings.eqlComptime(header_.value, "style");
+        return strings.eqlComptime(header_, "script") or
+            strings.eqlComptime(header_, "style");
     }
 
     fn handleSrcURL(ctx: *RequestContext, _: *Server) !void {
@@ -2944,6 +3052,7 @@ pub const Server = struct {
 
         const is_navigation_request = req_ctx_.isBrowserNavigation();
         defer if (is_navigation_request) Analytics.enqueue(Analytics.EventName.http_build);
+        req_ctx.parseOrigin();
 
         if (req_ctx.url.needs_redirect) {
             req_ctx.handleRedirect(req_ctx.url.path) catch |err| {
@@ -3028,7 +3137,7 @@ pub const Server = struct {
 
         if (comptime FeatureFlags.keep_alive) {
             if (req_ctx.header("Connection")) |connection| {
-                req_ctx.keep_alive = strings.eqlInsensitive(connection.value, "keep-alive");
+                req_ctx.keep_alive = strings.eqlInsensitive(connection, "keep-alive");
             }
 
             conn.client.setKeepAlive(req_ctx.keep_alive) catch {};

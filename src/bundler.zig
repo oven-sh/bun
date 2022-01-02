@@ -10,7 +10,6 @@ const default_allocator = _global.default_allocator;
 const StoredFileDescriptorType = _global.StoredFileDescriptorType;
 const FeatureFlags = _global.FeatureFlags;
 const C = _global.C;
-
 const std = @import("std");
 const lex = @import("js_lexer.zig");
 const logger = @import("logger.zig");
@@ -49,6 +48,7 @@ const NewBunQueue = @import("./bun_queue.zig").NewBunQueue;
 const NodeFallbackModules = @import("./node_fallbacks.zig");
 const CacheEntry = @import("./cache.zig").FsCacheEntry;
 const Analytics = @import("./analytics/analytics_thread.zig");
+const URL = @import("./query_string_map.zig").URL;
 
 const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
@@ -2166,6 +2166,7 @@ pub const Bundler = struct {
         comptime WatcherType: type,
         watcher: *WatcherType,
         client_entry_point: ?*ClientEntryPoint,
+        origin: URL,
     ) !BuildResolveResultPair {
         if (resolve_result.is_external) {
             return BuildResolveResultPair{
@@ -2230,6 +2231,7 @@ pub const Bundler = struct {
                                 allocator,
                                 bundler.log,
                                 &bundler.linker,
+                                origin,
                             )).written;
                         } else {
                             break :brk (try CSSBundler.bundle(
@@ -2243,6 +2245,7 @@ pub const Bundler = struct {
                                 allocator,
                                 bundler.log,
                                 &bundler.linker,
+                                origin,
                             )).written;
                         }
                     },
@@ -2274,7 +2277,7 @@ pub const Bundler = struct {
                     return BuildResolveResultPair{ .written = 0, .input_fd = result.input_fd, .empty = true };
                 }
 
-                try bundler.linker.link(file_path, &result, import_path_format, false);
+                try bundler.linker.link(file_path, &result, origin, import_path_format, false);
 
                 if (bundler.options.platform.isBun()) {
                     return BuildResolveResultPair{
@@ -2382,6 +2385,7 @@ pub const Bundler = struct {
                 try bundler.linker.link(
                     file_path,
                     &result,
+                    bundler.options.origin,
                     import_path_format,
                     false,
                 );
@@ -2411,11 +2415,15 @@ pub const Bundler = struct {
                 output_file.value = .{ .move = file_op };
             },
             .css => {
+                const CSSBuildContext = struct {
+                    origin: URL,
+                };
+                var build_ctx = CSSBuildContext{ .origin = bundler.options.origin };
                 const CSSWriter = Css.NewWriter(
                     std.fs.File,
                     @TypeOf(&bundler.linker),
                     import_path_format,
-                    void,
+                    CSSBuildContext,
                 );
                 const entry = bundler.resolver.caches.fs.readFile(
                     bundler.fs,
@@ -2434,6 +2442,7 @@ pub const Bundler = struct {
                     &bundler.linker,
                     bundler.log,
                 );
+                css_writer.buildCtx = build_ctx;
                 var did_warn = false;
                 try css_writer.run(bundler.log, bundler.allocator, &did_warn);
                 output_file.size = css_writer.written;

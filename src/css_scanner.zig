@@ -19,7 +19,7 @@ const logger = @import("./logger.zig");
 const Options = options;
 const resolver = @import("./resolver/resolver.zig");
 const _linker = @import("./linker.zig");
-
+const URL = @import("./query_string_map.zig").URL;
 const replacementCharacter: CodePoint = 0xFFFD;
 
 pub const Chunk = struct {
@@ -1020,6 +1020,7 @@ pub fn NewWriter(
                         import.text.utf8,
                         chunk.range,
                         import_record.ImportKind.at,
+                        writer.buildCtx.origin,
                         Options.BundleOptions.ImportPathFormat.absolute_path,
                         true,
                     ) catch |err| {
@@ -1066,6 +1067,7 @@ pub fn NewWriter(
                         url.utf8,
                         chunk.range,
                         import_record.ImportKind.url,
+                        writer.buildCtx.origin,
                         import_path_format,
                         true,
                     );
@@ -1078,6 +1080,7 @@ pub fn NewWriter(
                             import.text.utf8,
                             chunk.range,
                             import_record.ImportKind.at,
+                            writer.buildCtx.origin,
                             import_path_format,
                             false,
                         );
@@ -1155,6 +1158,8 @@ pub fn NewBundler(
         fs_reader: FileReader,
         fs: FSType,
         allocator: std.mem.Allocator,
+        origin: URL = URL{},
+
         pub fn bundle(
             absolute_path: string,
             fs: FSType,
@@ -1166,6 +1171,7 @@ pub fn NewBundler(
             allocator: std.mem.Allocator,
             log: *logger.Log,
             linker: Linker,
+            origin: URL,
         ) !CodeCount {
             if (!has_set_global_queue) {
                 global_queued = QueuedList.init(default_allocator);
@@ -1186,7 +1192,7 @@ pub fn NewBundler(
                 .writer = writer,
                 .fs_reader = fs_reader,
                 .fs = fs,
-
+                .origin = origin,
                 .allocator = allocator,
                 .watcher = watcher,
             };

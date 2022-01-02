@@ -15,7 +15,11 @@ const C = _global.C;
 // This is close to WHATWG URL, but we don't want the validation errors
 pub const URL = struct {
     hash: string = "",
+    /// hostname, but with a port
+    /// `localhost:3000`
     host: string = "",
+    /// hostname does not have a port
+    /// `localhost`
     hostname: string = "",
     href: string = "",
     origin: string = "",
@@ -84,6 +88,36 @@ pub const URL = struct {
         }
 
         return "localhost";
+    }
+
+    pub const HostFormatter = struct {
+        host: string,
+        port: string,
+        is_https: bool = false,
+
+        pub fn format(formatter: HostFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            if (strings.indexOfChar(formatter.host, ':') != null) {
+                try writer.writeAll(formatter.host);
+                return;
+            }
+
+            try writer.writeAll(formatter.host);
+
+            const is_port_optional = (formatter.is_https and (formatter.port.len == 0 or strings.eqlComptime(formatter.port, "443"))) or
+                (!formatter.is_https and (formatter.port.len == 0 or strings.eqlComptime(formatter.port, "80")));
+            if (!is_port_optional) {
+                try writer.writeAll(":");
+                try writer.writeAll(formatter.port);
+                return;
+            }
+        }
+    };
+    pub fn displayHost(this: *const URL) HostFormatter {
+        return HostFormatter{
+            .host = if (this.host.len > 0) this.host else this.displayHostname(),
+            .port = this.port,
+            .is_https = this.isHTTPS(),
+        };
     }
 
     pub fn hasHTTPLikeProtocol(this: *const URL) bool {

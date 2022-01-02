@@ -1663,7 +1663,7 @@ pub const Request = struct {
         _: js.ExceptionRef,
     ) js.JSValueRef {
         if (this.request_context.header("Referrer")) |referrer| {
-            return ZigString.init(referrer.value).toValueGC(VirtualMachine.vm.global).asRef();
+            return ZigString.init(referrer).toValueGC(VirtualMachine.vm.global).asRef();
         } else {
             return ZigString.init("").toValueGC(VirtualMachine.vm.global).asRef();
         }

@@ -75,7 +75,7 @@ const ErrorableZigString = @import("javascript_core").ErrorableZigString;
 const ZigGlobalObject = @import("javascript_core").ZigGlobalObject;
 const VM = @import("javascript_core").VM;
 const Config = @import("./config.zig");
-
+const URL = @import("../../query_string_map.zig").URL;
 pub const GlobalClasses = [_]type{
     Request.Class,
     Response.Class,
@@ -105,7 +105,7 @@ pub const Bun = struct {
     pub fn onImportCSS(
         resolve_result: *const Resolver.Result,
         import_record: *ImportRecord,
-        _: string,
+        origin: URL,
     ) void {
         if (!css_imports_buf_loaded) {
             css_imports_buf = std.ArrayList(u8).initCapacity(
@@ -121,7 +121,7 @@ pub const Bun = struct {
             .offset = @truncate(u32, offset),
             .length = 0,
         };
-        getPublicPath(resolve_result.path_pair.primary.text, @TypeOf(writer), writer);
+        getPublicPath(resolve_result.path_pair.primary.text, origin, @TypeOf(writer), writer);
         const length = css_imports_buf.items.len - offset;
         css_imports_list[css_imports_list_tail].length = @truncate(u32, length);
         css_imports_list_tail += 1;
@@ -198,7 +198,7 @@ pub const Bun = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(VirtualMachine.vm.bundler.options.origin.origin).toValue(VirtualMachine.vm.global).asRef();
+        return ZigString.init(VirtualMachine.vm.origin.origin).toValue(VirtualMachine.vm.global).asRef();
     }
 
     pub fn enableANSIColors(
@@ -509,10 +509,10 @@ pub const Bun = struct {
         return result;
     }
 
-    pub fn getPublicPath(to: string, comptime Writer: type, writer: Writer) void {
+    pub fn getPublicPath(to: string, origin: URL, comptime Writer: type, writer: Writer) void {
         const relative_path = VirtualMachine.vm.bundler.fs.relativeTo(to);
-        if (VirtualMachine.vm.bundler.options.origin.isAbsolute()) {
-            VirtualMachine.vm.bundler.options.origin.joinWrite(
+        if (origin.isAbsolute()) {
+            origin.joinWrite(
                 Writer,
                 writer,
                 VirtualMachine.vm.bundler.options.routes.asset_prefix_path,
@@ -558,7 +558,7 @@ pub const Bun = struct {
 
         var stream = std.io.fixedBufferStream(&public_path_temp_str);
         var writer = stream.writer();
-        getPublicPath(to, @TypeOf(&writer), &writer);
+        getPublicPath(to, VirtualMachine.vm.origin, @TypeOf(&writer), &writer);
         return ZigString.init(stream.buffer[0..stream.pos]).toValueGC(VirtualMachine.vm.global).asRef();
     }
 
@@ -820,6 +820,7 @@ pub const VirtualMachine = struct {
     blobs: *Blob.Group = undefined,
     flush_list: std.ArrayList(string),
     entry_point: ServerEntryPoint = undefined,
+    origin: URL = URL{},
 
     arena: *std.heap.ArenaAllocator = undefined,
     has_loaded: bool = false,
@@ -941,6 +942,7 @@ pub const VirtualMachine = struct {
             .log = log,
             .flush_list = std.ArrayList(string).init(allocator),
             .blobs = try Blob.Group.init(allocator),
+            .origin = bundler.options.origin,
 
             .macros = MacroMap.init(allocator),
             .macro_entry_points = @TypeOf(VirtualMachine.vm.macro_entry_points).init(allocator),
@@ -1078,6 +1080,7 @@ pub const VirtualMachine = struct {
             try bundler.linker.link(
                 file_path,
                 &parse_result,
+                vm.origin,
                 .absolute_path,
                 false,
             );
@@ -1205,6 +1208,7 @@ pub const VirtualMachine = struct {
                 try vm.bundler.linker.link(
                     path,
                     &parse_result,
+                    vm.origin,
                     .absolute_path,
                     false,
                 );
@@ -1384,19 +1388,33 @@ pub const VirtualMachine = struct {
     pub fn normalizeSpecifier(slice_: string) string {
         var slice = slice_;
         if (slice.len == 0) return slice;
-
-        if (strings.startsWith(slice, VirtualMachine.vm.bundler.options.origin.host)) {
-            slice = slice[VirtualMachine.vm.bundler.options.origin.host.len..];
+        var was_http = false;
+        if (strings.hasPrefix(slice, "https://")) {
+            slice = slice["https://".len..];
+            was_http = true;
         }
 
-        if (VirtualMachine.vm.bundler.options.origin.path.len > 1) {
-            if (strings.startsWith(slice, VirtualMachine.vm.bundler.options.origin.path)) {
-                slice = slice[VirtualMachine.vm.bundler.options.origin.path.len..];
+        if (strings.hasPrefix(slice, "http://")) {
+            slice = slice["http://".len..];
+            was_http = true;
+        }
+
+        if (strings.hasPrefix(slice, VirtualMachine.vm.origin.host)) {
+            slice = slice[VirtualMachine.vm.origin.host.len..];
+        } else if (was_http) {
+            if (strings.indexOfChar(slice, '/')) |i| {
+                slice = slice[i..];
+            }
+        }
+
+        if (VirtualMachine.vm.origin.path.len > 1) {
+            if (strings.hasPrefix(slice, VirtualMachine.vm.origin.path)) {
+                slice = slice[VirtualMachine.vm.origin.path.len..];
             }
         }
 
         if (VirtualMachine.vm.bundler.options.routes.asset_prefix_path.len > 0) {
-            if (strings.startsWith(slice, VirtualMachine.vm.bundler.options.routes.asset_prefix_path)) {
+            if (strings.hasPrefix(slice, VirtualMachine.vm.bundler.options.routes.asset_prefix_path)) {
                 slice = slice[VirtualMachine.vm.bundler.options.routes.asset_prefix_path.len..];
             }
         }
@@ -1742,7 +1760,7 @@ pub const VirtualMachine = struct {
                         ),
                         frame.sourceURLFormatter(
                             vm.bundler.fs.top_level_dir,
-                            &vm.bundler.options.origin,
+                            &vm.origin,
                             allow_ansi_colors,
                         ),
                     },

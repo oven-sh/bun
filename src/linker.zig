@@ -35,10 +35,10 @@ const Bundler = _bundler.Bundler;
 const ResolveQueue = _bundler.ResolveQueue;
 const ResolverType = Resolver.Resolver;
 const Runtime = @import("./runtime.zig").Runtime;
-
+const URL = @import("query_string_map.zig").URL;
 pub const CSSResolveError = error{ResolveError};
 
-pub const OnImportCallback = fn (resolve_result: *const Resolver.Result, import_record: *ImportRecord, source_dir: string) void;
+pub const OnImportCallback = fn (resolve_result: *const Resolver.Result, import_record: *ImportRecord, origin: URL) void;
 
 pub const Linker = struct {
     const HashedFileNameMap = std.AutoHashMap(u64, string);
@@ -117,6 +117,7 @@ pub const Linker = struct {
         url: string,
         range: logger.Range,
         kind: ImportKind,
+        origin: URL,
         comptime import_path_format: Options.BundleOptions.ImportPathFormat,
         comptime resolve_only: bool,
     ) !string {
@@ -133,7 +134,7 @@ pub const Linker = struct {
 
                 const loader = this.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
 
-                this.processImportRecord(loader, dir, &resolve_result, &import_record, import_path_format) catch unreachable;
+                this.processImportRecord(loader, dir, &resolve_result, &import_record, origin, import_path_format) catch unreachable;
                 return import_record.path.text;
             },
             .at_conditional => {
@@ -145,7 +146,7 @@ pub const Linker = struct {
                 var import_record = ImportRecord{ .range = range, .path = resolve_result.path_pair.primary, .kind = kind };
                 const loader = this.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
 
-                this.processImportRecord(loader, dir, &resolve_result, &import_record, import_path_format) catch unreachable;
+                this.processImportRecord(loader, dir, &resolve_result, &import_record, origin, import_path_format) catch unreachable;
                 return import_record.path.text;
             },
             .url => {
@@ -157,7 +158,7 @@ pub const Linker = struct {
                 var import_record = ImportRecord{ .range = range, .path = resolve_result.path_pair.primary, .kind = kind };
                 const loader = this.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
 
-                this.processImportRecord(loader, dir, &resolve_result, &import_record, import_path_format) catch unreachable;
+                this.processImportRecord(loader, dir, &resolve_result, &import_record, origin, import_path_format) catch unreachable;
                 return import_record.path.text;
             },
             else => unreachable,
@@ -165,13 +166,10 @@ pub const Linker = struct {
         unreachable;
     }
 
-    pub inline fn nodeModuleBundleImportPath(this: *const ThisLinker) string {
+    pub inline fn nodeModuleBundleImportPath(this: *const ThisLinker, origin: URL) string {
         if (this.options.platform.isBun()) return "/node_modules.server.bun";
 
-        return if (this.options.node_modules_bundle_url.len > 0)
-            this.options.node_modules_bundle_url
-        else
-            this.options.node_modules_bundle.?.bundle.import_from_name;
+        return std.fmt.allocPrint(this.allocator, "{s}://{}{s}", .{ origin.displayProtocol(), origin.displayHost(), this.options.node_modules_bundle.?.bundle.import_from_name }) catch unreachable;
     }
 
     // pub const Scratch = struct {
@@ -193,6 +191,7 @@ pub const Linker = struct {
         linker: *ThisLinker,
         file_path: Fs.Path,
         result: *_bundler.ParseResult,
+        origin: URL,
         comptime import_path_format: Options.BundleOptions.ImportPathFormat,
         comptime ignore_runtime: bool,
     ) !void {
@@ -201,6 +200,7 @@ pub const Linker = struct {
         var needs_bundle = false;
         var had_resolve_errors = false;
         var needs_require = false;
+        var node_module_bundle_import_path: ?string = null;
 
         // Step 1. Resolve imports & requires
         switch (result.loader) {
@@ -213,15 +213,17 @@ pub const Linker = struct {
                         if (strings.eqlComptime(import_record.path.text, Runtime.Imports.Name)) {
                             // runtime is included in the bundle, so we don't need to dynamically import it
                             if (linker.options.node_modules_bundle != null) {
-                                import_record.path.text = linker.nodeModuleBundleImportPath();
+                                node_module_bundle_import_path = node_module_bundle_import_path orelse
+                                    linker.nodeModuleBundleImportPath(origin);
+                                import_record.path.text = node_module_bundle_import_path.?;
                                 result.ast.runtime_import_record_id = record_index;
                             } else {
                                 import_record.path = try linker.generateImportPath(
                                     source_dir,
                                     linker.runtime_source_path,
-                                    Runtime.version(),
                                     false,
                                     "bun",
+                                    origin,
                                     import_path_format,
                                 );
                                 result.ast.runtime_import_record_id = record_index;
@@ -287,7 +289,9 @@ pub const Linker = struct {
                                         }
 
                                         import_record.is_bundled = true;
-                                        import_record.path.text = linker.nodeModuleBundleImportPath();
+                                        node_module_bundle_import_path = node_module_bundle_import_path orelse
+                                            linker.nodeModuleBundleImportPath(origin);
+                                        import_record.path.text = node_module_bundle_import_path.?;
                                         import_record.module_id = found_module.id;
                                         needs_bundle = true;
                                         continue;
@@ -303,6 +307,7 @@ pub const Linker = struct {
                             source_dir,
                             resolved_import,
                             import_record,
+                            origin,
                             import_path_format,
                         ) catch continue;
 
@@ -407,14 +412,14 @@ pub const Linker = struct {
             import_records[import_records.len - 1] = ImportRecord{
                 .kind = .stmt,
                 .path = if (linker.options.node_modules_bundle != null)
-                    Fs.Path.init(linker.nodeModuleBundleImportPath())
+                    Fs.Path.init(node_module_bundle_import_path orelse linker.nodeModuleBundleImportPath(origin))
                 else
                     try linker.generateImportPath(
                         source_dir,
                         linker.runtime_source_path,
-                        Runtime.version(),
                         false,
                         "bun",
+                        origin,
                         import_path_format,
                     ),
                 .range = logger.Range{ .loc = logger.Loc{ .start = 0 }, .len = 0 },
@@ -460,9 +465,9 @@ pub const Linker = struct {
         linker: *ThisLinker,
         source_dir: string,
         source_path: string,
-        _: ?string,
         use_hashed_name: bool,
         namespace: string,
+        origin: URL,
         comptime import_path_format: Options.BundleOptions.ImportPathFormat,
     ) !Fs.Path {
         switch (import_path_format) {
@@ -532,7 +537,7 @@ pub const Linker = struct {
                         // assumption: already starts with "node:"
                         "{s}/{s}",
                         .{
-                            linker.options.origin.origin,
+                            origin,
                             source_path,
                         },
                     ));
@@ -559,7 +564,7 @@ pub const Linker = struct {
                         basename = try linker.getHashedFilename(basepath, null);
                     }
 
-                    return Fs.Path.init(try linker.options.origin.joinAlloc(
+                    return Fs.Path.init(try origin.joinAlloc(
                         linker.allocator,
                         linker.options.routes.asset_prefix_path,
                         dirname,
@@ -580,6 +585,7 @@ pub const Linker = struct {
         source_dir: string,
         resolve_result: *const Resolver.Result,
         import_record: *ImportRecord,
+        origin: URL,
         comptime import_path_format: Options.BundleOptions.ImportPathFormat,
     ) !void {
         linker.import_counter += 1;
@@ -594,16 +600,16 @@ pub const Linker = struct {
         import_record.path = try linker.generateImportPath(
             source_dir,
             if (path.is_symlink and import_path_format == .absolute_url and linker.options.platform.isNotBun()) path.pretty else path.text,
-            if (resolve_result.package_json) |package_json| package_json.version else "",
             Bundler.isCacheEnabled and loader == .file,
             path.namespace,
+            origin,
             import_path_format,
         );
 
         switch (loader) {
             .css => {
                 if (linker.onImportCSS) |callback| {
-                    callback(resolve_result, import_record, source_dir);
+                    callback(resolve_result, import_record, origin);
                 }
                 // This saves us a less reliable string check
                 import_record.print_mode = .css;

@@ -313,6 +313,7 @@ pub const Bundler = struct {
 
         js_ast.Expr.Data.Store.create(this.allocator);
         js_ast.Stmt.Data.Store.create(this.allocator);
+
         defer js_ast.Expr.Data.Store.reset();
         defer js_ast.Stmt.Data.Store.reset();
 
@@ -2443,8 +2444,8 @@ pub const Bundler = struct {
                     bundler.log,
                 );
                 css_writer.buildCtx = build_ctx;
-                var did_warn = false;
-                try css_writer.run(bundler.log, bundler.allocator, &did_warn);
+
+                try css_writer.run(bundler.log, bundler.allocator);
                 output_file.size = css_writer.written;
                 var file_op = options.OutputFile.FileOperation.fromFile(file.handle, file_path.pretty);
 

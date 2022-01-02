@@ -368,6 +368,10 @@ pub const Lockfile = struct {
     const Stream = std.io.FixedBufferStream([]u8);
     pub const default_filename = "bun.lockb";
 
+    pub fn isEmpty(this: *const Lockfile) bool {
+        return this.packages.len == 0 or this.packages.len == 1 or this.packages.get(0).resolutions.len == 0;
+    }
+
     pub const LoadFromDiskResult = union(Tag) {
         not_found: void,
         err: struct {
@@ -848,7 +852,8 @@ pub const Lockfile = struct {
                 );
             }
 
-            try this.hoist();
+            if (this.lockfile.buffers.dependencies.items.len > 0)
+                try this.hoist();
         }
 
         fn hoist(this: *Cloner) anyerror!void {
@@ -5718,9 +5723,9 @@ pub const PackageManager = struct {
                 current_package_json.asProperty("optionalDependencies") == null and
                 current_package_json.asProperty("peerDependencies") == null)
             {
-                Output.prettyErrorln("<red>error<r><d>:<r> package.json doesn't have dependencies, there's nothing to remove!", .{});
+                Output.prettyErrorln("package.json doesn't have dependencies, there's nothing to remove!", .{});
                 Output.flush();
-                std.os.exit(1);
+                std.os.exit(0);
                 return;
             }
         }
@@ -6689,20 +6694,39 @@ pub const PackageManager = struct {
         }
 
         if (manager.options.do.save_lockfile) {
-            var node: *Progress.Node = undefined;
+            save: {
+                if (manager.lockfile.isEmpty()) {
+                    if (!manager.options.dry_run) {
+                        std.fs.cwd().deleteFileZ(manager.options.save_lockfile_path) catch |err| brk: {
+                            // we don't care
+                            if (err == error.FileNotFound) {
+                                if (had_any_diffs) break :save;
+                                break :brk;
+                            }
 
-            if (comptime log_level.showProgress()) {
-                node = try manager.progress.start(ProgressStrings.save(), 0);
-                node.activate();
+                            if (log_level != .silent) Output.prettyErrorln("\n <red>error: {s} deleting empty lockfile", .{@errorName(err)});
+                            break :save;
+                        };
+                    }
+                    if (log_level != .silent) Output.prettyErrorln("No packages! Deleted empty lockfile", .{});
+                    break :save;
+                }
 
-                manager.progress.refresh();
-            }
-            manager.lockfile.saveToDisk(manager.options.save_lockfile_path);
-            if (comptime log_level.showProgress()) {
-                node.end();
-                manager.progress.refresh();
-                manager.progress.root.end();
-                manager.progress = .{};
+                var node: *Progress.Node = undefined;
+
+                if (comptime log_level.showProgress()) {
+                    node = try manager.progress.start(ProgressStrings.save(), 0);
+                    node.activate();
+
+                    manager.progress.refresh();
+                }
+                manager.lockfile.saveToDisk(manager.options.save_lockfile_path);
+                if (comptime log_level.showProgress()) {
+                    node.end();
+                    manager.progress.refresh();
+                    manager.progress.root.end();
+                    manager.progress = .{};
+                }
             }
         }
 

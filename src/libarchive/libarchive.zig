@@ -457,9 +457,9 @@ pub const Archive = struct {
         }
     }
 
-    pub fn extractToDisk(
+    pub fn extractToDir(
         file_buffer: []const u8,
-        root: []const u8,
+        dir: std.fs.Dir,
         ctx: ?*Archive.Context,
         comptime FilePathAppender: type,
         appender: FilePathAppender,
@@ -475,21 +475,6 @@ pub const Archive = struct {
         _ = stream.openRead();
         var archive = stream.archive;
         var count: u32 = 0;
-
-        var dir: std.fs.Dir = brk: {
-            const cwd = std.fs.cwd();
-            cwd.makePath(
-                root,
-            ) catch {};
-
-            if (std.fs.path.isAbsolute(root)) {
-                break :brk try std.fs.openDirAbsolute(root, .{ .iterate = true });
-            } else {
-                break :brk try cwd.openDir(root, .{ .iterate = true });
-            }
-        };
-
-        defer if (comptime close_handles) dir.close();
 
         loop: while (true) {
             const r = @intToEnum(Status, lib.archive_read_next_header(archive, &entry));
@@ -566,5 +551,32 @@ pub const Archive = struct {
         }
 
         return count;
+    }
+
+    pub fn extractToDisk(
+        file_buffer: []const u8,
+        root: []const u8,
+        ctx: ?*Archive.Context,
+        comptime FilePathAppender: type,
+        appender: FilePathAppender,
+        comptime depth_to_skip: usize,
+        comptime close_handles: bool,
+        comptime log: bool,
+    ) !u32 {
+        var dir: std.fs.Dir = brk: {
+            const cwd = std.fs.cwd();
+            cwd.makePath(
+                root,
+            ) catch {};
+
+            if (std.fs.path.isAbsolute(root)) {
+                break :brk try std.fs.openDirAbsolute(root, .{ .iterate = true });
+            } else {
+                break :brk try cwd.openDir(root, .{ .iterate = true });
+            }
+        };
+
+        defer if (comptime close_handles) dir.close();
+        return try extractToDir(file_buffer, dir, ctx, FilePathAppender, appender, depth_to_skip, close_handles, log);
     }
 };

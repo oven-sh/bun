@@ -10,6 +10,12 @@
   "[zig]": {
     "editor.defaultFormatter": "tiehuis.zig"
   },
+  "[ts]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[tsx]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
   "zig.beforeDebugCmd": "make build-unit ${file} ${filter} ${bin}",
   "zig.testCmd": "make test ${file} ${filter} ${bin}",
 

@@ -126,8 +126,6 @@ pub const Scanner = struct {
     codepoint: CodePoint = -1,
     approximate_newline_count: usize = 0,
 
-    did_warn_tailwind: bool = false,
-
     pub fn init(log: *logger.Log, allocator: std.mem.Allocator, source: *const logger.Source) Scanner {
         return Scanner{ .log = log, .source = source, .allocator = allocator };
     }
@@ -329,10 +327,10 @@ pub const Scanner = struct {
 
         return text;
     }
-
+    var did_warn_tailwind = false;
     pub fn warnTailwind(scanner: *Scanner, start: usize) void {
-        if (scanner.did_warn_tailwind) return;
-        scanner.did_warn_tailwind = true;
+        if (did_warn_tailwind) return;
+        did_warn_tailwind = true;
         scanner.log.addWarningFmt(
             scanner.source,
             logger.usize2Loc(start),
@@ -899,7 +897,6 @@ pub fn NewWriter(
             writer: *Writer,
             log: *logger.Log,
             allocator: std.mem.Allocator,
-            did_warn_tailwind: *bool,
         ) !void {
             var scanner = Scanner.init(
                 log,
@@ -908,16 +905,13 @@ pub fn NewWriter(
                 writer.source,
             );
 
-            scanner.did_warn_tailwind = did_warn_tailwind.*;
             try scanner.next(.scan, @TypeOf(writer), writer, scanChunk);
-            did_warn_tailwind.* = scanner.did_warn_tailwind;
         }
 
         pub fn append(
             writer: *Writer,
             log: *logger.Log,
             allocator: std.mem.Allocator,
-            did_warn_tailwind: *bool,
         ) !usize {
             var scanner = Scanner.init(
                 log,
@@ -926,10 +920,7 @@ pub fn NewWriter(
                 writer.source,
             );
 
-            scanner.did_warn_tailwind = did_warn_tailwind.*;
-
             try scanner.next(.omit, @TypeOf(writer), writer, writeBundledChunk);
-            did_warn_tailwind.* = scanner.did_warn_tailwind;
 
             return scanner.approximate_newline_count;
         }
@@ -938,7 +929,6 @@ pub fn NewWriter(
             writer: *Writer,
             log: *logger.Log,
             allocator: std.mem.Allocator,
-            did_warn_tailwind: *bool,
         ) !void {
             var scanner = Scanner.init(
                 log,
@@ -946,10 +936,8 @@ pub fn NewWriter(
                 allocator,
                 writer.source,
             );
-            scanner.did_warn_tailwind = did_warn_tailwind.*;
 
             try scanner.next(.keep, @TypeOf(writer), writer, commitChunk);
-            did_warn_tailwind.* = scanner.did_warn_tailwind;
         }
 
         fn writeString(writer: *Writer, str: string, quote: Chunk.TextContent.Quote) !void {
@@ -1207,14 +1195,13 @@ pub fn NewBundler(
             css.buildCtx = &this;
 
             try this.addCSSImport(absolute_path);
-            var did_warn_tailwind: bool = false;
 
             while (this.import_queue.readItem()) |item| {
                 const watcher_id = this.watcher.indexOf(item) orelse unreachable;
                 const watch_item = this.watcher.watchlist.get(watcher_id);
                 const source = try this.getSource(watch_item.file_path, if (watch_item.fd > 0) watch_item.fd else null);
                 css.source = &source;
-                try css.scan(log, allocator, &did_warn_tailwind);
+                try css.scan(log, allocator);
             }
 
             // This exists to identify the entry point
@@ -1250,7 +1237,10 @@ pub fn NewBundler(
                 try this.writeAll("/* ");
                 try this.writeAll(file_path);
                 try this.writeAll("*/\n");
-                lines_of_code += try css.append(log, allocator, &did_warn_tailwind);
+                lines_of_code += try css.append(
+                    log,
+                    allocator,
+                );
             }
 
             try this.writer.done();

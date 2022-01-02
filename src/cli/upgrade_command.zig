@@ -96,7 +96,7 @@ pub const UpgradeCheckerThread = struct {
 
         if (!version.isCurrent()) {
             if (version.name()) |name| {
-                Output.prettyErrorln("\n<r><d>Bun v{s} is out. Run <b><cyan>bun upgrade<r> to upgrade.\n", .{name});
+                Output.prettyErrorln("\n<r><d>bun v{s} is out. Run <b><cyan>bun upgrade<r> to upgrade.\n", .{name});
                 Output.flush();
             }
         }
@@ -312,7 +312,7 @@ pub const UpgradeCommand = struct {
             progress.end();
             refresher.refresh();
             if (version.name()) |name| {
-                Output.prettyErrorln("Bun v{s} is out, but not for this platform ({s}) yet.", .{
+                Output.prettyErrorln("bun v{s} is out, but not for this platform ({s}) yet.", .{
                     name, Version.triplet,
                 });
             }
@@ -361,7 +361,7 @@ pub const UpgradeCommand = struct {
 
             if (version.name() != null and version.isCurrent()) {
                 Output.prettyErrorln(
-                    "<r><green>Congrats!<r> You're already on the latest version of Bun <d>(which is v{s})<r>",
+                    "<r><green>Congrats!<r> You're already on the latest version of bun <d>(which is v{s})<r>",
                     .{
                         version.name().?,
                     },
@@ -372,7 +372,7 @@ pub const UpgradeCommand = struct {
 
             if (version.name() == null) {
                 Output.prettyErrorln(
-                    "<r><red>error:<r> Bun versions are currently unavailable (the latest version name didn't match the expeccted format)",
+                    "<r><red>error:<r> bun versions are currently unavailable (the latest version name didn't match the expeccted format)",
                     .{},
                 );
                 Output.flush();
@@ -381,7 +381,7 @@ pub const UpgradeCommand = struct {
         }
 
         {
-            Output.prettyErrorln("<r><b>Bun <cyan>v{s}<r> is out<r>! You're on <blue>{s}<r>\n", .{ version.name().?, Global.package_json_version });
+            Output.prettyErrorln("<r><b>bun <cyan>v{s}<r> is out<r>! You're on <blue>{s}<r>\n", .{ version.name().?, Global.package_json_version });
             Output.flush();
 
             var refresher = std.Progress{};
@@ -421,7 +421,7 @@ pub const UpgradeCommand = struct {
             refresher.refresh();
 
             if (bytes.len == 0) {
-                Output.prettyErrorln("<r><red>error:<r> Failed to download the latest version of Bun. Received empty content", .{});
+                Output.prettyErrorln("<r><red>error:<r> Failed to download the latest version of bun. Received empty content", .{});
                 Output.flush();
                 std.os.exit(1);
             }
@@ -520,14 +520,14 @@ pub const UpgradeCommand = struct {
                     .max_output_bytes = 128,
                 }) catch |err| {
                     save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error<r> Failed to verify Bun {s}<r>)", .{@errorName(err)});
+                    Output.prettyErrorln("<r><red>error<r> Failed to verify bun {s}<r>)", .{@errorName(err)});
                     Output.flush();
                     std.os.exit(1);
                 };
 
                 if (result.term.Exited != 0) {
                     save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error<r> failed to verify Bun<r> (exit code: {d})", .{result.term.Exited});
+                    Output.prettyErrorln("<r><red>error<r> failed to verify bun<r> (exit code: {d})", .{result.term.Exited});
                     Output.flush();
                     std.os.exit(1);
                 }
@@ -536,7 +536,7 @@ pub const UpgradeCommand = struct {
                     save_dir_.deleteTree(version_name) catch {};
 
                     Output.prettyErrorln(
-                        "<r><red>error<r>: The downloaded version of Bun (<red>{s}<r>) doesn't match the expected version (<b>{s}<r>)<r>. Cancelled upgrade",
+                        "<r><red>error<r>: The downloaded version of bun (<red>{s}<r>) doesn't match the expected version (<b>{s}<r>)<r>. Cancelled upgrade",
                         .{
                             result.stdout[0..@minimum(result.stdout.len, 128)],
                             version_name,
@@ -558,7 +558,7 @@ pub const UpgradeCommand = struct {
             var target_dirname = current_executable_buf[0..target_dir_.len :0];
             var target_dir = std.fs.openDirAbsoluteZ(target_dirname, .{ .iterate = true }) catch |err| {
                 save_dir_.deleteTree(version_name) catch {};
-                Output.prettyErrorln("<r><red>error:<r> Failed to open Bun's install directory {s}", .{@errorName(err)});
+                Output.prettyErrorln("<r><red>error:<r> Failed to open bun's install directory {s}", .{@errorName(err)});
                 Output.flush();
                 std.os.exit(1);
             };
@@ -566,7 +566,7 @@ pub const UpgradeCommand = struct {
             if (env_loader.map.get("BUN_DRY_RUN") == null) {
                 C.moveFileZ(save_dir.fd, exe_subpath, target_dir.fd, target_filename) catch |err| {
                     save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error:<r> Failed to move new version of Bun due to {s}. You could try the install script instead:\n   curl -L https://bun.sh/install | bash", .{@errorName(err)});
+                    Output.prettyErrorln("<r><red>error:<r> Failed to move new version of bun due to {s}. You could try the install script instead:\n   curl -L https://bun.sh/install | bash", .{@errorName(err)});
                     Output.flush();
                     std.os.exit(1);
                 };
@@ -592,7 +592,7 @@ pub const UpgradeCommand = struct {
 
             Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
 
-            Output.prettyErrorln("<r> Upgraded.\n\n<b><green>Welcome to Bun v{s}!<r>\n\n  Report any bugs:\n    https://github.com/Jarred-Sumner/bun/issues\n\n  What's new:\n    https://github.com/Jarred-Sumner/bun/releases/tag/{s}<r>", .{ version_name, version.tag });
+            Output.prettyErrorln("<r> Upgraded.\n\n<b><green>Welcome to bun v{s}!<r>\n\n  Report any bugs:\n    https://github.com/Jarred-Sumner/bun/issues\n\n  What's new:\n    https://github.com/Jarred-Sumner/bun/releases/tag/{s}<r>", .{ version_name, version.tag });
             Output.flush();
             return;
         }

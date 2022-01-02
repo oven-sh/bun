@@ -3,7 +3,7 @@
   "version": "12.0.7",
   "main": "empty.js",
   "module": "empty.js",
-  "description": "Bun compatibility layer for Next.js v12.0.x",
+  "description": "bun compatibility layer for Next.js v12.0.x",
   "scripts": {
     "test": "echo Worked",
     "check": "tsc --noEmit"

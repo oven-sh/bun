@@ -4299,7 +4299,7 @@ pub const Format = enum {
     esm,
     cjs,
 
-    // Bun.js must escape non-latin1 identifiers in the output This is because
+    // bun.js must escape non-latin1 identifiers in the output This is because
     // we load JavaScript as a UTF-8 buffer instead of a UTF-16 buffer
     // JavaScriptCore does not support UTF-8 identifiers when the source code
     // string is loaded as const char* We don't want to double the size of code

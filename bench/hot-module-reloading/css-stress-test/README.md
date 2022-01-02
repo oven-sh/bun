@@ -4,10 +4,10 @@ This benchmarks bundler performance for CSS hot reloading.
 
 ## Results
 
-Bun is 14x faster than Next.js at hot reloading CSS.
+bun is 14x faster than Next.js at hot reloading CSS.
 
 ```
- Bun v0.0.34
+ bun v0.0.34
  Saving every 16ms
 
  Frame time:
@@ -40,7 +40,7 @@ The intent is to be as accurate as possible. Measuring times reported client-sid
 
 It works like this:
 
-1. `browser.js` loads either Bun or Next.js and a Chromium instance opened to the correct webpage
+1. `browser.js` loads either bun or Next.js and a Chromium instance opened to the correct webpage
 2. `color-looper.zig` updates [`./src/colors.css`](./src/colors.css) in a loop up to `1024` times (1024 is arbitrary), sleeping every `16`ms or `32`ms (a CLI arg you can pass it). The `var(--timestamp)` CSS variable contains the UTC timestamp with precision of milliseconds and one extra decimal point
 3. `color-looper.zig` automatically records the screen via `screencapture` (builtin on macOS) and saves it, along with a `BigUint64Array` containing all the expected timestamps. When it's done, it writes to a designated file on disk which `browser.js` picks up as the signal to close the browser.
 4. `ffmpeg` converts each frame into a black and white `.tif` file, which `tesseract` then OCRs

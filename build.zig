@@ -233,7 +233,7 @@ pub fn build(b: *std.build.Builder) !void {
         },
     ).step);
 
-    var obj_step = b.step("obj", "Build Bun as a .o file");
+    var obj_step = b.step("obj", "Build bun as a .o file");
     var obj = b.addObject(bun_executable_name, exe.root_src.?.path);
 
     {

@@ -49,7 +49,7 @@ pub fn main() anyerror!void {
 
     var global_file = try dir.createFile("globals.d.ts", .{});
     try global_file.writeAll(
-        \\// Bun.js v
+        \\// bun.js v
         \\
         \\
     );
@@ -57,7 +57,7 @@ pub fn main() anyerror!void {
 
     var module_file = try dir.createFile("modules.d.ts", .{});
     try module_file.writeAll(
-        \\// Bun.js v
+        \\// bun.js v
         \\
         \\
     );

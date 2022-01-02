@@ -29,7 +29,7 @@ fn NewUint64(val: u64) Analytics.Uint64 {
     };
 }
 
-// This answers, "What parts of Bun are people actually using?"
+// This answers, "What parts of bun are people actually using?"
 pub const Features = struct {
     pub var single_page_app_routing = false;
     pub var tsconfig_paths = false;

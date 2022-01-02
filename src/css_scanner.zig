@@ -335,7 +335,7 @@ pub const Scanner = struct {
             scanner.source,
             logger.usize2Loc(start),
             scanner.allocator,
-            "To use Tailwind with Bun, use the Tailwind CLI and import the processed .css file.\nLearn more: https://tailwindcss.com/docs/installation#watching-for-changes",
+            "To use Tailwind with bun, use the Tailwind CLI and import the processed .css file.\nLearn more: https://tailwindcss.com/docs/installation#watching-for-changes",
             .{},
         ) catch {};
     }

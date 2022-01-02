@@ -161,7 +161,7 @@ pub const Arguments = struct {
         clap.parseParam("-i, --inject <STR>...             Inject module at the top of every file") catch unreachable,
         clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: jsx, js, json, tsx, ts, css") catch unreachable,
         clap.parseParam("-u, --origin <STR>                Rewrite import URLs to start with --origin. Default: \"\"") catch unreachable,
-        clap.parseParam("-p, --port <STR>                      Port to serve Bun's dev server on. Default: \"3000\"") catch unreachable,
+        clap.parseParam("-p, --port <STR>                      Port to serve bun's dev server on. Default: \"3000\"") catch unreachable,
         clap.parseParam("--silent                          Don't repeat the command for bun run") catch unreachable,
         clap.parseParam("<POS>...                          ") catch unreachable,
     };
@@ -169,7 +169,7 @@ pub const Arguments = struct {
     const debug_params = [_]ParamType{
         clap.parseParam("--dump-environment-variables    Dump environment variables from .env and process as JSON and quit. Useful for debugging") catch unreachable,
         clap.parseParam("--dump-limits                   Dump system limits. Useful for debugging") catch unreachable,
-        clap.parseParam("--disable-bun.js                Disable Bun.js from loading in the dev server") catch unreachable,
+        clap.parseParam("--disable-bun.js                Disable bun.js from loading in the dev server") catch unreachable,
     };
 
     const params = public_params ++ debug_params;
@@ -488,7 +488,7 @@ pub const HelpCommand = struct {
 
     pub fn printWithReason(comptime reason: Reason) void {
         const fmt =
-            \\> <r> <b><green>dev     <r><d>  ./a.ts ./b.jsx<r>        Start a Bun Dev Server
+            \\> <r> <b><green>dev     <r><d>  ./a.ts ./b.jsx<r>        Start a bun Dev Server
             \\> <r> <b><magenta>bun     <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
             \\
             \\> <r> <b><cyan>create    <r><d>next ./app<r>            Start a new project from a template <d>(bun c)<r>
@@ -497,9 +497,9 @@ pub const HelpCommand = struct {
             \\> <r> <b><blue>add     <r><d>  {s:<16}<r>      Add a dependency to package.json <d>(bun a)<r>
             \\> <r> remove  <r><d>  {s:<16}<r>      Remove a dependency from package.json <d>(bun rm)<r>
             \\
-            \\> <r> <b><blue>upgrade <r>                        Get the latest version of Bun
+            \\> <r> <b><blue>upgrade <r>                        Get the latest version of bun
             \\> <r> <b><d>completions<r>                     Install shell completions for tab-completion
-            \\> <r> <b><d>discord <r>                        Open Bun's Discord server
+            \\> <r> <b><d>discord <r>                        Open bun's Discord server
             \\> <r> <b><d>help      <r>                      Print this help menu
             \\
         ;
@@ -515,7 +515,7 @@ pub const HelpCommand = struct {
 
         switch (reason) {
             .explicit => Output.pretty(
-                "<r><b><magenta>Bun<r>: a fast bundler, transpiler, JavaScript Runtime and package manager for web software.\n\n" ++ fmt,
+                "<r><b><magenta>bun<r>: a fast bundler, transpiler, JavaScript Runtime and package manager for web software.\n\n" ++ fmt,
                 args,
             ),
             .invalid_command => Output.prettyError(

@@ -1,4 +1,4 @@
-// Bun.js v
+// bun.js v
 
 declare global {
   function addEventListener(

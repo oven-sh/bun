@@ -1,6 +1,6 @@
 # bun-framework-next
 
-This package lets you use Next.js 12 with Bun. This readme assumes you already installed Bun.
+This package lets you use Next.js 12 with bun. This readme assumes you already installed bun.
 
 To start a new project:
 

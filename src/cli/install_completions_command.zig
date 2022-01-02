@@ -356,14 +356,14 @@ pub const InstallCompletionsCommand = struct {
 
                 // We need to add it to the end of the file
                 var remaining = buf[read..];
-                var extra = std.fmt.bufPrint(remaining, "\n# Bun completions\n[ -s \"{s}\" ] && source \"{s}\"\n", .{
+                var extra = std.fmt.bufPrint(remaining, "\n# bun completions\n[ -s \"{s}\" ] && source \"{s}\"\n", .{
                     completions_path,
                     completions_path,
                 }) catch unreachable;
 
                 dot_zshrc.pwriteAll(extra, read) catch break :brk true;
 
-                Output.prettyErrorln("<r><d>Enabled loading Bun's completions in .zshrc<r>", .{});
+                Output.prettyErrorln("<r><d>Enabled loading bun's completions in .zshrc<r>", .{});
                 break :brk false;
             };
 

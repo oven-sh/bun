@@ -58,7 +58,7 @@ subcommands:
         summary: Use a framework, e.g. "next"
 
   upgrade:
-    summary: Upgrade to the latest version of Bun
+    summary: Upgrade to the latest version of bun
 
   dev:
     summary: Start a dev server

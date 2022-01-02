@@ -1334,14 +1334,14 @@ pub const RequestContext = struct {
 
             if (vm.bundler.options.framework.?.display_name.len > 0) {
                 Output.prettyError(
-                    " {s} ready<d>! (powered by Bun)\n<r>",
+                    " {s} ready<d>! (powered by bun)\n<r>",
                     .{
                         vm.bundler.options.framework.?.display_name,
                     },
                 );
             } else {
                 Output.prettyError(
-                    " Bun.js started\n<r>",
+                    " bun.js started\n<r>",
                     .{},
                 );
             }
@@ -1359,7 +1359,7 @@ pub const RequestContext = struct {
             var module_map = JavaScript.ZigGlobalObject.getModuleRegistryMap(vm.global);
 
             if (!JavaScript.VM.isJITEnabled()) {
-                Output.prettyErrorln("<red><r>warn:<r> JIT is disabled,,,this is a bug in Bun and/or a permissions problem. JS will run slower.", .{});
+                Output.prettyErrorln("<red><r>warn:<r> JIT is disabled,,,this is a bug in bun and/or a permissions problem. JS will run slower.", .{});
                 if (vm.bundler.env.map.get("BUN_CRASH_WITHOUT_JIT") != null) {
                     Global.crash();
                 }
@@ -2911,7 +2911,7 @@ pub const Server = struct {
                 var random_number = std.rand.DefaultPrng.init(@intCast(u64, std.time.milliTimestamp()));
                 const default_port = @intCast(u16, server.bundler.options.origin.getPort() orelse 3000);
                 Output.prettyErrorln(
-                    "<r><red>error<r>: Bun can't start because <b>port {d} is already in use<r>. Tried {d} - {d}. Try closing the other apps or manually passing Bun a port\n\n  <r><cyan><b>bun --origin http://localhost:{d}/<r>\n",
+                    "<r><red>error<r>: bun can't start because <b>port {d} is already in use<r>. Tried {d} - {d}. Try closing the other apps or manually passing bun a port\n\n  <r><cyan><b>bun --origin http://localhost:{d}/<r>\n",
                     .{
                         default_port,
                         default_port,
@@ -2940,7 +2940,7 @@ pub const Server = struct {
         if (std.mem.readIntNative(u32, &addr.ipv4.host.octets) == 0 or std.mem.readIntNative(u128, &addr.ipv6.host.octets) == 0) {
             if (server.bundler.options.routes.single_page_app_routing) {
                 Output.prettyError(
-                    " Bun!! <d>v{s}<r>\n\n\n  Link:<r> <b><cyan>http://localhost:{d}<r>\n        <d>./{s}/index.html<r> \n\n\n",
+                    " bun!! <d>v{s}<r>\n\n\n  Link:<r> <b><cyan>http://localhost:{d}<r>\n        <d>./{s}/index.html<r> \n\n\n",
                     .{
                         Global.package_json_version,
                         addr.ipv4.port,
@@ -2948,20 +2948,20 @@ pub const Server = struct {
                     },
                 );
             } else {
-                Output.prettyError(" Bun!! <d>v{s}<r>\n\n\n<d>  Link:<r> <b><cyan>http://localhost:{d}<r>\n\n\n", .{
+                Output.prettyError(" bun!! <d>v{s}<r>\n\n\n<d>  Link:<r> <b><cyan>http://localhost:{d}<r>\n\n\n", .{
                     Global.package_json_version,
                     addr.ipv4.port,
                 });
             }
         } else {
             if (server.bundler.options.routes.single_page_app_routing) {
-                Output.prettyError(" Bun!! <d>v{s}<r>\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n       <d>./{s}/index.html<r> \n\n\n", .{
+                Output.prettyError(" bun!! <d>v{s}<r>\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n       <d>./{s}/index.html<r> \n\n\n", .{
                     Global.package_json_version,
                     addr,
                     resolve_path.relative(server.bundler.fs.top_level_dir, server.bundler.options.routes.static_dir),
                 });
             } else {
-                Output.prettyError(" Bun!! <d>v{s}\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n\n\n", .{
+                Output.prettyError(" bun!! <d>v{s}\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n\n\n", .{
                     Global.package_json_version,
                     addr,
                 });

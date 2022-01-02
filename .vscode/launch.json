@@ -238,7 +238,7 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Bun",
+      "name": "bun",
       "program": "bun-debug",
       "args": ["bun", "--use=next"],
       "cwd": "/Users/jarred/Build/lattice/apps/dazzle",
@@ -327,7 +327,7 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Context Bun Bug",
+      "name": "Context bun Bug",
       "program": "bun-debug",
       "args": ["bun", "./code.js"],
       "cwd": "/Users/jarred/Build/context/www",
@@ -336,7 +336,7 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Context Bun",
+      "name": "Context bun",
       "program": "bun-debug",
       "args": ["bun", "--use=next"],
       "cwd": "/Users/jarred/Build/context/www",
@@ -345,7 +345,7 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Bun-hello",
+      "name": "bun-hello",
       "program": "bun-debug",
       "args": [],
       "cwd": "${workspaceFolder}/packages/bun-hello",

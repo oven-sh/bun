@@ -1,6 +1,6 @@
-# Bun
+# bun
 
-Bun is a new:
+bun is a new:
 
 - JavaScript/TypeScript/JSX transpiler
 - JavaScript & CSS bundler
@@ -9,9 +9,9 @@ Bun is a new:
 - Task runner for package.json scripts
 - npm-compatible package manager
 
-All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for development, you only need Bun.
+All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for development, you only need bun.
 
-**Bun is experimental software**. Join [Bun’s Discord](https://bun.sh/discord) for help and have a look at [things that don’t work yet](#things-that-dont-work-yet).
+**bun is experimental software**. Join [bun’s Discord](https://bun.sh/discord) for help and have a look at [things that don’t work yet](#things-that-dont-work-yet).
 
 ## Install
 
@@ -32,13 +32,13 @@ docker run --rm --init --ulimit memlock=-1:-1 jarredsumner/bun:edge
 
 - [Install](#install)
 - [Benchmarks](#benchmarks)
-- [Using Bun as a package manager](#using-bun-as-a-package-manager)
-- [Using Bun as a task runner](#using-bun-as-a-task-runner)
-- [Using Bun with Next.js](#using-bun-with-nextjs)
-- [Using Bun with single page apps](#using-bun-with-single-page-apps)
-  - [Using Bun with Create React App](#using-bun-with-create-react-app)
-- [Using Bun with TypeScript](#using-bun-with-typescript)
-- [Using Tailwind with Bun](#using-tailwind-with-bun)
+- [Using bun as a package manager](#using-bun-as-a-package-manager)
+- [Using bun as a task runner](#using-bun-as-a-task-runner)
+- [Using bun with Next.js](#using-bun-with-nextjs)
+- [Using bun with single page apps](#using-bun-with-single-page-apps)
+  - [Using bun with Create React App](#using-bun-with-create-react-app)
+- [Using bun with TypeScript](#using-bun-with-typescript)
+- [Using Tailwind with bun](#using-tailwind-with-bun)
 - [Things that don’t work yet](#things-that-dont-work-yet)
   - [Limitations & intended usage](#limitations--intended-usage)
 - [Configuration](#configuration)
@@ -57,18 +57,18 @@ docker run --rm --init --ulimit memlock=-1:-1 jarredsumner/bun:edge
 - [Environment variables](#environment-variables)
 - [Credits](#credits)
 - [License](#license)
-- [Developing Bun](#developing-bun)
+- [Developing bun](#developing-bun)
   - [VSCode Dev Container](#vscode-dev-container-linux)
   - [MacOS](#macos)
 - [vscode-zig](#vscode-zig)
 
 ## Benchmarks
 
-**CSS**: [Bun is 14x faster](./bench/hot-module-reloading/css-stress-test) than Next.js at hot reloading CSS. TODO: compare Vite
+**CSS**: [bun is 14x faster](./bench/hot-module-reloading/css-stress-test) than Next.js at hot reloading CSS. TODO: compare Vite
 
 **JavaScript**: TODO
 
-## Using Bun as a package manager
+## Using bun as a package manager
 
 On Linux, `bun install` tends to install packages 20x - 100x faster than `npm install`. On macOS, it’s more like 4x - 80x.
 
@@ -87,9 +87,9 @@ bun remove react
 bun add preact
 ```
 
-## Using Bun as a task runner
+## Using bun as a task runner
 
-Instead of waiting 170ms for your npm client to start for each task, you wait 6ms for Bun.
+Instead of waiting 170ms for your npm client to start for each task, you wait 6ms for bun.
 
 To use bun as a task runner, run `bun run` instead of `npm run`.
 
@@ -112,9 +112,9 @@ Assuming a package.json with a `"clean"` command in `"scripts"`:
 }
 ```
 
-## Using Bun with Next.js
+## Using bun with Next.js
 
-To create a new Next.js app with Bun:
+To create a new Next.js app with bun:
 
 ```bash
 bun create next ./app
@@ -122,7 +122,7 @@ cd app
 bun
 ```
 
-To use an existing Next.js app with Bun:
+To use an existing Next.js app with bun:
 
 ```bash
 npm install bun-framework-next
@@ -142,11 +142,11 @@ Here’s what doesn’t work yet:
 - API routes, middleware (middleware is easier to support though! similar SSR API)
 - styled-jsx (technically not Next.js but often used with it)
 
-When using Next.js, Bun automatically reads configuration from `.env.local`, `.env.development` and `.env` (in that order). `process.env.NEXT_PUBLIC_` and `process.env.NEXT_` automatically are replaced via `--define`.
+When using Next.js, bun automatically reads configuration from `.env.local`, `.env.development` and `.env` (in that order). `process.env.NEXT_PUBLIC_` and `process.env.NEXT_` automatically are replaced via `--define`.
 
 Currently, any time you import new dependencies from `node_modules`, you will need to re-run `bun bun --use next`. This will eventually be automatic.
 
-## Using Bun with single page apps
+## Using bun with single page apps
 
 In your project folder root (where `package.json` is):
 
@@ -170,7 +170,7 @@ Here are examples of routing from `public/` and how they’re matched:
 
 If `public/index.html` exists, it becomes the default page instead of a 404 page, unless that pathname has a file extension.
 
-### Using Bun with Create React App
+### Using bun with Create React App
 
 To create new a React app:
 
@@ -193,7 +193,7 @@ bun bun ./src/index.js # jsx, tsx, ts also work. can be multiple files
 bun
 ```
 
-From there, Bun relies on the filesystem for mapping dev server paths to source files. All URL paths are relative to the project root (where `package.json` is located).
+From there, bun relies on the filesystem for mapping dev server paths to source files. All URL paths are relative to the project root (where `package.json` is located).
 
 Here are examples of routing source code file paths:
 
@@ -207,17 +207,17 @@ You do not need to include file extensions in `import` paths. CommonJS-style imp
 
 You can override the public directory by passing `--public-dir="path-to-folder"`.
 
-If no directory is specified and `./public/` doesn’t exist, Bun will try `./static/`. If `./static/` does not exist, but won’t serve from a public directory. If you pass `--public-dir=./` Bun will serve from the current directory, but it will check the current directory last instead of first.
+If no directory is specified and `./public/` doesn’t exist, bun will try `./static/`. If `./static/` does not exist, but won’t serve from a public directory. If you pass `--public-dir=./` bun will serve from the current directory, but it will check the current directory last instead of first.
 
-## Using Bun with TypeScript
+## Using bun with TypeScript
 
-TypeScript just works. There’s nothing to configure and nothing extra to install. If you import a `.ts` or `.tsx` file, Bun will transpile it into JavaScript. Bun also transpiles `node_modules` containing `.ts` or `.tsx` files. This is powered by Bun’s TypeScript transpiler, so it’s fast.
+TypeScript just works. There’s nothing to configure and nothing extra to install. If you import a `.ts` or `.tsx` file, bun will transpile it into JavaScript. bun also transpiles `node_modules` containing `.ts` or `.tsx` files. This is powered by bun’s TypeScript transpiler, so it’s fast.
 
-Bun also reads `tsconfig.json`, including `baseUrl` and `paths`.
+bun also reads `tsconfig.json`, including `baseUrl` and `paths`.
 
-## Using Tailwind with Bun
+## Using Tailwind with bun
 
-[Tailwind](https://tailwindcss.com/) is a popular CSS utility framework. Currently, the easiest way to use Tailwind with Bun is through Tailwind’s CLI. That means running both `bun` and `tailwind`, and importing the file `tailwind`’s CLI outputs.
+[Tailwind](https://tailwindcss.com/) is a popular CSS utility framework. Currently, the easiest way to use Tailwind with bun is through Tailwind’s CLI. That means running both `bun` and `tailwind`, and importing the file `tailwind`’s CLI outputs.
 
 Tailwind’s docs talk more about [Tailwind’s CLI usage](https://tailwindcss.com/docs/installation#watching-for-changes), but the gist is you’ll want to run this:
 
@@ -229,7 +229,7 @@ From there, make sure to import the `dist/tailwind.css` file (or what you chose 
 
 ## Things that don’t work yet
 
-Bun is a project with incredibly large scope, and it’s early days.
+bun is a project with incredibly large scope, and it’s early days.
 
 | Feature                                                                                                                | In              |
 | ---------------------------------------------------------------------------------------------------------------------- | --------------- |
@@ -244,9 +244,9 @@ Bun is a project with incredibly large scope, and it’s early days.
 | [TypeScript Decorators](https://www.typescriptlang.org/docs/handbook/decorators.html)                                  | TS Transpiler   |
 | `@jsxPragma` comments                                                                                                  | JS Transpiler   |
 | JSX source file name                                                                                                   | JS Transpiler   |
-| Sharing `.bun` files                                                                                                   | Bun             |
-| [Finish fetch](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API)                                             | Bun.js          |
-| [setTimeout](https://developer.mozilla.org/en-US/docs/Web/API/setTimeout)                                              | Bun.js          |
+| Sharing `.bun` files                                                                                                   | bun             |
+| [Finish fetch](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API)                                             | bun.js          |
+| [setTimeout](https://developer.mozilla.org/en-US/docs/Web/API/setTimeout)                                              | bun.js          |
 | [workspace: dependencies](https://github.com/Jarred-Sumner/bun/issues/83)                                              | Package manager |
 | [git: dependencies](https://github.com/Jarred-Sumner/bun/issues/82)                                                    | Package manager |
 | [github: dependencies](https://github.com/Jarred-Sumner/bun/issues/81)                                                 | Package manager |
@@ -260,21 +260,21 @@ TS Transpiler == TypeScript Transpiler
 <br/>
 Package manager == `bun install`
 <br/>
-Bun.js == Bun’s JavaScriptCore integration that executes JavaScript. Similar to how Node.js & Deno embed V8.
+bun.js == bun’s JavaScriptCore integration that executes JavaScript. Similar to how Node.js & Deno embed V8.
 </small>
 
 ### Limitations & intended usage
 
-Bun is great for building websites &amp; webapps. For libraries, consider using Rollup or esbuild instead. Bun currently doesn’t minify code and Bun’s dead code elimination doesn’t look beyond the current file.
+bun is great for building websites &amp; webapps. For libraries, consider using Rollup or esbuild instead. bun currently doesn’t minify code and bun’s dead code elimination doesn’t look beyond the current file.
 
-Today, Bun is focused on:
+Today, bun is focused on:
 
 - Development, not production
 - Compatibility with existing frameworks & tooling
 
-Ideally, most projects can use Bun with their existing tooling while making few changes to their codebase. That means using Bun in development, and continuing to use Webpack, esbuild, or another bundler in production. Using two bundlers might sound strange at first, but after all the production-only AST transforms, minification, and special development/production-only imported files...it’s not far from the status quo.
+Ideally, most projects can use bun with their existing tooling while making few changes to their codebase. That means using bun in development, and continuing to use Webpack, esbuild, or another bundler in production. Using two bundlers might sound strange at first, but after all the production-only AST transforms, minification, and special development/production-only imported files...it’s not far from the status quo.
 
-Longer-term, Bun intends to replace Node.js, Webpack, Babel, and PostCSS (in production).
+Longer-term, bun intends to replace Node.js, Webpack, Babel, and PostCSS (in production).
 
 ## Configuration
 
@@ -282,7 +282,7 @@ Longer-term, Bun intends to replace Node.js, Webpack, Babel, and PostCSS (in pro
 
 A loader determines how to map imports &amp; file extensions to transforms and output.
 
-Currently, Bun implements the following loaders:
+Currently, bun implements the following loaders:
 
 | Input | Loader                        | Output |
 | ----- | ----------------------------- | ------ |
@@ -312,7 +312,7 @@ This will disable JSX transforms for `.js` files.
 
 When importing CSS in JavaScript-like loaders, CSS is treated special.
 
-By default, Bun will transform a statement like this:
+By default, bun will transform a statement like this:
 
 ```js
 import "../styles/global.css";
@@ -336,16 +336,16 @@ An event handler for turning that into a `<link>` is automatically registered wh
 //@import url("http://localhost:3000/styles/globals.css");
 ```
 
-Additionally, Bun exposes an API for SSR/SSG that returns a flat list of URLs to css files imported. That function is `Bun.getImportedStyles()`.
+Additionally, bun exposes an API for SSR/SSG that returns a flat list of URLs to css files imported. That function is `bun.getImportedStyles()`.
 
 ```ts
 addEventListener("fetch", async (event: FetchEvent) => {
-  var route = Bun.match(event);
+  var route = bun.match(event);
   const App = await import("pages/_app");
 
   // This returns all .css files that were imported in the line above.
   // It’s recursive, so any file that imports a CSS file will be included.
-  const appStylesheets = Bun.getImportedStyles();
+  const appStylesheets = bun.getImportedStyles();
 
   // ...rest of code
 });
@@ -355,7 +355,7 @@ This is useful for preventing flash of unstyled content.
 
 ### CSS Loader
 
-Bun bundles `.css` files imported via `@import` into a single file. It doesn’t autoprefix or minify CSS today. Multiple `.css` files imported in one JavaScript file will _not_ be bundled into one file. You’ll have to import those from a `.css` file.
+bun bundles `.css` files imported via `@import` into a single file. It doesn’t autoprefix or minify CSS today. Multiple `.css` files imported in one JavaScript file will _not_ be bundled into one file. You’ll have to import those from a `.css` file.
 
 This input:
 
@@ -378,13 +378,13 @@ Becomes:
 
 ### CSS runtime
 
-To support hot CSS reloading, Bun inserts `@supports` annotations into CSS that tag which files a stylesheet is composed of. Browsers ignore this, so it doesn’t impact styles.
+To support hot CSS reloading, bun inserts `@supports` annotations into CSS that tag which files a stylesheet is composed of. Browsers ignore this, so it doesn’t impact styles.
 
-By default, Bun’s runtime code automatically listens to `onimportcss` and will insert the `event.detail` into a `<link rel="stylesheet" href={${event.detail}}>` if there is no existing `link` tag with that stylesheet. That’s how Bun’s equivalent of `style-loader` works.
+By default, bun’s runtime code automatically listens to `onimportcss` and will insert the `event.detail` into a `<link rel="stylesheet" href={${event.detail}}>` if there is no existing `link` tag with that stylesheet. That’s how bun’s equivalent of `style-loader` works.
 
 ### Frameworks
 
-Frameworks preconfigure Bun to enable developers to use Bun with their existing tooling.
+Frameworks preconfigure bun to enable developers to use bun with their existing tooling.
 
 Frameworks are configured via the `framework` object in the `package.json` of the framework (not in the application’s `package.json`):
 
@@ -477,12 +477,12 @@ type Framework = Environment & {
   //    and replaces an imported object with a proxy that mimics CSS module support without doing any class renaming.
   css?: "onimportcss" | "facade";
 
-  // Bun’s filesystem router
+  // bun’s filesystem router
   router?: Router;
 };
 
 type Define = {
-  // By passing ".env", Bun will automatically load .env.local, .env.development, and .env if exists in the project root
+  // By passing ".env", bun will automatically load .env.local, .env.development, and .env if exists in the project root
   //    (in addition to the processes’ environment variables)
   // When "*", all environment variables will be automatically injected into the JavaScript loader
   // When a string like "NEXT_PUBLIC_", only environment variables starting with that prefix will be injected
@@ -510,8 +510,8 @@ type Environment = {
   define?: Define;
 };
 
-// Bun’s filesystem router
-// Currently, Bun supports pages by either an absolute match or a parameter match.
+// bun’s filesystem router
+// Currently, bun supports pages by either an absolute match or a parameter match.
 // pages/index.tsx will be executed on navigation to "/" and "/index"
 // pages/posts/[id].tsx will be executed on navigation to "/posts/123"
 // Routes & parameters are automatically passed to `fallback` and `server`.
@@ -534,15 +534,15 @@ If you’re interested in adding a framework integration, please reach out. Ther
 
 ## Troubleshooting
 
-### Bun not running on an M1 (or Apple Silicon)
+### bun not running on an M1 (or Apple Silicon)
 
 If you see a message like this
 
 > [1] 28447 killed bun create next ./test
 
-It most likely means you’re running bun’s x64 version on Apple Silicon. This happens if bun is running via Rosetta. Rosetta is unable to emulate AVX2 instructions, which Bun indirectly uses.
+It most likely means you’re running bun’s x64 version on Apple Silicon. This happens if bun is running via Rosetta. Rosetta is unable to emulate AVX2 instructions, which bun indirectly uses.
 
-The fix is to ensure you installed a version of Bun built for Apple Silicon.
+The fix is to ensure you installed a version of bun built for Apple Silicon.
 
 ### error: Unexpected
 
@@ -550,7 +550,7 @@ If you see an error like this:
 
 ![image](https://user-images.githubusercontent.com/709451/141210854-89434678-d21b-42f4-b65a-7df3b785f7b9.png)
 
-It usually means the max number of open file descriptors is being explicitly set to a low number. By default, Bun requests the max number of file descriptors available (which on macOS, is something like 32,000). But, if you previously ran into ulimit issues with e.g. Chokidar, someone on The Internet may have advised you to run `ulimit -n 8096`.
+It usually means the max number of open file descriptors is being explicitly set to a low number. By default, bun requests the max number of file descriptors available (which on macOS, is something like 32,000). But, if you previously ran into ulimit issues with e.g. Chokidar, someone on The Internet may have advised you to run `ulimit -n 8096`.
 
 That advice unfortunately **lowers** the hard limit to `8096`. This can be a problem in large repositories or projects with lots of dependencies. Chokidar (and other watchers) don’t seem to call `setrlimit`, which means they’re reliant on the (much lower) soft limit.
 
@@ -579,19 +579,19 @@ Environment variables
 | BUN_CONFIG_SKIP_LOAD_LOCKFILE    | Don’t load a lockfile                                         |
 | BUN_CONFIG_SKIP_INSTALL_PACKAGES | Don’t install any packages                                    |
 
-Bun always tries to use the fastest available installation method for the target platform. On macOS, that’s `clonefile` and on Linux, that’s `hardlink`. You can change which installation method is used with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` fallsback to a platform-specific implementation of copying files.
+bun always tries to use the fastest available installation method for the target platform. On macOS, that’s `clonefile` and on Linux, that’s `hardlink`. You can change which installation method is used with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` fallsback to a platform-specific implementation of copying files.
 
-Bun stores installed packages from npm in `~/.bun/install/cache/${name}@${version}`. Note that if the semver version has a `build` or a `pre` tag, it is replaced with a hash of that value instead. This is to reduce chances of errors from long file paths, but unfortunately complicates figuring out where a package was installed on disk.
+bun stores installed packages from npm in `~/.bun/install/cache/${name}@${version}`. Note that if the semver version has a `build` or a `pre` tag, it is replaced with a hash of that value instead. This is to reduce chances of errors from long file paths, but unfortunately complicates figuring out where a package was installed on disk.
 
-When the `node_modules` folder exists, before installing, Bun checks if the `"name"` and `"version"` in `package/package.json` in the expected node_modules folder matches the expected `name` and `version`. This is how it determines whether or not it should install. It uses a custom JSON parser which stops parsing as soon as it finds `"name"` and `"version"`.
+When the `node_modules` folder exists, before installing, bun checks if the `"name"` and `"version"` in `package/package.json` in the expected node_modules folder matches the expected `name` and `version`. This is how it determines whether or not it should install. It uses a custom JSON parser which stops parsing as soon as it finds `"name"` and `"version"`.
 
 When a `bun.lockb` doesn’t exist or `package.json` has changed dependencies, tarballs are downloaded & extracted eagerly while resolving.
 
-When a `bun.lockb` exists and `package.json` hasn’t changed, Bun downloads missing dependencies lazily. If the package with a matching `name` & `version` already exists in the expected location within `node_modules`, Bun won’t attempt to download the tarball.
+When a `bun.lockb` exists and `package.json` hasn’t changed, bun downloads missing dependencies lazily. If the package with a matching `name` & `version` already exists in the expected location within `node_modules`, bun won’t attempt to download the tarball.
 
 #### Platform-specific dependencies?
 
-Bun stores normalized `cpu` and `os` values from npm in the lockfile, along with the resolved packages. It skips downloading, extracting, and installing packages disabled for the current target at runtime. This means the lockfile won’t change between platforms/architectures even if the packages ultimately installed do change.
+bun stores normalized `cpu` and `os` values from npm in the lockfile, along with the resolved packages. It skips downloading, extracting, and installing packages disabled for the current target at runtime. This means the lockfile won’t change between platforms/architectures even if the packages ultimately installed do change.
 
 #### Peer dependencies?
 
@@ -599,11 +599,11 @@ Peer dependencies are handled similarly to yarn. `bun install` does not automati
 
 #### Lockfile
 
-`bun.lockb` is Bun’s binary lockfile format.
+`bun.lockb` is bun’s binary lockfile format.
 
 #### Why is it binary?
 
-In a word: Performance. Bun’s lockfile saves & loads incredibly quickly, and saves a lot more data than what is typically inside lockfiles.
+In a word: Performance. bun’s lockfile saves & loads incredibly quickly, and saves a lot more data than what is typically inside lockfiles.
 
 #### How do I inspect it?
 
@@ -627,14 +627,14 @@ rm -rf ~/.bun/install/cache
 
 #### npm registry metadata
 
-Bun uses a binary format for caching NPM registry responses. This loads much faster than JSON and tends to be smaller on disk.
+bun uses a binary format for caching NPM registry responses. This loads much faster than JSON and tends to be smaller on disk.
 You will see these files in `~/.bun/install/cache/*.npm`. The filename pattern is `${hash(packageName)}.npm`. It’s a hash so that extra directories don’t need to be created for scoped packages
 
-Bun’s usage of `Cache-Control` ignores `Age`. This improves performance, but means Bun may be about 5 minutes out of date to receive the the latest package version metadata from npm.
+bun’s usage of `Cache-Control` ignores `Age`. This improves performance, but means bun may be about 5 minutes out of date to receive the the latest package version metadata from npm.
 
 ### `bun run`
 
-`bun run` is a fast `package.json` scripts runner. Instead of waiting 170ms for your npm client to start every time, you wait 6ms for Bun.
+`bun run` is a fast `package.json` scripts runner. Instead of waiting 170ms for your npm client to start every time, you wait 6ms for bun.
 
 By default, `bun run` prints the script that will be invoked:
 
@@ -673,7 +673,7 @@ react-scripts eject
 4 scripts
 ```
 
-`bun run` automatically loads environment variables from `.env` into the shell/task. `.env` files are loaded with the same priority as the rest of Bun, so that means:
+`bun run` automatically loads environment variables from `.env` into the shell/task. `.env` files are loaded with the same priority as the rest of bun, so that means:
 
 1. `.env.local` is first
 2. if (`$NODE_ENV` === `"production"`) `.env.production` else `.env.development`
@@ -691,7 +691,7 @@ bun run relay-compiler
 
 # You can also do this, but:
 # - It will only lookup packages in `node_modules/.bin` instead of `$PATH`
-# - It will start Bun’s dev server if the script name doesn’t exist (`bun` starts the dev server by default)
+# - It will start bun’s dev server if the script name doesn’t exist (`bun` starts the dev server by default)
 bun relay-compiler
 ```
 
@@ -702,7 +702,7 @@ To pass additional flags through to the task or executable, there are two ways:
 bun run relay-compiler -- -–help
 
 # Implicit: if you do not include "--", anything *after* the script name will be passed through
-# Bun flags are parsed first, which means e.g. `bun run relay-compiler --help` will print Bun’s help instead of relay-compiler’s help.
+# bun flags are parsed first, which means e.g. `bun run relay-compiler --help` will print bun’s help instead of relay-compiler’s help.
 bun run relay-compiler --schema foo.graphql
 ```
 
@@ -750,13 +750,13 @@ bun create https://github.com/github-user/repo-name destination
 bun create github.com/github-user/repo-name destination
 ```
 
-Note: you don’t need `bun create` to use Bun. You don’t need any configuration at all. This command exists to make it a little easier.
+Note: you don’t need `bun create` to use bun. You don’t need any configuration at all. This command exists to make it a little easier.
 
 #### Local templates
 
 If you have your own boilerplate you prefer using, copy it into `$HOME/.bun-create/my-boilerplate-name`.
 
-Before checking Bun’s examples folder, `bun create` checks for a local folder matching the input in:
+Before checking bun’s examples folder, `bun create` checks for a local folder matching the input in:
 
 - `$BUN_CREATE_DIR/`
 - `$HOME/.bun-create/`
@@ -946,7 +946,7 @@ export var $eb6819b = $$m({
     // ... rest of code
 ```
 
-This makes bundled modules [position-independent](https://en.wikipedia.org/wiki/Position-independent_code). In theory, one could import only the exact modules in-use without reparsing code and without generating a new bundle. One bundle can dynamically become many bundles comprising only the modules in use on the webpage. Thanks to the metadata with the byte offsets, a web server can send each module to browsers [zero-copy](https://en.wikipedia.org/wiki/Zero-copy) using [sendfile](https://man7.org/linux/man-pages/man2/sendfile.2.html). Bun itself is not quite this smart yet, but these optimizations would be useful in production and potentially very useful for React Server Components.
+This makes bundled modules [position-independent](https://en.wikipedia.org/wiki/Position-independent_code). In theory, one could import only the exact modules in-use without reparsing code and without generating a new bundle. One bundle can dynamically become many bundles comprising only the modules in use on the webpage. Thanks to the metadata with the byte offsets, a web server can send each module to browsers [zero-copy](https://en.wikipedia.org/wiki/Zero-copy) using [sendfile](https://man7.org/linux/man-pages/man2/sendfile.2.html). bun itself is not quite this smart yet, but these optimizations would be useful in production and potentially very useful for React Server Components.
 
 To see the schema inside, have a look at [`JavascriptBundleContainer`](./src/api/schema.d.ts#:~:text=export%20interface-,JavascriptBundleContainer,-%7B). You can find JavaScript bindings to read the metadata in [src/api/schema.js](./src/api/schema.js). This is not really an API yet. It’s missing the part where it gets the binary data from the bottom of the file. Someday, I want this to be usable by other tools too.
 
@@ -968,7 +968,7 @@ This works because every `.bun` file starts with this:
 #!/usr/bin/env bun
 ```
 
-To deploy to production with Bun, you’ll want to get the code from the `.bun` file and stick that somewhere your web server can find it (or if you’re using Vercel or a Rails app, in a `public` folder).
+To deploy to production with bun, you’ll want to get the code from the `.bun` file and stick that somewhere your web server can find it (or if you’re using Vercel or a Rails app, in a `public` folder).
 
 Note that `.bun` is a binary file format, so just opening it in VSCode or vim might render strangely.
 
@@ -987,7 +987,7 @@ To force bun to bundle packages which are not located in a `node_modules` folder
 }
 ```
 
-Bundled dependencies are not eligible for Hot Module Reloading. The code is served to browsers & Bun.js verbatim. But, in the future, it may be sectioned off into only parts of the bundle being used. That’s possible in the current version of the `.bun` file (so long as you know which files are necessary), but it’s not implemented yet. Longer-term, it will include all `import` and `export` of each module inside.
+Bundled dependencies are not eligible for Hot Module Reloading. The code is served to browsers & bun.js verbatim. But, in the future, it may be sectioned off into only parts of the bundle being used. That’s possible in the current version of the `.bun` file (so long as you know which files are necessary), but it’s not implemented yet. Longer-term, it will include all `import` and `export` of each module inside.
 
 #### What is the module ID hash?
 
@@ -1003,7 +1003,7 @@ Is generated like this:
 2. Wyhash 64 of the `package.hash` + `package_path`. `package_path` means "relative to the root of the npm package, where is the module imported?". For example, if you imported `react/jsx-dev-runtime.js`, the `package_path` is `jsx-dev-runtime.js`. `react-dom/cjs/react-dom.development.js` would be `cjs/react-dom.development.js`
 3. Truncate the hash generated above to a `u32`
 
-The implementation details of this module ID hash will vary between versions of Bun. The important part is the metadata contains the module IDs, the package paths, and the package hashes so it shouldn’t really matter in practice if other tooling wants to make use of any of this.
+The implementation details of this module ID hash will vary between versions of bun. The important part is the metadata contains the module IDs, the package paths, and the package hashes so it shouldn’t really matter in practice if other tooling wants to make use of any of this.
 
 ### `bun completions`
 
@@ -1014,33 +1014,33 @@ If you want to copy the completions manually, run `bun completions > path-to-fil
 ## Environment variables
 
 - `GOMAXPROCS`: For `bun bun`, this sets the maximum number of threads to use. If you’re experiencing an issue with `bun bun`, try setting `GOMAXPROCS=1` to force bun to run single-threaded
-- `DISABLE_BUN_ANALYTICS=1` this disables Bun’s analytics. Bun records bundle timings (so we can answer with data, "is bun getting faster?") and feature usage (e.g. "are people actually using macros?"). The request body size is about 60 bytes, so it’s not a lot of data
+- `DISABLE_BUN_ANALYTICS=1` this disables bun’s analytics. bun records bundle timings (so we can answer with data, "is bun getting faster?") and feature usage (e.g. "are people actually using macros?"). The request body size is about 60 bytes, so it’s not a lot of data
 - `TMPDIR`: Before `bun bun` completes, it stores the new `.bun` in `$TMPDIR`. If unset, `TMPDIR` defaults to the platform-specific temporary directory (on Linux, `/tmp` and on macOS `/private/tmp`)
 
 ## Credits
 
-- While written in Zig instead of Go, Bun’s JS transpiler, CSS lexer, and node module resolver source code is based off of @evanw’s esbuild project. @evanw did a fantastic job with esbuild.
-- The idea for the name "Bun" came from [@kipply](https://github.com/kipply)
+- While written in Zig instead of Go, bun’s JS transpiler, CSS lexer, and node module resolver source code is based off of @evanw’s esbuild project. @evanw did a fantastic job with esbuild.
+- The idea for the name "bun" came from [@kipply](https://github.com/kipply)
 
 ## License
 
-Bun itself is MIT-licensed.
+bun itself is MIT-licensed.
 
-However, JavaScriptCore (and WebKit) is LGPL-2 and Bun statically links it.
+However, JavaScriptCore (and WebKit) is LGPL-2 and bun statically links it.
 
 Per LGPL2:
 
 > (1) If you statically link against an LGPL’d library, you must also provide your application in an object (not necessarily source) format, so that a user has the opportunity to modify the library and relink the application.
 
-You can find the patched version of WebKit used by Bun here: <https://github.com/jarred-sumner/webkit>. If you would like to relink Bun with changes:
+You can find the patched version of WebKit used by bun here: <https://github.com/jarred-sumner/webkit>. If you would like to relink bun with changes:
 
 - `git submodule update --init --recursive`
 - `make jsc`
 - `zig build`
 
-This compiles JavaScriptCore, compiles Bun’s `.cpp` bindings for JavaScriptCore (which are the object files using JavaScriptCore) and outputs a new `bun` binary with your changes.
+This compiles JavaScriptCore, compiles bun’s `.cpp` bindings for JavaScriptCore (which are the object files using JavaScriptCore) and outputs a new `bun` binary with your changes.
 
-Bun also statically links these libraries:
+bun also statically links these libraries:
 
 - `libicu` 66.1, which can be found here: <https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE>
 - [`picohttp`](https://github.com/h2o/picohttpparser), which is dual-licensed under the Perl License or the MIT License
@@ -1050,7 +1050,7 @@ Bun also statically links these libraries:
 - [`libarchive`](https://github.com/libarchive/libarchive), which has [several licenses](https://github.com/libarchive/libarchive/blob/master/COPYING)
 - [`libiconv`](https://www.gnu.org/software/libiconv/), which is LGPL2. It’s a dependency of libarchive.
 
-For compatibiltiy reasons, these NPM packages are embedded into Bun’s binary and injected if imported.
+For compatibiltiy reasons, these NPM packages are embedded into bun’s binary and injected if imported.
 
 - [`assert`](https://npmjs.com/package/assert) (MIT license)
 - [`browserify-zlib`](https://npmjs.com/package/browserify-zlib) (MIT license)
@@ -1074,7 +1074,7 @@ For compatibiltiy reasons, these NPM packages are embedded into Bun’s binary a
 - [`util`](https://npmjs.com/package/util) (MIT license)
 - [`vm-browserify`](https://npmjs.com/package/vm-browserify) (MIT license)
 
-## Developing Bun
+## Developing bun
 
 Estimated: 30-90 minutes :(
 
@@ -1097,7 +1097,7 @@ devcontainer build
 devcontainer open
 ```
 
-You will need to clone the GitHub repository inside that container, which also requires authenticating with GitHub (until Bun's repository is public). Make sure to login with a Personal Access Token rather than a web browser.
+You will need to clone the GitHub repository inside that container, which also requires authenticating with GitHub (until bun's repository is public). Make sure to login with a Personal Access Token rather than a web browser.
 
 Inside the container, run this:
 
@@ -1112,7 +1112,7 @@ git -c submodule."src/javascript/jsc/WebKit".update=none submodule update --init
 # Compile bun dependencies (zig is already compiled)
 make devcontainer
 
-# Build Bun for development
+# Build bun for development
 make dev
 
 # Run bun
@@ -1129,7 +1129,7 @@ Install LLVM 13 and homebrew dependencies:
 brew install llvm@13 coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config
 ```
 
-Bun (& the version of Zig) need LLVM 13 and Clang 13 (clang is part of LLVM). Weird build & runtime errors will happen otherwise.
+bun (& the version of Zig) need LLVM 13 and Clang 13 (clang is part of LLVM). Weird build & runtime errors will happen otherwise.
 
 Make sure LLVM 13 is in your `$PATH`:
 

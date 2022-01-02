@@ -36,10 +36,10 @@ const Handler = struct {
         Output.Source.set(&source);
 
         if (Output.isEmojiEnabled()) {
-            Output.prettyErrorln("<r><red>Bun will crash now<r> 😭😭😭\n", .{});
+            Output.prettyErrorln("<r><red>bun will crash now<r> 😭😭😭\n", .{});
             Output.flush();
         } else {
-            stderr.writeAll("Bun has crashed :'(\n") catch {};
+            stderr.writeAll("bun has crashed :'(\n") catch {};
         }
         std.mem.doNotOptimizeAway(source);
 

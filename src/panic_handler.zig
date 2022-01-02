@@ -32,17 +32,17 @@ pub fn NewPanicHandler(comptime panic_func: fn handle_panic(msg: []const u8, err
 
             if (msg.len > 0) {
                 if (Output.isEmojiEnabled()) {
-                    Output.prettyErrorln("<r><red>Bun crashed 😭😭😭<r><d>: <r><b>{s}<r>\n", .{msg});
+                    Output.prettyErrorln("<r><red>bun crashed 😭😭😭<r><d>: <r><b>{s}<r>\n", .{msg});
                 } else {
                     Output.prettyErrorln("<r><red>Crash<r><d>:<r> <b>{s}<r>", .{msg});
                 }
                 Output.flush();
             } else {
                 if (Output.isEmojiEnabled()) {
-                    Output.prettyErrorln("<r><red>Bun will crash now<r> 😭😭😭<r>\n", .{});
+                    Output.prettyErrorln("<r><red>bun will crash now<r> 😭😭😭<r>\n", .{});
                     Output.flush();
                 } else {
-                    Output.printError("Bun has crashed :'(\n", .{});
+                    Output.printError("bun has crashed :'(\n", .{});
                 }
                 Output.flush();
             }

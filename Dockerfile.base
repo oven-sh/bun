@@ -69,7 +69,7 @@ ENV BUN_DEPS_OUT_DIR ${BUN_DEPS_OUT_DIR}
 
 RUN cd / && mkdir -p $BUN_RELEASE_DIR $BUN_DEPS_OUT_DIR ${BUN_DIR} ${BUN_DEPS_OUT_DIR}
 
-LABEL org.opencontainers.image.title="Bun base image ${BUILDARCH} (glibc)"
+LABEL org.opencontainers.image.title="bun base image ${BUILDARCH} (glibc)"
 LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
 
 
@@ -108,7 +108,7 @@ RUN  cd $GITHUB_WORKSPACE && \
 
 ENV ZIG "${ZIG_PATH}/zig"
 
-LABEL org.opencontainers.image.title="Bun base image with zig & webkit ${BUILDARCH} (glibc)"
+LABEL org.opencontainers.image.title="bun base image with zig & webkit ${BUILDARCH} (glibc)"
 LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
 
 

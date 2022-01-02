@@ -1,5 +1,5 @@
 
-# This builds the specifc version of Zig used by Bun
+# This builds the specifc version of Zig used by bun
 # It outputs a zig.zip file
 FROM ubuntu:20.04
 

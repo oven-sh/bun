@@ -97,7 +97,7 @@ const Resolver = _resolver.Resolver;
 //     - on macOS, ensure it does an APFS shallow clone so that doesn't use disk space (only possible if file doesn't already exist)
 //          fclonefile
 // IF serving via HTTP AND it's a file-like loader:
-// 4. Use os.sendfile so copying/reading the file happens in the kernel instead of in Bun.
+// 4. Use os.sendfile so copying/reading the file happens in the kernel instead of in bun.
 //      This unfortunately means content hashing for HTTP server is unsupported, but metadata etags work
 // For each imported file, GOTO 1.
 
@@ -710,7 +710,7 @@ pub const Bundler = struct {
             }
         }
 
-        // The Bun Bundle Format
+        // The bun Bundle Format
         // All the node_modules your app uses in a single compact file with metadata
         // A binary JavaScript bundle format prioritizing generation time and deserialization time
         pub const magic_bytes = "#!/usr/bin/env bun\n\n";

@@ -645,7 +645,7 @@ pub const RunCommand = struct {
 
                             return true;
 
-                            // If we get here, then we run it with Bun.js
+                            // If we get here, then we run it with bun.js
 
                         }
                     }

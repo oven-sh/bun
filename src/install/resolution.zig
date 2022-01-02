@@ -280,7 +280,7 @@ pub const Resolution = extern struct {
         //
         // There are many ways to do it, but perhaps one way to be maximally compatible is just removing the protocol part of the URL.
         //
-        // For example, Bun would transform this input:
+        // For example, bun would transform this input:
         //
         //   import _ from "https://github.com/lodash/lodash/lodash.min.js";
         //

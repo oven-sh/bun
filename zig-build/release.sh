@@ -32,11 +32,11 @@ fi
 
 # Name should be $BUILDKIT_ARCH so we only need that arg passed
 export CONTAINER_NAME=zig-linux-$BUILDKIT_ARCH
-export TAG=dec30
+export TAG=jan1
 
 temp=$(mktemp -d)
 
-docker build . -t $CONTAINER_NAME --progress=plain --platform=linux/$BUILDKIT_ARCH
+docker build . -t $CONTAINER_NAME --progress=plain --platform=linux/$BUILDKIT_ARCH --build-arg TAG=$TAG
 
 if (($?)); then
     echo "Failed to build container"

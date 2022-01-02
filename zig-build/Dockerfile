@@ -41,6 +41,7 @@ ENV CXX=clang++-13
 
 RUN mkdir /output;
 WORKDIR /output
+ARG TAG "jan1"
 
 # Compile zig
 RUN --mount=type=tmpfs,target=/zig-build \
@@ -53,6 +54,7 @@ RUN --mount=type=tmpfs,target=/zig-build \
     rm -rf .git; \
     cd /zig-build; \
     zip -r zig.zip zig; \
+    echo "${TAG}" > /output/.zig-version; \
     cp zig.zip /output;
 
 

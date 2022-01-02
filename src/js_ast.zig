@@ -50,7 +50,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
                 if (comptime Environment.allow_assert) std.debug.assert(block.used < count);
                 const index = block.used;
                 block.items[index][0..value.len].* = value.*;
-                block.used += 1;
+                block.used +%= 1;
                 return &block.items[index];
             }
         };
@@ -65,7 +65,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
 
             pub fn tail(this: *Overflow) *Block {
                 if (this.ptrs[this.used].isFull()) {
-                    this.used += 1;
+                    this.used +%= 1;
                     if (this.allocated > this.used) {
                         this.ptrs[this.used].used = 0;
                     }
@@ -77,7 +77,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
                     new_ptrs[1] = Block{};
                     this.ptrs[this.allocated] = &new_ptrs[0];
                     this.ptrs[this.allocated + 1] = &new_ptrs[1];
-                    this.allocated += 2;
+                    this.allocated +%= 2;
                 }
 
                 return this.ptrs[this.used];
@@ -121,25 +121,6 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
         inline fn _append(self: *Self, comptime ValueType: type, value: ValueType) *ValueType {
             const bytes = std.mem.asBytes(&value);
             const BytesAsSlice = @TypeOf(bytes);
-
-            // if (self.overflow_used >= self.overflow.len or self.overflow[self.overflow_used].isFull()) {
-            //     var slice = self.allocator.alloc(Block, 2) catch unreachable;
-            //     slice[0] = Block{
-            //         .used = 0,
-            //         .items = undefined,
-            //     };
-            //     slice[1] = Block{
-            //         .used = 0,
-            //         .items = undefined,
-            //     };
-
-            //     self.overflow_ptrs[self.overflow.len] = &slice[0];
-            //     self.overflow_ptrs[self.overflow.len + 1] = &slice[1];
-            //     self.overflow = self.overflow_ptrs[0 .. self.overflow.len + 2];
-            //     if (self.overflow[self.overflow_used].isFull()) {
-            //         self.overflow_used += 1;
-            //     }
-            // }
 
             var block = self.overflow.tail();
 

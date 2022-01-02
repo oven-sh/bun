@@ -82,10 +82,15 @@ pub const FileSystem = struct {
 
     dirname_store: *DirnameStore,
     filename_store: *FilenameStore,
+    inside_home_dir: bool = false,
 
     _tmpdir: ?std.fs.Dir = null,
 
     threadlocal var tmpdir_handle: ?std.fs.Dir = null;
+
+    pub fn setInsideHomeDir(this: *FileSystem, home_dir: string) void {
+        this.inside_home_dir = strings.hasPrefix(this.top_level_dir, home_dir);
+    }
 
     pub fn tmpdir(fs: *FileSystem) std.fs.Dir {
         if (tmpdir_handle == null) {
@@ -97,7 +102,7 @@ pub const FileSystem = struct {
 
     pub fn tmpname(_: *const FileSystem, extname: string, buf: []u8, hash: u64) ![*:0]u8 {
         // PRNG was...not so random
-        return try std.fmt.bufPrintZ(buf, "{x}{s}", .{ @truncate(u64, @intCast(u128, hash) * @intCast(u128, std.time.nanoTimestamp())), extname });
+        return try std.fmt.bufPrintZ(buf, ".{x}{s}", .{ @truncate(u64, @intCast(u128, hash) * @intCast(u128, std.time.nanoTimestamp())), extname });
     }
 
     pub var max_fd: FileDescriptorType = 0;
@@ -512,6 +517,15 @@ pub const FileSystem = struct {
             }
 
             return try std.fs.openDirAbsolute(tmpdir_path, .{ .access_sub_paths = true, .iterate = true });
+        }
+
+        pub fn getDefaultTempDir() string {
+            return std.os.getenvZ("BUN_TMPDIR") orelse std.os.getenvZ("TMPDIR") orelse PLATFORM_TMP_DIR;
+        }
+
+        pub fn setTempdir(path: ?string) void {
+            tmpdir_path = path orelse getDefaultTempDir();
+            tmpdir_path_set = true;
         }
 
         pub fn fetchCacheFile(fs: *RealFS, basename: string) !std.fs.File {

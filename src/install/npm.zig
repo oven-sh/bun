@@ -124,9 +124,7 @@ pub const Registry = struct {
             @truncate(u32, @intCast(u64, @maximum(0, std.time.timestamp()))) + 300,
         )) |package| {
             if (PackageManager.instance.options.enable.manifest_cache) {
-                var tmpdir = FileSystem.instance.tmpdir();
-
-                PackageManifest.Serializer.save(&package, tmpdir, PackageManager.instance.cache_directory) catch {};
+                PackageManifest.Serializer.save(&package, PackageManager.instance.getTemporaryDirectory(), PackageManager.instance.getCacheDirectory()) catch {};
             }
 
             return PackageVersionResponse{ .fresh = package };

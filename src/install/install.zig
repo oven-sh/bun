@@ -3587,8 +3587,8 @@ pub const CacheLevel = struct {
 // 1. Download all packages, parsing their dependencies and enqueuing all dependnecies for resolution
 // 2.
 pub const PackageManager = struct {
-    cache_directory_path: string = "",
-    cache_directory: std.fs.Dir = undefined,
+    cache_directory_: ?std.fs.Dir = null,
+    temp_dir_: ?std.fs.Dir = null,
     root_dir: *Fs.FileSystem.DirEntry,
     env_loader: *DotEnv.Loader,
     allocator: std.mem.Allocator,
@@ -3669,6 +3669,114 @@ pub const PackageManager = struct {
 
     var cached_package_folder_name_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
+    pub inline fn getCacheDirectory(this: *PackageManager) std.fs.Dir {
+        return this.cache_directory_ orelse brk: {
+            this.cache_directory_ = this.ensureCacheDirectory();
+            break :brk this.cache_directory_.?;
+        };
+    }
+
+    pub inline fn getTemporaryDirectory(this: *PackageManager) std.fs.Dir {
+        return this.temp_dir_ orelse brk: {
+            this.temp_dir_ = this.ensureTemporaryDirectory();
+            break :brk this.temp_dir_.?;
+        };
+    }
+
+    noinline fn ensureCacheDirectory(this: *PackageManager) std.fs.Dir {
+        loop: while (true) {
+            if (this.options.enable.cache) {
+                const cache_dir = fetchCacheDirectoryPath(this.env_loader);
+                return std.fs.cwd().makeOpenPath(cache_dir.path, .{ .iterate = true }) catch {
+                    this.options.enable.cache = false;
+                    continue :loop;
+                };
+            }
+
+            return std.fs.cwd().makeOpenPath("node_modules/.cache", .{ .iterate = true }) catch |err| {
+                Output.prettyErrorln("<r><red>error<r>: Bun is unable to write files: {s}", .{@errorName(err)});
+                Output.flush();
+                Global.crash();
+            };
+        }
+        unreachable;
+    }
+
+    // We need a temporary directory that can be rename()
+    // This is important for extracting files.
+    //
+    // However, we want it to be reused! Otherwise a cache is silly.
+    //   Error RenameAcrossMountPoints moving react-is to cache dir:
+    noinline fn ensureTemporaryDirectory(this: *PackageManager) std.fs.Dir {
+        var cache_directory = this.getCacheDirectory();
+        // The chosen tempdir must be on the same filesystem as the cache directory
+        // This makes renameat() work
+        const default_tempdir = Fs.FileSystem.RealFS.getDefaultTempDir();
+        var tried_dot_tmp = false;
+        var tempdir: std.fs.Dir = std.fs.cwd().makeOpenPath(default_tempdir, .{ .iterate = true }) catch brk: {
+            tried_dot_tmp = true;
+            break :brk cache_directory.makeOpenPath(".tmp", .{ .iterate = true }) catch |err| {
+                Output.prettyErrorln("<r><red>error<r>: Bun is unable to access tempdir: {s}", .{@errorName(err)});
+                Output.flush();
+                Global.crash();
+            };
+        };
+        var tmpbuf: ["18446744073709551615".len + 8]u8 = undefined;
+        const tmpname = Fs.FileSystem.instance.tmpname("hm", &tmpbuf, 999) catch unreachable;
+        var timer: std.time.Timer = if (this.options.log_level != .silent) std.time.Timer.start() catch unreachable else undefined;
+        brk: while (true) {
+            _ = tempdir.createFileZ(tmpname, .{ .truncate = true }) catch |err2| {
+                if (!tried_dot_tmp) {
+                    tried_dot_tmp = true;
+
+                    tempdir = cache_directory.makeOpenPath(".tmp", .{ .iterate = true }) catch |err| {
+                        Output.prettyErrorln("<r><red>error<r>: Bun is unable to access tempdir: {s}", .{@errorName(err)});
+                        Output.flush();
+                        Global.crash();
+                    };
+                    continue :brk;
+                }
+                Output.prettyErrorln("<r><red>error<r>: {s} accessing temporary directory. Please set <b>$BUN_TMPDIR<r> or <b>$BUN_INSTALL_DIR<r>", .{
+                    @errorName(err2),
+                });
+                Output.flush();
+                Global.crash();
+            };
+
+            std.os.renameatZ(tempdir.fd, tmpname, cache_directory.fd, tmpname) catch |err| {
+                if (!tried_dot_tmp) {
+                    tried_dot_tmp = true;
+                    tempdir = cache_directory.makeOpenPath(".tmp", .{ .iterate = true }) catch |err2| {
+                        Output.prettyErrorln("<r><red>error<r>: Bun is unable to write files to tempdir: {s}", .{@errorName(err2)});
+                        Output.flush();
+                        Global.crash();
+                    };
+                    continue :brk;
+                }
+
+                Output.prettyErrorln("<r><red>error<r>: {s} accessing temporary directory. Please set <b>$BUN_TMPDIR<r> or <b>$BUN_INSTALL_DIR<r>", .{
+                    @errorName(err),
+                });
+                Output.flush();
+                Global.crash();
+            };
+            cache_directory.deleteFileZ(tmpname) catch {};
+            break;
+        }
+        if (this.options.log_level != .silent) {
+            const elapsed = timer.read();
+            if (elapsed > std.time.ns_per_ms * 10) {
+                var cache_dir_path = std.os.getFdPath(cache_directory.fd, &path_buf) catch "it's";
+                Output.prettyErrorln(
+                    "<r><yellow>warn<r>: Slow filesystem detected. If {s} is a network drive, consider setting $BUN_INSTALL_CACHE_DIR to a local folder.",
+                    .{cache_dir_path},
+                );
+            }
+        }
+
+        return tempdir;
+    }
+
     pub var instance: PackageManager = undefined;
 
     pub fn getNetworkTask(this: *PackageManager) *NetworkTask {
@@ -3717,7 +3825,7 @@ pub const PackageManager = struct {
 
     pub fn isFolderInCache(this: *PackageManager, folder_path: stringZ) bool {
         // TODO: is this slow?
-        var dir = this.cache_directory.openDirZ(folder_path, .{ .iterate = true }) catch return false;
+        var dir = this.getCacheDirectory().openDirZ(folder_path, .{ .iterate = true }) catch return false;
         dir.close();
         return true;
     }
@@ -3837,7 +3945,8 @@ pub const PackageManager = struct {
                     strings.StringOrTinyString.init(this.lockfile.str(package.name)),
 
                 .resolution = package.resolution,
-                .cache_dir = this.cache_directory_path,
+                .cache_dir = this.getCacheDirectory(),
+                .temp_dir = this.getTemporaryDirectory(),
                 .registry = this.registry.url.href,
                 .package_id = package.meta.id,
                 .extracted_file_count = package.meta.file_count,
@@ -4152,7 +4261,7 @@ pub const PackageManager = struct {
                             var network_entry = try this.network_dedupe_map.getOrPutContext(this.allocator, task_id, .{});
                             if (!network_entry.found_existing) {
                                 if (this.options.enable.manifest_cache) {
-                                    if (Npm.PackageManifest.Serializer.load(this.allocator, this.cache_directory, name_str) catch null) |manifest_| {
+                                    if (Npm.PackageManifest.Serializer.load(this.allocator, this.getCacheDirectory(), name_str) catch null) |manifest_| {
                                         const manifest: Npm.PackageManifest = manifest_;
                                         loaded_manifest = manifest;
 
@@ -4185,6 +4294,11 @@ pub const PackageManager = struct {
                                             _ = this.network_dedupe_map.remove(task_id);
                                             continue :retry_from_manifests_ptr;
                                         }
+
+                                        // We want to make sure the temporary directory & cache directory are loaded on the main thread
+                                        // so that we don't run into weird threading issues
+                                        // the call to getCacheDirectory() above handles the cache dir
+                                        _ = this.getTemporaryDirectory();
                                     }
                                 }
 
@@ -4303,36 +4417,34 @@ pub const PackageManager = struct {
         this.network_resolve_batch = .{};
     }
 
+    const CacheDir = struct { path: string, is_node_modules: bool };
     pub fn fetchCacheDirectoryPath(
-        _: std.mem.Allocator,
         env_loader: *DotEnv.Loader,
-        _: *Fs.FileSystem.DirEntry,
-    ) ?string {
+    ) CacheDir {
         if (env_loader.map.get("BUN_INSTALL_CACHE_DIR")) |dir| {
-            return dir;
+            return CacheDir{ .path = dir, .is_node_modules = false };
+        }
+
+        if (env_loader.map.get("HOME")) |dir| {
+            FileSystem.instance.setInsideHomeDir(dir);
+            if (FileSystem.instance.inside_home_dir) {
+                var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
+                return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
+            }
         }
 
         if (env_loader.map.get("BUN_INSTALL")) |dir| {
             var parts = [_]string{ dir, "install/", "cache/" };
-            return Fs.FileSystem.instance.abs(&parts);
-        }
-
-        if (env_loader.map.get("HOME")) |dir| {
-            var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
-            return Fs.FileSystem.instance.abs(&parts);
+            return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
         }
 
         if (env_loader.map.get("XDG_CACHE_HOME")) |dir| {
             var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
-            return Fs.FileSystem.instance.abs(&parts);
+            return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
         }
 
-        if (env_loader.map.get("TMPDIR")) |dir| {
-            var parts = [_]string{ dir, ".bun-cache" };
-            return Fs.FileSystem.instance.abs(&parts);
-        }
-
-        return null;
+        var fallback_parts = [_]string{"node_modules/.bun-cache"};
+        return CacheDir{ .is_node_modules = true, .path = Fs.FileSystem.instance.abs(&fallback_parts) };
     }
 
     fn runTasks(
@@ -4399,8 +4511,7 @@ pub const PackageManager = struct {
                             entry.value_ptr.* = manifest;
                             entry.value_ptr.*.pkg.public_max_age = @truncate(u32, @intCast(u64, @maximum(0, std.time.timestamp()))) + 300;
                             {
-                                var tmpdir = Fs.FileSystem.instance.tmpdir();
-                                Npm.PackageManifest.Serializer.save(entry.value_ptr, tmpdir, PackageManager.instance.cache_directory) catch {};
+                                Npm.PackageManifest.Serializer.save(entry.value_ptr, PackageManager.instance.getTemporaryDirectory(), PackageManager.instance.getCacheDirectory()) catch {};
                             }
 
                             var dependency_list_entry = manager.task_queue.getEntry(task.task_id).?;
@@ -5142,7 +5253,6 @@ pub const PackageManager = struct {
 
         var entries_option = try fs.fs.readDirectory(fs.top_level_dir, null);
         var options = Options{};
-        var cache_directory: std.fs.Dir = undefined;
 
         var env_loader: *DotEnv.Loader = brk: {
             var map = try ctx.allocator.create(DotEnv.Map);
@@ -5159,17 +5269,6 @@ pub const PackageManager = struct {
         if (env_loader.map.get("BUN_INSTALL_VERBOSE") != null) {
             PackageManager.verbose_install = true;
         }
-
-        if (PackageManager.fetchCacheDirectoryPath(ctx.allocator, env_loader, &entries_option.entries)) |cache_dir_path| {
-            options.cache_directory = try fs.dirname_store.append(@TypeOf(cache_dir_path), cache_dir_path);
-            cache_directory = std.fs.cwd().makeOpenPath(options.cache_directory, .{ .iterate = true }) catch |err| brk: {
-                options.enable.cache = false;
-                options.enable.manifest_cache = false;
-                options.enable.manifest_cache_control = false;
-                Output.prettyErrorln("Cache is disabled due to error: {s}", .{@errorName(err)});
-                break :brk undefined;
-            };
-        } else {}
 
         if (PackageManager.verbose_install) {
             Output.prettyErrorln("Cache Dir: {s}", .{options.cache_directory});
@@ -5190,7 +5289,6 @@ pub const PackageManager = struct {
         manager.* = PackageManager{
             .options = options,
             .network_task_fifo = NetworkQueue.init(),
-            .cache_directory = cache_directory,
             .env_loader = env_loader,
             .allocator = ctx.allocator,
             .log = ctx.log,
@@ -6016,7 +6114,7 @@ pub const PackageManager = struct {
             switch (resolution.tag) {
                 .npm => {
                     var installer = PackageInstall{
-                        .cache_dir = this.manager.cache_directory,
+                        .cache_dir = this.manager.getCacheDirectory(),
                         .progress = this.progress,
                         .cache_dir_subpath = PackageManager.cachedNPMPackageFolderName(name, resolution.value.npm),
                         .destination_dir = this.node_modules_folder,

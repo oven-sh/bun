@@ -16,7 +16,8 @@ const Global = @import("../global.zig").Global;
 name: strings.StringOrTinyString,
 resolution: Resolution,
 registry: string,
-cache_dir: string,
+cache_dir: std.fs.Dir,
+temp_dir: std.fs.Dir,
 package_id: PackageID,
 extracted_file_count: usize = 0,
 skip_verify: bool = false,
@@ -144,8 +145,8 @@ threadlocal var abs_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var abs_buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
 fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
-    var tmpdir = FileSystem.instance.tmpdir();
-    var tmpname_buf: [128]u8 = undefined;
+    var tmpdir = this.temp_dir;
+    var tmpname_buf: [64]u8 = undefined;
     const name = this.name.slice();
 
     var basename = this.name.slice();
@@ -156,85 +157,84 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
     }
 
     var tmpname = try FileSystem.instance.tmpname(basename, &tmpname_buf, tgz_bytes.len);
+    {
+        var extract_destination = tmpdir.makeOpenPath(std.mem.span(tmpname), .{ .iterate = true }) catch |err| {
+            Output.panic("err: {s} when create temporary directory named {s} (while extracting {s})", .{ @errorName(err), tmpname, name });
+        };
 
-    var cache_dir = tmpdir.makeOpenPath(std.mem.span(tmpname), .{ .iterate = true }) catch |err| {
-        Output.panic("err: {s} when create temporary directory named {s} (while extracting {s})", .{ @errorName(err), tmpname, name });
-    };
-    var temp_destination = std.os.getFdPath(cache_dir.fd, &abs_buf) catch |err| {
-        Output.panic("err: {s} when resolve path for temporary directory named {s} (while extracting {s})", .{ @errorName(err), tmpname, name });
-    };
-    cache_dir.close();
+        defer extract_destination.close();
 
-    if (PackageManager.verbose_install) {
-        Output.prettyErrorln("[{s}] Start extracting {s}<r>", .{ name, tmpname });
-        Output.flush();
+        if (PackageManager.verbose_install) {
+            Output.prettyErrorln("[{s}] Start extracting {s}<r>", .{ name, tmpname });
+            Output.flush();
+        }
+
+        const Archive = @import("../libarchive/libarchive.zig").Archive;
+        const Zlib = @import("../zlib.zig");
+        var zlib_pool = Npm.Registry.BodyPool.get(default_allocator);
+        zlib_pool.data.reset();
+        defer Npm.Registry.BodyPool.release(zlib_pool);
+
+        var zlib_entry = try Zlib.ZlibReaderArrayList.init(tgz_bytes, &zlib_pool.data.list, default_allocator);
+        zlib_entry.readAll() catch |err| {
+            Output.prettyErrorln(
+                "<r><red>Error {s}<r> decompressing {s}",
+                .{
+                    @errorName(err),
+                    name,
+                },
+            );
+            Output.flush();
+            Global.crash();
+        };
+        _ = if (PackageManager.verbose_install)
+            try Archive.extractToDir(
+                zlib_pool.data.list.items,
+                extract_destination,
+                null,
+                void,
+                void{},
+                // for npm packages, the root dir is always "package"
+                1,
+                true,
+                true,
+            )
+        else
+            try Archive.extractToDir(
+                zlib_pool.data.list.items,
+                extract_destination,
+                null,
+                void,
+                void{},
+                // for npm packages, the root dir is always "package"
+                1,
+                true,
+                false,
+            );
+
+        if (PackageManager.verbose_install) {
+            Output.prettyErrorln(
+                "[{s}] Extracted<r>",
+                .{
+                    name,
+                },
+            );
+            Output.flush();
+        }
     }
-
-    const Archive = @import("../libarchive/libarchive.zig").Archive;
-    const Zlib = @import("../zlib.zig");
-    var zlib_pool = Npm.Registry.BodyPool.get(default_allocator);
-    zlib_pool.data.reset();
-    defer Npm.Registry.BodyPool.release(zlib_pool);
-
-    var zlib_entry = try Zlib.ZlibReaderArrayList.init(tgz_bytes, &zlib_pool.data.list, default_allocator);
-    zlib_entry.readAll() catch |err| {
-        Output.prettyErrorln(
-            "<r><red>Error {s}<r> decompressing {s}",
-            .{
-                @errorName(err),
-                name,
-            },
-        );
-        Output.flush();
-        Global.crash();
-    };
-    _ = if (PackageManager.verbose_install)
-        try Archive.extractToDisk(
-            zlib_pool.data.list.items,
-            temp_destination,
-            null,
-            void,
-            void{},
-            // for npm packages, the root dir is always "package"
-            1,
-            true,
-            true,
-        )
-    else
-        try Archive.extractToDisk(
-            zlib_pool.data.list.items,
-            temp_destination,
-            null,
-            void,
-            void{},
-            // for npm packages, the root dir is always "package"
-            1,
-            true,
-            false,
-        );
-
-    if (PackageManager.verbose_install) {
-        Output.prettyErrorln(
-            "[{s}] Extracted<r>",
-            .{
-                name,
-            },
-        );
-        Output.flush();
-    }
-
     var folder_name = PackageManager.cachedNPMPackageFolderNamePrint(&abs_buf2, name, this.resolution.value.npm);
     if (folder_name.len == 0 or (folder_name.len == 1 and folder_name[0] == '/')) @panic("Tried to delete root and stopped it");
-    PackageManager.instance.cache_directory.deleteTree(folder_name) catch {};
+    var cache_dir = this.cache_dir;
+    cache_dir.deleteTree(folder_name) catch {};
 
     // e.g. @next
     // if it's a namespace package, we need to make sure the @name folder exists
     if (basename.len != name.len) {
-        PackageManager.instance.cache_directory.makeDir(std.mem.trim(u8, name[0 .. name.len - basename.len], "/")) catch {};
+        cache_dir.makeDir(std.mem.trim(u8, name[0 .. name.len - basename.len], "/")) catch {};
     }
 
     // Now that we've extracted the archive, we rename.
-    std.os.renameatZ(tmpdir.fd, tmpname, PackageManager.instance.cache_directory.fd, folder_name) catch |err| {
+    std.os.renameatZ(tmpdir.fd, tmpname, cache_dir.fd, folder_name) catch |err| {
         Output.prettyErrorln(
             "<r><red>Error {s}<r> moving {s} to cache dir:\n   From: {s}    To: {s}",
             .{
@@ -250,7 +250,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
 
     // We return a resolved absolute absolute file path to the cache dir.
     // To get that directory, we open the directory again.
-    var final_dir = PackageManager.instance.cache_directory.openDirZ(folder_name, .{ .iterate = true }) catch |err| {
+    var final_dir = cache_dir.openDirZ(folder_name, .{ .iterate = true }) catch |err| {
         Output.prettyErrorln(
             "<r><red>Error {s}<r> failed to verify cache dir for {s}",
             .{

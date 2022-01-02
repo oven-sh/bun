@@ -189,6 +189,7 @@ noinline fn wait(self: *ThreadPool, _is_waking: bool) error{Shutdown}!bool {
     var is_idle = false;
     var is_waking = _is_waking;
     var sync = @bitCast(Sync, self.sync.load(.Monotonic));
+    var idle_network_ticks: u16 = 0;
 
     while (true) {
         if (sync.state == .shutdown) return error.Shutdown;
@@ -252,6 +253,17 @@ noinline fn wait(self: *ThreadPool, _is_waking: bool) error{Shutdown}!bool {
                 while (HTTP.AsyncHTTP.active_requests_count.load(.Monotonic) > HTTP.AsyncHTTP.max_simultaneous_requests) {
                     io.tick() catch {};
                 }
+
+                idle_network_ticks += @as(u16, @boolToInt(HTTP.AsyncHTTP.active_requests_count.load(.Monotonic) == 0));
+
+                // If it's been roughly 2ms since the last network request, go to sleep!
+                // this is 2ms because run_for_ns runs for 10 microseconds
+                // 10 microseconds * 200 == 2ms
+                if (idle_network_ticks > 200) {
+                    self.idle_event.wait();
+                    idle_network_ticks = 0;
+                }
+
                 sync = @bitCast(Sync, self.sync.load(.Monotonic));
                 continue;
             }

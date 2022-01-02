@@ -31,9 +31,6 @@ const dev = process.env.NODE_ENV === "development";
 
 type ParsedUrlQuery = Record<string, string | string[]>;
 
-// @ts-expect-error TS doesn't understand that Bun is a global
-const origin: string = Bun.origin;
-
 const isJSFile = (file: string) =>
   file.endsWith(".js") ||
   file.endsWith(".jsx") ||
@@ -347,6 +344,7 @@ export async function render({
   const getStaticProps = (PageNamespace as any)?.getStaticProps || null;
   const { default: AppComponent_ } = AppNamespace || {};
   var query = Object.assign({}, route.query);
+  const origin = "";
 
   // These are reversed in our Router versus Next.js...mostly due to personal preference.
   const pathname = route.name;
@@ -356,7 +354,7 @@ export async function render({
   for (let i = 0; i < routeNames.length; i++) {
     const filePath = routePaths[i];
     const name = routeNames[i];
-    pages[name] = [origin + filePath];
+    pages[name] = [filePath];
   }
 
   if (appStylesheets.length > 0) {

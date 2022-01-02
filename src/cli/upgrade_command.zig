@@ -328,6 +328,14 @@ pub const UpgradeCommand = struct {
     const exe_subpath = Version.folder_name ++ std.fs.path.sep_str ++ "bun";
 
     pub fn exec(ctx: Command.Context) !void {
+        _exec(ctx) catch |err| {
+            Output.prettyErrorln("<r>bun upgrade <red>fail<r>ed with error: <b>{s}<r>\n\n<cyan>Please upgrade manually<r>:\n  <b>curl https://bun.sh/install | bash<r>\n\n", .{@errorName(err)});
+            Output.flush();
+            std.os.exit(1);
+        };
+    }
+
+    fn _exec(ctx: Command.Context) !void {
         try NetworkThread.init();
 
         var filesystem = try fs.FileSystem.init1(ctx.allocator, null);

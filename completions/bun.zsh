@@ -15,9 +15,9 @@ _bun() {
         IFS=$'\n' scripts_list=($(SHELL=zsh bun getcompletes i))
         compadd $scripts_list && ret=0
 
-        main_commands=('add\:"Add a dependency to package.json" bun\:"Generate a bundle" create\:"Create a new project" dev\:"Start a dev server" help\:"Show command help" install\:"Install packages from package.json" remove\:"Remove a dependency from package.json" run\:"Run a script or package bin" upgrade\:"Upgrade to the latest version of Bun"')
+        main_commands=('add\:"Add a dependency to package.json" bun\:"Generate a bundle" create\:"Create a new project" dev\:"Start a dev server" help\:"Show command help" install\:"Install packages from package.json" remove\:"Remove a dependency from package.json" run\:"Run a script or package bin" upgrade\:"Upgrade to the latest version of bun"')
         main_commands=($main_commands)
-        _alternative "args:Bun:(($main_commands))"
+        _alternative "args:bun:(($main_commands))"
         ;;
     args)
         case $line[1] in

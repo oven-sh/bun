@@ -1332,7 +1332,7 @@ pub const BundleOptions = struct {
                         },
                         error.AccessDenied => {
                             Output.prettyErrorln(
-                                "error: access denied when trying to open directory for static files: \"{s}\".\nPlease re-open Bun with access to this folder or pass a different folder via \"--public-dir\". Note: --public-dir is relative to --cwd (or the process' current working directory).\n\nThe public folder is where static assets such as images, fonts, and .html files go.",
+                                "error: access denied when trying to open directory for static files: \"{s}\".\nPlease re-open bun with access to this folder or pass a different folder via \"--public-dir\". Note: --public-dir is relative to --cwd (or the process' current working directory).\n\nThe public folder is where static assets such as images, fonts, and .html files go.",
                                 .{opts.routes.static_dir},
                             );
                             std.process.exit(1);

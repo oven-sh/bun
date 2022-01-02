@@ -3694,7 +3694,7 @@ pub const PackageManager = struct {
             }
 
             return std.fs.cwd().makeOpenPath("node_modules/.cache", .{ .iterate = true }) catch |err| {
-                Output.prettyErrorln("<r><red>error<r>: Bun is unable to write files: {s}", .{@errorName(err)});
+                Output.prettyErrorln("<r><red>error<r>: bun is unable to write files: {s}", .{@errorName(err)});
                 Output.flush();
                 Global.crash();
             };
@@ -3716,7 +3716,7 @@ pub const PackageManager = struct {
         var tempdir: std.fs.Dir = std.fs.cwd().makeOpenPath(default_tempdir, .{ .iterate = true }) catch brk: {
             tried_dot_tmp = true;
             break :brk cache_directory.makeOpenPath(".tmp", .{ .iterate = true }) catch |err| {
-                Output.prettyErrorln("<r><red>error<r>: Bun is unable to access tempdir: {s}", .{@errorName(err)});
+                Output.prettyErrorln("<r><red>error<r>: bun is unable to access tempdir: {s}", .{@errorName(err)});
                 Output.flush();
                 Global.crash();
             };
@@ -3730,7 +3730,7 @@ pub const PackageManager = struct {
                     tried_dot_tmp = true;
 
                     tempdir = cache_directory.makeOpenPath(".tmp", .{ .iterate = true }) catch |err| {
-                        Output.prettyErrorln("<r><red>error<r>: Bun is unable to access tempdir: {s}", .{@errorName(err)});
+                        Output.prettyErrorln("<r><red>error<r>: bun is unable to access tempdir: {s}", .{@errorName(err)});
                         Output.flush();
                         Global.crash();
                     };
@@ -3747,7 +3747,7 @@ pub const PackageManager = struct {
                 if (!tried_dot_tmp) {
                     tried_dot_tmp = true;
                     tempdir = cache_directory.makeOpenPath(".tmp", .{ .iterate = true }) catch |err2| {
-                        Output.prettyErrorln("<r><red>error<r>: Bun is unable to write files to tempdir: {s}", .{@errorName(err2)});
+                        Output.prettyErrorln("<r><red>error<r>: bun is unable to write files to tempdir: {s}", .{@errorName(err2)});
                         Output.flush();
                         Global.crash();
                     };

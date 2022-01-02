@@ -2,7 +2,7 @@
   "folders": [
     {
       // Source code
-      "name": "Bun",
+      "name": "bun",
       "path": "bun"
     },
   ]

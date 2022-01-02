@@ -1,6 +1,6 @@
-// Bun.js v
+// bun.js v
 
-/**  Filesystem Router supporting dynamic routes, exact routes, catch-all routes, and optional catch-all routes. Implemented in native code and only available with Bun.js.  */
+/**  Filesystem Router supporting dynamic routes, exact routes, catch-all routes, and optional catch-all routes. Implemented in native code and only available with bun.js.  */
 declare module "bun.js/router" {
   /**  Match a {@link https://developer.mozilla.org/en-US/docs/Web/API/FetchEvent FetchEvent} to a `Route` from the local filesystem. Returns `null` if there is no match.  */
   function match(event: FetchEvent): Route | null;

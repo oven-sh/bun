@@ -1,7 +1,7 @@
 // For format details, see https://aka.ms/devcontainer.json. For config options, see the README at:
 // https://github.com/microsoft/vscode-dev-containers/tree/v0.209.6/containers/docker-existing-dockerfile
 {
-  "name": "Bun (Ubuntu)",
+  "name": "bun (Ubuntu)",
 
   // Sets the run context to one level up instead of the .devcontainer folder.
   "context": "..",

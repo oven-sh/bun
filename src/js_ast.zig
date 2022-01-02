@@ -5856,7 +5856,7 @@ pub const Macro = struct {
                             return TagOrJSNode{ .invalid = .{} };
                         },
                         else => {
-                            throwTypeError(writer.ctx, "Invalid Bun AST", writer.exception);
+                            throwTypeError(writer.ctx, "Invalid bun AST", writer.exception);
                             return TagOrJSNode{ .invalid = .{} };
                         },
                     }

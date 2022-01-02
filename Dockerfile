@@ -267,7 +267,7 @@ COPY .devcontainer/limits.conf /etc/security/limits.conf
 ENV BUN_INSTALL /opt/bun
 ENV PATH "/opt/bun/bin:$PATH"
 ARG BUILDARCH=amd64
-LABEL org.opencontainers.image.title="Bun ${BUILDARCH} (glibc)"
+LABEL org.opencontainers.image.title="bun ${BUILDARCH} (glibc)"
 LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
 COPY --from=build_release ${BUN_RELEASE_DIR}/bun /opt/bun/bin/bun
 WORKDIR /opt/bun

@@ -1,6 +1,6 @@
 // ---
 // Public exports from runtime
-// Compatible with Bun's Runtime Environment and web browsers.
+// Compatible with bun's Runtime Environment and web browsers.
 export var $$m =
   "$primordials" in globalThis ? $primordials.require : BUN_RUNTIME.$$m;
 export var __HMRModule = BUN_RUNTIME.__HMRModule;

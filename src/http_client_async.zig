@@ -176,7 +176,7 @@ else
 
 const accept_encoding_header_hash = hashHeaderName("Accept-Encoding");
 
-const user_agent_header = picohttp.Header{ .name = "User-Agent", .value = "Bun.js " ++ Global.package_json_version };
+const user_agent_header = picohttp.Header{ .name = "User-Agent", .value = "bun.js " ++ Global.package_json_version };
 const user_agent_header_hash = hashHeaderName("User-Agent");
 const location_header_hash = hashHeaderName("Location");
 

@@ -1,8 +1,8 @@
 # bun-macro-relay
 
-This lets you use Faceook's [Relay](https://github.com/facebook/relay) framework (GraphQL) with Bun.
+This lets you use Faceook's [Relay](https://github.com/facebook/relay) framework (GraphQL) with bun.
 
-Specifically, this implements the Bun equivalent of [`babel-plugin-relay`](https://github.com/facebook/relay/tree/main/packages/babel-plugin-relay). It parses `graphql` queries, but does not compile/save them to your artifacts directory, you still need [`relay-compiler`](https://github.com/facebook/relay/tree/main/packages/relay-compiler) for that.
+Specifically, this implements the bun equivalent of [`babel-plugin-relay`](https://github.com/facebook/relay/tree/main/packages/babel-plugin-relay). It parses `graphql` queries, but does not compile/save them to your artifacts directory, you still need [`relay-compiler`](https://github.com/facebook/relay/tree/main/packages/relay-compiler) for that.
 
 ## Installation
 
@@ -12,7 +12,7 @@ npm install -D bun-macro-relay
 
 ## Usage
 
-With one tweak to your project's `package.json`, `react-relay` works automatically with Bun.
+With one tweak to your project's `package.json`, `react-relay` works automatically with bun.
 
 Add this to your `package.json`:
 
@@ -26,12 +26,12 @@ Add this to your `package.json`:
   },
 ```
 
-This tells Bun to automatically pretend every import statement to `react-relay` with a `graphql` import came from `macro:bun-macro-relay/bun-macro-relay.tsx`.
+This tells bun to automatically pretend every import statement to `react-relay` with a `graphql` import came from `macro:bun-macro-relay/bun-macro-relay.tsx`.
 
 Effectively, it applies this diff in-memory so you can use `bun-macro-relay` without making other changes to your code:
 
 ```js
-// Bun will remap this import:
+// bun will remap this import:
 import { graphql } from "react-relay";
 
 // To this:
@@ -41,7 +41,7 @@ import { graphql } from "macro:bun-macro-relay/bun-macro-relay.tsx";
 You can still use the other imports from `react-relay`. It only affects the `graphql` export from `react-relay`.
 
 ```js
-// Bun will remap this import:
+// bun will remap this import:
 import { graphql, useFragment } from "react-relay";
 
 // To this:
@@ -119,9 +119,9 @@ const Tweet = () => {
 };
 ```
 
-Bun automatically transpiles JSX & TypeScript, but that's not relevant to this example.
+bun automatically transpiles JSX & TypeScript, but that's not relevant to this example.
 
 ### What does `bun-macro-relay` not do?
 
-1. This first version doesn't hash the contents of the `graphql` query, so it won't detect when the GraphQL query is out of sync with the compiled `.graphql` file in development. However, if you're running Relay's CLI, Bun's hot module reloading will automatically update. As long as you run Relay's CLI, it shouldn't matter. This will be fixed eventually (have to expose a native MD5 hashing function)
+1. This first version doesn't hash the contents of the `graphql` query, so it won't detect when the GraphQL query is out of sync with the compiled `.graphql` file in development. However, if you're running Relay's CLI, bun's hot module reloading will automatically update. As long as you run Relay's CLI, it shouldn't matter. This will be fixed eventually (have to expose a native MD5 hashing function)
 2. Compile GraphQL. You still need to use `relay-compiler` for that.

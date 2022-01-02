@@ -119,7 +119,7 @@
 # ENV BUN_INSTALL /opt/bun
 # ENV PATH /opt/bun/bin:$PATH
 
-# LABEL org.opencontainers.image.title="Bun - Linux ${BUILDARCH} (musl)"
+# LABEL org.opencontainers.image.title="bun - Linux ${BUILDARCH} (musl)"
 # LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
 
 # FROM release as test

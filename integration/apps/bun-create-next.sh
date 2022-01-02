@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# The important part of this test: make sure that Bun.js successfully loads
-# The most likely reason for this test to fail is that something broke in the JavaScriptCore <> Bun integration
+# The important part of this test: make sure that bun.js successfully loads
+# The most likely reason for this test to fail is that something broke in the JavaScriptCore <> bun integration
 killall -9 $(basename $BUN_BIN) || echo ""
 
 rm -rf /tmp/next-app

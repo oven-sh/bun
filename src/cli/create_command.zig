@@ -86,7 +86,7 @@ const UnsupportedPackages = struct {
     pub fn print(this: UnsupportedPackages) void {
         inline for (comptime std.meta.fieldNames(UnsupportedPackages)) |field_name| {
             if (@field(this, field_name)) {
-                Output.prettyErrorln("<r><yellow>warn<r><d>:<r> <b>\"{s}\"<r> won't work in Bun yet\n", .{field_name});
+                Output.prettyErrorln("<r><yellow>warn<r><d>:<r> <b>\"{s}\"<r> won't work in bun yet\n", .{field_name});
             }
         }
     }
@@ -434,7 +434,7 @@ pub const CreateCommand = struct {
                                 node.end();
                                 progress.refresh();
 
-                                Output.prettyError("\n<r><red>error:<r> GitHub returned 403. This usually means GitHub is rate limiting your requests.\nTo fix this, either:<r>  <b>A) pass a <r><cyan>GITHUB_ACCESS_TOKEN<r> environment variable to Bun<r>\n  <b>B)Wait a little and try again<r>\n", .{});
+                                Output.prettyError("\n<r><red>error:<r> GitHub returned 403. This usually means GitHub is rate limiting your requests.\nTo fix this, either:<r>  <b>A) pass a <r><cyan>GITHUB_ACCESS_TOKEN<r> environment variable to bun<r>\n  <b>B)Wait a little and try again<r>\n", .{});
                                 Global.crash();
                             },
 
@@ -1548,7 +1548,7 @@ pub const CreateCommand = struct {
 
         Output.pretty(
             \\
-            \\<d>Come hang out in Bun's Discord: https://bun.sh/discord<r>
+            \\<d>Come hang out in bun's Discord: https://bun.sh/discord<r>
             \\
         , .{});
 
@@ -2118,7 +2118,7 @@ pub const CreateListExamplesCommand = struct {
         const examples = try Example.fetchAllLocalAndRemote(ctx, node, &env_loader, filesystem);
         Output.printStartEnd(time, std.time.nanoTimestamp());
         Output.prettyln(" <d>Fetched manifest<r>", .{});
-        Output.prettyln("Welcome to Bun! Create a new project by pasting any of the following:\n\n", .{});
+        Output.prettyln("Welcome to bun! Create a new project by pasting any of the following:\n\n", .{});
         Output.flush();
 
         Example.print(examples.items, null);

@@ -94,14 +94,14 @@ complete -c bun \
 	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_create next react; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_seen_subcommand_from create;" -a 'react' -d 'new React project'
 
 complete -c bun \
-	-n "not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_use_subcommand" -a 'upgrade' -d 'Upgrade Bun to the latest version' -x 
+	-n "not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_use_subcommand" -a 'upgrade' -d 'Upgrade bun to the latest version' -x 
 complete -c bun \
 	-n "not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_use_subcommand"  -a '--help' -d 'See all commands and flags' -x
 
 complete -c bun \
-	-n "not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_use_subcommand" -l "version" -s "v"  -a '--version' -d 'Bun\'s version' -x
+	-n "not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_use_subcommand" -l "version" -s "v"  -a '--version' -d 'bun\'s version' -x
 complete -c bun \
-	-n "not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_use_subcommand" -a 'discord' -d 'Open Bun\'s Discord server' -x 
+	-n "not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_use_subcommand" -a 'discord' -d 'Open bun\'s Discord server' -x 
 
 
 complete -c bun \

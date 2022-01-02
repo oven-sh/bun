@@ -79,6 +79,12 @@ jobs:
           BUN_TEST_NAME: test-bun-run
           GITHUB_WORKSPACE: $GITHUB_WORKSPACE
         run: bash .docker/runner.sh
+      - name: Run test-bun-install
+        env:
+          RUNNER_TEMP: ${RUNNER_TEMP}
+          BUN_TEST_NAME: test-bun-install
+          GITHUB_WORKSPACE: $GITHUB_WORKSPACE
+        run: bash .docker/runner.sh
   # This is commented out because zig test does not work on the CI
   # Which sucks
   # zig-unit-tests:

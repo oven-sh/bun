@@ -553,7 +553,7 @@ mkdir-dev:
 test-install:
 	cd integration/scripts && $(NPM_CLIENT) install
 
-test-all: test-install test-with-hmr test-no-hmr test-create-next test-create-react test-bun-run
+test-all: test-install test-with-hmr test-no-hmr test-create-next test-create-react test-bun-run test-bun-install
 
 copy-test-node-modules:
 	rm -rf integration/snippets/package-json-exports/node_modules || echo "";
@@ -572,6 +572,12 @@ test-create-next:
 
 test-bun-run: 
 	cd integration/apps && BUN_BIN=$(RELEASE_BUN) bash ./bun-run-check.sh
+
+test-bun-install: 
+	cd integration/apps && JS_RUNTIME=$(RELEASE_BUN) NPM_CLIENT=$(RELEASE_BUN) bash ./bun-install.sh
+
+test-dev-bun-install: 
+	cd integration/apps && JS_RUNTIME=$(DEBUG_BUN) NPM_CLIENT=$(DEBUG_BUN) bash ./bun-install.sh
 
 test-create-react: 
 	BUN_BIN=$(RELEASE_BUN) bash integration/apps/bun-create-react.sh
@@ -594,7 +600,7 @@ test-dev-no-hmr: copy-test-node-modules
 test-dev-bun-run: 
 	cd integration/apps && BUN_BIN=$(DEBUG_BUN) bash bun-run-check.sh
 
-test-dev-all: test-dev-with-hmr test-dev-no-hmr test-dev-create-next test-dev-create-react test-dev-bun-run
+test-dev-all: test-dev-with-hmr test-dev-no-hmr test-dev-create-next test-dev-create-react test-dev-bun-run test-dev-bun-install
 test-dev-bunjs: 
 
 test-dev: test-dev-with-hmr

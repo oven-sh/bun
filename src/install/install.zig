@@ -2455,6 +2455,10 @@ pub const Lockfile = struct {
                 var new = this.*;
                 new.id = invalid_package_id;
                 new.man_dir = builder.append(String, this.man_dir.slice(buf));
+                // zero out this field
+                // it should really not exist in this data type at all, but not sure where to put it
+                // we waste 1 byte per package doing this!
+                new.preinstall_state = .unknown;
 
                 return new;
             }

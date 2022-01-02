@@ -127,13 +127,14 @@ pub const RequestContext = struct {
         }
 
         if (protocol == null) {
-            // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Forwarded-Proto
             determine_protocol: {
+                // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Upgrade-Insecure-Requests
                 if (this.header("Upgrade-Insecure-Requests") != null) {
                     protocol = "https";
                     break :determine_protocol;
                 }
 
+                // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Forwarded-Proto
                 if (this.header("X-Forwarded-Proto")) |proto| {
                     if (strings.eqlComptime(proto, "https")) {
                         protocol = "https";
@@ -159,15 +160,16 @@ pub const RequestContext = struct {
                 }
             }
 
-            if (this.header("Origin")) |origin| {
-                this.origin = ZigURL.parse(origin);
-                return;
+            if (protocol == null) {
+                if (this.header("Origin")) |origin| {
+                    this.origin = ZigURL.parse(origin);
+                    return;
+                }
             }
         }
 
         if (host != null or protocol != null) {
             // Proxies like Caddy might only send X-Forwarded-Proto if the host matches
-            // In that case,
             const display_protocol = protocol orelse @as(string, "http");
             var display_host = host orelse
                 (if (protocol != null) this.header("Host") else null) orelse

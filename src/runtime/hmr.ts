@@ -3,7 +3,7 @@ import * as API from "../api/schema";
 
 var __HMRModule, __FastRefreshModule, __HMRClient, __injectFastRefresh;
 if (typeof window !== "undefined") {
-  var textEncoder: TextEncoder; 
+  var textEncoder: TextEncoder;
   // We add a scope here to minimize chances of namespace collisions
   var runOnce = false;
   var clientStartTime = 0;
@@ -186,7 +186,7 @@ if (typeof window !== "undefined") {
       return CSSLoader.cssLoadId.bundle_id;
     }
 
-     findCSSLinkTag(id: number): CSSHMRInsertionPoint | null {
+    findCSSLinkTag(id: number): CSSHMRInsertionPoint | null {
       let count = 0;
       let match: CSSHMRInsertionPoint = null;
 
@@ -848,30 +848,54 @@ if (typeof window !== "undefined") {
       }
     }
 
-    handleFileChangeNotification(buffer: ByteBuffer, timestamp: number, copy_file_path: boolean) {
+    handleFileChangeNotification(
+      buffer: ByteBuffer,
+      timestamp: number,
+      copy_file_path: boolean
+    ) {
       const notification =
         API.decodeWebsocketMessageFileChangeNotification(buffer);
-        let file_path = "";
+      let file_path = "";
       switch (notification.loader) {
         case API.Loader.css: {
           file_path = this.loaders.css.filePath(notification);
           break;
         }
 
-        default: {
-          const index = HMRModule.dependencies.graph.indexOf(notification.id);
+        case API.Loader.js:
+        case API.Loader.jsx:
+        case API.Loader.tsx:
+        case API.Loader.ts:
+        case API.Loader.json: {
+          const index = HMRModule.dependencies.graph
+            .subarray(0, HMRModule.dependencies.graph_used)
+            .indexOf(notification.id);
 
-          if (index > -1) {
+          if (index > -1 && index) {
             file_path = HMRModule.dependencies.modules[index].file_path;
           }
           break;
         }
+        
+        default: {
+          return;
+        }
       }
 
-      return this.handleFileChangeNotificationBase(timestamp, notification, file_path, copy_file_path);
+      return this.handleFileChangeNotificationBase(
+        timestamp,
+        notification,
+        file_path,
+        copy_file_path
+      );
     }
 
-    private handleFileChangeNotificationBase(timestamp: number, notification: API.WebsocketMessageFileChangeNotification, file_path: string, copy_file_path: boolean) {
+    private handleFileChangeNotificationBase(
+      timestamp: number,
+      notification: API.WebsocketMessageFileChangeNotification,
+      file_path: string,
+      copy_file_path: boolean
+    ) {
       const accept = file_path && file_path.length > 0;
 
       if (!accept) {
@@ -936,13 +960,17 @@ if (typeof window !== "undefined") {
             this.buildCommandBufWithFilePath = new Uint8Array(4096 + 256);
           }
 
-          const writeBuffer = !copy_file_path ? this.buildCommandBuf : this.buildCommandBufWithFilePath;
-          writeBuffer[0] = !copy_file_path ? API.WebsocketCommandKind.build : API.WebsocketCommandKind.build_with_file_path;
+          const writeBuffer = !copy_file_path
+            ? this.buildCommandBuf
+            : this.buildCommandBufWithFilePath;
+          writeBuffer[0] = !copy_file_path
+            ? API.WebsocketCommandKind.build
+            : API.WebsocketCommandKind.build_with_file_path;
           this.buildCommandUArray[0] = timestamp;
           writeBuffer.set(this.buildCommandUArrayEight, 1);
           this.buildCommandUArray[0] = notification.id;
           writeBuffer.set(this.buildCommandUArrayEight, 5);
-          
+
           if (copy_file_path) {
             if (!textEncoder) {
               textEncoder = new TextEncoder();
@@ -951,8 +979,13 @@ if (typeof window !== "undefined") {
             this.buildCommandUArray[0] = file_path.length;
             writeBuffer.set(this.buildCommandUArrayEight, 9);
 
-            const out = textEncoder.encodeInto(file_path, writeBuffer.subarray(13));
-            this.socket.send(this.buildCommandBufWithFilePath.subarray(0, 13 + out.written));
+            const out = textEncoder.encodeInto(
+              file_path,
+              writeBuffer.subarray(13)
+            );
+            this.socket.send(
+              this.buildCommandBufWithFilePath.subarray(0, 13 + out.written)
+            );
           } else {
             this.socket.send(this.buildCommandBuf);
           }
@@ -1007,7 +1040,7 @@ if (typeof window !== "undefined") {
         }
 
         case API.WebsocketMessageKind.resolve_file: {
-          const {id} = API.decodeWebsocketMessageResolveID(buffer);
+          const { id } = API.decodeWebsocketMessageResolveID(buffer);
           const timestamp = this.builds.get(id) || 0;
 
           if (timestamp == 0 && HotReload.VERBOSE) {
@@ -1015,7 +1048,9 @@ if (typeof window !== "undefined") {
             return;
           }
 
-          const index = HMRModule.dependencies.graph.indexOf(id);
+          const index = HMRModule.dependencies.graph
+            .subarray(0, HMRModule.dependencies.graph_used)
+            .indexOf(id);
           var file_path: string = "";
           var loader = API.Loader.js;
           if (index > -1) {
@@ -1033,7 +1068,7 @@ if (typeof window !== "undefined") {
             }
             return;
           }
-          
+
           switch (file_path.substring(file_path.lastIndexOf("."))) {
             case ".css": {
               loader = API.Loader.css;
@@ -1075,7 +1110,12 @@ if (typeof window !== "undefined") {
             }
           }
 
-          this.handleFileChangeNotificationBase(timestamp, {id, loader}, file_path, true);
+          this.handleFileChangeNotificationBase(
+            timestamp,
+            { id, loader },
+            file_path,
+            true
+          );
           break;
         }
         case API.WebsocketMessageKind.file_change_notification: {
@@ -1226,13 +1266,19 @@ if (typeof window !== "undefined") {
       }
 
       const callbacksStart = performance.now();
-      const origUpdaters = oldModule ? oldModule.additional_updaters.slice() : [];
+      const origUpdaters = oldModule
+        ? oldModule.additional_updaters.slice()
+        : [];
       try {
         switch (this.reloader) {
           case ReloadBehavior.hotReload: {
             let foundBoundary = false;
 
-            const isOldModuleDead = oldModule && oldModule.previousVersion && oldModule.previousVersion.id === oldModule.id && oldModule.hasSameExports(oldModule.previousVersion);
+            const isOldModuleDead =
+              oldModule &&
+              oldModule.previousVersion &&
+              oldModule.previousVersion.id === oldModule.id &&
+              oldModule.hasSameExports(oldModule.previousVersion);
 
             if (oldModule) {
               // ESM-based HMR has a disadvantage against CommonJS HMR
@@ -1319,7 +1365,6 @@ if (typeof window !== "undefined") {
               if (isOldModuleDead) oldModule.previousVersion = null;
             } else if (pendingUpdateCount === currentPendingUpdateCount) {
               FastRefreshLoader.performFullRefresh();
-
             } else {
               return Promise.reject(
                 new ThrottleModuleUpdateError(
@@ -1328,7 +1373,6 @@ if (typeof window !== "undefined") {
               );
             }
 
-            
             break;
           }
         }
@@ -1440,7 +1484,6 @@ if (typeof window !== "undefined") {
       return true;
     }
 
-    
     additional_files = [];
     additional_updaters = [];
     _update: (exports: Object) => void;
@@ -1519,7 +1562,6 @@ if (typeof window !== "undefined") {
       this.$r_(Component, Component.name || Component.displayName);
     }
 
- 
     // Auto-register exported React components so we only have to manually register the non-exported ones
     // This is what Metro does: https://github.com/facebook/metro/blob/9f2b1210a0f66378dd93e5fcaabc464c86c9e236/packages/metro-runtime/src/polyfills/require.js#L905
     exportAll(object: any) {

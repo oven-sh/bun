@@ -73,7 +73,7 @@ pub const INotify = struct {
             // it includes alignment / padding
             // but it is a sentineled value
             // so we can just trim it to the first null byte
-            return std.mem.sliceTo(@intToPtr([*]u8, @ptrToInt(this) + @sizeOf(INotifyEvent))[0..this.name_len:0], 0);
+            return std.mem.sliceTo(@intToPtr([*]u8, @ptrToInt(this) + @sizeOf(INotifyEvent))[0..this.name_len :0], 0);
         }
     };
     pub var inotify_fd: EventListIndex = 0;
@@ -244,8 +244,6 @@ pub const WatchEvent = struct {
         };
     }
 
- 
-
     pub fn fromKEvent(this: *WatchEvent, kevent: KEvent) void {
         this.* =
             WatchEvent{
@@ -258,8 +256,6 @@ pub const WatchEvent = struct {
             .index = @truncate(WatchItemIndex, kevent.udata),
         };
     }
-
-    
 
     pub fn fromINotify(this: *WatchEvent, event: INotify.INotifyEvent, index: WatchItemIndex) void {
         this.* = WatchEvent{
@@ -283,8 +279,6 @@ pub const WatchEvent = struct {
         write: bool = false,
         move_to: bool = false,
     };
-
-    
 };
 
 pub const Watchlist = std.MultiArrayList(WatchItem);
@@ -479,14 +473,14 @@ pub fn NewWatcher(comptime ContextType: type) type {
                                     ) orelse continue,
                                 ),
                             );
-                            temp_name_list[temp_name_off] = if (event.name_len > 0) 
-                                  event.name()
-                                else 
-                                    null;
+                            temp_name_list[temp_name_off] = if (event.name_len > 0)
+                                event.name()
+                            else
+                                null;
                             watchevents[watch_event_id].name_off = temp_name_off;
                             watchevents[watch_event_id].name_len = @as(u8, @boolToInt((event.name_len > 0)));
                             temp_name_off += @as(u8, @boolToInt((event.name_len > 0)));
-                            
+
                             watch_event_id += 1;
                         }
 
@@ -495,8 +489,6 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
                         var last_event_index: usize = 0;
                         var last_event_id: INotify.EventListIndex = std.math.maxInt(INotify.EventListIndex);
-
-   
 
                         for (all_events) |_, i| {
                             if (all_events[i].name_len > 0) {
@@ -513,7 +505,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                             last_event_id = all_events[i].index;
                         }
                         if (all_events.len == 0) continue :restart;
-                        this.ctx.onFileUpdate(all_events[0 .. last_event_index + 1], this.changed_filepaths[0..name_off + 1], this.watchlist);
+                        this.ctx.onFileUpdate(all_events[0 .. last_event_index + 1], this.changed_filepaths[0 .. name_off + 1], this.watchlist);
                         remaining_events -= slice.len;
                     }
                 }

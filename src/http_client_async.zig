@@ -226,13 +226,9 @@ pub const HTTPChannel = @import("./sync.zig").Channel(*AsyncHTTP, .{ .Static = 1
 const SingleHTTPChannel = struct {
     const SingleHTTPCHannel_ = @import("./sync.zig").Channel(*AsyncHTTP, .{ .Static = 8 });
     channel: SingleHTTPCHannel_,
-    pub fn reset(_: *@This()) void {
-
-    }
+    pub fn reset(_: *@This()) void {}
     pub fn init(_: std.mem.Allocator) anyerror!SingleHTTPChannel {
-        return SingleHTTPChannel{
-            .channel = SingleHTTPCHannel_.init()
-        };
+        return SingleHTTPChannel{ .channel = SingleHTTPCHannel_.init() };
     }
 };
 

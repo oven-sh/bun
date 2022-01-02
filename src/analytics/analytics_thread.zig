@@ -359,7 +359,6 @@ fn readloop() anyerror!void {
     Output.Source.configureNamedThread(thread, "Analytics");
     defer Output.flush();
 
-
     event_list = EventList.init();
 
     var headers_entries: Headers.Entries = Headers.Entries{};
@@ -511,7 +510,7 @@ pub const EventList = struct {
         disabled = disabled or stuck_count > 4;
 
         this.in_buffer.reset();
-out_buffer.reset();
+        out_buffer.reset();
 
         if (comptime FeatureFlags.verbose_analytics) {
             Output.prettyErrorln("[Analytics] Sent {d} events", .{count});

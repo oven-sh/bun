@@ -129,6 +129,11 @@ pub const RequestContext = struct {
         if (protocol == null) {
             // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Forwarded-Proto
             determine_protocol: {
+                if (this.header("Upgrade-Insecure-Requests") != null) {
+                    protocol = "https";
+                    break :determine_protocol;
+                }
+
                 if (this.header("X-Forwarded-Proto")) |proto| {
                     if (strings.eqlComptime(proto, "https")) {
                         protocol = "https";

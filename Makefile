@@ -234,6 +234,7 @@ ifeq ($(OS_NAME), linux)
 PLATFORM_LINKER_FLAGS = \
 	    -fuse-ld=lld \
 		-lc \
+		-fno-omit-frame-pointer \
 		-Wl,-z,now \
 		-Wl,--as-needed \
 		-Wl,--gc-sections \
@@ -700,7 +701,7 @@ bun-link-lld-release:
 # The C compilation stuff with build.zig is really slow and we don't need to run this as often as the rest
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	$(CXX) -c -o $@ $< \
-		$(CLANG_FLAGS) \
+		$(CLANG_FLAGS) $(PLATFORM_LINKER_FLAGS) \
 		-O3 \
 		-w
 

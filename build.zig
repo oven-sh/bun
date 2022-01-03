@@ -439,6 +439,7 @@ pub fn configureObjectStep(obj: *std.build.LibExeObjStep, target: anytype, main_
 
     if (target.getOsTag() == .linux) {
         // obj.want_lto = tar;
+        obj.link_eh_frame_hdr = true;
         obj.link_emit_relocs = true;
         obj.link_function_sections = true;
     }

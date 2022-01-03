@@ -10,6 +10,7 @@ const assert = std.debug.assert;
 const Atomic = std.atomic.Atomic;
 
 io: ?*AsyncIO = null,
+sleep_on_idle_network_thread: bool = true,
 
 stack_size: u32,
 max_threads: u32,
@@ -186,10 +187,20 @@ noinline fn notifySlow(self: *ThreadPool, is_waking: bool) void {
 }
 
 noinline fn wait(self: *ThreadPool, _is_waking: bool) error{Shutdown}!bool {
+    if (self.sleep_on_idle_network_thread and self.io != null) {
+        return _wait(self, _is_waking, true);
+    }
+
+    return _wait(self, _is_waking, false);
+}
+
+// sleep_on_idle seems to impact `bun install` performance negatively
+// so we can just not sleep for that
+fn _wait(self: *ThreadPool, _is_waking: bool, comptime sleep_on_idle: bool) error{Shutdown}!bool {
     var is_idle = false;
     var is_waking = _is_waking;
     var sync = @bitCast(Sync, self.sync.load(.Monotonic));
-    var idle_network_ticks: u16 = 0;
+    var idle_network_ticks: if (sleep_on_idle) u16 else void = if (comptime sleep_on_idle) 0 else void{};
 
     while (true) {
         if (sync.state == .shutdown) return error.Shutdown;
@@ -254,14 +265,16 @@ noinline fn wait(self: *ThreadPool, _is_waking: bool) error{Shutdown}!bool {
                     io.tick() catch {};
                 }
 
-                idle_network_ticks += @as(u16, @boolToInt(HTTP.AsyncHTTP.active_requests_count.load(.Monotonic) == 0));
+                if (sleep_on_idle) {
+                    idle_network_ticks += @as(u16, @boolToInt(HTTP.AsyncHTTP.active_requests_count.load(.Monotonic) == 0));
 
-                // If it's been roughly 2ms since the last network request, go to sleep!
-                // this is 2ms because run_for_ns runs for 10 microseconds
-                // 10 microseconds * 200 == 2ms
-                if (idle_network_ticks > 200) {
-                    self.idle_event.wait();
-                    idle_network_ticks = 0;
+                    // If it's been roughly 2ms since the last network request, go to sleep!
+                    // this is 4ms because run_for_ns runs for 10 microseconds
+                    // 10 microseconds * 400 == 4ms
+                    if (idle_network_ticks > 400) {
+                        self.idle_event.wait();
+                        idle_network_ticks = 0;
+                    }
                 }
 
                 sync = @bitCast(Sync, self.sync.load(.Monotonic));

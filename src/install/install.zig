@@ -6387,6 +6387,10 @@ pub const PackageManager = struct {
             };
 
             const cwd = std.fs.cwd();
+
+            // sleep goes off, only need to set it once because it will have an impact on the next network request
+            NetworkThread.global.pool.sleep_on_idle_network_thread = false;
+
             while (iterator.nextNodeModulesFolder()) |node_modules| {
                 try cwd.makePath(std.mem.span(node_modules.relative_path));
                 // We deliberately do not close this folder.
@@ -6529,6 +6533,9 @@ pub const PackageManager = struct {
         package_json_contents: string,
         comptime log_level: Options.LogLevel,
     ) !void {
+        // sleep off for maximum network throughput
+        NetworkThread.global.pool.sleep_on_idle_network_thread = false;
+
         var load_lockfile_result: Lockfile.LoadFromDiskResult = if (manager.options.do.load_lockfile)
             manager.lockfile.loadFromDisk(
                 ctx.allocator,
@@ -6790,6 +6797,9 @@ pub const PackageManager = struct {
             Output.flush();
             std.os.exit(1);
         }
+
+        // sleep on since we might not need it anymore
+        NetworkThread.global.pool.sleep_on_idle_network_thread = true;
 
         if (had_any_diffs or needs_new_lockfile or manager.package_json_updates.len > 0) {
             manager.lockfile = try manager.lockfile.clean(&manager.summary.deduped, manager.package_json_updates, &manager.options);

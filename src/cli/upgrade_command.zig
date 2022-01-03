@@ -92,7 +92,10 @@ pub const UpgradeCheckerThread = struct {
         Output.Source.configureThread();
         NetworkThread.init() catch unreachable;
         NetworkThread.global.pool.sleep_on_idle_network_thread = false;
-
+        defer {
+            js_ast.Expr.Data.Store.deinit();
+            js_ast.Stmt.Data.Store.deinit();
+        }
         const version = (try UpgradeCommand.getLatestVersion(default_allocator, env_loader, undefined, undefined, true)) orelse return;
 
         if (!version.isCurrent()) {

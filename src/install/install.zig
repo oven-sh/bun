@@ -103,6 +103,10 @@ pub fn ExternalSliceAligned(comptime Type: type, comptime alignment_: ?u29) type
         off: u32 = 0,
         len: u32 = 0,
 
+        pub inline fn contains(this: Slice, id: u32) bool {
+            return id >= this.off and id < (this.len + this.off);
+        }
+
         pub inline fn get(this: Slice, in: []const Type) []const Type {
             // it should be impossible to address this out of bounds due to the minimum here
             return in.ptr[this.off..@minimum(in.len, this.off + this.len)];
@@ -321,6 +325,15 @@ pub const Features = struct {
 
     check_for_duplicate_dependencies: bool = false,
 
+    pub fn behavior(this: Features) Behavior {
+        var out: u8 = 0;
+        out |= @as(u8, @boolToInt(this.dependencies)) << 1;
+        out |= @as(u8, @boolToInt(this.optional_dependencies)) << 2;
+        out |= @as(u8, @boolToInt(this.dev_dependencies)) << 3;
+        out |= @as(u8, @boolToInt(this.peer_dependencies)) << 4;
+        return @intToEnum(Behavior, out);
+    }
+
     // When it's a folder, we do not parse any of the dependencies
     pub const folder = Features{
         .optional_dependencies = false,
@@ -420,7 +433,7 @@ pub const Lockfile = struct {
     pub const Tree = extern struct {
         id: Id = invalid_id,
         package_id: PackageID = invalid_package_id,
-
+        behavior: Behavior = Behavior.uninitialized,
         parent: Id = invalid_id,
         packages: Lockfile.PackageIDSlice = Lockfile.PackageIDSlice{},
 
@@ -666,7 +679,33 @@ pub const Lockfile = struct {
         }
     };
 
-    pub fn clean(old: *Lockfile, _: *u32, updates: []PackageManager.UpdateRequest, _: *const PackageManager.Options) !*Lockfile {
+    /// This conditonally clones the lockfile with root packages marked as non-resolved that do not satisfy `Features`. The package may still end up installed even if it was e.g. in "devDependencies" and its a production install. In that case, it would be installed because another dependency or transient dependency needed it 
+    ///
+    /// Warning: This potentially modifies the existing lockfile in-place. That is safe to do because at this stage, the lockfile has already been saved to disk. Our in-memory representation is all that's left.
+    pub fn maybeCloneFilteringRootPackages(
+        old: *Lockfile,
+        features: Features,
+    ) !*Lockfile {
+        const old_root_dependenices_list: DependencySlice = old.packages.items(.dependencies)[0];
+        var old_root_resolutions: PackageIDSlice = old.packages.items(.resolutions)[0];
+        const root_dependencies = old_root_dependenices_list.get(old.buffers.dependencies.items);
+        var resolutions = old_root_resolutions.mut(old.buffers.resolutions.items);
+        var any_changes = false;
+        const end = @truncate(PackageID, old.packages.len);
+
+        for (root_dependencies) |dependency, i| {
+            if (!dependency.behavior.isEnabled(features) and resolutions[i] < end) {
+                resolutions[i] = invalid_package_id;
+                any_changes = true;
+            }
+        }
+
+        if (!any_changes) return old;
+
+        return try old.clean(&.{});
+    }
+
+    pub fn clean(old: *Lockfile, updates: []PackageManager.UpdateRequest) !*Lockfile {
 
         // We will only shrink the number of packages here.
         // never grow
@@ -1104,16 +1143,12 @@ pub const Lockfile = struct {
                 const names: []const String = slice.items(.name);
                 const resolved: []const Resolution = slice.items(.resolution);
                 if (names.len == 0) return;
-                const dependency_lists = slice.items(.dependencies);
                 const resolutions_list = slice.items(.resolutions);
                 const resolutions_buffer = this.lockfile.buffers.resolutions.items;
-                const dependencies_buffer = this.lockfile.buffers.dependencies.items;
                 const string_buf = this.lockfile.buffers.string_bytes.items;
 
                 visited.set(0);
                 const end = @truncate(PackageID, names.len);
-
-                var any_failed = false;
 
                 if (this.successfully_installed) |installed| {
                     for (resolutions_list[0].get(resolutions_buffer)) |package_id| {
@@ -1150,31 +1185,6 @@ pub const Lockfile = struct {
                         );
                     }
                 }
-
-                for (resolutions_list) |list, parent_id| {
-                    for (list.get(resolutions_buffer)) |package_id, j| {
-                        if (package_id >= end) {
-                            const failed_dep: Dependency = dependency_lists[parent_id].get(dependencies_buffer)[j];
-                            if (failed_dep.behavior.isOptional() or failed_dep.behavior.isPeer() or (failed_dep.behavior.isDev() and parent_id > 0)) continue;
-
-                            try writer.print(
-                                comptime Output.prettyFmt(
-                                    "<r><red>ERROR<r><d>:<r> <b>{s}<r><d>@<b>{}<r><d> failed to resolve\n",
-                                    enable_ansi_colors,
-                                ),
-                                .{
-                                    failed_dep.name.slice(string_buf),
-                                    failed_dep.version.literal.fmt(string_buf),
-                                },
-                            );
-                            // track this so we can log each failure instead of just the first
-                            any_failed = true;
-                            continue;
-                        }
-                    }
-                }
-
-                if (any_failed) std.os.exit(1);
             }
         };
 
@@ -1358,7 +1368,7 @@ pub const Lockfile = struct {
         };
     };
 
-    pub fn verify(this: *Lockfile) !void {
+    pub fn verifyData(this: *Lockfile) !void {
         std.debug.assert(this.format == .v0);
         {
             var i: usize = 0;
@@ -1378,9 +1388,47 @@ pub const Lockfile = struct {
         }
     }
 
+    pub fn verifyResolutions(this: *Lockfile, local_features: Features, remote_features: Features, comptime log_level: PackageManager.Options.LogLevel) void {
+        const resolutions_list: []const PackageIDSlice = this.packages.items(.resolutions);
+        const dependency_lists: []const DependencySlice = this.packages.items(.dependencies);
+        const dependencies_buffer = this.buffers.dependencies.items;
+        const resolutions_buffer = this.buffers.resolutions.items;
+        const end = @truncate(PackageID, this.packages.len);
+
+        var any_failed = false;
+        const string_buf = this.buffers.string_bytes.items;
+
+        const root_list = resolutions_list[0];
+        for (resolutions_list) |list, parent_id| {
+            for (list.get(resolutions_buffer)) |package_id, j| {
+                if (package_id >= end) {
+                    const failed_dep: Dependency = dependency_lists[parent_id].get(dependencies_buffer)[j];
+                    if (!failed_dep.behavior.isEnabled(if (root_list.contains(@truncate(PackageID, parent_id)))
+                        local_features
+                    else
+                        remote_features)) continue;
+                    if (log_level != .silent)
+                        Output.prettyErrorln(
+                            "<r><red>ERROR<r><d>:<r> <b>{s}<r><d>@<b>{}<r><d> failed to resolve\n",
+                            .{
+                                failed_dep.name.slice(string_buf),
+                                failed_dep.version.literal.fmt(string_buf),
+                            },
+                        );
+                    // track this so we can log each failure instead of just the first
+                    any_failed = true;
+                }
+            }
+        }
+
+        if (any_failed) {
+            std.os.exit(1);
+        }
+    }
+
     pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
-        if (comptime Environment.isDebug) {
-            this.verify() catch |err| {
+        if (comptime Environment.allow_assert) {
+            this.verifyData() catch |err| {
                 Output.prettyErrorln("<r><red>error:<r> failed to verify lockfile: {s}", .{@errorName(err)});
                 Output.flush();
                 Global.crash();
@@ -2443,6 +2491,8 @@ pub const Lockfile = struct {
             unpacked_size: u64 = 0,
             integrity: Integrity = Integrity{},
 
+            /// Does the `cpu` arch and `os` match the requirements listed in the package?
+            /// This is completely unrelated to "devDependencies", "peerDependencies", "optionalDependencies" etc
             pub fn isDisabled(this: *const Meta) bool {
                 return !this.arch.isMatch() or !this.os.isMatch();
             }
@@ -3883,7 +3933,11 @@ pub const PackageManager = struct {
             Features.npm,
         );
 
-        if (!behavior.isEnabled(this.options.omit.toFeatures())) {
+        if (!behavior.isEnabled(if (this.root_dependency_list.contains(dependency_id))
+            this.options.local_package_features
+        else
+            this.options.remote_package_features))
+        {
             package.meta.preinstall_state = .done;
         }
 
@@ -4176,10 +4230,9 @@ pub const PackageManager = struct {
 
         if (comptime !is_main) {
             // it might really be main
-            if (!(id >= this.root_dependency_list.off and id < this.root_dependency_list.len + this.root_dependency_list.off)) {
+            if (!this.root_dependency_list.contains(id))
                 if (!dependency.behavior.isEnabled(Features.npm))
                     return;
-            }
         }
 
         switch (dependency.version.tag) {
@@ -4391,6 +4444,9 @@ pub const PackageManager = struct {
         this.task_queue.ensureUnusedCapacity(this.allocator, dependencies_list.len) catch unreachable;
         var lockfile = this.lockfile;
 
+        var dependencies = &lockfile.buffers.dependencies;
+        var resolutions = &lockfile.buffers.resolutions;
+
         // Step 1. Go through main dependencies
         {
             var i: u32 = dependencies_list.off;
@@ -4399,8 +4455,8 @@ pub const PackageManager = struct {
             while (i < end) : (i += 1) {
                 this.enqueueDependencyWithMain(
                     i,
-                    lockfile.buffers.dependencies.items[i],
-                    lockfile.buffers.resolutions.items[i],
+                    dependencies.items[i],
+                    resolutions.items[i],
                     is_main,
                 ) catch {};
             }
@@ -4430,11 +4486,8 @@ pub const PackageManager = struct {
         }
 
         if (env_loader.map.get("HOME")) |dir| {
-            FileSystem.instance.setInsideHomeDir(dir);
-            if (FileSystem.instance.inside_home_dir) {
-                var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
-                return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
-            }
+            var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
+            return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
         }
 
         if (env_loader.map.get("BUN_INSTALL")) |dir| {
@@ -4724,8 +4777,8 @@ pub const PackageManager = struct {
         positionals: []const string = &[_]string{},
         update: Update = Update{},
         dry_run: bool = false,
-        omit: CommandLineArguments.Omit = .{},
-
+        remote_package_features: Features = Features{ .peer_dependencies = false },
+        local_package_features: Features = Features{ .peer_dependencies = false, .dev_dependencies = true },
         allowed_install_scripts: []const PackageNameHash = &default_allowed_install_scripts,
 
         // The idea here is:
@@ -4938,9 +4991,11 @@ pub const PackageManager = struct {
                 //     this.enable.deduplicate_packages = false;
                 // }
 
-                this.omit.dev = cli.omit.dev or this.omit.dev;
-                this.omit.optional = cli.omit.optional or this.omit.optional;
-                this.omit.peer = cli.omit.peer or this.omit.peer;
+                if (cli.omit.dev) {
+                    this.local_package_features.dev_dependencies = false;
+                }
+
+                this.local_package_features.optional_dependencies = !cli.omit.optional;
 
                 if (cli.verbose) {
                     this.log_level = .verbose;
@@ -4973,7 +5028,7 @@ pub const PackageManager = struct {
                 }
 
                 if (cli.production) {
-                    this.enable.install_dev_dependencies = false;
+                    this.local_package_features.dev_dependencies = false;
                 }
 
                 if (cli.force) {
@@ -5002,7 +5057,6 @@ pub const PackageManager = struct {
             /// Probably need to be a little smarter
             deduplicate_packages: bool = false,
 
-            install_dev_dependencies: bool = true,
             force_install: bool = false,
         };
     };
@@ -5422,7 +5476,7 @@ pub const PackageManager = struct {
 
         const Omit = struct {
             dev: bool = false,
-            optional: bool = false,
+            optional: bool = true,
             peer: bool = false,
 
             pub inline fn toFeatures(this: Omit) Features {
@@ -6294,9 +6348,14 @@ pub const PackageManager = struct {
 
     pub fn installPackages(
         this: *PackageManager,
-        lockfile: *Lockfile,
+        lockfile_: *Lockfile,
         comptime log_level: PackageManager.Options.LogLevel,
     ) !PackageInstall.Summary {
+        var lockfile = lockfile_;
+        if (!this.options.local_package_features.dev_dependencies) {
+            lockfile = try lockfile.maybeCloneFilteringRootPackages(this.options.local_package_features);
+        }
+
         var root_node: *Progress.Node = undefined;
         var download_node: Progress.Node = undefined;
         var install_node: Progress.Node = undefined;
@@ -6317,8 +6376,6 @@ pub const PackageManager = struct {
                 progress.* = .{};
             }
         }
-
-        lockfile.unique_packages.unset(0);
 
         // If there was already a valid lockfile and so we did not resolve, i.e. there was zero network activity
         // the packages could still not be in the cache dir
@@ -6598,37 +6655,22 @@ pub const PackageManager = struct {
                     var lockfile: Lockfile = undefined;
                     try lockfile.initEmpty(ctx.allocator);
                     var new_root: Lockfile.Package = undefined;
-                    if (manager.options.enable.install_dev_dependencies) {
-                        try Lockfile.Package.parseMain(
-                            &lockfile,
-                            &new_root,
-                            ctx.allocator,
-                            ctx.log,
-                            package_json_source,
-                            Features{
-                                .optional_dependencies = true,
-                                .dev_dependencies = true,
-                                .is_main = true,
-                                .check_for_duplicate_dependencies = true,
-                                .peer_dependencies = false,
-                            },
-                        );
-                    } else {
-                        try Lockfile.Package.parseMain(
-                            &lockfile,
-                            &new_root,
-                            ctx.allocator,
-                            ctx.log,
-                            package_json_source,
-                            Features{
-                                .optional_dependencies = true,
-                                .dev_dependencies = false,
-                                .is_main = true,
-                                .check_for_duplicate_dependencies = true,
-                                .peer_dependencies = false,
-                            },
-                        );
-                    }
+
+                    try Lockfile.Package.parseMain(
+                        &lockfile,
+                        &new_root,
+                        ctx.allocator,
+                        ctx.log,
+                        package_json_source,
+                        Features{
+                            .optional_dependencies = true,
+                            .dev_dependencies = true,
+                            .is_main = true,
+                            .check_for_duplicate_dependencies = true,
+                            .peer_dependencies = false,
+                        },
+                    );
+
                     var mapping = try manager.lockfile.allocator.alloc(PackageID, new_root.dependencies.len);
                     std.mem.set(PackageID, mapping, invalid_package_id);
 
@@ -6695,14 +6737,19 @@ pub const PackageManager = struct {
                         if (manager.summary.add > 0 or manager.summary.update > 0) {
                             var remaining = mapping;
                             var dependency_i: PackageID = off;
+
+                            var deps = &manager.lockfile.buffers.dependencies;
+                            var res = &manager.lockfile.buffers.resolutions;
+
                             while (std.mem.indexOfScalar(PackageID, remaining, invalid_package_id)) |next_i_| {
                                 remaining = remaining[next_i_ + 1 ..];
 
                                 dependency_i += @intCast(PackageID, next_i_);
+
                                 try manager.enqueueDependencyWithMain(
                                     dependency_i,
-                                    manager.lockfile.buffers.dependencies.items[dependency_i],
-                                    manager.lockfile.buffers.resolutions.items[dependency_i],
+                                    deps.items[dependency_i],
+                                    res.items[dependency_i],
                                     true,
                                 );
                             }
@@ -6717,37 +6764,20 @@ pub const PackageManager = struct {
             root = Lockfile.Package{};
             try manager.lockfile.initEmpty(ctx.allocator);
 
-            if (manager.options.enable.install_dev_dependencies) {
-                try Lockfile.Package.parseMain(
-                    manager.lockfile,
-                    &root,
-                    ctx.allocator,
-                    ctx.log,
-                    package_json_source,
-                    Features{
-                        .optional_dependencies = true,
-                        .dev_dependencies = true,
-                        .is_main = true,
-                        .check_for_duplicate_dependencies = true,
-                        .peer_dependencies = false,
-                    },
-                );
-            } else {
-                try Lockfile.Package.parseMain(
-                    manager.lockfile,
-                    &root,
-                    ctx.allocator,
-                    ctx.log,
-                    package_json_source,
-                    Features{
-                        .optional_dependencies = true,
-                        .dev_dependencies = false,
-                        .is_main = true,
-                        .check_for_duplicate_dependencies = true,
-                        .peer_dependencies = false,
-                    },
-                );
-            }
+            try Lockfile.Package.parseMain(
+                manager.lockfile,
+                &root,
+                ctx.allocator,
+                ctx.log,
+                package_json_source,
+                Features{
+                    .optional_dependencies = true,
+                    .dev_dependencies = true,
+                    .is_main = true,
+                    .check_for_duplicate_dependencies = true,
+                    .peer_dependencies = false,
+                },
+            );
 
             root = try manager.lockfile.appendPackage(root);
 
@@ -6802,7 +6832,12 @@ pub const PackageManager = struct {
         NetworkThread.global.pool.sleep_on_idle_network_thread = true;
 
         if (had_any_diffs or needs_new_lockfile or manager.package_json_updates.len > 0) {
-            manager.lockfile = try manager.lockfile.clean(&manager.summary.deduped, manager.package_json_updates, &manager.options);
+            manager.lockfile = try manager.lockfile.clean(manager.package_json_updates);
+        }
+
+        if (manager.lockfile.packages.len > 0) {
+            manager.root_dependency_list = manager.lockfile.packages.items(.dependencies)[0];
+            manager.lockfile.verifyResolutions(manager.options.local_package_features, manager.options.remote_package_features, log_level);
         }
 
         if (manager.options.do.save_lockfile) {

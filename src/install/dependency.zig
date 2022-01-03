@@ -616,6 +616,10 @@ pub const Behavior = enum(u8) {
         return @intToEnum(Behavior, @enumToInt(this) | (@as(u8, @boolToInt(value))) << 2);
     }
 
+    pub inline fn setDev(this: Behavior, value: bool) Behavior {
+        return @intToEnum(Behavior, @enumToInt(this) | (@as(u8, @boolToInt(value))) << 2);
+    }
+
     pub inline fn cmp(lhs: Behavior, rhs: Behavior) std.math.Order {
         if (@enumToInt(lhs) == @enumToInt(rhs)) {
             return .eq;

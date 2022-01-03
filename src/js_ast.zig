@@ -114,6 +114,23 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
             return _self;
         }
 
+        fn deinit() void {
+            var sliced = _self.overflow.slice()[1..];
+
+            if (sliced.len > 0) {
+                var i: usize = 0;
+                const end = sliced.len;
+                while (i < end) {
+                    var ptrs = @ptrCast(*[2]Block, sliced[i]);
+                    default_allocator.free(ptrs);
+                    i += 2;
+                }
+            }
+
+            default_allocator.destroy(_self);
+            _self = undefined;
+        }
+
         pub fn append(comptime ValueType: type, value: ValueType) *ValueType {
             return _self._append(ValueType, value);
         }
@@ -1644,6 +1661,12 @@ pub const Stmt = struct {
                 All.reset();
             }
 
+            pub fn deinit() void {
+                if (!has_inited) return;
+                All.deinit();
+                has_inited = false;
+            }
+
             pub fn append(comptime ValueType: type, value: anytype) *ValueType {
                 return All.append(ValueType, value);
             }
@@ -2883,6 +2906,12 @@ pub const Expr = struct {
             pub fn reset() void {
                 if (disable_reset) return;
                 All.reset();
+            }
+
+            pub fn deinit() void {
+                if (!has_inited) return;
+                All.deinit();
+                has_inited = false;
             }
 
             pub fn append(comptime ValueType: type, value: anytype) *ValueType {

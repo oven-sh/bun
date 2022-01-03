@@ -82,15 +82,10 @@ pub const FileSystem = struct {
 
     dirname_store: *DirnameStore,
     filename_store: *FilenameStore,
-    inside_home_dir: bool = false,
 
     _tmpdir: ?std.fs.Dir = null,
 
     threadlocal var tmpdir_handle: ?std.fs.Dir = null;
-
-    pub fn setInsideHomeDir(this: *FileSystem, home_dir: string) void {
-        this.inside_home_dir = strings.hasPrefix(this.top_level_dir, home_dir);
-    }
 
     pub fn tmpdir(fs: *FileSystem) std.fs.Dir {
         if (tmpdir_handle == null) {

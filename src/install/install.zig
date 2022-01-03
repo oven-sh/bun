@@ -402,6 +402,26 @@ pub const Lockfile = struct {
         };
     };
 
+    const SignalHandler = struct {
+        pub export fn lockfile_corrupt_signal_handler(_: i32, _: *const std.os.siginfo_t, _: ?*const anyopaque) callconv(.C) void {
+            var stdout = std.io.getStdOut();
+            var stderr = std.io.getStdErr();
+            var source = Output.Source.init(stdout, stderr);
+            Output.Source.set(&source);
+
+            if (Output.isEmojiEnabled()) {
+                Output.prettyErrorln("<r><red>bun.lockb is corrupt and it crashed bun<r> 😭😭😭\n", .{});
+                Output.flush();
+            } else {
+                stderr.writeAll("bun.lockb is corrupt, causing bun to crash :'(\n") catch {};
+            }
+            std.mem.doNotOptimizeAway(source);
+
+            std.os.exit(6);
+        }
+    };
+    var sigaction: std.os.Sigaction = undefined;
+
     pub fn loadFromDisk(this: *Lockfile, allocator: std.mem.Allocator, log: *logger.Log, filename: stringZ) LoadFromDiskResult {
         std.debug.assert(FileSystem.instance_loaded);
         var file = std.fs.cwd().openFileZ(filename, .{ .read = true }) catch |err| {
@@ -414,8 +434,15 @@ pub const Lockfile = struct {
         var buf = file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
             return LoadFromDiskResult{ .err = .{ .step = .read_file, .value = err } };
         };
-
         var stream = Stream{ .buffer = buf, .pos = 0 };
+
+        sigaction = std.mem.zeroes(std.os.Sigaction);
+        sigaction.handler = .{ .sigaction = SignalHandler.lockfile_corrupt_signal_handler };
+
+        std.os.sigaction(std.os.SIG.SEGV | std.os.SIG.BUS, null, null);
+        std.os.sigaction(std.os.SIG.SEGV | std.os.SIG.BUS, &sigaction, null);
+        defer std.os.sigaction(std.os.SIG.SEGV | std.os.SIG.BUS, null, null);
+        // defer std.os.sigaction(sig: u6, act: ?*const Sigaction, oact: ?*Sigaction)
         Lockfile.Serializer.load(this, &stream, allocator, log) catch |err| {
             return LoadFromDiskResult{ .err = .{ .step = .parse_file, .value = err } };
         };
@@ -433,7 +460,6 @@ pub const Lockfile = struct {
     pub const Tree = extern struct {
         id: Id = invalid_id,
         package_id: PackageID = invalid_package_id,
-        behavior: Behavior = Behavior.uninitialized,
         parent: Id = invalid_id,
         packages: Lockfile.PackageIDSlice = Lockfile.PackageIDSlice{},
 

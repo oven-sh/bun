@@ -260,9 +260,9 @@ fn _wait(self: *ThreadPool, _is_waking: bool, comptime sleep_on_idle: bool) erro
         } else {
             if (self.io) |io| {
                 const HTTP = @import("http");
-                io.run_for_ns(std.time.ns_per_us * 10) catch {};
+                io.run_for_ns(std.time.ns_per_us * 100) catch {};
                 while (HTTP.AsyncHTTP.active_requests_count.load(.Monotonic) > HTTP.AsyncHTTP.max_simultaneous_requests) {
-                    io.tick() catch {};
+                    io.run_for_ns(std.time.ns_per_us * 10) catch {};
                 }
 
                 if (sleep_on_idle) {
@@ -271,7 +271,7 @@ fn _wait(self: *ThreadPool, _is_waking: bool, comptime sleep_on_idle: bool) erro
                     // If it's been roughly 2ms since the last network request, go to sleep!
                     // this is 4ms because run_for_ns runs for 10 microseconds
                     // 10 microseconds * 400 == 4ms
-                    if (idle_network_ticks > 400) {
+                    if (idle_network_ticks > 40) {
                         self.idle_event.wait();
                         idle_network_ticks = 0;
                     }

@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -euxo pipefail
+
 export DOCKER_BUILDKIT=1
 
 export BUILDKIT_ARCH=$(uname -m)

@@ -115,10 +115,10 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
         }
 
         fn deinit() void {
-            var sliced = _self.overflow.slice()[1..];
+            var sliced = _self.overflow.slice();
 
-            if (sliced.len > 0) {
-                var i: usize = 0;
+            if (sliced.len > 1) {
+                var i: usize = 1;
                 const end = sliced.len;
                 while (i < end) {
                     var ptrs = @ptrCast(*[2]Block, sliced[i]);

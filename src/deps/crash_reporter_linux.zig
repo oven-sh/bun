@@ -2,6 +2,7 @@ const std = @import("std");
 
 pub fn start(_: anytype, _: anytype) bool {
     std.debug.attachSegfaultHandler();
+    return true;
 }
 
 pub fn generate() void {}

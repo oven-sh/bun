@@ -7,8 +7,6 @@ const json_parser = @import("json_parser.zig");
 const js_printer = @import("js_printer.zig");
 const js_ast = @import("js_ast.zig");
 const linker = @import("linker.zig");
-usingnamespace @import("ast/base.zig");
-usingnamespace @import("defines.zig");
 const _global = @import("global.zig");
 const string = _global.string;
 const Output = _global.Output;

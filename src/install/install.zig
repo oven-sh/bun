@@ -18,8 +18,6 @@ const json_parser = @import("../json_parser.zig");
 const JSPrinter = @import("../js_printer.zig");
 
 const linker = @import("../linker.zig");
-usingnamespace @import("../ast/base.zig");
-usingnamespace @import("../defines.zig");
 const panicky = @import("../panic_handler.zig");
 const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;

@@ -261,7 +261,7 @@ BUN_LLD_FLAGS = $(OBJ_FILES) \
 		$(PLATFORM_LINKER_FLAGS)
 
 
-bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local 
+bun:
 
 
 vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive pl-crash-report
@@ -418,8 +418,6 @@ httpbench-release:
 	$(CXX) $(PACKAGE_DIR)/httpbench.o -g -O3 -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
 	rm -rf $(PACKAGE_DIR)/httpbench.o
 
-bun-codesign-debug:
-bun-codesign-release-local:
 
 
 	
@@ -440,6 +438,10 @@ bun-codesign-release-local:
 
 
 endif
+
+bun-codesign-debug:
+bun-codesign-release-local:
+
 
 jsc: jsc-build jsc-copy-headers jsc-bindings  
 jsc-build: $(JSC_BUILD_STEPS)
@@ -876,3 +878,6 @@ copy-to-bun-release-dir:
 	cp -r $(PACKAGE_DIR)/bun-profile $(BUN_RELEASE_DIR)/bun-profile
 
 PACKAGE_MAP = --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-begin io $(BUN_DIR)/src/io/io_$(OS_NAME).zig --pkg-end --pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin boringssl $(BUN_DIR)/src/deps/boringssl.zig --pkg-end --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin boringssl $(BUN_DIR)/src/deps/boringssl.zig --pkg-end --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-end --pkg-end --pkg-end --pkg-end --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin clap $(BUN_DIR)/src/deps/zig-clap/clap.zig --pkg-end --pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin boringssl $(BUN_DIR)/src/deps/boringssl.zig --pkg-end --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin boringssl $(BUN_DIR)/src/deps/boringssl.zig --pkg-end --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-end --pkg-end --pkg-end --pkg-end --pkg-begin boringssl $(BUN_DIR)/src/deps/boringssl.zig --pkg-end --pkg-begin javascript_core $(BUN_DIR)/src/jsc.zig --pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-end --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-end
+
+
+bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local 

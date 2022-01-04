@@ -10,7 +10,6 @@ const IPv4 = std.x.os.IPv4;
 const IPv6 = std.x.os.IPv6;
 const Socket = std.x.os.Socket;
 const os = std.os;
-usingnamespace @import("../http.zig");
 const _global = @import("../global.zig");
 const string = _global.string;
 const Output = _global.Output;

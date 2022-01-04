@@ -16,9 +16,6 @@ const MutableString = _global.MutableString;
 const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
 const C = _global.C;
-usingnamespace @import("ast/base.zig");
-usingnamespace js_ast.G;
-
 const expect = std.testing.expect;
 const ImportKind = importRecord.ImportKind;
 const BindingNodeIndex = js_ast.BindingNodeIndex;

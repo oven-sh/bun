@@ -23,7 +23,6 @@ const Ref = @import("ast/base.zig").Ref;
 const StoredFileDescriptorType = _global.StoredFileDescriptorType;
 const FeatureFlags = _global.FeatureFlags;
 const FileDescriptorType = _global.FileDescriptorType;
-usingnamespace js_ast.G;
 
 const expect = std.testing.expect;
 const ImportKind = importRecord.ImportKind;

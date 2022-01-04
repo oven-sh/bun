@@ -1,5 +1,4 @@
 const JSC = @import("./bindings.zig");
-usingnamespace @import("./shared.zig");
 const Fs = @import("../../../fs.zig");
 const CAPI = @import("../../../jsc.zig").C;
 const JS = @import("../javascript.zig");
@@ -28,25 +27,6 @@ const JSModuleRecord = JSC.JSModuleRecord;
 const Microtask = JSC.Microtask;
 const JSPrivateDataPtr = @import("../base.zig").JSPrivateDataPtr;
 
-const Handler = struct {
-    pub export fn global_signal_handler_fn(_: i32, _: *const std.os.siginfo_t, _: ?*const anyopaque) callconv(.C) void {
-        var stdout = std.io.getStdOut();
-        var stderr = std.io.getStdErr();
-        var source = Output.Source.init(stdout, stderr);
-        Output.Source.set(&source);
-
-        if (Output.isEmojiEnabled()) {
-            Output.prettyErrorln("<r><red>bun will crash now<r> 😭😭😭\n", .{});
-            Output.flush();
-        } else {
-            stderr.writeAll("bun has crashed :'(\n") catch {};
-        }
-        std.mem.doNotOptimizeAway(source);
-
-        std.os.exit(6);
-    }
-};
-
 pub const ZigGlobalObject = extern struct {
     pub const shim = Shimmer("Zig", "GlobalObject", @This());
     bytes: shim.Bytes,
@@ -56,22 +36,7 @@ pub const ZigGlobalObject = extern struct {
     pub const namespace = shim.namespace;
     pub const Interface: type = NewGlobalObject(JS.VirtualMachine);
 
-    pub var sigaction: std.os.Sigaction = undefined;
-    pub var sigaction_installed = false;
-
     pub fn create(class_ref: [*]CAPI.JSClassRef, count: i32, console: *anyopaque) *JSGlobalObject {
-        if (!sigaction_installed) {
-            sigaction_installed = true;
-
-            sigaction = std.mem.zeroes(std.os.Sigaction);
-            sigaction.handler = .{ .sigaction = Handler.global_signal_handler_fn };
-
-            std.os.sigaction(std.os.SIG.ABRT, &sigaction, null);
-            if (comptime !Environment.isDebug) {
-                std.os.sigaction(std.os.SIG.TRAP, &sigaction, null);
-            }
-        }
-
         return shim.cppFn("create", .{ class_ref, count, console });
     }
 

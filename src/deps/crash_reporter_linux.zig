@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub fn start(_: anytype, _: anytype) bool {
+pub fn start(_: anytype) bool {
     std.debug.attachSegfaultHandler();
     return true;
 }

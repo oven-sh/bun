@@ -46,8 +46,7 @@ bool PLCrashReportStart(const char *version, const char *basePath) {
                                                 appMarketingVersion:v
                                                       configuration:config];
 
-  crash_folder = basePath_;
-  [reporter setValue:crash_folder forKey:@"_crashReportDirectory"];
+  [reporter setValue:basePath_ forKey:@"_crashReportDirectory"];
   [reporter setCrashCallbacks:&callbacks];
 
   return [reporter enableCrashReporter];

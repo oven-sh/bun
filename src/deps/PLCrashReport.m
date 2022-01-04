@@ -35,7 +35,7 @@ bool PLCrashReportStart(const char *version, const char *basePath) {
                        symbolicationStrategy:
                            PLCrashReporterSymbolicationStrategyNone
       shouldRegisterUncaughtExceptionHandler:YES
-                                    basePath:basePath_;
+                                    basePath:basePath_];
 
   v = [[NSString alloc] initWithBytesNoCopy:version
                                      length:strlen(version)

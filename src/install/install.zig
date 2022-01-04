@@ -4529,12 +4529,20 @@ pub const PackageManager = struct {
                             has_updated_this_run = true;
                         }
                     }
+
                     const response = task.http.response orelse {
                         if (comptime log_level != .silent) {
-                            Output.prettyErrorln("Failed to download package manifest for package {s}", .{
-                                name.slice(),
-                            });
-                            Output.flush();
+                            const fmt = "<r><red>rerror<r>: Failed to download package manifest <b>{s}<r>";
+                            const args = .{name.slice()};
+                            if (comptime log_level.showProgress()) {
+                                Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
+                            } else {
+                                Output.prettyErrorln(
+                                    fmt,
+                                    args,
+                                );
+                                Output.flush();
+                            }
                         }
                         continue;
                     };
@@ -4674,8 +4682,17 @@ pub const PackageManager = struct {
                 .package_manifest => {
                     if (task.status == .fail) {
                         if (comptime log_level != .silent) {
-                            Output.prettyErrorln("Failed to parse package manifest for {s}", .{task.request.package_manifest.name.slice()});
-                            Output.flush();
+                            const fmt = "<r><red>rerror<r>: Failed to parse package manifest for <b>{s}<r>";
+                            const args = .{task.request.package_manifest.name.slice()};
+                            if (comptime log_level.showProgress()) {
+                                Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
+                            } else {
+                                Output.prettyErrorln(
+                                    fmt,
+                                    args,
+                                );
+                                Output.flush();
+                            }
                         }
                         continue;
                     }
@@ -4710,10 +4727,21 @@ pub const PackageManager = struct {
                 },
                 .extract => {
                     if (task.status == .fail) {
-                        Output.prettyErrorln("Failed to extract tarball for {s}", .{
-                            task.request.extract.tarball.name,
-                        });
-                        Output.flush();
+                        if (comptime log_level != .silent) {
+                            const fmt = "<r><red>rerror<r>: Failed to extract tarball for <b>{s}<r>";
+                            const args = .{
+                                task.request.extract.tarball.name.slice(),
+                            };
+                            if (comptime log_level.showProgress()) {
+                                Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
+                            } else {
+                                Output.prettyErrorln(
+                                    fmt,
+                                    args,
+                                );
+                                Output.flush();
+                            }
+                        }
                         continue;
                     }
                     const package_id = task.request.extract.tarball.package_id;

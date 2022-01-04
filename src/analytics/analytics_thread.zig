@@ -51,6 +51,41 @@ pub const Features = struct {
     pub var external = false;
     pub var fetch = false;
 
+    pub fn formatter() Formatter {
+        return Formatter{};
+    }
+    pub const Formatter = struct {
+        pub fn format(_: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            const fields = comptime .{
+                "single_page_app_routing",
+                "tsconfig_paths",
+                "fast_refresh",
+                "hot_module_reloading",
+                "jsx",
+                "always_bundle",
+                "tsconfig",
+                "bun_bun",
+                "filesystem_router",
+                "framework",
+                "bunjs",
+                "macros",
+                "public_folder",
+                "dotenv",
+                "define",
+                "loaders",
+                "origin",
+                "external",
+                "fetch",
+            };
+            inline for (fields) |field| {
+                if (@field(Features, field)) {
+                    try writer.writeAll(field);
+                    try writer.writeAll(" ");
+                }
+            }
+        }
+    };
+
     const Bitset = std.bit_set.IntegerBitSet(32);
 
     pub const Serializer = struct {

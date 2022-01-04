@@ -51,6 +51,16 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
         .path = pkgPath("src/thread_pool.zig"),
     };
 
+    var crash_reporter_mac: std.build.Pkg = .{
+        .name = "crash_reporter",
+        .path = pkgPath("src/deps/PLCrashReport.zig"),
+    };
+
+    var crash_reporter_linux: std.build.Pkg = .{
+        .name = "crash_reporter",
+        .path = pkgPath("src/deps/crash_reporter_linux.zig"),
+    };
+
     var picohttp: std.build.Pkg = .{
         .name = "picohttp",
         .path = pkgPath("src/deps/picohttp.zig"),
@@ -69,6 +79,11 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
         io_darwin
     else
         io_linux;
+
+    var crash_reporter = if (target.isDarwin())
+        crash_reporter_mac
+    else
+        crash_reporter_linux;
 
     var strings: std.build.Pkg = .{
         .name = "strings",
@@ -120,6 +135,7 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
     step.addPackage(http);
     step.addPackage(boringssl);
     step.addPackage(javascript_core);
+    step.addPackage(crash_reporter);
 }
 var output_dir: []const u8 = "";
 fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
@@ -273,6 +289,7 @@ pub fn build(b: *std.build.Builder) !void {
         if (target.getOsTag() == .linux) {
             // obj.want_lto = tar;
             obj.link_emit_relocs = true;
+            obj.link_eh_frame_hdr = true;
             obj.link_function_sections = true;
         }
         var log_step = b.addLog("Destination: {s}/{s}\n", .{ output_dir, bun_executable_name });
@@ -377,7 +394,7 @@ pub fn linkObjectFiles(b: *std.build.Builder, obj: *std.build.LibExeObjStep, tar
     var dirs_to_search = std.BoundedArray([]const u8, 32).init(0) catch unreachable;
     const arm_brew_prefix: []const u8 = "/opt/homebrew";
     const x86_brew_prefix: []const u8 = "/usr/local";
-    try dirs_to_search.append(b.env_map.get("BUN_DEPS_DIR") orelse @as([]const u8, b.pathFromRoot("src/deps")));
+    try dirs_to_search.append(b.env_map.get("BUN_DEPS_OUT_DIR") orelse b.env_map.get("BUN_DEPS_DIR") orelse @as([]const u8, b.pathFromRoot("src/deps")));
     if (target.getOsTag() == .macos) {
         if (target.getCpuArch().isAARCH64()) {
             try dirs_to_search.append(comptime arm_brew_prefix ++ "/opt/icu4c/lib/");
@@ -405,6 +422,8 @@ pub fn linkObjectFiles(b: *std.build.Builder, obj: *std.build.LibExeObjStep, tar
         .{ "libJavaScriptCore.a", "libJavaScriptCore.a" },
         .{ "libWTF.a", "libWTF.a" },
         .{ "libbmalloc.a", "libbmalloc.a" },
+        .{ "libCrashReporter.a", "libCrashReporter.a" },
+        .{ "libCrashReporter.bindings.a", "libCrashReporter.bindings.a" },
     });
 
     for (dirs_to_search.slice()) |deps_path| {
@@ -431,6 +450,7 @@ pub fn configureObjectStep(obj: *std.build.LibExeObjStep, target: anytype, main_
     try addInternalPackages(obj, std.heap.page_allocator, target);
     addPicoHTTP(obj, false);
 
+    obj.strip = false;
     obj.setOutputDir(output_dir);
     obj.setBuildMode(mode);
     obj.linkLibC();
@@ -439,8 +459,8 @@ pub fn configureObjectStep(obj: *std.build.LibExeObjStep, target: anytype, main_
 
     if (target.getOsTag() == .linux) {
         // obj.want_lto = tar;
-        obj.link_eh_frame_hdr = true;
         obj.link_emit_relocs = true;
+        obj.link_eh_frame_hdr = true;
         obj.link_function_sections = true;
     }
 }

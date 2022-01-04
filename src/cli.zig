@@ -76,6 +76,8 @@ pub const Cli = struct {
             }
         };
     }
+
+    pub var cmd: ?Command.Tag = null;
 };
 
 const LoaderMatcher = strings.ExactSizeMatcher(4);
@@ -583,6 +585,8 @@ pub const Command = struct {
         debug: DebugOptions = DebugOptions{},
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
+            Cli.cmd = command;
+
             var ctx = Command.Context{
                 .args = std.mem.zeroes(Api.TransformOptions),
                 .log = log,

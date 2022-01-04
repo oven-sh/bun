@@ -11,6 +11,10 @@ const MutableString = _global.MutableString;
 const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
 const C = _global.C;
+const CLI = @import("./cli.zig").Cli;
+const Features = @import("./analytics/analytics_thread.zig").Features;
+const HTTP = @import("http").AsyncHTTP;
+const Report = @import("./report.zig");
 
 pub fn NewPanicHandler(comptime panic_func: fn handle_panic(msg: []const u8, error_return_type: ?*std.builtin.StackTrace) noreturn) type {
     return struct {
@@ -30,22 +34,8 @@ pub fn NewPanicHandler(comptime panic_func: fn handle_panic(msg: []const u8, err
             // This exists to ensure we flush all buffered output before panicking.
             Output.flush();
 
-            if (msg.len > 0) {
-                if (Output.isEmojiEnabled()) {
-                    Output.prettyErrorln("<r><red>bun crashed 😭😭😭<r><d>: <r><b>{s}<r>\n", .{msg});
-                } else {
-                    Output.prettyErrorln("<r><red>Crash<r><d>:<r> <b>{s}<r>", .{msg});
-                }
-                Output.flush();
-            } else {
-                if (Output.isEmojiEnabled()) {
-                    Output.prettyErrorln("<r><red>bun will crash now<r> 😭😭😭<r>\n", .{});
-                    Output.flush();
-                } else {
-                    Output.printError("bun has crashed :'(\n", .{});
-                }
-                Output.flush();
-            }
+            Report.fatal(null, msg);
+
             Output.disableBuffering();
 
             // // We want to always inline the panic handler so it doesn't show up in the stacktrace.

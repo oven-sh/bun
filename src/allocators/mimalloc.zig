@@ -44,7 +44,7 @@ pub extern fn mi_process_init() void;
 pub extern fn mi_thread_init() void;
 pub extern fn mi_thread_done() void;
 pub extern fn mi_thread_stats_print_out(out: ?mi_output_fun, arg: ?*anyopaque) void;
-pub extern fn mi_process_info(elapsed_msecs: [*c]usize, user_msecs: [*c]usize, system_msecs: [*c]usize, current_rss: [*c]usize, peak_rss: [*c]usize, current_commit: [*c]usize, peak_commit: [*c]usize, page_faults: [*c]usize) void;
+pub extern fn mi_process_info(elapsed_msecs: *usize, user_msecs: *usize, system_msecs: *usize, current_rss: *usize, peak_rss: *usize, current_commit: *usize, peak_commit: *usize, page_faults: *usize) void;
 pub extern fn mi_malloc_aligned(size: usize, alignment: usize) ?*anyopaque;
 pub extern fn mi_malloc_aligned_at(size: usize, alignment: usize, offset: usize) ?*anyopaque;
 pub extern fn mi_zalloc_aligned(size: usize, alignment: usize) ?*anyopaque;

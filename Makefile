@@ -226,6 +226,10 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE) \
 
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) $(BUN_DEPS_OUT_DIR)/libcrypto.boring.a
 
+ifeq ($(OS_NAME), darwin)
+ARCHIVE_FILES += $(BUN_DEPS_OUT_DIR)/libCrashReporter.a $(BUN_DEPS_OUT_DIR)/libCrashReporter.bindings.a
+endif
+
 PLATFORM_LINKER_FLAGS =
 
 STATIC_MUSL_FLAG ?= 
@@ -257,10 +261,10 @@ BUN_LLD_FLAGS = $(OBJ_FILES) \
 		$(PLATFORM_LINKER_FLAGS)
 
 
-bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local
+bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local 
 
 
-vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive 
+vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive pl-crash-report
 
 boringssl-build:
 	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && cmake $(CMAKE_FLAGS) -GNinja .. && ninja 
@@ -270,6 +274,26 @@ boringssl-copy:
 	cp $(BUN_DEPS_DIR)/boringssl/build/crypto/libcrypto.a $(BUN_DEPS_OUT_DIR)/libcrypto.boring.a
 
 boringssl: boringssl-build boringssl-copy
+
+download-pl-crash-report:
+	rm -rf /tmp/PLCrashReporter.zip /tmp/PLCrashReporter
+	curl -L https://github.com/microsoft/plcrashreporter/releases/download/1.10.1/PLCrashReporter-Static-1.10.1.zip > /tmp/PLCrashReporter.zip
+	unzip /tmp/PLCrashReporter.zip -d /tmp
+	cp /tmp/PLCrashReporter/libCrashReporter-MacOSX-Static.a $(BUN_DEPS_OUT_DIR)/libCrashReporter.a
+	mkdir -p $(BUN_DEPS_DIR)/PLCrashReporter/include/PLCrashReporter
+	cp -r /tmp/PLCrashReporter/include/*.h $(BUN_DEPS_DIR)/PLCrashReporter/include/PLCrashReporter
+
+pl-crash-report:
+
+ifeq ($(OS_NAME), darwin)
+pl-crash-report: pl-crash-report-mac
+endif
+
+pl-crash-report-mac: download-pl-crash-report pl-crash-report-mac-compile
+
+pl-crash-report-mac-compile:
+	$(CC) $(MACOS_MIN_FLAG) -O3 -ObjC -I$(BUN_DEPS_DIR)/PLCrashReporter/include -I$(BUN_DEPS_DIR)/PLCrashReporter -c $(BUN_DEPS_DIR)/PLCrashReport.m \
+	-g	-o $(BUN_DEPS_OUT_DIR)/libCrashReporter.bindings.a
 
 libarchive:
 	cd $(BUN_DEPS_DIR)/libarchive; \

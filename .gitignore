@@ -83,3 +83,5 @@ src/deps/s2n-tls
 .npm.gz
 
 bun-binary
+
+src/deps/PLCrashReporter/

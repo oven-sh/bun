@@ -402,26 +402,6 @@ pub const Lockfile = struct {
         };
     };
 
-    const SignalHandler = struct {
-        pub export fn lockfile_corrupt_signal_handler(_: i32, _: *const std.os.siginfo_t, _: ?*const anyopaque) callconv(.C) void {
-            var stdout = std.io.getStdOut();
-            var stderr = std.io.getStdErr();
-            var source = Output.Source.init(stdout, stderr);
-            Output.Source.set(&source);
-
-            if (Output.isEmojiEnabled()) {
-                Output.prettyErrorln("<r><red>bun.lockb is corrupt and it crashed bun<r> 😭😭😭\n", .{});
-                Output.flush();
-            } else {
-                stderr.writeAll("bun.lockb is corrupt, causing bun to crash :'(\n") catch {};
-            }
-            std.mem.doNotOptimizeAway(source);
-
-            std.os.exit(6);
-        }
-    };
-    var sigaction: std.os.Sigaction = undefined;
-
     pub fn loadFromDisk(this: *Lockfile, allocator: std.mem.Allocator, log: *logger.Log, filename: stringZ) LoadFromDiskResult {
         std.debug.assert(FileSystem.instance_loaded);
         var file = std.fs.cwd().openFileZ(filename, .{ .read = true }) catch |err| {
@@ -436,13 +416,6 @@ pub const Lockfile = struct {
         };
         var stream = Stream{ .buffer = buf, .pos = 0 };
 
-        sigaction = std.mem.zeroes(std.os.Sigaction);
-        sigaction.handler = .{ .sigaction = SignalHandler.lockfile_corrupt_signal_handler };
-
-        std.os.sigaction(std.os.SIG.SEGV | std.os.SIG.BUS, null, null);
-        std.os.sigaction(std.os.SIG.SEGV | std.os.SIG.BUS, &sigaction, null);
-        defer std.os.sigaction(std.os.SIG.SEGV | std.os.SIG.BUS, null, null);
-        // defer std.os.sigaction(sig: u6, act: ?*const Sigaction, oact: ?*Sigaction)
         Lockfile.Serializer.load(this, &stream, allocator, log) catch |err| {
             return LoadFromDiskResult{ .err = .{ .step = .parse_file, .value = err } };
         };
@@ -1075,13 +1048,13 @@ pub const Lockfile = struct {
             switch (load_from_disk) {
                 .err => |cause| {
                     switch (cause.step) {
-                        .open_file => Output.prettyErrorln("<r><red>error opening lockfile:<r> {s}.", .{
+                        .open_file => Output.prettyErrorln("<r><red>error<r> opening lockfile:<r> {s}.", .{
                             @errorName(cause.value),
                         }),
-                        .parse_file => Output.prettyErrorln("<r><red>error parsing lockfile:<r> {s}", .{
+                        .parse_file => Output.prettyErrorln("<r><red>error<r> parsing lockfile:<r> {s}", .{
                             @errorName(cause.value),
                         }),
-                        .read_file => Output.prettyErrorln("<r><red>error reading lockfile:<r> {s}", .{
+                        .read_file => Output.prettyErrorln("<r><red>error<r> reading lockfile:<r> {s}", .{
                             @errorName(cause.value),
                         }),
                     }
@@ -2291,6 +2264,9 @@ pub const Lockfile = struct {
         ) !void {
             initializeStore();
 
+            // A valid package.json always has "{}" characters
+            if (source.contents.len < 2) return error.InvalidPackageJSON;
+
             var json = json_parser.ParseJSON(&source, log, allocator) catch |err| {
                 if (Output.enable_ansi_colors) {
                     log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
@@ -2630,9 +2606,12 @@ pub const Lockfile = struct {
                         .capacity = 0,
                     };
                 }
+                const end = stream.getEndPos() catch 0;
+                if ((byte_len - 1 + stream.pos) > end) return error.CorruptLockfileNearPackageList;
 
                 // Count of items in the list
                 const list_len = try reader.readIntLittle(u64);
+                if (list_len > std.math.maxInt(u32) - 1) return error.CorruptLockfileNearPackageList;
 
                 var list = Lockfile.Package.List{};
                 try list.ensureTotalCapacity(allocator, list_len);
@@ -4806,7 +4785,6 @@ pub const PackageManager = struct {
         remote_package_features: Features = Features{ .peer_dependencies = false },
         local_package_features: Features = Features{ .peer_dependencies = false, .dev_dependencies = true },
         allowed_install_scripts: []const PackageNameHash = &default_allowed_install_scripts,
-
         // The idea here is:
         // 1. package has a platform-specific binary to install
         // 2. To prevent downloading & installing incompatible versions, they stick the "real" one in optionalDependencies
@@ -5055,6 +5033,7 @@ pub const PackageManager = struct {
 
                 if (cli.production) {
                     this.local_package_features.dev_dependencies = false;
+                    this.enable.fail_early = true;
                 }
 
                 if (cli.force) {
@@ -5078,6 +5057,7 @@ pub const PackageManager = struct {
             manifest_cache: bool = true,
             manifest_cache_control: bool = true,
             cache: bool = true,
+            fail_early: bool = false,
 
             /// Disabled because it doesn't actually reduce the number of packages we end up installing
             /// Probably need to be a little smarter
@@ -6115,13 +6095,13 @@ pub const PackageManager = struct {
             return;
         };
 
-        switch (manager.options.log_level) {
-            .default => try installWithManager(ctx, manager, package_json_contents, .default),
-            .verbose => try installWithManager(ctx, manager, package_json_contents, .verbose),
-            .silent => try installWithManager(ctx, manager, package_json_contents, .silent),
-            .default_no_progress => try installWithManager(ctx, manager, package_json_contents, .default_no_progress),
-            .verbose_no_progress => try installWithManager(ctx, manager, package_json_contents, .verbose_no_progress),
-        }
+        try switch (manager.options.log_level) {
+            .default => installWithManager(ctx, manager, package_json_contents, .default),
+            .verbose => installWithManager(ctx, manager, package_json_contents, .verbose),
+            .silent => installWithManager(ctx, manager, package_json_contents, .silent),
+            .default_no_progress => installWithManager(ctx, manager, package_json_contents, .default_no_progress),
+            .verbose_no_progress => installWithManager(ctx, manager, package_json_contents, .verbose_no_progress),
+        };
     }
 
     const PackageInstaller = struct {
@@ -6646,25 +6626,36 @@ pub const PackageManager = struct {
 
         switch (load_lockfile_result) {
             .err => |cause| {
-                switch (cause.step) {
-                    .open_file => Output.prettyErrorln("<r><red>error opening lockfile:<r> {s}. <b>Ignoring lockfile<r>.", .{
-                        @errorName(cause.value),
-                    }),
-                    .parse_file => Output.prettyErrorln("<r><red>error parsing lockfile:<r> {s}. <b>Ignoring lockfile<r>.", .{
-                        @errorName(cause.value),
-                    }),
-                    .read_file => Output.prettyErrorln("<r><red>error reading lockfile:<r> {s}. <b>Ignoring lockfile<r>.", .{
-                        @errorName(cause.value),
-                    }),
-                }
-                if (ctx.log.errors > 0) {
-                    if (Output.enable_ansi_colors) {
-                        try manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-                    } else {
-                        try manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
+                if (log_level != .silent) {
+                    switch (cause.step) {
+                        .open_file => Output.prettyError("<r><red>error<r> opening lockfile:<r> {s}\n<r>", .{
+                            @errorName(cause.value),
+                        }),
+                        .parse_file => Output.prettyError("<r><red>error<r> parsing lockfile:<r> {s}\n<r>", .{
+                            @errorName(cause.value),
+                        }),
+                        .read_file => Output.prettyError("<r><red>error<r> reading lockfile:<r> {s}\n<r>", .{
+                            @errorName(cause.value),
+                        }),
                     }
+
+                    if (manager.options.enable.fail_early) {
+                        Output.prettyError("<b>Failed to load lockfile<r>\n", .{});
+                    } else {
+                        Output.prettyError("<b>Ignoring lockfile<r>\n", .{});
+                    }
+
+                    if (ctx.log.errors > 0) {
+                        if (Output.enable_ansi_colors) {
+                            try manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
+                        } else {
+                            try manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
+                        }
+                    }
+                    Output.flush();
                 }
-                Output.flush();
+
+                if (manager.options.enable.fail_early) std.os.exit(1);
             },
             .ok => {
                 differ: {

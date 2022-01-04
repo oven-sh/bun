@@ -24,14 +24,22 @@ const cli = @import("cli.zig");
 pub const MainPanicHandler = panicky.NewPanicHandler(std.builtin.default_panic);
 const js = @import("javascript/jsc/bindings/bindings.zig");
 const JavaScript = @import("javascript/jsc/javascript.zig");
-
 pub const io_mode = .blocking;
-
+const Report = @import("./report.zig");
 pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace) noreturn {
     MainPanicHandler.handle_panic(msg, error_return_trace);
 }
+
+const CrashReporter = @import("crash_reporter");
+
+pub fn PLCrashReportHandler() void {
+    Report.fatal(null, null);
+}
+
 pub var start_time: i128 = 0;
 pub fn main() anyerror!void {
+    std.debug.assert(CrashReporter.start(Global.package_json_version));
+
     start_time = std.time.nanoTimestamp();
 
     // The memory allocator makes a massive difference.
@@ -58,7 +66,46 @@ pub fn main() anyerror!void {
                 Output.flush();
                 std.os.exit(1);
             },
-            else => return err,
+            error.FileNotFound => {
+                Output.prettyError(
+                    "\n<r><red>error<r><d>:<r> <b>FileNotFound<r>\nbun could not find a file, and the code that produces this error is missing a better error.\n",
+                    .{},
+                );
+                Output.flush();
+
+                Report.printMetadata();
+
+                Output.flush();
+
+                print_stacktrace: {
+                    var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+                    var trace = @errorReturnTrace() orelse break :print_stacktrace;
+                    Output.disableBuffering();
+                    std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig()) catch break :print_stacktrace;
+                }
+
+                std.os.exit(1);
+            },
+            error.MissingPackageJSON => {
+                Output.prettyError(
+                    "\n<r><red>error<r><d>:<r> <b>MissingPackageJSON<r>\nbun could not find a package.json file.\n",
+                    .{},
+                );
+                Output.flush();
+                std.os.exit(1);
+            },
+            else => {
+                Report.fatal(err, null);
+
+                print_stacktrace: {
+                    var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+                    var trace = @errorReturnTrace() orelse break :print_stacktrace;
+                    Output.disableBuffering();
+                    std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig()) catch break :print_stacktrace;
+                }
+
+                std.os.exit(1);
+            },
         }
     };
 
@@ -75,4 +122,8 @@ test "" {
     std.mem.doNotOptimizeAway(JavaScriptVirtualMachine.fetch);
     std.mem.doNotOptimizeAway(JavaScriptVirtualMachine.init);
     std.mem.doNotOptimizeAway(JavaScriptVirtualMachine.resolve);
+}
+
+test "panic" {
+    panic("woah", null);
 }

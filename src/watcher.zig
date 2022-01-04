@@ -532,10 +532,12 @@ pub fn NewWatcher(comptime ContextType: type) type {
             comptime copy_file_path: bool,
         ) !void {
             if (this.indexOf(hash)) |index| {
-                // On Linux, the file descriptor might be out of date.
-                if (fd > 0) {
-                    var fds = this.watchlist.items(.fd);
-                    fds[index] = fd;
+                if (comptime FeatureFlags.atomic_file_watcher) {
+                    // On Linux, the file descriptor might be out of date.
+                    if (fd > 0) {
+                        var fds = this.watchlist.items(.fd);
+                        fds[index] = fd;
+                    }
                 }
                 return;
             }

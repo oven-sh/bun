@@ -84,3 +84,5 @@ pub const disable_compression_in_http_client = false;
 //   Time (mean ± σ):     306.7 ms ±   6.1 ms    [User: 31.7 ms, System: 269.8 ms]
 //   Range (min … max):   299.5 ms … 318.8 ms    10 runs
 pub const use_libgit2 = true;
+
+pub const atomic_file_watcher = env.isLinux;

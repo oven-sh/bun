@@ -309,9 +309,6 @@ var bin_folders: BinFolderArray = undefined;
 var bin_folders_lock: Mutex = Mutex.init();
 var bin_folders_loaded: bool = false;
 
-// TODO:
-// - Fix "browser" field mapping
-// - Consider removing the string list abstraction?
 pub const Resolver = struct {
     const ThisResolver = @This();
     opts: options.BundleOptions,

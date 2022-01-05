@@ -520,7 +520,10 @@ pub const Platform = enum {
     pub const DefaultConditions: std.EnumArray(Platform, []const string) = brk: {
         var array = std.EnumArray(Platform, []const string).initUndefined();
 
-        array.set(Platform.node, &[_]string{default_conditions_strings.node});
+        array.set(Platform.node, &[_]string{
+            default_conditions_strings.node,
+            default_conditions_strings.module,
+        });
 
         var listc = [_]string{
             default_conditions_strings.browser,

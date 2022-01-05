@@ -54,58 +54,7 @@ pub fn main() anyerror!void {
     Output.Source.set(&output_source);
     defer Output.flush();
 
-    cli.Cli.start(default_allocator, stdout, stderr, MainPanicHandler) catch |err| {
-        switch (err) {
-            error.CurrentWorkingDirectoryUnlinked => {
-                Output.prettyError(
-                    "\n<r><red>error: <r>The current working directory was deleted, so that command didn't work. Please cd into a different directory and try again.",
-                    .{},
-                );
-                Output.flush();
-                std.os.exit(1);
-            },
-            error.FileNotFound => {
-                Output.prettyError(
-                    "\n<r><red>error<r><d>:<r> <b>FileNotFound<r>\nbun could not find a file, and the code that produces this error is missing a better error.\n",
-                    .{},
-                );
-                Output.flush();
-
-                Report.printMetadata();
-
-                Output.flush();
-
-                print_stacktrace: {
-                    var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
-                    var trace = @errorReturnTrace() orelse break :print_stacktrace;
-                    Output.disableBuffering();
-                    std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig()) catch break :print_stacktrace;
-                }
-
-                std.os.exit(1);
-            },
-            error.MissingPackageJSON => {
-                Output.prettyError(
-                    "\n<r><red>error<r><d>:<r> <b>MissingPackageJSON<r>\nbun could not find a package.json file.\n",
-                    .{},
-                );
-                Output.flush();
-                std.os.exit(1);
-            },
-            else => {
-                Report.fatal(err, null);
-
-                print_stacktrace: {
-                    var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
-                    var trace = @errorReturnTrace() orelse break :print_stacktrace;
-                    Output.disableBuffering();
-                    std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig()) catch break :print_stacktrace;
-                }
-
-                std.os.exit(1);
-            },
-        }
-    };
+    cli.Cli.start(default_allocator, stdout, stderr, MainPanicHandler) catch |err| Report.globalError(err);
 
     std.mem.doNotOptimizeAway(JavaScriptVirtualMachine.fetch);
     std.mem.doNotOptimizeAway(JavaScriptVirtualMachine.init);

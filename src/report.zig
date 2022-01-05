@@ -16,6 +16,8 @@ const Features = @import("./analytics/analytics_thread.zig").Features;
 const HTTP = @import("http").AsyncHTTP;
 const CrashReporter = @import("crash_reporter");
 
+const Report = @This();
+
 var crash_reporter_path: [1024]u8 = undefined;
 pub fn printMetadata() void {
     @setCold(true);
@@ -165,4 +167,242 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
         Output.prettyError("\nAsk for #help in https://bun.sh/discord or go to https://bun.sh/issues\n\n", .{});
         Output.flush();
     }
+}
+
+var globalError_ranOnce = false;
+
+pub noinline fn globalError(err: anyerror) noreturn {
+    @setCold(true);
+
+    if (@atomicRmw(bool, &globalError_ranOnce, .Xchg, true, .Monotonic)) {
+        std.os.exit(1);
+    }
+
+    switch (err) {
+        error.CurrentWorkingDirectoryUnlinked => {
+            Output.prettyError(
+                "\n<r><red>error: <r>The current working directory was deleted, so that command didn't work. Please cd into a different directory and try again.",
+                .{},
+            );
+            Output.flush();
+            std.os.exit(1);
+        },
+        error.SystemFdQuotaExceeded => {
+            const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
+            if (comptime Environment.isMac) {
+                Output.prettyError(
+                    \\
+                    \\<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>
+                    \\
+                    \\<d>Current limit: {d}<r>
+                    \\
+                    \\To fix this, try running:
+                    \\ 
+                    \\  <cyan>sudo launchctl limit maxfiles 2147483646<r>
+                    \\  <cyan>ulimit -n 2147483646<r>
+                    \\
+                    \\That will only work until you reboot.
+                    \\
+                ,
+                    .{
+                        limit.cur,
+                    },
+                );
+            } else {
+                Output.prettyError(
+                    \\
+                    \\<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>
+                    \\
+                    \\<d>Current limit: {d}<r>
+                    \\
+                    \\To fix this, try running:
+                    \\ 
+                    \\  <cyan>sudo echo -e "\nfs.file-max=2147483646\n" >> /etc/sysctl.conf<r>
+                    \\  <cyan>sudo sysctl -p<r>
+                    \\  <cyan>ulimit -n 2147483646<r>
+                    \\
+                ,
+                    .{
+                        limit.cur,
+                    },
+                );
+
+                if (std.os.getenv("USER")) |user| {
+                    if (user.len > 0) {
+                        Output.prettyError(
+                            \\
+                            \\If that still doesn't work, you may need to add these lines to /etc/security/limits.conf:
+                            \\
+                            \\ <cyan>{s} soft nofile 2147483646<r>
+                            \\ <cyan>{s} hard nofile 2147483646<r>
+                            \\
+                        ,
+                            .{ user, user },
+                        );
+                    }
+                }
+            }
+
+            Output.flush();
+            std.os.exit(1);
+        },
+        error.ProcessFdQuotaExceeded => {
+            const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
+            if (comptime Environment.isMac) {
+                Output.prettyError(
+                    \\
+                    \\<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>
+                    \\
+                    \\<d>Current limit: {d}<r>
+                    \\
+                    \\To fix this, try running:
+                    \\ 
+                    \\  <cyan>ulimit -n 2147483646<r>
+                    \\
+                    \\You may also need to run:
+                    \\
+                    \\  <cyan>sudo launchctl limit maxfiles 2147483646<r>
+                    \\
+                ,
+                    .{
+                        limit.cur,
+                    },
+                );
+            } else {
+                Output.prettyError(
+                    \\
+                    \\<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>
+                    \\
+                    \\<d>Current limit: {d}<r>
+                    \\
+                    \\To fix this, try running:
+                    \\ 
+                    \\  <cyan>ulimit -n 2147483646<r>
+                    \\
+                    \\That will only work for the current shell. To fix this for the entire system, run:
+                    \\
+                    \\  <cyan>sudo echo -e "\nfs.file-max=2147483646\n" >> /etc/sysctl.conf<r>
+                    \\  <cyan>sudo sysctl -p<r>
+                    \\
+                ,
+                    .{
+                        limit.cur,
+                    },
+                );
+
+                if (std.os.getenv("USER")) |user| {
+                    if (user.len > 0) {
+                        Output.prettyError(
+                            \\
+                            \\If that still doesn't work, you may need to add these lines to /etc/security/limits.conf:
+                            \\
+                            \\ <cyan>{s} soft nofile 2147483646<r>
+                            \\ <cyan>{s} hard nofile 2147483646<r>
+                            \\
+                        ,
+                            .{ user, user },
+                        );
+                    }
+                }
+            }
+
+            Output.flush();
+            std.os.exit(1);
+        },
+        // The usage of `unreachable` in Zig's std.os may cause the file descriptor problem to show up as other errors
+        error.NotOpenForReading, error.Unexpected => {
+            const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
+
+            if (limit.cur > 0 and limit.cur < (8096 * 2)) {
+                Output.prettyError(
+                    \\
+                    \\<r><red>error<r>: An unknown error ocurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>
+                    \\
+                    \\<d>Current limit: {d}<r>
+                    \\
+                    \\To fix this, try running:
+                    \\ 
+                    \\  <cyan>ulimit -n 2147483646<r>
+                    \\
+                ,
+                    .{
+                        limit.cur,
+                    },
+                );
+
+                if (Environment.isLinux) {
+                    if (std.os.getenv("USER")) |user| {
+                        if (user.len > 0) {
+                            Output.prettyError(
+                                \\
+                                \\If that still doesn't work, you may need to add these lines to /etc/security/limits.conf:
+                                \\
+                                \\ <cyan>{s} soft nofile 2147483646<r>
+                                \\ <cyan>{s} hard nofile 2147483646<r>
+                                \\
+                            ,
+                                .{
+                                    user,
+                                    user,
+                                },
+                            );
+                        }
+                    }
+                } else if (Environment.isMac) {
+                    Output.prettyError(
+                        \\
+                        \\If that still doesn't work, you may need to run:
+                        \\
+                        \\  <cyan>sudo launchctl limit maxfiles 2147483646<r>
+                        \\
+                    ,
+                        .{},
+                    );
+                }
+
+                Output.flush();
+                std.os.exit(1);
+            }
+        },
+        error.FileNotFound => {
+            Output.prettyError(
+                "\n<r><red>error<r><d>:<r> <b>FileNotFound<r>\nbun could not find a file, and the code that produces this error is missing a better error.\n",
+                .{},
+            );
+            Output.flush();
+
+            Report.printMetadata();
+
+            Output.flush();
+
+            print_stacktrace: {
+                var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+                var trace = @errorReturnTrace() orelse break :print_stacktrace;
+                Output.disableBuffering();
+                std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig()) catch break :print_stacktrace;
+            }
+
+            std.os.exit(1);
+        },
+        error.MissingPackageJSON => {
+            Output.prettyError(
+                "\n<r><red>error<r><d>:<r> <b>MissingPackageJSON<r>\nbun could not find a package.json file.\n",
+                .{},
+            );
+            Output.flush();
+            std.os.exit(1);
+        },
+        else => {},
+    }
+
+    Report.fatal(err, null);
+
+    print_stacktrace: {
+        var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+        var trace = @errorReturnTrace() orelse break :print_stacktrace;
+        Output.disableBuffering();
+        std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig()) catch break :print_stacktrace;
+    }
+
+    std.os.exit(1);
 }

@@ -49,7 +49,7 @@ const NodeFallbackModules = @import("./node_fallbacks.zig");
 const CacheEntry = @import("./cache.zig").FsCacheEntry;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const URL = @import("./query_string_map.zig").URL;
-
+const Report = @import("./report.zig");
 const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
 
@@ -603,9 +603,7 @@ pub const Bundler = struct {
                         Output.flush();
                     }
 
-                    this.loop() catch |err| {
-                        Output.prettyErrorln("<r><red>Error: {s}<r>", .{@errorName(err)});
-                    };
+                    this.loop() catch |err| Report.globalError(err);
                 }
 
                 pub fn loop(this: *Worker) anyerror!void {

@@ -375,7 +375,10 @@ fn start() bool {
 fn spawn() !void {
     @setCold(true);
     has_loaded = true;
-    thread = try std.Thread.spawn(.{}, readloop, .{});
+    thread = std.Thread.spawn(.{}, readloop, .{}) catch {
+        disabled = true;
+        return;
+    };
 }
 
 const headers_buf: string = "Content-Type binary/peechy";

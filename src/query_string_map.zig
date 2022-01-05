@@ -33,19 +33,6 @@ pub const URL = struct {
     username: string = "",
     port_was_automatically_set: bool = false,
 
-    pub fn isDomainName(this: *const URL) bool {
-        for (this.hostname) |c| {
-            switch (c) {
-                '0'...'9', '.', ':' => {},
-                else => {
-                    return true;
-                },
-            }
-        }
-
-        return false;
-    }
-
     pub fn isLocalhost(this: *const URL) bool {
         return this.hostname.len == 0 or strings.eqlComptime(this.hostname, "localhost") or strings.eqlComptime(this.hostname, "0.0.0.0");
     }

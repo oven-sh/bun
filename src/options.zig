@@ -523,31 +523,8 @@ pub const Platform = enum {
     pub const DefaultConditions: std.EnumArray(Platform, []const string) = brk: {
         var array = std.EnumArray(Platform, []const string).initUndefined();
 
-        // Note that this means if a package specifies "module" and "main", the ES6
-        // module will not be selected. This means tree shaking will not work when
-        // targeting node environments.
-        //
-        // This is unfortunately necessary for compatibility. Some packages
-        // incorrectly treat the "module" field as "code for the browser". It
-        // actually means "code for ES6 environments" which includes both node
-        // and the browser.
-        //
-        // For example, the package "@firebase/app" prints a warning on startup about
-        // the bundler incorrectly using code meant for the browser if the bundler
-        // selects the "module" field instead of the "main" field.
-        //
-        // If you want to enable tree shaking when targeting node, you will have to
-        // configure the main fields to be "module" and then "main". Keep in mind
-        // that some packages may break if you do this.
         array.set(Platform.node, &[_]string{default_conditions_strings.node});
 
-        // Note that this means if a package specifies "main", "module", and
-        // "browser" then "browser" will win out over "module". This is the
-        // same behavior as webpack: https://github.com/webpack/webpack/issues/4674.
-        //
-        // This is deliberate because the presence of the "browser" field is a
-        // good signal that the "module" field may have non-browser stuff in it,
-        // which will crash or fail to be bundled when targeting the browser.
         var listc = [_]string{
             default_conditions_strings.browser,
             default_conditions_strings.module,

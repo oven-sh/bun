@@ -100,7 +100,23 @@ pub const BunCommand = struct {
         this_bundler.configureLinker();
         var filepath: [*:0]const u8 = "node_modules.bun";
         var server_bundle_filepath: [*:0]const u8 = "node_modules.server.bun";
-        try this_bundler.configureRouter(true);
+
+        // This step is optional
+        // If it fails for any reason, ignore it and continue bundling
+        // This is partially a workaround for the 'error.MissingRoutesDir' error
+        this_bundler.configureRouter(true) catch {
+            this_bundler.options.routes.routes_enabled = false;
+            this_bundler.options.framework = null;
+            if (this_bundler.router) |*router| {
+                router.config.routes_enabled = false;
+                router.config.single_page_app_routing = false;
+                router.config.static_dir_enabled = false;
+                this_bundler.router = null;
+            }
+            this_bundler.options.node_modules_bundle = null;
+            this_bundler.options.node_modules_bundle_pretty_path = "";
+            this_bundler.options.node_modules_bundle_url = "";
+        };
 
         var loaded_route_config: ?Api.LoadedRouteConfig = brk: {
             if (this_bundler.options.routes.routes_enabled) {

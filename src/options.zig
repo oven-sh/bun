@@ -398,7 +398,7 @@ pub const Platform = enum {
 
     pub inline fn supportsBrowserField(this: Platform) bool {
         return switch (this) {
-            .neutral, .browser => true,
+            .bun, .bun_macro, .neutral, .browser => true,
             else => false,
         };
     }

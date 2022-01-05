@@ -60,7 +60,7 @@ pub const StringHashMap = _hash_map.StringHashMap;
 pub const AutoHashMap = _hash_map.AutoHashMap;
 const StringHashMapUnamanged = _hash_map.StringHashMapUnamanged;
 const ObjectPool = @import("../pool.zig").ObjectPool;
-
+const SymbolPool = js_ast.SymbolPool;
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 // Dear reader,
 // There are some things you should know about this file to make it easier for humans to read
@@ -2933,7 +2933,8 @@ pub fn NewParser(
         forbid_suffix_after_as_loc: logger.Loc = logger.Loc.Empty,
         current_scope: *js_ast.Scope = undefined,
         scopes_for_current_part: List(*js_ast.Scope) = .{},
-        symbols: List(js_ast.Symbol) = .{},
+        symbols: ListManaged(js_ast.Symbol) = undefined,
+        symbol_pool_node: *SymbolPool.Node = undefined,
         ts_use_counts: List(u32) = .{},
         exports_ref: Ref = Ref.None,
         require_ref: Ref = Ref.None,
@@ -5035,7 +5036,7 @@ pub fn NewParser(
 
         pub fn newSymbol(p: *P, kind: Symbol.Kind, identifier: string) !Ref {
             const inner_index = Ref.toInt(p.symbols.items.len);
-            try p.symbols.append(p.allocator, Symbol{
+            try p.symbols.append(Symbol{
                 .kind = kind,
                 .original_name = identifier,
                 .link = null,
@@ -12197,7 +12198,7 @@ pub fn NewParser(
                                 MacroVisitor{ .p = p, .loc = expr.loc },
                             ) catch |err| {
                                 if (err == error.MacroFailed) {
-                                    p.log.addError(p.source, expr.loc, "error in macro") catch unreachable;
+                                    p.log.addError(p.source, expr.loc, "macro threw exception") catch unreachable;
                                 } else {
                                     p.log.addErrorFmt(p.source, expr.loc, p.allocator, "{s} error in macro", .{@errorName(err)}) catch unreachable;
                                 }
@@ -15143,6 +15144,8 @@ pub fn NewParser(
                 // }
             }
 
+            p.symbol_pool_node.data = p.symbols;
+
             return js_ast.Ast{
                 .runtime_imports = p.runtime_imports,
                 .parts = parts,
@@ -15170,6 +15173,7 @@ pub fn NewParser(
                     (p.symbols.items[p.runtime_imports.__require.?.ref.inner_index].use_count_estimate > 0)
                 else
                     false,
+                .symbol_pool = p.symbol_pool_node,
                 // .top_Level_await_keyword = p.top_level_await_keyword,
             };
         }
@@ -15226,6 +15230,10 @@ pub fn NewParser(
                 .needs_jsx_import = if (comptime only_scan_imports_and_do_not_visit) false else NeedsJSXType{},
                 .lexer = lexer,
             };
+
+            this.symbol_pool_node = SymbolPool.get(_global.default_allocator);
+            this.symbols = this.symbol_pool_node.data;
+            this.symbols.clearRetainingCapacity();
 
             if (comptime !only_scan_imports_and_do_not_visit) {
                 this.import_records = @TypeOf(this.import_records).init(allocator);

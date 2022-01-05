@@ -20,7 +20,7 @@ pub fn ObjectPool(comptime Type: type, comptime Init: (fn (allocator: std.mem.Al
         pub fn get(allocator: std.mem.Allocator) *LinkedList.Node {
             if (data.loaded) {
                 if (data.list.popFirst()) |node| {
-                    node.data.reset();
+                    if (comptime @hasDecl(Type, "reset")) node.data.reset();
                     return node;
                 }
             }

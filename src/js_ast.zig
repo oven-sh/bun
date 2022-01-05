@@ -14,7 +14,7 @@ const default_allocator = _global.default_allocator;
 const C = _global.C;
 const Ref = @import("ast/base.zig").Ref;
 const RefHashCtx = @import("ast/base.zig").RefHashCtx;
-
+const ObjectPool = @import("./pool.zig").ObjectPool;
 const ImportRecord = @import("import_record.zig").ImportRecord;
 const allocators = @import("allocators.zig");
 
@@ -3376,6 +3376,16 @@ pub const ArrayBinding = struct {
     default_value: ?ExprNodeIndex = null,
 };
 
+pub const SymbolPool = ObjectPool(
+    std.ArrayList(Symbol),
+    struct {
+        pub fn init(allocator: std.mem.Allocator) anyerror!std.ArrayList(Symbol) {
+            return std.ArrayList(Symbol).init(allocator);
+        }
+    }.init,
+    true,
+);
+
 pub const Ast = struct {
     approximate_newline_count: usize = 0,
     has_lazy_export: bool = false,
@@ -3410,6 +3420,7 @@ pub const Ast = struct {
     url_for_css: ?string = null,
     parts: []Part,
     symbols: []Symbol = &([_]Symbol{}),
+    symbol_pool: ?*SymbolPool.Node = null,
     module_scope: ?Scope = null,
     // char_freq:    *CharFreq,
     exports_ref: ?Ref = null,
@@ -6767,6 +6778,11 @@ pub const Macro = struct {
             }
 
             const value = promise.result(macro.vm.global.vm());
+
+            if (value.isError() or value.isAggregateError(macro.vm.global) or value.isException(macro.vm.global.vm())) {
+                macro.vm.defaultErrorHandler(value, null);
+                return error.MacroFailed;
+            }
 
             if (JSCBase.GetJSPrivateData(JSNode, value.asObjectRef())) |node| {
                 node.updateSymbolsMap(Visitor, visitor);

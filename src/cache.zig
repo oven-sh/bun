@@ -48,6 +48,7 @@ pub const Set = struct {
             .js = JavaScript.init(allocator),
             .fs = Fs{
                 .shared_buffer = MutableString.init(allocator, 0) catch unreachable,
+                .macro_shared_buffer = MutableString.init(allocator, 0) catch unreachable,
             },
             .json = Json{},
         };
@@ -57,6 +58,18 @@ pub const Fs = struct {
     const Entry = FsCacheEntry;
 
     shared_buffer: MutableString,
+    macro_shared_buffer: MutableString,
+
+    is_macro_mode: bool = false,
+
+    // When we are in a macro, the shared buffer may be in use by the in-progress macro.
+    // so we have to dynamically switch it out.
+    pub inline fn sharedBuffer(this: *Fs) *MutableString {
+        return if (!this.is_macro_mode)
+            &this.shared_buffer
+        else
+            &this.macro_shared_buffer;
+    }
 
     pub fn deinit(c: *Fs) void {
         var iter = c.entries.iterator();
@@ -138,7 +151,7 @@ pub const Fs = struct {
             }
         }
 
-        const file = rfs.readFileWithHandle(path, null, file_handle, use_shared_buffer, &c.shared_buffer) catch |err| {
+        const file = rfs.readFileWithHandle(path, null, file_handle, use_shared_buffer, c.sharedBuffer()) catch |err| {
             if (Environment.isDebug) {
                 Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
             }

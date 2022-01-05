@@ -637,7 +637,7 @@ pub const Fetch = struct {
         pub fn callback(http_: *HTTPClient.AsyncHTTP, sender: *HTTPClient.AsyncHTTP.HTTPSender) void {
             var task: *FetchTasklet = @fieldParentPtr(FetchTasklet, "http", http_);
             @atomicStore(Status, &task.status, Status.done, .Monotonic);
-            _ = task.javascript_vm.ready_tasks_count.fetchAdd(1, .Monotonic);
+            _ = task.javascript_vm.eventLoop().ready_tasks_count.fetchAdd(1, .Monotonic);
             sender.release();
         }
     };

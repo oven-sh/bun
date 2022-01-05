@@ -6154,7 +6154,7 @@ pub fn NewParser(
                         }
                     }
 
-                    const macro_remap = if (FeatureFlags.is_macro_enabled and !is_macro and jsx_transform_type != .macro)
+                    const macro_remap = if ((comptime FeatureFlags.is_macro_enabled and jsx_transform_type != .macro) and !is_macro)
                         p.options.macro_context.getRemap(path.text)
                     else
                         null;
@@ -12195,7 +12195,14 @@ pub fn NewParser(
                                 name,
                                 MacroVisitor,
                                 MacroVisitor{ .p = p, .loc = expr.loc },
-                            ) catch return expr;
+                            ) catch |err| {
+                                if (err == error.MacroFailed) {
+                                    p.log.addError(p.source, expr.loc, "error in macro") catch unreachable;
+                                } else {
+                                    p.log.addErrorFmt(p.source, expr.loc, p.allocator, "{s} error in macro", .{@errorName(err)}) catch unreachable;
+                                }
+                                return expr;
+                            };
 
                             if (macro_result.data != .e_call) {
                                 return p.visitExpr(macro_result);

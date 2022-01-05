@@ -837,57 +837,81 @@ pub const VirtualMachine = struct {
 
     origin_timer: std.time.Timer = undefined,
 
-    ready_tasks_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
-    pending_tasks_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
-    microtasks_queue: std.ArrayList(Task) = std.ArrayList(Task).init(default_allocator),
+    macro_event_loop: EventLoop = EventLoop{},
+    regular_event_loop: EventLoop = EventLoop{},
 
-    pub fn enqueueTask(this: *VirtualMachine, task: Task) !void {
-        _ = this.pending_tasks_count.fetchAdd(1, .Monotonic);
-        try this.microtasks_queue.append(task);
+    pub inline fn eventLoop(this: *VirtualMachine) *EventLoop {
+        return if (this.macro_mode)
+            return &this.macro_event_loop
+        else
+            return &this.regular_event_loop;
+    }
+
+    const EventLoop = struct {
+        ready_tasks_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
+        pending_tasks_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
+        tasks: std.ArrayList(Task) = std.ArrayList(Task).init(default_allocator),
+
+        pub fn tickWithCount(this: *EventLoop) u32 {
+            var finished: u32 = 0;
+            var i: usize = 0;
+            var global = VirtualMachine.vm.global;
+            while (i < this.tasks.items.len) {
+                var task: Task = this.tasks.items[i];
+                switch (task.tag()) {
+                    .Microtask => {
+                        var micro: *Microtask = task.get(Microtask).?;
+                        _ = this.tasks.swapRemove(i);
+                        _ = this.pending_tasks_count.fetchSub(1, .Monotonic);
+                        micro.run(global);
+
+                        finished += 1;
+                        continue;
+                    },
+                    .FetchTasklet => {
+                        var fetch_task: *Fetch.FetchTasklet = task.get(Fetch.FetchTasklet).?;
+                        if (fetch_task.status == .done) {
+                            _ = this.ready_tasks_count.fetchSub(1, .Monotonic);
+                            _ = this.pending_tasks_count.fetchSub(1, .Monotonic);
+                            _ = this.tasks.swapRemove(i);
+                            fetch_task.onDone();
+                            finished += 1;
+                            continue;
+                        }
+                    },
+                    else => unreachable,
+                }
+                i += 1;
+            }
+            return finished;
+        }
+
+        pub fn tick(this: *EventLoop) void {
+            while (this.tickWithCount() > 0) {}
+        }
+
+        pub fn waitForTasks(this: *EventLoop) void {
+            while (this.pending_tasks_count.load(.Monotonic) > 0 or this.ready_tasks_count.load(.Monotonic) > 0) {
+                while (this.tickWithCount() > 0) {}
+            }
+        }
+
+        pub fn enqueueTask(this: *EventLoop, task: Task) !void {
+            _ = this.pending_tasks_count.fetchAdd(1, .Monotonic);
+            try this.tasks.append(task);
+        }
+    };
+
+    pub inline fn enqueueTask(this: *VirtualMachine, task: Task) !void {
+        try this.eventLoop().enqueueTask(task);
     }
 
     pub fn tick(this: *VirtualMachine) void {
-        while (this.eventLoopTick() > 0) {}
+        while (this.eventLoop().tickWithCount() > 0) {}
     }
 
     pub fn waitForTasks(this: *VirtualMachine) void {
-        while (this.pending_tasks_count.load(.Monotonic) > 0 or this.ready_tasks_count.load(.Monotonic) > 0) {
-            while (this.eventLoopTick() > 0) {}
-        }
-    }
-
-    // 👶👶👶 event loop 👶👶👶
-    pub fn eventLoopTick(this: *VirtualMachine) u32 {
-        var finished: u32 = 0;
-        var i: usize = 0;
-        while (i < this.microtasks_queue.items.len) {
-            var task: Task = this.microtasks_queue.items[i];
-            switch (task.tag()) {
-                .Microtask => {
-                    var micro: *Microtask = task.get(Microtask).?;
-                    _ = this.microtasks_queue.swapRemove(i);
-                    _ = this.pending_tasks_count.fetchSub(1, .Monotonic);
-                    micro.run(this.global);
-
-                    finished += 1;
-                    continue;
-                },
-                .FetchTasklet => {
-                    var fetch_task: *Fetch.FetchTasklet = task.get(Fetch.FetchTasklet).?;
-                    if (fetch_task.status == .done) {
-                        _ = this.ready_tasks_count.fetchSub(1, .Monotonic);
-                        _ = this.pending_tasks_count.fetchSub(1, .Monotonic);
-                        _ = this.microtasks_queue.swapRemove(i);
-                        fetch_task.onDone();
-                        finished += 1;
-                        continue;
-                    }
-                },
-                else => unreachable,
-            }
-            i += 1;
-        }
-        return finished;
+        this.eventLoop().waitForTasks();
     }
 
     pub const MacroMap = std.AutoArrayHashMap(i32, js.JSObjectRef);
@@ -897,12 +921,14 @@ pub const VirtualMachine = struct {
 
     pub fn enableMacroMode(this: *VirtualMachine) void {
         this.bundler.options.platform = .bun_macro;
+        this.bundler.resolver.caches.fs.is_macro_mode = true;
         this.macro_mode = true;
         Analytics.Features.macros = true;
     }
 
     pub fn disableMacroMode(this: *VirtualMachine) void {
         this.bundler.options.platform = .bun;
+        this.bundler.resolver.caches.fs.is_macro_mode = false;
         this.macro_mode = false;
     }
 

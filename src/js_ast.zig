@@ -3898,7 +3898,7 @@ pub const Macro = struct {
             }
             macro.vm.enableMacroMode();
             defer macro.vm.disableMacroMode();
-            return Macro.Runner.run(
+            return try Macro.Runner.run(
                 macro,
                 log,
                 default_allocator,
@@ -6725,6 +6725,8 @@ pub const Macro = struct {
         threadlocal var args_buf: [2]js.JSObjectRef = undefined;
         threadlocal var expr_nodes_buf: [1]JSNode = undefined;
         threadlocal var exception_holder: Zig.ZigException.Holder = undefined;
+        pub const MacroError = error{MacroFailed};
+
         pub fn run(
             macro: Macro,
             _: *logger.Log,
@@ -6736,7 +6738,7 @@ pub const Macro = struct {
             id: i32,
             comptime Visitor: type,
             visitor: Visitor,
-        ) Expr {
+        ) MacroError!Expr {
             if (comptime Environment.isDebug) Output.prettyln("<r><d>[macro]<r> call <d><b>{s}<r>", .{function_name});
 
             exception_holder = Zig.ZigException.Holder.init();
@@ -6755,9 +6757,13 @@ pub const Macro = struct {
             var promise = JSC.JSPromise.resolvedPromise(macro.vm.global, result);
             _ = macro.vm.tick();
 
+            while (promise.status(macro.vm.global.vm()) == .Pending) {
+                macro.vm.tick();
+            }
+
             if (promise.status(macro.vm.global.vm()) == .Rejected) {
                 macro.vm.defaultErrorHandler(promise.result(macro.vm.global.vm()), null);
-                return caller;
+                return error.MacroFailed;
             }
 
             const value = promise.result(macro.vm.global.vm());

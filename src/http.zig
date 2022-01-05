@@ -536,6 +536,11 @@ pub const RequestContext = struct {
         return std.fmt.comptimePrint("HTTP/1.1 {d} {s}\r\n", .{ code, status_text });
     }
 
+    var status_line_error_buf: [1024]u8 = undefined;
+    pub fn printStatusLineError(err: anyerror) []const u8 {
+        return std.fmt.bufPrint(&status_line_error_buf, "HTTP/1.1 500 {s}\r\n", .{@errorName(err)}) catch unreachable;
+    }
+
     threadlocal var content_length_header_buf: [64]u8 = undefined;
 
     pub fn prepareToSendBody(
@@ -612,6 +617,11 @@ pub const RequestContext = struct {
         ctx.status = code;
     }
 
+    pub fn writeStatusError(ctx: *RequestContext, err: anyerror) !void {
+        _ = try ctx.writeSocket(printStatusLineError(err), SOCKET_FLAGS);
+        ctx.status = @as(HTTPStatusCode, 500);
+    }
+
     threadlocal var status_buf: [std.fmt.count("HTTP/1.1 {d} {s}\r\n", .{ 200, "OK" })]u8 = undefined;
     pub fn writeStatusSlow(ctx: *RequestContext, code: u16) !void {
         _ = try ctx.writeSocket(
@@ -669,8 +679,8 @@ pub const RequestContext = struct {
 
     pub fn sendInternalError(ctx: *RequestContext, err: anytype) !void {
         defer ctx.done();
-        try ctx.writeStatus(500);
-        const printed = std.fmt.bufPrint(&error_buf, "Error: {s}", .{@errorName(err)}) catch |err2| brk: {
+        try ctx.writeStatusError(err);
+        const printed = std.fmt.bufPrint(&error_buf, "error: {s}", .{@errorName(err)}) catch |err2| brk: {
             if (Environment.isDebug or Environment.isTest) {
                 Global.panic("error while printing error: {s}", .{@errorName(err2)});
             }
@@ -1804,7 +1814,7 @@ pub const RequestContext = struct {
                                 switch (build_result.value) {
                                     .fail => {
                                         Output.prettyErrorln(
-                                            "Error: <b>{s}<r><b>",
+                                            "error: <b>{s}<r><b>",
                                             .{
                                                 file_path,
                                             },

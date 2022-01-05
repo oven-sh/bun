@@ -546,7 +546,7 @@ pub const Fetch = struct {
         pub fn onReject(this: *FetchTasklet) JSValue {
             const fetch_error = std.fmt.allocPrint(
                 default_allocator,
-                "Fetch error: {s}\nURL: \"{s}\"",
+                "fetch() failed – {s}\nurl: \"{s}\"",
                 .{
                     @errorName(this.http.err orelse error.HTTPFail),
                     this.http.url.href,

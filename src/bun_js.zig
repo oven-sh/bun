@@ -93,6 +93,7 @@ pub const Run = struct {
             } else {
                 this.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
             }
+            Output.prettyErrorln("\n", .{});
         }
 
         Output.flush();

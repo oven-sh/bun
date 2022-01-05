@@ -1021,7 +1021,7 @@ const AsyncSocket = struct {
 
                             if (extremely_verbose) {
                                 Output.prettyErrorln(
-                                    "Error: {s}: \n Read Wait: {s}\n Send Wait: {s}",
+                                    "error: {s}: \n Read Wait: {s}\n Send Wait: {s}",
                                     .{
                                         @errorName(err),
                                         @tagName(this.ssl_bio.read_wait),
@@ -1042,7 +1042,7 @@ const AsyncSocket = struct {
 
                             if (extremely_verbose) {
                                 Output.prettyErrorln(
-                                    "Error: {s}: \n Read Wait: {s}\n Send Wait: {s}",
+                                    "error: {s}: \n Read Wait: {s}\n Send Wait: {s}",
                                     .{
                                         @errorName(err),
                                         @tagName(this.ssl_bio.read_wait),

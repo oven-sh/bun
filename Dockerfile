@@ -189,7 +189,7 @@ RUN cd $BUN_DIR &&  rm -rf $HOME/.cache zig-cache && make \
     fallback_decoder && rm -rf $HOME/.cache zig-cache && \
     mkdir -p $BUN_RELEASE_DIR && \
     make release copy-to-bun-release-dir && \
-    rm -rf $HOME/.cache zig-cache misctools package.json build-id completions build.zig
+    rm -rf $HOME/.cache zig-cache misctools package.json build-id completions build.zig $(BUN_DIR)/packages
 
 FROM prepare_release as build_unit
 
@@ -250,6 +250,30 @@ RUN mkdir -p /home/ubuntu/.bun /home/ubuntu/.config $GITHUB_WORKSPACE/bun && \
     bash /scripts/nice.sh && \
     bash /scripts/zig-env.sh
 COPY .devcontainer/zls.json /home/ubuntu/.config/zls.json
+
+FROM ubuntu:20.04 as release_with_debug_info
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+
+COPY .devcontainer/limits.conf /etc/security/limits.conf
+
+ENV BUN_INSTALL /opt/bun
+ENV PATH "/opt/bun/bin:$PATH"
+ARG BUILDARCH=amd64
+LABEL org.opencontainers.image.title="bun ${BUILDARCH} (glibc)"
+LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
+COPY --from=build_release ${BUN_RELEASE_DIR}/bun /opt/bun/bin/bun
+COPY --from=build_release ${BUN_RELEASE_DIR}/bun.dSYM.gz /opt/bun/bin/bun.dSYM.gz
+WORKDIR /opt/bun
+
+ENTRYPOINT [ "/opt/bun/bin/bun" ]
 
 FROM ubuntu:20.04 as release 
 

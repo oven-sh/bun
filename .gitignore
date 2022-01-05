@@ -85,3 +85,6 @@ src/deps/s2n-tls
 bun-binary
 
 src/deps/PLCrashReporter/
+
+*.dSYM
+*.crash

@@ -368,6 +368,13 @@ pub const Platform = enum {
     bun_macro,
     node,
 
+    pub inline fn isServerSide(this: Platform) bool {
+        return switch (this) {
+            .bun_macro, .node, .bun => true,
+            else => false,
+        };
+    }
+
     pub inline fn isBun(this: Platform) bool {
         return switch (this) {
             .bun_macro, .bun => true,
@@ -391,7 +398,7 @@ pub const Platform = enum {
 
     pub inline fn supportsBrowserField(this: Platform) bool {
         return switch (this) {
-            .bun_macro, .neutral, .browser, .bun => true,
+            .neutral, .browser => true,
             else => false,
         };
     }
@@ -493,8 +500,11 @@ pub const Platform = enum {
         // good signal that this should be preferred. Some older packages might only use CJS in their "browser"
         // but in such a case they probably don't have any ESM files anyway.
         var listc = [_]string{ MAIN_FIELD_NAMES[0], MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[3], MAIN_FIELD_NAMES[2] };
+        var listd = [_]string{ MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[2], MAIN_FIELD_NAMES[3] };
+
         array.set(Platform.browser, &listc);
-        array.set(Platform.bun, &listc);
+        array.set(Platform.bun, &listd);
+        array.set(Platform.bun_macro, &listd);
 
         // Original comment:
         // The neutral platform is for people that don't want esbuild to try to
@@ -509,12 +519,15 @@ pub const Platform = enum {
     pub const default_conditions_strings = .{
         .browser = @as(string, "browser"),
         .import = @as(string, "import"),
+        .worker = @as(string, "worker"),
         .require = @as(string, "require"),
         .node = @as(string, "node"),
         .default = @as(string, "default"),
         .bun = @as(string, "bun"),
         .bun_macro = @as(string, "bun_macro"),
         .module = @as(string, "module"), // used in tslib
+        .development = @as(string, "development"),
+        .production = @as(string, "production"),
     };
 
     pub const DefaultConditions: std.EnumArray(Platform, []const string) = brk: {
@@ -534,6 +547,16 @@ pub const Platform = enum {
             Platform.bun,
             &[_]string{
                 default_conditions_strings.bun,
+                default_conditions_strings.worker,
+                default_conditions_strings.module,
+                default_conditions_strings.browser,
+            },
+        );
+        array.set(
+            Platform.bun_macro,
+            &[_]string{
+                default_conditions_strings.bun,
+                default_conditions_strings.worker,
                 default_conditions_strings.module,
                 default_conditions_strings.browser,
             },

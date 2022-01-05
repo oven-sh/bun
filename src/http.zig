@@ -680,7 +680,7 @@ pub const RequestContext = struct {
     pub fn sendInternalError(ctx: *RequestContext, err: anytype) !void {
         defer ctx.done();
         try ctx.writeStatusError(err);
-        const printed = std.fmt.bufPrint(&error_buf, "error: {s}", .{@errorName(err)}) catch |err2| brk: {
+        const printed = std.fmt.bufPrint(&error_buf, "error: {s}\nPlease see your terminal for more details", .{@errorName(err)}) catch |err2| brk: {
             if (Environment.isDebug or Environment.isTest) {
                 Global.panic("error while printing error: {s}", .{@errorName(err2)});
             }

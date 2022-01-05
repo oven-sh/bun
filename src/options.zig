@@ -473,19 +473,16 @@ pub const Platform = enum {
         // module will not be selected. This means tree shaking will not work when
         // targeting node environments.
         //
-        // This is unfortunately necessary for compatibility. Some packages
-        // incorrectly treat the "module" field as "code for the browser". It
-        // actually means "code for ES6 environments" which includes both node
-        // and the browser.
+        // Some packages incorrectly treat the "module" field as "code for the browser". It
+        // actually means "code for ES6 environments" which includes both node and the browser.
         //
         // For example, the package "@firebase/app" prints a warning on startup about
         // the bundler incorrectly using code meant for the browser if the bundler
         // selects the "module" field instead of the "main" field.
         //
-        // If you want to enable tree shaking when targeting node, you will have to
-        // configure the main fields to be "module" and then "main". Keep in mind
-        // that some packages may break if you do this.
-        var list = [_]string{ MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[2] };
+        // This is unfortunate but it's a problem on the side of those packages.
+        // They won't work correctly with other popular bundlers (with node as a target) anyway.
+        var list = [_]string{ MAIN_FIELD_NAMES[2], MAIN_FIELD_NAMES[1] };
         array.set(Platform.node, &list);
 
         // Note that this means if a package specifies "main", "module", and
@@ -493,8 +490,8 @@ pub const Platform = enum {
         // same behavior as webpack: https://github.com/webpack/webpack/issues/4674.
         //
         // This is deliberate because the presence of the "browser" field is a
-        // good signal that the "module" field may have non-browser stuff in it,
-        // which will crash or fail to be bundled when targeting the browser.
+        // good signal that this should be preferred. Some older packages might only use CJS in their "browser"
+        // but in such a case they probably don't have any ESM files anyway.
         var listc = [_]string{ MAIN_FIELD_NAMES[0], MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[3], MAIN_FIELD_NAMES[2] };
         array.set(Platform.browser, &listc);
         array.set(Platform.bun, &listc);

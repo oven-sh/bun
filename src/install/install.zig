@@ -6396,6 +6396,7 @@ pub const PackageManager = struct {
 
         if (comptime log_level.showProgress()) {
             root_node = try progress.start("", 0);
+            progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
             download_node = root_node.start(ProgressStrings.download(), 0);
 
             install_node = root_node.start(ProgressStrings.install(), lockfile.packages.len);
@@ -6839,6 +6840,7 @@ pub const PackageManager = struct {
         if (manager.pending_tasks > 0) {
             if (comptime log_level.showProgress()) {
                 manager.downloads_node = try manager.progress.start(ProgressStrings.download(), 0);
+                manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
                 manager.setNodeName(manager.downloads_node.?, ProgressStrings.download_no_emoji_, ProgressStrings.download_emoji, true);
                 manager.downloads_node.?.setEstimatedTotalItems(manager.total_tasks + manager.extracted_count);
                 manager.downloads_node.?.setCompletedItems(manager.total_tasks - manager.pending_tasks);
@@ -6906,6 +6908,7 @@ pub const PackageManager = struct {
 
                 if (comptime log_level.showProgress()) {
                     node = try manager.progress.start(ProgressStrings.save(), 0);
+                    manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
                     node.activate();
 
                     manager.progress.refresh();
@@ -6936,6 +6939,7 @@ pub const PackageManager = struct {
             var node: *Progress.Node = undefined;
             if (comptime log_level.showProgress()) {
                 node = try manager.progress.start("Saving yarn.lock", 0);
+                manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
                 manager.progress.refresh();
             }
 

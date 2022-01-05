@@ -91,21 +91,60 @@ pub const Output = struct {
             }
         }
 
+        fn isForceColor() ?bool {
+            if (std.os.getenvZ("NO_COLOR") != null) return false;
+            const force_color_str = std.os.getenvZ("FORCE_COLOR") orelse return null;
+            return force_color_str.len == 0 or
+                strings.eqlComptime(force_color_str, "TRUE") or
+                strings.eqlComptime(force_color_str, "ON") or
+                strings.eqlComptime(force_color_str, "YES") or
+                strings.eqlComptime(force_color_str, "1") or
+                strings.eqlComptime(force_color_str, " ");
+        }
+
+        fn isColorTerminal() bool {
+            if (isForceColor()) |val| return val;
+            if (std.os.getenvZ("COLOR_TERM")) |color_term| return !strings.eqlComptime(color_term, "0");
+
+            if (std.os.getenvZ("TERM")) |term| {
+                if (strings.eqlComptime(term, "dumb")) return false;
+
+                return true;
+            }
+
+            return false;
+        }
+
         pub fn set(_source: *Source) void {
             source = _source.*;
+
             source_set = true;
 
             if (!stdout_stream_set) {
                 stdout_stream_set = true;
 
-                enable_ansi_colors = _source.error_stream.supportsAnsiEscapeCodes();
-
-                is_stdout_piped = !_source.stream.isTty();
-                is_stderr_piped = !_source.error_stream.isTty();
-
-                if (!is_stderr_piped) {
-                    // _ = std.c.ioctl(source.error_stream.handle, std.os.TIOCGWINSZ, &terminal_size);
+                var is_color_terminal: ?bool = null;
+                if (_source.stream.isTty()) {
+                    stdout_descriptor_type = OutputStreamDescriptor.terminal;
+                    is_color_terminal = is_color_terminal orelse isColorTerminal();
+                    enable_ansi_colors_stdout = is_color_terminal.?;
+                } else if (isForceColor()) |val| {
+                    enable_ansi_colors_stdout = val;
+                } else {
+                    enable_ansi_colors_stdout = false;
                 }
+
+                if (_source.error_stream.isTty()) {
+                    stderr_descriptor_type = OutputStreamDescriptor.terminal;
+                    is_color_terminal = is_color_terminal orelse isColorTerminal();
+                    enable_ansi_colors_stderr = is_color_terminal.?;
+                } else if (isForceColor()) |val| {
+                    enable_ansi_colors_stderr = val;
+                } else {
+                    enable_ansi_colors_stderr = false;
+                }
+
+                enable_ansi_colors = enable_ansi_colors_stderr or enable_ansi_colors_stdout;
 
                 stdout_stream = _source.stream;
                 stderr_stream = _source.error_stream;
@@ -113,10 +152,20 @@ pub const Output = struct {
         }
     };
 
+    pub const OutputStreamDescriptor = enum {
+        unknown,
+        // file,
+        // pipe,
+        terminal,
+    };
+
     pub var enable_ansi_colors = Environment.isNative;
+    pub var enable_ansi_colors_stderr = Environment.isNative;
+    pub var enable_ansi_colors_stdout = Environment.isNative;
     pub var enable_buffering = true;
-    pub var is_stdout_piped = false;
-    pub var is_stderr_piped = false;
+
+    pub var stderr_descriptor_type = OutputStreamDescriptor.unknown;
+    pub var stdout_descriptor_type = OutputStreamDescriptor.unknown;
 
     pub inline fn isEmojiEnabled() bool {
         return enable_ansi_colors and !Environment.isWindows;
@@ -390,7 +439,7 @@ pub const Output = struct {
             if (level == .Error) return;
         }
 
-        if (enable_ansi_colors) {
+        if (if (comptime l == Level.stdout) enable_ansi_colors_stdout else enable_ansi_colors_stderr) {
             printer(comptime prettyFmt(fmt, true), args);
         } else {
             printer(comptime prettyFmt(fmt, false), args);
@@ -406,7 +455,7 @@ pub const Output = struct {
     }
 
     pub fn pretty(comptime fmt: string, args: anytype) void {
-        prettyWithPrinter(fmt, args, print, .Error);
+        prettyWithPrinter(fmt, args, print, .stdout);
     }
 
     pub fn prettyln(comptime fmt: string, args: anytype) void {
@@ -450,6 +499,7 @@ pub const Output = struct {
     pub const Level = enum(u8) {
         Warn,
         Error,
+        stdout,
     };
 
     pub var level = if (Environment.isDebug) Level.Warn else Level.Error;

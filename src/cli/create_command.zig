@@ -377,7 +377,7 @@ pub const CreateCommand = struct {
 
         var progress = std.Progress{};
         var node = try progress.start(try ProgressBuf.print("Loading {s}", .{template}), 0);
-        progress.supports_ansi_escape_codes = Output.enable_ansi_colors;
+        progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
 
         // alacritty is fast
         if (env_loader.map.get("ALACRITTY_LOG") != null) {
@@ -2113,6 +2113,7 @@ pub const CreateListExamplesCommand = struct {
         const time = std.time.nanoTimestamp();
         var progress = std.Progress{};
         var node = try progress.start("Fetching manifest", 0);
+        progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
         progress.refresh();
 
         const examples = try Example.fetchAllLocalAndRemote(ctx, node, &env_loader, filesystem);

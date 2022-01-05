@@ -91,7 +91,6 @@ pub const UpgradeCheckerThread = struct {
 
         Output.Source.configureThread();
         NetworkThread.init() catch unreachable;
-        NetworkThread.global.pool.sleep_on_idle_network_thread = false;
         defer {
             js_ast.Expr.Data.Store.deinit();
             js_ast.Stmt.Data.Store.deinit();

@@ -1533,7 +1533,7 @@ pub const VirtualMachine = struct {
                 return;
             },
             else => {
-                var errors = errors_stack[0..std.math.min(log.msgs.items.len, errors_stack.len)];
+                var errors = errors_stack[0..@minimum(log.msgs.items.len, errors_stack.len)];
 
                 for (log.msgs.items) |msg, i| {
                     errors[i] = switch (msg.metadata) {
@@ -1551,10 +1551,14 @@ pub const VirtualMachine = struct {
                     vm.global.createAggregateError(
                         errors.ptr,
                         @intCast(u16, errors.len),
-                        &ZigString.init(std.fmt.allocPrint(vm.bundler.allocator, "{d} errors building \"{s}\"", .{ errors.len, specifier.slice() }) catch unreachable),
+                        &ZigString.init(
+                            std.fmt.allocPrint(vm.bundler.allocator, "{d} errors building \"{s}\"", .{
+                                errors.len,
+                                specifier.slice(),
+                            }) catch unreachable,
+                        ),
                     ).asVoid(),
                 );
-                return;
             },
         }
     }

@@ -1542,6 +1542,8 @@ const ModuleNamespace = @import("../../js_ast.zig").Macro.ModuleNamespace;
 const FetchTaskletContext = Fetch.FetchTasklet.FetchTaskletContext;
 const Expect = Test.Expect;
 const DescribeScope = Test.DescribeScope;
+const TestScope = Test.TestScope;
+const ExpectPrototype = Test.ExpectPrototype;
 pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     ResolveError,
     BuildError,
@@ -1557,6 +1559,7 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     FetchTaskletContext,
     DescribeScope,
     Expect,
+    ExpectPrototype,
 });
 
 pub inline fn GetJSPrivateData(comptime Type: type, ref: js.JSObjectRef) ?*Type {

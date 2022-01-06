@@ -142,13 +142,14 @@ pub const PackageJSON = struct {
         }
 
         var buffer = allocator.alloc([]const u8, valid_count * 2) catch unreachable;
-        var keys = buffer[0 .. buffer.len / 2];
-        var values = buffer[keys.len..];
+        var keys = buffer[0..valid_count];
+        var values = buffer[valid_count..];
         var i: usize = 0;
         for (json.properties) |prop| {
             if (prop.value.?.data != .e_string) continue;
             keys[i] = prop.key.?.data.e_string.string(allocator) catch unreachable;
             values[i] = prop.value.?.data.e_string.string(allocator) catch unreachable;
+            i += 1;
         }
         framework.override_modules = Api.StringMap{ .keys = keys, .values = values };
     }

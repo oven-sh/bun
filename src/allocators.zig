@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const FeatureFlags = @import("./feature_flags.zig");
+const Environment = @import("./env.zig");
 const Wyhash = std.hash.Wyhash;
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const constStrToU8 = @import("./global.zig").constStrToU8;
@@ -66,6 +67,106 @@ pub const ItemStatus = enum(u3) {
     exists,
     not_found,
 };
+
+pub fn OverflowList(comptime ValueType: type, comptime count: comptime_int) type {
+    return struct {
+        const This = @This();
+        const SizeType = std.math.IntFittingRange(0, count);
+        const default_allocator = @import("./global.zig").default_allocator;
+
+        const Block = struct {
+            used: SizeType = 0,
+            items: [count]ValueType = undefined,
+
+            pub inline fn isFull(block: *const Block) bool {
+                return block.used >= @as(SizeType, count);
+            }
+
+            pub fn append(block: *Block, value: ValueType) *ValueType {
+                if (comptime Environment.allow_assert) std.debug.assert(block.used < count);
+                const index = block.used;
+                block.items[index] = value;
+                block.used +%= 1;
+                return &block.items[index];
+            }
+        };
+
+        const Overflow = struct {
+            // 16 million files should be good enough for anyone
+            // ...right?
+            const max = 4095;
+            const UsedSize = std.math.IntFittingRange(0, max + 1);
+            used: UsedSize = 0,
+            allocated: UsedSize = 0,
+            ptrs: [max]*Block = undefined,
+
+            pub fn tail(this: *Overflow) *Block {
+                if (this.allocated > 0 and this.ptrs[this.used].isFull()) {
+                    this.used +%= 1;
+                    if (this.allocated > this.used) {
+                        this.ptrs[this.used].used = 0;
+                    }
+                }
+
+                if (this.allocated <= this.used) {
+                    this.ptrs[this.allocated] = default_allocator.create(Block) catch unreachable;
+                    this.ptrs[this.allocated].* = Block{};
+                    this.allocated +%= 1;
+                }
+
+                return this.ptrs[this.used];
+            }
+
+            pub inline fn slice(this: *Overflow) []*Block {
+                return this.ptrs[0..this.used];
+            }
+        };
+        list: Overflow = Overflow{},
+        count: u31 = 0,
+
+        pub inline fn len(this: *const This) u31 {
+            return this.count;
+        }
+
+        pub inline fn append(this: *This, value: ValueType) *ValueType {
+            this.count += 1;
+            return this.list.tail().append(value);
+        }
+
+        fn reset(this: *This) void {
+            for (this.list.slice()) |block| {
+                block.used = 0;
+            }
+            this.list.used = 0;
+        }
+
+        pub inline fn atIndex(this: *const This, index: IndexType) *const ValueType {
+            const block_id = if (index.index > 0)
+                index.index / count
+            else
+                0;
+
+            if (comptime Environment.allow_assert) std.debug.assert(index.is_overflow);
+            if (comptime Environment.allow_assert) std.debug.assert(this.list.used >= block_id);
+            if (comptime Environment.allow_assert) std.debug.assert(this.list.ptrs[block_id].used > (index.index % count));
+
+            return &this.list.ptrs[block_id].items[index.index % count];
+        }
+
+        pub inline fn atIndexMut(this: *This, index: IndexType) *ValueType {
+            const block_id = if (index.index > 0)
+                index.index / count
+            else
+                0;
+
+            if (comptime Environment.allow_assert) std.debug.assert(index.is_overflow);
+            if (comptime Environment.allow_assert) std.debug.assert(this.list.used >= block_id);
+            if (comptime Environment.allow_assert) std.debug.assert(this.list.ptrs[block_id].used > (index.index % count));
+
+            return &this.list.ptrs[block_id].items[index.index % count];
+        }
+    };
+}
 
 // const hasDeinit = std.meta.trait.hasFn("deinit")(ValueType);
 
@@ -168,9 +269,9 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
     const count = _count * 2;
     const max_index = count - 1;
     const ValueType = []const u8;
-    const overflow_init_count = std.math.max(count / 8, 32);
 
     return struct {
+        pub const Overflow = OverflowList([]const u8, count / 4);
         pub var slice_buf: [count][]const u8 = undefined;
         pub var slice_buf_used: u16 = 0;
         pub var backing_buf: [count * item_length]u8 = undefined;
@@ -178,7 +279,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
         const Allocator = std.mem.Allocator;
         const Self = @This();
 
-        overflow_list: std.ArrayListUnmanaged(ValueType),
+        overflow_list: Overflow = Overflow{},
         allocator: Allocator,
 
         pub var instance: Self = undefined;
@@ -194,7 +295,6 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             if (!loaded) {
                 instance = Self{
                     .allocator = allocator,
-                    .overflow_list = std.ArrayListUnmanaged(ValueType){},
                 };
                 mutex = Mutex.init();
                 loaded = true;
@@ -326,23 +426,20 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             var result = IndexType{ .index = std.math.maxInt(u31), .is_overflow = slice_buf_used > max_index };
 
             if (result.is_overflow) {
-                result.index = @intCast(u31, self.overflow_list.items.len);
+                result.index = @intCast(u31, self.overflow_list.len());
             } else {
                 result.index = slice_buf_used;
                 slice_buf_used += 1;
-                if (slice_buf_used >= max_index) {
-                    self.overflow_list = try @TypeOf(self.overflow_list).initCapacity(self.allocator, overflow_init_count);
-                }
             }
 
             if (result.is_overflow) {
-                if (self.overflow_list.items.len == result.index) {
-                    try self.overflow_list.append(self.allocator, value);
+                if (self.overflow_list.len() == result.index) {
+                    _ = self.overflow_list.append(value);
                 } else {
-                    self.overflow_list.items[result.index] = value;
+                    self.overflow_list.atIndexMut(result).* = value;
                 }
 
-                return self.overflow_list.items[result.index];
+                return value;
             } else {
                 slice_buf[result.index] = value;
 
@@ -354,15 +451,15 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
 
 pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: bool, estimated_key_length: usize, remove_trailing_slashes: bool) type {
     const max_index = count - 1;
-    const overflow_init_count = std.math.max(count / 8, 32);
     const BSSMapType = struct {
         pub var backing_buf: [count]ValueType = undefined;
         pub var backing_buf_used: u16 = 0;
         const Allocator = std.mem.Allocator;
         const Self = @This();
+        const Overflow = OverflowList(ValueType, count / 4);
 
         index: IndexMap,
-        overflow_list: std.ArrayListUnmanaged(ValueType),
+        overflow_list: Overflow = Overflow{},
         allocator: Allocator,
         mutex: Mutex = Mutex.init(),
 
@@ -375,7 +472,6 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
                 instance = Self{
                     .index = IndexMap{},
                     .allocator = allocator,
-                    .overflow_list = std.ArrayListUnmanaged(ValueType){},
                 };
                 loaded = true;
             }
@@ -431,11 +527,11 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
             self.index.put(self.allocator, result.hash, NotFound) catch unreachable;
         }
 
-        pub fn atIndex(self: *const Self, index: IndexType) ?*ValueType {
+        pub fn atIndex(self: *Self, index: IndexType) ?*ValueType {
             if (index.index == NotFound.index or index.index == Unassigned.index) return null;
 
             if (index.is_overflow) {
-                return &self.overflow_list.items[index.index];
+                return self.overflow_list.atIndexMut(index);
             } else {
                 return &backing_buf[index.index];
             }
@@ -448,26 +544,23 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
             if (result.index.index == NotFound.index or result.index.index == Unassigned.index) {
                 result.index.is_overflow = backing_buf_used > max_index;
                 if (result.index.is_overflow) {
-                    result.index.index = @intCast(u31, self.overflow_list.items.len);
+                    result.index.index = self.overflow_list.len();
                 } else {
                     result.index.index = backing_buf_used;
                     backing_buf_used += 1;
-                    if (backing_buf_used >= max_index) {
-                        self.overflow_list = try @TypeOf(self.overflow_list).initCapacity(self.allocator, overflow_init_count);
-                    }
                 }
             }
 
             try self.index.put(self.allocator, result.hash, result.index);
 
             if (result.index.is_overflow) {
-                if (self.overflow_list.items.len == result.index.index) {
-                    try self.overflow_list.append(self.allocator, value);
+                if (self.overflow_list.len() == result.index.index) {
+                    return self.overflow_list.append(value);
                 } else {
-                    self.overflow_list.items[result.index.index] = value;
+                    var ptr = self.overflow_list.atIndexMut(result.index);
+                    ptr.* = value;
+                    return ptr;
                 }
-
-                return &self.overflow_list.items[result.index.index];
             } else {
                 backing_buf[result.index.index] = value;
 
@@ -517,7 +610,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
         var key_list_buffer: [count * estimated_key_length]u8 = undefined;
         var key_list_buffer_used: usize = 0;
         var key_list_slices: [count][]u8 = undefined;
-        var key_list_overflow: std.ArrayListUnmanaged([]u8) = undefined;
+        var key_list_overflow: OverflowList([]u8, count / 4) = OverflowList([]u8, count / 4){};
         var instance_loaded = false;
         pub fn init(allocator: std.mem.Allocator) *Self {
             if (!instance_loaded) {

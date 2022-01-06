@@ -1847,7 +1847,7 @@ pub const Example = struct {
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
         async_http.* = try HTTP.AsyncHTTP.init(ctx.allocator, .GET, api_url, header_entries, headers_buf, mutable, &request_body, 60 * std.time.ns_per_min);
         async_http.client.progress_node = progress;
-        const response = try async_http.sendSync();
+        const response = try async_http.sendSync(true);
 
         switch (response.status_code) {
             404 => return error.GitHubRepositoryNotFound,
@@ -1913,7 +1913,7 @@ pub const Example = struct {
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
         async_http.* = try HTTP.AsyncHTTP.init(ctx.allocator, .GET, url, .{}, "", mutable, &request_body, 60 * std.time.ns_per_min);
         async_http.client.progress_node = progress;
-        var response = try async_http.sendSync();
+        var response = try async_http.sendSync(true);
 
         switch (response.status_code) {
             404 => return error.ExampleNotFound,
@@ -1992,7 +1992,7 @@ pub const Example = struct {
 
         refresher.maybeRefresh();
 
-        response = try async_http.sendSync();
+        response = try async_http.sendSync(true);
 
         refresher.maybeRefresh();
 
@@ -2023,7 +2023,7 @@ pub const Example = struct {
             async_http.client.progress_node = progress_node;
         }
 
-        const response = async_http.sendSync() catch |err| {
+        const response = async_http.sendSync(true) catch |err| {
             switch (err) {
                 error.WouldBlock => {
                     Output.prettyErrorln("Request timed out while trying to fetch examples list. Please try again", .{});

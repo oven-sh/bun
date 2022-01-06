@@ -513,7 +513,10 @@ pub const EventList = struct {
         var retry_remaining: usize = 10;
         const rand = random.random();
         retry: while (retry_remaining > 0) {
-            const response = this.async_http.sendSync() catch |err| {
+            this.async_http.max_retry_count = 0;
+            this.async_http.retries_count = 0;
+
+            const response = this.async_http.sendSync(true) catch |err| {
                 if (FeatureFlags.verbose_analytics) {
                     Output.prettyErrorln("[Analytics] failed due to error {s} ({d} retries remain)", .{ @errorName(err), retry_remaining });
                 }

@@ -95,7 +95,9 @@ pub const UpgradeCheckerThread = struct {
             js_ast.Expr.Data.Store.deinit();
             js_ast.Stmt.Data.Store.deinit();
         }
-        const version = (try UpgradeCommand.getLatestVersion(default_allocator, env_loader, undefined, undefined, true)) orelse return;
+        var arena = std.heap.ArenaAllocator.init(default_allocator);
+        defer arena.deinit();
+        const version = (try UpgradeCommand.getLatestVersion(arena.allocator(), env_loader, undefined, undefined, true)) orelse return;
 
         if (!version.isCurrent()) {
             if (version.name()) |name| {
@@ -182,7 +184,7 @@ pub const UpgradeCommand = struct {
         var async_http: *HTTP.AsyncHTTP = allocator.create(HTTP.AsyncHTTP) catch unreachable;
         async_http.* = try HTTP.AsyncHTTP.init(allocator, .GET, api_url, header_entries, headers_buf, &metadata_body, &request_body, 60 * std.time.ns_per_min);
         if (!silent) async_http.client.progress_node = progress;
-        const response = try async_http.sendSync();
+        const response = try async_http.sendSync(true);
 
         switch (response.status_code) {
             404 => return error.HTTP404,
@@ -407,7 +409,7 @@ pub const UpgradeCommand = struct {
             );
             async_http.client.timeout = timeout;
             async_http.client.progress_node = progress;
-            const response = try async_http.sendSync();
+            const response = try async_http.sendSync(true);
 
             switch (response.status_code) {
                 404 => return error.HTTP404,

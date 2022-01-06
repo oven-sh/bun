@@ -637,6 +637,10 @@ pub const Bun = struct {
             },
         },
         .{
+            .jest = .{
+                .get = @import("./test/jest.zig").Jest.getter,
+                .ts = d.ts{},
+            },
             .main = .{
                 .get = getMain,
                 .ts = d.ts{ .name = "main", .@"return" = "string" },

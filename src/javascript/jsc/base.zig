@@ -14,6 +14,7 @@ const JavaScript = @import("./javascript.zig");
 const ResolveError = JavaScript.ResolveError;
 const BuildError = JavaScript.BuildError;
 const WebCore = @import("./webcore/response.zig");
+const Test = @import("./test/jest.zig");
 const Fetch = WebCore.Fetch;
 const Response = WebCore.Response;
 const Request = WebCore.Request;
@@ -1539,6 +1540,8 @@ const JSNode = @import("../../js_ast.zig").Macro.JSNode;
 const LazyPropertiesObject = @import("../../js_ast.zig").Macro.LazyPropertiesObject;
 const ModuleNamespace = @import("../../js_ast.zig").Macro.ModuleNamespace;
 const FetchTaskletContext = Fetch.FetchTasklet.FetchTaskletContext;
+const Expect = Test.Expect;
+const DescribeScope = Test.DescribeScope;
 pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     ResolveError,
     BuildError,
@@ -1552,6 +1555,8 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     LazyPropertiesObject,
     ModuleNamespace,
     FetchTaskletContext,
+    DescribeScope,
+    Expect,
 });
 
 pub inline fn GetJSPrivateData(comptime Type: type, ref: js.JSObjectRef) ?*Type {

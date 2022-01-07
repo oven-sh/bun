@@ -359,7 +359,8 @@ pub fn NewPrinter(
             }
         }
 
-        pub fn printBunImportStatement(p: *Printer, import: S.Import) void {
+        //
+        fn printBunImportStatement(p: *Printer, import: S.Import) void {
             p.print("const ");
 
             if (import.star_name_loc != null) {
@@ -4101,7 +4102,7 @@ pub fn NewWriter(
         pub const Error = error{FormatError};
 
         pub fn writeAll(writer: *Self, bytes: anytype) Error!usize {
-            const written = std.math.max(writer.written, 0);
+            const written = @maximum(writer.written, 0);
             writer.print(@TypeOf(bytes), bytes);
             return @intCast(usize, writer.written) - @intCast(usize, written);
         }

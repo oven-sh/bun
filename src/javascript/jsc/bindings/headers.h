@@ -452,8 +452,10 @@ CPP_DECL bool JSC__JSValue__isNull(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isNumber(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isObject(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isPrimitive(JSC__JSValue JSValue0);
+CPP_DECL bool JSC__JSValue__isSameValue(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* arg2);
 CPP_DECL bool JSC__JSValue__isString(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isSymbol(JSC__JSValue JSValue0);
+CPP_DECL bool JSC__JSValue__isTerminationException(JSC__JSValue JSValue0, JSC__VM* arg1);
 CPP_DECL bool JSC__JSValue__isUInt32AsAnyInt(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isUndefined(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isUndefinedOrNull(JSC__JSValue JSValue0);
@@ -497,6 +499,7 @@ CPP_DECL JSC__JSValue JSC__Exception__value(JSC__Exception* arg0);
 #pragma mark - JSC::VM
 
 CPP_DECL JSC__JSLock* JSC__VM__apiLock(JSC__VM* arg0);
+CPP_DECL void JSC__VM__clearExecutionTimeLimit(JSC__VM* arg0);
 CPP_DECL JSC__VM* JSC__VM__create(unsigned char HeapType0);
 CPP_DECL void JSC__VM__deinit(JSC__VM* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL void JSC__VM__deleteAllCode(JSC__VM* arg0, JSC__JSGlobalObject* arg1);
@@ -505,6 +508,7 @@ CPP_DECL bool JSC__VM__executionForbidden(JSC__VM* arg0);
 CPP_DECL bool JSC__VM__isEntered(JSC__VM* arg0);
 CPP_DECL bool JSC__VM__isJITEnabled();
 CPP_DECL void JSC__VM__setExecutionForbidden(JSC__VM* arg0, bool arg1);
+CPP_DECL void JSC__VM__setExecutionTimeLimit(JSC__VM* arg0, double arg1);
 CPP_DECL void JSC__VM__shrinkFootprint(JSC__VM* arg0);
 CPP_DECL bool JSC__VM__throwError(JSC__VM* arg0, JSC__JSGlobalObject* arg1, JSC__ThrowScope* arg2, const unsigned char* arg3, size_t arg4);
 CPP_DECL void JSC__VM__whenIdle(JSC__VM* arg0, void (* ArgFn1)());

@@ -31,6 +31,7 @@
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/WasmFaultSignalHandler.h>
+#include <JavaScriptCore/Watchdog.h>
 #include <wtf/text/ExternalStringImpl.h>
 #include <wtf/text/StringCommon.h>
 #include <wtf/text/StringImpl.h>
@@ -175,6 +176,12 @@ JSC__JSInternalPromise *JSC__VM__reloadModule(JSC__VM *vm, JSC__JSGlobalObject *
   // return nullptr;
 }
 
+bool JSC__JSValue__isSameValue(JSC__JSValue JSValue0, JSC__JSValue JSValue1,
+                               JSC__JSGlobalObject *globalObject) {
+  return JSC::sameValue(globalObject, JSC::JSValue::decode(JSValue0),
+                        JSC::JSValue::decode(JSValue1));
+}
+
 // This is the same as the C API version, except it returns a JSValue which may be a *Exception
 // We want that so we can return stack traces.
 JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSObjectRef object,
@@ -236,10 +243,10 @@ JSC__JSValue JSC__JSObject__getIndex(JSC__JSValue jsValue, JSC__JSGlobalObject *
   return JSC::JSValue::encode(JSC::JSValue::decode(jsValue).toObject(arg1)->getIndex(arg1, arg3));
 }
 JSC__JSValue JSC__JSObject__getDirect(JSC__JSObject *arg0, JSC__JSGlobalObject *arg1,
-                                      const ZigString * arg2) {
+                                      const ZigString *arg2) {
   return JSC::JSValue::encode(arg0->getDirect(arg1->vm(), Zig::toIdentifier(*arg2, arg1)));
 }
-void JSC__JSObject__putDirect(JSC__JSObject *arg0, JSC__JSGlobalObject *arg1, const ZigString * key,
+void JSC__JSObject__putDirect(JSC__JSObject *arg0, JSC__JSGlobalObject *arg1, const ZigString *key,
                               JSC__JSValue value) {
   auto prop = Zig::toIdentifier(*key, arg1);
 
@@ -376,7 +383,7 @@ JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject *globalObject, 
 
 JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject *globalObject,
                                                        void **errors, uint16_t errors_count,
-                                                       const ZigString * arg3) {
+                                                       const ZigString *arg3) {
   JSC::VM &vm = globalObject->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -457,7 +464,8 @@ static JSC::EncodedJSValue resolverFunctionCallback(JSC::JSGlobalObject *globalO
 }
 
 JSC__JSInternalPromise *
-JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject *globalObject, const ZigString * arg1) {
+JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject *globalObject,
+                                           const ZigString *arg1) {
   globalObject->vm().drainMicrotasks();
   auto name = Zig::toString(*arg1);
   name.impl()->ref();
@@ -1480,6 +1488,22 @@ const WTF__StringImpl *JSC__PropertyName__uid(JSC__PropertyName *arg0) { return 
 #pragma mark - JSC::VM
 
 bool JSC__VM__isJITEnabled() { return JSC::Options::useJIT(); }
+
+void JSC__VM__clearExecutionTimeLimit(JSC__VM *vm) {
+  JSC::JSLockHolder locker(vm);
+  if (vm->watchdog()) vm->watchdog()->setTimeLimit(JSC::Watchdog::noTimeLimit);
+}
+void JSC__VM__setExecutionTimeLimit(JSC__VM *vm, double limit) {
+  JSC::JSLockHolder locker(vm);
+  JSC::Watchdog &watchdog = vm->ensureWatchdog();
+  watchdog.setTimeLimit(WTF::Seconds{limit});
+}
+
+bool JSC__JSValue__isTerminationException(JSC__JSValue JSValue0, JSC__VM *arg1) {
+  JSC::Exception *exception =
+    JSC::jsDynamicCast<JSC::Exception *>(*arg1, JSC::JSValue::decode(JSValue0));
+  return exception != NULL && arg1->isTerminationException(exception);
+}
 
 void JSC__VM__shrinkFootprint(JSC__VM *arg0) { arg0->shrinkFootprintWhenIdle(); };
 void JSC__VM__whenIdle(JSC__VM *arg0, void (*ArgFn1)()) { arg0->whenIdle(ArgFn1); };

@@ -151,7 +151,7 @@ pub const To = struct {
                 ) callconv(.C) js.JSValueRef {
                     if (comptime ZigContextType == anyopaque) {
                         return ctxfn(
-                            js.JSObjectGetPrivate(function) or js.jsObjectGetPrivate(thisObject),
+                            js.JSObjectGetPrivate(function) orelse js.JSObjectGetPrivate(thisObject) orelse undefined,
                             ctx,
                             function,
                             thisObject,
@@ -944,6 +944,13 @@ pub fn NewClass(
                             );
                         },
                         .Struct => {
+                            comptime {
+                                if (!@hasField(@TypeOf(@field(properties, property_names[id])), "get")) {
+                                    @compileError(
+                                        "Cannot get static property " ++ property_names[id] ++ " of " ++ name ++ " because it is a struct without a getter",
+                                    );
+                                }
+                            }
                             const func = @field(
                                 @field(
                                     properties,

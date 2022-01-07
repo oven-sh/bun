@@ -72,22 +72,33 @@ static const JSC::Identifier toIdentifier(ZigString str, JSC::JSGlobalObject *gl
   return JSC::Identifier::fromString(global->vm(), str.ptr, str.len);
 }
 
+static bool isTaggedUTF16Ptr(const unsigned char *ptr) {
+  return (reinterpret_cast<uintptr_t>(ptr) & (static_cast<uint64_t>(1) << 63)) != 0;
+}
+
 static const WTF::String toString(ZigString str) {
   if (str.len == 0 || str.ptr == nullptr) { return WTF::String(); }
 
-  return WTF::String(WTF::StringImpl::createWithoutCopying(str.ptr, str.len));
+  return !isTaggedUTF16Ptr(str.ptr)
+           ? WTF::String(WTF::StringImpl::createWithoutCopying(str.ptr, str.len))
+           : WTF::String(WTF::StringImpl::createWithoutCopying(
+               reinterpret_cast<const UChar *>(str.ptr), str.len));
 }
 
 static const WTF::String toStringCopy(ZigString str) {
   if (str.len == 0 || str.ptr == nullptr) { return WTF::String(); }
 
-  return WTF::String(WTF::StringImpl::create(str.ptr, str.len));
+  return !isTaggedUTF16Ptr(str.ptr) ? WTF::String(WTF::StringImpl::create(str.ptr, str.len))
+                                    : WTF::String(WTF::StringImpl::create(
+                                        reinterpret_cast<const UChar *>(str.ptr), str.len));
 }
 
 static WTF::String toStringNotConst(ZigString str) {
   if (str.len == 0 || str.ptr == nullptr) { return WTF::String(); }
 
-  return WTF::String(WTF::StringImpl::createWithoutCopying(str.ptr, str.len));
+  return !isTaggedUTF16Ptr(str.ptr) ? WTF::String(WTF::StringImpl::create(str.ptr, str.len))
+                                    : WTF::String(WTF::StringImpl::create(
+                                        reinterpret_cast<const UChar *>(str.ptr), str.len));
 }
 
 static const JSC::JSString *toJSString(ZigString str, JSC::JSGlobalObject *global) {
@@ -98,20 +109,37 @@ static const ZigString ZigStringEmpty = ZigString{nullptr, 0};
 static const unsigned char __dot_char = '.';
 static const ZigString ZigStringCwd = ZigString{&__dot_char, 1};
 
+static const unsigned char *taggedUTF16Ptr(const UChar *ptr) {
+  return reinterpret_cast<const unsigned char *>(reinterpret_cast<uintptr_t>(ptr) |
+                                                 (static_cast<uint64_t>(1) << 63));
+}
+
 static ZigString toZigString(WTF::String str) {
-  return str.isEmpty() ? ZigStringEmpty : ZigString{str.characters8(), str.length()};
+  return str.isEmpty()
+           ? ZigStringEmpty
+           : ZigString{str.is8Bit() ? str.characters8() : taggedUTF16Ptr(str.characters16()),
+                       str.length()};
 }
 
 static ZigString toZigString(WTF::String *str) {
-  return str->isEmpty() ? ZigStringEmpty : ZigString{str->characters8(), str->length()};
+  return str->isEmpty()
+           ? ZigStringEmpty
+           : ZigString{str->is8Bit() ? str->characters8() : taggedUTF16Ptr(str->characters16()),
+                       str->length()};
 }
 
 static ZigString toZigString(WTF::StringImpl &str) {
-  return str.isEmpty() ? ZigStringEmpty : ZigString{str.characters8(), str.length()};
+  return str.isEmpty()
+           ? ZigStringEmpty
+           : ZigString{str.is8Bit() ? str.characters8() : taggedUTF16Ptr(str.characters16()),
+                       str.length()};
 }
 
 static ZigString toZigString(WTF::StringView &str) {
-  return str.isEmpty() ? ZigStringEmpty : ZigString{str.characters8(), str.length()};
+  return str.isEmpty()
+           ? ZigStringEmpty
+           : ZigString{str.is8Bit() ? str.characters8() : taggedUTF16Ptr(str.characters16()),
+                       str.length()};
 }
 
 static ZigString toZigString(JSC::JSString &str, JSC::JSGlobalObject *global) {

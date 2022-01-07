@@ -807,14 +807,15 @@ pub const ZigConsoleClient = struct {
             } else if (value.isClass(globalThis)) {
                 var printable = ZigString.init(&name_buf);
                 value.getClassName(globalThis, &printable);
-                try writer.print("[class {s}]", .{printable.slice()});
+                try writer.print("[class {}]", .{printable});
             } else if (value.isCallable(globalThis.vm())) {
                 var printable = ZigString.init(&name_buf);
                 value.getNameProperty(globalThis, &printable);
-                try writer.print("[Function {s}]", .{printable.slice()});
+                try writer.print("[Function {}]", .{printable});
             } else {
-                var str = value.toWTFString(JS.VirtualMachine.vm.global);
-                _ = try writer.write(str.slice());
+                var str = ZigString.init("");
+                value.toZigString(&str, JS.VirtualMachine.vm.global);
+                try writer.print("{}", .{str});
             }
         }
     };

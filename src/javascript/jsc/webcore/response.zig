@@ -110,11 +110,17 @@ pub const Response = struct {
                     .Unconsumed => {
                         if (this.body.len > 0) {
                             if (this.body.ptr) |_ptr| {
-                                var offset: usize = 0;
-                                while (offset < this.body.len and (_ptr[offset] > 127 or strings.utf8ByteSequenceLength(_ptr[offset]) == 0)) : (offset += 1) {}
-                                if (offset < this.body.len) {
-                                    break :brk ZigString.init(_ptr[offset..this.body.len]).toValue(VirtualMachine.vm.global);
+                                var zig_string = ZigString.init(_ptr[0..this.body.len]);
+                                zig_string.detectEncoding();
+                                if (zig_string.is16Bit()) {
+                                    var value = zig_string.to16BitValue(VirtualMachine.vm.global);
+                                    this.body.ptr_allocator.?.free(_ptr[0..this.body.len]);
+                                    this.body.ptr_allocator = null;
+                                    this.body.ptr = null;
+                                    break :brk value;
                                 }
+
+                                break :brk zig_string.toValue(VirtualMachine.vm.global);
                             }
                         }
 
@@ -124,7 +130,16 @@ pub const Response = struct {
                         break :brk ZigString.init("").toValue(VirtualMachine.vm.global);
                     },
                     .String => |str| {
-                        break :brk ZigString.init(str).toValue(VirtualMachine.vm.global);
+                        var zig_string = ZigString.init(str);
+
+                        zig_string.detectEncoding();
+                        if (zig_string.is16Bit()) {
+                            var value = zig_string.to16BitValue(VirtualMachine.vm.global);
+                            if (this.body.ptr_allocator) |allocator| this.body.deinit(allocator);
+                            break :brk value;
+                        }
+
+                        break :brk zig_string.toValue(VirtualMachine.vm.global);
                     },
                     .ArrayBuffer => |buffer| {
                         break :brk ZigString.init(buffer.ptr[buffer.offset..buffer.byte_len]).toValue(VirtualMachine.vm.global);
@@ -1302,7 +1317,8 @@ pub const Body = struct {
     ptr_allocator: ?std.mem.Allocator = null,
 
     pub fn deinit(this: *Body, allocator: std.mem.Allocator) void {
-        if (this.init.headers) |headers| {
+        this.ptr_allocator = null;
+        if (this.init.headers) |*headers| {
             headers.deinit();
         }
 
@@ -1312,6 +1328,7 @@ pub const Body = struct {
                 allocator.free(str);
             },
             .Empty => {},
+            else => {},
         }
     }
 

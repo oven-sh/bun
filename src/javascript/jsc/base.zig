@@ -1543,6 +1543,7 @@ export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, ctx_: *anyopaque) vo
 pub fn castObj(obj: js.JSObjectRef, comptime Type: type) *Type {
     return JSPrivateDataPtr.from(js.JSObjectGetPrivate(obj)).as(Type);
 }
+
 const JSNode = @import("../../js_ast.zig").Macro.JSNode;
 const LazyPropertiesObject = @import("../../js_ast.zig").Macro.LazyPropertiesObject;
 const ModuleNamespace = @import("../../js_ast.zig").Macro.ModuleNamespace;

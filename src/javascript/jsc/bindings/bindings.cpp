@@ -411,11 +411,16 @@ JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject *glob
 // static JSC::JSNativeStdFunction* rejecterFunction;
 // static bool resolverFunctionInitialized = false;
 
-JSC__JSValue ZigString__toValue(const ZigString * arg0, JSC__JSGlobalObject *arg1) {
+JSC__JSValue ZigString__toValue(const ZigString *arg0, JSC__JSGlobalObject *arg1) {
   return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(arg1->vm(), Zig::toString(*arg0))));
 }
 
-JSC__JSValue ZigString__toValueGC(const ZigString * arg0, JSC__JSGlobalObject *arg1) {
+JSC__JSValue ZigString__to16BitValue(const ZigString *arg0, JSC__JSGlobalObject *arg1) {
+  auto str = WTF::String::fromUTF8(arg0->ptr, arg0->len);
+  return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(arg1->vm(), str)));
+}
+
+JSC__JSValue ZigString__toValueGC(const ZigString *arg0, JSC__JSGlobalObject *arg1) {
   return JSC::JSValue::encode(
     JSC::JSValue(JSC::jsMakeNontrivialString(arg1->vm(), Zig::toString(*arg0))));
 }
@@ -423,7 +428,12 @@ JSC__JSValue ZigString__toValueGC(const ZigString * arg0, JSC__JSGlobalObject *a
 void JSC__JSValue__toZigString(JSC__JSValue JSValue0, ZigString *arg1, JSC__JSGlobalObject *arg2) {
   JSC::JSValue value = JSC::JSValue::decode(JSValue0);
   auto str = value.toWTFString(arg2);
-  arg1->ptr = str.characters8();
+  if (str.is8Bit()) {
+    arg1->ptr = str.characters8();
+  } else {
+    arg1->ptr = Zig::taggedUTF16Ptr(str.characters16());
+  }
+
   arg1->len = str.length();
 }
 JSC__JSValue ZigString__toErrorInstance(const ZigString *str, JSC__JSGlobalObject *globalObject) {

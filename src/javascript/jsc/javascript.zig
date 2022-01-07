@@ -805,6 +805,7 @@ const TaggedPointerUnion = @import("../../tagged_pointer.zig").TaggedPointerUnio
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
     Microtask,
+    // TimeoutTasklet,
 });
 
 // If you read JavascriptCore/API/JSVirtualMachine.mm - https://github.com/WebKit/WebKit/blob/acff93fb303baa670c055cb24c2bad08691a01a0/Source/JavaScriptCore/API/JSVirtualMachine.mm#L101
@@ -1416,6 +1417,8 @@ pub const VirtualMachine = struct {
         res.* = ErrorableZigString.ok(ZigString.init(result.path));
     }
     pub fn normalizeSpecifier(slice_: string) string {
+        var vm_ = VirtualMachine.vm;
+
         var slice = slice_;
         if (slice.len == 0) return slice;
         var was_http = false;
@@ -1429,23 +1432,23 @@ pub const VirtualMachine = struct {
             was_http = true;
         }
 
-        if (strings.hasPrefix(slice, VirtualMachine.vm.origin.host)) {
-            slice = slice[VirtualMachine.vm.origin.host.len..];
+        if (strings.hasPrefix(slice, vm_.origin.host)) {
+            slice = slice[vm_.origin.host.len..];
         } else if (was_http) {
             if (strings.indexOfChar(slice, '/')) |i| {
                 slice = slice[i..];
             }
         }
 
-        if (VirtualMachine.vm.origin.path.len > 1) {
-            if (strings.hasPrefix(slice, VirtualMachine.vm.origin.path)) {
-                slice = slice[VirtualMachine.vm.origin.path.len..];
+        if (vm_.origin.path.len > 1) {
+            if (strings.hasPrefix(slice, vm_.origin.path)) {
+                slice = slice[vm_.origin.path.len..];
             }
         }
 
-        if (VirtualMachine.vm.bundler.options.routes.asset_prefix_path.len > 0) {
-            if (strings.hasPrefix(slice, VirtualMachine.vm.bundler.options.routes.asset_prefix_path)) {
-                slice = slice[VirtualMachine.vm.bundler.options.routes.asset_prefix_path.len..];
+        if (vm_.bundler.options.routes.asset_prefix_path.len > 0) {
+            if (strings.hasPrefix(slice, vm_.bundler.options.routes.asset_prefix_path)) {
+                slice = slice[vm_.bundler.options.routes.asset_prefix_path.len..];
             }
         }
 
@@ -1887,8 +1890,8 @@ pub const VirtualMachine = struct {
             ) catch unreachable;
         }
 
-        const name = exception.name.slice();
-        const message = exception.message.slice();
+        const name = exception.name;
+        const message = exception.message;
         var did_print_name = false;
         if (source_lines.next()) |source| {
             if (source.text.len > 0 and exception.stack.frames()[0].position.isInvalid()) {
@@ -1906,14 +1909,14 @@ pub const VirtualMachine = struct {
                 ) catch unreachable;
 
                 if (name.len > 0 and message.len > 0) {
-                    writer.print(comptime Output.prettyFmt(" <r><red><b>{s}<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{
+                    writer.print(comptime Output.prettyFmt(" <r><red><b>{}<r><d>:<r> <b>{}<r>\n", allow_ansi_color), .{
                         name,
                         message,
                     }) catch unreachable;
                 } else if (name.len > 0) {
-                    writer.print(comptime Output.prettyFmt(" <r><b>{s}<r>\n", allow_ansi_color), .{name}) catch unreachable;
+                    writer.print(comptime Output.prettyFmt(" <r><b>{}<r>\n", allow_ansi_color), .{name}) catch unreachable;
                 } else if (message.len > 0) {
-                    writer.print(comptime Output.prettyFmt(" <r><b>{s}<r>\n", allow_ansi_color), .{message}) catch unreachable;
+                    writer.print(comptime Output.prettyFmt(" <r><b>{}<r>\n", allow_ansi_color), .{message}) catch unreachable;
                 }
             } else if (source.text.len > 0) {
                 defer did_print_name = true;

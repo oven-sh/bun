@@ -516,6 +516,10 @@ pub fn eqlUtf16(comptime self: string, other: []const u16) bool {
 }
 
 pub fn toUTF8Alloc(allocator: std.mem.Allocator, js: []const u16) !string {
+    return try toUTF8AllocWithType(allocator, []const u16, js);
+}
+
+pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, js: Type) !string {
     var temp: [4]u8 = undefined;
     var list = std.ArrayList(u8).initCapacity(allocator, js.len) catch unreachable;
     var i: usize = 0;
@@ -667,6 +671,44 @@ pub inline fn decodeWTF8RuneTMultibyte(p: *const [4]u8, len: u3, comptime T: typ
     }
 
     unreachable;
+}
+
+pub fn formatUTF16(slice_: []align(1) const u16, writer: anytype) !void {
+    var slice = slice_;
+    var chunk: [512 + 4]u8 = undefined;
+    var chunk_i: u16 = 0;
+
+    while (slice.len > 0) {
+        if (chunk_i >= chunk.len - 5) {
+            try writer.writeAll(chunk[0..chunk_i]);
+            chunk_i = 0;
+        }
+
+        var cp: u32 = slice[0];
+        slice = slice[1..];
+        if (cp & ~@as(u32, 0x03ff) == 0xd800 and slice.len > 0) {
+            cp = 0x10000 + (((cp & 0x03ff) << 10) | (slice[0] & 0x03ff));
+            slice = slice[1..];
+        }
+
+        chunk_i += @as(
+            u8,
+            @call(
+                .{ .modifier = .always_inline },
+                encodeWTF8RuneT,
+                .{ chunk[chunk_i..][0..4], u32, cp },
+            ),
+        );
+    }
+
+    try writer.writeAll(chunk[0..chunk_i]);
+}
+
+test "print UTF16" {
+    var err = std.io.getStdErr();
+    const utf16 = comptime std.unicode.utf8ToUtf16LeStringLiteral("❌ ✅ opkay ");
+    try formatUTF16(utf16, err.writer());
+    // std.unicode.fmtUtf16le(utf16le: []const u16)
 }
 
 /// Convert potentially ill-formed UTF-8 or UTF-16 bytes to a Unicode Codepoint.

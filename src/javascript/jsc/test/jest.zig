@@ -64,6 +64,8 @@ pub const TestRunner = struct {
     files: File.List = .{},
     index: File.Map = File.Map{},
 
+    timeout_seconds: f64 = 5.0,
+
     allocator: std.mem.Allocator,
     callback: *Callback = undefined,
 
@@ -330,6 +332,8 @@ pub const Expect = struct {
             },
         },
     );
+
+    /// Object.is()
     pub fn toBe(
         this: *Expect,
         ctx: js.JSContextRef,
@@ -349,7 +353,7 @@ pub const Expect = struct {
             return js.JSValueMakeUndefined(ctx);
         }
         this.scope.tests.items[this.test_id].counter.actual += 1;
-        if (!js.JSValueIsEqual(ctx, arguments[0], this.value, exception)) {
+        if (!JSValue.fromRef(arguments[0]).isSameValue(JSValue.fromRef(this.value), VirtualMachine.vm.global)) {
             JSC.JSError(
                 getAllocator(ctx),
                 "fail",
@@ -532,11 +536,12 @@ pub const TestScope = struct {
         }
 
         if (js.JSValueIsString(ctx, args[0])) {
-            var label_ref = js.JSValueToStringCopy(ctx, args[0], exception);
-            if (exception.* != null) return null;
-            defer js.JSStringRelease(label_ref);
-            var label_ = getAllocator(ctx).alloc(u8, js.JSStringGetLength(label_ref) + 1) catch unreachable;
-            label = label_[0 .. js.JSStringGetUTF8CString(label_ref, label_.ptr, label_.len) - 1];
+            var label_ = ZigString.init("");
+            JSC.JSValue.fromRef(arguments[0]).toZigString(&label_, VirtualMachine.vm.global);
+            label = if (label_.is16Bit())
+                (strings.toUTF8AllocWithType(getAllocator(ctx), @TypeOf(label_.utf16Slice()), label_.utf16Slice()) catch unreachable)
+            else
+                label_.full();
             args = args[1..];
         }
 
@@ -566,20 +571,22 @@ pub const TestScope = struct {
     pub fn run(
         this: *TestScope,
     ) Result {
+        var vm = VirtualMachine.vm;
+
         var promise = JSC.JSPromise.resolvedPromise(
-            VirtualMachine.vm.global,
-            js.JSObjectCallAsFunctionReturnValue(VirtualMachine.vm.global.ref(), this.callback, null, 0, null),
+            vm.global,
+            js.JSObjectCallAsFunctionReturnValue(vm.global.ref(), this.callback, null, 0, null),
         );
-        js.JSValueUnprotect(VirtualMachine.vm.global.ref(), this.callback);
+        js.JSValueUnprotect(vm.global.ref(), this.callback);
         this.callback = null;
 
-        while (promise.status(VirtualMachine.vm.global.vm()) == JSC.JSPromise.Status.Pending) {
-            VirtualMachine.vm.tick();
+        while (promise.status(vm.global.vm()) == JSC.JSPromise.Status.Pending) {
+            vm.tick();
         }
-        var result = promise.result(VirtualMachine.vm.global.vm());
+        var result = promise.result(vm.global.vm());
 
-        if (result.isException(VirtualMachine.vm.global.vm()) or result.isError() or result.isAggregateError(VirtualMachine.vm.global)) {
-            VirtualMachine.vm.defaultErrorHandler(result, null);
+        if (result.isException(vm.global.vm()) or result.isError() or result.isAggregateError(vm.global)) {
+            vm.defaultErrorHandler(result, null);
             return .{ .fail = this.counter.actual };
         }
 
@@ -652,11 +659,11 @@ pub const DescribeScope = struct {
             return js.JSValueMakeUndefined(ctx);
         }
 
-        var label_value: js.JSValueRef = null;
+        var label = ZigString.init("");
         var args = arguments;
 
         if (js.JSValueIsString(ctx, arguments[0])) {
-            label_value = arguments[0];
+            JSC.JSValue.fromRef(arguments[0]).toZigString(&label, JSC.VirtualMachine.vm.global);
             args = args[1..];
         }
 
@@ -667,25 +674,12 @@ pub const DescribeScope = struct {
 
         var callback = args[0];
 
-        var label: js.JSStringRef = null;
-        defer if (label != null) js.JSStringRelease(label);
-
-        if (label_value != null) {
-            label = js.JSValueToStringCopy(ctx, label_value, exception);
-        }
-        if (exception.* != null) {
-            return js.JSValueMakeUndefined(ctx);
-        }
-
-        const label_len = if (label == null)
-            0
-        else
-            js.JSStringGetLength(label);
-
         var scope = getAllocator(ctx).create(DescribeScope) catch unreachable;
-        var str = if (label_len == 0) "" else (getAllocator(ctx).dupe(u8, js.JSStringGetCharacters8Ptr(label)[0..label_len]) catch unreachable);
         scope.* = .{
-            .label = str,
+            .label = if (label.is16Bit())
+                (strings.toUTF8AllocWithType(getAllocator(ctx), @TypeOf(label.utf16Slice()), label.utf16Slice()) catch unreachable)
+            else
+                label.full(),
             .parent = this,
             .file_id = this.file_id,
         };

@@ -6704,7 +6704,6 @@ pub const Macro = struct {
 
             _vm.enableMacroMode();
 
-            _vm.bundler.configureLinker();
             try _vm.bundler.configureDefines();
             break :brk _vm;
         };

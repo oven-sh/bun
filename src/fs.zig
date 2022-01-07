@@ -1064,6 +1064,10 @@ pub const Path = struct {
     is_disabled: bool = false,
     is_symlink: bool = false,
 
+    pub fn isBun(this: *const Path) bool {
+        return strings.eqlComptime(this.namespace, "bun");
+    }
+
     pub const PackageRelative = struct {
         path: string,
         name: string,

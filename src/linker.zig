@@ -233,6 +233,13 @@ pub const Linker = struct {
                         }
                     }
 
+                    if (linker.options.platform.isBun() and import_record.path.text.len > 4 and strings.eqlComptime(import_record.path.text[0.."bun:".len], "bun:")) {
+                        import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
+                        import_record.path.namespace = "bun";
+                        // don't link bun
+                        continue;
+                    }
+
                     if (linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |*_resolved_import| {
                         const resolved_import: *const Resolver.Result = _resolved_import;
                         if (resolved_import.is_external) {

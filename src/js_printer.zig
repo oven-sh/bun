@@ -358,6 +358,69 @@ pub fn NewPrinter(
                 p.needs_semicolon = false;
             }
         }
+
+        pub fn printBunImportStatement(p: *Printer, import: S.Import) void {
+            p.print("const ");
+
+            if (import.star_name_loc != null) {
+                p.printSymbol(import.namespace_ref);
+                p.printSpace();
+                p.print("=");
+                p.printSpaceBeforeIdentifier();
+                p.print("Bun.jest(import.meta.filePath)");
+                p.printSemicolonAfterStatement();
+                p.printIndent();
+                p.print("const ");
+            }
+
+            if (import.items.len > 0) {
+                p.print("{ ");
+                if (!import.is_single_line) {
+                    p.print("\n");
+                    p.options.indent += 1;
+                    p.printIndent();
+                }
+
+                for (import.items) |item, i| {
+                    if (i > 0) {
+                        p.print(",");
+                        p.printSpace();
+
+                        if (!import.is_single_line) {
+                            p.print("\n");
+                            p.printIndent();
+                        }
+                    }
+
+                    const name = p.renamer.nameForSymbol(item.name.ref.?);
+                    p.printIdentifier(name);
+
+                    if (!strings.eql(name, item.alias)) {
+                        p.print(" : ");
+                        p.printSpace();
+                        p.printClauseAlias(item.alias);
+                    }
+                }
+
+                if (!import.is_single_line) {
+                    p.print("\n");
+                    p.options.indent -= 1;
+                } else {
+                    p.printSpace();
+                }
+
+                if (import.star_name_loc == null) {
+                    p.print("} = Bun.jest(import.meta.filePath)");
+                } else {
+                    p.print("} =");
+                    p.printSpaceBeforeIdentifier();
+                    p.printSymbol(import.namespace_ref);
+                }
+
+                p.printSemicolonAfterStatement();
+            }
+        }
+
         pub inline fn printSpaceBeforeIdentifier(
             p: *Printer,
         ) void {
@@ -3159,6 +3222,11 @@ pub fn NewPrinter(
 
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+
+                    if (record.path.isBun()) {
+                        p.printBunImportStatement(s.*);
+                        return;
+                    }
 
                     if (is_inside_bundle) {
                         return p.printBundledImport(record, s);

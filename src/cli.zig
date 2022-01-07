@@ -36,20 +36,21 @@ const Router = @import("./router.zig");
 
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 
-const BunCommand = @import("./cli/bun_command.zig").BunCommand;
-const DevCommand = @import("./cli/dev_command.zig").DevCommand;
-const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
+const AddCommand = @import("./cli/add_command.zig").AddCommand;
 const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
+const BunCommand = @import("./cli/bun_command.zig").BunCommand;
 const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
 const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
-const RunCommand = @import("./cli/run_command.zig").RunCommand;
-const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
+const DevCommand = @import("./cli/dev_command.zig").DevCommand;
+const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
 const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
-const AddCommand = @import("./cli/add_command.zig").AddCommand;
-const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
-const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
 const InstallCompletionsCommand = @import("./cli/install_completions_command.zig").InstallCompletionsCommand;
+const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
+const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
+const RunCommand = @import("./cli/run_command.zig").RunCommand;
 const ShellCompletions = @import("./cli/shell_completions.zig");
+const TestCommand = @import("./cli/test_command.zig").TestCommand;
+const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
 
 var start_time: i128 = undefined;
 
@@ -630,6 +631,8 @@ pub const Command = struct {
             RootCommandMatcher.case("i"), RootCommandMatcher.case("install") => .InstallCommand,
             RootCommandMatcher.case("c"), RootCommandMatcher.case("create") => .CreateCommand,
 
+            RootCommandMatcher.case("test") => .TestCommand,
+
             RootCommandMatcher.case("pm") => .PackageManagerCommand,
 
             RootCommandMatcher.case("add"), RootCommandMatcher.case("update"), RootCommandMatcher.case("a") => .AddCommand,
@@ -715,6 +718,12 @@ pub const Command = struct {
                 const ctx = try Command.Context.create(allocator, log, .PackageManagerCommand);
 
                 try PackageManagerCommand.exec(ctx);
+                return;
+            },
+            .TestCommand => {
+                const ctx = try Command.Context.create(allocator, log, .TestCommand);
+
+                try TestCommand.exec(ctx);
                 return;
             },
             .GetCompletionsCommand => {
@@ -954,6 +963,7 @@ pub const Command = struct {
         RunCommand,
         UpgradeCommand,
         PackageManagerCommand,
+        TestCommand,
 
         pub const uses_global_options: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(true, .{
             .CreateCommand = false,

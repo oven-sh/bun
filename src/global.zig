@@ -336,7 +336,7 @@ pub const Output = struct {
     // <d> - dim
     // </r> - reset
     // <r> - reset
-    const ED = "\x1b[";
+    pub const ED = "\x1b[";
     pub const color_map = std.ComptimeStringMap(string, .{
         &.{ "black", ED ++ "30m" },
         &.{ "blue", ED ++ "34m" },
@@ -349,7 +349,7 @@ pub const Output = struct {
         &.{ "white", ED ++ "37m" },
         &.{ "yellow", ED ++ "33m" },
     });
-
+    pub const RESET = "\x1b[0m";
     pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
         comptime var new_fmt: [fmt.len * 4]u8 = undefined;
         comptime var new_fmt_i: usize = 0;
@@ -415,7 +415,7 @@ pub const Output = struct {
                         }
 
                         if (is_reset) {
-                            const reset_sequence = "\x1b[0m";
+                            const reset_sequence = RESET;
                             orig = new_fmt_i;
                             new_fmt_i += reset_sequence.len;
                             std.mem.copy(u8, new_fmt[orig..new_fmt_i], reset_sequence);

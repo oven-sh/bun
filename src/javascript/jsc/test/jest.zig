@@ -41,8 +41,9 @@ const Task = @import("../javascript.zig").Task;
 
 const Fs = @import("../../../fs.zig");
 
-fn notImplementedFn(_: anytype, ctx: js.JSContextRef, _: js.JSObjectRef, _: js.JSObjectRef, _: []const js.JSValueRef, exception: js.JSExceptionRef) void {
+fn notImplementedFn(_: *anyopaque, ctx: js.JSContextRef, _: js.JSObjectRef, _: js.JSObjectRef, _: []const js.JSValueRef, exception: js.ExceptionRef) js.JSValueRef {
     JSError(getAllocator(ctx), "Not implemented yet!", .{}, ctx, exception);
+    return null;
 }
 
 fn notImplementedProp(
@@ -52,7 +53,8 @@ fn notImplementedProp(
     _: js.JSStringRef,
     exception: js.ExceptionRef,
 ) js.JSValueRef {
-    return JSError(getAllocator(ctx), "Property not implemented yet!", .{}, ctx, exception);
+    JSError(getAllocator(ctx), "Property not implemented yet!", .{}, ctx, exception);
+    return null;
 }
 
 const ArrayIdentityContext = @import("../../../identity_context.zig").ArrayIdentityContext;
@@ -78,44 +80,47 @@ pub const TestRunner = struct {
 
     pub fn reportPass(this: *TestRunner, test_id: Test.ID, expectations: u32) void {
         this.tests.items(.status)[test_id] = .pass;
-        this.callback.onTestPass(&this.callback, this, test_id, expectations);
+        this.callback.onTestPass(this.callback, test_id, expectations);
     }
     pub fn reportFailure(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32) void {
         this.tests.items(.status)[test_id] = .fail;
-        this.callback.onTestFail(&this.callback, this, test_id, file, label, expectations);
+        this.callback.onTestFail(this.callback, test_id, file, label, expectations);
     }
 
     pub fn addTestCount(this: *TestRunner, count: u32) u32 {
         this.tests.ensureUnusedCapacity(this.allocator, count) catch unreachable;
         const start = @truncate(Test.ID, this.tests.len);
         this.tests.len += count;
-        var statuses = this.tests.items(.status)[start..this.tests.len];
-        std.mem.set(Test.Status, statuses, count, Test.Status.pending);
+        var statuses = this.tests.items(.status)[start..][0..count];
+        std.mem.set(Test.Status, statuses, Test.Status.pending);
+        this.callback.onUpdateCount(this.callback, count, count + start);
         return start;
     }
 
     pub fn getOrPutFile(this: *TestRunner, file_path: string) *DescribeScope {
-        var entry = this.index.getOrPut(this.allocator, std.hash.Wyhash.hash(0, file_path)) catch unreachable;
+        var entry = this.index.getOrPut(this.allocator, @truncate(u32, std.hash.Wyhash.hash(0, file_path))) catch unreachable;
         if (entry.found_existing) {
             return this.files.items(.module_scope)[entry.value_ptr.*];
         }
         var scope = this.allocator.create(DescribeScope) catch unreachable;
+        const file_id = @truncate(File.ID, this.files.len);
         scope.* = DescribeScope{
+            .file_id = file_id,
             .test_id_start = @truncate(Test.ID, this.tests.len),
         };
-        try this.files.append(this.allocator, .{ .module_scope = scope });
-        entry.value_ptr.* = @truncate(File.ID, this.files.len - 1);
+        this.files.append(this.allocator, .{ .module_scope = scope, .source = logger.Source.initEmptyFile(file_path) }) catch unreachable;
+        entry.value_ptr.* = file_id;
         return scope;
     }
 
     pub const File = struct {
         source: logger.Source = logger.Source.initEmptyFile(""),
-        log: *logger.Log = logger.Log.init(default_allocator),
+        log: logger.Log = logger.Log.init(default_allocator),
         module_scope: *DescribeScope = undefined,
 
         pub const List = std.MultiArrayList(File);
         pub const ID = u32;
-        pub const Map = std.ArrayHashMapUnmanaged(u32, u32, ArrayIdentityContext(u32), false);
+        pub const Map = std.ArrayHashMapUnmanaged(u32, u32, ArrayIdentityContext, false);
     };
 
     pub const Test = struct {
@@ -152,7 +157,7 @@ pub const Jest = struct {
             JSError(getAllocator(ctx), "Bun.jest() expects a string filename", .{}, ctx, exception);
             return js.JSValueMakeUndefined(ctx);
         }
-        var str = js.JSValueToStringCopy(arguments[0], ctx);
+        var str = js.JSValueToStringCopy(ctx, arguments[0], exception);
         defer js.JSStringRelease(str);
         var ptr = js.JSStringGetCharacters8Ptr(str);
         const len = js.JSStringGetLength(str);
@@ -164,6 +169,8 @@ pub const Jest = struct {
         var filepath = Fs.FileSystem.instance.filename_store.append([]const u8, str_value) catch unreachable;
 
         var scope = runner_.getOrPutFile(filepath);
+        DescribeScope.active = scope;
+
         return DescribeScope.Class.make(ctx, scope);
     }
 };
@@ -172,7 +179,7 @@ pub const Jest = struct {
 // To support async tests, we need to track the test ID
 pub const Expect = struct {
     test_id: TestRunner.Test.ID,
-    describe_scope: *DescribeScope,
+    scope: *DescribeScope,
     value: js.JSValueRef,
     op: Op.Set = Op.Set.init(.{}),
 
@@ -310,20 +317,50 @@ pub const Expect = struct {
         },
         .{
             .not = .{
-                .rfn = Expect.not,
+                .get = Expect.not,
                 .name = "not",
             },
             .resolves = .{
-                .rfn = Expect.resolves,
+                .get = Expect.resolves,
                 .name = "resolves",
             },
             .rejects = .{
-                .rfn = Expect.rejects,
+                .get = Expect.rejects,
                 .name = "rejects",
             },
         },
     );
-    pub const toBe = notImplementedFn;
+    pub fn toBe(
+        this: *Expect,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        thisObject: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        if (arguments.len != 1) {
+            JSC.JSError(
+                getAllocator(ctx),
+                ".toBe() takes 1 argument",
+                .{},
+                ctx,
+                exception,
+            );
+            return js.JSValueMakeUndefined(ctx);
+        }
+        this.scope.tests.items[this.test_id].counter.actual += 1;
+        if (!js.JSValueIsEqual(ctx, arguments[0], this.value, exception)) {
+            JSC.JSError(
+                getAllocator(ctx),
+                "fail",
+                .{},
+                ctx,
+                exception,
+            );
+            return null;
+        }
+        return thisObject;
+    }
     pub const toHaveBeenCalledTimes = notImplementedFn;
     pub const toHaveBeenCalledWith = notImplementedFn;
     pub const toHaveBeenLastCalledWith = notImplementedFn;
@@ -360,7 +397,6 @@ pub const Expect = struct {
 pub const ExpectPrototype = struct {
     scope: *DescribeScope,
     test_id: TestRunner.Test.ID,
-    describe_scope: *DescribeScope,
     op: Expect.Op.Set = Expect.Op.Set.init(.{}),
 
     pub const Class = NewClass(
@@ -451,7 +487,7 @@ pub const ExpectPrototype = struct {
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSObjectRef {
-        if (arguments.length != 1) {
+        if (arguments.len != 1) {
             JSError(getAllocator(ctx), "expect() requires one argument", .{}, ctx, exception);
             return js.JSValueMakeUndefined(ctx);
         }
@@ -459,7 +495,7 @@ pub const ExpectPrototype = struct {
         js.JSValueProtect(ctx, arguments[0]);
         expect_.* = .{
             .value = arguments[0],
-            .describe_scope = DescribeScope.active,
+            .scope = DescribeScope.active,
             .test_id = DescribeScope.active.current_test_id,
         };
         return Expect.Class.make(ctx, expect_);
@@ -473,7 +509,7 @@ pub const TestScope = struct {
     callback: js.JSValueRef,
     id: TestRunner.Test.ID = 0,
 
-    pub const Class = NewClass(TestScope, .{ .name = "test" }, .{ .call = call }, .{});
+    pub const Class = NewClass(void, .{ .name = "test" }, .{ .call = call }, .{});
 
     pub const Counter = struct {
         expected: u32 = 0,
@@ -495,9 +531,9 @@ pub const TestScope = struct {
             return js.JSValueMakeUndefined(ctx);
         }
 
-        if (js.JSValueIsString(args[0])) {
+        if (js.JSValueIsString(ctx, args[0])) {
             var label_ref = js.JSValueToStringCopy(ctx, args[0], exception);
-            if (exception != null) return null;
+            if (exception.* != null) return null;
             defer js.JSStringRelease(label_ref);
             var label_ = getAllocator(ctx).alloc(u8, js.JSStringGetLength(label_ref) + 1) catch unreachable;
             label = label_[0 .. js.JSStringGetUTF8CString(label_ref, label_.ptr, label_.len) - 1];
@@ -515,7 +551,10 @@ pub const TestScope = struct {
         DescribeScope.active.tests.append(getAllocator(ctx), TestScope{
             .label = label,
             .callback = function,
+            .parent = DescribeScope.active,
         }) catch unreachable;
+
+        return js.JSValueMakeUndefined(ctx);
     }
 
     pub const Result = union(TestRunner.Test.Status) {
@@ -534,14 +573,14 @@ pub const TestScope = struct {
         js.JSValueUnprotect(VirtualMachine.vm.global.ref(), this.callback);
         this.callback = null;
 
-        while (promise.status(VirtualMachine.vm.global.vm()) == .pending) {
+        while (promise.status(VirtualMachine.vm.global.vm()) == JSC.JSPromise.Status.Pending) {
             VirtualMachine.vm.tick();
         }
         var result = promise.result(VirtualMachine.vm.global.vm());
 
-        if (result.isException(VirtualMachine.vm.global.vm()) or result.isError() or result.isAggregateError(VirtualMachine.vm.global.vm())) {
+        if (result.isException(VirtualMachine.vm.global.vm()) or result.isError() or result.isAggregateError(VirtualMachine.vm.global)) {
             VirtualMachine.vm.defaultErrorHandler(result, null);
-            return .{ .fail = .{} };
+            return .{ .fail = this.counter.actual };
         }
 
         if (this.counter.expected > 0 and this.counter.expected < this.counter.actual) {
@@ -549,10 +588,10 @@ pub const TestScope = struct {
                 this.counter.actual,
                 this.counter.expected,
             });
-            return .{ .fail = .{} };
+            return .{ .fail = this.counter.actual };
         }
 
-        return TestRunner.Test.Status.passed;
+        return .{ .pass = this.counter.actual };
     }
 };
 
@@ -585,13 +624,16 @@ pub const DescribeScope = struct {
             .read_only = true,
         },
         .{
-            .describe = .{ .rfn = describe },
+            .call = describe,
             .afterAll = .{ .rfn = callAfterAll, .name = "afterAll" },
             .beforeAll = .{ .rfn = callAfterAll, .name = "beforeAll" },
             .beforeEach = .{ .rfn = callAfterAll, .name = "beforeEach" },
         },
         .{
             .expect = .{ .get = createExpect, .name = "expect" },
+            // kind of a mindfuck but
+            // describe("foo", () => {}).describe("bar") will wrok
+            .describe = .{ .get = createDescribe, .name = "describe" },
             .it = .{ .get = createTest, .name = "it" },
             .@"test" = .{ .get = createTest, .name = "test" },
         },
@@ -605,7 +647,7 @@ pub const DescribeScope = struct {
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSObjectRef {
-        if (arguments.length == 0 or arguments.len > 2) {
+        if (arguments.len == 0 or arguments.len > 2) {
             JSError(getAllocator(ctx), "describe() requires 1-2 arguments", .{}, ctx, exception);
             return js.JSValueMakeUndefined(ctx);
         }
@@ -631,7 +673,7 @@ pub const DescribeScope = struct {
         if (label_value != null) {
             label = js.JSValueToStringCopy(ctx, label_value, exception);
         }
-        if (exception != js.JSValueRef) {
+        if (exception.* != null) {
             return js.JSValueMakeUndefined(ctx);
         }
 
@@ -645,13 +687,14 @@ pub const DescribeScope = struct {
         scope.* = .{
             .label = str,
             .parent = this,
+            .file_id = this.file_id,
         };
         var new_this = DescribeScope.Class.make(ctx, scope);
 
-        return scope.run(new_this, callback, exception);
+        return scope.run(new_this, ctx, callback, exception);
     }
 
-    pub fn run(this: *DescribeScope, ctx: js.JSContextRef, callback: js.JSObjectRef, exception: js.ExceptionRef) js.JSObjectRef {
+    pub fn run(this: *DescribeScope, thisObject: js.JSObjectRef, ctx: js.JSContextRef, callback: js.JSObjectRef, exception: js.ExceptionRef) js.JSObjectRef {
         js.JSValueProtect(ctx, callback);
         defer js.JSValueUnprotect(ctx, callback);
         var original_active = active;
@@ -659,37 +702,43 @@ pub const DescribeScope = struct {
         active = this;
 
         {
-            var result = js.JSObjectCallAsFunctionReturnValue(ctx, callback, this, 0);
+            var result = js.JSObjectCallAsFunctionReturnValue(ctx, callback, thisObject, 0, null);
             if (result.isException(VirtualMachine.vm.global.vm())) {
-                exception.* = result;
+                exception.* = result.asObjectRef();
                 return null;
             }
         }
+        this.runTests(ctx);
+        return js.JSValueMakeUndefined(ctx);
+    }
+
+    pub fn runTests(this: *DescribeScope, ctx: js.JSContextRef) void {
         // Step 1. Initialize the test block
 
         const file = this.file_id;
 
         var tests: []TestScope = this.tests.items;
         const end = @truncate(TestRunner.Test.ID, tests.len);
+
+        if (end == 0) return;
+
         // Step 2. Update the runner with the count of how many tests we have for this block
         this.test_id_start = Jest.runner.?.addTestCount(end);
 
         // Step 3. Run the beforeAll callbacks, in reverse order
         // TODO:
 
-        if (tests.len == 0) return;
-
         const source: logger.Source = Jest.runner.?.files.items(.source)[file];
 
         var i: TestRunner.Test.ID = 0;
 
         while (i < end) {
-            const test_id = i + this.test_id_start;
-            this.current_test_id = test_id;
+            this.current_test_id = i;
             const result = TestScope.run(&tests[i]);
             // invalidate it
             this.current_test_id = std.math.maxInt(TestRunner.Test.ID);
 
+            const test_id = i + this.test_id_start;
             switch (result) {
                 .pass => |count| Jest.runner.?.reportPass(test_id, count),
                 .fail => |count| Jest.runner.?.reportFailure(test_id, source.path.text, tests[i].label, count),
@@ -724,7 +773,7 @@ pub const DescribeScope = struct {
             var callback = callbacks.items[i];
             var result = js.JSObjectCallAsFunctionReturnValue(ctx, callback, this, 0);
             if (result.isException(VirtualMachine.vm.global.vm())) {
-                exception.* = result;
+                exception.* = result.asObjectRef();
                 return false;
             }
         }
@@ -743,7 +792,7 @@ pub const DescribeScope = struct {
     ) js.JSObjectRef {
         var expect_ = getAllocator(ctx).create(ExpectPrototype) catch unreachable;
         expect_.* = .{
-            .describe_scope = DescribeScope.active,
+            .scope = DescribeScope.active,
             .test_id = DescribeScope.active.current_test_id,
         };
         return ExpectPrototype.Class.make(ctx, expect_);
@@ -757,5 +806,15 @@ pub const DescribeScope = struct {
         _: js.ExceptionRef,
     ) js.JSObjectRef {
         return js.JSObjectMake(ctx, TestScope.Class.get().*, null);
+    }
+
+    pub fn createDescribe(
+        this: *DescribeScope,
+        ctx: js.JSContextRef,
+        _: js.JSValueRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
+    ) js.JSObjectRef {
+        return DescribeScope.Class.make(ctx, this);
     }
 };

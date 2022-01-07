@@ -363,6 +363,7 @@ pub fn eqlComptimeIgnoreLen(self: string, comptime alt: anytype) bool {
 }
 
 inline fn eqlComptimeCheckLen(a: string, comptime b: anytype, comptime check_len: bool) bool {
+    @setEvalBranchQuota(9999);
     if (comptime check_len) {
         if (comptime b.len == 0) {
             return a.len == 0;

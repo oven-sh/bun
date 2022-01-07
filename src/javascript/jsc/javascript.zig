@@ -635,12 +635,12 @@ pub const Bun = struct {
                     .@"return" = "undefined",
                 },
             },
-        },
-        .{
             .jest = .{
-                .get = @import("./test/jest.zig").Jest.getter,
+                .rfn = @import("./test/jest.zig").Jest.call,
                 .ts = d.ts{},
             },
+        },
+        .{
             .main = .{
                 .get = getMain,
                 .ts = d.ts{ .name = "main", .@"return" = "string" },
@@ -1493,7 +1493,7 @@ pub const VirtualMachine = struct {
         ret.result.value = result;
 
         const specifier_blob = brk: {
-            if (strings.startsWith(spec, VirtualMachine.vm.bundler.fs.top_level_dir)) {
+            if (strings.hasPrefix(spec, VirtualMachine.vm.bundler.fs.top_level_dir)) {
                 break :brk spec[VirtualMachine.vm.bundler.fs.top_level_dir.len..];
             }
             break :brk spec;

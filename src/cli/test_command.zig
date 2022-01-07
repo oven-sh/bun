@@ -52,23 +52,23 @@ pub const CommandLineReporter = struct {
     const DotColorMap = std.EnumMap(TestRunner.Test.Status, string);
     const dots: DotColorMap = brk: {
         var map: DotColorMap = DotColorMap.init(.{});
-        map.put(TestRunner.Test.Status.pending, Output.color_map.get("r").? ++ Output.color_map.get("yellow").? ++ Output.color_map.get("r").? ++ " ");
-        map.put(TestRunner.Test.Status.pass, Output.color_map.get("r").? ++ Output.color_map.get("green").? ++ Output.color_map.get("r").? ++ " ");
-        map.put(TestRunner.Test.Status.fail, Output.color_map.get("r").? ++ Output.color_map.get("red").? ++ Output.color_map.get("r").? ++ " ");
+        map.put(TestRunner.Test.Status.pending, Output.RESET ++ Output.ED ++ Output.color_map.get("yellow").? ++ Output.RESET);
+        map.put(TestRunner.Test.Status.pass, Output.RESET ++ Output.ED ++ Output.color_map.get("green").? ++ Output.RESET);
+        map.put(TestRunner.Test.Status.fail, Output.RESET ++ Output.ED ++ Output.color_map.get("red").? ++ Output.RESET);
         break :brk map;
     };
 
     fn updateDots(this: *CommandLineReporter) void {
         const statuses = this.jest.tests.items(.status);
         var writer = Output.errorWriter();
-        writer.writeAll("\r");
+        writer.writeAll("\r") catch unreachable;
         if (Output.enable_ansi_colors_stderr) {
             for (statuses) |status| {
-                writer.writeAll(this.dots.get(status).?);
+                writer.writeAll(dots.get(status).?) catch unreachable;
             }
         } else {
             for (statuses) |_| {
-                writer.writeAll(". ");
+                writer.writeAll(".") catch unreachable;
             }
         }
     }
@@ -83,7 +83,7 @@ pub const CommandLineReporter = struct {
     }
     pub fn handleTestPass(cb: *TestRunner.Callback, _: Test.ID, expectations: u32) void {
         var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
-        this.updateDots();
+        // this.updateDots();
         this.summary.pass += 1;
         this.summary.expectations += expectations;
     }
@@ -91,7 +91,7 @@ pub const CommandLineReporter = struct {
         // var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
         var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
         this.last_dot = test_id;
-        this.updateDots();
+        // this.updateDots();
         this.summary.fail += 1;
     }
 };
@@ -106,7 +106,7 @@ pub const TestCommand = struct {
             loader.* = DotEnv.Loader.init(map, ctx.allocator);
             break :brk loader;
         };
-        @import("javascript/jsc/javascript_core_c_api.zig").JSCInitialize();
+        JSC.C.JSCInitialize();
         var reporter = try ctx.allocator.create(CommandLineReporter);
         reporter.* = CommandLineReporter{
             .jest = TestRunner{
@@ -123,31 +123,27 @@ pub const TestCommand = struct {
             .onTestFail = CommandLineReporter.handleTestFail,
         };
         reporter.jest.callback = &reporter.callback;
+        Jest.Jest.runner = &reporter.jest;
 
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);
-        var vm = JSC.VirtualMachine.init(ctx.allocator, .{}, null, ctx.log, env_loader);
-        for (ctx.positionals) |file| {
-            try run(vm, file, ctx.allocator);
+        var vm = try JSC.VirtualMachine.init(ctx.allocator, ctx.args, null, ctx.log, env_loader);
+        try vm.bundler.configureDefines();
+        const test_files = ctx.positionals[1..];
+        for (test_files) |file| {
+            run(reporter, vm, file, ctx.allocator) catch continue;
         }
 
-        Output.prettyln("\n", .{});
-        Output.prettyErrorln("\n ", .{});
+        Output.pretty("\n", .{});
         Output.flush();
-        Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
-        Output.prettyError(
-            \\ Ran {d} tests across {d} files
-            \\ 
-        , .{
-            reporter.summary.fail + reporter.summary.pass,
-            ctx.positionals.len,
-        });
+
+        Output.prettyError("\n", .{});
 
         if (reporter.summary.pass > 0) {
             Output.prettyError("<r><green>", .{});
         }
 
-        Output.prettyError("  {d:5>} pass<r>\n", .{reporter.summary.pass});
+        Output.prettyError(" {d:5>} pass<r>\n", .{reporter.summary.pass});
 
         if (reporter.summary.fail > 0) {
             Output.prettyError("<r><red>", .{});
@@ -155,18 +151,29 @@ pub const TestCommand = struct {
             Output.prettyError("<r><d>", .{});
         }
 
-        Output.prettyError("  {d:5>} fail<r>\n", .{reporter.summary.fail});
+        Output.prettyError(" {d:5>} fail<r>\n", .{reporter.summary.fail});
 
-        if (reporter.summary.fail == 0) {
+        if (reporter.summary.fail == 0 and reporter.summary.expectations > 0) {
             Output.prettyError("<r><green>", .{});
         } else {
             Output.prettyError("<r>", .{});
         }
         Output.prettyError(" {d:5>} expectations\n", .{reporter.summary.expectations});
+
+        Output.prettyError(
+            \\ Ran {d} tests across {s} files 
+        , .{
+            reporter.summary.fail + reporter.summary.pass,
+            test_files,
+        });
+        Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
+        Output.prettyError("\n", .{});
+
         Output.flush();
     }
 
     pub fn run(
+        reporter: *CommandLineReporter,
         vm: *JSC.VirtualMachine,
         file_name: string,
         _: std.mem.Allocator,
@@ -174,12 +181,26 @@ pub const TestCommand = struct {
         defer {
             js_ast.Expr.Data.Store.reset();
             js_ast.Stmt.Data.Store.reset();
+
+            if (vm.log.errors > 0) {
+                if (Output.enable_ansi_colors) {
+                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                } else {
+                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                }
+                vm.log.msgs.clearRetainingCapacity();
+                vm.log.errors = 0;
+            }
+
             Output.flush();
         }
 
+        var file_start = reporter.jest.files.len;
         var resolution = try vm.bundler.resolveEntryPoint(file_name);
+
         var promise = try vm.loadEntryPoint(resolution.path_pair.primary.text);
-        while (promise.status(vm.global.vm()) == .pending) {
+
+        while (promise.status(vm.global.vm()) == .Pending) {
             vm.tick();
         }
 
@@ -190,5 +211,14 @@ pub const TestCommand = struct {
         {
             vm.defaultErrorHandler(result, null);
         }
+
+        reporter.updateDots();
+
+        var modules: []*Jest.DescribeScope = reporter.jest.files.items(.module_scope)[file_start..];
+        for (modules) |module| {
+            module.runTests(vm.global.ref());
+        }
+
+        reporter.updateDots();
     }
 };

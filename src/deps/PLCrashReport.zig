@@ -9,6 +9,10 @@ extern fn copyCrashReportPath(buf: *[1024]u8) u16;
 pub export fn PLCrashReportHandler(_: ?*anyopaque) void {
     root.PLCrashReportHandler();
 }
+export fn mkdirp(file_path: [*c]const u8) void {
+    var path = std.fs.path.dirname(std.mem.span(file_path orelse return)) orelse return;
+    std.fs.cwd().makePath(path) catch {};
+}
 
 pub fn start(
     comptime version: [*:0]const u8,

@@ -71,15 +71,6 @@ pub const JSObject = extern struct {
         });
     }
 
-    pub fn putDirect(this: *JSObject, globalThis: *JSGlobalObject, prop: *const ZigString, value: JSValue) void {
-        return cppFn("putDirect", .{
-            this,
-            globalThis,
-            prop,
-            value,
-        });
-    }
-
     pub const Extern = [_][]const u8{
         "putRecord",
         "create",
@@ -87,7 +78,6 @@ pub const JSObject = extern struct {
         "getIndex",
         "putAtIndex",
         "getDirect",
-        "putDirect",
     };
 };
 
@@ -1266,9 +1256,127 @@ pub const JSValue = enum(i64) {
     pub const include = "<JavaScriptCore/JSValue.h>";
     pub const name = "JSC::JSValue";
     pub const namespace = "JSC";
+    pub const JSType = enum(u8) {
+        // The Cell value must come before any JS that is a JSCell.
+        Cell,
+        String,
+        HeapBigInt,
+        Symbol,
+
+        GetterSetter,
+        CustomGetterSetter,
+        APIValueWrapper,
+
+        NativeExecutable,
+
+        ProgramExecutable,
+        ModuleProgramExecutable,
+        EvalExecutable,
+        FunctionExecutable,
+
+        UnlinkedFunctionExecutable,
+
+        UnlinkedProgramCodeBlock,
+        UnlinkedModuleProgramCodeBlock,
+        UnlinkedEvalCodeBlock,
+        UnlinkedFunctionCodeBlock,
+
+        CodeBlock,
+
+        JSImmutableButterfly,
+        JSSourceCode,
+        JSScriptFetcher,
+        JSScriptFetchParameters,
+
+        // The Object value must come before any JS that is a subclass of JSObject.
+        Object,
+        FinalObject,
+        JSCallee,
+        JSFunction,
+        InternalFunction,
+        NullSetterFunction,
+        BooleanObject,
+        NumberObject,
+        ErrorInstance,
+        PureForwardingProxy,
+        DirectArguments,
+        ScopedArguments,
+        ClonedArguments,
+
+        // Start JSArray types.
+        Array,
+        DerivedArray,
+        // End JSArray types.
+
+        ArrayBuffer,
+
+        // Start JSArrayBufferView types. Keep in sync with the order of FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW.
+        Int8Array,
+        Uint8Array,
+        Uint8ClampedArray,
+        Int16Array,
+        Uint16Array,
+        Int32Array,
+        Uint32Array,
+        Float32Array,
+        Float64Array,
+        BigInt64Array,
+        BigUint64Array,
+        DataView,
+        // End JSArrayBufferView types.
+
+        // JSScope <- JSWithScope
+        //         <- StrictEvalActivation
+        //         <- JSSymbolTableObject  <- JSLexicalEnvironment      <- JSModuleEnvironment
+        //                                 <- JSSegmentedVariableObject <- JSGlobalLexicalEnvironment
+        //                                                              <- JSGlobalObject
+        // Start JSScope types.
+        // Start environment record types.
+        GlobalObject,
+        GlobalLexicalEnvironment,
+        LexicalEnvironment,
+        ModuleEnvironment,
+        StrictEvalActivation,
+        // End environment record types.
+        WithScope,
+        // End JSScope types.
+
+        ModuleNamespaceObject,
+        RegExpObject,
+        JSDate,
+        ProxyObject,
+        JSGenerator,
+        JSAsyncGenerator,
+        JSArrayIterator,
+        JSMapIterator,
+        JSSetIterator,
+        JSStringIterator,
+        JSPromise,
+        JSMap,
+        JSSet,
+        JSWeakMap,
+        JSWeakSet,
+        WebAssemblyModule,
+        // Start StringObject types.
+        StringObject,
+        DerivedStringObject,
+        // End StringObject types.
+
+        MaxJS = 0b11111111,
+        _,
+
+        pub const LastMaybeFalsyCellPrimitive = JSType.HeapBigInt;
+        pub const LastJSCObject = JSType.DerivedStringObject; // This is the last "JSC" Object type. After this, we have embedder's (e.g., WebCore) extended object types.
+    };
 
     pub inline fn cast(ptr: anytype) JSValue {
         return @intToEnum(JSValue, @intCast(i64, @ptrToInt(ptr)));
+    }
+
+    pub fn jsType(
+        this: JSValue,
+    ) JSType {
+        return cppFn("jsType", .{this});
     }
 
     pub fn createEmptyObject(global: *JSGlobalObject, len: usize) JSValue {
@@ -1282,6 +1390,7 @@ pub const JSValue = enum(i64) {
     pub fn getErrorsProperty(this: JSValue, globalObject: *JSGlobalObject) JSValue {
         return cppFn("getErrorsProperty", .{ this, globalObject });
     }
+
     pub fn jsNumber(number: anytype) JSValue {
         return switch (@TypeOf(number)) {
             f64 => @call(.{ .modifier = .always_inline }, jsNumberFromDouble, .{number}),
@@ -1455,6 +1564,10 @@ pub const JSValue = enum(i64) {
         return cppFn("toWTFString", .{ this, globalThis });
     }
 
+    pub fn jsonStringify(this: JSValue, globalThis: *JSGlobalObject, indent: u32, out: *ZigString) void {
+        return cppFn("jsonStringify", .{ this, globalThis, indent, out });
+    }
+
     // On exception, this returns null, to make exception checks faster.
     pub fn toStringOrNull(this: JSValue, globalThis: *JSGlobalObject) *JSString {
         return cppFn("toStringOrNull", .{ this, globalThis });
@@ -1564,7 +1677,7 @@ pub const JSValue = enum(i64) {
         return @intToPtr(*anyopaque, @intCast(usize, @enumToInt(this)));
     }
 
-    pub const Extern = [_][]const u8{ "isTerminationException", "isSameValue", "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "get", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
+    pub const Extern = [_][]const u8{ "jsType", "jsonStringify", "kind_", "isTerminationException", "isSameValue", "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "get", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
 };
 
 extern "c" fn Microtask__run(*Microtask, *JSGlobalObject) void;

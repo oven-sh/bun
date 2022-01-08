@@ -675,6 +675,14 @@ pub const ZigConsoleClient = struct {
         };
     }
 
+    pub const MessageLevel = enum(u32) {
+        Log = 0,
+        Warning = 1,
+        Error = 2,
+        Debug = 3,
+        Info = 4,
+    };
+
     /// TODO: support %s %d %f %o %O
     /// https://console.spec.whatwg.org/#formatter
     pub fn messageWithTypeAndLevel(
@@ -683,7 +691,7 @@ pub const ZigConsoleClient = struct {
         //message_type: u32,
         _: u32,
         //message_level: u32,
-        _: u32,
+        level: MessageLevel,
         global: *JSGlobalObject,
         vals: [*]JSValue,
         len: usize,
@@ -694,26 +702,35 @@ pub const ZigConsoleClient = struct {
 
         var console = JS.VirtualMachine.vm.console;
         var i: usize = 0;
-        var buffered_writer = console.writer;
+        const enable_colors = if (level == .Warning or level == .Error)
+            Output.enable_ansi_colors_stderr
+        else
+            Output.enable_ansi_colors_stdout;
+        var buffered_writer = if (level == .Warning or level == .Error)
+            console.error_writer
+        else
+            console.writer;
         var writer = buffered_writer.writer();
 
         if (len == 1) {
-            if (Output.enable_ansi_colors) {
+            if (enable_colors) {
                 FormattableType.format(
                     @TypeOf(buffered_writer.unbuffered_writer),
                     buffered_writer.unbuffered_writer,
                     vals[0],
                     global,
+                    0,
                     true,
-                ) catch {};
+                );
             } else {
                 FormattableType.format(
                     @TypeOf(buffered_writer.unbuffered_writer),
                     buffered_writer.unbuffered_writer,
                     vals[0],
                     global,
+                    0,
                     false,
-                ) catch {};
+                );
             }
 
             _ = buffered_writer.unbuffered_writer.write("\n") catch 0;
@@ -724,17 +741,17 @@ pub const ZigConsoleClient = struct {
         var values = vals[0..len];
         defer buffered_writer.flush() catch {};
 
-        if (Output.enable_ansi_colors) {
+        if (enable_colors) {
             while (i < len) : (i += 1) {
                 _ = if (i > 0) (writer.write(" ") catch 0);
 
-                FormattableType.format(@TypeOf(writer), writer, values[i], global, true) catch {};
+                FormattableType.format(@TypeOf(writer), writer, values[i], global, 0, true);
             }
         } else {
             while (i < len) : (i += 1) {
                 _ = if (i > 0) (writer.write(" ") catch 0);
 
-                FormattableType.format(@TypeOf(writer), writer, values[i], global, false) catch {};
+                FormattableType.format(@TypeOf(writer), writer, values[i], global, 0, false);
             }
         }
 
@@ -742,80 +759,339 @@ pub const ZigConsoleClient = struct {
     }
 
     const FormattableType = enum {
-        Error,
         String,
         Undefined,
         Double,
         Integer,
         Null,
         Boolean,
+        Array,
+        Object,
+        Function,
+        Class,
+        Error,
+        TypedArray,
+        Map,
+        Set,
+        Symbol,
+        BigInt,
+
+        GlobalObject,
+        Private,
+        Promise,
+
+        JSON,
+        NativeCode,
+        ArrayBuffer,
+
         const CellType = CAPI.CellType;
         threadlocal var name_buf: [512]u8 = undefined;
-        pub fn format(comptime Writer: type, writer: Writer, value: JSValue, globalThis: *JSGlobalObject, comptime enable_ansi_colors: bool) anyerror!void {
+
+        pub fn printAs(
+            comptime Format: FormattableType,
+            comptime Writer: type,
+            writer_: Writer,
+            value: JSValue,
+            globalThis: *JSGlobalObject,
+            indent_: u16,
+            jsType: JSValue.JSType,
+            comptime enable_ansi_colors: bool,
+        ) void {
+            const WrappedWriter = struct {
+                ctx: Writer,
+
+                pub inline fn print(this: *@This(), comptime fmt: string, args: anytype) void {
+                    this.ctx.print(fmt, args) catch unreachable;
+                }
+
+                pub inline fn writeAll(this: *@This(), buf: []const u8) void {
+                    this.ctx.writeAll(buf) catch unreachable;
+                }
+            };
+            var writer = WrappedWriter{ .ctx = writer_ };
+
+            switch (comptime Format) {
+                .String => {
+                    var str = ZigString.init("");
+                    value.toZigString(&str, JS.VirtualMachine.vm.global);
+                    if (jsType == .RegExpObject) {
+                        writer.print(comptime Output.prettyFmt("<r><red>", enable_ansi_colors), .{});
+                    }
+
+                    writer.print("{}", .{str});
+
+                    if (jsType == .RegExpObject) {
+                        writer.print(comptime Output.prettyFmt("<r>", enable_ansi_colors), .{});
+                    }
+                },
+                .Integer => {
+                    writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{value.toInt32()});
+                },
+                .Double => {
+                    writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{value.asNumber()});
+                },
+                .Undefined => {
+                    writer.print(comptime Output.prettyFmt("<r><d>undefined<r>", enable_ansi_colors), .{});
+                },
+                .Null => {
+                    writer.print(comptime Output.prettyFmt("<r><yellow>null<r>", enable_ansi_colors), .{});
+                },
+                .Error => {
+                    JS.VirtualMachine.printErrorlikeObject(JS.VirtualMachine.vm, value, null, null, enable_ansi_colors);
+                },
+                .Class => {
+                    var printable = ZigString.init(&name_buf);
+                    value.getClassName(globalThis, &printable);
+                    if (printable.len == 0) {
+                        writer.print(comptime Output.prettyFmt("[class]", enable_ansi_colors), .{});
+                    } else {
+                        writer.print(comptime Output.prettyFmt("[class <cyan>{}<r>]", enable_ansi_colors), .{printable});
+                    }
+                },
+                .Function => {
+                    var printable = ZigString.init(&name_buf);
+                    value.getNameProperty(globalThis, &printable);
+
+                    if (printable.len == 0) {
+                        writer.print(comptime Output.prettyFmt("<cyan>[Function]<r>", enable_ansi_colors), .{});
+                    } else {
+                        writer.print(comptime Output.prettyFmt("<cyan>[Function<d>:<r> <cyan>{}]<r>", enable_ansi_colors), .{printable});
+                    }
+                },
+                .Array => {
+                    const len = value.getLengthOfArray(globalThis);
+                    if (len == 0) {
+                        writer.writeAll("[]");
+                        return;
+                    }
+
+                    writer.writeAll("[ ");
+                    var i: u32 = 0;
+                    var ref = value.asObjectRef();
+                    while (i < len) : (i += 1) {
+                        if (i > 0) {
+                            writer.writeAll(", ");
+                        }
+
+                        const element = JSValue.fromRef(CAPI.JSObjectGetPropertyAtIndex(globalThis.ref(), ref, i, null));
+                        FormattableType.format(Writer, writer_, element, globalThis, indent_, enable_ansi_colors);
+                    }
+
+                    writer.writeAll(" ]");
+                },
+                .Private => {
+                    if (CAPI.JSObjectGetPrivate(value.asRef())) |private_data_ptr| {
+                        const priv_data = JSPrivateDataPtr.from(private_data_ptr);
+                        switch (priv_data.tag()) {
+                            .BuildError => {
+                                const build_error = priv_data.as(JS.BuildError);
+                                build_error.msg.formatWriter(Writer, writer_, enable_ansi_colors) catch {};
+                                return;
+                            },
+                            .ResolveError => {
+                                const resolve_error = priv_data.as(JS.ResolveError);
+                                resolve_error.msg.formatWriter(Writer, writer_, enable_ansi_colors) catch {};
+                                return;
+                            },
+                            else => {},
+                        }
+                    }
+
+                    writer.writeAll("[native code]");
+                },
+                .NativeCode => {
+                    writer.writeAll("[native code]");
+                },
+                .Promise => {
+                    writer.writeAll("Promise { " ++ comptime Output.prettyFmt("<r><cyan>", enable_ansi_colors));
+
+                    switch (JSPromise.status(@ptrCast(*JSPromise, value.asObjectRef().?), globalThis.vm())) {
+                        JSPromise.Status.Pending => {
+                            writer.writeAll("<pending>");
+                        },
+                        JSPromise.Status.Fulfilled => {
+                            writer.writeAll("<resolved>");
+                        },
+                        JSPromise.Status.Rejected => {
+                            writer.writeAll("<rejected>");
+                        },
+                    }
+
+                    writer.writeAll(comptime Output.prettyFmt("<r>", enable_ansi_colors) ++ " }");
+                },
+                .Boolean => {
+                    if (value.toBoolean()) {
+                        writer.writeAll(comptime Output.prettyFmt("<r><yellow>true<r>", enable_ansi_colors));
+                    } else {
+                        writer.writeAll(comptime Output.prettyFmt("<r><yellow>false<r>", enable_ansi_colors));
+                    }
+                },
+                .GlobalObject => {
+                    writer.writeAll(comptime Output.prettyFmt("<cyan>[globalThis]<r>", enable_ansi_colors));
+                },
+                .Map => {},
+                .Set => {},
+                .JSON => {
+                    var str = ZigString.init("");
+                    value.jsonStringify(globalThis, indent_, &str);
+                    if (jsType == JSValue.JSType.JSDate) {
+                        // in the code for printing dates, it never exceeds this amount
+                        var iso_string_buf: [36]u8 = undefined;
+                        var out_buf: []const u8 = std.fmt.bufPrint(&iso_string_buf, "{}", .{str}) catch "";
+                        if (out_buf.len > 2) {
+                            // trim the quotes
+                            out_buf = out_buf[1 .. out_buf.len - 1];
+                        }
+
+                        writer.print(comptime Output.prettyFmt("<r><magenta>{s}<r>", enable_ansi_colors), .{out_buf});
+                        return;
+                    }
+
+                    writer.print("{}", .{str});
+                },
+                .Object => {
+                    var object = value.asObjectRef();
+                    var array = CAPI.JSObjectCopyPropertyNames(globalThis.ref(), object);
+                    defer CAPI.JSPropertyNameArrayRelease(array);
+                    const count_ = CAPI.JSPropertyNameArrayGetCount(array);
+                    var i: usize = 0;
+
+                    var name_str = ZigString.init("");
+                    value.getPrototype(globalThis).getNameProperty(globalThis, &name_str);
+
+                    if (name_str.len > 0 and !strings.eqlComptime(name_str.slice(), "Object")) {
+                        writer.print("{} ", .{name_str});
+                    }
+
+                    if (count_ == 0) {
+                        writer.writeAll("{ }");
+                        return;
+                    }
+
+                    writer.writeAll("{ ");
+
+                    while (i < count_) : (i += 1) {
+                        var property_name_ref = CAPI.JSPropertyNameArrayGetNameAtIndex(array, i);
+                        defer CAPI.JSStringRelease(property_name_ref);
+                        var prop = CAPI.JSStringGetCharacters8Ptr(property_name_ref)[0..CAPI.JSStringGetLength(property_name_ref)];
+                        writer.print(
+                            comptime Output.prettyFmt("{s}<d>:<r> ", enable_ansi_colors),
+                            .{prop[0..@minimum(prop.len, 128)]},
+                        );
+                        var property_value = CAPI.JSObjectGetProperty(globalThis.ref(), object, property_name_ref, null);
+                        FormattableType.format(Writer, writer_, JSValue.fromRef(property_value), globalThis, indent_, enable_ansi_colors);
+
+                        if (i + 1 < count_) {
+                            writer.writeAll(", ");
+                        }
+                    }
+
+                    writer.writeAll(" }");
+                },
+                else => {},
+            }
+        }
+
+        pub fn format(comptime Writer: type, writer: Writer, value: JSValue, globalThis: *JSGlobalObject, indent_: u16, comptime enable_ansi_colors: bool) void {
             if (comptime @hasDecl(@import("root"), "bindgen")) {
                 return;
             }
 
-            if (value.isCell()) {
-                if (CAPI.JSObjectGetPrivate(value.asRef())) |private_data_ptr| {
-                    const priv_data = JSPrivateDataPtr.from(private_data_ptr);
-                    switch (priv_data.tag()) {
-                        .BuildError => {
-                            const build_error = priv_data.as(JS.BuildError);
-                            try build_error.msg.formatWriter(Writer, writer, enable_ansi_colors);
-                            return;
-                        },
-                        .ResolveError => {
-                            const resolve_error = priv_data.as(JS.ResolveError);
-                            try resolve_error.msg.formatWriter(Writer, writer, enable_ansi_colors);
-                            return;
-                        },
-                        else => {},
-                    }
-                }
-
-                switch (@intToEnum(CellType, value.asCell().getType())) {
-                    CellType.ErrorInstanceType => {
-                        JS.VirtualMachine.printErrorlikeObject(JS.VirtualMachine.vm, value, null, null, enable_ansi_colors);
-                        return;
-                    },
-
-                    CellType.GlobalObjectType => {
-                        _ = try writer.write("[globalThis]");
-                        return;
-                    },
-                    else => {},
-                }
+            if (value.isInt32()) {
+                return printAs(.Integer, Writer, writer, value, globalThis, indent_, .Cell, enable_ansi_colors);
+            } else if (value.isNumber()) {
+                return printAs(.Double, Writer, writer, value, globalThis, indent_, .Cell, enable_ansi_colors);
+            } else if (value.isUndefined()) {
+                return printAs(.Undefined, Writer, writer, value, globalThis, indent_, .Cell, enable_ansi_colors);
+            } else if (value.isNull()) {
+                return printAs(.Null, Writer, writer, value, globalThis, indent_, .Cell, enable_ansi_colors);
+            } else if (value.isBoolean()) {
+                return printAs(.Boolean, Writer, writer, value, globalThis, indent_, .Cell, enable_ansi_colors);
             }
 
-            if (value.isInt32()) {
-                try writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{value.toInt32()});
-            } else if (value.isNumber()) {
-                try writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{value.asNumber()});
-            } else if (value.isUndefined()) {
-                try writer.print(comptime Output.prettyFmt("<r><d>undefined<r>", enable_ansi_colors), .{});
-            } else if (value.isNull()) {
-                try writer.print(comptime Output.prettyFmt("<r><yellow>null<r>", enable_ansi_colors), .{});
-            } else if (value.isBoolean()) {
-                if (value.toBoolean()) {
-                    try writer.print(comptime Output.prettyFmt("<r><yellow>true<r>", enable_ansi_colors), .{});
-                } else {
-                    try writer.print(comptime Output.prettyFmt("<r><yellow>false<r>", enable_ansi_colors), .{});
-                }
-                // } else if (value.isSymbol()) {
-                //     try writer.print(comptime Output.prettyFmt("<r><yellow>Symbol(\"{s}\")<r>", enable_ansi_colors), .{ value.getDescriptionProperty() });
-            } else if (value.isClass(globalThis)) {
-                var printable = ZigString.init(&name_buf);
-                value.getClassName(globalThis, &printable);
-                try writer.print("[class {}]", .{printable});
-            } else if (value.isCallable(globalThis.vm())) {
-                var printable = ZigString.init(&name_buf);
-                value.getNameProperty(globalThis, &printable);
-                try writer.print("[Function {}]", .{printable});
-            } else {
-                var str = ZigString.init("");
-                value.toZigString(&str, JS.VirtualMachine.vm.global);
-                try writer.print("{}", .{str});
+            const callable = value.isCallable(globalThis.vm());
+
+            if (value.isClass(globalThis) and !callable) {
+                return printAs(.Class, Writer, writer, value, globalThis, indent_, .Cell, enable_ansi_colors);
+            }
+
+            if (callable) {
+                return printAs(.Function, Writer, writer, value, globalThis, indent_, .Cell, enable_ansi_colors);
+            }
+
+            if (value.isCell() and CAPI.JSObjectGetPrivate(value.asObjectRef()) != null)
+                return printAs(.Private, Writer, writer, value, globalThis, indent_, .Cell, enable_ansi_colors);
+
+            const js_type = value.jsType();
+            switch (js_type) {
+                JSValue.JSType.ErrorInstance => return printAs(.Error, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
+                JSValue.JSType.NumberObject => return printAs(.Double, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
+                JSValue.JSType.DerivedArray, JSValue.JSType.Array => return printAs(.Array, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
+
+                JSValue.JSType.RegExpObject,
+                JSValue.JSType.DerivedStringObject,
+                JSValue.JSType.String,
+                JSValue.JSType.StringObject,
+                JSValue.JSType.Symbol,
+                => return printAs(
+                    .String,
+                    Writer,
+                    writer,
+                    value,
+                    globalThis,
+                    indent_,
+                    js_type,
+                    enable_ansi_colors,
+                ),
+                JSValue.JSType.BooleanObject => return printAs(.Boolean, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
+                JSValue.JSType.JSFunction => return printAs(.Function, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
+                JSValue.JSType.JSWeakMap, JSValue.JSType.JSMap => return printAs(.Map, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
+                JSValue.JSType.JSWeakSet, JSValue.JSType.JSSet => return printAs(.Set, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
+                JSValue.JSType.JSDate => return printAs(.JSON, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
+                JSValue.JSType.JSPromise => return printAs(.Promise, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
+                JSValue.JSType.Object, JSValue.JSType.FinalObject => return printAs(.Object, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
+
+                JSValue.JSType.Int8Array,
+                JSValue.JSType.Uint8Array,
+                JSValue.JSType.Uint8ClampedArray,
+                JSValue.JSType.Int16Array,
+                JSValue.JSType.Uint16Array,
+                JSValue.JSType.Int32Array,
+                JSValue.JSType.Uint32Array,
+                JSValue.JSType.Float32Array,
+                JSValue.JSType.Float64Array,
+                JSValue.JSType.BigInt64Array,
+                JSValue.JSType.BigUint64Array,
+                => return printAs(.TypedArray, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
+
+                // None of these should ever exist here
+                // But we're going to check anyway
+                .GetterSetter,
+                .CustomGetterSetter,
+                .APIValueWrapper,
+                .NativeExecutable,
+                .ProgramExecutable,
+                .ModuleProgramExecutable,
+                .EvalExecutable,
+                .FunctionExecutable,
+                .UnlinkedFunctionExecutable,
+                .UnlinkedProgramCodeBlock,
+                .UnlinkedModuleProgramCodeBlock,
+                .UnlinkedEvalCodeBlock,
+                .UnlinkedFunctionCodeBlock,
+                .CodeBlock,
+                .JSImmutableButterfly,
+                .JSSourceCode,
+                .JSScriptFetcher,
+                .JSScriptFetchParameters,
+                .JSCallee,
+                .GlobalLexicalEnvironment,
+                .LexicalEnvironment,
+                .ModuleEnvironment,
+                .StrictEvalActivation,
+                .WithScope,
+                => return printAs(.NativeCode, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
+                else => return printAs(.JSON, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
             }
         }
     };

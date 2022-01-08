@@ -20,6 +20,7 @@
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/JSModuleRecord.h>
 #include <JavaScriptCore/JSNativeStdFunction.h>
+#include <JavaScriptCore/JSONObject.h>
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSSet.h>
 #include <JavaScriptCore/JSString.h>
@@ -146,6 +147,19 @@ void JSC__JSValue__putRecord(JSC__JSValue objectValue, JSC__JSGlobalObject *glob
   object->methodTable(global->vm())->defineOwnProperty(object, global, ident, descriptor, true);
   object->putDirect(global->vm(), ident, descriptor.value());
   scope.release();
+}
+
+void JSC__JSValue__jsonStringify(JSC__JSValue JSValue0, JSC__JSGlobalObject *arg1, uint32_t arg2,
+                                 ZigString *arg3) {
+  JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+  WTF::String str = JSC::JSONStringify(arg1, value, (unsigned)arg2);
+  *arg3 = Zig::toZigString(str);
+}
+unsigned char JSC__JSValue__jsType(JSC__JSValue JSValue0) {
+  JSC::JSValue jsValue = JSC::JSValue::decode(JSValue0);
+  if (!jsValue.isCell()) return 0;
+
+  return jsValue.asCell()->type();
 }
 
 // This is very naive!

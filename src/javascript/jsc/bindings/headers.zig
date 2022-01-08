@@ -132,7 +132,6 @@ pub extern fn JSC__JSObject__create(arg0: [*c]JSC__JSGlobalObject, arg1: usize, 
 pub extern fn JSC__JSObject__getArrayLength(arg0: [*c]JSC__JSObject) usize;
 pub extern fn JSC__JSObject__getDirect(arg0: [*c]JSC__JSObject, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]const ZigString) JSC__JSValue;
 pub extern fn JSC__JSObject__getIndex(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: u32) JSC__JSValue;
-pub extern fn JSC__JSObject__putDirect(arg0: [*c]JSC__JSObject, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]const ZigString, JSValue3: JSC__JSValue) void;
 pub extern fn JSC__JSObject__putRecord(arg0: [*c]JSC__JSObject, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]ZigString, arg3: [*c]ZigString, arg4: usize) void;
 pub extern fn ZigString__to16BitValue(arg0: [*c]const ZigString, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toErrorInstance(arg0: [*c]const ZigString, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
@@ -316,7 +315,9 @@ pub extern fn JSC__JSValue__jsNumberFromInt32(arg0: i32) JSC__JSValue;
 pub extern fn JSC__JSValue__jsNumberFromInt64(arg0: i64) JSC__JSValue;
 pub extern fn JSC__JSValue__jsNumberFromU16(arg0: u16) JSC__JSValue;
 pub extern fn JSC__JSValue__jsNumberFromUint64(arg0: u64) JSC__JSValue;
+pub extern fn JSC__JSValue__jsonStringify(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: u32, arg3: [*c]ZigString) void;
 pub extern fn JSC__JSValue__jsTDZValue(...) JSC__JSValue;
+pub extern fn JSC__JSValue__jsType(JSValue0: JSC__JSValue) u8;
 pub extern fn JSC__JSValue__jsUndefined(...) JSC__JSValue;
 pub extern fn JSC__JSValue__putRecord(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]ZigString, arg3: [*c]ZigString, arg4: usize) void;
 pub extern fn JSC__JSValue__toBoolean(JSValue0: JSC__JSValue) bool;

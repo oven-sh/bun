@@ -27,3 +27,5 @@ console.log(function foooo() {});
 console.log(/FooRegex/);
 
 console.error("uh oh");
+
+console.log("Formatting specifier %s, %d ok", "foo", 123);

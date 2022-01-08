@@ -701,7 +701,6 @@ pub const ZigConsoleClient = struct {
         }
 
         var console = JS.VirtualMachine.vm.console;
-        var i: usize = 0;
         const enable_colors = if (level == .Warning or level == .Error)
             Output.enable_ansi_colors_stderr
         else
@@ -712,105 +711,414 @@ pub const ZigConsoleClient = struct {
             console.writer;
         var writer = buffered_writer.writer();
 
-        if (len == 1) {
-            if (enable_colors) {
-                FormattableType.format(
-                    @TypeOf(buffered_writer.unbuffered_writer),
-                    buffered_writer.unbuffered_writer,
-                    vals[0],
-                    global,
-                    0,
-                    true,
-                );
-            } else {
-                FormattableType.format(
-                    @TypeOf(buffered_writer.unbuffered_writer),
-                    buffered_writer.unbuffered_writer,
-                    vals[0],
-                    global,
-                    0,
-                    false,
-                );
-            }
+        const BufferedWriterType = @TypeOf(writer);
 
-            _ = buffered_writer.unbuffered_writer.write("\n") catch 0;
+        var fmt: Formatter = undefined;
+        if (len == 1) {
+            fmt = Formatter{ .remaining_values = &[_]JSValue{} };
+            const tag = Formatter.Tag.get(vals[0], global);
+
+            var unbuffered_writer = buffered_writer.unbuffered_writer.context.writer();
+            const UnbufferedWriterType = @TypeOf(unbuffered_writer);
+
+            if (tag.tag == .String) {
+                if (enable_colors) {
+                    fmt.format(
+                        tag,
+                        UnbufferedWriterType,
+                        unbuffered_writer,
+                        vals[0],
+                        global,
+                        true,
+                    );
+                } else {
+                    fmt.format(
+                        tag,
+                        UnbufferedWriterType,
+                        unbuffered_writer,
+                        vals[0],
+                        global,
+                        false,
+                    );
+                }
+                _ = unbuffered_writer.write("\n") catch 0;
+            } else {
+                defer buffered_writer.flush() catch {};
+                if (enable_colors) {
+                    fmt.format(
+                        tag,
+                        BufferedWriterType,
+                        writer,
+                        vals[0],
+                        global,
+                        true,
+                    );
+                } else {
+                    fmt.format(
+                        tag,
+                        BufferedWriterType,
+                        writer,
+                        vals[0],
+                        global,
+                        false,
+                    );
+                }
+                _ = writer.write("\n") catch 0;
+            }
 
             return;
         }
 
-        var values = vals[0..len];
         defer buffered_writer.flush() catch {};
 
-        if (enable_colors) {
-            while (i < len) : (i += 1) {
-                _ = if (i > 0) (writer.write(" ") catch 0);
+        var this_value = vals[0];
+        fmt = Formatter{ .remaining_values = vals[1..len] };
+        var tag: Formatter.Tag.Result = undefined;
 
-                FormattableType.format(@TypeOf(writer), writer, values[i], global, 0, true);
+        var any = false;
+        if (enable_colors) {
+            while (fmt.remaining_values.len > 0) {
+                if (any) {
+                    _ = writer.write(" ") catch 0;
+                }
+                any = true;
+
+                tag = Formatter.Tag.get(this_value, global);
+                if (tag.tag == .String and fmt.remaining_values.len > 0) {
+                    tag.tag = .StringPossiblyFormatted;
+                }
+
+                fmt.format(tag, BufferedWriterType, writer, this_value, global, true);
+                if (fmt.remaining_values.len == 0) break;
+                this_value = fmt.remaining_values[0];
+                fmt.remaining_values = fmt.remaining_values[1..];
             }
         } else {
-            while (i < len) : (i += 1) {
-                _ = if (i > 0) (writer.write(" ") catch 0);
+            while (fmt.remaining_values.len > 0) {
+                if (any) {
+                    _ = writer.write(" ") catch 0;
+                }
+                any = true;
+                tag = Formatter.Tag.get(this_value, global);
+                if (tag.tag == .String and fmt.remaining_values.len > 0) {
+                    tag.tag = .StringPossiblyFormatted;
+                }
 
-                FormattableType.format(@TypeOf(writer), writer, values[i], global, 0, false);
+                fmt.format(tag, BufferedWriterType, writer, this_value, global, false);
+                if (fmt.remaining_values.len == 0) break;
+                this_value = fmt.remaining_values[0];
+                fmt.remaining_values = fmt.remaining_values[1..];
             }
         }
 
         _ = writer.write("\n") catch 0;
     }
 
-    const FormattableType = enum {
-        String,
-        Undefined,
-        Double,
-        Integer,
-        Null,
-        Boolean,
-        Array,
-        Object,
-        Function,
-        Class,
-        Error,
-        TypedArray,
-        Map,
-        Set,
-        Symbol,
-        BigInt,
+    const Formatter = struct {
+        remaining_values: []JSValue,
 
-        GlobalObject,
-        Private,
-        Promise,
+        pub const Tag = enum {
+            StringPossiblyFormatted,
+            String,
+            Undefined,
+            Double,
+            Integer,
+            Null,
+            Boolean,
+            Array,
+            Object,
+            Function,
+            Class,
+            Error,
+            TypedArray,
+            Map,
+            Set,
+            Symbol,
+            BigInt,
 
-        JSON,
-        NativeCode,
-        ArrayBuffer,
+            GlobalObject,
+            Private,
+            Promise,
+
+            JSON,
+            NativeCode,
+            ArrayBuffer,
+
+            const Result = struct {
+                tag: Tag,
+                cell: JSValue.JSType = JSValue.JSType.Cell,
+            };
+
+            pub fn get(value: JSValue, globalThis: *JSGlobalObject) Result {
+                if (value.isInt32()) {
+                    return .{
+                        .tag = .Integer,
+                    };
+                } else if (value.isNumber()) {
+                    return .{
+                        .tag = .Double,
+                    };
+                } else if (value.isUndefined()) {
+                    return .{
+                        .tag = .Undefined,
+                    };
+                } else if (value.isNull()) {
+                    return .{
+                        .tag = .Null,
+                    };
+                } else if (value.isBoolean()) {
+                    return .{
+                        .tag = .Boolean,
+                    };
+                }
+
+                const callable = value.isCallable(globalThis.vm());
+
+                if (value.isClass(globalThis) and !callable) {
+                    return .{
+                        .tag = .Class,
+                    };
+                }
+
+                if (callable) {
+                    return .{
+                        .tag = .Function,
+                    };
+                }
+
+                if (value.isCell() and CAPI.JSObjectGetPrivate(value.asObjectRef()) != null)
+                    return .{
+                        .tag = .Private,
+                    };
+
+                const js_type = value.jsType();
+                return .{
+                    .tag = switch (js_type) {
+                        JSValue.JSType.ErrorInstance => .Error,
+                        JSValue.JSType.NumberObject => .Double,
+                        JSValue.JSType.DerivedArray, JSValue.JSType.Array => .Array,
+                        JSValue.JSType.DerivedStringObject, JSValue.JSType.String, JSValue.JSType.StringObject => .String,
+                        JSValue.JSType.RegExpObject,
+                        JSValue.JSType.Symbol,
+                        => .String,
+                        JSValue.JSType.BooleanObject => .Boolean,
+                        JSValue.JSType.JSFunction => .Function,
+                        JSValue.JSType.JSWeakMap, JSValue.JSType.JSMap => .Map,
+                        JSValue.JSType.JSWeakSet, JSValue.JSType.JSSet => .Set,
+                        JSValue.JSType.JSDate => .JSON,
+                        JSValue.JSType.JSPromise => .Promise,
+                        JSValue.JSType.Object, JSValue.JSType.FinalObject => .Object,
+
+                        JSValue.JSType.Int8Array,
+                        JSValue.JSType.Uint8Array,
+                        JSValue.JSType.Uint8ClampedArray,
+                        JSValue.JSType.Int16Array,
+                        JSValue.JSType.Uint16Array,
+                        JSValue.JSType.Int32Array,
+                        JSValue.JSType.Uint32Array,
+                        JSValue.JSType.Float32Array,
+                        JSValue.JSType.Float64Array,
+                        JSValue.JSType.BigInt64Array,
+                        JSValue.JSType.BigUint64Array,
+                        => .TypedArray,
+
+                        // None of these should ever exist here
+                        // But we're going to check anyway
+                        .GetterSetter,
+                        .CustomGetterSetter,
+                        .APIValueWrapper,
+                        .NativeExecutable,
+                        .ProgramExecutable,
+                        .ModuleProgramExecutable,
+                        .EvalExecutable,
+                        .FunctionExecutable,
+                        .UnlinkedFunctionExecutable,
+                        .UnlinkedProgramCodeBlock,
+                        .UnlinkedModuleProgramCodeBlock,
+                        .UnlinkedEvalCodeBlock,
+                        .UnlinkedFunctionCodeBlock,
+                        .CodeBlock,
+                        .JSImmutableButterfly,
+                        .JSSourceCode,
+                        .JSScriptFetcher,
+                        .JSScriptFetchParameters,
+                        .JSCallee,
+                        .GlobalLexicalEnvironment,
+                        .LexicalEnvironment,
+                        .ModuleEnvironment,
+                        .StrictEvalActivation,
+                        .WithScope,
+                        => .NativeCode,
+                        else => .JSON,
+                    },
+                    .cell = js_type,
+                };
+            }
+        };
 
         const CellType = CAPI.CellType;
         threadlocal var name_buf: [512]u8 = undefined;
 
+        fn writeWithFormatting(
+            this: *Formatter,
+            comptime Writer: type,
+            writer_: Writer,
+            comptime Slice: type,
+            slice_: Slice,
+            globalThis: *JSGlobalObject,
+            comptime enable_ansi_colors: bool,
+        ) void {
+            var writer = WrappedWriter(Writer){ .ctx = writer_ };
+            var slice = slice_;
+            var i: u32 = 0;
+            var len: u32 = @truncate(u32, slice.len);
+            while (i < len) : (i += 1) {
+                switch (slice[i]) {
+                    '%' => {
+                        i += 1;
+                        if (i >= len)
+                            break;
+
+                        switch (slice[i]) {
+                            's' => {
+                                writer.writeAll(slice[0 .. i - 1]);
+                                slice = slice[i + 1 ..];
+                                i = 0;
+                                len = @truncate(u32, slice.len);
+                                const next_value = this.remaining_values[0];
+                                this.remaining_values = this.remaining_values[1..];
+                                this.printAs(
+                                    .String,
+                                    Writer,
+                                    writer_,
+                                    next_value,
+                                    globalThis,
+                                    next_value.jsType(),
+                                    enable_ansi_colors,
+                                );
+                            },
+                            'f' => {
+                                writer.writeAll(slice[0 .. i - 1]);
+                                slice = slice[i + 1 ..];
+                                i = 0;
+                                len = @truncate(u32, slice.len);
+                                const next_value = this.remaining_values[0];
+                                this.remaining_values = this.remaining_values[1..];
+                                this.printAs(
+                                    .Double,
+                                    Writer,
+                                    writer_,
+                                    next_value,
+                                    globalThis,
+                                    next_value.jsType(),
+                                    enable_ansi_colors,
+                                );
+                            },
+                            'o' => {
+                                writer.writeAll(slice[0 .. i - 1]);
+                                slice = slice[i + 1 ..];
+                                i = 0;
+                                len = @truncate(u32, slice.len);
+                                const next_value = this.remaining_values[0];
+                                this.remaining_values = this.remaining_values[1..];
+                                this.format(
+                                    Tag.get(next_value, globalThis),
+                                    Writer,
+                                    writer_,
+                                    next_value,
+                                    globalThis,
+                                    enable_ansi_colors,
+                                );
+                            },
+                            'O' => {
+                                writer.writeAll(slice[0 .. i - 1]);
+                                slice = slice[i + 1 ..];
+                                i = 0;
+                                len = @truncate(u32, slice.len);
+                                const next_value = this.remaining_values[0];
+                                this.remaining_values = this.remaining_values[1..];
+                                this.printAs(
+                                    .Object,
+                                    Writer,
+                                    writer_,
+                                    next_value,
+                                    globalThis,
+                                    next_value.jsType(),
+                                    enable_ansi_colors,
+                                );
+                            },
+                            'd', 'i' => {
+                                writer.writeAll(slice[0 .. i - 1]);
+                                slice = slice[i + 1 ..];
+                                i = 0;
+                                len = @truncate(u32, slice.len);
+                                const next_value = this.remaining_values[0];
+                                this.remaining_values = this.remaining_values[1..];
+                                this.printAs(
+                                    .Integer,
+                                    Writer,
+                                    writer_,
+                                    next_value,
+                                    globalThis,
+                                    next_value.jsType(),
+                                    enable_ansi_colors,
+                                );
+                            },
+                            else => continue,
+                        }
+                    },
+                    '\\' => {
+                        i += 1;
+                        if (i >= len)
+                            break;
+                        if (slice[i] == '%') i += 1;
+                    },
+                    else => {},
+                }
+            }
+
+            if (slice.len > 0) writer.writeAll(slice);
+        }
+
+        pub fn WrappedWriter(comptime Writer: type) type {
+            return struct {
+                ctx: Writer,
+
+                pub fn print(self: *@This(), comptime fmt: string, args: anytype) void {
+                    self.ctx.print(fmt, args) catch unreachable;
+                }
+
+                pub inline fn writeAll(self: *@This(), buf: []const u8) void {
+                    self.ctx.writeAll(buf) catch unreachable;
+                }
+            };
+        }
+
         pub fn printAs(
-            comptime Format: FormattableType,
+            this: *Formatter,
+            comptime Format: Formatter.Tag,
             comptime Writer: type,
             writer_: Writer,
             value: JSValue,
             globalThis: *JSGlobalObject,
-            indent_: u16,
             jsType: JSValue.JSType,
             comptime enable_ansi_colors: bool,
         ) void {
-            const WrappedWriter = struct {
-                ctx: Writer,
-
-                pub inline fn print(this: *@This(), comptime fmt: string, args: anytype) void {
-                    this.ctx.print(fmt, args) catch unreachable;
-                }
-
-                pub inline fn writeAll(this: *@This(), buf: []const u8) void {
-                    this.ctx.writeAll(buf) catch unreachable;
-                }
-            };
-            var writer = WrappedWriter{ .ctx = writer_ };
+            var writer = WrappedWriter(Writer){ .ctx = writer_ };
 
             switch (comptime Format) {
+                .StringPossiblyFormatted => {
+                    var str = ZigString.init("");
+                    value.toZigString(&str, JS.VirtualMachine.vm.global);
+
+                    if (!str.is16Bit()) {
+                        const slice = str.slice();
+                        this.writeWithFormatting(Writer, writer_, @TypeOf(slice), slice, globalThis, enable_ansi_colors);
+                    } else {
+                        // TODO: UTF16
+                        writer.print("{}", .{str});
+                    }
+                },
                 .String => {
                     var str = ZigString.init("");
                     value.toZigString(&str, JS.VirtualMachine.vm.global);
@@ -874,7 +1182,7 @@ pub const ZigConsoleClient = struct {
                         }
 
                         const element = JSValue.fromRef(CAPI.JSObjectGetPropertyAtIndex(globalThis.ref(), ref, i, null));
-                        FormattableType.format(Writer, writer_, element, globalThis, indent_, enable_ansi_colors);
+                        this.format(Tag.get(element, globalThis), Writer, writer_, element, globalThis, enable_ansi_colors);
                     }
 
                     writer.writeAll(" ]");
@@ -933,7 +1241,7 @@ pub const ZigConsoleClient = struct {
                 .Set => {},
                 .JSON => {
                     var str = ZigString.init("");
-                    value.jsonStringify(globalThis, indent_, &str);
+                    value.jsonStringify(globalThis, 0, &str);
                     if (jsType == JSValue.JSType.JSDate) {
                         // in the code for printing dates, it never exceeds this amount
                         var iso_string_buf: [36]u8 = undefined;
@@ -979,7 +1287,7 @@ pub const ZigConsoleClient = struct {
                             .{prop[0..@minimum(prop.len, 128)]},
                         );
                         var property_value = CAPI.JSObjectGetProperty(globalThis.ref(), object, property_name_ref, null);
-                        FormattableType.format(Writer, writer_, JSValue.fromRef(property_value), globalThis, indent_, enable_ansi_colors);
+                        this.format(Tag.get(JSValue.fromRef(property_value), globalThis), Writer, writer_, JSValue.fromRef(property_value), globalThis, enable_ansi_colors);
 
                         if (i + 1 < count_) {
                             writer.writeAll(", ");
@@ -992,107 +1300,36 @@ pub const ZigConsoleClient = struct {
             }
         }
 
-        pub fn format(comptime Writer: type, writer: Writer, value: JSValue, globalThis: *JSGlobalObject, indent_: u16, comptime enable_ansi_colors: bool) void {
+        pub fn format(this: *Formatter, result: Tag.Result, comptime Writer: type, writer: Writer, value: JSValue, globalThis: *JSGlobalObject, comptime enable_ansi_colors: bool) void {
             if (comptime @hasDecl(@import("root"), "bindgen")) {
                 return;
             }
 
-            if (value.isInt32()) {
-                return printAs(.Integer, Writer, writer, value, globalThis, indent_, .Cell, enable_ansi_colors);
-            } else if (value.isNumber()) {
-                return printAs(.Double, Writer, writer, value, globalThis, indent_, .Cell, enable_ansi_colors);
-            } else if (value.isUndefined()) {
-                return printAs(.Undefined, Writer, writer, value, globalThis, indent_, .Cell, enable_ansi_colors);
-            } else if (value.isNull()) {
-                return printAs(.Null, Writer, writer, value, globalThis, indent_, .Cell, enable_ansi_colors);
-            } else if (value.isBoolean()) {
-                return printAs(.Boolean, Writer, writer, value, globalThis, indent_, .Cell, enable_ansi_colors);
-            }
-
-            const callable = value.isCallable(globalThis.vm());
-
-            if (value.isClass(globalThis) and !callable) {
-                return printAs(.Class, Writer, writer, value, globalThis, indent_, .Cell, enable_ansi_colors);
-            }
-
-            if (callable) {
-                return printAs(.Function, Writer, writer, value, globalThis, indent_, .Cell, enable_ansi_colors);
-            }
-
-            if (value.isCell() and CAPI.JSObjectGetPrivate(value.asObjectRef()) != null)
-                return printAs(.Private, Writer, writer, value, globalThis, indent_, .Cell, enable_ansi_colors);
-
-            const js_type = value.jsType();
-            switch (js_type) {
-                JSValue.JSType.ErrorInstance => return printAs(.Error, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
-                JSValue.JSType.NumberObject => return printAs(.Double, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
-                JSValue.JSType.DerivedArray, JSValue.JSType.Array => return printAs(.Array, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
-
-                JSValue.JSType.RegExpObject,
-                JSValue.JSType.DerivedStringObject,
-                JSValue.JSType.String,
-                JSValue.JSType.StringObject,
-                JSValue.JSType.Symbol,
-                => return printAs(
-                    .String,
-                    Writer,
-                    writer,
-                    value,
-                    globalThis,
-                    indent_,
-                    js_type,
-                    enable_ansi_colors,
-                ),
-                JSValue.JSType.BooleanObject => return printAs(.Boolean, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
-                JSValue.JSType.JSFunction => return printAs(.Function, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
-                JSValue.JSType.JSWeakMap, JSValue.JSType.JSMap => return printAs(.Map, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
-                JSValue.JSType.JSWeakSet, JSValue.JSType.JSSet => return printAs(.Set, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
-                JSValue.JSType.JSDate => return printAs(.JSON, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
-                JSValue.JSType.JSPromise => return printAs(.Promise, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
-                JSValue.JSType.Object, JSValue.JSType.FinalObject => return printAs(.Object, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
-
-                JSValue.JSType.Int8Array,
-                JSValue.JSType.Uint8Array,
-                JSValue.JSType.Uint8ClampedArray,
-                JSValue.JSType.Int16Array,
-                JSValue.JSType.Uint16Array,
-                JSValue.JSType.Int32Array,
-                JSValue.JSType.Uint32Array,
-                JSValue.JSType.Float32Array,
-                JSValue.JSType.Float64Array,
-                JSValue.JSType.BigInt64Array,
-                JSValue.JSType.BigUint64Array,
-                => return printAs(.TypedArray, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
-
-                // None of these should ever exist here
-                // But we're going to check anyway
-                .GetterSetter,
-                .CustomGetterSetter,
-                .APIValueWrapper,
-                .NativeExecutable,
-                .ProgramExecutable,
-                .ModuleProgramExecutable,
-                .EvalExecutable,
-                .FunctionExecutable,
-                .UnlinkedFunctionExecutable,
-                .UnlinkedProgramCodeBlock,
-                .UnlinkedModuleProgramCodeBlock,
-                .UnlinkedEvalCodeBlock,
-                .UnlinkedFunctionCodeBlock,
-                .CodeBlock,
-                .JSImmutableButterfly,
-                .JSSourceCode,
-                .JSScriptFetcher,
-                .JSScriptFetchParameters,
-                .JSCallee,
-                .GlobalLexicalEnvironment,
-                .LexicalEnvironment,
-                .ModuleEnvironment,
-                .StrictEvalActivation,
-                .WithScope,
-                => return printAs(.NativeCode, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
-                else => return printAs(.JSON, Writer, writer, value, globalThis, indent_, js_type, enable_ansi_colors),
-            }
+            return switch (result.tag) {
+                .StringPossiblyFormatted => this.printAs(.StringPossiblyFormatted, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
+                .String => this.printAs(.String, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
+                .Undefined => this.printAs(.Undefined, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
+                .Double => this.printAs(.Double, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
+                .Integer => this.printAs(.Integer, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
+                .Null => this.printAs(.Null, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
+                .Boolean => this.printAs(.Boolean, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
+                .Array => this.printAs(.Array, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
+                .Object => this.printAs(.Object, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
+                .Function => this.printAs(.Function, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
+                .Class => this.printAs(.Class, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
+                .Error => this.printAs(.Error, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
+                .TypedArray => this.printAs(.TypedArray, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
+                .Map => this.printAs(.Map, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
+                .Set => this.printAs(.Set, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
+                .Symbol => this.printAs(.Symbol, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
+                .BigInt => this.printAs(.BigInt, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
+                .GlobalObject => this.printAs(.GlobalObject, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
+                .Private => this.printAs(.Private, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
+                .Promise => this.printAs(.Promise, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
+                .JSON => this.printAs(.JSON, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
+                .NativeCode => this.printAs(.NativeCode, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
+                .ArrayBuffer => this.printAs(.ArrayBuffer, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
+            };
         }
     };
 

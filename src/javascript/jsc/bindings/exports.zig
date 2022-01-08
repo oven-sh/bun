@@ -681,6 +681,25 @@ pub const ZigConsoleClient = struct {
         Error = 2,
         Debug = 3,
         Info = 4,
+        _,
+    };
+
+    pub const MessageType = enum(u32) {
+        Log = 0,
+        Dir = 1,
+        DirXML = 2,
+        Table = 3,
+        Trace = 4,
+        StartGroup = 5,
+        StartGroupCollapsed = 6,
+        EndGroup = 7,
+        Clear = 8,
+        Assert = 9,
+        Timing = 10,
+        Profile = 11,
+        ProfileEnd = 12,
+        Image = 13,
+        _,
     };
 
     /// TODO: support %s %d %f %o %O
@@ -688,8 +707,7 @@ pub const ZigConsoleClient = struct {
     pub fn messageWithTypeAndLevel(
         //console_: ZigConsoleClient.Type,
         _: ZigConsoleClient.Type,
-        //message_type: u32,
-        _: u32,
+        message_type: MessageType,
         //message_level: u32,
         level: MessageLevel,
         global: *JSGlobalObject,
@@ -697,6 +715,11 @@ pub const ZigConsoleClient = struct {
         len: usize,
     ) callconv(.C) void {
         if (comptime @hasDecl(@import("root"), "bindgen")) {
+            return;
+        }
+
+        if (message_type == .Clear) {
+            Output.resetTerminal();
             return;
         }
 

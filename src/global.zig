@@ -215,6 +215,14 @@ pub const Output = struct {
         return source.stream.writer();
     }
 
+    pub fn resetTerminal() void {
+        if (!enable_ansi_colors) {
+            return;
+        }
+
+        _ = source.stream.write("\x1b[H") catch 0;
+    }
+
     pub fn flush() void {
         if (Environment.isNative and source_set) {
             source.buffered_stream.flush() catch {};

@@ -220,7 +220,11 @@ pub const Output = struct {
             return;
         }
 
-        _ = source.stream.write("\x1b[H") catch 0;
+        if (enable_ansi_colors_stderr) {
+            _ = source.error_stream.write("\x1b[H\x1b[2J") catch 0;
+        } else {
+            _ = source.stream.write("\x1b[H\x1b[2J") catch 0;
+        }
     }
 
     pub fn flush() void {

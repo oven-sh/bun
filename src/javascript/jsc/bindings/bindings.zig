@@ -146,6 +146,14 @@ pub const ZigString = extern struct {
         return std.mem.trim(u8, this.ptr[0..@minimum(this.len, std.math.maxInt(u32))], " \r\n");
     }
 
+    pub fn toValueAuto(this: *const ZigString, global: *JSGlobalObject) JSValue {
+        if (!this.is16Bit()) {
+            return this.toValue(global);
+        } else {
+            return this.to16BitValue(global);
+        }
+    }
+
     pub fn toValue(this: *const ZigString, global: *JSGlobalObject) JSValue {
         return shim.cppFn("toValue", .{ this, global });
     }
@@ -1367,6 +1375,13 @@ pub const JSValue = enum(i64) {
 
         pub const LastMaybeFalsyCellPrimitive = JSType.HeapBigInt;
         pub const LastJSCObject = JSType.DerivedStringObject; // This is the last "JSC" Object type. After this, we have embedder's (e.g., WebCore) extended object types.
+
+        pub inline fn isStringLike(this: JSType) bool {
+            return switch (this) {
+                .StringObject, .DerivedStringObject => true,
+                else => false,
+            };
+        }
     };
 
     pub inline fn cast(ptr: anytype) JSValue {
@@ -1674,7 +1689,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub inline fn asVoid(this: JSValue) *anyopaque {
-        return @intToPtr(*anyopaque, @intCast(usize, @enumToInt(this)));
+        return @intToPtr(*anyopaque, @bitCast(u64, @enumToInt(this)));
     }
 
     pub const Extern = [_][]const u8{ "jsType", "jsonStringify", "kind_", "isTerminationException", "isSameValue", "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "get", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };

@@ -13,6 +13,7 @@ const C = _global.C;
 const JavaScript = @import("./javascript.zig");
 const ResolveError = JavaScript.ResolveError;
 const BuildError = JavaScript.BuildError;
+const Bindings = @import("../../jsc.zig");
 const WebCore = @import("./webcore/response.zig");
 const Test = @import("./test/jest.zig");
 const Fetch = WebCore.Fetch;
@@ -1458,27 +1459,65 @@ pub fn NewClass(
     };
 }
 
+const JSValue = Bindings.JSValue;
+const ZigString = Bindings.ZigString;
+
+pub const PathString = packed struct {
+    pub usingnamespace _global.PathString;
+
+    pub fn from(value: JSValue, globalThis: js.JSContextRef, exception: js.ExceptionRef) PathString {
+        if (!value.jsType().isStringLike()) {
+            JSError(getAllocator(globalThis), "Only path strings are supported for now", .{}, globalThis, exception);
+            return PathString{};
+        }
+        var zig_str = ZigString.init("");
+        value.toZigString(&zig_str, globalThis);
+
+        if (zig_str.len > std.fs.MAX_PATH_BYTES) {
+            JSError(getAllocator(globalThis), "Path is too long", .{}, globalThis, exception);
+
+            return PathString{};
+        }
+
+        if (zig_str.is16Bit()) {
+            JSError(getAllocator(globalThis), "UTF-16 paths are not supported yet", .{}, globalThis, exception);
+            return PathString{};
+        }
+
+        return PathString.init(zig_str.slice());
+    }
+
+    pub inline fn asRef(this: PathString) js.JSValueRef {
+        return this.toValue().asObjectRef();
+    }
+
+    pub fn toValue(this: PathString) JSValue {
+        var zig_str = ZigString.init(this.slice());
+        zig_str.detectEncoding();
+
+        return zig_str.toValueGC(JavaScript.VirtualMachine.vm.global);
+    }
+};
+
 threadlocal var error_args: [1]js.JSValueRef = undefined;
 pub fn JSError(
-    allocator: std.mem.Allocator,
+    _: std.mem.Allocator,
     comptime fmt: string,
     args: anytype,
     ctx: js.JSContextRef,
     exception: ExceptionValueRef,
 ) void {
     if (comptime std.meta.fields(@TypeOf(args)).len == 0) {
-        var message = js.JSStringCreateWithUTF8CString(fmt[0.. :0]);
-        defer js.JSStringRelease(message);
-        error_args[0] = js.JSValueMakeString(ctx, message);
+        var zig_str = Bindings.ZigString.init(fmt);
+        zig_str.detectEncoding();
+        error_args[0] = zig_str.toValueAuto(JavaScript.VirtualMachine.vm.global).asObjectRef();
         exception.* = js.JSObjectMakeError(ctx, 1, &error_args, null);
     } else {
-        var buf = std.fmt.allocPrintZ(allocator, fmt, args) catch unreachable;
-        defer allocator.free(buf);
+        var buf = std.fmt.allocPrint(default_allocator, fmt, args) catch unreachable;
+        var zig_str = Bindings.ZigString.init(buf);
+        zig_str.detectEncoding();
 
-        var message = js.JSStringCreateWithUTF8CString(buf);
-        defer js.JSStringRelease(message);
-
-        error_args[0] = js.JSValueMakeString(ctx, message);
+        error_args[0] = zig_str.toValueGC(JavaScript.VirtualMachine.vm.global).asObjectRef();
         exception.* = js.JSObjectMakeError(ctx, 1, &error_args, null);
     }
 }
@@ -1499,7 +1538,7 @@ pub const ArrayBuffer = struct {
 
     typed_array_type: js.JSTypedArrayType,
 
-    pub inline fn slice(this: *const ArrayBuffer) []u8 {
+    pub inline fn slice(this: *const @This()) []u8 {
         return this.ptr[this.offset .. this.offset + this.byte_len];
     }
 };

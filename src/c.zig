@@ -18,6 +18,7 @@ const errno = os.errno;
 const mode_t = C.mode_t;
 const libc_stat = C.Stat;
 const zeroes = mem.zeroes;
+pub const darwin = @import("./darwin_c.zig");
 
 pub extern "c" fn chmod([*c]const u8, mode_t) c_int;
 pub extern "c" fn fchmod(std.c.fd_t, mode_t) c_int;

@@ -538,7 +538,10 @@ pub const Output = struct {
             source.error_stream.writer().print(fmt, args) catch unreachable;
             root.console_error(root.Uint8Array.fromSlice(source.err_buffer[0..source.error_stream.pos]));
         } else {
-            std.fmt.format(source.error_stream.writer(), fmt, args) catch unreachable;
+            if (enable_buffering)
+                std.fmt.format(source.buffered_error_stream.writer(), fmt, args) catch {}
+            else
+                std.fmt.format(source.error_stream.writer(), fmt, args) catch {};
         }
     }
 };

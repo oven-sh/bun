@@ -57,12 +57,25 @@ pub const Syscall = struct {
         system.fstat64
     else
         system.fstat;
+
     const mem = std.mem;
 
+    pub fn stat(path: [:0]const u8) Maybe(os.Stat) {
+        var stat_ = mem.zeroes(os.Stat);
+        if (Maybe(os.Stat).errno(system.stat(path, &stat_))) |err| return err;
+        return Maybe(os.Stat){ .result = stat_ };
+    }
+
+    pub fn lstat(path: [:0]const u8) Maybe(os.Stat) {
+        var stat_ = mem.zeroes(os.Stat);
+        if (Maybe(os.Stat).errno(system.lstat(path, &stat_))) |err| return err;
+        return Maybe(os.Stat){ .result = stat_ };
+    }
+
     pub fn fstat(fd: std.os.fd_t) Maybe(os.Stat) {
-        var stat = mem.zeroes(os.Stat);
-        if (Maybe(os.Stat).errno(fstat_sym(fd, &stat))) |err| return err;
-        return Maybe(os.Stat){ .result = stat };
+        var stat_ = mem.zeroes(os.Stat);
+        if (Maybe(os.Stat).errno(fstat_sym(fd, &stat_))) |err| return err;
+        return Maybe(os.Stat){ .result = stat_ };
     }
 
     pub fn open(file_path: [:0]const u8, flags: u32, perm: std.os.mode_t) Maybe(std.os.fd_t) {
@@ -140,7 +153,10 @@ pub const Syscall = struct {
     };
 };
 
-// We can't really rely on zig builtin error handling for this stuff
+/// Node.js expects the error to include contextual information
+/// - "syscall"
+/// - "path"
+/// - "errno"
 pub fn Maybe(comptime ReturnType: type) type {
     return union(Tag) {
         err: Syscall.Error,
@@ -151,6 +167,8 @@ pub fn Maybe(comptime ReturnType: type) type {
         pub const success: @This() = @This(){
             .result = std.mem.zeroes(ReturnType),
         };
+
+        pub const todo = .{ .err = Syscall.Error.todo };
 
         pub inline fn errno(rc: anytype) ?@This() {
             return switch (std.os.errno(rc)) {
@@ -167,7 +185,7 @@ pub fn Maybe(comptime ReturnType: type) type {
 // We can't really use Zig's error handling for syscalls because Node.js expects the "real" errno to be returned
 // and various issues with std.os that make it too unstable for arbitrary user input (e.g. how .BADF is marked as unreachable)
 
-// https://github.com/nodejs/node/blob/master/lib/buffer.js#L587
+/// https://github.com/nodejs/node/blob/master/lib/buffer.js#L587
 pub const Encoding = enum {
     utf8,
     ucs2,
@@ -177,6 +195,8 @@ pub const Encoding = enum {
     base64,
     base64url,
     hex,
+
+    /// Refer to the buffer's encoding
     buffer,
 };
 const builtin = @import("builtin");
@@ -781,6 +801,30 @@ pub const NodeFS = struct {
             mtime: Date,
             ctime: Date,
             birthtime: Date,
+
+            pub fn init(stat_: os.Stat) @This() {
+                return @This(){
+                    .dev = @truncate(T, stat_.dev),
+                    .ino = @truncate(T, stat_.ino),
+                    .mode = @truncate(T, stat_.mode),
+                    .nlink = @truncate(T, stat_.nlink),
+                    .uid = @truncate(T, stat_.uid),
+                    .gid = @truncate(T, stat_.gid),
+                    .rdev = @truncate(T, stat_.rdev),
+                    .size = @truncate(T, stat_.size),
+                    .blksize = @truncate(T, stat_.blksize),
+                    .blocks = @truncate(T, stat_.blocks),
+                    .atime_ms = @truncate(T, if (stat_.atime > 0) (stat_.atime / std.time.ns_per_ms) else 0),
+                    .mtime_ms = @truncate(T, if (stat_.mtime > 0) (stat_.mtime / std.time.ns_per_ms) else 0),
+                    .ctime_ms = @truncate(T, if (stat_.ctime > 0) (stat_.ctime / std.time.ns_per_ms) else 0),
+                    .atime = @truncate(T, stat_.atime),
+                    .mtime = @truncate(T, stat_.mtime),
+                    .ctime = @truncate(T, stat_.ctime),
+
+                    .birthtime_ms = 0,
+                    .birthtime = 0,
+                };
+            }
         };
     }
 
@@ -819,6 +863,7 @@ pub const NodeFS = struct {
         pub const CopyFile = void;
         pub const Exists = bool;
         pub const Fchmod = void;
+        pub const Chmod = void;
         pub const Fchown = void;
         pub const Fdatasync = void;
         pub const Fstat = Stats;
@@ -979,12 +1024,16 @@ pub const NodeFS = struct {
                         else => |err| return Maybe(Return.CopyFile){ .err = err },
                     };
 
+                    if (!os.S.ISREG(stat_.mode)) {
+                        return Maybe(Return.CopyFile){ .err = .{ .errno = @enumToInt(os.E.NOTSUP) } };
+                    }
+
                     var flags: Mode = std.os.O_CREAT | std.os.O_WRONLY | std.os.O_TRUNC;
                     if (!args.mode.shouldOverwrite()) {
                         flags |= std.os.O_EXCL;
                     }
 
-                    const dest_fd = switch (Syscall.open(dest, std.os.O.CREAT | std.os.O.WRONLY | std.os.O.TRUNC, flags)) {
+                    const dest_fd = switch (Syscall.open(dest, flags, flags)) {
                         .result => |result| result,
                         else => |err| return Maybe(Return.CopyFile){ .err = err },
                     };
@@ -994,6 +1043,11 @@ pub const NodeFS = struct {
 
                     var off_in_copy = @bitCast(i64, @as(u64, 0));
                     var off_out_copy = @bitCast(i64, @as(u64, 0));
+
+                    // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
+                    if (args.mode.isForceClone()) {
+                        return Maybe(Return.CopyFile).todo;
+                    }
 
                     var size = stat_.size;
                     while (size > 0) {
@@ -1017,77 +1071,233 @@ pub const NodeFS = struct {
 
         return Maybe(Return.CopyFile).todo;
     }
-    pub fn exists(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Exists) !Return.Exists {
+    pub fn exists(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Exists) Maybe(Return.Exists) {
+        const Ret = Maybe(Return.Exists);
+        var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        const path = args.path.sliceZ(&path_buf);
+        switch (comptime flavor) {
+            .sync => {
+                // TODO: bench if faster to stat() or open() + close()
+                // I imagine stat() is slower for directories and faster for files
+                const fd = switch (Syscall.open(path, FileSystemFlags.@"r", 000666)) {
+                    .result => |result| result,
+                    else => |err| return switch (@intToEnum(std.os.E, err.err.errno)) {
+                        .NOTFOUND => .{ .result = false },
+                        else => .{ .err = err },
+                    },
+                };
+                _ = Syscall.close(fd);
+
+                return .{ .result = true };
+            },
+            else => {},
+        }
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Ret.todo;
     }
-    pub fn fchmod(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Fchmod) !Return.Fchmod {
+
+    /// This should almost never be async
+    pub fn chmod(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Chmod) Maybe(Return.Chmod) {
+        var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        const path = args.path.sliceZ(&buf);
+
+        switch (comptime flavor) {
+            .sync => {
+                return Maybe(Return.Chmod).errno(C.chmod(path, args.mode)) orelse
+                    Maybe(Return.Chmod).success;
+            },
+            else => {},
+        }
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.Chmod).todo;
     }
-    pub fn fchown(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Fchown) !Return.Fchown {
+
+    /// This should almost never be async
+    pub fn fchmod(this: *NodeFS, comptime flavor: Flavor, args: Arguments.FChmod) Maybe(Return.Fchmod) {
+        switch (comptime flavor) {
+            .sync => {
+                return Maybe(Return.Fchmod).errno(C.fchmod(args.fd, args.mode)) orelse
+                    Maybe(Return.Fchmod).success;
+            },
+            else => {},
+        }
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.Fchmod).todo;
     }
-    pub fn fdatasync(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Fdatasync) !Return.Fdatasync {
+    pub fn fchown(this: *NodeFS, comptime flavor: Flavor, args: Arguments.FChown) !Maybe(Return.FChown) {
+        switch (comptime flavor) {
+            .sync => {
+                return Maybe(Return.Fchown).errno(C.fchown(args.fd, args.uid, args.gid)) orelse
+                    Maybe(Return.Fchown).success;
+            },
+            else => {},
+        }
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.Fchown).todo;
     }
-    pub fn fstat(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Fstat) !Return.Fstat {
+    pub fn fdatasync(this: *NodeFS, comptime flavor: Flavor, args: Arguments.FDataSync) Maybe(Return.FDataSync) {
+        switch (comptime flavor) {
+            .sync => return Maybe(Return.Fdatasync).errno(system.fdatasync(args.fd)) orelse
+                Maybe(Return.Fdatasync).success,
+            else => {},
+        }
+
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.FDataSync).todo;
     }
+    pub fn fstat(this: *NodeFS, comptime flavor: Flavor, args: Arguments.FStat) Maybe(Return.Fstat) {
+        if (args.big_int) return Maybe(Return.Fstat).todo;
+
+        switch (comptime flavor) {
+            .sync => {
+                const stat_: os.Stat = switch (Syscall.fstat(args.fd)) {
+                    .result => |result| result,
+                    else => |err| return Maybe(Return.Fstat){ .err = err },
+                };
+
+                return Maybe(Return.Fstat){ .result = Stats.init(stat_) };
+            },
+            else => {},
+        }
+
+        _ = args;
+        _ = this;
+        _ = flavor;
+        return Maybe(Return.Fstat).todo;
+    }
+
     pub fn fsync(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Fsync) !Return.Fsync {
+        switch (comptime flavor) {
+            .sync => return Maybe(Return.Fsync).errno(system.fsync(args.fd)) orelse
+                Maybe(Return.Fsync).success,
+            else => {},
+        }
+
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.Fsync).todo;
     }
+
     pub fn ftruncate(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Ftruncate) !Return.Ftruncate {
+        switch (comptime flavor) {
+            .sync => return Maybe(Return.Ftruncate).errno(system.ftruncate(args.fd)) orelse
+                Maybe(Return.Ftruncate).success,
+            else => {},
+        }
+
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.Ftruncate).todo;
     }
-    pub fn futimes(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Futimes) !Return.Futimes {
+    pub fn futimes(this: *NodeFS, comptime flavor: Flavor, args: Arguments.FUTimes) !Return.Futimes {
+        var times = [2]std.os.timespec{
+            .{
+                .tv_sec = args.mtime,
+                .tv_nsec = 0,
+            },
+            .{
+                .tv_sec = args.atime,
+                .tv_nsec = 0,
+            },
+        };
+
+        switch (comptime flavor) {
+            .sync => return switch (Maybe(Return.Fstat).errno(system.futimens(args.fd, &times))) {
+                .err => |err| err,
+                else => Maybe(Return.Futimes).success,
+            },
+            else => {},
+        }
+
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.Fstat).todo;
     }
-    pub fn lchmod(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Lchmod) !Return.Lchmod {
+
+    pub fn lchmod(this: *NodeFS, comptime flavor: Flavor, args: Arguments.LCHmod) !Return.Lchmod {
+        var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        const path = args.path.sliceZ(&buf);
+
+        switch (comptime flavor) {
+            .sync => {
+                return Maybe(Return.Lchmod).errno(C.lchmod(path, args.mode)) orelse
+                    Maybe(Return.Lchmod).success;
+            },
+            else => {},
+        }
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.Lchmod).todo;
     }
-    pub fn lchown(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Lchown) !Return.Lchown {
+
+    pub fn lchown(this: *NodeFS, comptime flavor: Flavor, args: Arguments.LChown) !Return.Lchown {
+        var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        const path = args.path.sliceZ(&buf);
+
+        switch (comptime flavor) {
+            .sync => {
+                return Maybe(Return.Lchown).errno(C.lchown(path, args.uid, args.gid)) orelse
+                    Maybe(Return.Lchown).success;
+            },
+            else => {},
+        }
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.Lchown).todo;
     }
     pub fn link(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Link) !Return.Link {
+        var from_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var to_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        const from = args.old_path.sliceZ(&from_path_buf);
+        const to = args.old_path.sliceZ(&to_path_buf);
+
+        switch (comptime flavor) {
+            .sync => {
+                return Maybe(Return.Link).errno(system.link(from, to, 0)) orelse
+                    Maybe(Return.Link).success;
+            },
+            else => {},
+        }
+
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.Link).todo;
     }
     pub fn lstat(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Lstat) !Return.Lstat {
+        if (args.big_int) return Maybe(Return.Lstat).todo;
+
+        switch (comptime flavor) {
+            .sync => {
+                const stat_: os.Stat = switch (Syscall.lstat(args.fd)) {
+                    .result => |result| result,
+                    else => |err| return Maybe(Return.Lstat){ .err = err },
+                };
+
+                return Maybe(Return.Lstat){ .result = Stats.init(stat_) };
+            },
+            else => {},
+        }
+
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.Lstat).todo;
     }
     pub fn mkdir(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Mkdir) !Return.Mkdir {
         _ = args;

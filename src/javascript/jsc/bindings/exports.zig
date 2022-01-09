@@ -723,6 +723,8 @@ pub const ZigConsoleClient = struct {
             return;
         }
 
+        if (len == 0) return;
+
         var console = JS.VirtualMachine.vm.console;
         const enable_colors = if (level == .Warning or level == .Error)
             Output.enable_ansi_colors_stderr
@@ -737,6 +739,13 @@ pub const ZigConsoleClient = struct {
         const BufferedWriterType = @TypeOf(writer);
 
         var fmt: Formatter = undefined;
+        defer {
+            if (fmt.map_node) |node| {
+                node.data = fmt.map;
+                node.data.clearRetainingCapacity();
+                node.release();
+            }
+        }
         if (len == 1) {
             fmt = Formatter{ .remaining_values = &[_]JSValue{} };
             const tag = Formatter.Tag.get(vals[0], global);
@@ -839,6 +848,23 @@ pub const ZigConsoleClient = struct {
 
     const Formatter = struct {
         remaining_values: []JSValue,
+        map: Visited.Map = undefined,
+        map_node: ?*Visited.Pool.Node = null,
+
+        // For detecting circular references
+        pub const Visited = struct {
+            const ObjectPool = @import("../../../pool.zig").ObjectPool;
+            pub const Map = std.AutoHashMap(i64, void);
+            pub const Pool = ObjectPool(
+                Map,
+                struct {
+                    pub fn init(allocator: std.mem.Allocator) anyerror!Map {
+                        return Map.init(allocator);
+                    }
+                }.init,
+                true,
+            );
+        };
 
         pub const Tag = enum {
             StringPossiblyFormatted,
@@ -866,6 +892,10 @@ pub const ZigConsoleClient = struct {
             JSON,
             NativeCode,
             ArrayBuffer,
+
+            pub inline fn canHaveCircularReferences(tag: Tag) bool {
+                return tag == .Array or tag == .Object or tag == .Map or tag == .Set;
+            }
 
             const Result = struct {
                 tag: Tag,
@@ -1002,99 +1032,41 @@ pub const ZigConsoleClient = struct {
                         if (i >= len)
                             break;
 
-                        switch (slice[i]) {
-                            's' => {
-                                writer.writeAll(slice[0 .. i - 1]);
-                                slice = slice[i + 1 ..];
-                                i = 0;
-                                len = @truncate(u32, slice.len);
-                                const next_value = this.remaining_values[0];
-                                this.remaining_values = this.remaining_values[1..];
-                                this.printAs(
-                                    .String,
-                                    Writer,
-                                    writer_,
-                                    next_value,
-                                    globalThis,
-                                    next_value.jsType(),
-                                    enable_ansi_colors,
-                                );
-                            },
-                            'f' => {
-                                writer.writeAll(slice[0 .. i - 1]);
-                                slice = slice[i + 1 ..];
-                                i = 0;
-                                len = @truncate(u32, slice.len);
-                                const next_value = this.remaining_values[0];
-                                this.remaining_values = this.remaining_values[1..];
-                                this.printAs(
-                                    .Double,
-                                    Writer,
-                                    writer_,
-                                    next_value,
-                                    globalThis,
-                                    next_value.jsType(),
-                                    enable_ansi_colors,
-                                );
-                            },
-                            'o' => {
-                                writer.writeAll(slice[0 .. i - 1]);
-                                slice = slice[i + 1 ..];
-                                i = 0;
-                                len = @truncate(u32, slice.len);
-                                const next_value = this.remaining_values[0];
-                                this.remaining_values = this.remaining_values[1..];
-                                this.format(
-                                    Tag.get(next_value, globalThis),
-                                    Writer,
-                                    writer_,
-                                    next_value,
-                                    globalThis,
-                                    enable_ansi_colors,
-                                );
-                            },
-                            'O' => {
-                                writer.writeAll(slice[0 .. i - 1]);
-                                slice = slice[i + 1 ..];
-                                i = 0;
-                                len = @truncate(u32, slice.len);
-                                const next_value = this.remaining_values[0];
-                                this.remaining_values = this.remaining_values[1..];
-                                this.printAs(
-                                    .Object,
-                                    Writer,
-                                    writer_,
-                                    next_value,
-                                    globalThis,
-                                    next_value.jsType(),
-                                    enable_ansi_colors,
-                                );
-                            },
-                            'd', 'i' => {
-                                writer.writeAll(slice[0 .. i - 1]);
-                                slice = slice[i + 1 ..];
-                                i = 0;
-                                len = @truncate(u32, slice.len);
-                                const next_value = this.remaining_values[0];
-                                this.remaining_values = this.remaining_values[1..];
-                                this.printAs(
-                                    .Integer,
-                                    Writer,
-                                    writer_,
-                                    next_value,
-                                    globalThis,
-                                    next_value.jsType(),
-                                    enable_ansi_colors,
-                                );
-                            },
+                        const token = switch (slice[i]) {
+                            's' => Tag.String,
+                            'f' => Tag.Double,
+                            'o' => Tag.Undefined,
+                            'O' => Tag.Object,
+                            'd', 'i' => Tag.Integer,
                             else => continue,
+                        };
+
+                        // Flush everything up to the %
+                        const end = slice[0 .. i - 1];
+                        writer.writeAll(end);
+                        slice = slice[@minimum(slice.len, i + 1)..];
+                        i = 0;
+                        len = @truncate(u32, slice.len);
+                        const next_value = this.remaining_values[0];
+                        this.remaining_values = this.remaining_values[1..];
+                        switch (token) {
+                            Tag.String => this.printAs(Tag.String, Writer, writer_, next_value, globalThis, next_value.jsType(), enable_ansi_colors),
+                            Tag.Double => this.printAs(Tag.Double, Writer, writer_, next_value, globalThis, next_value.jsType(), enable_ansi_colors),
+                            Tag.Object => this.printAs(Tag.Object, Writer, writer_, next_value, globalThis, next_value.jsType(), enable_ansi_colors),
+                            Tag.Integer => this.printAs(Tag.Integer, Writer, writer_, next_value, globalThis, next_value.jsType(), enable_ansi_colors),
+
+                            // undefined is overloaded to mean the '%o" field
+                            Tag.Undefined => this.format(Tag.get(next_value, globalThis), Writer, writer_, next_value, globalThis, enable_ansi_colors),
+
+                            else => unreachable,
                         }
+                        if (this.remaining_values.len == 0) break;
                     },
                     '\\' => {
                         i += 1;
                         if (i >= len)
                             break;
-                        if (slice[i] == '%') i += 1;
+                        if (slice[i] == '%') i += 2;
                     },
                     else => {},
                 }
@@ -1128,6 +1100,20 @@ pub const ZigConsoleClient = struct {
             comptime enable_ansi_colors: bool,
         ) void {
             var writer = WrappedWriter(Writer){ .ctx = writer_ };
+
+            if (comptime Format.canHaveCircularReferences()) {
+                if (this.map_node == null) {
+                    this.map_node = Visited.Pool.get(default_allocator);
+                    this.map_node.?.data.clearRetainingCapacity();
+                    this.map = this.map_node.?.data;
+                }
+
+                var entry = this.map.getOrPut(@enumToInt(value)) catch unreachable;
+                if (entry.found_existing) {
+                    writer.writeAll(comptime Output.prettyFmt("<r><cyan>[Circular]<r>", enable_ansi_colors));
+                    return;
+                }
+            }
 
             switch (comptime Format) {
                 .StringPossiblyFormatted => {
@@ -1328,6 +1314,10 @@ pub const ZigConsoleClient = struct {
                 return;
             }
 
+            // This looks incredibly redudant. We make the Formatter.Tag a
+            // comptime var so we have to repeat it here. The rationale there is
+            // it _should_ limit the stack usage because each version of the
+            // function will be relatively small
             return switch (result.tag) {
                 .StringPossiblyFormatted => this.printAs(.StringPossiblyFormatted, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
                 .String => this.printAs(.String, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),

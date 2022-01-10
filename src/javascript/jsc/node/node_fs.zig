@@ -1,6 +1,6 @@
 // This file contains the underlying implementation for sync & async functions
-// for interacting with the filesystem from JavaScript The top-level functions
-// assume the arguments are already validated
+// for interacting with the filesystem from JavaScript.
+// The top-level functions assume the arguments are already validated
 const std = @import("std");
 const _global = @import("../../../global.zig");
 const strings = _global.strings;
@@ -25,7 +25,7 @@ const PathOrFileDescriptor = @import("./types.zig").PathOrFileDescriptor;
 const FileDescriptor = @import("./types.zig").FileDescriptor;
 const DirIterator = @import("./dir_iterator.zig");
 const Path = @import("../../../resolver/resolve_path.zig");
-
+const FileSystem = @import("../../../fs.zig").FileSystem;
 pub const FlavoredIO = struct {
     io: *AsyncIO,
 };
@@ -92,8 +92,8 @@ pub const NodeFS = struct {
 
     pub const Arguments = struct {
         pub const Rename = struct {
-            old_path: PathLike,
-            new_path: PathLike,
+            from_path: PathLike,
+            to_path: PathLike,
         };
 
         pub const Truncate = struct {
@@ -153,13 +153,13 @@ pub const NodeFS = struct {
         pub const LStat = Stat;
 
         pub const Link = struct {
-            old_path: PathLike,
-            new_path: PathLike,
+            from_path: PathLike,
+            to_path: PathLike,
         };
 
         pub const Symlink = struct {
-            old_path: PathLike,
-            new_path: PathLike,
+            from_path: PathLike,
+            to_path: PathLike,
         };
 
         pub const ReadLink = struct {
@@ -296,14 +296,10 @@ pub const NodeFS = struct {
             encoding: Encoding = Encoding.utf8,
         };
 
-        pub const WriteFileOptions = struct {
+        pub const WriteFile = struct {
             encoding: Encoding = Encoding.utf8,
             flag: FileSystemFlags = FileSystemFlags.@"w",
             mode: Mode = 0o666,
-        };
-
-        pub const WriteFile = struct {
-            pub usingnamespace WriteFileOptions;
             file: PathOrFileDescriptor,
             data: StringOrBuffer,
         };
@@ -625,6 +621,7 @@ pub const NodeFS = struct {
         pub const Fchown = void;
         pub const Fdatasync = void;
         pub const Fstat = Stats;
+        pub const Rm = void;
         pub const Fsync = void;
         pub const Ftruncate = void;
         pub const Futimes = void;
@@ -635,6 +632,7 @@ pub const NodeFS = struct {
         pub const Mkdir = string;
         pub const Mkdtemp = PathString;
         pub const Open = FileDescriptor;
+        pub const WriteFile = void;
         pub const Read = struct {
             bytes_read: u32,
             buffer: Buffer,
@@ -651,9 +649,13 @@ pub const NodeFS = struct {
             };
         };
         pub const ReadFile = StringOrBuffer;
-        pub const Readlink = PathString;
-        pub const Realpath = PathString;
-        pub const RealpathNative = PathString;
+        pub const Readlink = StringOrBuffer;
+        pub const Realpath = StringOrBuffer;
+        pub const Write = struct {
+            bytes_written: u32,
+            buffer: Buffer,
+        };
+        pub const RealpathNative = Realpath;
         pub const Rename = void;
         pub const Rmdir = void;
         pub const Stat = Stats;
@@ -665,6 +667,7 @@ pub const NodeFS = struct {
         pub const Watch = void;
         pub const CreateReadStream = void;
         pub const CreateWriteStream = void;
+        pub const Chown = void;
     };
 
     pub fn access(_: *NodeFS, comptime _: Flavor, args: Arguments.Access) Maybe(Return.Access) {
@@ -858,6 +861,20 @@ pub const NodeFS = struct {
         return Ret.todo;
     }
 
+    pub fn chown(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Chown) Maybe(Return.Chown) {
+        var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        const path = args.path.sliceZ(&buf);
+
+        switch (comptime flavor) {
+            .sync => return Syscall.chown(path, args.uid, args.gid),
+            else => {},
+        }
+        _ = args;
+        _ = this;
+        _ = flavor;
+        return Maybe(Return.Chown).todo;
+    }
+
     /// This should almost never be async
     pub fn chmod(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Chmod) Maybe(Return.Chmod) {
         var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
@@ -949,9 +966,9 @@ pub const NodeFS = struct {
         return Maybe(Return.Fsync).todo;
     }
 
-    pub fn ftruncate(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Ftruncate) Maybe(Return.Ftruncate) {
+    pub fn ftruncate(this: *NodeFS, comptime flavor: Flavor, args: Arguments.FTruncate) Maybe(Return.Ftruncate) {
         switch (comptime flavor) {
-            .sync => return Maybe(Return.Ftruncate).errno(system.ftruncate(args.fd)) orelse
+            .sync => return Maybe(Return.Ftruncate).errno(system.ftruncate(args.fd, args.len orelse 0)) orelse
                 Maybe(Return.Ftruncate).success,
             else => {},
         }
@@ -1023,8 +1040,8 @@ pub const NodeFS = struct {
     pub fn link(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Link) Maybe(Return.Link) {
         var from_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         var to_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-        const from = args.old_path.sliceZ(&from_path_buf);
-        const to = args.old_path.sliceZ(&to_path_buf);
+        const from = args.from_path.sliceZ(&from_path_buf);
+        const to = args.to_path.sliceZ(&to_path_buf);
 
         switch (comptime flavor) {
             .sync => {
@@ -1252,28 +1269,18 @@ pub const NodeFS = struct {
         switch (comptime flavor) {
             // The sync version does no allocation except when returning the path
             .sync => {
-                var buf = args.buffer.buffer.slice()[args.offset..];
-                if (buf.len == 0 or buf.len < args.length) {
-                    return .{ .result = 0 };
-                }
-                buf = buf[0..args.length];
-                var total: usize = 0;
-                while (buf.len > 0) {
-                    switch (Syscall.read(args.fd, buf)) {
-                        .err => |err| return .{
-                            .err = err,
-                        },
-                        .result => |amt| {
-                            total += amt;
-                            buf = buf[@minimum(amt, buf.len)..];
-                            if (amt == 0) {
-                                break;
-                            }
-                        },
-                    }
-                }
+                var buf = args.buffer.buffer.slice();
+                buf = buf[@minimum(args.offset, buf.len)..];
+                buf = buf[0..@minimum(buf.len, args.length)];
 
-                return .{ .result = total };
+                return switch (Syscall.read(args.fd, buf)) {
+                    .err => |err| .{
+                        .err = err,
+                    },
+                    .result => |amt| .{
+                        .result = amt,
+                    },
+                };
             },
             else => {},
         }
@@ -1281,7 +1288,33 @@ pub const NodeFS = struct {
         return Maybe(Return.Read).todo;
     }
 
-    pub fn pread(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Read) Maybe(Return.Read) {
+    pub fn write(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Write) Maybe(Return.Write) {
+        _ = args;
+        _ = this;
+        _ = flavor;
+
+        switch (comptime flavor) {
+            .sync => {
+                var buf = args.buffer.buffer.slice();
+                buf = buf[@minimum(args.offset, buf.len)..];
+                buf = buf[0..@minimum(buf.len, args.length)];
+
+                return switch (Syscall.write(args.fd, buf)) {
+                    .err => |err| .{
+                        .err = err,
+                    },
+                    .result => |amt| .{
+                        .result = .{ .bytes_written = amt, .buffer = args.buffer },
+                    },
+                };
+            },
+            else => {},
+        }
+
+        return Maybe(Return.Write).todo;
+    }
+
+    pub fn pwrite(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Write) Maybe(Return.Write) {
         _ = args;
         _ = this;
         _ = flavor;
@@ -1290,33 +1323,21 @@ pub const NodeFS = struct {
 
         switch (comptime flavor) {
             .sync => {
-                var buf = args.buffer.buffer.slice()[args.offset..];
-                if (buf.len == 0 or buf.len < args.length) {
-                    return .{ .result = 0 };
-                }
-                buf = buf[0..args.length];
-                var total: usize = 0;
-                while (buf.len > 0) {
-                    switch (Syscall.pread(args.fd, buf, position)) {
-                        .err => |err| return .{
-                            .err = err,
-                        },
-                        .result => |amt| {
-                            total += amt;
-                            buf = buf[@minimum(amt, buf.len)..];
-                            if (amt == 0) {
-                                break;
-                            }
-                        },
-                    }
-                }
+                var buf = args.buffer.buffer.slice();
+                buf = buf[@minimum(args.offset, buf.len)..];
+                buf = buf[0..@minimum(args.length, buf.len)];
 
-                return .{ .result = total };
+                return switch (Syscall.pwrite(args.fd, buf, position)) {
+                    .err => |err| .{
+                        .err = err,
+                    },
+                    .result => |amt| .{ .result = .{ .bytes_written = amt, .buffer = args.buffer } },
+                };
             },
             else => {},
         }
 
-        return Maybe(Return.Read).todo;
+        return Maybe(Return.Write).todo;
     }
 
     pub fn readdir(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Readdir) Maybe(Return.Readdir) {
@@ -1451,7 +1472,7 @@ pub const NodeFS = struct {
                     return .{
                         .err = .{
                             .errno = @truncate(Syscall.Error.Int, @enumToInt(os.E.BADF)),
-                            .syscall = .open,
+                            .syscall = .fstat,
                         },
                     };
                 }
@@ -1505,6 +1526,62 @@ pub const NodeFS = struct {
         return Maybe(Return.ReadFile).todo;
     }
 
+    pub fn writeFile(this: *NodeFS, comptime flavor: Flavor, args: Arguments.WriteFile) Maybe(Return.WriteFile) {
+        var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var path: [:0]const u8 = undefined;
+
+        switch (comptime flavor) {
+            .sync => {
+                const fd = switch (args) {
+                    .path => brk: {
+                        path = args.path.sliceZ(&path_buf);
+                        break :brk switch (Syscall.open(
+                            path,
+                            @enumToInt(args.flag) | os.O.NOCTTY,
+                            args.mode,
+                        )) {
+                            .err => |err| return .{
+                                .err = err.withPath(args.path.slice()),
+                            },
+                            .result => |fd_| fd_,
+                        };
+                    },
+                    .fd => |_fd| _fd,
+                };
+
+                defer {
+                    if (args == .path)
+                        _ = Syscall.close(fd);
+                }
+
+                var buf = args.data.slice();
+
+                while (buf.len > 0) {
+                    switch (Syscall.write(fd, buf)) {
+                        .err => |err| return .{
+                            .err = err,
+                        },
+                        .result => |amt| {
+                            buf = buf[amt..];
+                            if (amt == 0) {
+                                break;
+                            }
+                        },
+                    }
+                }
+                return .{
+                    .result = .{},
+                };
+            },
+            else => {},
+        }
+
+        _ = args;
+        _ = this;
+        _ = flavor;
+        return Maybe(Return.WriteFile).todo;
+    }
+
     pub fn readlink(this: *NodeFS, comptime flavor: Flavor, args: Arguments.ReadLink) Maybe(Return.Readlink) {
         var outbuf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         var inbuf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
@@ -1541,14 +1618,19 @@ pub const NodeFS = struct {
     pub fn realpath(this: *NodeFS, comptime flavor: Flavor, args: Arguments.RealPath) Maybe(Return.Realpath) {
         var outbuf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         var inbuf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-
-        // Path.joinAbsString(_cwd: []const u8, parts: anytype, comptime _platform: Platform)
-        // std.os.getFdPath(fd: fd_t, out_buffer: *[MAX_PATH_BYTES]u8)
+        if (comptime Environment.allow_assert) std.debug.assert(FileSystem.instance_loaded);
 
         switch (comptime flavor) {
             .sync => {
-                const path = args.path.sliceZ(&inbuf);
+                var path_slice = args.path.slice();
+
+                var parts = [_]string{ FileSystem.instance.top_level_dir, path_slice };
+                var path_ = FileSystem.instance.absBuf(parts, &inbuf);
+                inbuf[path_.len] = 0;
+                var path: [:0]u8 = inbuf[0..path_.len :0];
+
                 const flags = if (comptime Environment.isLinux)
+                    // O_PATH is faster
                     std.os.O.PATH
                 else
                     std.os.O.RDONLY;
@@ -1564,7 +1646,7 @@ pub const NodeFS = struct {
                     _ = Syscall.close(fd);
                 }
 
-                const len = switch (Syscall.getFdPath(fd, &outbuf)) {
+                const buf = switch (Syscall.getFdPath(fd, &outbuf)) {
                     .err => |err| return .{
                         .err = err.withPath(args.path.slice()),
                     },
@@ -1574,10 +1656,10 @@ pub const NodeFS = struct {
                 return .{
                     .result = switch (args.encoding) {
                         .buffer => .{
-                            .buffer = Buffer.fromString(_global.default_allocator, outbuf[0..len]) catch unreachable,
+                            .buffer = Buffer.fromString(_global.default_allocator, buf) catch unreachable,
                         },
                         else => .{
-                            .string = _global.default_allocator.dupe(u8, outbuf[0..len]) catch unreachable,
+                            .string = _global.default_allocator.dupe(u8, buf) catch unreachable,
                         },
                     },
                 };
@@ -1598,69 +1680,173 @@ pub const NodeFS = struct {
     //     return error.NotImplementedYet;
     // }
     pub fn rename(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Rename) Maybe(Return.Rename) {
+        var from_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var to_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+
+        switch (comptime flavor) {
+            .sync => {
+                var from = args.from_path.sliceZ(&from_buf);
+                var to = args.to_path.sliceZ(&to_buf);
+                return Syscall.rename(from, to);
+            },
+            else => {},
+        }
+
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.Rename).todo;
     }
-    pub fn rmdir(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Rmdir) Maybe(Return.Rmdir) {
+    pub fn rmdir(this: *NodeFS, comptime flavor: Flavor, args: Arguments.RmDir) Maybe(Return.Rmdir) {
+        var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+
+        switch (comptime flavor) {
+            .sync => {
+                var dir = args.from_path.sliceZ(&buf);
+                _ = dir;
+            },
+            else => {},
+        }
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.Rmdir).todo;
+    }
+    pub fn rm(this: *NodeFS, comptime flavor: Flavor, args: Arguments.RmDir) Maybe(Return.Rm) {
+        _ = args;
+        _ = this;
+        _ = flavor;
+        return Maybe(Return.Rm).todo;
     }
     pub fn stat(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Stat) Maybe(Return.Stat) {
+        if (args.big_int) return Maybe(Return.Stat).todo;
+        var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+
+        switch (comptime flavor) {
+            .sync => {
+                const stat_: os.Stat = switch (Syscall.stat(
+                    args.path.sliceZ(
+                        &buf,
+                    ),
+                )) {
+                    .result => |result| result,
+                    else => |err| return Maybe(Return.Stat){ .err = err },
+                };
+
+                return Maybe(Return.Stat){ .result = Stats.init(stat_) };
+            },
+            else => {},
+        }
+
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.Stat).todo;
     }
+
     pub fn symlink(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Symlink) Maybe(Return.Symlink) {
+        var from_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var to_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+
+        switch (comptime flavor) {
+            .sync => {
+                return Syscall.symlink(
+                    args.from_path.sliceZ(&from_buf),
+                    args.to_path.sliceZ(&to_buf),
+                );
+            },
+            else => {},
+        }
+
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.Symlink).todo;
     }
     pub fn truncate(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Truncate) Maybe(Return.Truncate) {
+        var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+
+        switch (comptime flavor) {
+            .sync => {
+                return Maybe(Return.Truncate).errno(C.truncate(args.path.sliceZ(&buf), args.len orelse 0)) orelse
+                    Maybe(Return.Truncate).success;
+            },
+            else => {},
+        }
+
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.Truncate).todo;
     }
     pub fn unlink(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Unlink) Maybe(Return.Unlink) {
+        var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+
+        switch (comptime flavor) {
+            .sync => {
+                return Maybe(Return.Unlink).errno(system.unlink(args.path.sliceZ(&buf))) orelse
+                    Maybe(Return.Unlink).success;
+            },
+            else => {},
+        }
+
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.Unlink).todo;
     }
     pub fn unwatchFile(this: *NodeFS, comptime flavor: Flavor, args: Arguments.UnwatchFile) Maybe(Return.UnwatchFile) {
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.UnwatchFile).todo;
     }
-    pub fn utimes(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Utimes) Maybe(Return.Utimes) {
+    pub fn utimes(this: *NodeFS, comptime flavor: Flavor, args: Arguments.UTimes) Maybe(Return.Utimes) {
+        var times = [2]std.c.timeval{
+            .{
+                .tv_sec = args.mtime,
+                // TODO: is this correct?
+                .tv_usec = 0,
+            },
+            .{
+                .tv_sec = args.atime,
+                // TODO: is this correct?
+                .tv_usec = 0,
+            },
+        };
+
+        switch (comptime flavor) {
+            // futimes uses the syscall version
+            // we use libc because here, not for a good reason
+            // just missing from the linux syscall interface in zig and I don't want to modify that right now
+            .sync => return switch (Maybe(Return.Utimes).errno(std.c.utimes(args.path, &times))) {
+                .err => |err| err,
+                else => Maybe(Return.Utimes).success,
+            },
+            else => {},
+        }
+
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.Utimes).todo;
     }
     pub fn watch(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Watch) Maybe(Return.Watch) {
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.Watch).todo;
     }
     pub fn createReadStream(this: *NodeFS, comptime flavor: Flavor, args: Arguments.CreateReadStream) Maybe(Return.CreateReadStream) {
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.CreateReadStream).todo;
     }
     pub fn createWriteStream(this: *NodeFS, comptime flavor: Flavor, args: Arguments.CreateWriteStream) Maybe(Return.CreateWriteStream) {
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.CreateWriteStream).todo;
     }
 };

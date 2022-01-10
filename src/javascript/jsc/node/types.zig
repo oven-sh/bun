@@ -116,13 +116,17 @@ pub fn CallbackTask(comptime Result: type) type {
 
 const PathLike = union(Tag) {
     string: PathString,
-    buffer: void,
+    buffer: Buffer,
     url: void,
 
     pub const Tag = enum { string, buffer, url };
 
     pub inline fn slice(this: PathLike) string {
-        return this.string.slice();
+        return switch (this) {
+            .string => this.string.slice(),
+            .buffer => this.buffer.buffer.slice(),
+            else => unreachable, // TODO:
+        };
     }
 
     pub fn sliceZWithForceCopy(this: PathLike, buf: [:0]u8, comptime force: bool) [:0]const u8 {

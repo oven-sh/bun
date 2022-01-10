@@ -1,3 +1,5 @@
+// This file is entirely based on Zig's std.os
+// The differences are in error handling
 const std = @import("std");
 const system = std.os.system;
 const os = std.os;
@@ -143,6 +145,28 @@ pub fn pread(fd: os.fd_t, buf: []u8, offset: i64) Maybe(usize) {
     unreachable;
 }
 
+const pwrite_sym = if (builtin.os.tag == .linux and builtin.link_libc)
+    system.pwrite64
+else
+    system.pwrite;
+
+pub fn pwrite(fd: os.fd_t, bytes: []const u8, offset: i64) Maybe(usize) {
+    const adjusted_len = @minimum(bytes.len, max_count);
+
+    const ioffset = @bitCast(i64, offset); // the OS treats this as unsigned
+    while (true) {
+        const rc = pwrite_sym(fd, bytes.ptr, adjusted_len, ioffset);
+        return if (Maybe(usize).err(rc)) |err| {
+            switch (err.getErrno()) {
+                .INTR => continue,
+                else => return err,
+            }
+        } else Maybe(usize){ .result = rc };
+    }
+
+    unreachable;
+}
+
 pub fn read(fd: os.fd_t, buf: []u8) Maybe(usize) {
     const adjusted_len = @minimum(buf.len, max_count);
     while (true) {
@@ -165,6 +189,39 @@ pub fn readlink(in: [:0]const u8, buf: []u8) Maybe(usize) {
             return err;
         }
         return Maybe(usize){ .result = rc };
+    }
+    unreachable;
+}
+
+pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
+    while (true) {
+        if (Maybe(void).errno(system.rename(from, to))) |err| {
+            if (err.err.errno == .INTR) continue;
+            return err;
+        }
+        return Maybe(void).success;
+    }
+    unreachable;
+}
+
+pub fn chown(path: [:0]const u8, uid: os.uid_t, gid: os.gid_t) Maybe(void) {
+    while (true) {
+        if (Maybe(void).errno(system.chown(path, uid, gid))) |err| {
+            if (err.err.errno == .INTR) continue;
+            return err;
+        }
+        return Maybe(void).success;
+    }
+    unreachable;
+}
+
+pub fn symlink(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
+    while (true) {
+        if (Maybe(void).errno(system.symlink(from, to))) |err| {
+            if (err.err.errno == .INTR) continue;
+            return err;
+        }
+        return Maybe(void).success;
     }
     unreachable;
 }

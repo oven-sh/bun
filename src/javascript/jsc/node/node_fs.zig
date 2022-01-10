@@ -24,6 +24,8 @@ const PathLike = @import("./types.zig").PathLike;
 const PathOrFileDescriptor = @import("./types.zig").PathOrFileDescriptor;
 const FileDescriptor = @import("./types.zig").FileDescriptor;
 const DirIterator = @import("./dir_iterator.zig");
+const Path = @import("../../../resolver/resolve_path.zig");
+
 pub const FlavoredIO = struct {
     io: *AsyncIO,
 };
@@ -1221,7 +1223,7 @@ pub const NodeFS = struct {
                 const path = args.path.sliceZ(&buf);
                 return switch (Syscall.open(path, @enumToInt(args.flags), args.mode)) {
                     .err => |err| .{
-                        .err = .{ .err = err.withPath(args.path.slice()) },
+                        .err = err.withPath(args.path.slice()),
                     },
                     .result => |fd| .{ .result = fd },
                 };
@@ -1259,7 +1261,7 @@ pub const NodeFS = struct {
                 while (buf.len > 0) {
                     switch (Syscall.read(args.fd, buf)) {
                         .err => |err| return .{
-                            .err = .{ .err = err },
+                            .err = err,
                         },
                         .result => |amt| {
                             total += amt;
@@ -1297,7 +1299,7 @@ pub const NodeFS = struct {
                 while (buf.len > 0) {
                     switch (Syscall.pread(args.fd, buf, position)) {
                         .err => |err| return .{
-                            .err = .{ .err = err },
+                            .err = err,
                         },
                         .result => |amt| {
                             total += amt;
@@ -1344,7 +1346,7 @@ pub const NodeFS = struct {
                 const flags = os.O.DIRECTORY | os.O.RDONLY;
                 const fd = switch (Syscall.open(path, flags, 0)) {
                     .err => |err| return .{
-                        .err = .{ .err = err.withPath(args.path.slice()) },
+                        .err = err.withPath(args.path.slice()),
                     },
                     .result => |fd_| fd_,
                 };
@@ -1376,7 +1378,7 @@ pub const NodeFS = struct {
                         entries.deinit();
 
                         return .{
-                            .err = .{ .err = err },
+                            .err = err,
                         };
                     },
                     .result => |entry| entry,
@@ -1412,29 +1414,189 @@ pub const NodeFS = struct {
         return Maybe(Return.Readdir).todo;
     }
     pub fn readFile(this: *NodeFS, comptime flavor: Flavor, args: Arguments.ReadFile) Maybe(Return.ReadFile) {
+        var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var path: [:0]const u8 = undefined;
+        switch (comptime flavor) {
+            .sync => {
+                const fd = switch (args) {
+                    .path => brk: {
+                        path = args.path.sliceZ(&path_buf);
+                        break :brk switch (Syscall.open(
+                            path,
+                            os.O.RDONLY | os.O.NOCTTY,
+                            0,
+                        )) {
+                            .err => |err| return .{
+                                .err = err.withPath(args.path.slice()),
+                            },
+                            .result => |fd_| fd_,
+                        };
+                    },
+                    .fd => |_fd| _fd,
+                };
+
+                defer {
+                    if (args == .path)
+                        _ = Syscall.close(fd);
+                }
+
+                const stat_ = switch (Syscall.fstat(fd)) {
+                    .err => |err| return .{
+                        .err = err,
+                    },
+                    .result => |stat_| stat_,
+                };
+
+                if (!os.S.ISREG(stat_.mode) and !os.S.ISLNK(stat_.mode)) {
+                    return .{
+                        .err = .{
+                            .errno = @truncate(Syscall.Error.Int, @enumToInt(os.E.BADF)),
+                            .syscall = .open,
+                        },
+                    };
+                }
+
+                const size = stat_.size;
+                var buf = std.ArrayList(u8).init(_global.default_allocator);
+                buf.ensureTotalCapacity(size + 16) catch unreachable;
+                buf.expandToCapacity();
+                var total: usize = 0;
+
+                while (total < size) {
+                    switch (Syscall.read(fd, buf.items[total..])) {
+                        .err => |err| return .{
+                            .err = err,
+                        },
+                        .result => |amt| {
+                            total += amt;
+                            // There are cases where stat()'s size is wrong or out of date
+                            if (total > size and amt != 0) {
+                                buf.ensureUnusedCapacity(1024) catch unreachable;
+                                buf.expandToCapacity();
+                                continue;
+                            }
+
+                            if (amt == 0) {
+                                break;
+                            }
+                        },
+                    }
+                }
+                buf.items.len = total;
+                return switch (args.encoding) {
+                    .buffer => .{
+                        .result = .{
+                            .buffer = Buffer.fromBytes(buf.toOwnedSlice(), _global.default_allocator, JSC.C.kJSTypedArrayTypeUint8Array),
+                        },
+                    },
+                    else => .{
+                        .result = .{
+                            .string = buf.toOwnedSlice(),
+                        },
+                    },
+                };
+            },
+            else => {},
+        }
+
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.ReadFile).todo;
     }
-    pub fn readlink(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Readlink) Maybe(Return.Readlink) {
+
+    pub fn readlink(this: *NodeFS, comptime flavor: Flavor, args: Arguments.ReadLink) Maybe(Return.Readlink) {
+        var outbuf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var inbuf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        switch (comptime flavor) {
+            .sync => {
+                const path = args.path.sliceZ(&inbuf);
+
+                const len = switch (Syscall.readlink(path, &outbuf)) {
+                    .err => |err| return .{
+                        .err = err.withPath(args.path.slice()),
+                    },
+                    .result => |buf_| buf_,
+                };
+
+                return .{
+                    .result = switch (args.encoding) {
+                        .buffer => .{
+                            .buffer = Buffer.fromString(_global.default_allocator, outbuf[0..len]) catch unreachable,
+                        },
+                        else => .{
+                            .string = _global.default_allocator.dupe(u8, outbuf[0..len]) catch unreachable,
+                        },
+                    },
+                };
+            },
+            else => {},
+        }
+
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.Readlink).todo;
     }
-    pub fn realpath(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Realpath) Maybe(Return.Realpath) {
+    pub fn realpath(this: *NodeFS, comptime flavor: Flavor, args: Arguments.RealPath) Maybe(Return.Realpath) {
+        var outbuf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var inbuf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+
+        // Path.joinAbsString(_cwd: []const u8, parts: anytype, comptime _platform: Platform)
+        // std.os.getFdPath(fd: fd_t, out_buffer: *[MAX_PATH_BYTES]u8)
+
+        switch (comptime flavor) {
+            .sync => {
+                const path = args.path.sliceZ(&inbuf);
+                const flags = if (comptime Environment.isLinux)
+                    std.os.O.PATH
+                else
+                    std.os.O.RDONLY;
+
+                const fd = switch (Syscall.open(path, flags, 0)) {
+                    .err => |err| return .{
+                        .err = err.withPath(args.path.slice()),
+                    },
+                    .result => |fd_| fd_,
+                };
+
+                defer {
+                    _ = Syscall.close(fd);
+                }
+
+                const len = switch (Syscall.getFdPath(fd, &outbuf)) {
+                    .err => |err| return .{
+                        .err = err.withPath(args.path.slice()),
+                    },
+                    .result => |buf_| buf_,
+                };
+
+                return .{
+                    .result = switch (args.encoding) {
+                        .buffer => .{
+                            .buffer = Buffer.fromString(_global.default_allocator, outbuf[0..len]) catch unreachable,
+                        },
+                        else => .{
+                            .string = _global.default_allocator.dupe(u8, outbuf[0..len]) catch unreachable,
+                        },
+                    },
+                };
+            },
+            else => {},
+        }
+
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.Realpath).todo;
     }
-    pub fn realpathNative(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Realpath) Maybe(Return.Realpath) {
-        _ = args;
-        _ = this;
-        _ = flavor;
-        return error.NotImplementedYet;
-    }
+    pub const realpathNative = realpath;
+    // pub fn realpathNative(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Realpath) Maybe(Return.Realpath) {
+    //     _ = args;
+    //     _ = this;
+    //     _ = flavor;
+    //     return error.NotImplementedYet;
+    // }
     pub fn rename(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Rename) Maybe(Return.Rename) {
         _ = args;
         _ = this;

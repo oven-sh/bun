@@ -7,7 +7,8 @@ const Syscall = @This();
 const Environment = @import("../../../global.zig").Environment;
 
 const darwin = os.darwin;
-
+const MAX_PATH_BYTES = std.fs.MAX_PATH_BYTES;
+const fd_t = std.os.fd_t;
 const linux = os.linux;
 // TODO
 
@@ -119,6 +120,7 @@ pub fn write(fd: os.fd_t, bytes: []const u8) Maybe(usize) {
         }
         return Maybe(usize){ .result = rc };
     }
+    unreachable;
 }
 
 const pread_sym = if (builtin.os.tag == .linux and builtin.link_libc)
@@ -138,6 +140,7 @@ pub fn pread(fd: os.fd_t, buf: []u8, offset: i64) Maybe(usize) {
         }
         return Maybe(usize){ .result = rc };
     }
+    unreachable;
 }
 
 pub fn read(fd: os.fd_t, buf: []u8) Maybe(usize) {
@@ -149,6 +152,67 @@ pub fn read(fd: os.fd_t, buf: []u8) Maybe(usize) {
             return err;
         }
         return Maybe(usize){ .result = rc };
+    }
+    unreachable;
+}
+
+pub fn readlink(in: [:0]const u8, buf: []u8) Maybe(usize) {
+    while (true) {
+        const rc = system.readlink(in, buf.ptr, buf.len);
+
+        if (Maybe(usize).errno(rc)) |err| {
+            if (err.err.errno == .INTR) continue;
+            return err;
+        }
+        return Maybe(usize){ .result = rc };
+    }
+    unreachable;
+}
+
+pub fn getFdPath(fd: fd_t, out_buffer: *[MAX_PATH_BYTES]u8) Maybe([]u8) {
+    switch (comptime builtin.os.tag) {
+        .windows => {
+            const windows = std.os.windows;
+            var wide_buf: [windows.PATH_MAX_WIDE]u16 = undefined;
+            const wide_slice = windows.GetFinalPathNameByHandle(fd, .{}, wide_buf[0..]) catch {
+                return Maybe([]u8){ .err = .{ .errno = .EBADF } };
+            };
+
+            // Trust that Windows gives us valid UTF-16LE.
+            const end_index = std.unicode.utf16leToUtf8(out_buffer, wide_slice) catch unreachable;
+            return .{ .result = out_buffer[0..end_index] };
+        },
+        .macos, .ios, .watchos, .tvos => {
+            // On macOS, we can use F.GETPATH fcntl command to query the OS for
+            // the path to the file descriptor.
+            @memset(out_buffer, 0, MAX_PATH_BYTES);
+            if (Maybe([]u8).errno(darwin.fcntl(fd, os.F.GETPATH, out_buffer))) |err| {
+                return err;
+            }
+            const len = mem.indexOfScalar(u8, out_buffer[0..], @as(u8, 0)) orelse MAX_PATH_BYTES;
+            return .{ .result = out_buffer[0..len] };
+        },
+        .linux => {
+            var procfs_buf: ["/proc/self/fd/-2147483648".len:0]u8 = undefined;
+            const proc_path = std.fmt.bufPrint(procfs_buf[0..], "/proc/self/fd/{d}\x00", .{fd}) catch unreachable;
+
+            return switch (readlink(std.meta.assumeSentinel(proc_path.ptr, 0), out_buffer)) {
+                .err => |err| return .{ .err = err },
+                .result => |len| return .{ .result = out_buffer[0..len] },
+            };
+        },
+        // .solaris => {
+        //     var procfs_buf: ["/proc/self/path/-2147483648".len:0]u8 = undefined;
+        //     const proc_path = std.fmt.bufPrintZ(procfs_buf[0..], "/proc/self/path/{d}", .{fd}) catch unreachable;
+
+        //     const target = readlinkZ(proc_path, out_buffer) catch |err| switch (err) {
+        //         error.UnsupportedReparsePointType => unreachable,
+        //         error.NotLink => unreachable,
+        //         else => |e| return e,
+        //     };
+        //     return target;
+        // },
+        else => @compileError("querying for canonical path of a handle is unsupported on this host"),
     }
 }
 

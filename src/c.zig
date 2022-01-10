@@ -31,6 +31,8 @@ pub extern "c" fn lstat([*c]const u8, [*c]libc_stat) c_int;
 pub extern "c" fn lstat64([*c]const u8, [*c]libc_stat) c_int;
 pub extern "c" fn lchmod(path: [*:0]const u8, mode: mode_t) c_int;
 
+pub extern "c" fn mkdtemp(template: [*c]u8) ?[*]u8;
+
 pub fn lstat_absolute(path: [:0]const u8) StatError!Stat {
     if (builtin.os.tag == .windows) {
         @compileError("Not implemented yet");

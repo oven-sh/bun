@@ -43,6 +43,8 @@ pub const Syscall = struct {
         fdatasync,
         fchmod,
         fchown,
+        mkdtemp,
+        mkdir,
         _,
     };
 
@@ -169,6 +171,13 @@ pub fn Maybe(comptime ReturnType: type) type {
         };
 
         pub const todo = .{ .err = Syscall.Error.todo };
+
+        pub inline fn getErrno(this: @This()) os.E {
+            return switch (this) {
+                .result => os.E.SUCCESS,
+                .err => |err| @intToEnum(os.E, err.errno),
+            };
+        }
 
         pub inline fn errno(rc: anytype) ?@This() {
             return switch (std.os.errno(rc)) {
@@ -314,17 +323,22 @@ pub const NodeFS = struct {
             return this.string.slice();
         }
 
-        pub inline fn sliceZ(this: PathLike, buf: [:0]u8) [:0]const u8 {
+        pub fn sliceZWithForceCopy(this: PathLike, buf: [:0]u8, comptime force: bool) [:0]const u8 {
             var sliced = this.string.slice();
-
-            if (sliced[sliced.len - 1] == 0) {
-                var sliced_ptr = sliced.ptr;
-                return sliced_ptr[0 .. sliced.len - 1 :0];
+            if (comptime !force) {
+                if (sliced[sliced.len - 1] == 0) {
+                    var sliced_ptr = sliced.ptr;
+                    return sliced_ptr[0 .. sliced.len - 1 :0];
+                }
             }
 
             @memcpy(&buf, sliced.ptr, sliced.len);
             buf[sliced.len] = 0;
             return buf[0..sliced.len :0];
+        }
+
+        pub inline fn sliceZ(this: PathLike, buf: [:0]u8) [:0]const u8 {
+            return sliceZWithForceCopy(this, buf, false);
         }
     };
 
@@ -437,6 +451,7 @@ pub const NodeFS = struct {
             retry_delay: c_uint = 100,
         };
 
+        /// https://github.com/nodejs/node/blob/master/lib/fs.js#L1285
         pub const Mkdir = struct {
             path: PathLike,
             /// Indicates whether parent folders should be created.
@@ -874,7 +889,7 @@ pub const NodeFS = struct {
         pub const Lchown = void;
         pub const Link = void;
         pub const Lstat = Stats;
-        pub const Mkdir = void;
+        pub const Mkdir = string;
         pub const Mkdtemp = PathString;
         pub const Open = FileDescriptor;
         pub const Read = struct {
@@ -1176,7 +1191,7 @@ pub const NodeFS = struct {
         return Maybe(Return.Fstat).todo;
     }
 
-    pub fn fsync(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Fsync) !Return.Fsync {
+    pub fn fsync(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Fsync) Maybe(Return.Fsync) {
         switch (comptime flavor) {
             .sync => return Maybe(Return.Fsync).errno(system.fsync(args.fd)) orelse
                 Maybe(Return.Fsync).success,
@@ -1189,7 +1204,7 @@ pub const NodeFS = struct {
         return Maybe(Return.Fsync).todo;
     }
 
-    pub fn ftruncate(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Ftruncate) !Return.Ftruncate {
+    pub fn ftruncate(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Ftruncate) Maybe(Return.Ftruncate) {
         switch (comptime flavor) {
             .sync => return Maybe(Return.Ftruncate).errno(system.ftruncate(args.fd)) orelse
                 Maybe(Return.Ftruncate).success,
@@ -1201,7 +1216,7 @@ pub const NodeFS = struct {
         _ = flavor;
         return Maybe(Return.Ftruncate).todo;
     }
-    pub fn futimes(this: *NodeFS, comptime flavor: Flavor, args: Arguments.FUTimes) !Return.Futimes {
+    pub fn futimes(this: *NodeFS, comptime flavor: Flavor, args: Arguments.FUTimes) Maybe(Return.Futimes) {
         var times = [2]std.os.timespec{
             .{
                 .tv_sec = args.mtime,
@@ -1227,7 +1242,7 @@ pub const NodeFS = struct {
         return Maybe(Return.Fstat).todo;
     }
 
-    pub fn lchmod(this: *NodeFS, comptime flavor: Flavor, args: Arguments.LCHmod) !Return.Lchmod {
+    pub fn lchmod(this: *NodeFS, comptime flavor: Flavor, args: Arguments.LCHmod) Maybe(Return.Lchmod) {
         var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         const path = args.path.sliceZ(&buf);
 
@@ -1244,7 +1259,7 @@ pub const NodeFS = struct {
         return Maybe(Return.Lchmod).todo;
     }
 
-    pub fn lchown(this: *NodeFS, comptime flavor: Flavor, args: Arguments.LChown) !Return.Lchown {
+    pub fn lchown(this: *NodeFS, comptime flavor: Flavor, args: Arguments.LChown) Maybe(Return.Lchown) {
         var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         const path = args.path.sliceZ(&buf);
 
@@ -1260,7 +1275,7 @@ pub const NodeFS = struct {
         _ = flavor;
         return Maybe(Return.Lchown).todo;
     }
-    pub fn link(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Link) !Return.Link {
+    pub fn link(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Link) Maybe(Return.Link) {
         var from_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         var to_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         const from = args.old_path.sliceZ(&from_path_buf);
@@ -1279,7 +1294,7 @@ pub const NodeFS = struct {
         _ = flavor;
         return Maybe(Return.Link).todo;
     }
-    pub fn lstat(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Lstat) !Return.Lstat {
+    pub fn lstat(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Lstat) Maybe(Return.Lstat) {
         if (args.big_int) return Maybe(Return.Lstat).todo;
 
         switch (comptime flavor) {
@@ -1299,127 +1314,271 @@ pub const NodeFS = struct {
         _ = flavor;
         return Maybe(Return.Lstat).todo;
     }
-    pub fn mkdir(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Mkdir) !Return.Mkdir {
+
+    // Node doesn't absolute the path so we don't have to either
+    pub fn mkdirNonRecursive(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Mkdir) Maybe(Return.Mkdir) {
+        switch (comptime flavor) {
+            .sync => {
+                var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                const path = args.path.sliceZ(&buf);
+                if (Maybe(Return.Mkdir).errno(system.mkdir(path, args.mode))) |err| {
+                    return switch (err.getErrno()) {
+                        .EXIST => Maybe(Return.Mkdir){ .result = "" },
+                        else => .{ .err = err.err },
+                    };
+                }
+
+                return Maybe(Return.Mkdir){ .result = args.path.slice() };
+            },
+            else => {},
+        }
+        _ = args;
+        _ = this;
+        _ = flavor;
+        return Maybe(Return.Mkdir).todo;
+    }
+
+    // TODO: windows
+    // TODO: verify this works correctly with unicode codepoints
+    pub fn mkdirRecursive(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Mkdir) Maybe(Return.Mkdir) {
+        switch (comptime flavor) {
+            // The sync version does no allocation except when returning the path
+            .sync => {
+                var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                const path = args.path.sliceZWithForceCopy(&buf, true);
+                const len = path.len;
+                // First, attempt to create the desired directory
+                // If that fails, then walk back up the path until we have a match
+                if (Maybe(Return.Mkdir).errno(system.mkdir(path, args.mode))) |err| {
+                    switch (err.getErrno()) {
+                        .EXIST => return Maybe(Return.Mkdir){ .result = "" },
+                        else => return .{ .err = err },
+
+                        // continue
+                        .NOENT => {},
+                    }
+                } else {
+                    return Maybe(Return.Mkdir){ .result = args.path.slice() };
+                }
+
+                var working_mem: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                @memcpy(&working_mem, path, len);
+
+                if (comptime Environment.isWindows) @compileError("This needs to be implemented on Windows.");
+                var i: usize = len - 1;
+
+                // iterate backwards until creating the directory works successfully
+                while (i > 0) : (i -= 1) {
+                    if (path[i] == std.fs.path.sep) {
+                        working_mem[i] = 0;
+                        var parent: [:0]u8 = working_mem[0 .. i - 1 :0];
+
+                        if (Maybe(Return.Mkdir).errno(system.mkdir(parent, args.mode))) |err| {
+                            working_mem[i] = std.fs.path.sep;
+                            switch (err.getErrno()) {
+                                .EXIST => {
+                                    break;
+                                },
+                                .NOENT => {
+                                    continue;
+                                },
+                                else => return .{ .err = err },
+                            }
+                        } else {
+                            working_mem[i] = std.fs.path.sep;
+                            break;
+                        }
+                    }
+                }
+                var first_match: u16 = i;
+                i += 1;
+                // after we find one that works, we go forward _after_ the first working directory
+                while (i < len) : (i += 1) {
+                    if (path[i] == std.fs.path.sep) {
+                        working_mem[i] = 0;
+                        var parent: [:0]u8 = working_mem[0 .. i - 1 :0];
+
+                        if (Maybe(Return.Mkdir).errno(system.mkdir(parent, args.mode))) |err| {
+                            working_mem[i] = std.fs.path.sep;
+                            switch (err.getErrno()) {
+                                .EXIST => {
+                                    std.debug.assert(false);
+                                    continue;
+                                },
+                                else => return .{ .err = err },
+                            }
+                        } else {
+                            working_mem[i] = std.fs.path.sep;
+                            break;
+                        }
+                    }
+                }
+
+                first_match = @truncate(u16, i);
+                // Our final directory will not have a trailing separator
+                // so we have to create it once again
+                if (Maybe(Return.Mkdir).errno(system.mkdir(path, args.mode))) |err| {
+                    switch (err.getErrno()) {
+                        // handle the race condition
+                        .EXIST => {
+                            var display_path: []const u8 = "";
+                            if (first_match != std.math.maxInt(u16)) {
+                                // TODO: this leaks memory
+                                display_path = _global.default_allocator.dupe(u8, display_path[0..first_match]) catch unreachable;
+                            }
+                            return Maybe(Return.Mkdir){ .result = display_path };
+                        },
+
+                        // NOENT shouldn't happen here
+                        else => return .{ .err = err },
+                    }
+                } else {
+                    var display_path = args.path.slice();
+                    if (first_match != std.math.maxInt(u16)) {
+                        // TODO: this leaks memory
+                        display_path = _global.default_allocator.dupe(u8, display_path[0..first_match]) catch unreachable;
+                    }
+                    return Maybe(Return.Mkdir){ .result = display_path };
+                }
+            },
+            else => {},
+        }
+
+        _ = args;
+        _ = this;
+        _ = flavor;
+        return Maybe(Return.Mkdir).todo;
+    }
+
+    pub fn mkdtemp(this: *NodeFS, comptime flavor: Flavor, args: Arguments.MkdirTemp) Maybe(Return.Mkdtemp) {
+        var prefix_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        prefix_buf[0] = 0;
+        const len = args.prefix.len;
+        if (len > 0) {
+            @memcpy(&prefix_buf, args.prefix.ptr, len);
+            prefix_buf[len] = 0;
+        }
+
+        const rc = C.mkdtemp(&prefix_buf);
+        if (std.c.getErrno(rc)) |errno| {
+            return .{ .err = Syscall.Error{ .errno = errno, .syscall = .mkdtemp } };
+        }
+        var prefix: [:0]u8 = std.mem.sliceTo(&prefix_buf, 0);
+        _ = this;
+        _ = flavor;
+        return .{
+            .result = _global.default_allocator.dupe(u8, prefix) catch unreachable,
+        };
+    }
+    pub fn open(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Open) Maybe(Return.Open) {
         _ = args;
         _ = this;
         _ = flavor;
         return error.NotImplementedYet;
     }
-    pub fn mkdtemp(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Mkdtemp) !Return.Mkdtemp {
+    pub fn openDir(this: *NodeFS, comptime flavor: Flavor, args: Arguments.OpenDir) Maybe(Return.OpenDir) {
         _ = args;
         _ = this;
         _ = flavor;
         return error.NotImplementedYet;
     }
-    pub fn open(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Open) !Return.Open {
+    pub fn read(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Read) Maybe(Return.Read) {
         _ = args;
         _ = this;
         _ = flavor;
         return error.NotImplementedYet;
     }
-    pub fn openDir(this: *NodeFS, comptime flavor: Flavor, args: Arguments.OpenDir) !Return.OpenDir {
+    pub fn readdir(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Readdir) Maybe(Return.Readdir) {
         _ = args;
         _ = this;
         _ = flavor;
         return error.NotImplementedYet;
     }
-    pub fn read(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Read) !Return.Read {
+    pub fn readFile(this: *NodeFS, comptime flavor: Flavor, args: Arguments.ReadFile) Maybe(Return.ReadFile) {
         _ = args;
         _ = this;
         _ = flavor;
         return error.NotImplementedYet;
     }
-    pub fn readdir(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Readdir) !Return.Readdir {
+    pub fn readlink(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Readlink) Maybe(Return.Readlink) {
         _ = args;
         _ = this;
         _ = flavor;
         return error.NotImplementedYet;
     }
-    pub fn readFile(this: *NodeFS, comptime flavor: Flavor, args: Arguments.ReadFile) !Return.ReadFile {
+    pub fn realpath(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Realpath) Maybe(Return.Realpath) {
         _ = args;
         _ = this;
         _ = flavor;
         return error.NotImplementedYet;
     }
-    pub fn readlink(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Readlink) !Return.Readlink {
+    pub fn realpathNative(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Realpath) Maybe(Return.Realpath) {
         _ = args;
         _ = this;
         _ = flavor;
         return error.NotImplementedYet;
     }
-    pub fn realpath(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Realpath) !Return.Realpath {
+    pub fn rename(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Rename) Maybe(Return.Rename) {
         _ = args;
         _ = this;
         _ = flavor;
         return error.NotImplementedYet;
     }
-    pub fn realpathNative(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Realpath) !Return.Realpath {
+    pub fn rmdir(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Rmdir) Maybe(Return.Rmdir) {
         _ = args;
         _ = this;
         _ = flavor;
         return error.NotImplementedYet;
     }
-    pub fn rename(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Rename) !Return.Rename {
+    pub fn stat(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Stat) Maybe(Return.Stat) {
         _ = args;
         _ = this;
         _ = flavor;
         return error.NotImplementedYet;
     }
-    pub fn rmdir(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Rmdir) !Return.Rmdir {
+    pub fn symlink(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Symlink) Maybe(Return.Symlink) {
         _ = args;
         _ = this;
         _ = flavor;
         return error.NotImplementedYet;
     }
-    pub fn stat(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Stat) !Return.Stat {
+    pub fn truncate(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Truncate) Maybe(Return.Truncate) {
         _ = args;
         _ = this;
         _ = flavor;
         return error.NotImplementedYet;
     }
-    pub fn symlink(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Symlink) !Return.Symlink {
+    pub fn unlink(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Unlink) Maybe(Return.Unlink) {
         _ = args;
         _ = this;
         _ = flavor;
         return error.NotImplementedYet;
     }
-    pub fn truncate(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Truncate) !Return.Truncate {
+    pub fn unwatchFile(this: *NodeFS, comptime flavor: Flavor, args: Arguments.UnwatchFile) Maybe(Return.UnwatchFile) {
         _ = args;
         _ = this;
         _ = flavor;
         return error.NotImplementedYet;
     }
-    pub fn unlink(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Unlink) !Return.Unlink {
+    pub fn utimes(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Utimes) Maybe(Return.Utimes) {
         _ = args;
         _ = this;
         _ = flavor;
         return error.NotImplementedYet;
     }
-    pub fn unwatchFile(this: *NodeFS, comptime flavor: Flavor, args: Arguments.UnwatchFile) !Return.UnwatchFile {
+    pub fn watch(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Watch) Maybe(Return.Watch) {
         _ = args;
         _ = this;
         _ = flavor;
         return error.NotImplementedYet;
     }
-    pub fn utimes(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Utimes) !Return.Utimes {
+    pub fn createReadStream(this: *NodeFS, comptime flavor: Flavor, args: Arguments.CreateReadStream) Maybe(Return.CreateReadStream) {
         _ = args;
         _ = this;
         _ = flavor;
         return error.NotImplementedYet;
     }
-    pub fn watch(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Watch) !Return.Watch {
-        _ = args;
-        _ = this;
-        _ = flavor;
-        return error.NotImplementedYet;
-    }
-    pub fn createReadStream(this: *NodeFS, comptime flavor: Flavor, args: Arguments.CreateReadStream) !Return.CreateReadStream {
-        _ = args;
-        _ = this;
-        _ = flavor;
-        return error.NotImplementedYet;
-    }
-    pub fn createWriteStream(this: *NodeFS, comptime flavor: Flavor, args: Arguments.CreateWriteStream) !Return.CreateWriteStream {
+    pub fn createWriteStream(this: *NodeFS, comptime flavor: Flavor, args: Arguments.CreateWriteStream) Maybe(Return.CreateWriteStream) {
         _ = args;
         _ = this;
         _ = flavor;

@@ -9,6 +9,8 @@ const Environment = _global.Environment;
 const C = _global.C;
 const Syscall = @import("./syscall.zig");
 const os = std.os;
+const Buffer = JSC.MarkedArrayBuffer;
+pub const FileDescriptor = os.fd_t;
 pub const Flavor = enum {
     sync,
     promise,
@@ -79,4 +81,72 @@ pub const Encoding = enum {
 
     /// Refer to the buffer's encoding
     buffer,
+};
+
+const PathOrBuffer = union(Tag) {
+    path: PathString,
+    buffer: Buffer,
+
+    pub const Tag = enum { path, buffer };
+
+    pub inline fn slice(this: PathOrBuffer) []const u8 {
+        return this.path.slice();
+    }
+};
+
+pub const SystemError = struct {
+    errno: c_int = 0,
+    path: PathString,
+    syscall: [:0]const u8 = "",
+};
+
+pub fn CallbackTask(comptime Result: type) type {
+    return struct {
+        callback: JSC.C.JSObjectRef,
+        option: Option,
+        success: bool = false,
+        completion: AsyncIO.Completion,
+
+        pub const Option = union {
+            err: SystemError,
+            result: Result,
+        };
+    };
+}
+
+const PathLike = union(Tag) {
+    string: PathString,
+    buffer: void,
+    url: void,
+
+    pub const Tag = enum { string, buffer, url };
+
+    pub inline fn slice(this: PathLike) string {
+        return this.string.slice();
+    }
+
+    pub fn sliceZWithForceCopy(this: PathLike, buf: [:0]u8, comptime force: bool) [:0]const u8 {
+        var sliced = this.string.slice();
+        if (comptime !force) {
+            if (sliced[sliced.len - 1] == 0) {
+                var sliced_ptr = sliced.ptr;
+                return sliced_ptr[0 .. sliced.len - 1 :0];
+            }
+        }
+
+        @memcpy(&buf, sliced.ptr, sliced.len);
+        buf[sliced.len] = 0;
+        return buf[0..sliced.len :0];
+    }
+
+    pub inline fn sliceZ(this: PathLike, buf: [:0]u8) [:0]const u8 {
+        return sliceZWithForceCopy(this, buf, false);
+    }
+};
+
+const PathOrFileDescriptor = union(Tag) {
+    path: PathLike,
+    fd: FileDescriptor,
+
+    pub const Tag = enum { fd, path };
 };

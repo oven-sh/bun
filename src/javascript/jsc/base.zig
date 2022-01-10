@@ -1547,6 +1547,11 @@ pub const MarkedArrayBuffer = struct {
     buffer: ArrayBuffer,
     allocator: std.mem.Allocator,
 
+    pub fn fromString(str: []const u8, allocator: std.mem.Allocator) !MarkedArrayBuffer {
+        var buf = try allocator.dupe(u8, str);
+        return MarkedArrayBuffer.fromBytes(buf, allocator, js.kJSTypedArrayTypeUint8Array);
+    }
+
     pub fn fromBytes(bytes: []u8, allocator: std.mem.Allocator, typed_array_type: js.JSTypedArrayType) MarkedArrayBuffer {
         return MarkedArrayBuffer{
             .buffer = ArrayBuffer{ .offset = 0, .len = @intCast(u32, bytes.len), .byte_len = @intCast(u32, bytes.len), .typed_array_type = typed_array_type, .ptr = bytes.ptr },

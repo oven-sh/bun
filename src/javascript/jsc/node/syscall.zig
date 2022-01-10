@@ -64,7 +64,7 @@ pub fn fstat(fd: std.os.fd_t) Maybe(os.Stat) {
 
 pub fn open(file_path: [:0]const u8, flags: u32, perm: std.os.mode_t) Maybe(std.os.fd_t) {
     while (true) {
-        const rc = open_sym(file_path, flags, perm);
+        const rc = open_sym(file_path, flags | os.O.CLOEXEC, perm);
         switch (system.getErrno(rc)) {
             .SUCCESS => .{ .result = rc },
             .INTR => continue,

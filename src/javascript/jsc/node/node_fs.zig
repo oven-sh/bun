@@ -1,3 +1,6 @@
+// This file contains the underlying implementation for sync & async functions
+// for interacting with the filesystem from JavaScript The top-level functions
+// assume the arguments are already validated
 const std = @import("std");
 const _global = @import("../../../global.zig");
 const strings = _global.strings;
@@ -16,50 +19,24 @@ const builtin = @import("builtin");
 const os = @import("std").os;
 const darwin = os.darwin;
 const linux = os.linux;
-
+const PathOrBuffer = @import("./types.zig").PathOrBuffer;
+const PathLike = @import("./types.zig").PathLike;
+const PathOrFileDescriptor = @import("./types.zig").PathOrFileDescriptor;
+const FileDescriptor = @import("./types.zig").FileDescriptor;
+const DirIterator = @import("./dir_iterator.zig");
 pub const FlavoredIO = struct {
     io: *AsyncIO,
-};
-
-const PathOrBuffer = union(Tag) {
-    path: PathString,
-    buffer: Buffer,
-
-    pub const Tag = enum { path, buffer };
-
-    pub inline fn slice(this: PathOrBuffer) []const u8 {
-        return this.path.slice();
-    }
 };
 
 const ArrayBuffer = JSC.MarkedArrayBuffer;
 const Buffer = ArrayBuffer;
 
-pub const SystemError = struct {
-    errno: c_int = 0,
-    path: PathString,
-    syscall: [:0]const u8 = "",
-};
-
-pub fn CallbackTask(comptime Result: type) type {
-    return struct {
-        callback: JSC.C.JSObjectRef,
-        option: Option,
-        success: bool = false,
-        completion: AsyncIO.Completion,
-
-        pub const Option = union {
-            err: SystemError,
-            result: Result,
-        };
-    };
-}
-
+/// Bun's implementation of the Node.js "fs" module
 /// https://nodejs.org/api/fs.html
 /// https://github.com/DefinitelyTyped/DefinitelyTyped/blob/master/types/node/fs.d.ts
 pub const NodeFS = struct {
     const Mode = c_uint;
-    const FileDescriptor = c_int;
+
     const uid_t = std.os.uid_t;
     const gid_t = std.os.gid_t;
     const TimeLike = c_int;
@@ -109,43 +86,6 @@ pub const NodeFS = struct {
         @"w+" = std.os.O.RDWR | std.os.O.CREAT,
         ///  Like 'w+' but fails if the path exists.
         @"wx+" = std.os.O.RDWR | std.os.O.EXCL,
-    };
-
-    const PathLike = union(Tag) {
-        string: PathString,
-        buffer: void,
-        url: void,
-
-        pub const Tag = enum { string, buffer, url };
-
-        pub inline fn slice(this: PathLike) string {
-            return this.string.slice();
-        }
-
-        pub fn sliceZWithForceCopy(this: PathLike, buf: [:0]u8, comptime force: bool) [:0]const u8 {
-            var sliced = this.string.slice();
-            if (comptime !force) {
-                if (sliced[sliced.len - 1] == 0) {
-                    var sliced_ptr = sliced.ptr;
-                    return sliced_ptr[0 .. sliced.len - 1 :0];
-                }
-            }
-
-            @memcpy(&buf, sliced.ptr, sliced.len);
-            buf[sliced.len] = 0;
-            return buf[0..sliced.len :0];
-        }
-
-        pub inline fn sliceZ(this: PathLike, buf: [:0]u8) [:0]const u8 {
-            return sliceZWithForceCopy(this, buf, false);
-        }
-    };
-
-    const PathOrFileDescriptor = union(Tag) {
-        path: PathLike,
-        fd: FileDescriptor,
-
-        pub const Tag = enum { fd, path };
     };
 
     pub const Arguments = struct {
@@ -268,6 +208,7 @@ pub const NodeFS = struct {
         };
 
         pub const Readdir = struct {
+            path: PathLike,
             encoding: Encoding = Encoding.utf8,
             with_file_types: bool = false,
         };
@@ -668,6 +609,7 @@ pub const NodeFS = struct {
     /// @since v12.12.0
     const Dir = struct {
         path: PathString,
+        kind: std.fs.File.Kind,
     };
 
     pub const Return = struct {
@@ -697,10 +639,12 @@ pub const NodeFS = struct {
         };
         pub const Readdir = union(Tag) {
             with_file_types: []const DirEnt,
-            files: []const PathOrBuffer,
+            buffers: []const Buffer,
+            files: []const PathString,
 
             pub const Tag = enum {
                 with_file_types,
+                buffers,
                 files,
             };
         };
@@ -1374,10 +1318,98 @@ pub const NodeFS = struct {
     }
 
     pub fn readdir(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Readdir) Maybe(Return.Readdir) {
+        return switch (args.encoding) {
+            .buffer => _readdir(this, flavor, Buffer, args),
+            else => {
+                if (!args.with_file_types) {
+                    return _readdir(this, flavor, PathString, args);
+                }
+
+                return _readdir(this, flavor, DirEnt, args);
+            },
+        };
+    }
+
+    pub fn _readdir(this: *NodeFS, comptime flavor: Flavor, comptime ExpectedType: type, args: Arguments.Readdir) Maybe(Return.Readdir) {
+        const file_type = comptime switch (ExpectedType) {
+            DirEnt => "with_file_types",
+            PathString => "files",
+            Buffer => "buffers",
+        };
+
+        switch (comptime flavor) {
+            .sync => {
+                var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                var path = args.path.sliceZ(&buf);
+                const flags = os.O.DIRECTORY | os.O.RDONLY;
+                const fd = switch (Syscall.open(path, flags, 0)) {
+                    .err => |err| return .{
+                        .err = .{ .err = err.withPath(args.path.slice()) },
+                    },
+                    .result => |fd_| fd_,
+                };
+                defer {
+                    _ = Syscall.close(fd);
+                }
+
+                var entries = std.ArrayList(ExpectedType).init(_global.default_allocator);
+                var dir = std.fs.Dir{ .fd = fd };
+                var iterator = DirIterator.iterate(dir);
+                var entry = iterator.next();
+                while (switch (entry) {
+                    .err => |err| {
+                        for (entries.items) |*item| {
+                            switch (comptime ExpectedType) {
+                                DirEnt => {
+                                    _global.default_allocator.free(item.name.slice());
+                                },
+                                Buffer => {
+                                    item.allocator.free(item.buffer.slice());
+                                },
+                                PathString => {
+                                    _global.default_allocator.free(item.slice());
+                                },
+                                else => unreachable,
+                            }
+                        }
+
+                        entries.deinit();
+
+                        return .{
+                            .err = .{ .err = err },
+                        };
+                    },
+                    .result => |entry| entry,
+                }) |current| {
+                    switch (comptime ExpectedType) {
+                        DirEnt => {
+                            entries.append(.{
+                                .name = PathString.init(_global.default_allocator.dupe(u8, current.name.slice()) catch unreachable),
+                                .kind = current.kind,
+                            }) catch unreachable;
+                        },
+                        Buffer => {
+                            const slice = current.name.slice();
+                            entries.append(Buffer.fromString(slice) catch unreachable) catch unreachable;
+                        },
+                        PathString => {
+                            entries.append(
+                                PathString.init(_global.default_allocator.dupe(u8, current.name.slice())) catch unreachable,
+                            ) catch unreachable;
+                        },
+                        else => unreachable,
+                    }
+                }
+
+                return .{ .result = @unionInit(Return.Readdir, file_type, entries.toOwnedSlice()) };
+            },
+            else => {},
+        }
+
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.Readdir).todo;
     }
     pub fn readFile(this: *NodeFS, comptime flavor: Flavor, args: Arguments.ReadFile) Maybe(Return.ReadFile) {
         _ = args;

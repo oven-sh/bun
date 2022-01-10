@@ -842,7 +842,11 @@ pub const NodeFS = struct {
             .sync => {
                 // TODO: bench if faster to stat() or open() + close()
                 // I imagine stat() is slower for directories and faster for files
-                const fd = switch (Syscall.open(path, FileSystemFlags.@"r", 000666)) {
+                const flags = comptime if (Environment.isLinux)
+                    os.O.PATH
+                else
+                    @enumToInt(FileSystemFlags.@"r");
+                const fd = switch (Syscall.open(path, flags, 0)) {
                     .result => |result| result,
                     else => |err| return switch (@intToEnum(std.os.E, err.err.errno)) {
                         .NOTFOUND => .{ .result = false },
@@ -991,7 +995,7 @@ pub const NodeFS = struct {
         };
 
         switch (comptime flavor) {
-            .sync => return switch (Maybe(Return.Fstat).errno(system.futimens(args.fd, &times))) {
+            .sync => return switch (Maybe(Return.Futimes).errno(system.futimens(args.fd, &times))) {
                 .err => |err| err,
                 else => Maybe(Return.Futimes).success,
             },
@@ -1001,7 +1005,7 @@ pub const NodeFS = struct {
         _ = args;
         _ = this;
         _ = flavor;
-        return Maybe(Return.Fstat).todo;
+        return Maybe(Return.Futimes).todo;
     }
 
     pub fn lchmod(this: *NodeFS, comptime flavor: Flavor, args: Arguments.LCHmod) Maybe(Return.Lchmod) {
@@ -1569,9 +1573,7 @@ pub const NodeFS = struct {
                         },
                     }
                 }
-                return .{
-                    .result = .{},
-                };
+                return Maybe(Return.WriteFile).success;
             },
             else => {},
         }
@@ -1830,6 +1832,37 @@ pub const NodeFS = struct {
         _ = this;
         _ = flavor;
         return Maybe(Return.Utimes).todo;
+    }
+
+    pub fn lutimes(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Lutimes) Maybe(Return.Lutimes) {
+        var times = [2]std.c.timeval{
+            .{
+                .tv_sec = args.mtime,
+                // TODO: is this correct?
+                .tv_usec = 0,
+            },
+            .{
+                .tv_sec = args.atime,
+                // TODO: is this correct?
+                .tv_usec = 0,
+            },
+        };
+
+        switch (comptime flavor) {
+            // futimes uses the syscall version
+            // we use libc because here, not for a good reason
+            // just missing from the linux syscall interface in zig and I don't want to modify that right now
+            .sync => return switch (Maybe(Return.Lutimes).errno(C.lutimes(args.path, &times))) {
+                .err => |err| err,
+                else => Maybe(Return.Lutimes).success,
+            },
+            else => {},
+        }
+
+        _ = args;
+        _ = this;
+        _ = flavor;
+        return Maybe(Return.Lutimes).todo;
     }
     pub fn watch(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Watch) Maybe(Return.Watch) {
         _ = args;

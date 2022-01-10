@@ -5,7 +5,7 @@ const Flavor = @import("./types.zig").Flavor;
 const system = std.os.system;
 const Maybe = @import("./types.zig").Maybe;
 const Encoding = @import("./types.zig").Encoding;
-const Syscall = @import("./syscall.zig");
+const Args = NodeFS.Arguments;
 
 pub const Class = JSC.NewClass(
     NodeFS,

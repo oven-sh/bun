@@ -226,6 +226,17 @@ pub fn symlink(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
     unreachable;
 }
 
+pub fn unlink(from: [:0]const u8) Maybe(void) {
+    while (true) {
+        if (Maybe(void).errno(system.unlink(from))) |err| {
+            if (err.err.errno == .INTR) continue;
+            return err;
+        }
+        return Maybe(void).success;
+    }
+    unreachable;
+}
+
 pub fn getFdPath(fd: fd_t, out_buffer: *[MAX_PATH_BYTES]u8) Maybe([]u8) {
     switch (comptime builtin.os.tag) {
         .windows => {

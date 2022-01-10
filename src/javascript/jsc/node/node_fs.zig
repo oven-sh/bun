@@ -120,16 +120,48 @@ pub const Syscall = struct {
         @compileError("Not implemented yet");
     }
 
+    const max_count = switch (builtin.os.tag) {
+        .linux => 0x7ffff000,
+        .macos, .ios, .watchos, .tvos => std.math.maxInt(i32),
+        else => std.math.maxInt(isize),
+    };
+
     pub fn write(fd: os.fd_t, bytes: []const u8) Maybe(usize) {
-        const max_count = switch (builtin.os.tag) {
-            .linux => 0x7ffff000,
-            .macos, .ios, .watchos, .tvos => std.math.maxInt(i32),
-            else => std.math.maxInt(isize),
-        };
         const adjusted_len = @minimum(max_count, bytes.len);
 
         while (true) {
             const rc = system.write(fd, bytes.ptr, adjusted_len);
+            if (Maybe(usize).errno(rc)) |err| {
+                if (err.err.errno == .INTR) continue;
+                return err;
+            }
+            return Maybe(usize){ .result = rc };
+        }
+    }
+
+    const pread_sym = if (builtin.os.tag == .linux and builtin.link_libc)
+        system.pread64
+    else
+        system.pread;
+
+    pub fn pread(fd: os.fd_t, buf: []u8, offset: i64) Maybe(usize) {
+        const adjusted_len = @minimum(buf.len, max_count);
+
+        const ioffset = @bitCast(i64, offset); // the OS treats this as unsigned
+        while (true) {
+            const rc = pread_sym(fd, buf.ptr, adjusted_len, ioffset);
+            if (Maybe(usize).errno(rc)) |err| {
+                if (err.err.errno == .INTR) continue;
+                return err;
+            }
+            return Maybe(usize){ .result = rc };
+        }
+    }
+
+    pub fn read(fd: os.fd_t, buf: []u8) Maybe(usize) {
+        const adjusted_len = @minimum(buf.len, max_count);
+        while (true) {
+            const rc = system.read(fd, buf.ptr, adjusted_len);
             if (Maybe(usize).errno(rc)) |err| {
                 if (err.err.errno == .INTR) continue;
                 return err;
@@ -151,6 +183,16 @@ pub const Syscall = struct {
 
         errno: Int,
         syscall: Syscall.Tag = @intToEnum(Syscall.Tag, 0),
+        path: ?[:0]const u8 = null,
+
+        pub inline fn withPath(this: Error, path: ?[:0]const u8) Error {
+            return Error{
+                .errno = this.errno,
+                .syscall = this.syscall,
+                .path = path,
+            };
+        }
+
         pub const todo = Error{ .errno = std.math.maxInt(Int) - 5 };
     };
 };
@@ -213,8 +255,6 @@ const os = @import("std").os;
 const darwin = os.darwin;
 const linux = os.linux;
 
-const Buffer = struct {};
-
 pub const FlavoredIO = struct {
     io: *AsyncIO,
 };
@@ -230,7 +270,8 @@ const PathOrBuffer = union(Tag) {
     }
 };
 
-const ArrayBuffer = JSC.ArrayBuffer;
+const ArrayBuffer = JSC.MarkedArrayBuffer;
+const Buffer = ArrayBuffer;
 
 pub const SystemError = struct {
     errno: c_int = 0,
@@ -1471,23 +1512,109 @@ pub const NodeFS = struct {
         };
     }
     pub fn open(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Open) Maybe(Return.Open) {
+        switch (comptime flavor) {
+            // The sync version does no allocation except when returning the path
+            .sync => {
+                var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                const path = args.path.sliceZ(&buf);
+                return switch (Syscall.open(path, @enumToInt(args.flags), args.mode)) {
+                    .err => |err| .{
+                        .err = .{ .err = err.withPath(args.path.slice()) },
+                    },
+                    .result => |fd| .{ .result = fd },
+                };
+            },
+            else => {},
+        }
+
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.Open).todo;
     }
     pub fn openDir(this: *NodeFS, comptime flavor: Flavor, args: Arguments.OpenDir) Maybe(Return.OpenDir) {
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        return Maybe(Return.OpenDir).todo;
     }
+
     pub fn read(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Read) Maybe(Return.Read) {
         _ = args;
         _ = this;
         _ = flavor;
-        return error.NotImplementedYet;
+        std.debug.assert(args.position == null);
+
+        switch (comptime flavor) {
+            // The sync version does no allocation except when returning the path
+            .sync => {
+                var buf = args.buffer.buffer.slice()[args.offset..];
+                if (buf.len == 0 or buf.len < args.length) {
+                    return .{ .result = 0 };
+                }
+                buf = buf[0..args.length];
+                var total: usize = 0;
+                while (buf.len > 0) {
+                    switch (Syscall.read(args.fd, buf)) {
+                        .err => |err| return .{
+                            .err = .{ .err = err },
+                        },
+                        .result => |amt| {
+                            total += amt;
+                            buf = buf[@minimum(amt, buf.len)..];
+                            if (amt == 0) {
+                                break;
+                            }
+                        },
+                    }
+                }
+
+                return .{ .result = total };
+            },
+            else => {},
+        }
+
+        return Maybe(Return.Read).todo;
     }
+
+    pub fn pread(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Read) Maybe(Return.Read) {
+        _ = args;
+        _ = this;
+        _ = flavor;
+
+        const position = args.position.?;
+
+        switch (comptime flavor) {
+            .sync => {
+                var buf = args.buffer.buffer.slice()[args.offset..];
+                if (buf.len == 0 or buf.len < args.length) {
+                    return .{ .result = 0 };
+                }
+                buf = buf[0..args.length];
+                var total: usize = 0;
+                while (buf.len > 0) {
+                    switch (Syscall.pread(args.fd, buf, position)) {
+                        .err => |err| return .{
+                            .err = .{ .err = err },
+                        },
+                        .result => |amt| {
+                            total += amt;
+                            buf = buf[@minimum(amt, buf.len)..];
+                            if (amt == 0) {
+                                break;
+                            }
+                        },
+                    }
+                }
+
+                return .{ .result = total };
+            },
+            else => {},
+        }
+
+        return Maybe(Return.Read).todo;
+    }
+
     pub fn readdir(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Readdir) Maybe(Return.Readdir) {
         _ = args;
         _ = this;

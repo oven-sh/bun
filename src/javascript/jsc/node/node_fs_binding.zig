@@ -2,1240 +2,432 @@ const JSC = @import("javascript_core");
 const NodeFS = @import("./node_fs.zig").NodeFS;
 const std = @import("std");
 const Flavor = @import("./types.zig").Flavor;
+const ArgumentsSlice = @import("./types.zig").ArgumentsSlice;
 const system = std.os.system;
 const Maybe = @import("./types.zig").Maybe;
 const Encoding = @import("./types.zig").Encoding;
 const Args = NodeFS.Arguments;
 
-pub const Class = JSC.NewClass(
+const NodeFSFunction = fn (
+    *NodeFS,
+    JSC.C.JSContextRef,
+    JSC.C.JSObjectRef,
+    JSC.C.JSObjectRef,
+    []const JSC.C.JSValueRef,
+    JSC.C.ExceptionRef,
+) JSC.C.JSValueRef;
+
+pub const toJSTrait = std.meta.trait.hasFn("toJS");
+pub const fromJSTrait = std.meta.trait.hasFn("fromJS");
+fn toJSWithType(comptime Type: type, value: Type, context: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+    switch (comptime Type) {
+        void => JSC.C.JSValueMakeUndefined(context),
+        bool => JSC.C.JSValueMakeBoolean(context, value),
+        []const u8, [:0]const u8, [*:0]const u8, []u8, [:0]u8, [*:0]u8 => {
+            var zig_str = JSC.ZigString.init(value);
+            zig_str.detectEncoding();
+            return zig_str.toValueAuto(context.asJSGlobalObject()).asObjectRef();
+        },
+
+        else => {
+            if (comptime std.meta.trait.isNumber(Type)) {
+                return JSC.JSValue.jsNumberWithType(Type, value).asRef();
+            }
+
+            if (comptime std.meta.trait.isZigString(Type)) {
+                var zig_str = JSC.ZigString.init(value);
+                return zig_str.toValue(context.asJSGlobalObject()).asObjectRef();
+            }
+
+            return value.toJS(context, exception).asObjectRef();
+        },
+    }
+}
+
+fn callSync(comptime Function: anytype) NodeFSFunction {
+    const FunctionType = @TypeOf(Function);
+
+    const function: std.builtin.TypeInfo.Fn = comptime @typeInfo(FunctionType).Fn;
+    comptime if (function.args.len != 3) @compileError("Expected 3 arguments");
+    const Arguments = comptime function.args[2].arg_type.?;
+    const Result = comptime function.return_type.?;
+
+    const NodeBindingClosure = struct {
+        pub fn bind(
+            this: *NodeFS,
+            ctx: JSC.C.JSContextRef,
+            _: JSC.C.JSObjectRef,
+            _: JSC.C.JSObjectRef,
+            arguments: []const JSC.C.JSValueRef,
+            exception: JSC.C.ExceptionRef,
+        ) JSC.C.JSValueRef {
+            var slice = ArgumentsSlice.init(arguments);
+
+            defer {
+                // TODO: fix this
+                for (arguments.len) |arg| {
+                    JSC.C.JSValueUnprotect(ctx, arg);
+                }
+                slice.arena.deinit();
+            }
+
+            const args = if (comptime Arguments != void)
+                Arguments.fromJS(ctx, &slice, exception)
+            else
+                Arguments{};
+            if (exception.* != null) return null;
+
+            const result: Maybe(Result) = Function(this, comptime Flavor.sync, args);
+            switch (result) {
+                .err => |err| {
+                    exception.* = err.toJS(ctx);
+                    return null;
+                },
+                .result => |res| toJSWithType(Result, res, ctx, exception),
+            }
+
+            unreachable;
+        }
+    };
+
+    return NodeBindingClosure.bind;
+}
+
+fn call(comptime Function: anytype) NodeFSFunction {
+    const FunctionType = @TypeOf(Function);
+
+    const function: std.builtin.TypeInfo.Fn = comptime @typeInfo(FunctionType).Fn;
+    comptime if (function.args.len != 3) @compileError("Expected 3 arguments");
+    const Arguments = comptime function.args[2].arg_type.?;
+    const Result = comptime function.return_type.?;
+    comptime if (Arguments != void and !fromJSTrait(Arguments)) @compileError(std.fmt.comptimePrint("{s} is missing fromJS()", .{@typeName(Arguments)}));
+    comptime if (Result != void and !toJSTrait(Result)) @compileError(std.fmt.comptimePrint("{s} is missing toJS()", .{@typeName(Result)}));
+    const NodeBindingClosure = struct {
+        pub fn bind(
+            this: *NodeFS,
+            ctx: JSC.C.JSContextRef,
+            _: JSC.C.JSObjectRef,
+            _: JSC.C.JSObjectRef,
+            arguments: []const JSC.C.JSValueRef,
+            exception: JSC.C.ExceptionRef,
+        ) JSC.C.JSValueRef {
+            _ = this;
+            _ = ctx;
+            _ = arguments;
+            exception.* = JSC.Node.SystemError.Class.make(ctx, &JSC.Node.SystemError.todo);
+            return null;
+            // var slice = ArgumentsSlice.init(arguments);
+
+            // defer {
+            //     for (arguments.len) |arg| {
+            //         JSC.C.JSValueUnprotect(ctx, arg);
+            //     }
+            //     slice.arena.deinit();
+            // }
+
+            // const args = if (comptime Arguments != void)
+            //     Arguments.fromJS(ctx, &slice, exception)
+            // else
+            //     Arguments{};
+            // if (exception.* != null) return null;
+
+            // const result: Maybe(Result) = Function(this, comptime Flavor.sync, args);
+            // switch (result) {
+            //     .err => |err| {
+            //         exception.* = err.toJS(ctx);
+            //         return null;
+            //     },
+            //     .result => |res| {
+            //         return switch (comptime Result) {
+            //             void => JSC.JSValue.jsUndefined().asRef(),
+            //             else => res.toJS(ctx),
+            //         };
+            //     },
+            // }
+            // unreachable;
+        }
+    };
+    return NodeBindingClosure.bind;
+}
+
+pub const NodeFSBindings = JSC.NewClass(
     NodeFS,
     .{ .name = "fs" },
-    .{},
+
     .{
+        .access = .{
+            .name = "access",
+            .rfn = call(NodeFS.access),
+        },
         .appendFile = .{
             .name = "appendFile",
-            .rfn = NodeFS.Binding.appendFile,
-        },
-        .appendFileSync = .{
-            .name = "appendFileSync",
-            .rfn = NodeFS.Binding.appendFileSync,
+            .rfn = call(NodeFS.appendFile),
         },
         .close = .{
             .name = "close",
-            .rfn = NodeFS.Binding.close,
-        },
-        .closeSync = .{
-            .name = "closeSync",
-            .rfn = NodeFS.Binding.closeSync,
+            .rfn = call(NodeFS.close),
         },
         .copyFile = .{
             .name = "copyFile",
-            .rfn = NodeFS.Binding.copyFile,
-        },
-        .copyFileSync = .{
-            .name = "copyFileSync",
-            .rfn = NodeFS.Binding.copyFileSync,
+            .rfn = call(NodeFS.copyFile),
         },
         .exists = .{
             .name = "exists",
-            .rfn = NodeFS.Binding.exists,
+            .rfn = call(NodeFS.exists),
         },
-        .existsSync = .{
-            .name = "existsSync",
-            .rfn = NodeFS.Binding.existsSync,
+        .chown = .{
+            .name = "chown",
+            .rfn = call(NodeFS.chown),
+        },
+        .chmod = .{
+            .name = "chmod",
+            .rfn = call(NodeFS.chmod),
         },
         .fchmod = .{
             .name = "fchmod",
-            .rfn = NodeFS.Binding.fchmod,
-        },
-        .fchmodSync = .{
-            .name = "fchmodSync",
-            .rfn = NodeFS.Binding.fchmodSync,
+            .rfn = call(NodeFS.fchmod),
         },
         .fchown = .{
             .name = "fchown",
-            .rfn = NodeFS.Binding.fchown,
-        },
-        .fchownSync = .{
-            .name = "fchownSync",
-            .rfn = NodeFS.Binding.fchownSync,
-        },
-        .fdatasync = .{
-            .name = "fdatasync",
-            .rfn = NodeFS.Binding.fdatasync,
-        },
-        .fdatasyncSync = .{
-            .name = "fdatasyncSync",
-            .rfn = NodeFS.Binding.fdatasyncSync,
+            .rfn = call(NodeFS.fchown),
         },
         .fstat = .{
             .name = "fstat",
-            .rfn = NodeFS.Binding.fstat,
-        },
-        .fstatSync = .{
-            .name = "fstatSync",
-            .rfn = NodeFS.Binding.fstatSync,
+            .rfn = call(NodeFS.fstat),
         },
         .fsync = .{
             .name = "fsync",
-            .rfn = NodeFS.Binding.fsync,
-        },
-        .fsyncSync = .{
-            .name = "fsyncSync",
-            .rfn = NodeFS.Binding.fsyncSync,
+            .rfn = call(NodeFS.fsync),
         },
         .ftruncate = .{
             .name = "ftruncate",
-            .rfn = NodeFS.Binding.ftruncate,
-        },
-        .ftruncateSync = .{
-            .name = "ftruncateSync",
-            .rfn = NodeFS.Binding.ftruncateSync,
+            .rfn = call(NodeFS.ftruncate),
         },
         .futimes = .{
             .name = "futimes",
-            .rfn = NodeFS.Binding.futimes,
-        },
-        .futimesSync = .{
-            .name = "futimesSync",
-            .rfn = NodeFS.Binding.futimesSync,
+            .rfn = call(NodeFS.futimes),
         },
         .lchmod = .{
             .name = "lchmod",
-            .rfn = NodeFS.Binding.lchmod,
-        },
-        .lchmodSync = .{
-            .name = "lchmodSync",
-            .rfn = NodeFS.Binding.lchmodSync,
+            .rfn = call(NodeFS.lchmod),
         },
         .lchown = .{
             .name = "lchown",
-            .rfn = NodeFS.Binding.lchown,
-        },
-        .lchownSync = .{
-            .name = "lchownSync",
-            .rfn = NodeFS.Binding.lchownSync,
+            .rfn = call(NodeFS.lchown),
         },
         .link = .{
             .name = "link",
-            .rfn = NodeFS.Binding.link,
-        },
-        .linkSync = .{
-            .name = "linkSync",
-            .rfn = NodeFS.Binding.linkSync,
+            .rfn = call(NodeFS.link),
         },
         .lstat = .{
             .name = "lstat",
-            .rfn = NodeFS.Binding.lstat,
-        },
-        .lstatSync = .{
-            .name = "lstatSync",
-            .rfn = NodeFS.Binding.lstatSync,
+            .rfn = call(NodeFS.lstat),
         },
         .mkdir = .{
             .name = "mkdir",
-            .rfn = NodeFS.Binding.mkdir,
-        },
-        .mkdirSync = .{
-            .name = "mkdirSync",
-            .rfn = NodeFS.Binding.mkdirSync,
+            .rfn = call(NodeFS.mkdir),
         },
         .mkdtemp = .{
             .name = "mkdtemp",
-            .rfn = NodeFS.Binding.mkdtemp,
-        },
-        .mkdtempSync = .{
-            .name = "mkdtempSync",
-            .rfn = NodeFS.Binding.mkdtempSync,
+            .rfn = call(NodeFS.mkdtemp),
         },
         .open = .{
             .name = "open",
-            .rfn = NodeFS.Binding.open,
-        },
-        .openSync = .{
-            .name = "openSync",
-            .rfn = NodeFS.Binding.openSync,
-        },
-        .openDir = .{
-            .name = "openDir",
-            .rfn = NodeFS.Binding.openDir,
-        },
-        .openDirSync = .{
-            .name = "openDirSync",
-            .rfn = NodeFS.Binding.openDirSync,
+            .rfn = call(NodeFS.open),
         },
         .read = .{
             .name = "read",
-            .rfn = NodeFS.Binding.read,
+            .rfn = call(NodeFS.read),
         },
-        .readSync = .{
-            .name = "readSync",
-            .rfn = NodeFS.Binding.readSync,
+        .write = .{
+            .name = "write",
+            .rfn = call(NodeFS.write),
         },
         .readdir = .{
             .name = "readdir",
-            .rfn = NodeFS.Binding.readdir,
-        },
-        .readdirSync = .{
-            .name = "readdirSync",
-            .rfn = NodeFS.Binding.readdirSync,
+            .rfn = call(NodeFS.readdir),
         },
         .readFile = .{
             .name = "readFile",
-            .rfn = NodeFS.Binding.readFile,
+            .rfn = call(NodeFS.readFile),
         },
-        .readFileSync = .{
-            .name = "readFileSync",
-            .rfn = NodeFS.Binding.readFileSync,
+        .writeFile = .{
+            .name = "writeFile",
+            .rfn = call(NodeFS.writeFile),
         },
         .readlink = .{
             .name = "readlink",
-            .rfn = NodeFS.Binding.readlink,
-        },
-        .readlinkSync = .{
-            .name = "readlinkSync",
-            .rfn = NodeFS.Binding.readlinkSync,
+            .rfn = call(NodeFS.readlink),
         },
         .realpath = .{
             .name = "realpath",
-            .rfn = NodeFS.Binding.realpath,
-        },
-        .realpathSync = .{
-            .name = "realpathSync",
-            .rfn = NodeFS.Binding.realpathSync,
-        },
-        .realpathNative = .{
-            .name = "realpathNative",
-            .rfn = NodeFS.Binding.realpathNative,
-        },
-        .realpathNativeSync = .{
-            .name = "realpathNativeSync",
-            .rfn = NodeFS.Binding.realpathNativeSync,
+            .rfn = call(NodeFS.realpath),
         },
         .rename = .{
             .name = "rename",
-            .rfn = NodeFS.Binding.rename,
-        },
-        .renameSync = .{
-            .name = "renameSync",
-            .rfn = NodeFS.Binding.renameSync,
-        },
-        .rmdir = .{
-            .name = "rmdir",
-            .rfn = NodeFS.Binding.rmdir,
-        },
-        .rmdirSync = .{
-            .name = "rmdirSync",
-            .rfn = NodeFS.Binding.rmdirSync,
+            .rfn = call(NodeFS.rename),
         },
         .stat = .{
             .name = "stat",
-            .rfn = NodeFS.Binding.stat,
-        },
-        .statSync = .{
-            .name = "statSync",
-            .rfn = NodeFS.Binding.statSync,
+            .rfn = call(NodeFS.stat),
         },
         .symlink = .{
             .name = "symlink",
-            .rfn = NodeFS.Binding.symlink,
-        },
-        .symlinkSync = .{
-            .name = "symlinkSync",
-            .rfn = NodeFS.Binding.symlinkSync,
+            .rfn = call(NodeFS.symlink),
         },
         .truncate = .{
             .name = "truncate",
-            .rfn = NodeFS.Binding.truncate,
-        },
-        .truncateSync = .{
-            .name = "truncateSync",
-            .rfn = NodeFS.Binding.truncateSync,
+            .rfn = call(NodeFS.truncate),
         },
         .unlink = .{
             .name = "unlink",
-            .rfn = NodeFS.Binding.unlink,
-        },
-        .unlinkSync = .{
-            .name = "unlinkSync",
-            .rfn = NodeFS.Binding.unlinkSync,
-        },
-        .unwatchFile = .{
-            .name = "unwatchFile",
-            .rfn = NodeFS.Binding.unwatchFile,
-        },
-        .unwatchFileSync = .{
-            .name = "unwatchFileSync",
-            .rfn = NodeFS.Binding.unwatchFileSync,
+            .rfn = call(NodeFS.unlink),
         },
         .utimes = .{
             .name = "utimes",
-            .rfn = NodeFS.Binding.utimes,
+            .rfn = call(NodeFS.utimes),
+        },
+        .lutimes = .{
+            .name = "lutimes",
+            .rfn = call(NodeFS.lutimes),
+        },
+
+        .accessSync = .{
+            .name = "accessSync",
+            .rfn = callSync(NodeFS.access),
+        },
+        .appendFileSync = .{
+            .name = "appendFileSync",
+            .rfn = callSync(NodeFS.appendFile),
+        },
+        .closeSync = .{
+            .name = "closeSync",
+            .rfn = callSync(NodeFS.close),
+        },
+        .copyFileSync = .{
+            .name = "copyFileSync",
+            .rfn = callSync(NodeFS.copyFile),
+        },
+        .existsSync = .{
+            .name = "existsSync",
+            .rfn = callSync(NodeFS.exists),
+        },
+        .chownSync = .{
+            .name = "chownSync",
+            .rfn = callSync(NodeFS.chown),
+        },
+        .chmodSync = .{
+            .name = "chmodSync",
+            .rfn = callSync(NodeFS.chmod),
+        },
+        .fchmodSync = .{
+            .name = "fchmodSync",
+            .rfn = callSync(NodeFS.fchmod),
+        },
+        .fchownSync = .{
+            .name = "fchownSync",
+            .rfn = callSync(NodeFS.fchown),
+        },
+        .fstatSync = .{
+            .name = "fstatSync",
+            .rfn = callSync(NodeFS.fstat),
+        },
+        .fsyncSync = .{
+            .name = "fsyncSync",
+            .rfn = callSync(NodeFS.fsync),
+        },
+        .ftruncateSync = .{
+            .name = "ftruncateSync",
+            .rfn = callSync(NodeFS.ftruncate),
+        },
+        .futimesSync = .{
+            .name = "futimesSync",
+            .rfn = callSync(NodeFS.futimes),
+        },
+        .lchmodSync = .{
+            .name = "lchmodSync",
+            .rfn = callSync(NodeFS.lchmod),
+        },
+        .lchownSync = .{
+            .name = "lchownSync",
+            .rfn = callSync(NodeFS.lchown),
+        },
+        .linkSync = .{
+            .name = "linkSync",
+            .rfn = callSync(NodeFS.link),
+        },
+        .lstatSync = .{
+            .name = "lstatSync",
+            .rfn = callSync(NodeFS.lstat),
+        },
+        .mkdirSync = .{
+            .name = "mkdirSync",
+            .rfn = callSync(NodeFS.mkdir),
+        },
+        .mkdtempSync = .{
+            .name = "mkdtempSync",
+            .rfn = callSync(NodeFS.mkdtemp),
+        },
+        .openSync = .{
+            .name = "openSync",
+            .rfn = callSync(NodeFS.open),
+        },
+        .readSync = .{
+            .name = "readSync",
+            .rfn = callSync(NodeFS.read),
+        },
+        .writeSync = .{
+            .name = "writeSync",
+            .rfn = callSync(NodeFS.write),
+        },
+        .readdirSync = .{
+            .name = "readdirSync",
+            .rfn = callSync(NodeFS.readdir),
+        },
+        .readFileSync = .{
+            .name = "readFileSync",
+            .rfn = callSync(NodeFS.readFile),
+        },
+        .writeFileSync = .{
+            .name = "writeFileSync",
+            .rfn = callSync(NodeFS.writeFile),
+        },
+        .readlinkSync = .{
+            .name = "readlinkSync",
+            .rfn = callSync(NodeFS.readlink),
+        },
+        .realpathSync = .{
+            .name = "realpathSync",
+            .rfn = callSync(NodeFS.realpath),
+        },
+        .renameSync = .{
+            .name = "renameSync",
+            .rfn = callSync(NodeFS.rename),
+        },
+        .statSync = .{
+            .name = "statSync",
+            .rfn = callSync(NodeFS.stat),
+        },
+        .symlinkSync = .{
+            .name = "symlinkSync",
+            .rfn = callSync(NodeFS.symlink),
+        },
+        .truncateSync = .{
+            .name = "truncateSync",
+            .rfn = callSync(NodeFS.truncate),
+        },
+        .unlinkSync = .{
+            .name = "unlinkSync",
+            .rfn = callSync(NodeFS.unlink),
         },
         .utimesSync = .{
             .name = "utimesSync",
-            .rfn = NodeFS.Binding.utimesSync,
+            .rfn = callSync(NodeFS.utimes),
         },
-        .watch = .{
-            .name = "watch",
-            .rfn = NodeFS.Binding.watch,
-        },
-        .watchSync = .{
-            .name = "watchSync",
-            .rfn = NodeFS.Binding.watchSync,
-        },
-        .createReadStream = .{
-            .name = "createReadStream",
-            .rfn = NodeFS.Binding.createReadStream,
-        },
-        .createReadStreamSync = .{
-            .name = "createReadStreamSync",
-            .rfn = NodeFS.Binding.createReadStreamSync,
-        },
-        .createWriteStream = .{
-            .name = "createWriteStream",
-            .rfn = NodeFS.Binding.createWriteStream,
-        },
-        .createWriteStreamSync = .{
-            .name = "createWriteStreamSync",
-            .rfn = NodeFS.Binding.createWriteStreamSync,
+        .lutimesSync = .{
+            .name = "lutimesSync",
+            .rfn = callSync(NodeFS.lutimes),
         },
     },
+    .{},
 );
-
-pub fn appendFile(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn appendFileSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn close(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn closeSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn copyFile(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn copyFileSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn exists(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn existsSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn fchmod(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn fchmodSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn fchown(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn fchownSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn fdatasync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn fdatasyncSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn fstat(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn fstatSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn fsync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn fsyncSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn ftruncate(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn ftruncateSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn futimes(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn futimesSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn lchmod(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn lchmodSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn lchown(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn lchownSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn link(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn linkSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn lstat(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn lstatSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn mkdir(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn mkdirSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn mkdtemp(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn mkdtempSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn open(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn openSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn openDir(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn openDirSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn read(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn readSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn readdir(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn readdirSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn readFile(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn readFileSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn readlink(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn readlinkSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn realpath(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn realpathSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn realpathNative(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn realpathNativeSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn rename(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn renameSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn rmdir(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn rmdirSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn stat(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn statSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn symlink(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn symlinkSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn truncate(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn truncateSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn unlink(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn unlinkSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn unwatchFile(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn unwatchFileSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn utimes(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn utimesSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn watch(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn watchSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn createReadStream(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn createReadStreamSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn createWriteStream(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = arguments;
-    _ = exception;
-}
-pub fn createWriteStreamSync(
-    this: *NodeFS,
-    ctx: JSC.C.JSContextRef,
-    _: JSC.C.JSObjectRef,
-    _: JSC.C.JSObjectRef,
-    arguments: []const JSC.C.JSValueRef,
-    exception: JSC.C.ExceptionRef,
-) JSC.C.JSValueRef {
-    _ = ctx;
-    _ = this;
-    _ = exception;
-    _ = arguments;
-}

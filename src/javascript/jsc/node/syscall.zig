@@ -7,7 +7,9 @@ const builtin = @import("builtin");
 const Maybe = @import("./types.zig").Maybe;
 const Syscall = @This();
 const Environment = @import("../../../global.zig").Environment;
-
+const SystemError = @import("./types.zig").SystemError;
+const default_allocator = @import("../../../global.zig").default_allocator;
+const JSC = @import("../../../jsc.zig");
 const darwin = os.darwin;
 const MAX_PATH_BYTES = std.fs.MAX_PATH_BYTES;
 const fd_t = std.os.fd_t;
@@ -30,8 +32,8 @@ pub const Tag = enum(u8) {
     fchown,
     mkdtemp,
     mkdir,
-    _,
 };
+const PathString = @import("../../../global.zig").PathString;
 
 const mode_t = os.mode_t;
 
@@ -306,6 +308,16 @@ pub const Error = struct {
             .path = path,
         };
     }
+    pub const todo_errno = std.math.maxInt(Int) - 1;
+    pub const todo = Error{ .errno = todo_errno };
 
-    pub const todo = Error{ .errno = std.math.maxInt(Int) - 5 };
+    pub fn toJS(this: Error, ctx: JSC.C.JSContextRef) JSC.C.JSObjectRef {
+        var ptr = default_allocator.create(SystemError) catch unreachable;
+        ptr.* = SystemError{
+            .path = if (this.path) |path| PathString.init(path) else PathString.empty,
+            .errno = @as(c_int, @enumToInt(this.errno)) * -1,
+            .syscall = this.syscall,
+        };
+        return SystemError.Class.make(ctx, ptr);
+    }
 };

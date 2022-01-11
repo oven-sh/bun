@@ -1406,16 +1406,20 @@ pub const JSValue = enum(i64) {
         return cppFn("getErrorsProperty", .{ this, globalObject });
     }
 
-    pub fn jsNumber(number: anytype) JSValue {
-        return switch (@TypeOf(number)) {
+    pub fn jsNumberWithType(comptime Number: type, number: Type) JSValue {
+        return switch (Number) {
             f64 => @call(.{ .modifier = .always_inline }, jsNumberFromDouble, .{number}),
             u8 => @call(.{ .modifier = .always_inline }, jsNumberFromChar, .{number}),
             u16 => @call(.{ .modifier = .always_inline }, jsNumberFromU16, .{number}),
-            i32 => @call(.{ .modifier = .always_inline }, jsNumberFromInt32, .{number}),
+            c_int, i32 => @call(.{ .modifier = .always_inline }, jsNumberFromInt32, .{number}),
             i64 => @call(.{ .modifier = .always_inline }, jsNumberFromInt64, .{number}),
-            u64 => @call(.{ .modifier = .always_inline }, jsNumberFromUint64, .{number}),
-            else => @compileError("Type transformation missing for number of type: " ++ @typeName(@TypeOf(number))),
+            c_uint, u32, u64 => @call(.{ .modifier = .always_inline }, jsNumberFromUint64, .{number}),
+            else => @compileError("Type transformation missing for number of type: " ++ @typeName(Number)),
         };
+    }
+
+    pub fn jsNumber(number: anytype) JSValue {
+        return jsNumberWithType(@TypeOf(number), number);
     }
 
     pub fn jsNull() JSValue {

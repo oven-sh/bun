@@ -1,10 +1,14 @@
 const cpp = @import("./bindings/bindings.zig");
-const generic = opaque {};
+const generic = opaque {
+    pub inline fn asJSGlobalObject(this: *@This()) *cpp.JSGlobalObject {
+        return @ptrCast(*cpp.JSGlobalObject, @alignCast(@alignOf(*cpp.JSGlobalObject), this));
+    }
+};
 pub const Private = anyopaque;
 pub const struct_OpaqueJSContextGroup = generic;
 pub const JSContextGroupRef = ?*const struct_OpaqueJSContextGroup;
 pub const struct_OpaqueJSContext = generic;
-pub const JSContextRef = ?*const struct_OpaqueJSContext;
+pub const JSContextRef = *struct_OpaqueJSContext;
 pub const JSGlobalContextRef = ?*struct_OpaqueJSContext;
 pub const struct_OpaqueJSString = generic;
 pub const JSStringRef = ?*struct_OpaqueJSString;

@@ -62,6 +62,7 @@ const JSGlobalObject = @import("javascript_core").JSGlobalObject;
 const ExceptionValueRef = @import("javascript_core").ExceptionValueRef;
 const JSPrivateDataPtr = @import("javascript_core").JSPrivateDataPtr;
 const ZigConsoleClient = @import("javascript_core").ZigConsoleClient;
+const Node = @import("javascript_core").Node;
 const ZigException = @import("javascript_core").ZigException;
 const ZigStackTrace = @import("javascript_core").ZigStackTrace;
 const ErrorableResolvedSource = @import("javascript_core").ErrorableResolvedSource;
@@ -541,6 +542,24 @@ pub const Bun = struct {
         return js.JSValueMakeUndefined(ctx);
     }
 
+    pub fn createNodeFS(
+        _: void,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        return Node.NodeFSBindings.make(
+            ctx,
+            VirtualMachine.vm.node_fs orelse brk: {
+                VirtualMachine.vm.node_fs = _global.default_allocator.create(Node.NodeFS) catch unreachable;
+                VirtualMachine.vm.node_fs.?.* = Node.NodeFS{ .async_io = undefined };
+                break :brk VirtualMachine.vm.node_fs.?;
+            },
+        );
+    }
+
     var public_path_temp_str: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
     pub fn getPublicPathJS(
@@ -634,6 +653,10 @@ pub const Bun = struct {
                     .name = "registerMacro",
                     .@"return" = "undefined",
                 },
+            },
+            .fs = .{
+                .rfn = Bun.createNodeFS,
+                .ts = d.ts{},
             },
             .jest = .{
                 .rfn = @import("./test/jest.zig").Jest.call,
@@ -826,6 +849,7 @@ pub const VirtualMachine = struct {
     flush_list: std.ArrayList(string),
     entry_point: ServerEntryPoint = undefined,
     origin: URL = URL{},
+    node_fs: ?*Node.NodeFS = null,
 
     arena: *std.heap.ArenaAllocator = undefined,
     has_loaded: bool = false,

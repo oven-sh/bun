@@ -13,7 +13,7 @@ const C = _global.C;
 const JavaScript = @import("./javascript.zig");
 const ResolveError = JavaScript.ResolveError;
 const BuildError = JavaScript.BuildError;
-const Bindings = @import("../../jsc.zig");
+const JSC = @import("../../jsc.zig");
 const WebCore = @import("./webcore/response.zig");
 const Test = @import("./test/jest.zig");
 const Fetch = WebCore.Fetch;
@@ -1396,6 +1396,8 @@ pub fn NewClass(
                                 def.finalize = To.JS.Finalize(ZigType, staticFunctions.finalize).rfn;
                             } else if (comptime strings.eqlComptime(function_names[i], "call")) {
                                 def.callAsFunction = To.JS.Callback(ZigType, staticFunctions.call).rfn;
+                            } else if (comptime strings.eqlComptime(function_names[i], "hasInstance")) {
+                                def.hasInstance = staticFunctions.hasInstance;
                             } else {
                                 var callback = To.JS.Callback(
                                     ZigType,
@@ -1452,37 +1454,26 @@ pub fn NewClass(
                 def.callAsFunction = throwInvalidFunctionError;
             }
 
-            if (!singleton)
+            if (!singleton and def.hasInstance == null)
                 def.hasInstance = customHasInstance;
             return def;
         }
     };
 }
 
-const JSValue = Bindings.JSValue;
-const ZigString = Bindings.ZigString;
+const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;
 
 pub const PathString = packed struct {
     pub usingnamespace _global.PathString;
 
-    pub fn from(value: JSValue, globalThis: js.JSContextRef, exception: js.ExceptionRef) PathString {
+    pub fn fromJS(value: JSValue, globalThis: js.JSContextRef, exception: js.ExceptionRef) PathString {
         if (!value.jsType().isStringLike()) {
             JSError(getAllocator(globalThis), "Only path strings are supported for now", .{}, globalThis, exception);
             return PathString{};
         }
         var zig_str = ZigString.init("");
         value.toZigString(&zig_str, globalThis);
-
-        if (zig_str.len > std.fs.MAX_PATH_BYTES) {
-            JSError(getAllocator(globalThis), "Path is too long", .{}, globalThis, exception);
-
-            return PathString{};
-        }
-
-        if (zig_str.is16Bit()) {
-            JSError(getAllocator(globalThis), "UTF-16 paths are not supported yet", .{}, globalThis, exception);
-            return PathString{};
-        }
 
         return PathString.init(zig_str.slice());
     }
@@ -1508,13 +1499,13 @@ pub fn JSError(
     exception: ExceptionValueRef,
 ) void {
     if (comptime std.meta.fields(@TypeOf(args)).len == 0) {
-        var zig_str = Bindings.ZigString.init(fmt);
+        var zig_str = JSC.ZigString.init(fmt);
         zig_str.detectEncoding();
         error_args[0] = zig_str.toValueAuto(JavaScript.VirtualMachine.vm.global).asObjectRef();
         exception.* = js.JSObjectMakeError(ctx, 1, &error_args, null);
     } else {
         var buf = std.fmt.allocPrint(default_allocator, fmt, args) catch unreachable;
-        var zig_str = Bindings.ZigString.init(buf);
+        var zig_str = JSC.ZigString.init(buf);
         zig_str.detectEncoding();
 
         error_args[0] = zig_str.toValueGC(JavaScript.VirtualMachine.vm.global).asObjectRef();
@@ -1538,6 +1529,32 @@ pub const ArrayBuffer = struct {
 
     typed_array_type: js.JSTypedArrayType,
 
+    encoding: JSC.Node.Encoding = JSC.Node.Encoding.utf8,
+
+    pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ArrayBuffer {
+        return ArrayBuffer{
+            .byte_len = @truncate(u32, JSC.C.JSObjectGetTypedArrayByteLength(ctx, value.asObjectRef(), exception)),
+            .offset = @truncate(u32, JSC.C.JSObjectGetTypedArrayByteOffset(ctx, value.asObjectRef(), exception)),
+            .ptr = @ptrCast([*]u8, JSC.C.JSObjectGetTypedArrayBytesPtr(ctx, value.asObjectRef(), exception).?),
+            // TODO
+            .typed_array_type = js.JSTypedArrayType.kJSTypedArrayTypeUint8Array,
+            .len = @truncate(u32, JSC.C.JSObjectGetTypedArrayLength(ctx, value.asObjectRef(), exception)),
+        };
+    }
+
+    pub fn fromArrayBuffer(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ArrayBuffer {
+        var buffer = ArrayBuffer{
+            .byte_len = @truncate(u32, JSC.C.JSObjectGetArrayBufferByteLength(ctx, value.asObjectRef(), exception)),
+            .ptr = @ptrCast([*]u8, JSC.C.GetArrayBufferBytesPtr(ctx, value.asObjectRef(), exception).?),
+            // TODO
+            .typed_array_type = js.JSTypedArrayType.kJSTypedArrayTypeUint8Array,
+            .len = 0,
+            .offset = 0,
+        };
+        buffer.len = buffer.byte_len;
+        return buffer;
+    }
+
     pub inline fn slice(this: *const @This()) []u8 {
         return this.ptr[this.offset .. this.offset + this.byte_len];
     }
@@ -1545,7 +1562,20 @@ pub const ArrayBuffer = struct {
 
 pub const MarkedArrayBuffer = struct {
     buffer: ArrayBuffer,
-    allocator: std.mem.Allocator,
+    allocator: ?std.mem.Allocator = null,
+
+    pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) MarkedArrayBuffer {
+        return MarkedArrayBuffer{
+            .allocator = null,
+            .buffer = ArrayBuffer.fromTypedArray(ctx, value, exception),
+        };
+    }
+    pub fn fromArrayBuffer(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) MarkedArrayBuffer {
+        return MarkedArrayBuffer{
+            .allocator = null,
+            .buffer = ArrayBuffer.fromArrayBuffer(ctx, value, exception),
+        };
+    }
 
     pub fn fromString(str: []const u8, allocator: std.mem.Allocator) !MarkedArrayBuffer {
         var buf = try allocator.dupe(u8, str);
@@ -1559,10 +1589,16 @@ pub const MarkedArrayBuffer = struct {
         };
     }
 
+    pub inline fn slice(this: *const @This()) []u8 {
+        return this.buffer.slice();
+    }
+
     pub fn destroy(this: *MarkedArrayBuffer) void {
         const content = this.*;
-        content.allocator.free(content.buffer.slice());
-        content.allocator.destroy(this);
+        if (this.allocator) |allocator| {
+            allocator.free(content.buffer.slice());
+            allocator.destroy(this);
+        }
     }
 
     pub fn init(allocator: std.mem.Allocator, size: u32, typed_array_type: js.JSTypedArrayType) !*MarkedArrayBuffer {
@@ -1596,6 +1632,7 @@ const Expect = Test.Expect;
 const DescribeScope = Test.DescribeScope;
 const TestScope = Test.TestScope;
 const ExpectPrototype = Test.ExpectPrototype;
+const NodeFS = @import("./node/node_fs_binding.zig").NodeFS;
 pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     ResolveError,
     BuildError,
@@ -1612,6 +1649,7 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     DescribeScope,
     Expect,
     ExpectPrototype,
+    NodeFS,
 });
 
 pub inline fn GetJSPrivateData(comptime Type: type, ref: js.JSObjectRef) ?*Type {
@@ -1627,6 +1665,9 @@ pub const JSPropertyNameIterator = struct {
         if (this.i >= this.count) return null;
         const i = this.i;
         this.i += 1;
+
         return js.JSPropertyNameArrayGetNameAtIndex(this.array, i);
     }
 };
+
+pub const throwTypeError = JSError;

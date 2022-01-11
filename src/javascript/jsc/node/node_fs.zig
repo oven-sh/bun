@@ -1081,8 +1081,11 @@ pub const NodeFS = struct {
         return Maybe(Return.Lstat).todo;
     }
 
+    pub fn mkdir(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Mkdir) Maybe(Return.Mkdir) {
+        return if (args.recursive) mkdirRecursive(this, flavor, args) else mkdirNonRecursive(this, flavor, args);
+    }
     // Node doesn't absolute the path so we don't have to either
-    pub fn mkdirNonRecursive(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Mkdir) Maybe(Return.Mkdir) {
+    fn mkdirNonRecursive(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Mkdir) Maybe(Return.Mkdir) {
         switch (comptime flavor) {
             .sync => {
                 var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
@@ -1106,7 +1109,7 @@ pub const NodeFS = struct {
 
     // TODO: windows
     // TODO: verify this works correctly with unicode codepoints
-    pub fn mkdirRecursive(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Mkdir) Maybe(Return.Mkdir) {
+    fn mkdirRecursive(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Mkdir) Maybe(Return.Mkdir) {
         switch (comptime flavor) {
             // The sync version does no allocation except when returning the path
             .sync => {
@@ -1264,7 +1267,7 @@ pub const NodeFS = struct {
         return Maybe(Return.OpenDir).todo;
     }
 
-    pub fn read(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Read) Maybe(Return.Read) {
+    fn _read(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Read) Maybe(Return.Read) {
         _ = args;
         _ = this;
         _ = flavor;
@@ -1273,7 +1276,7 @@ pub const NodeFS = struct {
         switch (comptime flavor) {
             // The sync version does no allocation except when returning the path
             .sync => {
-                var buf = args.buffer.buffer.slice();
+                var buf = args.buffer.slice();
                 buf = buf[@minimum(args.offset, buf.len)..];
                 buf = buf[0..@minimum(buf.len, args.length)];
 
@@ -1292,14 +1295,51 @@ pub const NodeFS = struct {
         return Maybe(Return.Read).todo;
     }
 
+    fn _pread(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Read) Maybe(Return.Read) {
+        _ = args;
+        _ = this;
+        _ = flavor;
+
+        switch (comptime flavor) {
+            // The sync version does no allocation except when returning the path
+            .sync => {
+                var buf = args.buffer.slice();
+                buf = buf[@minimum(args.offset, buf.len)..];
+                buf = buf[0..@minimum(buf.len, args.length)];
+
+                return switch (Syscall.pread(args.fd, buf, args.position.?)) {
+                    .err => |err| .{
+                        .err = err,
+                    },
+                    .result => |amt| .{
+                        .result = amt,
+                    },
+                };
+            },
+            else => {},
+        }
+
+        return Maybe(Return.Read).todo;
+    }
+
+    pub fn read(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Read) Maybe(Return.Read) {
+        return if (args.position != null)
+            this._pread(comptime flavor, args)
+        else
+            this._read(comptime flavor, args);
+    }
+
     pub fn write(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Write) Maybe(Return.Write) {
+        return if (args.position != null) _pwrite(this, flavor, args) else _write(this, flavor, args);
+    }
+    fn _write(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Write) Maybe(Return.Write) {
         _ = args;
         _ = this;
         _ = flavor;
 
         switch (comptime flavor) {
             .sync => {
-                var buf = args.buffer.buffer.slice();
+                var buf = args.buffer.slice();
                 buf = buf[@minimum(args.offset, buf.len)..];
                 buf = buf[0..@minimum(buf.len, args.length)];
 
@@ -1318,7 +1358,7 @@ pub const NodeFS = struct {
         return Maybe(Return.Write).todo;
     }
 
-    pub fn pwrite(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Write) Maybe(Return.Write) {
+    fn _pwrite(this: *NodeFS, comptime flavor: Flavor, args: Arguments.Write) Maybe(Return.Write) {
         _ = args;
         _ = this;
         _ = flavor;
@@ -1327,7 +1367,7 @@ pub const NodeFS = struct {
 
         switch (comptime flavor) {
             .sync => {
-                var buf = args.buffer.buffer.slice();
+                var buf = args.buffer.slice();
                 buf = buf[@minimum(args.offset, buf.len)..];
                 buf = buf[0..@minimum(args.length, buf.len)];
 

@@ -500,6 +500,7 @@ const PathOrFileDescriptor = union(Tag) {
         const first = arguments.next().? orelse return null;
 
         if (fileDescriptorFromJS(ctx, first, exception).?) |fd| {
+            arguments.eat();
             return PathOrFileDescriptor{ .fd = fd };
         }
 

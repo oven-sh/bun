@@ -622,6 +622,7 @@ pub const NodeFS = struct {
                     // be absolute. When using 'junction', the target argument
                     // will automatically be normalized to absolute path.
                     if (next_val.isString()) {
+                        comptime if (Environment.isWindows) @compileError("Add support for type argument on Windows");
                         arguments.eat();
                     }
                 }
@@ -1379,7 +1380,83 @@ pub const NodeFS = struct {
             encoding: Encoding = Encoding.utf8,
 
             flag: FileSystemFlags = FileSystemFlags.@"r",
-            mode: Mode = 0o666,
+
+            pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?ReadFile {
+                const path = PathOrFileDescriptor.fromJS(ctx, arguments, exception) orelse {
+                    if (exception.* == null) {
+                        JSC.throwTypeError(
+                            undefined,
+                            "path must be a string or a file descriptor",
+                            .{},
+                            ctx,
+                            exception,
+                        );
+                    }
+                    return null;
+                };
+
+                if (exception.* != null) return null;
+
+                var encoding = Encoding.buffer;
+                var flag = FileSystemFlags.@"r";
+
+                if (arguments.next()) |arg| {
+                    arguments.eat();
+                    if (arg.isString()) {
+                        encoding = Encoding.fromStringValue(arg, ctx.asJSGlobalObject()) orelse {
+                            if (exception.* == null) {
+                                JSC.throwTypeError(
+                                    undefined,
+                                    "Invalid encoding",
+                                    .{},
+                                    ctx,
+                                    exception,
+                                );
+                            }
+                            return null;
+                        };
+                    } else if (arg.isObject()) {
+                        if (arg.getIfPropertyExists("encoding")) |encoding_| {
+                            if (!encoding_.isUndefinedOrNull()) {
+                                encoding = Encoding.fromStringValue(encoding_, ctx.asJSGlobalObject()) orelse {
+                                    if (exception.* == null) {
+                                        JSC.throwTypeError(
+                                            undefined,
+                                            "Invalid encoding",
+                                            .{},
+                                            ctx,
+                                            exception,
+                                        );
+                                    }
+                                    return null;
+                                };
+                            }
+                        }
+
+                        if (arg.getIfPropertyExists("flag")) |flag_| {
+                            flag = FileSystemFlags.fromJS(ctx, flag_, exception) orelse {
+                                if (exception.* == null) {
+                                    JSC.throwTypeError(
+                                        undefined,
+                                        "Invalid flag",
+                                        .{},
+                                        ctx,
+                                        exception,
+                                    );
+                                }
+                                return null;
+                            };
+                        }
+                    }
+                }
+
+                // Note: Signal is not implemented
+                return ReadFile{
+                    .path = path,
+                    .encoding = encoding,
+                    .flag = flag,
+                };
+            }
         };
 
         pub const WriteFile = struct {
@@ -1388,6 +1465,127 @@ pub const NodeFS = struct {
             mode: Mode = 0o666,
             file: PathOrFileDescriptor,
             data: StringOrBuffer,
+
+            pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?WriteFile {
+                const file = PathOrFileDescriptor.fromJS(ctx, arguments, exception) orelse {
+                    if (exception.* == null) {
+                        JSC.throwTypeError(
+                            undefined,
+                            "path must be a string or a file descriptor",
+                            .{},
+                            ctx,
+                            exception,
+                        );
+                    }
+                    return null;
+                };
+
+                if (exception.* != null) return null;
+
+                const data = StringOrBuffer.fromJS(arguments.next() orelse {
+                    if (exception.* == null) {
+                        JSC.throwTypeError(
+                            undefined,
+                            "data is required",
+                            .{},
+                            ctx,
+                            exception,
+                        );
+                    }
+                    return null;
+                }, arguments, exception) orelse {
+                    if (exception.* == null) {
+                        JSC.throwTypeError(
+                            undefined,
+                            "data must be a string or Buffer",
+                            .{},
+                            ctx,
+                            exception,
+                        );
+                    }
+                    return null;
+                };
+
+                if (exception.* != null) return null;
+
+                var encoding = Encoding.buffer;
+                var flag = FileSystemFlags.@"w";
+                var mode = 0o666;
+
+                if (arguments.next()) |arg| {
+                    arguments.eat();
+                    if (arg.isString()) {
+                        encoding = Encoding.fromStringValue(arg, ctx.asJSGlobalObject()) orelse {
+                            if (exception.* == null) {
+                                JSC.throwTypeError(
+                                    undefined,
+                                    "Invalid encoding",
+                                    .{},
+                                    ctx,
+                                    exception,
+                                );
+                            }
+                            return null;
+                        };
+                    } else if (arg.isObject()) {
+                        if (arg.getIfPropertyExists("encoding")) |encoding_| {
+                            if (!encoding_.isUndefinedOrNull()) {
+                                encoding = Encoding.fromStringValue(encoding_, ctx.asJSGlobalObject()) orelse {
+                                    if (exception.* == null) {
+                                        JSC.throwTypeError(
+                                            undefined,
+                                            "Invalid encoding",
+                                            .{},
+                                            ctx,
+                                            exception,
+                                        );
+                                    }
+                                    return null;
+                                };
+                            }
+                        }
+
+                        if (arg.getIfPropertyExists("flag")) |flag_| {
+                            flag = FileSystemFlags.fromJS(ctx, flag_, exception) orelse {
+                                if (exception.* == null) {
+                                    JSC.throwTypeError(
+                                        undefined,
+                                        "Invalid flag",
+                                        .{},
+                                        ctx,
+                                        exception,
+                                    );
+                                }
+                                return null;
+                            };
+                        }
+
+                        if (arg.getIfPropertyExists("mode")) |mode_| {
+                            mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse {
+                                if (exception.* == null) {
+                                    JSC.throwTypeError(
+                                        undefined,
+                                        "Invalid flag",
+                                        .{},
+                                        ctx,
+                                        exception,
+                                    );
+                                }
+                                return null;
+                            };
+                        }
+                    }
+                }
+
+                // Note: Signal is not implemented
+                return WriteFile{
+                    .file = file,
+                    .encoding = encoding,
+                    .flag = flag,
+                    .mode = mode,
+                    .data = data,
+                };
+            }
         };
 
         pub const AppendFile = WriteFile;
@@ -1398,18 +1596,161 @@ pub const NodeFS = struct {
 
             /// Number of directory entries that are buffered internally when reading from the directory. Higher values lead to better performance but higher memory usage. Default: 32
             buffer_size: c_int = 32,
+
+            pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?OpenDir {
+                const path = PathLike.fromJS(ctx, arguments, exception) orelse {
+                    if (exception.* == null) {
+                        JSC.throwTypeError(
+                            undefined,
+                            "path must be a string or a file descriptor",
+                            .{},
+                            ctx,
+                            exception,
+                        );
+                    }
+                    return null;
+                };
+
+                if (exception.* != null) return null;
+
+                var encoding = Encoding.buffer;
+                var buffer_size: c_int = 32;
+
+                if (arguments.next()) |arg| {
+                    arguments.eat();
+                    if (arg.isString()) {
+                        encoding = Encoding.fromStringValue(arg, ctx.asJSGlobalObject()) orelse {
+                            if (exception.* == null) {
+                                JSC.throwTypeError(
+                                    undefined,
+                                    "Invalid encoding",
+                                    .{},
+                                    ctx,
+                                    exception,
+                                );
+                            }
+                            return null;
+                        };
+                    } else if (arg.isObject()) {
+                        if (arg.getIfPropertyExists("encoding")) |encoding_| {
+                            if (!encoding_.isUndefinedOrNull()) {
+                                encoding = Encoding.fromStringValue(encoding_, ctx.asJSGlobalObject()) orelse {
+                                    if (exception.* == null) {
+                                        JSC.throwTypeError(
+                                            undefined,
+                                            "Invalid encoding",
+                                            .{},
+                                            ctx,
+                                            exception,
+                                        );
+                                    }
+                                    return null;
+                                };
+                            }
+                        }
+
+                        if (arg.getIfPropertyExists("bufferSize")) |buffer_size_| {
+                            buffer_size = buffer_size.toInt32();
+                            if (buffer_size < 0) {
+                                if (exception.* == null) {
+                                    JSC.throwTypeError(
+                                        undefined,
+                                        "bufferSize must be > 0",
+                                        .{},
+                                        ctx,
+                                        exception,
+                                    );
+                                }
+                                return null;
+                            }
+                        }
+                    }
+                }
+
+                return OpenDir{
+                    .path = path,
+                    .encoding = encoding,
+                    .buffer_size = buffer_size,
+                };
+            }
         };
         pub const Exists = struct {
             path: PathLike,
+
+            pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Exists {
+                const path = PathLike.fromJS(ctx, arguments, exception) orelse {
+                    if (exception.* == null) {
+                        JSC.throwTypeError(
+                            undefined,
+                            "path must be a string or buffer",
+                            .{},
+                            ctx,
+                            exception,
+                        );
+                    }
+                    return null;
+                };
+
+                if (exception.* != null) return null;
+
+                return Exists{
+                    .path = path,
+                };
+            }
         };
 
         pub const Access = struct {
             path: PathLike,
             mode: FileSystemFlags = FileSystemFlags.@"r",
+
+            pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Access {
+                const path = PathLike.fromJS(ctx, arguments, exception) orelse {
+                    if (exception.* == null) {
+                        JSC.throwTypeError(
+                            undefined,
+                            "path must be a string or buffer",
+                            .{},
+                            ctx,
+                            exception,
+                        );
+                    }
+                    return null;
+                };
+
+                if (exception.* != null) return null;
+
+                var mode = FileSystemFlags.@"r";
+
+                if (arguments.next()) |arg| {
+                    arguments.eat();
+                    if (arg.isString()) {
+                        mode = FileSystemFlags.fromJS(ctx, arg, exception) orelse {
+                            if (exception.* == null) {
+                                JSC.throwTypeError(
+                                    undefined,
+                                    "Invalid mode",
+                                    .{},
+                                    ctx,
+                                    exception,
+                                );
+                            }
+                            return null;
+                        };
+                    }
+                }
+
+                return Access{
+                    .path = path,
+                    .mode = mode,
+                };
+            }
         };
 
         fn StreamOptions(comptime flags: FileSystemFlags, highwater_mark: u64) type {
             return struct {
+                const Stream = @This();
+
+                path: PathLike,
                 flags: FileSystemFlags = flags,
                 encoding: Encoding = Encoding.buffer,
                 fd: FileDescriptor = 0,
@@ -1418,29 +1759,227 @@ pub const NodeFS = struct {
                 emit_close: bool = true,
                 start: u32 = 0,
                 highwater_mark: u32 = highwater_mark,
+
+                pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Stream {
+                    var stream = Stream{
+                        .path = PathLike.fromJS(ctx, arguments, exception) orelse {
+                            if (exception.* == null) {
+                                JSC.throwTypeError(
+                                    undefined,
+                                    "path must be a string or buffer",
+                                    .{},
+                                    ctx,
+                                    exception,
+                                );
+                            }
+                            return null;
+                        },
+                    };
+
+                    if (exception.* != null) return null;
+
+                    if (arguments.next()) |arg| {
+                        arguments.eat();
+                        if (arg.isString()) {
+                            stream.encoding = Encoding.fromStringValue(arg, ctx.asJSGlobalObject()) orelse {
+                                if (exception.* == null) {
+                                    JSC.throwTypeError(
+                                        undefined,
+                                        "Invalid encoding",
+                                        .{},
+                                        ctx,
+                                        exception,
+                                    );
+                                }
+                                return null;
+                            };
+                        } else if (arg.isObject()) {
+                            if (arg.getIfPropertyExists("encoding")) |encoding_| {
+                                if (!encoding_.isUndefinedOrNull()) {
+                                    stream.encoding = Encoding.fromStringValue(encoding_, ctx.asJSGlobalObject()) orelse {
+                                        if (exception.* == null) {
+                                            JSC.throwTypeError(
+                                                undefined,
+                                                "Invalid encoding",
+                                                .{},
+                                                ctx,
+                                                exception,
+                                            );
+                                        }
+                                        return null;
+                                    };
+                                }
+                            }
+
+                            if (arg.getIfPropertyExists("flags")) |flags_| {
+                                stream.flags = FileSystemFlags.fromJS(ctx, flags_, exception) orelse {
+                                    if (exception.* == null) {
+                                        JSC.throwTypeError(
+                                            undefined,
+                                            "Invalid flags",
+                                            .{},
+                                            ctx,
+                                            exception,
+                                        );
+                                    }
+                                    return null;
+                                };
+                            }
+
+                            if (arg.getIfPropertyExists("mode")) |mode_| {
+                                stream.mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse {
+                                    if (exception.* == null) {
+                                        JSC.throwTypeError(
+                                            undefined,
+                                            "Invalid mode",
+                                            .{},
+                                            ctx,
+                                            exception,
+                                        );
+                                    }
+                                    return null;
+                                };
+                            }
+
+                            if (arg.getIfPropertyExists("autoClose")) |auto_close_| {
+                                stream.auto_close = auto_close_.toBoolean();
+                            }
+
+                            if (arg.getIfPropertyExists("emitClose")) |emit_close_| {
+                                stream.emit_close = emit_close_.toBoolean();
+                            }
+
+                            if (arg.getIfPropertyExists("start")) |start_| {
+                                stream.start = start_.toU32();
+                            }
+
+                            if (arg.getIfPropertyExists("highWaterMark")) |highwater_mark_| {
+                                stream.highwater_mark = highwater_mark_.toU32();
+                            }
+                        }
+                    }
+
+                    return stream;
+                }
             };
         }
 
-        pub const CreateReadStream = struct {
-            path: PathLike,
-
-            pub const ReadStreamOptions = StreamOptions(FileSystemFlags.@"r", 64_384);
-            pub usingnamespace ReadStreamOptions;
-        };
+        pub const CreateReadStream = StreamOptions(FileSystemFlags.@"r", 64_384);
+        pub const CreateWriteStream = StreamOptions(FileSystemFlags.@"w", 16_384);
 
         pub const FDataSync = struct {
             fd: FileDescriptor,
+
+            pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?FDataSync {
+                const fd = JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
+                    if (exception.* == null) {
+                        JSC.throwTypeError(
+                            undefined,
+                            "File descriptor is required",
+                            .{},
+                            ctx,
+                            exception,
+                        );
+                    }
+                    return null;
+                }, exception) orelse {
+                    if (exception.* == null) {
+                        JSC.throwTypeError(
+                            undefined,
+                            "fd must be a number",
+                            .{},
+                            ctx,
+                            exception,
+                        );
+                    }
+                    return null;
+                };
+
+                if (exception.* != null) return null;
+
+                return FDataSync{
+                    .fd = fd,
+                };
+            }
         };
 
         pub const CopyFile = struct {
             src: PathLike,
             dest: PathLike,
             mode: Constants.Copyfile,
+
+            pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?CopyFile {
+                const src = PathLike.fromJS(ctx, arguments.next() orelse {
+                    if (exception.* == null) {
+                        JSC.throwTypeError(
+                            undefined,
+                            "src is required",
+                            .{},
+                            ctx,
+                            exception,
+                        );
+                    }
+                    return null;
+                }, exception) orelse {
+                    if (exception.* == null) {
+                        JSC.throwTypeError(
+                            undefined,
+                            "src must be a string or buffer",
+                            .{},
+                            ctx,
+                            exception,
+                        );
+                    }
+                    return null;
+                };
+
+                if (exception.* != null) return null;
+
+                const dest = PathLike.fromJS(ctx, arguments.next() orelse {
+                    if (exception.* == null) {
+                        JSC.throwTypeError(
+                            undefined,
+                            "dest is required",
+                            .{},
+                            ctx,
+                            exception,
+                        );
+                    }
+                    return null;
+                }, exception) orelse {
+                    if (exception.* == null) {
+                        JSC.throwTypeError(
+                            undefined,
+                            "dest must be a string or buffer",
+                            .{},
+                            ctx,
+                            exception,
+                        );
+                    }
+                    return null;
+                };
+
+                if (exception.* != null) return null;
+
+                var mode: i32 = 0;
+                if (arguments.next()) |arg| {
+                    arguments.eat();
+                    if (arg.isNumber()) {
+                        mode = arg.toInt32();
+                    }
+                }
+
+                return CopyFile{
+                    .src = src,
+                    .dest = dest,
+                    .mode = @intToEnum(Constants.Copyfile, mode),
+                };
+            }
         };
 
         pub const WriteEv = struct {
             fd: FileDescriptor,
-            buffers: []ArrayBuffer,
+            buffers: []const ArrayBuffer,
             position: ReadPosition,
         };
 
@@ -1498,14 +2037,14 @@ pub const NodeFS = struct {
             _,
             pub const exclusive = 1;
             pub const clone = 2;
-            pub const force = 3;
+            pub const force = 4;
 
             pub inline fn isForceClone(this: Copyfile) bool {
-                return (@enumToInt(this) | COPYFILE_FICLONE_FORCE) != 0;
+                return (@enumToInt(this) & COPYFILE_FICLONE_FORCE) != 0;
             }
 
             pub inline fn shouldOverwrite(this: Copyfile) bool {
-                return (@enumToInt(this) | COPYFILE_EXCL) != 0;
+                return (@enumToInt(this) & COPYFILE_EXCL) != 0;
             }
 
             pub inline fn canUseClone(this: Copyfile) bool {

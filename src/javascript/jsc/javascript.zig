@@ -93,6 +93,7 @@ pub const GlobalClasses = [_]type{
     Bun.EnvironmentVariables.Class,
 };
 const Blob = @import("../../blob.zig");
+pub const Buffer = MarkedArrayBuffer;
 
 pub const Bun = struct {
     threadlocal var css_imports_list_strings: [512]ZigString = undefined;

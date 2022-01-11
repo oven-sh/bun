@@ -547,7 +547,7 @@ pub const Bun = struct {
         ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
+        _: []const js.JSValueRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
         return Node.NodeFSBindings.make(

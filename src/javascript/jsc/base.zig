@@ -1498,6 +1498,8 @@ pub fn JSError(
     ctx: js.JSContextRef,
     exception: ExceptionValueRef,
 ) void {
+    @setCold(true);
+
     if (comptime std.meta.fields(@TypeOf(args)).len == 0) {
         var zig_str = JSC.ZigString.init(fmt);
         zig_str.detectEncoding();
@@ -1582,6 +1584,14 @@ pub const MarkedArrayBuffer = struct {
         return MarkedArrayBuffer.fromBytes(buf, allocator, js.kJSTypedArrayTypeUint8Array);
     }
 
+    pub fn fromJS(value: JSC.JSValue, global: *JSC.JSGlobalObject, exception: JSC.C.ExceptionRef) ?MarkedArrayBuffer {
+        return switch (value.jsType()) {
+            JSC.JSValue.JSType.Uint16Array, JSC.JSValue.JSType.Uint32Array, JSC.JSValue.JSType.Uint8Array, JSC.JSValue.JSType.DataView => fromTypedArray(global.ref(), value, exception),
+            JSC.JSValue.JSType.ArrayBuffer => fromArrayBuffer(global.ref(), value, exception),
+            else => null,
+        };
+    }
+
     pub fn fromBytes(bytes: []u8, allocator: std.mem.Allocator, typed_array_type: js.JSTypedArrayType) MarkedArrayBuffer {
         return MarkedArrayBuffer{
             .buffer = ArrayBuffer{ .offset = 0, .len = @intCast(u32, bytes.len), .byte_len = @intCast(u32, bytes.len), .typed_array_type = typed_array_type, .ptr = bytes.ptr },
@@ -1632,7 +1642,7 @@ const Expect = Test.Expect;
 const DescribeScope = Test.DescribeScope;
 const TestScope = Test.TestScope;
 const ExpectPrototype = Test.ExpectPrototype;
-const NodeFS = @import("./node/node_fs_binding.zig").NodeFS;
+const NodeFS = JSC.Node.NodeFS;
 pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     ResolveError,
     BuildError,

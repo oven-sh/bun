@@ -2126,7 +2126,7 @@ const Constants = struct {
             return (@enumToInt(this) & COPYFILE_FICLONE_FORCE) != 0;
         }
 
-        pub inline fn shouldOverwrite(this: Copyfile) bool {
+        pub inline fn shouldntOverwrite(this: Copyfile) bool {
             return (@enumToInt(this) & COPYFILE_EXCL) != 0;
         }
 
@@ -2449,8 +2449,8 @@ pub const NodeFS = struct {
                         return ret.errno(C.clonefile(src, dest, 0)) orelse ret.success;
                     }
 
-                    var mode: Mode = C.darwin.COPYFILE_ACL | C.darwin.COPYFILE_XATTR | C.darwin.COPYFILE_DATA;
-                    if (!args.mode.shouldOverwrite()) {
+                    var mode: Mode = C.darwin.COPYFILE_ACL | C.darwin.COPYFILE_DATA;
+                    if (args.mode.shouldntOverwrite()) {
                         mode |= C.darwin.COPYFILE_EXCL;
                     }
 

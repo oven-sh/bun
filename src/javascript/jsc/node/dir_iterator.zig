@@ -140,7 +140,7 @@ pub const Iterator = switch (builtin.os.tag) {
                 };
                 return .{
                     .result = Entry{
-                        .name = name,
+                        .name = PathString.init(name),
                         .kind = entry_kind,
                     },
                 };

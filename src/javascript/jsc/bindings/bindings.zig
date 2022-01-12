@@ -1378,7 +1378,7 @@ pub const JSValue = enum(i64) {
 
         pub inline fn isStringLike(this: JSType) bool {
             return switch (this) {
-                .StringObject, .DerivedStringObject => true,
+                .String, .StringObject, .DerivedStringObject => true,
                 else => false,
             };
         }

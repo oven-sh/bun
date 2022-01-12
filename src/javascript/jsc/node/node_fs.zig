@@ -3158,7 +3158,7 @@ pub const NodeFS = struct {
                         };
                     },
                     .result => |ent| ent,
-                }) |current| {
+                }) |current| : (entry = iterator.next()) {
                     switch (comptime ExpectedType) {
                         DirEnt => {
                             entries.append(.{

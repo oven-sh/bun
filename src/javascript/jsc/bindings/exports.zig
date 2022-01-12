@@ -1196,7 +1196,23 @@ pub const ZigConsoleClient = struct {
                         }
 
                         const element = JSValue.fromRef(CAPI.JSObjectGetPropertyAtIndex(globalThis.ref(), ref, i, null));
-                        this.format(Tag.get(element, globalThis), Writer, writer_, element, globalThis, enable_ansi_colors);
+                        const tag = Tag.get(element, globalThis);
+
+                        if (tag.cell.isStringLike()) {
+                            if (comptime enable_ansi_colors) {
+                                writer.writeAll(comptime Output.prettyFmt("<r><green>", true));
+                            }
+                            writer.writeAll("\"");
+                        }
+
+                        this.format(tag, Writer, writer_, element, globalThis, enable_ansi_colors);
+
+                        if (tag.cell.isStringLike()) {
+                            writer.writeAll("\"");
+                            if (comptime enable_ansi_colors) {
+                                writer.writeAll(comptime Output.prettyFmt("<r>", true));
+                            }
+                        }
                     }
 
                     writer.writeAll(" ]");

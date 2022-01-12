@@ -1175,6 +1175,15 @@ pub const VirtualMachine = struct {
                     .bytecodecache_fd = 0,
                 };
             }
+        } else if (strings.eqlComptime(_specifier, "node:fs")) {
+            return ResolvedSource{
+                .allocator = null,
+                .source_code = ZigString.init(@embedFile("fs.exports.js")),
+                .specifier = ZigString.init("node:fs"),
+                .source_url = ZigString.init("node:fs"),
+                .hash = 0,
+                .bytecodecache_fd = 0,
+            };
         }
 
         const specifier = normalizeSpecifier(_specifier);
@@ -1319,7 +1328,7 @@ pub const VirtualMachine = struct {
         if (vm.node_modules == null and strings.eqlComptime(std.fs.path.basename(specifier), Runtime.Runtime.Imports.alt_name)) {
             ret.path = Runtime.Runtime.Imports.Name;
             return;
-        } else if (vm.node_modules != null and strings.eql(specifier, bun_file_import_path)) {
+        } else if (vm.node_modules != null and strings.eqlComptime(specifier, bun_file_import_path)) {
             ret.path = bun_file_import_path;
             return;
         } else if (strings.eqlComptime(specifier, main_file_name)) {
@@ -1333,6 +1342,10 @@ pub const VirtualMachine = struct {
         } else if (specifier.len > "/bun-vfs/node_modules/".len and strings.eqlComptimeIgnoreLen(specifier[0.."/bun-vfs/node_modules/".len], "/bun-vfs/node_modules/")) {
             ret.result = null;
             ret.path = specifier;
+            return;
+        } else if (strings.eqlComptime(specifier, "fs") or strings.eqlComptime(specifier, "node:fs")) {
+            ret.result = null;
+            ret.path = "node:fs";
             return;
         }
 

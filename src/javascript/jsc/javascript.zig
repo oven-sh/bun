@@ -880,6 +880,7 @@ pub const VirtualMachine = struct {
     const EventLoop = struct {
         ready_tasks_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
         pending_tasks_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
+        io_tasks_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
         tasks: std.ArrayList(Task) = std.ArrayList(Task).init(default_allocator),
 
         pub fn tickWithCount(this: *EventLoop) u32 {

@@ -227,7 +227,7 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE) \
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) $(BUN_DEPS_OUT_DIR)/libcrypto.boring.a
 
 ifeq ($(OS_NAME), darwin)
-ARCHIVE_FILES += $(BUN_DEPS_OUT_DIR)/libCrashReporter.a $(BUN_DEPS_OUT_DIR)/libCrashReporter.bindings.a
+# ARCHIVE_FILES += $(BUN_DEPS_OUT_DIR)/libCrashReporter.a $(BUN_DEPS_OUT_DIR)/libCrashReporter.bindings.a
 endif
 
 PLATFORM_LINKER_FLAGS =

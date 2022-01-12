@@ -664,7 +664,8 @@ pub const Date = enum(u64) {
     _,
 
     pub fn toJS(this: Date, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-        const unix_timestamp = JSC.C.JSValueMakeNumber(ctx, @intToFloat(f64, @enumToInt(this)));
+        const seconds = @floatCast(f64, @intToFloat(f128, @enumToInt(this)) * 1000.0);
+        const unix_timestamp = JSC.C.JSValueMakeNumber(ctx, seconds);
         const array: [1]JSC.C.JSValueRef = .{unix_timestamp};
         const obj = JSC.C.JSObjectMakeDate(ctx, 1, &array, exception);
         return obj;
@@ -792,12 +793,11 @@ fn StatsLike(comptime name: string, comptime T: type) type {
                 .atime_ms = @truncate(T, @intCast(i64, if (atime.tv_nsec > 0) (@intCast(usize, atime.tv_nsec) / std.time.ns_per_ms) else 0)),
                 .mtime_ms = @truncate(T, @intCast(i64, if (mtime.tv_nsec > 0) (@intCast(usize, mtime.tv_nsec) / std.time.ns_per_ms) else 0)),
                 .ctime_ms = @truncate(T, @intCast(i64, if (ctime.tv_nsec > 0) (@intCast(usize, ctime.tv_nsec) / std.time.ns_per_ms) else 0)),
+                .birthtime_ms = @truncate(T, @intCast(i64, if (stat_.birthtimensec > 0) (@intCast(usize, stat_.birthtimensec) / std.time.ns_per_ms) else 0)),
                 .atime = @intToEnum(Date, @intCast(u64, @maximum(atime.tv_sec, 0))),
                 .mtime = @intToEnum(Date, @intCast(u64, @maximum(mtime.tv_sec, 0))),
                 .ctime = @intToEnum(Date, @intCast(u64, @maximum(ctime.tv_sec, 0))),
-
-                .birthtime_ms = 0,
-                .birthtime = @intToEnum(Date, 0),
+                .birthtime = @intToEnum(Date, @intCast(u64, @maximum(stat_.birthtimesec, 0))),
             };
         }
 

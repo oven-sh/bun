@@ -284,6 +284,21 @@ void GlobalObject::installAPIGlobals(JSClassRef *globals, int count) {
   process->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "platform"),
                      JSC::jsString(this->vm(), WTF::String("linux")));
 #endif
+
+#if defined(__x86_64__)
+  process->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "arch"),
+                     JSC::jsString(this->vm(), WTF::String("x64")));
+#elif defined(__i386__)
+  process->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "arch"),
+                     JSC::jsString(this->vm(), WTF::String("x86")));
+#elif defined(__arm__)
+  process->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "arch"),
+                     JSC::jsString(this->vm(), WTF::String("arm")));
+#elif defined(__aarch64__)
+  process->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "arch"),
+                     JSC::jsString(this->vm(), WTF::String("arm64")));
+
+#endif
   int i = 0;
   for (; i < count - 1; i++) {
     auto jsClass = globals[i];

@@ -135,13 +135,16 @@ pub const To = struct {
                 return JSC.JSValue.jsNumberWithType(Type, value).asRef();
             }
 
+            var zig_str: JSC.ZigString = undefined;
+
             return switch (comptime Type) {
                 void => JSC.C.JSValueMakeUndefined(context),
                 bool => JSC.C.JSValueMakeBoolean(context, value),
                 []const u8, [:0]const u8, [*:0]const u8, []u8, [:0]u8, [*:0]u8 => brk: {
-                    var zig_str = JSC.ZigString.init(value);
-                    zig_str.detectEncoding();
-                    break :brk zig_str.toValueAuto(context.asJSGlobalObject()).asObjectRef();
+                    zig_str = ZigString.init(value);
+                    const val = zig_str.toValueAuto(context.asJSGlobalObject());
+
+                    break :brk val.asObjectRef();
                 },
                 JSC.C.JSValueRef => value,
 
@@ -150,7 +153,7 @@ pub const To = struct {
                     if (comptime Info == .Enum) {
                         const Enum: std.builtin.TypeInfo.Enum = Info.Enum;
                         if (comptime !std.meta.trait.isNumber(Enum.tag_type)) {
-                            var zig_str = JSC.ZigString.init(@tagName(value));
+                            zig_str = JSC.ZigString.init(@tagName(value));
                             return zig_str.toValue(context.asJSGlobalObject()).asObjectRef();
                         }
                     }
@@ -212,7 +215,7 @@ pub const To = struct {
                     }
 
                     if (comptime std.meta.trait.isZigString(Type)) {
-                        var zig_str = JSC.ZigString.init(value);
+                        zig_str = JSC.ZigString.init(value);
                         return zig_str.toValue(context.asJSGlobalObject()).asObjectRef();
                     }
 

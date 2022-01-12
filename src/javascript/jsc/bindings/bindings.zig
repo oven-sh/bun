@@ -1627,12 +1627,12 @@ pub const JSValue = enum(i64) {
     }
 
     // intended to be more lightweight than ZigString
-    pub fn getIfPropertyExistsImpl(this: JSValue, ptr: [*]const u8, len: u32) JSValue {
-        return cppFn("getIfPropertyExistsImpl", .{ this, ptr, len });
+    pub fn getIfPropertyExistsImpl(this: JSValue, global: *JSGlobalObject, ptr: [*]const u8, len: u32) JSValue {
+        return cppFn("getIfPropertyExistsImpl", .{ this, global, ptr, len });
     }
 
-    pub fn getIfPropertyExists(this: JSValue, property: []const u8) ?JSValue {
-        const value = getIfPropertyExistsImpl(this, property.ptr, @intCast(u32, property.len));
+    pub fn getIfPropertyExists(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
+        const value = getIfPropertyExistsImpl(this, global, property.ptr, @intCast(u32, property.len));
         return if (@enumToInt(value) != 0) value else return null;
     }
 

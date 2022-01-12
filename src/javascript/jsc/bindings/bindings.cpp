@@ -1038,6 +1038,45 @@ JSC__JSValue JSC__JSValue__jsNumberFromUint64(uint64_t arg0) {
   return JSC::JSValue::encode(JSC::jsNumber(arg0));
 };
 
+JSC__JSValue JSC__JSValue__createObject2(JSC__JSGlobalObject *globalObject, const ZigString *arg1,
+                                         const ZigString *arg2, JSC__JSValue JSValue3,
+                                         JSC__JSValue JSValue4) {
+  JSC::JSObject *object = JSC::constructEmptyObject(globalObject);
+  auto key1 = Zig::toIdentifier(*arg1, globalObject);
+  JSC::PropertyDescriptor descriptor1;
+  JSC::PropertyDescriptor descriptor2;
+
+  descriptor1.setEnumerable(1);
+  descriptor1.setConfigurable(1);
+  descriptor1.setWritable(1);
+  descriptor1.setValue(JSC::JSValue::decode(JSValue3));
+
+  auto key2 = Zig::toIdentifier(*arg2, globalObject);
+
+  descriptor2.setEnumerable(1);
+  descriptor2.setConfigurable(1);
+  descriptor2.setWritable(1);
+  descriptor2.setValue(JSC::JSValue::decode(JSValue4));
+
+  object->methodTable(globalObject->vm())
+    ->defineOwnProperty(object, globalObject, key2, descriptor2, true);
+  object->methodTable(globalObject->vm())
+    ->defineOwnProperty(object, globalObject, key1, descriptor1, true);
+
+  return JSC::JSValue::encode(object);
+}
+
+JSC__JSValue JSC__JSValue__getIfPropertyExistsImpl(JSC__JSValue JSValue0,
+                                                   JSC__JSGlobalObject *globalObject,
+                                                   const unsigned char *arg1, uint32_t arg2) {
+
+  JSC::VM &vm = globalObject->vm();
+  JSC::JSObject *object = JSC::JSValue::decode(JSValue0).asCell()->getObject();
+  auto propertyName = JSC::PropertyName(
+    JSC::Identifier::fromString(vm, reinterpret_cast<const LChar *>(arg1), (int)arg2));
+  return JSC::JSValue::encode(object->getIfPropertyExists(globalObject, propertyName));
+}
+
 bool JSC__JSValue__toBoolean(JSC__JSValue JSValue0) {
   return JSC::JSValue::decode(JSValue0).asBoolean();
 }

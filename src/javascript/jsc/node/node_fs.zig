@@ -514,7 +514,7 @@ const Arguments = struct {
                         if (next_val.isCallable(ctx.asJSGlobalObject().vm())) break :brk false;
                         arguments.eat();
 
-                        if (next_val.getIfPropertyExists("bigint")) |big_int| {
+                        if (next_val.getIfPropertyExists(ctx.asJSGlobalObject(), "bigint")) |big_int| {
                             break :brk big_int.toBoolean();
                         }
                     }
@@ -565,7 +565,7 @@ const Arguments = struct {
                         if (next_val.isCallable(ctx.asJSGlobalObject().vm())) break :brk false;
                         arguments.eat();
 
-                        if (next_val.getIfPropertyExists("bigint")) |big_int| {
+                        if (next_val.getIfPropertyExists(ctx.asJSGlobalObject(), "bigint")) |big_int| {
                             break :brk big_int.toBoolean();
                         }
                     }
@@ -703,7 +703,7 @@ const Arguments = struct {
                     },
                     else => {
                         if (val.isObject()) {
-                            if (val.getIfPropertyExists("encoding")) |encoding_| {
+                            if (val.getIfPropertyExists(ctx.asJSGlobalObject(), "encoding")) |encoding_| {
                                 encoding = Encoding.fromStringValue(encoding_, ctx.asJSGlobalObject()) orelse Encoding.utf8;
                             }
                         }
@@ -744,7 +744,7 @@ const Arguments = struct {
                     },
                     else => {
                         if (val.isObject()) {
-                            if (val.getIfPropertyExists("encoding")) |encoding_| {
+                            if (val.getIfPropertyExists(ctx.asJSGlobalObject(), "encoding")) |encoding_| {
                                 encoding = Encoding.fromStringValue(encoding_, ctx.asJSGlobalObject()) orelse Encoding.utf8;
                             }
                         }
@@ -831,11 +831,11 @@ const Arguments = struct {
                 arguments.eat();
 
                 if (val.isObject()) {
-                    if (val.getIfPropertyExists("recursive")) |recursive_| {
+                    if (val.getIfPropertyExists(ctx.asJSGlobalObject(), "recursive")) |recursive_| {
                         recursive = recursive_.toBoolean();
                     }
 
-                    if (val.getIfPropertyExists("mode")) |mode_| {
+                    if (val.getIfPropertyExists(ctx.asJSGlobalObject(), "mode")) |mode_| {
                         mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse mode;
                     }
                 }
@@ -874,7 +874,7 @@ const Arguments = struct {
                     },
                     else => {
                         if (val.isObject()) {
-                            if (val.getIfPropertyExists("encoding")) |encoding_| {
+                            if (val.getIfPropertyExists(ctx.asJSGlobalObject(), "encoding")) |encoding_| {
                                 encoding = Encoding.fromStringValue(encoding_, ctx.asJSGlobalObject()) orelse Encoding.utf8;
                             }
                         }
@@ -922,11 +922,11 @@ const Arguments = struct {
                     },
                     else => {
                         if (val.isObject()) {
-                            if (val.getIfPropertyExists("encoding")) |encoding_| {
+                            if (val.getIfPropertyExists(ctx.asJSGlobalObject(), "encoding")) |encoding_| {
                                 encoding = Encoding.fromStringValue(encoding_, ctx.asJSGlobalObject()) orelse Encoding.utf8;
                             }
 
-                            if (val.getIfPropertyExists("withFileTypes")) |with_file_types_| {
+                            if (val.getIfPropertyExists(ctx.asJSGlobalObject(), "withFileTypes")) |with_file_types_| {
                                 with_file_types = with_file_types_.toBoolean();
                             }
                         }
@@ -1006,11 +1006,11 @@ const Arguments = struct {
                 arguments.eat();
 
                 if (val.isObject()) {
-                    if (val.getIfPropertyExists("flags")) |flags_| {
+                    if (val.getIfPropertyExists(ctx.asJSGlobalObject(), "flags")) |flags_| {
                         flags = FileSystemFlags.fromJS(ctx, flags_, exception) orelse flags;
                     }
 
-                    if (val.getIfPropertyExists("mode")) |mode_| {
+                    if (val.getIfPropertyExists(ctx.asJSGlobalObject(), "mode")) |mode_| {
                         mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse mode;
                     }
                 }
@@ -1415,15 +1415,15 @@ const Arguments = struct {
                     args.position = if (position > -1) @intCast(ReadPosition, position) else null;
                     arguments.remaining = arguments.remaining[2..];
                 } else if (current.isObject()) {
-                    if (current.getIfPropertyExists("offset")) |num| {
+                    if (current.getIfPropertyExists(ctx.asJSGlobalObject(), "offset")) |num| {
                         args.offset = num.toU32();
                     }
 
-                    if (current.getIfPropertyExists("length")) |num| {
+                    if (current.getIfPropertyExists(ctx.asJSGlobalObject(), "length")) |num| {
                         args.length = num.toU32();
                     }
 
-                    if (current.getIfPropertyExists("position")) |num| {
+                    if (current.getIfPropertyExists(ctx.asJSGlobalObject(), "position")) |num| {
                         const position: i32 = if (num.isUndefinedOrNull()) -1 else num.toInt32();
                         if (position > -1) {
                             args.position = @intCast(ReadPosition, position);
@@ -1482,7 +1482,7 @@ const Arguments = struct {
                         return null;
                     };
                 } else if (arg.isObject()) {
-                    if (arg.getIfPropertyExists("encoding")) |encoding_| {
+                    if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "encoding")) |encoding_| {
                         if (!encoding_.isUndefinedOrNull()) {
                             encoding = Encoding.fromStringValue(encoding_, ctx.asJSGlobalObject()) orelse {
                                 if (exception.* == null) {
@@ -1499,7 +1499,7 @@ const Arguments = struct {
                         }
                     }
 
-                    if (arg.getIfPropertyExists("flag")) |flag_| {
+                    if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "flag")) |flag_| {
                         flag = FileSystemFlags.fromJS(ctx, flag_, exception) orelse {
                             if (exception.* == null) {
                                 JSC.throwTypeError(
@@ -1594,7 +1594,7 @@ const Arguments = struct {
                         return null;
                     };
                 } else if (arg.isObject()) {
-                    if (arg.getIfPropertyExists("encoding")) |encoding_| {
+                    if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "encoding")) |encoding_| {
                         if (!encoding_.isUndefinedOrNull()) {
                             encoding = Encoding.fromStringValue(encoding_, ctx.asJSGlobalObject()) orelse {
                                 if (exception.* == null) {
@@ -1611,7 +1611,7 @@ const Arguments = struct {
                         }
                     }
 
-                    if (arg.getIfPropertyExists("flag")) |flag_| {
+                    if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "flag")) |flag_| {
                         flag = FileSystemFlags.fromJS(ctx, flag_, exception) orelse {
                             if (exception.* == null) {
                                 JSC.throwTypeError(
@@ -1626,7 +1626,7 @@ const Arguments = struct {
                         };
                     }
 
-                    if (arg.getIfPropertyExists("mode")) |mode_| {
+                    if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "mode")) |mode_| {
                         mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse {
                             if (exception.* == null) {
                                 JSC.throwTypeError(
@@ -1698,7 +1698,7 @@ const Arguments = struct {
                         return null;
                     };
                 } else if (arg.isObject()) {
-                    if (arg.getIfPropertyExists("encoding")) |encoding_| {
+                    if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "encoding")) |encoding_| {
                         if (!encoding_.isUndefinedOrNull()) {
                             encoding = Encoding.fromStringValue(encoding_, ctx.asJSGlobalObject()) orelse {
                                 if (exception.* == null) {
@@ -1715,7 +1715,7 @@ const Arguments = struct {
                         }
                     }
 
-                    if (arg.getIfPropertyExists("bufferSize")) |buffer_size_| {
+                    if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "bufferSize")) |buffer_size_| {
                         buffer_size = buffer_size_.toInt32();
                         if (buffer_size < 0) {
                             if (exception.* == null) {
@@ -1860,7 +1860,7 @@ const Arguments = struct {
                             return null;
                         };
                     } else if (arg.isObject()) {
-                        if (arg.getIfPropertyExists("encoding")) |encoding_| {
+                        if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "encoding")) |encoding_| {
                             if (!encoding_.isUndefinedOrNull()) {
                                 stream.encoding = Encoding.fromStringValue(encoding_, ctx.asJSGlobalObject()) orelse {
                                     if (exception.* == null) {
@@ -1877,7 +1877,7 @@ const Arguments = struct {
                             }
                         }
 
-                        if (arg.getIfPropertyExists("flags")) |flags_| {
+                        if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "flags")) |flags_| {
                             stream.flags = FileSystemFlags.fromJS(ctx, flags_, exception) orelse {
                                 if (exception.* == null) {
                                     JSC.throwTypeError(
@@ -1892,7 +1892,7 @@ const Arguments = struct {
                             };
                         }
 
-                        if (arg.getIfPropertyExists("mode")) |mode_| {
+                        if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "mode")) |mode_| {
                             stream.mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse {
                                 if (exception.* == null) {
                                     JSC.throwTypeError(
@@ -1907,19 +1907,19 @@ const Arguments = struct {
                             };
                         }
 
-                        if (arg.getIfPropertyExists("autoClose")) |auto_close_| {
+                        if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "autoClose")) |auto_close_| {
                             stream.auto_close = auto_close_.toBoolean();
                         }
 
-                        if (arg.getIfPropertyExists("emitClose")) |emit_close_| {
+                        if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "emitClose")) |emit_close_| {
                             stream.emit_close = emit_close_.toBoolean();
                         }
 
-                        if (arg.getIfPropertyExists("start")) |start_| {
+                        if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "start")) |start_| {
                             stream.start = start_.toU32();
                         }
 
-                        if (arg.getIfPropertyExists("highWaterMark")) |highwater_mark_| {
+                        if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "highWaterMark")) |highwater_mark_| {
                             stream.highwater_mark = highwater_mark_.toU32();
                         }
                     }

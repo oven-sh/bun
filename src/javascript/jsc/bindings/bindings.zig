@@ -1403,7 +1403,7 @@ pub const JSValue = enum(i64) {
     }
 
     /// Create an object with exactly two properties
-    pub fn createObject2(global: *JSGlobalObject, key1: *const ZigString, key2: *const ZigString, value1: JSValue, value2: JSValue) void {
+    pub fn createObject2(global: *JSGlobalObject, key1: *const ZigString, key2: *const ZigString, value1: JSValue, value2: JSValue) JSValue {
         return cppFn("createObject2", .{ global, key1, key2, value1, value2 });
     }
 
@@ -1416,9 +1416,17 @@ pub const JSValue = enum(i64) {
             f64 => @call(.{ .modifier = .always_inline }, jsNumberFromDouble, .{number}),
             u8 => @call(.{ .modifier = .always_inline }, jsNumberFromChar, .{number}),
             u16 => @call(.{ .modifier = .always_inline }, jsNumberFromU16, .{number}),
-            c_int, i32 => @call(.{ .modifier = .always_inline }, jsNumberFromInt32, .{number}),
-            i64 => @call(.{ .modifier = .always_inline }, jsNumberFromInt64, .{number}),
-            c_uint, u32, u64 => @call(.{ .modifier = .always_inline }, jsNumberFromUint64, .{number}),
+            i32 => @call(.{ .modifier = .always_inline }, jsNumberFromInt32, .{@truncate(i32, number)}),
+            c_int, i64 => if (number > std.math.maxInt(i32))
+                jsNumberFromInt64(@truncate(i64, number))
+            else
+                jsNumberFromInt32(@intCast(i32, number)),
+
+            c_uint, u32 => if (number < std.math.maxInt(i32))
+                jsNumberFromInt32(@intCast(i32, number))
+            else
+                jsNumberFromUint64(@as(u64, number)),
+
             else => @compileError("Type transformation missing for number of type: " ++ @typeName(Number)),
         };
     }

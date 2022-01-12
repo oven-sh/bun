@@ -1,6 +1,6 @@
 const std = @import("std");
 const Api = @import("./api/schema.zig").Api;
-const js = @import("javascript_core");
+const js = @import("./jsc.zig");
 const ImportKind = @import("./import_record.zig").ImportKind;
 const _global = @import("./global.zig");
 const string = _global.string;

@@ -9,21 +9,17 @@ const std = @import("std");
 const os = std.os;
 
 const Dir = std.fs.Dir;
-const PathString = @import("javascript_core").PathString;
+const JSC = @import("../../../jsc.zig");
+const PathString = JSC.PathString;
 
 const IteratorError = error{ AccessDenied, SystemResources } || os.UnexpectedError;
 const mem = std.mem;
 const strings = @import("../../../global.zig").strings;
-const Maybe = @import("./types.zig").Maybe;
+const Maybe = JSC.Node.Maybe;
 const File = std.fs.File;
 const Result = Maybe(?Entry);
 
-pub const Entry = struct {
-    name: PathString,
-    kind: Kind,
-
-    pub const Kind = File.Kind;
-};
+const Entry = JSC.Node.DirEnt;
 
 pub const Iterator = switch (builtin.os.tag) {
     .macos, .ios, .freebsd, .netbsd, .dragonfly, .openbsd, .solaris => struct {
@@ -58,7 +54,7 @@ pub const Iterator = switch (builtin.os.tag) {
 
                     if (rc < 1) {
                         if (rc == 0) return Result{ .result = null };
-                        if (Result.getErrno(rc)) |err| {
+                        if (Result.errno(rc)) |err| {
                             return err;
                         }
                     }

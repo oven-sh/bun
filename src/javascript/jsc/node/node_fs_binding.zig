@@ -1,10 +1,10 @@
 const JSC = @import("../../../jsc.zig");
 const std = @import("std");
-const Flavor = @import("./types.zig").Flavor;
-const ArgumentsSlice = @import("./types.zig").ArgumentsSlice;
+const Flavor = JSC.Node.Flavor;
+const ArgumentsSlice = JSC.Node.ArgumentsSlice;
 const system = std.os.system;
-const Maybe = @import("./types.zig").Maybe;
-const Encoding = @import("./types.zig").Encoding;
+const Maybe = JSC.Node.Maybe;
+const Encoding = JSC.Node.Encoding;
 const Args = JSC.Node.NodeFS.Arguments;
 
 const NodeFSFunction = fn (
@@ -64,28 +64,33 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
 
             defer {
                 // TODO: fix this
-                for (arguments.len) |arg| {
+                for (arguments) |arg| {
                     JSC.C.JSValueUnprotect(ctx, arg);
                 }
                 slice.arena.deinit();
             }
 
             const args = if (comptime Arguments != void)
-                Arguments.fromJS(ctx, &slice, exception)
+                (Arguments.fromJS(ctx, &slice, exception) orelse return null)
             else
                 Arguments{};
             if (exception.* != null) return null;
 
-            const result: Maybe(Result) = Function(this, comptime Flavor.sync, args);
-            switch (result) {
-                .err => |err| {
+            const result: Result = Function(
+                this,
+                args,
+                comptime Flavor.sync,
+            );
+            return switch (result) {
+                .err => |err| brk: {
                     exception.* = err.toJS(ctx);
-                    return null;
+                    break :brk null;
                 },
-                .result => |res| JSC.To.JS.withType(Result, res, ctx, exception),
-            }
-
-            unreachable;
+                .result => |res| if (comptime Result.ReturnType != void)
+                    JSC.To.JS.withType(Result.ReturnType, res, ctx, exception)
+                else
+                    JSC.C.JSValueMakeUndefined(ctx),
+            };
         }
     };
 

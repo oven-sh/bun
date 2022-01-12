@@ -9,6 +9,7 @@ const off_t = std.c.off_t;
 const errno = os.errno;
 const zeroes = mem.zeroes;
 
+pub extern "c" fn copyfile(from: [*:0]const u8, to: [*:0]const u8, state: ?std.c.copyfile_state_t, flags: u32) c_int;
 pub const COPYFILE_STATE_SRC_FD = @as(c_int, 1);
 pub const COPYFILE_STATE_SRC_FILENAME = @as(c_int, 2);
 pub const COPYFILE_STATE_DST_FD = @as(c_int, 3);

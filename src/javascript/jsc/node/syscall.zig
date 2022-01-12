@@ -4,17 +4,18 @@ const std = @import("std");
 const system = std.os.system;
 const os = std.os;
 const builtin = @import("builtin");
-const Maybe = @import("./types.zig").Maybe;
+
 const Syscall = @This();
 const Environment = @import("../../../global.zig").Environment;
-const SystemError = @import("./types.zig").SystemError;
 const default_allocator = @import("../../../global.zig").default_allocator;
 const JSC = @import("../../../jsc.zig");
+const SystemError = JSC.Node.SystemError;
 const darwin = os.darwin;
 const MAX_PATH_BYTES = std.fs.MAX_PATH_BYTES;
 const fd_t = std.os.fd_t;
+const C = @import("../../../global.zig").C;
 const linux = os.linux;
-// TODO
+const Maybe = JSC.Node.Maybe;
 
 pub const Tag = enum(u8) {
     TODO,
@@ -57,7 +58,7 @@ pub fn stat(path: [:0]const u8) Maybe(os.Stat) {
 
 pub fn lstat(path: [:0]const u8) Maybe(os.Stat) {
     var stat_ = mem.zeroes(os.Stat);
-    if (Maybe(os.Stat).errno(system.lstat(path, &stat_))) |err| return err;
+    if (Maybe(os.Stat).errno(C.lstat(path, &stat_))) |err| return err;
     return Maybe(os.Stat){ .result = stat_ };
 }
 
@@ -70,7 +71,7 @@ pub fn fstat(fd: std.os.fd_t) Maybe(os.Stat) {
 pub fn open(file_path: [:0]const u8, flags: u32, perm: std.os.mode_t) Maybe(std.os.fd_t) {
     while (true) {
         const rc = open_sym(file_path, flags | os.O.CLOEXEC, perm);
-        switch (system.getErrno(rc)) {
+        return switch (system.getErrno(rc)) {
             .SUCCESS => .{ .result = rc },
             .INTR => continue,
             else => |err| {
@@ -80,7 +81,7 @@ pub fn open(file_path: [:0]const u8, flags: u32, perm: std.os.mode_t) Maybe(std.
                     },
                 };
             },
-        }
+        };
     }
 
     unreachable;
@@ -91,15 +92,15 @@ pub fn open(file_path: [:0]const u8, flags: u32, perm: std.os.mode_t) Maybe(std.
 pub fn close(fd: std.os.fd_t) ?Syscall.Error {
     if (comptime Environment.isMac) {
         // This avoids the EINTR problem.
-        switch (darwin.getErrno(darwin.@"close$NOCANCEL"(fd))) {
-            .BADF => Syscall.Error{ .errno = .BADF, .syscall = .close },
-            else => return null,
-        }
+        return switch (darwin.getErrno(darwin.@"close$NOCANCEL"(fd))) {
+            .BADF => Syscall.Error{ .errno = @enumToInt(os.E.BADF), .syscall = .close },
+            else => null,
+        };
     }
 
     if (comptime Environment.isLinux) {
         return switch (linux.getErrno(linux.close(fd))) {
-            .BADF => Syscall.Error{ .errno = .BADF, .syscall = .close },
+            .BADF => Syscall.Error{ .errno = @enumToInt(os.E.BADF), .syscall = .close },
             else => void{},
         };
     }
@@ -119,10 +120,10 @@ pub fn write(fd: os.fd_t, bytes: []const u8) Maybe(usize) {
     while (true) {
         const rc = system.write(fd, bytes.ptr, adjusted_len);
         if (Maybe(usize).errno(rc)) |err| {
-            if (err.err.errno == .INTR) continue;
+            if (err.getErrno() == .INTR) continue;
             return err;
         }
-        return Maybe(usize){ .result = rc };
+        return Maybe(usize){ .result = @intCast(usize, rc) };
     }
     unreachable;
 }
@@ -139,10 +140,10 @@ pub fn pread(fd: os.fd_t, buf: []u8, offset: i64) Maybe(usize) {
     while (true) {
         const rc = pread_sym(fd, buf.ptr, adjusted_len, ioffset);
         if (Maybe(usize).errno(rc)) |err| {
-            if (err.err.errno == .INTR) continue;
+            if (err.getErrno() == .INTR) continue;
             return err;
         }
-        return Maybe(usize){ .result = rc };
+        return Maybe(usize){ .result = @intCast(usize, rc) };
     }
     unreachable;
 }
@@ -158,12 +159,12 @@ pub fn pwrite(fd: os.fd_t, bytes: []const u8, offset: i64) Maybe(usize) {
     const ioffset = @bitCast(i64, offset); // the OS treats this as unsigned
     while (true) {
         const rc = pwrite_sym(fd, bytes.ptr, adjusted_len, ioffset);
-        return if (Maybe(usize).err(rc)) |err| {
+        return if (Maybe(usize).errno(rc)) |err| {
             switch (err.getErrno()) {
                 .INTR => continue,
                 else => return err,
             }
-        } else Maybe(usize){ .result = rc };
+        } else Maybe(usize){ .result = @intCast(usize, rc) };
     }
 
     unreachable;
@@ -174,10 +175,10 @@ pub fn read(fd: os.fd_t, buf: []u8) Maybe(usize) {
     while (true) {
         const rc = system.read(fd, buf.ptr, adjusted_len);
         if (Maybe(usize).errno(rc)) |err| {
-            if (err.err.errno == .INTR) continue;
+            if (err.getErrno() == .INTR) continue;
             return err;
         }
-        return Maybe(usize){ .result = rc };
+        return Maybe(usize){ .result = @intCast(usize, rc) };
     }
     unreachable;
 }
@@ -187,10 +188,10 @@ pub fn readlink(in: [:0]const u8, buf: []u8) Maybe(usize) {
         const rc = system.readlink(in, buf.ptr, buf.len);
 
         if (Maybe(usize).errno(rc)) |err| {
-            if (err.err.errno == .INTR) continue;
+            if (err.getErrno() == .INTR) continue;
             return err;
         }
-        return Maybe(usize){ .result = rc };
+        return Maybe(usize){ .result = @intCast(usize, rc) };
     }
     unreachable;
 }
@@ -198,7 +199,7 @@ pub fn readlink(in: [:0]const u8, buf: []u8) Maybe(usize) {
 pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
     while (true) {
         if (Maybe(void).errno(system.rename(from, to))) |err| {
-            if (err.err.errno == .INTR) continue;
+            if (err.getErrno() == .INTR) continue;
             return err;
         }
         return Maybe(void).success;
@@ -208,8 +209,8 @@ pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
 
 pub fn chown(path: [:0]const u8, uid: os.uid_t, gid: os.gid_t) Maybe(void) {
     while (true) {
-        if (Maybe(void).errno(system.chown(path, uid, gid))) |err| {
-            if (err.err.errno == .INTR) continue;
+        if (Maybe(void).errno(C.chown(path, uid, gid))) |err| {
+            if (err.getErrno() == .INTR) continue;
             return err;
         }
         return Maybe(void).success;
@@ -220,7 +221,7 @@ pub fn chown(path: [:0]const u8, uid: os.uid_t, gid: os.gid_t) Maybe(void) {
 pub fn symlink(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
     while (true) {
         if (Maybe(void).errno(system.symlink(from, to))) |err| {
-            if (err.err.errno == .INTR) continue;
+            if (err.getErrno() == .INTR) continue;
             return err;
         }
         return Maybe(void).success;
@@ -231,7 +232,7 @@ pub fn symlink(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
 pub fn unlink(from: [:0]const u8) Maybe(void) {
     while (true) {
         if (Maybe(void).errno(system.unlink(from))) |err| {
-            if (err.err.errno == .INTR) continue;
+            if (err.getErrno() == .INTR) continue;
             return err;
         }
         return Maybe(void).success;
@@ -301,6 +302,10 @@ pub const Error = struct {
     syscall: Syscall.Tag = @intToEnum(Syscall.Tag, 0),
     path: ?[:0]const u8 = null,
 
+    pub inline fn getErrno(this: Error) os.E {
+        return @intToEnum(os.E, this.errno);
+    }
+
     pub inline fn withPath(this: Error, path: ?[:0]const u8) Error {
         return Error{
             .errno = this.errno,
@@ -315,7 +320,7 @@ pub const Error = struct {
         var ptr = default_allocator.create(SystemError) catch unreachable;
         ptr.* = SystemError{
             .path = if (this.path) |path| PathString.init(path) else PathString{},
-            .errno = @as(c_int, @enumToInt(this.errno)) * -1,
+            .errno = @as(c_int, this.errno) * -1,
             .syscall = this.syscall,
         };
         return SystemError.Class.make(ctx, ptr);

@@ -135,14 +135,15 @@ pub const To = struct {
                 return JSC.JSValue.jsNumberWithType(Type, value).asRef();
             }
 
-            switch (comptime Type) {
+            return switch (comptime Type) {
                 void => JSC.C.JSValueMakeUndefined(context),
                 bool => JSC.C.JSValueMakeBoolean(context, value),
-                []const u8, [:0]const u8, [*:0]const u8, []u8, [:0]u8, [*:0]u8 => {
+                []const u8, [:0]const u8, [*:0]const u8, []u8, [:0]u8, [*:0]u8 => brk: {
                     var zig_str = JSC.ZigString.init(value);
                     zig_str.detectEncoding();
-                    return zig_str.toValueAuto(context.asJSGlobalObject()).asObjectRef();
+                    break :brk zig_str.toValueAuto(context.asJSGlobalObject()).asObjectRef();
                 },
+                JSC.C.JSValueRef => value,
 
                 else => {
                     const Info: std.builtin.TypeInfo = comptime @typeInfo(Type);
@@ -164,7 +165,10 @@ pub const To = struct {
                             var i: u8 = 0;
                             const len = @minimum(@intCast(u8, value.len), prefill);
                             while (i < len and exception.* == null) : (i += 1) {
-                                array[i] = To.JS.withType(Child, value[i], context, exception);
+                                array[i] = if (comptime Child == JSC.C.JSValueRef)
+                                    value[i]
+                                else
+                                    To.JS.withType(Child, value[i], context, exception);
                             }
 
                             if (exception.* != null) {
@@ -186,7 +190,10 @@ pub const To = struct {
                             defer _global.default_allocator.free(array);
                             var i: usize = 0;
                             while (i < value.len and exception.* == null) : (i += 1) {
-                                array[i] = To.JS.withType(Child, value[i], context, exception);
+                                array[i] = if (comptime Child == JSC.C.JSValueRef)
+                                    value[i]
+                                else
+                                    To.JS.withType(Child, value[i], context, exception);
                             }
 
                             if (exception.* != null) {
@@ -195,7 +202,7 @@ pub const To = struct {
 
                             // TODO: this function copies to a MarkedArgumentsBuffer
                             // That copy is unnecessary.
-                            const obj = JSC.C.JSObjectMakeArray(context, value.len, &array, exception);
+                            const obj = JSC.C.JSObjectMakeArray(context, value.len, array.ptr, exception);
                             if (exception.* != null) {
                                 return null;
                             }
@@ -218,19 +225,27 @@ pub const To = struct {
 
                     if (comptime Info == .Struct) {
                         if (comptime @hasDecl(Type, "Class") and @hasDecl(Type.Class, "isJavaScriptCoreClass")) {
-                            if (comptime @hasDecl(Type, "finalize")) {
-                                @compileError(comptime std.fmt.comptimePrint("JSC class {s} must have a finalizer to prevent memory leaks", .{Type.Class.name}));
+                            if (comptime !@hasDecl(Type, "finalize")) {
+                                @compileError(comptime std.fmt.comptimePrint("JSC class {s} must implement finalize to prevent memory leaks", .{Type.Class.name}));
                             }
 
-                            var val = _global.default_allocator.create(Type) catch unreachable;
-                            val.* = value;
-                            return Type.Class.make(context, val);
+                            if (comptime !@hasDecl(Type, "toJS")) {
+                                var val = _global.default_allocator.create(Type) catch unreachable;
+                                val.* = value;
+                                return Type.Class.make(context, val);
+                            }
                         }
                     }
 
-                    return value.toJS(context, exception).asObjectRef();
+                    const res = value.toJS(context, exception);
+
+                    if (@TypeOf(res) == JSC.C.JSValueRef) {
+                        return res;
+                    } else if (@TypeOf(res) == JSC.JSValue) {
+                        return res.asObjectRef();
+                    }
                 },
-            }
+            };
         }
 
         pub fn PropertyGetter(
@@ -1653,7 +1668,7 @@ pub const ArrayBuffer = struct {
     pub fn fromArrayBuffer(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ArrayBuffer {
         var buffer = ArrayBuffer{
             .byte_len = @truncate(u32, JSC.C.JSObjectGetArrayBufferByteLength(ctx, value.asObjectRef(), exception)),
-            .ptr = @ptrCast([*]u8, JSC.C.GetArrayBufferBytesPtr(ctx, value.asObjectRef(), exception).?),
+            .ptr = @ptrCast([*]u8, JSC.C.JSObjectGetArrayBufferBytesPtr(ctx, value.asObjectRef(), exception).?),
             // TODO
             .typed_array_type = js.JSTypedArrayType.kJSTypedArrayTypeUint8Array,
             .len = 0,
@@ -1687,10 +1702,10 @@ pub const MarkedArrayBuffer = struct {
 
     pub fn fromString(str: []const u8, allocator: std.mem.Allocator) !MarkedArrayBuffer {
         var buf = try allocator.dupe(u8, str);
-        return MarkedArrayBuffer.fromBytes(buf, allocator, js.kJSTypedArrayTypeUint8Array);
+        return MarkedArrayBuffer.fromBytes(buf, allocator, js.JSTypedArrayType.kJSTypedArrayTypeUint8Array);
     }
 
-    pub fn fromJS(value: JSC.JSValue, global: *JSC.JSGlobalObject, exception: JSC.C.ExceptionRef) ?MarkedArrayBuffer {
+    pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?MarkedArrayBuffer {
         return switch (value.jsType()) {
             JSC.JSValue.JSType.Uint16Array, JSC.JSValue.JSType.Uint32Array, JSC.JSValue.JSType.Uint8Array, JSC.JSValue.JSType.DataView => fromTypedArray(global.ref(), value, exception),
             JSC.JSValue.JSType.ArrayBuffer => fromArrayBuffer(global.ref(), value, exception),
@@ -1724,9 +1739,11 @@ pub const MarkedArrayBuffer = struct {
         return container;
     }
 
-    pub fn toJSObjectRef(this: *MarkedArrayBuffer, ctx: js.JSContextRef, exception: js.ExceptionRef) js.JSObjectRef {
-        return js.JSObjectMakeTypedArrayWithBytesNoCopy(ctx, this.buffer.typed_array_type, this.buffer.ptr, this.buffer.byte_len, MarkedArrayBuffer_deallocator, this, exception);
+    pub fn toJSObjectRef(this: *const MarkedArrayBuffer, ctx: js.JSContextRef, exception: js.ExceptionRef) js.JSObjectRef {
+        return js.JSObjectMakeTypedArrayWithBytesNoCopy(ctx, this.buffer.typed_array_type, this.buffer.ptr, this.buffer.byte_len, MarkedArrayBuffer_deallocator, @intToPtr([*]u8, @ptrToInt(this)), exception);
     }
+
+    pub const toJS = toJSObjectRef;
 };
 
 export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, ctx_: *anyopaque) void {
@@ -1773,6 +1790,7 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     Stats,
     BigIntStats,
     SystemError,
+    DirEnt,
 });
 
 pub inline fn GetJSPrivateData(comptime Type: type, ref: js.JSObjectRef) ?*Type {

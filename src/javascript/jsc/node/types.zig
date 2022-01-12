@@ -38,8 +38,10 @@ pub const Flavor = enum {
 /// - "syscall"
 /// - "path"
 /// - "errno"
-pub fn Maybe(comptime ReturnType: type) type {
+pub fn Maybe(comptime ResultType: type) type {
     return union(Tag) {
+        pub const ReturnType = ResultType;
+
         err: Syscall.Error,
         result: ReturnType,
 
@@ -49,7 +51,7 @@ pub fn Maybe(comptime ReturnType: type) type {
             .result = std.mem.zeroes(ReturnType),
         };
 
-        pub const todo = .{ .err = Syscall.Error.todo };
+        pub const todo: @This() = @This(){ .err = Syscall.Error.todo };
 
         pub inline fn getErrno(this: @This()) os.E {
             return switch (this) {
@@ -63,7 +65,7 @@ pub fn Maybe(comptime ReturnType: type) type {
                 .SUCCESS => null,
                 else => |err| @This(){
                     // always truncate
-                    .errno = @truncate(Syscall.Error.Int, err),
+                    .err = .{ .errno = @truncate(Syscall.Error.Int, @enumToInt(err)) },
                 },
             };
         }
@@ -90,7 +92,7 @@ pub const StringOrBuffer = union(Tag) {
         };
     }
 
-    pub fn fromJS(value: JSC.JSValue, global: *JSC.JSGlobalObject, exception: JSC.C.ExceptionRef) ?StringOrBuffer {
+    pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?StringOrBuffer {
         return switch (value.jsType()) {
             JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
                 var zig_str = JSC.ZigString.init("");
@@ -101,11 +103,15 @@ pub const StringOrBuffer = union(Tag) {
                 }
 
                 return StringOrBuffer{
-                    .string = value.slice(),
+                    .string = zig_str.slice(),
                 };
             },
-            JSC.JSValue.JSType.ArrayBuffer => Buffer.fromArrayBuffer(global.ref(), value, exception),
-            JSC.JSValue.JSType.Uint8Array, JSC.JSValue.JSType.DataView => Buffer.fromArrayBuffer(global.ref(), value, exception),
+            JSC.JSValue.JSType.ArrayBuffer => StringOrBuffer{
+                .buffer = Buffer.fromArrayBuffer(global.ref(), value, exception),
+            },
+            JSC.JSValue.JSType.Uint8Array, JSC.JSValue.JSType.DataView => StringOrBuffer{
+                .buffer = Buffer.fromArrayBuffer(global.ref(), value, exception),
+            },
             else => null,
         };
     }
@@ -133,9 +139,10 @@ pub const Encoding = enum {
     pub fn fromStringValue(value: JSC.JSValue, global: *JSC.JSGlobalObject) ?Encoding {
         var str = JSC.ZigString.Empty;
         value.toZigString(&str, global);
-        return switch (str.len) {
+        const slice = str.slice();
+        return switch (slice.len) {
             0...2 => null,
-            else => switch (Eight.match(str)) {
+            else => switch (Eight.match(slice)) {
                 Eight.case("utf8") => Encoding.utf8,
                 Eight.case("ucs2") => Encoding.ucs2,
                 Eight.case("utf16le") => Encoding.utf16le,
@@ -147,7 +154,7 @@ pub const Encoding = enum {
                 else => null,
             },
             "base64url".len => brk: {
-                if (strings.eqlComptime(str.slice(), "base64url")) {
+                if (strings.eqlComptime(slice, "base64url")) {
                     break :brk Encoding.base64url;
                 }
                 break :brk null;
@@ -184,19 +191,19 @@ pub const SystemError = struct {
         .{
             .errno = .{
                 .read_only = true,
-                .getter = SystemError.getErrno,
+                .get = SystemError.getErrno,
             },
             .path = .{
                 .read_only = true,
-                .getter = SystemError.getPath,
+                .get = SystemError.getPath,
             },
             .syscall = .{
                 .read_only = true,
-                .getter = SystemError.getSyscall,
+                .get = SystemError.getSyscall,
             },
             .code = .{
                 .read_only = true,
-                .getter = SystemError.getCode,
+                .get = SystemError.getCode,
             },
         },
     );
@@ -266,7 +273,7 @@ pub const PathLike = union(Tag) {
         };
     }
 
-    pub fn sliceZWithForceCopy(this: PathLike, buf: [:0]u8, comptime force: bool) [:0]const u8 {
+    pub fn sliceZWithForceCopy(this: PathLike, buf: *[std.fs.MAX_PATH_BYTES]u8, comptime force: bool) [:0]const u8 {
         var sliced = this.slice();
 
         if (sliced.len == 0) return "";
@@ -278,12 +285,12 @@ pub const PathLike = union(Tag) {
             }
         }
 
-        @memcpy(&buf, sliced.ptr, sliced.len);
+        @memcpy(buf, sliced.ptr, sliced.len);
         buf[sliced.len] = 0;
         return buf[0..sliced.len :0];
     }
 
-    pub inline fn sliceZ(this: PathLike, buf: [:0]u8) [:0]const u8 {
+    pub inline fn sliceZ(this: PathLike, buf: *[std.fs.MAX_PATH_BYTES]u8) [:0]const u8 {
         return sliceZWithForceCopy(this, buf, false);
     }
 
@@ -305,7 +312,7 @@ pub const PathLike = union(Tag) {
                 if (exception.* != null) return null;
                 if (!Valid.pathBuffer(buffer, ctx, exception)) return null;
 
-                JSC.C.JSValueProtect(ctx, arg);
+                JSC.C.JSValueProtect(ctx, arg.asObjectRef());
                 arguments.eat();
                 return PathLike{ .buffer = buffer };
             },
@@ -315,7 +322,7 @@ pub const PathLike = union(Tag) {
                 if (exception.* != null) return null;
                 if (!Valid.pathBuffer(buffer, ctx, exception)) return null;
 
-                JSC.C.JSValueProtect(ctx, arg);
+                JSC.C.JSValueProtect(ctx, arg.asObjectRef());
                 arguments.eat();
 
                 return PathLike{ .buffer = buffer };
@@ -330,15 +337,15 @@ pub const PathLike = union(Tag) {
 
                 if (!Valid.pathString(zig_str, ctx, exception)) return null;
 
-                JSC.C.JSValueProtect(ctx, arg);
+                JSC.C.JSValueProtect(ctx, arg.asObjectRef());
                 arguments.eat();
 
                 if (zig_str.is16Bit()) {
                     var printed = std.mem.span(std.fmt.allocPrintZ(arguments.arena.allocator(), "{}", .{zig_str}) catch unreachable);
-                    return PathLike{ .string = PathString.init(printed.ptr[0 .. printed.len + 1]) catch unreachable };
+                    return PathLike{ .string = PathString.init(printed.ptr[0 .. printed.len + 1]) };
                 }
 
-                return PathLike{ .string = PathString.init(zig_str.slice()) catch unreachable };
+                return PathLike{ .string = PathString.init(zig_str.slice()) };
             },
             else => return null,
         }
@@ -450,7 +457,7 @@ pub fn fileDescriptorFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, excepti
 var _get_time_prop_string: ?JSC.C.JSStringRef = null;
 pub fn timeLikeFromJS(ctx: JSC.C.JSContextRef, value_: JSC.JSValue, exception: JSC.C.ExceptionRef) ?TimeLike {
     var value = value_;
-    if (JSC.C.JSValueIsDate(ctx, value)) {
+    if (JSC.C.JSValueIsDate(ctx, value.asObjectRef())) {
         // TODO: make this faster
         var get_time_prop = _get_time_prop_string orelse brk: {
             var str = JSC.C.JSStringCreateStatic("getTime", "getTime".len);
@@ -460,7 +467,7 @@ pub fn timeLikeFromJS(ctx: JSC.C.JSContextRef, value_: JSC.JSValue, exception: J
 
         var getTimeFunction = JSC.C.JSObjectGetProperty(ctx, value.asObjectRef(), get_time_prop, exception);
         if (exception.* != null) return null;
-        value = JSC.C.JSObjectCallAsFunction(ctx, getTimeFunction, value, 0, null, exception);
+        value = JSC.JSValue.fromRef(JSC.C.JSObjectCallAsFunction(ctx, getTimeFunction, value.asObjectRef(), 0, null, exception) orelse return null);
         if (exception.* != null) return null;
     }
 
@@ -474,7 +481,7 @@ pub fn timeLikeFromJS(ctx: JSC.C.JSContextRef, value_: JSC.JSValue, exception: J
 
 pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Mode {
     const mode_int = if (value.isNumber())
-        @truncate(Mode, value.toInt32())
+        @truncate(Mode, value.toU32())
     else brk: {
         if (value.isUndefinedOrNull()) return null;
 
@@ -497,7 +504,7 @@ pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.
         };
     };
 
-    if (!std.math.isFinite(mode_int)) {
+    if (mode_int < 0 or mode_int > 0o777) {
         JSC.throwTypeError(_global.default_allocator, "Invalid mode: must be an octal number", .{}, ctx, exception);
         return null;
     }
@@ -512,16 +519,16 @@ pub const PathOrFileDescriptor = union(Tag) {
     pub const Tag = enum { fd, path };
 
     pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?PathOrFileDescriptor {
-        const first = arguments.next().? orelse return null;
+        const first = arguments.next() orelse return null;
 
-        if (fileDescriptorFromJS(ctx, first, exception).?) |fd| {
+        if (fileDescriptorFromJS(ctx, first, exception)) |fd| {
             arguments.eat();
             return PathOrFileDescriptor{ .fd = fd };
         }
 
         if (exception.* != null) return null;
 
-        return .{ .path = PathLike.fromJS(ctx, arguments, exception) orelse return null };
+        return PathOrFileDescriptor{ .path = PathLike.fromJS(ctx, arguments, exception) orelse return null };
     }
 
     pub fn toJS(this: PathOrFileDescriptor, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
@@ -532,7 +539,7 @@ pub const PathOrFileDescriptor = union(Tag) {
     }
 };
 
-pub const FileSystemFlags = enum(c_int) {
+pub const FileSystemFlags = enum(Mode) {
     /// Open file for appending. The file is created if it does not exist.
     @"a" = std.os.O.APPEND,
     /// Like 'a' but fails if the path exists.
@@ -564,14 +571,14 @@ pub const FileSystemFlags = enum(c_int) {
 
     _,
 
-    const O_RDONLY = std.os.O.RDONLY;
-    const O_RDWR = std.os.O.RDWR;
-    const O_APPEND = std.os.O.APPEND;
-    const O_CREAT = std.os.O.CREAT;
-    const O_WRONLY = std.os.O.WRONLY;
-    const O_EXCL = std.os.O.EXCL;
-    const O_SYNC = 0;
-    const O_TRUNC = std.os.O.TRUNC;
+    const O_RDONLY: Mode = std.os.O.RDONLY;
+    const O_RDWR: Mode = std.os.O.RDWR;
+    const O_APPEND: Mode = std.os.O.APPEND;
+    const O_CREAT: Mode = std.os.O.CREAT;
+    const O_WRONLY: Mode = std.os.O.WRONLY;
+    const O_EXCL: Mode = std.os.O.EXCL;
+    const O_SYNC: Mode = 0;
+    const O_TRUNC: Mode = std.os.O.TRUNC;
 
     pub fn fromJS(ctx: JSC.C.JSContextRef, val: JSC.JSValue, exception: JSC.C.ExceptionRef) ?FileSystemFlags {
         if (val.isUndefinedOrNull()) {
@@ -596,7 +603,7 @@ pub const FileSystemFlags = enum(c_int) {
         const jsType = val.jsType();
         if (jsType.isStringLike()) {
             var zig_str = JSC.ZigString.init("");
-            val.toZigString(&zig_str, ctx);
+            val.toZigString(&zig_str, ctx.asJSGlobalObject());
 
             var buf: [4]u8 = .{ 0, 0, 0, 0 };
             @memcpy(&buf, zig_str.ptr, @minimum(buf.len, zig_str.len));
@@ -768,27 +775,36 @@ fn StatsLike(comptime name: string, comptime T: type) type {
         birthtime: Date,
 
         pub fn init(stat_: os.Stat) @This() {
+            const atime = stat_.atime();
+            const mtime = stat_.mtime();
+            const ctime = stat_.ctime();
             return @This(){
-                .dev = @truncate(T, stat_.dev),
-                .ino = @truncate(T, stat_.ino),
-                .mode = @truncate(T, stat_.mode),
-                .nlink = @truncate(T, stat_.nlink),
-                .uid = @truncate(T, stat_.uid),
-                .gid = @truncate(T, stat_.gid),
-                .rdev = @truncate(T, stat_.rdev),
-                .size = @truncate(T, stat_.size),
-                .blksize = @truncate(T, stat_.blksize),
-                .blocks = @truncate(T, stat_.blocks),
-                .atime_ms = @truncate(T, if (stat_.atime > 0) (stat_.atime / std.time.ns_per_ms) else 0),
-                .mtime_ms = @truncate(T, if (stat_.mtime > 0) (stat_.mtime / std.time.ns_per_ms) else 0),
-                .ctime_ms = @truncate(T, if (stat_.ctime > 0) (stat_.ctime / std.time.ns_per_ms) else 0),
-                .atime = @truncate(T, stat_.atime),
-                .mtime = @truncate(T, stat_.mtime),
-                .ctime = @truncate(T, stat_.ctime),
+                .dev = @truncate(T, @intCast(i64, stat_.dev)),
+                .ino = @truncate(T, @intCast(i64, stat_.ino)),
+                .mode = @truncate(T, @intCast(i64, stat_.mode)),
+                .nlink = @truncate(T, @intCast(i64, stat_.nlink)),
+                .uid = @truncate(T, @intCast(i64, stat_.uid)),
+                .gid = @truncate(T, @intCast(i64, stat_.gid)),
+                .rdev = @truncate(T, @intCast(i64, stat_.rdev)),
+                .size = @truncate(T, @intCast(i64, stat_.size)),
+                .blksize = @truncate(T, @intCast(i64, stat_.blksize)),
+                .blocks = @truncate(T, @intCast(i64, stat_.blocks)),
+                .atime_ms = @truncate(T, @intCast(i64, if (atime.tv_nsec > 0) (@intCast(usize, atime.tv_nsec) / std.time.ns_per_ms) else 0)),
+                .mtime_ms = @truncate(T, @intCast(i64, if (mtime.tv_nsec > 0) (@intCast(usize, mtime.tv_nsec) / std.time.ns_per_ms) else 0)),
+                .ctime_ms = @truncate(T, @intCast(i64, if (ctime.tv_nsec > 0) (@intCast(usize, ctime.tv_nsec) / std.time.ns_per_ms) else 0)),
+                .atime = @intToEnum(Date, @intCast(u64, @maximum(atime.tv_sec, 0))),
+                .mtime = @intToEnum(Date, @intCast(u64, @maximum(mtime.tv_sec, 0))),
+                .ctime = @intToEnum(Date, @intCast(u64, @maximum(ctime.tv_sec, 0))),
 
                 .birthtime_ms = 0,
-                .birthtime = 0,
+                .birthtime = @intToEnum(Date, 0),
             };
+        }
+
+        pub fn toJS(this: Stats, ctx: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+            var _this = _global.default_allocator.create(Stats) catch unreachable;
+            _this.* = this;
+            return Class.make(ctx, _this);
         }
 
         pub fn finalize(this: *Stats) void {
@@ -822,7 +838,9 @@ pub const BigIntStats = StatsLike("BigIntStats", i64);
 pub const DirEnt = struct {
     name: PathString,
     // not publicly exposed
-    kind: std.fs.File.Kind,
+    kind: Kind,
+
+    pub const Kind = std.fs.File.Kind;
 
     pub fn isBlockDevice(
         this: *DirEnt,
@@ -895,7 +913,7 @@ pub const DirEnt = struct {
         return JSC.C.JSValueMakeBoolean(ctx, this.kind == std.fs.File.Kind.SymLink);
     }
 
-    pub const Class = JSC.NewClass(DirEnt, .{ .name = "DirEnt" }, .{}, .{
+    pub const Class = JSC.NewClass(DirEnt, .{ .name = "DirEnt" }, .{
         .isBlockDevice = .{
             .name = "isBlockDevice",
             .rfn = isBlockDevice,

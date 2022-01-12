@@ -1,4 +1,4 @@
-export var fs = Bun.fs();
+var fs = Bun.fs();
 export default fs;
 export var access = fs.access.bind(fs);
 export var appendFile = fs.appendFile.bind(fs);

@@ -1,4 +1,4 @@
-const JSC = @import("./bindings.zig");
+const JSC = @import("../../../jsc.zig");
 const Fs = @import("../../../fs.zig");
 const CAPI = @import("../../../jsc.zig").C;
 const JS = @import("../javascript.zig");
@@ -803,13 +803,13 @@ pub const ZigConsoleClient = struct {
 
         defer buffered_writer.flush() catch {};
 
-        var this_value = vals[0];
-        fmt = Formatter{ .remaining_values = vals[1..len] };
+        var this_value: JSValue = vals[0];
+        fmt = Formatter{ .remaining_values = vals[0..len][1..] };
         var tag: Formatter.Tag.Result = undefined;
 
         var any = false;
         if (enable_colors) {
-            while (fmt.remaining_values.len > 0) {
+            while (true) {
                 if (any) {
                     _ = writer.write(" ") catch 0;
                 }
@@ -821,12 +821,15 @@ pub const ZigConsoleClient = struct {
                 }
 
                 fmt.format(tag, BufferedWriterType, writer, this_value, global, true);
-                if (fmt.remaining_values.len == 0) break;
+                if (fmt.remaining_values.len == 0) {
+                    break;
+                }
+
                 this_value = fmt.remaining_values[0];
                 fmt.remaining_values = fmt.remaining_values[1..];
             }
         } else {
-            while (fmt.remaining_values.len > 0) {
+            while (true) {
                 if (any) {
                     _ = writer.write(" ") catch 0;
                 }
@@ -837,7 +840,9 @@ pub const ZigConsoleClient = struct {
                 }
 
                 fmt.format(tag, BufferedWriterType, writer, this_value, global, false);
-                if (fmt.remaining_values.len == 0) break;
+                if (fmt.remaining_values.len == 0)
+                    break;
+
                 this_value = fmt.remaining_values[0];
                 fmt.remaining_values = fmt.remaining_values[1..];
             }
@@ -925,6 +930,11 @@ pub const ZigConsoleClient = struct {
                     };
                 }
 
+                if (value.isCell() and CAPI.JSObjectGetPrivate(value.asObjectRef()) != null)
+                    return .{
+                        .tag = .Private,
+                    };
+
                 const callable = value.isCallable(globalThis.vm());
 
                 if (value.isClass(globalThis) and !callable) {
@@ -938,11 +948,6 @@ pub const ZigConsoleClient = struct {
                         .tag = .Function,
                     };
                 }
-
-                if (value.isCell() and CAPI.JSObjectGetPrivate(value.asObjectRef()) != null)
-                    return .{
-                        .tag = .Private,
-                    };
 
                 const js_type = value.jsType();
                 return .{
@@ -1304,6 +1309,27 @@ pub const ZigConsoleClient = struct {
                     }
 
                     writer.writeAll(" }");
+                },
+                .TypedArray => {
+                    const len = value.getLengthOfArray(globalThis);
+                    if (len == 0) {
+                        writer.writeAll("[]");
+                        return;
+                    }
+
+                    writer.writeAll("[ ");
+                    var i: u32 = 0;
+                    var buffer = JSC.Buffer.fromJS(globalThis, value, null).?;
+                    const slice = buffer.slice();
+                    while (i < len) : (i += 1) {
+                        if (i > 0) {
+                            writer.writeAll(", ");
+                        }
+
+                        writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{slice[i]});
+                    }
+
+                    writer.writeAll(" ]");
                 },
                 else => {},
             }

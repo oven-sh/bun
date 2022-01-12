@@ -104,7 +104,7 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
         .name = "javascript_core",
         .path = pkgPath("src/jsc.zig"),
     };
-    javascript_core.dependencies = &.{ http, strings, picohttp };
+    javascript_core.dependencies = &.{ http, strings, picohttp, io };
     http.dependencies = &.{
         strings,
         picohttp,

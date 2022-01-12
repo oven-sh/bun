@@ -83,6 +83,13 @@ pub const StringOrBuffer = union(Tag) {
         };
     }
 
+    pub fn toJS(this: StringOrBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+        return switch (this) {
+            .string => JSC.To.JS.withType(string, this.string, ctx, exception),
+            .buffer => this.buffer.toJSObjectRef(ctx, exception),
+        };
+    }
+
     pub fn fromJS(value: JSC.JSValue, global: *JSC.JSGlobalObject, exception: JSC.C.ExceptionRef) ?StringOrBuffer {
         return switch (value.jsType()) {
             JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
@@ -162,7 +169,7 @@ const PathOrBuffer = union(Tag) {
 
 pub const SystemError = struct {
     errno: c_int = 0,
-    path: PathString = PathString.empty,
+    path: PathString = PathString{},
     syscall: Syscall.Tag = Syscall.Tag.TODO,
     code: Code = Code.ERR_METHOD_NOT_IMPLEMENTED,
     allocator: ?std.mem.Allocator = null,
@@ -220,13 +227,13 @@ pub const SystemError = struct {
     }
     pub fn getSyscall(this: *SystemError, ctx: JSC.C.JSContextRef, _: JSC.C.JSStringRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
         if (this.syscall == .TODO) {
-            return JSC.JSValue.jsUndefined();
+            return JSC.JSValue.jsUndefined().asRef();
         }
 
-        return JSC.ZigString.init(std.mem.span(@tagName(this.syscall))).toValueAuto(ctx.current()).asObjectRef();
+        return JSC.ZigString.init(std.mem.span(@tagName(this.syscall))).toValueAuto(ctx.asJSGlobalObject()).asObjectRef();
     }
     pub fn getCode(this: *SystemError, ctx: JSC.C.JSContextRef, _: JSC.C.JSStringRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-        return JSC.ZigString.init(std.mem.span(@tagName(this.code))).toValue(ctx.current()).asObjectRef();
+        return JSC.ZigString.init(std.mem.span(@tagName(this.code))).toValue(ctx.asJSGlobalObject()).asObjectRef();
     }
 };
 
@@ -244,7 +251,7 @@ pub fn CallbackTask(comptime Result: type) type {
     };
 }
 
-const PathLike = union(Tag) {
+pub const PathLike = union(Tag) {
     string: PathString,
     buffer: Buffer,
     url: void,
@@ -278,6 +285,14 @@ const PathLike = union(Tag) {
 
     pub inline fn sliceZ(this: PathLike, buf: [:0]u8) [:0]const u8 {
         return sliceZWithForceCopy(this, buf, false);
+    }
+
+    pub fn toJS(this: PathLike, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+        return switch (this) {
+            .string => this.string.toJS(ctx, exception),
+            .buffer => this.buffer.toJSObjectRef(ctx, exception),
+            else => unreachable,
+        };
     }
 
     pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?PathLike {
@@ -490,7 +505,7 @@ pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.
     return mode_int;
 }
 
-const PathOrFileDescriptor = union(Tag) {
+pub const PathOrFileDescriptor = union(Tag) {
     path: PathLike,
     fd: FileDescriptor,
 
@@ -508,37 +523,44 @@ const PathOrFileDescriptor = union(Tag) {
 
         return .{ .path = PathLike.fromJS(ctx, arguments, exception) orelse return null };
     }
+
+    pub fn toJS(this: PathOrFileDescriptor, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+        return switch (this) {
+            .path => this.path.toJS(ctx, exception),
+            .fd => JSC.JSValue.jsNumberFromInt32(@intCast(i32, this.fd)).asRef(),
+        };
+    }
 };
 
 pub const FileSystemFlags = enum(c_int) {
     /// Open file for appending. The file is created if it does not exist.
     @"a" = std.os.O.APPEND,
     /// Like 'a' but fails if the path exists.
-    @"ax" = std.os.O.APPEND | std.os.O.EXCL,
+    // @"ax" = std.os.O.APPEND | std.os.O.EXCL,
     /// Open file for reading and appending. The file is created if it does not exist.
-    @"a+" = std.os.O.APPEND | std.os.O.RDWR,
+    // @"a+" = std.os.O.APPEND | std.os.O.RDWR,
     /// Like 'a+' but fails if the path exists.
-    @"ax+" = std.os.O.APPEND | std.os.O.RDWR | std.os.O.EXCL,
+    // @"ax+" = std.os.O.APPEND | std.os.O.RDWR | std.os.O.EXCL,
     /// Open file for appending in synchronous mode. The file is created if it does not exist.
-    @"as" = std.os.O.APPEND,
+    // @"as" = std.os.O.APPEND,
     /// Open file for reading and appending in synchronous mode. The file is created if it does not exist.
-    @"as+" = std.os.O.APPEND | std.os.O.RDWR,
+    // @"as+" = std.os.O.APPEND | std.os.O.RDWR,
     /// Open file for reading. An exception occurs if the file does not exist.
     @"r" = std.os.O.RDONLY,
     /// Open file for reading and writing. An exception occurs if the file does not exist.
-    @"r+" = std.os.O.RDWR,
+    // @"r+" = std.os.O.RDWR,
     /// Open file for reading and writing in synchronous mode. Instructs the operating system to bypass the local file system cache.
     /// This is primarily useful for opening files on NFS mounts as it allows skipping the potentially stale local cache. It has a very real impact on I/O performance so using this flag is not recommended unless it is needed.
     /// This doesn't turn fs.open() or fsPromises.open() into a synchronous blocking call. If synchronous operation is desired, something like fs.openSync() should be used.
-    @"rs+" = std.os.O.RDWR,
+    // @"rs+" = std.os.O.RDWR,
     /// Open file for writing. The file is created (if it does not exist) or truncated (if it exists).
     @"w" = std.os.O.WRONLY | std.os.O.CREAT,
     /// Like 'w' but fails if the path exists.
-    @"wx" = std.os.O.WRONLY | std.os.O.TRUNC,
-    ///  Open file for reading and writing. The file is created (if it does not exist) or truncated (if it exists).
-    @"w+" = std.os.O.RDWR | std.os.O.CREAT,
-    ///  Like 'w+' but fails if the path exists.
-    @"wx+" = std.os.O.RDWR | std.os.O.EXCL,
+    // @"wx" = std.os.O.WRONLY | std.os.O.TRUNC,
+    // ///  Open file for reading and writing. The file is created (if it does not exist) or truncated (if it exists).
+    // @"w+" = std.os.O.RDWR | std.os.O.CREAT,
+    // ///  Like 'w+' but fails if the path exists.
+    // @"wx+" = std.os.O.RDWR | std.os.O.EXCL,
 
     _,
 
@@ -627,5 +649,290 @@ pub const FileSystemFlags = enum(c_int) {
         }
 
         return null;
+    }
+};
+
+/// Milliseconds precision 
+pub const Date = enum(u64) {
+    _,
+
+    pub fn toJS(this: Date, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+        const unix_timestamp = JSC.C.JSValueMakeNumber(ctx, @intToFloat(f64, @enumToInt(this)));
+        const array: [1]JSC.C.JSValueRef = .{unix_timestamp};
+        const obj = JSC.C.JSObjectMakeDate(ctx, 1, &array, exception);
+        return obj;
+    }
+};
+
+fn StatsLike(comptime name: string, comptime T: type) type {
+    return struct {
+        const This = @This();
+
+        pub const Class = JSC.NewClass(
+            This,
+            .{ .name = name },
+            .{},
+            .{
+                .dev = .{
+                    .get = JSC.To.JS.Getter(This, .dev),
+                    .name = "dev",
+                },
+                .ino = .{
+                    .get = JSC.To.JS.Getter(This, .ino),
+                    .name = "ino",
+                },
+                .mode = .{
+                    .get = JSC.To.JS.Getter(This, .mode),
+                    .name = "mode",
+                },
+                .nlink = .{
+                    .get = JSC.To.JS.Getter(This, .nlink),
+                    .name = "nlink",
+                },
+                .uid = .{
+                    .get = JSC.To.JS.Getter(This, .uid),
+                    .name = "uid",
+                },
+                .gid = .{
+                    .get = JSC.To.JS.Getter(This, .gid),
+                    .name = "gid",
+                },
+                .rdev = .{
+                    .get = JSC.To.JS.Getter(This, .rdev),
+                    .name = "rdev",
+                },
+                .size = .{
+                    .get = JSC.To.JS.Getter(This, .size),
+                    .name = "size",
+                },
+                .blksize = .{
+                    .get = JSC.To.JS.Getter(This, .blksize),
+                    .name = "blksize",
+                },
+                .blocks = .{
+                    .get = JSC.To.JS.Getter(This, .blocks),
+                    .name = "blocks",
+                },
+                .atime = .{
+                    .get = JSC.To.JS.Getter(This, .atime),
+                    .name = "atime",
+                },
+                .mtime = .{
+                    .get = JSC.To.JS.Getter(This, .mtime),
+                    .name = "mtime",
+                },
+                .ctime = .{
+                    .get = JSC.To.JS.Getter(This, .ctime),
+                    .name = "ctime",
+                },
+                .birthtime = .{
+                    .get = JSC.To.JS.Getter(This, .birthtime),
+                    .name = "birthtime",
+                },
+                .atime_ms = .{
+                    .get = JSC.To.JS.Getter(This, .atime_ms),
+                    .name = "atimeMs",
+                },
+                .mtime_ms = .{
+                    .get = JSC.To.JS.Getter(This, .mtime_ms),
+                    .name = "mtimeMs",
+                },
+                .ctime_ms = .{
+                    .get = JSC.To.JS.Getter(This, .ctime_ms),
+                    .name = "ctimeMs",
+                },
+                .birthtime_ms = .{
+                    .get = JSC.To.JS.Getter(This, .birthtime_ms),
+                    .name = "birthtimeMs",
+                },
+            },
+        );
+
+        dev: T,
+        ino: T,
+        mode: T,
+        nlink: T,
+        uid: T,
+        gid: T,
+        rdev: T,
+        size: T,
+        blksize: T,
+        blocks: T,
+        atime_ms: T,
+        mtime_ms: T,
+        ctime_ms: T,
+        birthtime_ms: T,
+        atime: Date,
+        mtime: Date,
+        ctime: Date,
+        birthtime: Date,
+
+        pub fn init(stat_: os.Stat) @This() {
+            return @This(){
+                .dev = @truncate(T, stat_.dev),
+                .ino = @truncate(T, stat_.ino),
+                .mode = @truncate(T, stat_.mode),
+                .nlink = @truncate(T, stat_.nlink),
+                .uid = @truncate(T, stat_.uid),
+                .gid = @truncate(T, stat_.gid),
+                .rdev = @truncate(T, stat_.rdev),
+                .size = @truncate(T, stat_.size),
+                .blksize = @truncate(T, stat_.blksize),
+                .blocks = @truncate(T, stat_.blocks),
+                .atime_ms = @truncate(T, if (stat_.atime > 0) (stat_.atime / std.time.ns_per_ms) else 0),
+                .mtime_ms = @truncate(T, if (stat_.mtime > 0) (stat_.mtime / std.time.ns_per_ms) else 0),
+                .ctime_ms = @truncate(T, if (stat_.ctime > 0) (stat_.ctime / std.time.ns_per_ms) else 0),
+                .atime = @truncate(T, stat_.atime),
+                .mtime = @truncate(T, stat_.mtime),
+                .ctime = @truncate(T, stat_.ctime),
+
+                .birthtime_ms = 0,
+                .birthtime = 0,
+            };
+        }
+
+        pub fn finalize(this: *Stats) void {
+            _global.default_allocator.destroy(this);
+        }
+    };
+}
+
+pub const Stats = StatsLike("Stats", i32);
+pub const BigIntStats = StatsLike("BigIntStats", i64);
+
+/// A class representing a directory stream.
+///
+/// Created by {@link opendir}, {@link opendirSync}, or `fsPromises.opendir()`.
+///
+/// ```js
+/// import { opendir } from 'fs/promises';
+///
+/// try {
+///   const dir = await opendir('./');
+///   for await (const dirent of dir)
+///     console.log(dirent.name);
+/// } catch (err) {
+///   console.error(err);
+/// }
+/// ```
+///
+/// When using the async iterator, the `fs.Dir` object will be automatically
+/// closed after the iterator exits.
+/// @since v12.12.0
+pub const DirEnt = struct {
+    name: PathString,
+    // not publicly exposed
+    kind: std.fs.File.Kind,
+
+    pub fn isBlockDevice(
+        this: *DirEnt,
+        ctx: JSC.C.JSContextRef,
+        _: JSC.C.JSObjectRef,
+        _: JSC.C.JSObjectRef,
+        _: []const JSC.C.JSValueRef,
+        _: JSC.C.ExceptionRef,
+    ) JSC.C.JSValueRef {
+        return JSC.C.JSValueMakeBoolean(ctx, this.kind == std.fs.File.Kind.BlockDevice);
+    }
+    pub fn isCharacterDevice(
+        this: *DirEnt,
+        ctx: JSC.C.JSContextRef,
+        _: JSC.C.JSObjectRef,
+        _: JSC.C.JSObjectRef,
+        _: []const JSC.C.JSValueRef,
+        _: JSC.C.ExceptionRef,
+    ) JSC.C.JSValueRef {
+        return JSC.C.JSValueMakeBoolean(ctx, this.kind == std.fs.File.Kind.CharacterDevice);
+    }
+    pub fn isDirectory(
+        this: *DirEnt,
+        ctx: JSC.C.JSContextRef,
+        _: JSC.C.JSObjectRef,
+        _: JSC.C.JSObjectRef,
+        _: []const JSC.C.JSValueRef,
+        _: JSC.C.ExceptionRef,
+    ) JSC.C.JSValueRef {
+        return JSC.C.JSValueMakeBoolean(ctx, this.kind == std.fs.File.Kind.Directory);
+    }
+    pub fn isFIFO(
+        this: *DirEnt,
+        ctx: JSC.C.JSContextRef,
+        _: JSC.C.JSObjectRef,
+        _: JSC.C.JSObjectRef,
+        _: []const JSC.C.JSValueRef,
+        _: JSC.C.ExceptionRef,
+    ) JSC.C.JSValueRef {
+        return JSC.C.JSValueMakeBoolean(ctx, this.kind == std.fs.File.Kind.NamedPipe or this.kind == std.fs.File.Kind.EventPort);
+    }
+    pub fn isFile(
+        this: *DirEnt,
+        ctx: JSC.C.JSContextRef,
+        _: JSC.C.JSObjectRef,
+        _: JSC.C.JSObjectRef,
+        _: []const JSC.C.JSValueRef,
+        _: JSC.C.ExceptionRef,
+    ) JSC.C.JSValueRef {
+        return JSC.C.JSValueMakeBoolean(ctx, this.kind == std.fs.File.Kind.File);
+    }
+    pub fn isSocket(
+        this: *DirEnt,
+        ctx: JSC.C.JSContextRef,
+        _: JSC.C.JSObjectRef,
+        _: JSC.C.JSObjectRef,
+        _: []const JSC.C.JSValueRef,
+        _: JSC.C.ExceptionRef,
+    ) JSC.C.JSValueRef {
+        return JSC.C.JSValueMakeBoolean(ctx, this.kind == std.fs.File.Kind.UnixDomainSocket);
+    }
+    pub fn isSymbolicLink(
+        this: *DirEnt,
+        ctx: JSC.C.JSContextRef,
+        _: JSC.C.JSObjectRef,
+        _: JSC.C.JSObjectRef,
+        _: []const JSC.C.JSValueRef,
+        _: JSC.C.ExceptionRef,
+    ) JSC.C.JSValueRef {
+        return JSC.C.JSValueMakeBoolean(ctx, this.kind == std.fs.File.Kind.SymLink);
+    }
+
+    pub const Class = JSC.NewClass(DirEnt, .{ .name = "DirEnt" }, .{}, .{
+        .isBlockDevice = .{
+            .name = "isBlockDevice",
+            .rfn = isBlockDevice,
+        },
+        .isCharacterDevice = .{
+            .name = "isCharacterDevice",
+            .rfn = isCharacterDevice,
+        },
+        .isDirectory = .{
+            .name = "isDirectory",
+            .rfn = isDirectory,
+        },
+        .isFIFO = .{
+            .name = "isFIFO",
+            .rfn = isFIFO,
+        },
+        .isFile = .{
+            .name = "isFile",
+            .rfn = isFile,
+        },
+        .isSocket = .{
+            .name = "isSocket",
+            .rfn = isSocket,
+        },
+        .isSymbolicLink = .{
+            .name = "isSymbolicLink",
+            .rfn = isSymbolicLink,
+        },
+    }, .{
+        .name = .{
+            .get = JSC.To.JS.Getter(DirEnt, .name),
+            .name = "name",
+        },
+    });
+
+    pub fn finalize(this: *DirEnt) void {
+        _global.default_allocator.free(this.name.slice());
+        _global.default_allocator.destroy(this);
     }
 };

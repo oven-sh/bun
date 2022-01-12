@@ -15,7 +15,30 @@ pub const PathString = packed struct {
     ptr: PointerIntType = 0,
     len: PathInt = 0,
 
-    pub inline fn slice(this: @This()) string {
+    const JSC = @import("./jsc.zig");
+    pub fn fromJS(value: JSC.JSValue, global: *JSC.JSGlobalObject, exception: JSC.C.ExceptionRef) PathString {
+        if (!value.jsType().isStringLike()) {
+            JSC.JSError(JSC.getAllocator(global.ref()), "Only path strings are supported for now", .{}, global.ref(), exception);
+            return PathString{};
+        }
+        var zig_str = JSC.ZigString.init("");
+        value.toZigString(&zig_str, global);
+
+        return PathString.init(zig_str.slice());
+    }
+
+    pub inline fn asRef(this: PathString) JSC.JSValueRef {
+        return this.toValue().asObjectRef();
+    }
+
+    pub fn toJS(this: PathString, ctx: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+        var zig_str = JSC.ZigString.init(this.slice());
+        zig_str.detectEncoding();
+
+        return zig_str.toValueAuto(ctx.asJSGlobalObject()).asObjectRef();
+    }
+
+    pub inline fn slice(this: anytype) string {
         @setRuntimeSafety(false); // "cast causes pointer to be null" is fine here. if it is null, the len will be 0.
         return @intToPtr([*]u8, @intCast(usize, this.ptr))[0..this.len];
     }
@@ -29,7 +52,7 @@ pub const PathString = packed struct {
         };
     }
 
-    pub inline fn isEmpty(this: @This()) bool {
+    pub inline fn isEmpty(this: anytype) bool {
         return this.len == 0;
     }
 

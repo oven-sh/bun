@@ -314,7 +314,7 @@ pub const Error = struct {
     pub fn toJS(this: Error, ctx: JSC.C.JSContextRef) JSC.C.JSObjectRef {
         var ptr = default_allocator.create(SystemError) catch unreachable;
         ptr.* = SystemError{
-            .path = if (this.path) |path| PathString.init(path) else PathString.empty,
+            .path = if (this.path) |path| PathString.init(path) else PathString{},
             .errno = @as(c_int, @enumToInt(this.errno)) * -1,
             .syscall = this.syscall,
         };

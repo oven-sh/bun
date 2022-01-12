@@ -130,6 +130,135 @@ pub const To = struct {
             };
         }
 
+        pub fn withType(comptime Type: type, value: Type, context: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+            if (comptime std.meta.trait.isNumber(Type)) {
+                return JSC.JSValue.jsNumberWithType(Type, value).asRef();
+            }
+
+            switch (comptime Type) {
+                void => JSC.C.JSValueMakeUndefined(context),
+                bool => JSC.C.JSValueMakeBoolean(context, value),
+                []const u8, [:0]const u8, [*:0]const u8, []u8, [:0]u8, [*:0]u8 => {
+                    var zig_str = JSC.ZigString.init(value);
+                    zig_str.detectEncoding();
+                    return zig_str.toValueAuto(context.asJSGlobalObject()).asObjectRef();
+                },
+
+                else => {
+                    const Info: std.builtin.TypeInfo = comptime @typeInfo(Type);
+                    if (comptime Info == .Enum) {
+                        const Enum: std.builtin.TypeInfo.Enum = Info.Enum;
+                        if (comptime !std.meta.trait.isNumber(Enum.tag_type)) {
+                            var zig_str = JSC.ZigString.init(@tagName(value));
+                            return zig_str.toValue(context.asJSGlobalObject()).asObjectRef();
+                        }
+                    }
+
+                    // Recursion can stack overflow here
+                    if (comptime std.meta.trait.isSlice(Type)) {
+                        const Child = std.meta.Child(Type);
+
+                        const prefill = 32;
+                        if (value.len <= prefill) {
+                            var array: [prefill]JSC.C.JSValueRef = undefined;
+                            var i: u8 = 0;
+                            const len = @minimum(@intCast(u8, value.len), prefill);
+                            while (i < len and exception.* == null) : (i += 1) {
+                                array[i] = To.JS.withType(Child, value[i], context, exception);
+                            }
+
+                            if (exception.* != null) {
+                                return null;
+                            }
+
+                            // TODO: this function copies to a MarkedArgumentsBuffer
+                            // That copy is unnecessary.
+                            const obj = JSC.C.JSObjectMakeArray(context, len, &array, exception);
+
+                            if (exception.* != null) {
+                                return null;
+                            }
+                            return obj;
+                        }
+
+                        {
+                            var array = _global.default_allocator.alloc(JSC.C.JSValueRef, value.len) catch unreachable;
+                            defer _global.default_allocator.free(array);
+                            var i: usize = 0;
+                            while (i < value.len and exception.* == null) : (i += 1) {
+                                array[i] = To.JS.withType(Child, value[i], context, exception);
+                            }
+
+                            if (exception.* != null) {
+                                return null;
+                            }
+
+                            // TODO: this function copies to a MarkedArgumentsBuffer
+                            // That copy is unnecessary.
+                            const obj = JSC.C.JSObjectMakeArray(context, value.len, &array, exception);
+                            if (exception.* != null) {
+                                return null;
+                            }
+
+                            return obj;
+                        }
+                    }
+
+                    if (comptime std.meta.trait.isZigString(Type)) {
+                        var zig_str = JSC.ZigString.init(value);
+                        return zig_str.toValue(context.asJSGlobalObject()).asObjectRef();
+                    }
+
+                    if (comptime Info == .Pointer) {
+                        const Child = comptime std.meta.Child(Type);
+                        if (comptime std.meta.trait.isContainer(Child) and @hasDecl(Child, "Class") and @hasDecl(Child.Class, "isJavaScriptCoreClass")) {
+                            return Child.Class.make(context, value);
+                        }
+                    }
+
+                    if (comptime Info == .Struct) {
+                        if (comptime @hasDecl(Type, "Class") and @hasDecl(Type.Class, "isJavaScriptCoreClass")) {
+                            if (comptime @hasDecl(Type, "finalize")) {
+                                @compileError(comptime std.fmt.comptimePrint("JSC class {s} must have a finalizer to prevent memory leaks", .{Type.Class.name}));
+                            }
+
+                            var val = _global.default_allocator.create(Type) catch unreachable;
+                            val.* = value;
+                            return Type.Class.make(context, val);
+                        }
+                    }
+
+                    return value.toJS(context, exception).asObjectRef();
+                },
+            }
+        }
+
+        pub fn PropertyGetter(
+            comptime Type: type,
+        ) type {
+            return comptime fn (
+                this: ObjectPtrType(Type),
+                ctx: js.JSContextRef,
+                _: js.JSValueRef,
+                _: js.JSStringRef,
+                exception: js.ExceptionRef,
+            ) js.JSValueRef;
+        }
+
+        pub fn Getter(comptime Type: type, comptime field: std.meta.FieldEnum(Type)) PropertyGetter(Type) {
+            return struct {
+                pub fn rfn(
+                    this: ObjectPtrType(Type),
+                    ctx: js.JSContextRef,
+                    _: js.JSValueRef,
+                    _: js.JSStringRef,
+                    exception: js.ExceptionRef,
+                ) js.JSValueRef {
+                    return withType(std.meta.fieldInfo(Type, field).field_type, @field(this, @tagName(field)), ctx, exception);
+                }
+            }.rfn;
+        }
+
         pub fn Callback(
             comptime ZigContextType: type,
             comptime ctxfn: fn (
@@ -733,6 +862,7 @@ pub fn NewClass(
 
     return struct {
         const name = options.name;
+        pub const isJavaScriptCoreClass = true;
         const ClassDefinitionCreator = @This();
         const function_names = std.meta.fieldNames(@TypeOf(staticFunctions));
         const function_name_literals = function_names;
@@ -1464,31 +1594,7 @@ pub fn NewClass(
 const JSValue = JSC.JSValue;
 const ZigString = JSC.ZigString;
 
-pub const PathString = packed struct {
-    pub usingnamespace _global.PathString;
-
-    pub fn fromJS(value: JSValue, globalThis: js.JSContextRef, exception: js.ExceptionRef) PathString {
-        if (!value.jsType().isStringLike()) {
-            JSError(getAllocator(globalThis), "Only path strings are supported for now", .{}, globalThis, exception);
-            return PathString{};
-        }
-        var zig_str = ZigString.init("");
-        value.toZigString(&zig_str, globalThis);
-
-        return PathString.init(zig_str.slice());
-    }
-
-    pub inline fn asRef(this: PathString) js.JSValueRef {
-        return this.toValue().asObjectRef();
-    }
-
-    pub fn toValue(this: PathString) JSValue {
-        var zig_str = ZigString.init(this.slice());
-        zig_str.detectEncoding();
-
-        return zig_str.toValueGC(JavaScript.VirtualMachine.vm.global);
-    }
-};
+pub const PathString = _global.PathString;
 
 threadlocal var error_args: [1]js.JSValueRef = undefined;
 pub fn JSError(
@@ -1643,6 +1749,10 @@ const DescribeScope = Test.DescribeScope;
 const TestScope = Test.TestScope;
 const ExpectPrototype = Test.ExpectPrototype;
 const NodeFS = JSC.Node.NodeFS;
+const DirEnt = JSC.Node.DirEnt;
+const Stats = JSC.Node.Stats;
+const BigIntStats = JSC.Node.BigIntStats;
+const SystemError = JSC.Node.SystemError;
 pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     ResolveError,
     BuildError,
@@ -1660,6 +1770,9 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     Expect,
     ExpectPrototype,
     NodeFS,
+    Stats,
+    BigIntStats,
+    SystemError,
 });
 
 pub inline fn GetJSPrivateData(comptime Type: type, ref: js.JSObjectRef) ?*Type {

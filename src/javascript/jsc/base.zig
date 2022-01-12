@@ -869,6 +869,8 @@ pub const ClassOptions = struct {
     ts: d.ts.decl = d.ts.decl{ .empty = 0 },
 };
 
+// work around a comptime bug
+
 pub fn NewClass(
     comptime ZigType: type,
     comptime options: ClassOptions,
@@ -877,6 +879,7 @@ pub fn NewClass(
 ) type {
     const read_only = options.read_only;
     const singleton = options.singleton;
+    _ = read_only;
 
     return struct {
         const name = options.name;
@@ -904,20 +907,6 @@ pub fn NewClass(
         const property_names = std.meta.fieldNames(@TypeOf(properties));
         var property_name_refs = std.mem.zeroes([property_names.len]js.JSStringRef);
         const property_name_literals = property_names;
-        var static_properties = brk: {
-            var props: [property_names.len + 1]js.JSStaticValue = undefined;
-            std.mem.set(
-                js.JSStaticValue,
-                &props,
-                js.JSStaticValue{
-                    .name = @intToPtr([*c]const u8, 0),
-                    .getProperty = null,
-                    .setProperty = null,
-                    .attributes = js.JSPropertyAttributes.kJSPropertyAttributeNone,
-                },
-            );
-            break :brk props;
-        };
 
         pub var ref: js.JSClassRef = null;
         pub var loaded = false;
@@ -971,8 +960,6 @@ pub fn NewClass(
         }
 
         pub const Constructor = ConstructorWrapper.rfn;
-
-        pub const static_value_count = static_properties.len;
 
         pub fn get() callconv(.C) [*c]js.JSClassRef {
             if (!loaded) {
@@ -1031,39 +1018,6 @@ pub fn NewClass(
             };
 
             return ClassGetter;
-        }
-
-        pub fn getPropertyCallback(
-            ctx: js.JSContextRef,
-            obj: js.JSObjectRef,
-            prop: js.JSStringRef,
-            exception: js.ExceptionRef,
-        ) callconv(.C) js.JSValueRef {
-            var pointer = GetJSPrivateData(ZigType, obj) orelse return js.JSValueMakeUndefined(ctx);
-
-            if (singleton) {
-                inline for (function_names) |_, i| {
-                    if (js.JSStringIsEqual(prop, function_name_refs[i])) {
-                        return instance_functions[i];
-                    }
-                }
-                unreachable;
-            } else {
-                inline for (property_names) |propname, i| {
-                    if (js.JSStringIsEqual(prop, property_name_refs[i])) {
-                        return @field(
-                            properties,
-                            propname,
-                        )(pointer, ctx, obj, exception);
-                    }
-                }
-
-                if (comptime std.meta.trait.hasFn("onMissingProperty")(ZigType)) {
-                    return pointer.onMissingProperty(ctx, obj, prop, exception);
-                }
-            }
-
-            return js.JSValueMakeUndefined(ctx);
         }
 
         fn StaticProperty(comptime id: usize) type {
@@ -1145,7 +1099,7 @@ pub fn NewClass(
                     value: js.JSValueRef,
                     exception: js.ExceptionRef,
                 ) callconv(.C) bool {
-                    var this = GetJSPrivateData(ZigType, obj) orelse return js.JSValueMakeUndefined(ctx);
+                    var this = GetJSPrivateData(ZigType, obj) orelse return false;
 
                     switch (comptime @typeInfo(@TypeOf(@field(
                         properties,
@@ -1337,6 +1291,39 @@ pub fn NewClass(
             return decl;
         }
 
+        pub fn getPropertyNames(
+            _: js.JSContextRef,
+            _: js.JSObjectRef,
+            props: js.JSPropertyNameAccumulatorRef,
+        ) callconv(.C) void {
+            if (comptime property_name_refs.len > 0) {
+                comptime var i: usize = 0;
+                if (property_name_refs[0] == null) {
+                    inline while (i < property_name_refs.len) : (i += 1) {
+                        property_name_refs[i] = js.JSStringCreateStatic(property_names[i].ptr, property_names[i].len);
+                    }
+                    comptime i = 0;
+                }
+                inline while (i < property_name_refs.len) : (i += 1) {
+                    js.JSPropertyNameAccumulatorAddName(props, property_name_refs[i]);
+                }
+            }
+
+            if (comptime function_name_refs.len > 0) {
+                comptime var j: usize = 0;
+                if (function_name_refs[0] == null) {
+                    inline while (j < function_name_refs.len) : (j += 1) {
+                        function_name_refs[j] = js.JSStringCreateStatic(function_names[j].ptr, function_names[j].len);
+                    }
+                    comptime j = 0;
+                }
+
+                inline while (j < function_name_refs.len) : (j += 1) {
+                    js.JSPropertyNameAccumulatorAddName(props, function_name_refs[j]);
+                }
+            }
+        }
+
         // This should only be run at comptime
         pub fn typescriptClassDeclaration() d.ts.class {
             comptime var class = options.ts.class;
@@ -1458,11 +1445,26 @@ pub fn NewClass(
             return comptime class;
         }
 
+        var static_properties = brk: {
+            var props: [property_names.len + 1]js.JSStaticValue = undefined;
+            std.mem.set(
+                js.JSStaticValue,
+                &props,
+                js.JSStaticValue{
+                    .name = @intToPtr([*c]const u8, 0),
+                    .getProperty = null,
+                    .setProperty = null,
+                    .attributes = js.JSPropertyAttributes.kJSPropertyAttributeNone,
+                },
+            );
+            break :brk props;
+        };
+
         pub fn define() js.JSClassDefinition {
             var def = js.JSClassDefinition{
                 .version = 0,
                 .attributes = js.JSClassAttributes.kJSClassAttributeNone,
-                .className = class_name_str,
+                .className = name.ptr[0..name.len :0],
                 .parentClass = null,
                 .staticValues = null,
                 .staticFunctions = null,
@@ -1479,58 +1481,57 @@ pub fn NewClass(
                 .convertToType = null,
             };
 
+            // These workaround stage1 compiler bugs
+            var JSStaticValue_empty = std.mem.zeroes(js.JSStaticValue);
+            var count: usize = 0;
+
             if (static_functions.len > 0) {
-                std.mem.set(js.JSStaticFunction, &static_functions, std.mem.zeroes(js.JSStaticFunction));
-                var count: usize = 0;
-                inline for (function_name_literals) |_, i| {
-                    switch (comptime @typeInfo(@TypeOf(@field(staticFunctions, function_names[i])))) {
+                inline for (function_name_literals) |function_name_literal, i| {
+                    _ = i;
+                    switch (comptime @typeInfo(@TypeOf(@field(staticFunctions, function_name_literal)))) {
                         .Struct => {
-                            if (comptime strings.eqlComptime(function_names[i], "constructor")) {
+                            if (comptime strings.eqlComptime(function_name_literal, "constructor")) {
                                 def.callAsConstructor = To.JS.Constructor(staticFunctions.constructor.rfn).rfn;
-                            } else if (comptime strings.eqlComptime(function_names[i], "finalize")) {
+                            } else if (comptime strings.eqlComptime(function_name_literal, "finalize")) {
                                 def.finalize = To.JS.Finalize(ZigType, staticFunctions.finalize.rfn).rfn;
-                            } else if (comptime strings.eqlComptime(function_names[i], "call")) {
+                            } else if (comptime strings.eqlComptime(function_name_literal, "call")) {
                                 def.callAsFunction = To.JS.Callback(ZigType, staticFunctions.call.rfn).rfn;
-                            } else if (comptime strings.eqlComptime(function_names[i], "callAsFunction")) {
-                                const ctxfn = @field(staticFunctions, function_names[i]).rfn;
+                            } else if (comptime strings.eqlComptime(function_name_literal, "callAsFunction")) {
+                                const ctxfn = @field(staticFunctions, function_name_literal).rfn;
                                 const Func: std.builtin.TypeInfo.Fn = @typeInfo(@TypeOf(ctxfn)).Fn;
 
                                 const PointerType = std.meta.Child(Func.args[0].arg_type.?);
 
-                                var callback = if (Func.calling_convention == .C) ctxfn else To.JS.Callback(
+                                def.callAsFunction = if (Func.calling_convention == .C) ctxfn else To.JS.Callback(
                                     PointerType,
                                     ctxfn,
                                 ).rfn;
-
-                                def.callAsFunction = callback;
-                            } else if (comptime strings.eqlComptime(function_names[i], "hasProperty")) {
+                            } else if (comptime strings.eqlComptime(function_name_literal, "hasProperty")) {
                                 def.hasProperty = @field(staticFunctions, "hasProperty").rfn;
-                            } else if (comptime strings.eqlComptime(function_names[i], "getProperty")) {
+                            } else if (comptime strings.eqlComptime(function_name_literal, "getProperty")) {
                                 def.getProperty = @field(staticFunctions, "getProperty").rfn;
-                            } else if (comptime strings.eqlComptime(function_names[i], "setProperty")) {
+                            } else if (comptime strings.eqlComptime(function_name_literal, "setProperty")) {
                                 def.setProperty = @field(staticFunctions, "setProperty").rfn;
-                            } else if (comptime strings.eqlComptime(function_names[i], "deleteProperty")) {
+                            } else if (comptime strings.eqlComptime(function_name_literal, "deleteProperty")) {
                                 def.deleteProperty = @field(staticFunctions, "deleteProperty").rfn;
-                            } else if (comptime strings.eqlComptime(function_names[i], "getPropertyNames")) {
+                            } else if (comptime strings.eqlComptime(function_name_literal, "getPropertyNames")) {
                                 def.getPropertyNames = @field(staticFunctions, "getPropertyNames").rfn;
                             } else {
-                                const CtxField = @field(staticFunctions, function_names[i]);
+                                const CtxField = comptime @field(staticFunctions, function_name_literal);
                                 if (comptime !@hasField(@TypeOf(CtxField), "rfn")) {
-                                    @compileError("Expected " ++ options.name ++ "." ++ function_names[i] ++ " to have .rfn");
+                                    @compileError("Expected " ++ options.name ++ "." ++ function_name_literal ++ " to have .rfn");
                                 }
                                 const ctxfn = CtxField.rfn;
                                 const Func: std.builtin.TypeInfo.Fn = @typeInfo(@TypeOf(ctxfn)).Fn;
 
                                 const PointerType = if (Func.args[0].arg_type.? == void) void else std.meta.Child(Func.args[0].arg_type.?);
 
-                                var callback = if (Func.calling_convention == .C) ctxfn else To.JS.Callback(
-                                    PointerType,
-                                    ctxfn,
-                                ).rfn;
-
                                 static_functions[count] = js.JSStaticFunction{
                                     .name = (function_names[i][0.. :0]).ptr,
-                                    .callAsFunction = callback,
+                                    .callAsFunction = if (Func.calling_convention == .C) ctxfn else To.JS.Callback(
+                                        PointerType,
+                                        ctxfn,
+                                    ).rfn,
                                     .attributes = comptime if (read_only) js.JSPropertyAttributes.kJSPropertyAttributeReadOnly else js.JSPropertyAttributes.kJSPropertyAttributeNone,
                                 };
 
@@ -1538,29 +1539,28 @@ pub fn NewClass(
                             }
                         },
                         .Fn => {
-                            if (comptime strings.eqlComptime(function_names[i], "constructor")) {
+                            if (comptime strings.eqlComptime(function_name_literal, "constructor")) {
                                 def.callAsConstructor = To.JS.Constructor(staticFunctions.constructor).rfn;
-                            } else if (comptime strings.eqlComptime(function_names[i], "finalize")) {
+                            } else if (comptime strings.eqlComptime(function_name_literal, "finalize")) {
                                 def.finalize = To.JS.Finalize(ZigType, staticFunctions.finalize).rfn;
-                            } else if (comptime strings.eqlComptime(function_names[i], "call")) {
+                            } else if (comptime strings.eqlComptime(function_name_literal, "call")) {
                                 def.callAsFunction = To.JS.Callback(ZigType, staticFunctions.call).rfn;
-                            } else if (comptime strings.eqlComptime(function_names[i], "hasInstance")) {
+                            } else if (comptime strings.eqlComptime(function_name_literal, "hasInstance")) {
                                 def.hasInstance = staticFunctions.hasInstance;
                             } else {
-                                var callback = To.JS.Callback(
-                                    ZigType,
-                                    @field(staticFunctions, function_names[i]),
-                                ).rfn;
                                 static_functions[count] = js.JSStaticFunction{
                                     .name = (function_names[i][0.. :0]).ptr,
-                                    .callAsFunction = callback,
+                                    .callAsFunction = To.JS.Callback(
+                                        ZigType,
+                                        @field(staticFunctions, function_name_literal),
+                                    ).rfn,
                                     .attributes = comptime if (read_only) js.JSPropertyAttributes.kJSPropertyAttributeReadOnly else js.JSPropertyAttributes.kJSPropertyAttributeNone,
                                 };
 
                                 count += 1;
                             }
                         },
-                        else => unreachable,
+                        else => {},
                     }
 
                     // if (singleton) {
@@ -1573,12 +1573,8 @@ pub fn NewClass(
             }
 
             if (property_names.len > 0) {
-                inline for (comptime property_name_literals) |prop_name, i| {
-                    property_name_refs[i] = js.JSStringCreateStatic(
-                        prop_name.ptr,
-                        prop_name.len,
-                    );
-                    static_properties[i] = std.mem.zeroes(js.JSStaticValue);
+                inline for (property_name_literals) |_, i| {
+                    static_properties[i] = JSStaticValue_empty;
                     static_properties[i].getProperty = StaticProperty(i).getter;
 
                     const field = comptime @field(properties, property_names[i]);
@@ -1588,7 +1584,7 @@ pub fn NewClass(
                     }
                     static_properties[i].name = property_names[i][0.. :0].ptr;
                 }
-                def.staticValues = (&static_properties);
+                def.staticValues = &static_properties;
             }
 
             def.className = class_name_str;
@@ -1600,6 +1596,10 @@ pub fn NewClass(
 
             if (def.callAsFunction == null) {
                 def.callAsFunction = throwInvalidFunctionError;
+            }
+
+            if (def.getPropertyNames == null) {
+                def.getPropertyNames = getPropertyNames;
             }
 
             if (!singleton and def.hasInstance == null)

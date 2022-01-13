@@ -6,6 +6,7 @@
 #include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/Completion.h>
 #include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/ExceptionScope.h>
 #include <JavaScriptCore/FunctionConstructor.h>
 #include <JavaScriptCore/Identifier.h>
@@ -39,7 +40,65 @@
 #include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>
 
+#include "BunClientData.h"
+
 extern "C" {
+
+JSC__JSValue SystemError__toErrorInstance(const SystemError *arg0,
+                                          JSC__JSGlobalObject *globalObject) {
+
+  static const char *system_error_name = "SystemError";
+  SystemError err = *arg0;
+
+  JSC::VM &vm = globalObject->vm();
+
+  auto scope = DECLARE_THROW_SCOPE(vm);
+  JSC::JSValue message = JSC::jsUndefined();
+  if (err.message.len > 0) { message = Zig::toJSString(err.message, globalObject); }
+
+  JSC::JSValue options = JSC::jsUndefined();
+
+  JSC::Structure *errorStructure = globalObject->errorStructure();
+  JSC::JSObject *result =
+    JSC::ErrorInstance::create(globalObject, errorStructure, message, options);
+
+  auto clientData = Bun::clientData(vm);
+
+  if (err.code.len > 0) {
+    JSC::JSValue code = Zig::toJSString(err.code, globalObject);
+    result->putDirect(vm, clientData->builtinNames().codePublicName(), code,
+                      JSC::PropertyAttribute::DontDelete | 0);
+
+    result->putDirect(vm, vm.propertyNames->name, code, JSC::PropertyAttribute::DontEnum | 0);
+  } else {
+
+    result->putDirect(
+      vm, vm.propertyNames->name,
+      JSC::JSValue(JSC::jsOwnedString(
+        vm, WTF::String(WTF::StringImpl::createWithoutCopying(system_error_name, 11)))),
+      JSC::PropertyAttribute::DontEnum | 0);
+  }
+
+  if (err.path.len > 0) {
+    JSC::JSValue path = JSC::JSValue(Zig::toJSStringGC(err.path, globalObject));
+    result->putDirect(vm, clientData->builtinNames().pathPublicName(), path,
+                      JSC::PropertyAttribute::DontDelete | 0);
+  }
+
+  if (err.syscall.len > 0) {
+    JSC::JSValue syscall = JSC::JSValue(Zig::toJSString(err.syscall, globalObject));
+    result->putDirect(vm, clientData->builtinNames().syscallPublicName(), syscall,
+                      JSC::PropertyAttribute::DontDelete | 0);
+  }
+
+  result->putDirect(vm, clientData->builtinNames().errnoPublicName(), JSC::JSValue(err.errno_),
+                    JSC::PropertyAttribute::DontDelete | 0);
+
+  RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue()));
+  scope.release();
+
+  return JSC::JSValue::encode(JSC::JSValue(result));
+}
 
 JSC__JSValue
 JSC__JSObject__create(JSC__JSGlobalObject *globalObject, size_t initialCapacity, void *arg2,
@@ -369,8 +428,52 @@ static JSC::JSValue doLink(JSC__JSGlobalObject *globalObject, JSC::JSValue modul
   return JSC::linkAndEvaluateModule(globalObject, moduleKey, JSC::JSValue());
 }
 
+JSC__JSValue JSC__JSValue__createRangeError(const ZigString *message, const ZigString *arg1,
+                                            JSC__JSGlobalObject *globalObject) {
+  JSC::VM &vm = globalObject->vm();
+  ZigString code = *arg1;
+  JSC::JSObject *rangeError = Zig::getErrorInstance(message, globalObject).asCell()->getObject();
+  static const char *range_error_name = "RangeError";
+
+  rangeError->putDirect(
+    vm, vm.propertyNames->name,
+    JSC::JSValue(JSC::jsOwnedString(
+      vm, WTF::String(WTF::StringImpl::createWithoutCopying(range_error_name, 10)))),
+    0);
+
+  if (code.len > 0) {
+    auto clientData = Bun::clientData(vm);
+    JSC::JSValue codeValue = Zig::toJSStringValue(code, globalObject);
+    rangeError->putDirect(vm, clientData->builtinNames().codePublicName(), codeValue,
+                          JSC::PropertyAttribute::ReadOnly | 0);
+  }
+
+  return JSC::JSValue::encode(rangeError);
+}
+JSC__JSValue JSC__JSValue__createTypeError(const ZigString *message, const ZigString *arg1,
+                                           JSC__JSGlobalObject *globalObject) {
+  JSC::VM &vm = globalObject->vm();
+  ZigString code = *arg1;
+  JSC::JSObject *typeError = Zig::getErrorInstance(message, globalObject).asCell()->getObject();
+  static const char *range_error_name = "TypeError";
+
+  typeError->putDirect(
+    vm, vm.propertyNames->name,
+    JSC::JSValue(JSC::jsOwnedString(
+      vm, WTF::String(WTF::StringImpl::createWithoutCopying(range_error_name, 10)))),
+    0);
+
+  if (code.len > 0) {
+    auto clientData = Bun::clientData(vm);
+    JSC::JSValue codeValue = Zig::toJSStringValue(code, globalObject);
+    typeError->putDirect(vm, clientData->builtinNames().codePublicName(), codeValue, 0);
+  }
+
+  return JSC::JSValue::encode(typeError);
+}
+
 JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject *globalObject, ZigString *arg1,
-                                             size_t arg2) {
+                                             size_t arg2, bool clone) {
   JSC::VM &vm = globalObject->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -382,8 +485,14 @@ JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject *globalObject, 
            globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
            arg2))) {
 
-      for (size_t i = 0; i < arg2; ++i) {
-        array->putDirectIndex(globalObject, i, JSC::jsString(vm, Zig::toStringCopy(arg1[i])));
+      if (!clone) {
+        for (size_t i = 0; i < arg2; ++i) {
+          array->putDirectIndex(globalObject, i, JSC::jsString(vm, Zig::toString(arg1[i])));
+        }
+      } else {
+        for (size_t i = 0; i < arg2; ++i) {
+          array->putDirectIndex(globalObject, i, JSC::jsString(vm, Zig::toStringCopy(arg1[i])));
+        }
       }
     }
   }
@@ -457,19 +566,9 @@ void JSC__JSValue__toZigString(JSC__JSValue JSValue0, ZigString *arg1, JSC__JSGl
 
   arg1->len = str.length();
 }
+
 JSC__JSValue ZigString__toErrorInstance(const ZigString *str, JSC__JSGlobalObject *globalObject) {
-  JSC::VM &vm = globalObject->vm();
-
-  auto scope = DECLARE_THROW_SCOPE(vm);
-  JSC::JSValue message = Zig::toJSString(*str, globalObject);
-  JSC::JSValue options = JSC::jsUndefined();
-  JSC::Structure *errorStructure = globalObject->errorStructure();
-  JSC::JSObject *result =
-    JSC::ErrorInstance::create(globalObject, errorStructure, message, options);
-  RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue()));
-  scope.release();
-
-  return JSC::JSValue::encode(JSC::JSValue(result));
+  return JSC::JSValue::encode(Zig::getErrorInstance(str, globalObject));
 }
 
 static JSC::EncodedJSValue resolverFunctionCallback(JSC::JSGlobalObject *globalObject,
@@ -1345,9 +1444,10 @@ static void fromErrorInstance(ZigException *except, JSC::JSGlobalObject *global,
   if (err->isStackOverflowError()) { except->code = 253; }
   if (err->isOutOfMemoryError()) { except->code = 8; }
 
-  if (obj->hasProperty(global, global->vm().propertyNames->message)) {
-    except->message = Zig::toZigString(
-      obj->getDirect(global->vm(), global->vm().propertyNames->message).toWTFString(global));
+  if (JSC::JSValue message =
+        obj->getIfPropertyExists(global, global->vm().propertyNames->message)) {
+
+    except->message = Zig::toZigString(message, global);
 
   } else {
     except->message = Zig::toZigString(err->sanitizedMessageString(global));
@@ -1355,19 +1455,40 @@ static void fromErrorInstance(ZigException *except, JSC::JSGlobalObject *global,
   except->name = Zig::toZigString(err->sanitizedNameString(global));
   except->runtime_type = err->runtimeTypeForCause();
 
-  if (getFromSourceURL) {
-    if (obj->hasProperty(global, global->vm().propertyNames->sourceURL)) {
-      except->stack.frames_ptr[0].source_url = Zig::toZigString(
-        obj->getDirect(global->vm(), global->vm().propertyNames->sourceURL).toWTFString(global));
+  auto clientData = Bun::clientData(global->vm());
 
-      if (obj->hasProperty(global, global->vm().propertyNames->line)) {
-        except->stack.frames_ptr[0].position.line =
-          obj->getDirect(global->vm(), global->vm().propertyNames->line).toInt32(global);
+  if (JSC::JSValue syscall =
+        obj->getIfPropertyExists(global, clientData->builtinNames().syscallPublicName())) {
+    except->syscall = Zig::toZigString(syscall, global);
+  }
+
+  if (JSC::JSValue code =
+        obj->getIfPropertyExists(global, clientData->builtinNames().codePublicName())) {
+    except->code_ = Zig::toZigString(code, global);
+  }
+
+  if (JSC::JSValue path =
+        obj->getIfPropertyExists(global, clientData->builtinNames().pathPublicName())) {
+    except->path = Zig::toZigString(path, global);
+  }
+
+  if (JSC::JSValue errno_ =
+        obj->getIfPropertyExists(global, clientData->builtinNames().errnoPublicName())) {
+    except->errno_ = errno_.toInt32(global);
+  }
+
+  if (getFromSourceURL) {
+    if (JSC::JSValue sourceURL =
+          obj->getIfPropertyExists(global, global->vm().propertyNames->sourceURL)) {
+      except->stack.frames_ptr[0].source_url = Zig::toZigString(sourceURL, global);
+
+      if (JSC::JSValue line = obj->getIfPropertyExists(global, global->vm().propertyNames->line)) {
+        except->stack.frames_ptr[0].position.line = line.toInt32(global);
       }
 
-      if (obj->hasProperty(global, global->vm().propertyNames->column)) {
-        except->stack.frames_ptr[0].position.column_start =
-          obj->getDirect(global->vm(), global->vm().propertyNames->column).toInt32(global);
+      if (JSC::JSValue column =
+            obj->getIfPropertyExists(global, global->vm().propertyNames->column)) {
+        except->stack.frames_ptr[0].position.column_start = column.toInt32(global);
       }
       except->stack.frames_len = 1;
     }

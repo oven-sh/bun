@@ -1255,6 +1255,7 @@ pub const RequestContext = struct {
                 handler.handleJSError(.create_vm, err) catch {};
                 return;
             };
+            vm.is_from_devserver = true;
             vm.bundler.log = handler.log;
             std.debug.assert(JavaScript.VirtualMachine.vm_loaded);
             javascript_vm = vm;

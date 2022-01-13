@@ -53,6 +53,7 @@ pub const ZigStackTrace = bindings.ZigStackTrace;
 pub const ReturnableException = bindings.ReturnableException;
 pub const struct_Zig__JSMicrotaskCallback = bindings.Microtask;
 pub const bZig__JSMicrotaskCallback = struct_Zig__JSMicrotaskCallback;
+pub const SystemError = bindings.SystemError;
 const JSClassRef = bindings.C.JSClassRef;
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
@@ -137,6 +138,7 @@ pub extern fn ZigString__to16BitValue(arg0: [*c]const ZigString, arg1: [*c]JSC__
 pub extern fn ZigString__toErrorInstance(arg0: [*c]const ZigString, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toValue(arg0: [*c]const ZigString, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toValueGC(arg0: [*c]const ZigString, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
+pub extern fn SystemError__toErrorInstance(arg0: [*c]const SystemError, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSCell__getObject(arg0: [*c]JSC__JSCell) [*c]JSC__JSObject;
 pub extern fn JSC__JSCell__getString(arg0: [*c]JSC__JSCell, arg1: [*c]JSC__JSGlobalObject) bWTF__String;
 pub extern fn JSC__JSCell__getType(arg0: [*c]JSC__JSCell) u8;
@@ -271,7 +273,9 @@ pub extern fn JSC__JSValue__asObject(JSValue0: JSC__JSValue) bJSC__JSObject;
 pub extern fn JSC__JSValue__asString(JSValue0: JSC__JSValue) [*c]JSC__JSString;
 pub extern fn JSC__JSValue__createEmptyObject(arg0: [*c]JSC__JSGlobalObject, arg1: usize) JSC__JSValue;
 pub extern fn JSC__JSValue__createObject2(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const ZigString, arg2: [*c]const ZigString, JSValue3: JSC__JSValue, JSValue4: JSC__JSValue) JSC__JSValue;
-pub extern fn JSC__JSValue__createStringArray(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]ZigString, arg2: usize) JSC__JSValue;
+pub extern fn JSC__JSValue__createRangeError(arg0: [*c]const ZigString, arg1: [*c]const ZigString, arg2: [*c]JSC__JSGlobalObject) JSC__JSValue;
+pub extern fn JSC__JSValue__createStringArray(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]ZigString, arg2: usize, arg3: bool) JSC__JSValue;
+pub extern fn JSC__JSValue__createTypeError(arg0: [*c]const ZigString, arg1: [*c]const ZigString, arg2: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__eqlCell(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSCell) bool;
 pub extern fn JSC__JSValue__eqlValue(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__forEach(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, ArgFn2: ?fn ([*c]JSC__VM, [*c]JSC__JSGlobalObject, JSC__JSValue) callconv(.C) void) void;

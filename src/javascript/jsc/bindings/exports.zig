@@ -428,15 +428,18 @@ pub const ZigStackFrame = extern struct {
         source_url: ZigString,
         position: ZigStackFramePosition,
         enable_color: bool,
-        origin: *const ZigURL,
+        origin: ?*const ZigURL,
+
         root_path: string = "",
         pub fn format(this: SourceURLFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            try writer.writeAll(this.origin.displayProtocol());
-            try writer.writeAll("://");
-            try writer.writeAll(this.origin.displayHostname());
-            try writer.writeAll(":");
-            try writer.writeAll(this.origin.port);
-            try writer.writeAll("/blob:");
+            if (this.origin) |origin| {
+                try writer.writeAll(origin.displayProtocol());
+                try writer.writeAll("://");
+                try writer.writeAll(origin.displayHostname());
+                try writer.writeAll(":");
+                try writer.writeAll(origin.port);
+                try writer.writeAll("/blob:");
+            }
 
             var source_slice = this.source_url.slice();
             if (strings.startsWith(source_slice, this.root_path)) {
@@ -505,7 +508,7 @@ pub const ZigStackFrame = extern struct {
         return NameFormatter{ .function_name = this.function_name, .code_type = this.code_type, .enable_color = enable_color };
     }
 
-    pub fn sourceURLFormatter(this: *const ZigStackFrame, root_path: string, origin: *const ZigURL, comptime enable_color: bool) SourceURLFormatter {
+    pub fn sourceURLFormatter(this: *const ZigStackFrame, root_path: string, origin: ?*const ZigURL, comptime enable_color: bool) SourceURLFormatter {
         return SourceURLFormatter{ .source_url = this.source_url, .origin = origin, .root_path = root_path, .position = this.position, .enable_color = enable_color };
     }
 };
@@ -538,6 +541,16 @@ pub const ZigStackFramePosition = extern struct {
 pub const ZigException = extern struct {
     code: JSErrorCode,
     runtime_type: JSRuntimeType,
+
+    /// SystemError only
+    errno: c_int = 0,
+    /// SystemError only
+    syscall: ZigString = ZigString.Empty,
+    /// SystemError only
+    system_code: ZigString = ZigString.Empty,
+    /// SystemError only
+    path: ZigString = ZigString.Empty,
+
     name: ZigString,
     message: ZigString,
     stack: ZigStackTrace,
@@ -1316,8 +1329,25 @@ pub const ZigConsoleClient = struct {
                             comptime Output.prettyFmt("{s}<d>:<r> ", enable_ansi_colors),
                             .{prop[0..@minimum(prop.len, 128)]},
                         );
+
                         var property_value = CAPI.JSObjectGetProperty(globalThis.ref(), object, property_name_ref, null);
-                        this.format(Tag.get(JSValue.fromRef(property_value), globalThis), Writer, writer_, JSValue.fromRef(property_value), globalThis, enable_ansi_colors);
+                        const tag = Tag.get(JSValue.fromRef(property_value), globalThis);
+
+                        if (tag.cell.isStringLike()) {
+                            if (comptime enable_ansi_colors) {
+                                writer.writeAll(comptime Output.prettyFmt("<r><green>", true));
+                            }
+                            writer.writeAll("\"");
+                        }
+
+                        this.format(tag, Writer, writer_, JSValue.fromRef(property_value), globalThis, enable_ansi_colors);
+
+                        if (tag.cell.isStringLike()) {
+                            writer.writeAll("\"");
+                            if (comptime enable_ansi_colors) {
+                                writer.writeAll(comptime Output.prettyFmt("<r>", true));
+                            }
+                        }
 
                         if (i + 1 < count_) {
                             writer.writeAll(", ");

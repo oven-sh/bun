@@ -52,9 +52,9 @@ pub const CommandLineReporter = struct {
     const DotColorMap = std.EnumMap(TestRunner.Test.Status, string);
     const dots: DotColorMap = brk: {
         var map: DotColorMap = DotColorMap.init(.{});
-        map.put(TestRunner.Test.Status.pending, Output.RESET ++ Output.ED ++ Output.color_map.get("yellow").? ++ Output.RESET);
-        map.put(TestRunner.Test.Status.pass, Output.RESET ++ Output.ED ++ Output.color_map.get("green").? ++ Output.RESET);
-        map.put(TestRunner.Test.Status.fail, Output.RESET ++ Output.ED ++ Output.color_map.get("red").? ++ Output.RESET);
+        map.put(TestRunner.Test.Status.pending, Output.RESET ++ Output.ED ++ Output.color_map.get("yellow").? ++ "." ++ Output.RESET);
+        map.put(TestRunner.Test.Status.pass, Output.RESET ++ Output.ED ++ Output.color_map.get("green").? ++ "." ++ Output.RESET);
+        map.put(TestRunner.Test.Status.fail, Output.RESET ++ Output.ED ++ Output.color_map.get("red").? ++ "." ++ Output.RESET);
         break :brk map;
     };
 
@@ -170,6 +170,10 @@ pub const TestCommand = struct {
         Output.prettyError("\n", .{});
 
         Output.flush();
+
+        if (reporter.summary.fail > 0) {
+            std.os.exit(1);
+        }
     }
 
     pub fn run(

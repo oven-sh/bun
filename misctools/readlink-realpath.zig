@@ -22,17 +22,16 @@ pub fn main() anyerror!void {
 
     var args_buffer: [8096 * 2]u8 = undefined;
     var fixed_buffer = std.heap.FixedBufferAllocator.init(&args_buffer);
-    var allocator = &fixed_buffer.allocator;
+    var allocator = fixed_buffer.allocator();
 
     var args = std.mem.span(try std.process.argsAlloc(allocator));
 
     const to_resolve = args[args.len - 1];
-    const cwd = try std.process.getCwdAlloc(allocator);
     var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     var path: []u8 = undefined;
 
     var j: usize = 0;
-    while (j < 100000) : (j += 1) {
+    while (j < 1000) : (j += 1) {
         path = try std.os.realpathZ(to_resolve, &out_buffer);
     }
 

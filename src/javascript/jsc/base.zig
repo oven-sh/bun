@@ -1485,7 +1485,7 @@ pub fn NewClass(
             var JSStaticValue_empty = std.mem.zeroes(js.JSStaticValue);
             var count: usize = 0;
 
-            if (static_functions.len > 0) {
+            if (comptime static_functions.len > 0) {
                 inline for (function_name_literals) |function_name_literal, i| {
                     _ = i;
                     switch (comptime @typeInfo(@TypeOf(@field(staticFunctions, function_name_literal)))) {
@@ -1572,7 +1572,7 @@ pub fn NewClass(
                 def.staticFunctions = static_functions[0..count].ptr;
             }
 
-            if (property_names.len > 0) {
+            if (comptime property_names.len > 0) {
                 inline for (property_name_literals) |_, i| {
                     static_properties[i] = JSStaticValue_empty;
                     static_properties[i].getProperty = StaticProperty(i).getter;
@@ -1637,6 +1637,38 @@ pub fn JSError(
         error_args[0] = zig_str.toValueGC(JavaScript.VirtualMachine.vm.global).asObjectRef();
         exception.* = js.JSObjectMakeError(ctx, 1, &error_args, null);
     }
+}
+
+pub fn throwTypeError(
+    code: JSC.Node.ErrorCode,
+    comptime fmt: string,
+    args: anytype,
+    ctx: js.JSContextRef,
+    exception: ExceptionValueRef,
+) void {
+    @setCold(true);
+    var zig_str: JSC.ZigString = undefined;
+    if (comptime std.meta.fields(@TypeOf(args)).len == 0) {
+        zig_str = JSC.ZigString.init(fmt);
+        zig_str.detectEncoding();
+    } else {
+        var buf = std.fmt.allocPrint(default_allocator, fmt, args) catch unreachable;
+        zig_str = JSC.ZigString.init(buf);
+        zig_str.detectEncoding();
+        zig_str.mark();
+    }
+    const code_str = ZigString.init(@tagName(code));
+    exception.* = JSC.JSValue.createTypeError(&zig_str, &code_str, ctx.asJSGlobalObject()).asObjectRef();
+}
+
+pub fn throwInvalidArguments(
+    comptime fmt: string,
+    args: anytype,
+    ctx: js.JSContextRef,
+    exception: ExceptionValueRef,
+) void {
+    @setCold(true);
+    return throwTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE, fmt, args, ctx, exception);
 }
 
 pub fn getAllocator(_: js.JSContextRef) std.mem.Allocator {
@@ -1772,7 +1804,6 @@ const NodeFS = JSC.Node.NodeFS;
 const DirEnt = JSC.Node.DirEnt;
 const Stats = JSC.Node.Stats;
 const BigIntStats = JSC.Node.BigIntStats;
-const SystemError = JSC.Node.SystemError;
 pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     ResolveError,
     BuildError,
@@ -1792,7 +1823,6 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     NodeFS,
     Stats,
     BigIntStats,
-    SystemError,
     DirEnt,
 });
 
@@ -1813,5 +1843,3 @@ pub const JSPropertyNameIterator = struct {
         return js.JSPropertyNameArrayGetNameAtIndex(this.array, i);
     }
 };
-
-pub const throwTypeError = JSError;

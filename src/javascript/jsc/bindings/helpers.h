@@ -1,3 +1,5 @@
+#pragma once
+
 #include "headers.h"
 #include "root.h"
 
@@ -9,8 +11,6 @@
 #include <JavaScriptCore/JSValueInternal.h>
 #include <JavaScriptCore/ThrowScope.h>
 #include <JavaScriptCore/VM.h>
-
-#pragma once
 
 template <class CppType, typename ZigType> class Wrap {
     public:
@@ -76,6 +76,10 @@ static bool isTaggedUTF16Ptr(const unsigned char *ptr) {
   return (reinterpret_cast<uintptr_t>(ptr) & (static_cast<uint64_t>(1) << 63)) != 0;
 }
 
+static bool isTaggedExternalPtr(const unsigned char *ptr) {
+  return (reinterpret_cast<uintptr_t>(ptr) & (static_cast<uint64_t>(1) << 62)) != 0;
+}
+
 static const WTF::String toString(ZigString str) {
   if (str.len == 0 || str.ptr == nullptr) { return WTF::String(); }
 
@@ -103,6 +107,18 @@ static WTF::String toStringNotConst(ZigString str) {
 
 static const JSC::JSString *toJSString(ZigString str, JSC::JSGlobalObject *global) {
   return JSC::jsOwnedString(global->vm(), toString(str));
+}
+
+static const JSC::JSValue toJSStringValue(ZigString str, JSC::JSGlobalObject *global) {
+  return JSC::JSValue(toJSString(str, global));
+}
+
+static const JSC::JSString *toJSStringGC(ZigString str, JSC::JSGlobalObject *global) {
+  return JSC::jsString(global->vm(), toStringCopy(str));
+}
+
+static const JSC::JSValue toJSStringValueGC(ZigString str, JSC::JSGlobalObject *global) {
+  return JSC::JSValue(toJSString(str, global));
 }
 
 static const ZigString ZigStringEmpty = ZigString{nullptr, 0};
@@ -178,6 +194,21 @@ static ZigString toZigString(JSC::JSValue val, JSC::JSGlobalObject *global) {
   scope.release();
 
   return toZigString(str);
+}
+
+static JSC::JSValue getErrorInstance(const ZigString *str, JSC__JSGlobalObject *globalObject) {
+  JSC::VM &vm = globalObject->vm();
+
+  auto scope = DECLARE_THROW_SCOPE(vm);
+  JSC::JSValue message = Zig::toJSString(*str, globalObject);
+  JSC::JSValue options = JSC::jsUndefined();
+  JSC::Structure *errorStructure = globalObject->errorStructure();
+  JSC::JSObject *result =
+    JSC::ErrorInstance::create(globalObject, errorStructure, message, options);
+  RETURN_IF_EXCEPTION(scope, JSC::JSValue());
+  scope.release();
+
+  return JSC::JSValue(result);
 }
 
 }; // namespace Zig

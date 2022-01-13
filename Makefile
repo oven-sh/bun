@@ -733,8 +733,8 @@ bun-link-lld-release:
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	$(CXX) -c -o $@ $< \
 		$(CLANG_FLAGS) $(PLATFORM_LINKER_FLAGS) \
-		-O3 \
-		-w
+		-O1 \
+		-w -g
 
 sizegen:
 	$(CXX) src/javascript/jsc/headergen/sizegen.cpp -o $(BUN_TMP_DIR)/sizegen $(CLANG_FLAGS) -O1

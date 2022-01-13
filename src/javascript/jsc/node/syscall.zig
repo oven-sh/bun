@@ -9,7 +9,7 @@ const Syscall = @This();
 const Environment = @import("../../../global.zig").Environment;
 const default_allocator = @import("../../../global.zig").default_allocator;
 const JSC = @import("../../../jsc.zig");
-const SystemError = JSC.Node.SystemError;
+const SystemError = JSC.SystemError;
 const darwin = os.darwin;
 const MAX_PATH_BYTES = std.fs.MAX_PATH_BYTES;
 const fd_t = std.os.fd_t;
@@ -20,19 +20,44 @@ const Maybe = JSC.Node.Maybe;
 pub const Tag = enum(u8) {
     TODO,
 
-    open,
+    access,
+    chmod,
+    chown,
+    clonefile,
     close,
-    read,
-    write,
-    lseek,
+    copy_file_range,
+    copyfile,
+    fchmod,
+    fchown,
+    fcntl,
+    fdatasync,
     fstat,
     fsync,
     ftruncate,
-    fdatasync,
-    fchmod,
-    fchown,
-    mkdtemp,
+    futimens,
+    getdents64,
+    getdirentries64,
+    lchmod,
+    lchown,
+    link,
+    lseek,
+    lstat,
+    lutimes,
     mkdir,
+    mkdtemp,
+    open,
+    pread,
+    pwrite,
+    read,
+    readlink,
+    rename,
+    stat,
+    symlink,
+    unlink,
+    utimes,
+    write,
+
+    pub var strings = std.EnumMap(Tag, JSC.C.JSStringRef).initFull(null);
 };
 const PathString = @import("../../../global.zig").PathString;
 
@@ -52,19 +77,19 @@ const mem = std.mem;
 
 pub fn stat(path: [:0]const u8) Maybe(os.Stat) {
     var stat_ = mem.zeroes(os.Stat);
-    if (Maybe(os.Stat).errno(system.stat(path, &stat_))) |err| return err;
+    if (Maybe(os.Stat).errnoSys(system.stat(path, &stat_), .stat)) |err| return err;
     return Maybe(os.Stat){ .result = stat_ };
 }
 
 pub fn lstat(path: [:0]const u8) Maybe(os.Stat) {
     var stat_ = mem.zeroes(os.Stat);
-    if (Maybe(os.Stat).errno(C.lstat(path, &stat_))) |err| return err;
+    if (Maybe(os.Stat).errnoSys(C.lstat(path, &stat_), .lstat)) |err| return err;
     return Maybe(os.Stat){ .result = stat_ };
 }
 
 pub fn fstat(fd: std.os.fd_t) Maybe(os.Stat) {
     var stat_ = mem.zeroes(os.Stat);
-    if (Maybe(os.Stat).errno(fstat_sym(fd, &stat_))) |err| return err;
+    if (Maybe(os.Stat).errnoSys(fstat_sym(fd, &stat_), .fstat)) |err| return err;
     return Maybe(os.Stat){ .result = stat_ };
 }
 
@@ -78,6 +103,7 @@ pub fn open(file_path: [:0]const u8, flags: u32, perm: std.os.mode_t) Maybe(std.
                 return Maybe(std.os.fd_t){
                     .err = .{
                         .errno = @truncate(Syscall.Error.Int, @enumToInt(err)),
+                        .syscall = .open,
                     },
                 };
             },
@@ -119,7 +145,7 @@ pub fn write(fd: os.fd_t, bytes: []const u8) Maybe(usize) {
 
     while (true) {
         const rc = system.write(fd, bytes.ptr, adjusted_len);
-        if (Maybe(usize).errno(rc)) |err| {
+        if (Maybe(usize).errnoSys(rc, .write)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -139,7 +165,7 @@ pub fn pread(fd: os.fd_t, buf: []u8, offset: i64) Maybe(usize) {
     const ioffset = @bitCast(i64, offset); // the OS treats this as unsigned
     while (true) {
         const rc = pread_sym(fd, buf.ptr, adjusted_len, ioffset);
-        if (Maybe(usize).errno(rc)) |err| {
+        if (Maybe(usize).errnoSys(rc, .pread)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -159,7 +185,7 @@ pub fn pwrite(fd: os.fd_t, bytes: []const u8, offset: i64) Maybe(usize) {
     const ioffset = @bitCast(i64, offset); // the OS treats this as unsigned
     while (true) {
         const rc = pwrite_sym(fd, bytes.ptr, adjusted_len, ioffset);
-        return if (Maybe(usize).errno(rc)) |err| {
+        return if (Maybe(usize).errnoSys(rc, .pwrite)) |err| {
             switch (err.getErrno()) {
                 .INTR => continue,
                 else => return err,
@@ -174,7 +200,7 @@ pub fn read(fd: os.fd_t, buf: []u8) Maybe(usize) {
     const adjusted_len = @minimum(buf.len, max_count);
     while (true) {
         const rc = system.read(fd, buf.ptr, adjusted_len);
-        if (Maybe(usize).errno(rc)) |err| {
+        if (Maybe(usize).errnoSys(rc, .read)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -187,7 +213,7 @@ pub fn readlink(in: [:0]const u8, buf: []u8) Maybe(usize) {
     while (true) {
         const rc = system.readlink(in, buf.ptr, buf.len);
 
-        if (Maybe(usize).errno(rc)) |err| {
+        if (Maybe(usize).errnoSys(rc, .readlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -198,7 +224,7 @@ pub fn readlink(in: [:0]const u8, buf: []u8) Maybe(usize) {
 
 pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
     while (true) {
-        if (Maybe(void).errno(system.rename(from, to))) |err| {
+        if (Maybe(void).errnoSys(system.rename(from, to), .rename)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -209,7 +235,7 @@ pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
 
 pub fn chown(path: [:0]const u8, uid: os.uid_t, gid: os.gid_t) Maybe(void) {
     while (true) {
-        if (Maybe(void).errno(C.chown(path, uid, gid))) |err| {
+        if (Maybe(void).errnoSys(C.chown(path, uid, gid), .chown)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -220,7 +246,7 @@ pub fn chown(path: [:0]const u8, uid: os.uid_t, gid: os.gid_t) Maybe(void) {
 
 pub fn symlink(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
     while (true) {
-        if (Maybe(void).errno(system.symlink(from, to))) |err| {
+        if (Maybe(void).errnoSys(system.symlink(from, to), .symlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -231,7 +257,7 @@ pub fn symlink(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
 
 pub fn unlink(from: [:0]const u8) Maybe(void) {
     while (true) {
-        if (Maybe(void).errno(system.unlink(from))) |err| {
+        if (Maybe(void).errno(system.unlink(from), .unlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -257,7 +283,7 @@ pub fn getFdPath(fd: fd_t, out_buffer: *[MAX_PATH_BYTES]u8) Maybe([]u8) {
             // On macOS, we can use F.GETPATH fcntl command to query the OS for
             // the path to the file descriptor.
             @memset(out_buffer, 0, MAX_PATH_BYTES);
-            if (Maybe([]u8).errno(darwin.fcntl(fd, os.F.GETPATH, out_buffer))) |err| {
+            if (Maybe([]u8).errnoSys(darwin.fcntl(fd, os.F.GETPATH, out_buffer), .fcntl)) |err| {
                 return err;
             }
             const len = mem.indexOfScalar(u8, out_buffer[0..], @as(u8, 0)) orelse MAX_PATH_BYTES;
@@ -300,29 +326,50 @@ pub const Error = struct {
 
     errno: Int,
     syscall: Syscall.Tag = @intToEnum(Syscall.Tag, 0),
-    path: ?[:0]const u8 = null,
+    path: []const u8 = "",
 
     pub inline fn getErrno(this: Error) os.E {
         return @intToEnum(os.E, this.errno);
     }
 
-    pub inline fn withPath(this: Error, path: ?[:0]const u8) Error {
+    pub inline fn withPath(this: Error, path: anytype) Error {
         return Error{
             .errno = this.errno,
             .syscall = this.syscall,
-            .path = path,
+            .path = std.mem.span(path),
         };
     }
+
+    pub inline fn withSyscall(this: Error, syscall: Syscall) Error {
+        return Error{
+            .errno = this.errno,
+            .syscall = syscall,
+            .path = this.path,
+        };
+    }
+
     pub const todo_errno = std.math.maxInt(Int) - 1;
     pub const todo = Error{ .errno = todo_errno };
 
     pub fn toJS(this: Error, ctx: JSC.C.JSContextRef) JSC.C.JSObjectRef {
-        var ptr = default_allocator.create(SystemError) catch unreachable;
-        ptr.* = SystemError{
-            .path = if (this.path) |path| PathString.init(path) else PathString{},
+        var sys = SystemError{
             .errno = @as(c_int, this.errno) * -1,
-            .syscall = this.syscall,
+            .syscall = JSC.ZigString.init(@tagName(this.syscall)),
         };
-        return SystemError.Class.make(ctx, ptr);
+
+        // errno label
+        if (this.errno > 0 and this.errno < C.SystemErrno.max) {
+            const system_errno = @intToEnum(C.SystemErrno, this.errno);
+            sys.code = JSC.ZigString.init(@tagName(system_errno));
+            if (C.SystemErrno.labels.get(system_errno)) |label| {
+                sys.message = JSC.ZigString.init(label);
+            }
+        }
+
+        if (this.path.len > 0) {
+            sys.path = JSC.ZigString.init(this.path);
+        }
+
+        return sys.toErrorInstance(ctx.asJSGlobalObject()).asObjectRef();
     }
 };

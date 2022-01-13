@@ -35,6 +35,14 @@ typedef struct ErrorableResolvedSource {
   bool success;
 } ErrorableResolvedSource;
 
+typedef struct SystemError {
+  int errno_;
+  ZigString code;
+  ZigString message;
+  ZigString path;
+  ZigString syscall;
+} SystemError;
+
 typedef uint8_t ZigStackFrameCode;
 const ZigStackFrameCode ZigStackFrameCodeNone = 0;
 const ZigStackFrameCode ZigStackFrameCodeEval = 1;
@@ -74,6 +82,10 @@ typedef struct ZigStackTrace {
 typedef struct ZigException {
   unsigned char code;
   uint16_t runtime_type;
+  int errno_;
+  ZigString syscall;
+  ZigString code_;
+  ZigString path;
   ZigString name;
   ZigString message;
   ZigStackTrace stack;

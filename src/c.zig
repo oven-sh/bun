@@ -3,6 +3,7 @@ const Enviroment = @import("./env.zig");
 
 const PlatformSpecific = switch (@import("builtin").target.os.tag) {
     .macos => @import("./darwin_c.zig"),
+    .linux => @import("./linux_c.zig"),
     else => struct {},
 };
 pub usingnamespace PlatformSpecific;
@@ -19,7 +20,7 @@ const mode_t = C.mode_t;
 const libc_stat = C.Stat;
 const zeroes = mem.zeroes;
 pub const darwin = @import("./darwin_c.zig");
-
+pub const linux = @import("./linux_c.zig");
 pub extern "c" fn chmod([*c]const u8, mode_t) c_int;
 pub extern "c" fn fchmod(std.c.fd_t, mode_t) c_int;
 pub extern "c" fn umask(mode_t) mode_t;

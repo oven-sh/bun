@@ -69,6 +69,26 @@ pub fn Maybe(comptime ResultType: type) type {
                 },
             };
         }
+
+        pub inline fn errnoSys(rc: anytype, syscall: Syscall.Tag) ?@This() {
+            return switch (std.os.errno(rc)) {
+                .SUCCESS => null,
+                else => |err| @This(){
+                    // always truncate
+                    .err = .{ .errno = @truncate(Syscall.Error.Int, @enumToInt(err)), .syscall = syscall },
+                },
+            };
+        }
+
+        pub inline fn errnoSysP(rc: anytype, syscall: Syscall.Tag, path: anytype) ?@This() {
+            return switch (std.os.errno(rc)) {
+                .SUCCESS => null,
+                else => |err| @This(){
+                    // always truncate
+                    .err = .{ .errno = @truncate(Syscall.Error.Int, @enumToInt(err)), .syscall = syscall, .path = std.mem.span(path) },
+                },
+            };
+        }
     };
 }
 
@@ -98,7 +118,7 @@ pub const StringOrBuffer = union(Tag) {
                 var zig_str = JSC.ZigString.init("");
                 value.toZigString(&zig_str, global);
                 if (zig_str.len == 0) {
-                    JSC.throwTypeError(undefined, "Expected string to have length > 0", .{}, global.ref(), exception);
+                    JSC.throwInvalidArguments("Expected string to have length > 0", .{}, global.ref(), exception);
                     return null;
                 }
 
@@ -116,6 +136,7 @@ pub const StringOrBuffer = union(Tag) {
         };
     }
 };
+pub const ErrorCode = @import("./nodejs_error_code.zig").Code;
 
 // We can't really use Zig's error handling for syscalls because Node.js expects the "real" errno to be returned
 // and various issues with std.os that make it too unstable for arbitrary user input (e.g. how .BADF is marked as unreachable)
@@ -174,76 +195,6 @@ const PathOrBuffer = union(Tag) {
     }
 };
 
-pub const SystemError = struct {
-    errno: c_int = 0,
-    path: PathString = PathString{},
-    syscall: Syscall.Tag = Syscall.Tag.TODO,
-    code: Code = Code.ERR_METHOD_NOT_IMPLEMENTED,
-    allocator: ?std.mem.Allocator = null,
-
-    pub const Code = @import("./nodejs_error_code.zig").Code;
-    pub const Class = JSC.NewClass(
-        SystemError,
-        .{ .name = "SystemError", .read_only = true },
-        .{
-            .hasInstance = SystemError.hasInstance,
-        },
-        .{
-            .errno = .{
-                .read_only = true,
-                .get = SystemError.getErrno,
-            },
-            .path = .{
-                .read_only = true,
-                .get = SystemError.getPath,
-            },
-            .syscall = .{
-                .read_only = true,
-                .get = SystemError.getSyscall,
-            },
-            .code = .{
-                .read_only = true,
-                .get = SystemError.getCode,
-            },
-        },
-    );
-
-    pub var todo = SystemError{ .errno = -1, .syscall = Syscall.Tag.TODO, .code = Code.ERR_METHOD_NOT_IMPLEMENTED };
-
-    pub fn finalize(
-        this: *SystemError,
-    ) void {
-        if (this.allocator) |allocator| {
-            allocator.destroy(this);
-        }
-    }
-
-    pub fn hasInstance(ctx: JSC.C.JSContextRef, _: JSC.C.JSObjectRef, value: JSC.C.JSValueRef, _: JSC.C.ExceptionRef) callconv(.C) bool {
-        return Class.customHasInstance(ctx, undefined, value, undefined) or JSC.JSValue.fromRef(value).isError();
-    }
-
-    pub fn getErrno(this: *SystemError, _: JSC.C.JSContextRef, _: JSC.C.JSStringRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-        return JSC.JSValue.jsNumberFromInt32(this.errno).asRef();
-    }
-    pub fn getPath(this: *SystemError, ctx: JSC.C.JSContextRef, _: JSC.C.JSStringRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-        if (this.path.isEmpty()) {
-            return JSC.JSValue.jsUndefined().asRef();
-        }
-
-        return JSC.ZigString.init(this.path.slice()).toValueAuto(ctx.asJSGlobalObject()).asObjectRef();
-    }
-    pub fn getSyscall(this: *SystemError, ctx: JSC.C.JSContextRef, _: JSC.C.JSStringRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-        if (this.syscall == .TODO) {
-            return JSC.JSValue.jsUndefined().asRef();
-        }
-
-        return JSC.ZigString.init(std.mem.span(@tagName(this.syscall))).toValueAuto(ctx.asJSGlobalObject()).asObjectRef();
-    }
-    pub fn getCode(this: *SystemError, ctx: JSC.C.JSContextRef, _: JSC.C.JSStringRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-        return JSC.ZigString.init(std.mem.span(@tagName(this.code))).toValue(ctx.asJSGlobalObject()).asObjectRef();
-    }
-};
-
 pub fn CallbackTask(comptime Result: type) type {
     return struct {
         callback: JSC.C.JSObjectRef,
@@ -252,7 +203,7 @@ pub fn CallbackTask(comptime Result: type) type {
         completion: AsyncIO.Completion,
 
         pub const Option = union {
-            err: SystemError,
+            err: JSC.SystemError,
             result: Result,
         };
     };
@@ -355,7 +306,7 @@ pub const PathLike = union(Tag) {
 pub const Valid = struct {
     pub fn fileDescriptor(fd: FileDescriptor, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
         if (fd < 0) {
-            JSC.throwTypeError(_global.default_allocator, "Invalid file descriptor, must not be negative number", .{}, ctx, exception);
+            JSC.throwInvalidArguments("Invalid file descriptor, must not be negative number", .{}, ctx, exception);
             return false;
         }
 
@@ -365,14 +316,13 @@ pub const Valid = struct {
     pub fn pathString(zig_str: JSC.ZigString, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
         switch (zig_str.len) {
             0 => {
-                JSC.throwTypeError(_global.default_allocator, "Invalid path string: can't be empty", .{}, ctx, exception);
+                JSC.throwInvalidArguments("Invalid path string: can't be empty", .{}, ctx, exception);
                 return false;
             },
             1...std.fs.MAX_PATH_BYTES => return true,
             else => {
                 // TODO: should this be an EINVAL?
-                JSC.throwTypeError(
-                    _global.default_allocator,
+                JSC.throwInvalidArguments(
                     comptime std.fmt.comptimePrint("Invalid path string: path is too long (max: {d})", .{std.fs.MAX_PATH_BYTES}),
                     .{},
                     ctx,
@@ -389,15 +339,14 @@ pub const Valid = struct {
         const slice = buffer.slice();
         switch (slice.len) {
             0 => {
-                JSC.throwTypeError(_global.default_allocator, "Invalid path buffer: can't be empty", .{}, ctx, exception);
+                JSC.throwInvalidArguments("Invalid path buffer: can't be empty", .{}, ctx, exception);
                 return false;
             },
 
             else => {
 
                 // TODO: should this be an EINVAL?
-                JSC.throwTypeError(
-                    _global.default_allocator,
+                JSC.throwInvalidArguments(
                     comptime std.fmt.comptimePrint("Invalid path buffer: path is too long (max: {d})", .{std.fs.MAX_PATH_BYTES}),
                     .{},
                     ctx,
@@ -499,13 +448,13 @@ pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.
         }
 
         break :brk std.fmt.parseInt(Mode, slice, 8) catch {
-            JSC.throwTypeError(_global.default_allocator, "Invalid mode string: must be an octal number", .{}, ctx, exception);
+            JSC.throwInvalidArguments("Invalid mode string: must be an octal number", .{}, ctx, exception);
             return null;
         };
     };
 
     if (mode_int < 0 or mode_int > 0o777) {
-        JSC.throwTypeError(_global.default_allocator, "Invalid mode: must be an octal number", .{}, ctx, exception);
+        JSC.throwInvalidArguments("Invalid mode: must be an octal number", .{}, ctx, exception);
         return null;
     }
 
@@ -588,8 +537,7 @@ pub const FileSystemFlags = enum(Mode) {
         if (val.isNumber()) {
             const number = val.toInt32();
             if (!(number > 0o000 and number < 0o777)) {
-                JSC.throwTypeError(
-                    _global.default_allocator,
+                JSC.throwInvalidArguments(
                     "Invalid integer mode: must be a number between 0o000 and 0o777",
                     .{},
                     ctx,
@@ -631,8 +579,7 @@ pub const FileSystemFlags = enum(Mode) {
                 Matcher.case("as+"), Matcher.case("sa+") => O_APPEND | O_CREAT | O_RDWR | O_SYNC,
 
                 Matcher.case("") => {
-                    JSC.throwTypeError(
-                        _global.default_allocator,
+                    JSC.throwInvalidArguments(
                         "Invalid flag: string can't be empty",
                         .{},
                         ctx,
@@ -641,8 +588,7 @@ pub const FileSystemFlags = enum(Mode) {
                     return null;
                 },
                 else => {
-                    JSC.throwTypeError(
-                        _global.default_allocator,
+                    JSC.throwInvalidArguments(
                         "Invalid flag. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
                         .{},
                         ctx,

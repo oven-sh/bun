@@ -1,7 +1,6 @@
 {
   "version": "0.2.0",
   "configurations": [
-
     {
       "type": "lldb",
       "request": "launch",
@@ -231,17 +230,30 @@
       "request": "launch",
       "name": "Dazzle serve",
       "program": "bun-debug",
-      "args": ["--origin=http://localhost:5001", "--disable-bun.js", "--disable-hmr"],
+      "args": [
+        "--origin=http://localhost:5001",
+        "--disable-bun.js",
+        "--disable-hmr"
+      ],
       "cwd": "/Users/jarred/Build/lattice/apps/dazzle",
       "console": "internalConsole"
     },
     {
       "type": "lldb",
       "request": "launch",
-      "name": "bun",
+      "name": "bun run",
       "program": "bun-debug",
-      "args": ["bun", "--use=next"],
-      "cwd": "/Users/jarred/Build/lattice/apps/dazzle",
+      "args": ["run", "/Users/jarred/Desktop/wow-such-fs/errno.mjs"],
+      "cwd": "/Users/jarred/Desktop/wow-such-fs",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun test",
+      "program": "bun-debug",
+      "args": ["test", "./foo.test.js"],
+      "cwd": "${workspaceFolder}",
       "console": "internalConsole"
     },
     {
@@ -367,9 +379,7 @@
       "program": "bun-debug",
       "args": ["install", "--backend=clonefile", "--force"],
       "cwd": "/Users/jarred/Build/octokit-test",
-      "env": {
-
-      },
+      "env": {},
       "console": "internalConsole"
     },
     {
@@ -379,8 +389,7 @@
       "program": "bun-debug",
       "args": ["add", "typescript"],
       "cwd": "/tmp/wow-such-npm",
-      "env": {
-      },
+      "env": {},
       "console": "internalConsole"
     },
     {
@@ -390,8 +399,7 @@
       "program": "bun-debug",
       "args": ["add", "react"],
       "cwd": "/tmp/wow-such-npm",
-      "env": {
-      },
+      "env": {},
       "console": "internalConsole"
     },
     {
@@ -401,8 +409,7 @@
       "program": "bun-debug",
       "args": ["remove", "foo"],
       "cwd": "/Users/jarred/Build/athena.yarn",
-      "env": {
-      },
+      "env": {},
       "console": "internalConsole"
     },
     {
@@ -414,7 +421,6 @@
       "cwd": "/tmp/wow-such-npm",
       "env": {
         "BUN_CONFIG_SKIP_SAVE_LOCKFILE": "1"
-      
       },
       "console": "internalConsole"
     },
@@ -530,7 +536,6 @@
       "cwd": "${workspaceFolder}/src/test/fixtures",
       "console": "internalConsole"
     },
- 
 
     // {
     //   "type": "lldb",

@@ -68,6 +68,7 @@
 #include <JavaScriptCore/JSCallbackObject.h>
 #include <JavaScriptCore/JSClassRef.h>
 
+#include "BunClientData.h"
 #include "ZigSourceProvider.h"
 
 using JSGlobalObject = JSC::JSGlobalObject;
@@ -104,6 +105,8 @@ extern "C" JSC__JSGlobalObject *Zig__GlobalObject__create(JSClassRef *globalObje
   auto heapSize = JSC::LargeHeap;
 
   JSC::VM &vm = JSC::VM::create(heapSize).leakRef();
+  Bun::JSVMClientData::create(&vm);
+
   vm.heap.acquireAccess();
 #if ENABLE(WEBASSEMBLY)
   JSC::Wasm::enableFastMemory();

@@ -251,7 +251,7 @@ pub const Bun = struct {
             argv[i] = ZigString.init(std.mem.span(arg));
         }
 
-        return JSValue.createStringArray(VirtualMachine.vm.global, argv.ptr, argv.len).asObjectRef();
+        return JSValue.createStringArray(VirtualMachine.vm.global, argv.ptr, argv.len, true).asObjectRef();
     }
 
     pub fn getRoutesDir(
@@ -350,7 +350,7 @@ pub const Bun = struct {
             return js.JSObjectMakeArray(ctx, 0, null, null);
         }
 
-        return JSValue.createStringArray(VirtualMachine.vm.global, styles.ptr, styles.len).asRef();
+        return JSValue.createStringArray(VirtualMachine.vm.global, styles.ptr, styles.len, true).asRef();
     }
 
     pub fn readFileAsStringCallback(
@@ -452,7 +452,7 @@ pub const Bun = struct {
             routes_list_strings[i] = ZigString.init(list[i]);
         }
 
-        const ref = JSValue.createStringArray(VirtualMachine.vm.global, &routes_list_strings, list.len).asRef();
+        const ref = JSValue.createStringArray(VirtualMachine.vm.global, &routes_list_strings, list.len, true).asRef();
         return ref;
     }
 
@@ -473,7 +473,7 @@ pub const Bun = struct {
             routes_list_strings[i] = ZigString.init(list[i]);
         }
 
-        const ref = JSValue.createStringArray(VirtualMachine.vm.global, &routes_list_strings, list.len).asRef();
+        const ref = JSValue.createStringArray(VirtualMachine.vm.global, &routes_list_strings, list.len, true).asRef();
         return ref;
     }
 
@@ -864,6 +864,7 @@ pub const VirtualMachine = struct {
     macro_mode: bool = false,
 
     has_any_macro_remappings: bool = false,
+    is_from_devserver: bool = false,
 
     origin_timer: std.time.Timer = undefined,
 
@@ -1818,6 +1819,8 @@ pub const VirtualMachine = struct {
         const stack = trace.frames();
         if (stack.len > 0) {
             var i: i16 = 0;
+            const origin: ?*const URL = if (vm.is_from_devserver) &vm.origin else null;
+            const dir = vm.bundler.fs.top_level_dir;
 
             while (i < stack.len) : (i += 1) {
                 const frame = stack[@intCast(usize, i)];
@@ -1835,8 +1838,8 @@ pub const VirtualMachine = struct {
                             allow_ansi_colors,
                         ),
                         frame.sourceURLFormatter(
-                            vm.bundler.fs.top_level_dir,
-                            &vm.origin,
+                            dir,
+                            origin,
                             allow_ansi_colors,
                         ),
                     },
@@ -2027,6 +2030,56 @@ pub const VirtualMachine = struct {
                 writer.print(comptime Output.prettyFmt("<r><b>{s}<r>\n", true), .{name}) catch unreachable;
             }
         }
+
+        var add_extra_line = false;
+
+        const Show = struct {
+            system_code: bool = false,
+            syscall: bool = false,
+            errno: bool = false,
+            path: bool = false,
+        };
+
+        var show = Show{
+            .system_code = exception.system_code.len > 0 and !strings.eql(exception.system_code.slice(), name.slice()),
+            .syscall = exception.syscall.len > 0,
+            .errno = exception.errno < 0,
+            .path = exception.path.len > 0,
+        };
+
+        if (show.path) {
+            if (show.syscall) {
+                writer.writeAll("  ") catch unreachable;
+            } else if (show.errno) {
+                writer.writeAll(" ") catch unreachable;
+            }
+            writer.print(comptime Output.prettyFmt(" path<d>: <r><cyan>\"{s}\"<r>\n", allow_ansi_color), .{exception.path}) catch unreachable;
+        }
+
+        if (show.system_code) {
+            if (show.syscall) {
+                writer.writeAll("  ") catch unreachable;
+            } else if (show.errno) {
+                writer.writeAll(" ") catch unreachable;
+            }
+            writer.print(comptime Output.prettyFmt(" code<d>: <r><cyan>\"{s}\"<r>\n", allow_ansi_color), .{exception.system_code}) catch unreachable;
+            add_extra_line = true;
+        }
+
+        if (show.syscall) {
+            writer.print(comptime Output.prettyFmt("syscall<d>: <r><cyan>\"{s}\"<r>\n", allow_ansi_color), .{exception.syscall}) catch unreachable;
+            add_extra_line = true;
+        }
+
+        if (show.errno) {
+            if (show.syscall) {
+                writer.writeAll("  ") catch unreachable;
+            }
+            writer.print(comptime Output.prettyFmt("errno<d>: <r><yellow>{d}<r>\n", allow_ansi_color), .{exception.errno}) catch unreachable;
+            add_extra_line = true;
+        }
+
+        if (add_extra_line) writer.writeAll("\n") catch unreachable;
 
         try printStackTrace(@TypeOf(writer), writer, exception.stack, allow_ansi_color);
     }

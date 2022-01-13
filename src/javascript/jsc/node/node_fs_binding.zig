@@ -119,7 +119,8 @@ fn call(comptime Function: NodeFSFunctionEnum) NodeFSFunction {
             _ = this;
             _ = ctx;
             _ = arguments;
-            exception.* = JSC.Node.SystemError.Class.make(ctx, &JSC.Node.SystemError.todo);
+            var err = JSC.SystemError{};
+            exception.* = err.toErrorInstance(ctx.asJSGlobalObject()).asObjectRef();
             return null;
             // var slice = ArgumentsSlice.init(arguments);
 

@@ -86,6 +86,7 @@ pub const ZigString = extern struct {
     // That would improve perf a bit
     ptr: [*]const u8,
     len: usize,
+
     pub const shim = Shimmer("", "ZigString", @This());
 
     pub const name = "ZigString";
@@ -117,6 +118,14 @@ pub const ZigString = extern struct {
                 return;
             }
         }
+    }
+
+    pub inline fn isGloballyAllocated(this: *ZigString) bool {
+        return (@ptrToInt(this.ptr) & (1 << 62)) != 0;
+    }
+
+    pub inline fn mark(this: *ZigString) void {
+        this.ptr = @intToPtr([*]const u8, @ptrToInt(this.ptr) | (1 << 62));
     }
 
     pub fn format(self: ZigString, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -185,6 +194,28 @@ pub const ZigString = extern struct {
         "toValue",
         "to16BitValue",
         "toValueGC",
+        "toErrorInstance",
+    };
+};
+
+pub const SystemError = extern struct {
+    errno: c_int = 0,
+    /// label for errno
+    code: ZigString = ZigString.init(""),
+    message: ZigString = ZigString.init(""),
+    path: ZigString = ZigString.init(""),
+    syscall: ZigString = ZigString.init(""),
+
+    pub const shim = Shimmer("", "SystemError", @This());
+
+    pub const name = "SystemError";
+    pub const namespace = "";
+
+    pub fn toErrorInstance(this: *const SystemError, global: *JSGlobalObject) JSValue {
+        return shim.cppFn("toErrorInstance", .{ this, global });
+    }
+
+    pub const Extern = [_][]const u8{
         "toErrorInstance",
     };
 };
@@ -1451,11 +1482,12 @@ pub const JSValue = enum(i64) {
         return cppFn("jsDoubleNumber", .{i});
     }
 
-    pub fn createStringArray(globalThis: *JSGlobalObject, str: [*c]ZigString, strings_count: usize) JSValue {
+    pub fn createStringArray(globalThis: *JSGlobalObject, str: [*c]ZigString, strings_count: usize, clone: bool) JSValue {
         return cppFn("createStringArray", .{
             globalThis,
             str,
             strings_count,
+            clone,
         });
     }
 
@@ -1636,6 +1668,14 @@ pub const JSValue = enum(i64) {
         return if (@enumToInt(value) != 0) value else return null;
     }
 
+    pub fn createTypeError(message: *const ZigString, code: *const ZigString, global: *JSGlobalObject) JSValue {
+        return cppFn("createTypeError", .{ message, code, global });
+    }
+
+    pub fn createRangeError(message: *const ZigString, code: *const ZigString, global: *JSGlobalObject) JSValue {
+        return cppFn("createRangeError", .{ message, code, global });
+    }
+
     /// Object.is()
     /// This algorithm differs from the IsStrictlyEqual Algorithm by treating all NaN values as equivalent and by differentiating +0𝔽 from -0𝔽.
     /// https://tc39.es/ecma262/#sec-samevalue
@@ -1719,7 +1759,7 @@ pub const JSValue = enum(i64) {
         return @intToPtr(*anyopaque, @bitCast(u64, @enumToInt(this)));
     }
 
-    pub const Extern = [_][]const u8{ "createObject2", "getIfPropertyExistsImpl", "jsType", "jsonStringify", "kind_", "isTerminationException", "isSameValue", "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "get", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
+    pub const Extern = [_][]const u8{ "createTypeError", "createRangeError", "createObject2", "getIfPropertyExistsImpl", "jsType", "jsonStringify", "kind_", "isTerminationException", "isSameValue", "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "get", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
 };
 
 extern "c" fn Microtask__run(*Microtask, *JSGlobalObject) void;

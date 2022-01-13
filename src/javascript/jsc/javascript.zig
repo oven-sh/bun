@@ -583,6 +583,19 @@ pub const Bun = struct {
         Global.mimalloc_cleanup(true);
         return ctx.asJSGlobalObject().vm().runGC(arguments.len > 0 and JSValue.fromRef(arguments[0]).toBoolean()).asRef();
     }
+
+    pub fn shrink(
+        _: void,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        _: []const js.JSValueRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        ctx.asJSGlobalObject().vm().shrinkFootprint();
+        return JSValue.jsUndefined().asRef();
+    }
+
     var public_path_temp_str: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
     pub fn getPublicPathJS(
@@ -691,6 +704,10 @@ pub const Bun = struct {
             },
             .generateHeapSnapshot = .{
                 .rfn = Bun.generateHeapSnapshot,
+                .ts = d.ts{},
+            },
+            .shrink = .{
+                .rfn = Bun.shrink,
                 .ts = d.ts{},
             },
         },

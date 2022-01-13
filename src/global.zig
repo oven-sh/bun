@@ -563,10 +563,10 @@ pub const Global = struct {
         long_running: bool = false,
     };
 
-    pub inline fn mimalloc_cleanup() void {
+    pub inline fn mimalloc_cleanup(force: bool) void {
         if (comptime use_mimalloc) {
             const Mimalloc = @import("./allocators/mimalloc.zig");
-            Mimalloc.mi_collect(false);
+            Mimalloc.mi_collect(force);
         }
     }
 

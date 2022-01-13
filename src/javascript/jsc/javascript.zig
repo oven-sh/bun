@@ -561,6 +561,17 @@ pub const Bun = struct {
         );
     }
 
+    pub fn runGC(
+        _: void,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        Global.mimalloc_cleanup(true);
+        return ctx.asJSGlobalObject().vm().runGC(arguments.len > 0 and JSValue.fromRef(arguments[0]).toBoolean()).asRef();
+    }
     var public_path_temp_str: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
     pub fn getPublicPathJS(
@@ -661,6 +672,10 @@ pub const Bun = struct {
             },
             .jest = .{
                 .rfn = @import("./test/jest.zig").Jest.call,
+                .ts = d.ts{},
+            },
+            .gc = .{
+                .rfn = Bun.runGC,
                 .ts = d.ts{},
             },
         },

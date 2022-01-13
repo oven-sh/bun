@@ -1000,6 +1000,10 @@ pub const JSGlobalObject = extern struct {
         return cppFn("createAggregateError", .{ globalObject, errors, errors_len, message });
     }
 
+    pub fn generateHeapSnapshot(this: *JSGlobalObject) JSValue {
+        return cppFn("generateHeapSnapshot", .{this});
+    }
+
     pub fn vm(this: *JSGlobalObject) *VM {
         return cppFn("vm", .{this});
     }
@@ -1031,6 +1035,7 @@ pub const JSGlobalObject = extern struct {
         "asyncGeneratorPrototype",
         "asyncGeneratorFunctionPrototype",
         "vm",
+        "generateHeapSnapshot",
         // "createError",
         // "throwError",
     };
@@ -1917,6 +1922,13 @@ pub const VM = extern struct {
         });
     }
 
+    pub fn runGC(vm: *VM, sync: bool) JSValue {
+        return cppFn("runGC", .{
+            vm,
+            sync,
+        });
+    }
+
     pub fn setExecutionForbidden(vm: *VM, forbidden: bool) void {
         cppFn("setExecutionForbidden", .{ vm, forbidden });
     }
@@ -1967,7 +1979,7 @@ pub const VM = extern struct {
         });
     }
 
-    pub const Extern = [_][]const u8{ "isJITEnabled", "deleteAllCode", "apiLock", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
+    pub const Extern = [_][]const u8{ "runGC", "generateHeapSnapshot", "isJITEnabled", "deleteAllCode", "apiLock", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
 };
 
 pub const ThrowScope = extern struct {

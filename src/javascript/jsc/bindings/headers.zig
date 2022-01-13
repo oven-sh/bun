@@ -211,6 +211,7 @@ pub extern fn JSC__JSGlobalObject__createAggregateError(arg0: [*c]JSC__JSGlobalO
 pub extern fn JSC__JSGlobalObject__datePrototype(arg0: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__errorPrototype(arg0: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__functionPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__FunctionPrototype;
+pub extern fn JSC__JSGlobalObject__generateHeapSnapshot(arg0: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSGlobalObject__generatorFunctionPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__GeneratorFunctionPrototype;
 pub extern fn JSC__JSGlobalObject__generatorPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__GeneratorPrototype;
 pub extern fn JSC__JSGlobalObject__iteratorPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__IteratorPrototype;
@@ -352,6 +353,7 @@ pub extern fn JSC__VM__drainMicrotasks(arg0: [*c]JSC__VM) void;
 pub extern fn JSC__VM__executionForbidden(arg0: [*c]JSC__VM) bool;
 pub extern fn JSC__VM__isEntered(arg0: [*c]JSC__VM) bool;
 pub extern fn JSC__VM__isJITEnabled(...) bool;
+pub extern fn JSC__VM__runGC(arg0: [*c]JSC__VM, arg1: bool) JSC__JSValue;
 pub extern fn JSC__VM__setExecutionForbidden(arg0: [*c]JSC__VM, arg1: bool) void;
 pub extern fn JSC__VM__setExecutionTimeLimit(arg0: [*c]JSC__VM, arg1: f64) void;
 pub extern fn JSC__VM__shrinkFootprint(arg0: [*c]JSC__VM) void;

@@ -733,7 +733,7 @@ bun-link-lld-release:
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	$(CXX) -c -o $@ $< \
 		$(CLANG_FLAGS) $(PLATFORM_LINKER_FLAGS) \
-		-O1 \
+		-O3 \
 		-w -g
 
 sizegen:

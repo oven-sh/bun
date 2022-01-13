@@ -1509,6 +1509,7 @@ const Arguments = struct {
             };
 
             if (exception.* != null) return null;
+            arguments.eat();
 
             var encoding = Encoding.buffer;
             var flag = FileSystemFlags.@"w";
@@ -2230,7 +2231,7 @@ const Return = struct {
             return switch (this) {
                 .with_file_types => JSC.To.JS.withType([]const DirEnt, this.with_file_types, ctx, exception),
                 .buffers => JSC.To.JS.withType([]const Buffer, this.buffers, ctx, exception),
-                .files => JSC.To.JS.withType([]const PathString, this.files, ctx, exception),
+                .files => JSC.To.JS.withTypeClone([]const PathString, this.files, ctx, exception, true),
             };
         }
     };

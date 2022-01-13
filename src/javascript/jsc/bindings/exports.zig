@@ -715,7 +715,6 @@ pub const ZigConsoleClient = struct {
         _,
     };
 
-    /// TODO: support %s %d %f %o %O
     /// https://console.spec.whatwg.org/#formatter
     pub fn messageWithTypeAndLevel(
         //console_: ZigConsoleClient.Type,
@@ -1525,12 +1524,16 @@ pub const ZigConsoleClient = struct {
         // console
         _: ZigConsoleClient.Type,
         // global
-        _: *JSGlobalObject,
+        globalThis: *JSGlobalObject,
         // chars
         _: [*]const u8,
         // len
         _: usize,
-    ) callconv(.C) void {}
+    ) callconv(.C) void {
+        // TODO: this does an extra JSONStringify and we don't need it to!
+        var snapshot: [1]JSValue = .{globalThis.generateHeapSnapshot()};
+        ZigConsoleClient.messageWithTypeAndLevel(undefined, MessageType.Log, MessageLevel.Debug, globalThis, &snapshot, 1);
+    }
     pub fn timeStamp(
         // console
         _: ZigConsoleClient.Type,

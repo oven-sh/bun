@@ -131,6 +131,10 @@ pub const To = struct {
         }
 
         pub fn withType(comptime Type: type, value: Type, context: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+            return withTypeClone(Type, value, context, exception, false);
+        }
+
+        pub fn withTypeClone(comptime Type: type, value: Type, context: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef, clone: bool) JSC.C.JSValueRef {
             if (comptime std.meta.trait.isNumber(Type)) {
                 return JSC.JSValue.jsNumberWithType(Type, value).asRef();
             }
@@ -146,6 +150,39 @@ pub const To = struct {
 
                     break :brk val.asObjectRef();
                 },
+                []const PathString, []const []const u8, []const []u8, [][]const u8, [][:0]const u8, [][:0]u8 => {
+                    var zig_strings_buf: [32]ZigString = undefined;
+                    var zig_strings: []ZigString = if (value.len < 32)
+                        &zig_strings_buf
+                    else
+                        (_global.default_allocator.alloc(ZigString, value.len) catch unreachable);
+                    defer if (zig_strings.ptr != &zig_strings_buf)
+                        _global.default_allocator.free(zig_strings);
+
+                    for (value) |path_string, i| {
+                        if (comptime Type == []const PathString) {
+                            zig_strings[i] = ZigString.init(path_string.slice());
+                        } else {
+                            zig_strings[i] = ZigString.init(path_string);
+                        }
+                    }
+
+                    var array = JSC.JSValue.createStringArray(context.asJSGlobalObject(), zig_strings.ptr, zig_strings.len, clone).asObjectRef();
+
+                    if (clone) {
+                        for (value) |path_string| {
+                            if (comptime Type == []const PathString) {
+                                _global.default_allocator.free(path_string.slice());
+                            } else {
+                                _global.default_allocator.free(path_string);
+                            }
+                        }
+                        _global.default_allocator.free(value);
+                    }
+
+                    return array;
+                },
+
                 JSC.C.JSValueRef => value,
 
                 else => {

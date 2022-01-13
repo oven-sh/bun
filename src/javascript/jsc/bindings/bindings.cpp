@@ -1,3 +1,4 @@
+#include "BunClientData.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "root.h"
@@ -9,6 +10,7 @@
 #include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/ExceptionScope.h>
 #include <JavaScriptCore/FunctionConstructor.h>
+#include <JavaScriptCore/HeapSnapshotBuilder.h>
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSArray.h>
@@ -39,8 +41,6 @@
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>
-
-#include "BunClientData.h"
 
 extern "C" {
 
@@ -899,6 +899,22 @@ bWTF__String JSC__JSFunction__calculatedDisplayName(JSC__JSFunction *arg0, JSC__
 };
 #pragma mark - JSC::JSGlobalObject
 
+JSC__JSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC__JSGlobalObject *globalObject) {
+  JSC::VM &vm = globalObject->vm();
+
+  JSC::JSLockHolder lock(vm);
+  // JSC::DeferTermination deferScope(vm);
+  auto scope = DECLARE_THROW_SCOPE(vm);
+
+  JSC::HeapSnapshotBuilder snapshotBuilder(vm.ensureHeapProfiler());
+  snapshotBuilder.buildSnapshot();
+
+  WTF::String jsonString = snapshotBuilder.json();
+  JSC::EncodedJSValue result = JSC::JSValue::encode(JSONParse(globalObject, jsonString));
+  scope.releaseAssertNoException();
+  return result;
+}
+
 JSC__ArrayIteratorPrototype *
 JSC__JSGlobalObject__arrayIteratorPrototype(JSC__JSGlobalObject *arg0) {
   return arg0->arrayIteratorPrototype();
@@ -1660,6 +1676,18 @@ const WTF__StringImpl *JSC__PropertyName__publicName(JSC__PropertyName *arg0) {
 const WTF__StringImpl *JSC__PropertyName__uid(JSC__PropertyName *arg0) { return arg0->uid(); };
 
 #pragma mark - JSC::VM
+
+JSC__JSValue JSC__VM__runGC(JSC__VM *vm, bool sync) {
+  JSC::JSLockHolder lock(vm);
+
+  if (sync) {
+    vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+  } else {
+    vm->heap.collectSync(JSC::CollectionScope::Full);
+  }
+
+  return JSC::JSValue::encode(JSC::jsNumber(vm->heap.sizeAfterLastFullCollection()));
+}
 
 bool JSC__VM__isJITEnabled() { return JSC::Options::useJIT(); }
 

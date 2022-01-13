@@ -561,6 +561,17 @@ pub const Bun = struct {
         );
     }
 
+    pub fn generateHeapSnapshot(
+        _: void,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        _: []const js.JSValueRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        return ctx.asJSGlobalObject().generateHeapSnapshot().asObjectRef();
+    }
+
     pub fn runGC(
         _: void,
         ctx: js.JSContextRef,
@@ -676,6 +687,10 @@ pub const Bun = struct {
             },
             .gc = .{
                 .rfn = Bun.runGC,
+                .ts = d.ts{},
+            },
+            .generateHeapSnapshot = .{
+                .rfn = Bun.generateHeapSnapshot,
                 .ts = d.ts{},
             },
         },

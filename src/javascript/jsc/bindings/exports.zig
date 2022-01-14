@@ -1156,7 +1156,7 @@ pub const ZigConsoleClient = struct {
             switch (comptime Format) {
                 .StringPossiblyFormatted => {
                     var str = ZigString.init("");
-                    value.toZigString(&str, JS.VirtualMachine.vm.global);
+                    value.toZigString(&str, globalThis);
 
                     if (!str.is16Bit()) {
                         const slice = str.slice();
@@ -1168,7 +1168,7 @@ pub const ZigConsoleClient = struct {
                 },
                 .String => {
                     var str = ZigString.init("");
-                    value.toZigString(&str, JS.VirtualMachine.vm.global);
+                    value.toZigString(&str, globalThis);
                     if (jsType == .RegExpObject) {
                         writer.print(comptime Output.prettyFmt("<r><red>", enable_ansi_colors), .{});
                     }

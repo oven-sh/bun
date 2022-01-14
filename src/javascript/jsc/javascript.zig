@@ -187,22 +187,22 @@ pub const Bun = struct {
 
     pub fn getCWD(
         _: void,
-        _: js.JSContextRef,
+        ctx: js.JSContextRef,
         _: js.JSValueRef,
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(VirtualMachine.vm.bundler.fs.top_level_dir).toValue(VirtualMachine.vm.global).asRef();
+        return ZigString.init(VirtualMachine.vm.bundler.fs.top_level_dir).toValue(ctx.ptr()).asRef();
     }
 
     pub fn getOrigin(
         _: void,
-        _: js.JSContextRef,
+        ctx: js.JSContextRef,
         _: js.JSValueRef,
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(VirtualMachine.vm.origin.origin).toValue(VirtualMachine.vm.global).asRef();
+        return ZigString.init(VirtualMachine.vm.origin.origin).toValue(ctx.ptr()).asRef();
     }
 
     pub fn enableANSIColors(
@@ -216,22 +216,22 @@ pub const Bun = struct {
     }
     pub fn getMain(
         _: void,
-        _: js.JSContextRef,
+        ctx: js.JSContextRef,
         _: js.JSValueRef,
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(VirtualMachine.vm.main).toValue(VirtualMachine.vm.global).asRef();
+        return ZigString.init(VirtualMachine.vm.main).toValue(ctx.ptr()).asRef();
     }
 
     pub fn getAssetPrefix(
         _: void,
-        _: js.JSContextRef,
+        ctx: js.JSContextRef,
         _: js.JSValueRef,
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(VirtualMachine.vm.bundler.options.routes.asset_prefix_path).toValue(VirtualMachine.vm.global).asRef();
+        return ZigString.init(VirtualMachine.vm.bundler.options.routes.asset_prefix_path).toValue(ctx.ptr()).asRef();
     }
 
     pub fn getArgv(
@@ -253,7 +253,7 @@ pub const Bun = struct {
             argv[i] = ZigString.init(std.mem.span(arg));
         }
 
-        return JSValue.createStringArray(VirtualMachine.vm.global, argv.ptr, argv.len, true).asObjectRef();
+        return JSValue.createStringArray(ctx.ptr(), argv.ptr, argv.len, true).asObjectRef();
     }
 
     pub fn getRoutesDir(
@@ -267,7 +267,7 @@ pub const Bun = struct {
             return js.JSValueMakeUndefined(ctx);
         }
 
-        return ZigString.init(VirtualMachine.vm.bundler.options.routes.dir).toValue(VirtualMachine.vm.global).asRef();
+        return ZigString.init(VirtualMachine.vm.bundler.options.routes.dir).toValue(ctx.ptr()).asRef();
     }
 
     pub fn getFilePath(ctx: js.JSContextRef, arguments: []const js.JSValueRef, buf: []u8, exception: js.ExceptionRef) ?string {
@@ -279,7 +279,7 @@ pub const Bun = struct {
         const value = arguments[0];
         if (js.JSValueIsString(ctx, value)) {
             var out = ZigString.Empty;
-            JSValue.toZigString(JSValue.fromRef(value), &out, VirtualMachine.vm.global);
+            JSValue.toZigString(JSValue.fromRef(value), &out, ctx.ptr());
             var out_slice = out.slice();
 
             // The dots are kind of unnecessary. They'll be normalized.
@@ -302,7 +302,7 @@ pub const Bun = struct {
                 }
             }
 
-            var iter = JSValue.fromRef(value).arrayIterator(VirtualMachine.vm.global);
+            var iter = JSValue.fromRef(value).arrayIterator(ctx.ptr());
             while (iter.next()) |item| {
                 if (temp_strings_list_len >= temp_strings_list.len) {
                     break;
@@ -314,7 +314,7 @@ pub const Bun = struct {
                 }
 
                 var out = ZigString.Empty;
-                JSValue.toZigString(item, &out, VirtualMachine.vm.global);
+                JSValue.toZigString(item, &out, ctx.ptr());
                 const out_slice = out.slice();
 
                 temp_strings_list[temp_strings_list_len] = out_slice;
@@ -352,7 +352,7 @@ pub const Bun = struct {
             return js.JSObjectMakeArray(ctx, 0, null, null);
         }
 
-        return JSValue.createStringArray(VirtualMachine.vm.global, styles.ptr, styles.len, true).asRef();
+        return JSValue.createStringArray(ctx.ptr(), styles.ptr, styles.len, true).asRef();
     }
 
     pub fn readFileAsStringCallback(
@@ -454,7 +454,7 @@ pub const Bun = struct {
             routes_list_strings[i] = ZigString.init(list[i]);
         }
 
-        const ref = JSValue.createStringArray(VirtualMachine.vm.global, &routes_list_strings, list.len, true).asRef();
+        const ref = JSValue.createStringArray(ctx.ptr(), &routes_list_strings, list.len, true).asRef();
         return ref;
     }
 
@@ -475,7 +475,7 @@ pub const Bun = struct {
             routes_list_strings[i] = ZigString.init(list[i]);
         }
 
-        const ref = JSValue.createStringArray(VirtualMachine.vm.global, &routes_list_strings, list.len, true).asRef();
+        const ref = JSValue.createStringArray(ctx.ptr(), &routes_list_strings, list.len, true).asRef();
         return ref;
     }
 
@@ -571,7 +571,7 @@ pub const Bun = struct {
         _: []const js.JSValueRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ctx.asJSGlobalObject().generateHeapSnapshot().asObjectRef();
+        return ctx.ptr().generateHeapSnapshot().asObjectRef();
     }
 
     pub fn runGC(
@@ -583,7 +583,7 @@ pub const Bun = struct {
         _: js.ExceptionRef,
     ) js.JSValueRef {
         Global.mimalloc_cleanup(true);
-        return ctx.asJSGlobalObject().vm().runGC(arguments.len > 0 and JSValue.fromRef(arguments[0]).toBoolean()).asRef();
+        return ctx.ptr().vm().runGC(arguments.len > 0 and JSValue.fromRef(arguments[0]).toBoolean()).asRef();
     }
 
     pub fn shrink(
@@ -594,7 +594,7 @@ pub const Bun = struct {
         _: []const js.JSValueRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        ctx.asJSGlobalObject().vm().shrinkFootprint();
+        ctx.ptr().vm().shrinkFootprint();
         return JSValue.jsUndefined().asRef();
     }
 
@@ -602,21 +602,21 @@ pub const Bun = struct {
 
     pub fn getPublicPathJS(
         _: void,
-        _: js.JSContextRef,
+        ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSObjectRef,
         arguments: []const js.JSValueRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
         var zig_str: ZigString = ZigString.Empty;
-        JSValue.toZigString(JSValue.fromRef(arguments[0]), &zig_str, VirtualMachine.vm.global);
+        JSValue.toZigString(JSValue.fromRef(arguments[0]), &zig_str, ctx.ptr());
 
         const to = zig_str.slice();
 
         var stream = std.io.fixedBufferStream(&public_path_temp_str);
         var writer = stream.writer();
         getPublicPath(to, VirtualMachine.vm.origin, @TypeOf(&writer), &writer);
-        return ZigString.init(stream.buffer[0..stream.pos]).toValueGC(VirtualMachine.vm.global).asRef();
+        return ZigString.init(stream.buffer[0..stream.pos]).toValueGC(ctx.ptr()).asRef();
     }
 
     pub const Class = NewClass(
@@ -796,13 +796,13 @@ pub const Bun = struct {
             var ptr = js.JSStringGetCharacters8Ptr(propertyName);
             var name = ptr[0..len];
             if (VirtualMachine.vm.bundler.env.map.get(name)) |value| {
-                return ZigString.toRef(value, VirtualMachine.vm.global);
+                return ZigString.toRef(value, ctx.ptr());
             }
 
             if (Output.enable_ansi_colors) {
                 // https://github.com/chalk/supports-color/blob/main/index.js
                 if (strings.eqlComptime(name, "FORCE_COLOR")) {
-                    return ZigString.toRef(BooleanString.@"true", VirtualMachine.vm.global);
+                    return ZigString.toRef(BooleanString.@"true", ctx.ptr());
                 }
             }
 
@@ -1159,13 +1159,12 @@ pub const VirtualMachine = struct {
     }
 
     inline fn _fetch(
-        global: *JSGlobalObject,
+        _: *JSGlobalObject,
         _specifier: string,
         _: string,
         log: *logger.Log,
     ) !ResolvedSource {
         std.debug.assert(VirtualMachine.vm_loaded);
-        std.debug.assert(VirtualMachine.vm.global == global);
 
         if (vm.node_modules != null and strings.eqlComptime(_specifier, bun_file_import_path)) {
             // We kind of need an abstraction around this.
@@ -1419,9 +1418,8 @@ pub const VirtualMachine = struct {
         path: string,
     };
 
-    fn _resolve(ret: *ResolveFunctionResult, global: *JSGlobalObject, specifier: string, source: string) !void {
+    fn _resolve(ret: *ResolveFunctionResult, _: *JSGlobalObject, specifier: string, source: string) !void {
         std.debug.assert(VirtualMachine.vm_loaded);
-        std.debug.assert(VirtualMachine.vm.global == global);
 
         if (vm.node_modules == null and strings.eqlComptime(std.fs.path.basename(specifier), Runtime.Runtime.Imports.alt_name)) {
             ret.path = Runtime.Runtime.Imports.Name;
@@ -1511,11 +1509,10 @@ pub const VirtualMachine = struct {
         ret.path = result_path.text;
     }
     pub fn queueMicrotaskToEventLoop(
-        global: *JSGlobalObject,
+        _: *JSGlobalObject,
         microtask: *Microtask,
     ) void {
         std.debug.assert(VirtualMachine.vm_loaded);
-        std.debug.assert(VirtualMachine.vm.global == global);
 
         vm.enqueueTask(Task.init(microtask));
     }
@@ -1544,7 +1541,7 @@ pub const VirtualMachine = struct {
             };
 
             {
-                res.* = ErrorableZigString.err(err, @ptrCast(*anyopaque, ResolveError.create(vm.allocator, msg, source.slice())));
+                res.* = ErrorableZigString.err(err, @ptrCast(*anyopaque, ResolveError.create(global, vm.allocator, msg, source.slice())));
             }
 
             return;
@@ -1603,12 +1600,12 @@ pub const VirtualMachine = struct {
         var log = logger.Log.init(vm.bundler.allocator);
         const spec = specifier.slice();
         const result = _fetch(global, spec, source.slice(), &log) catch |err| {
-            processFetchLog(specifier, source, &log, ret, err);
+            processFetchLog(global, specifier, source, &log, ret, err);
             return;
         };
 
         if (log.errors > 0) {
-            processFetchLog(specifier, source, &log, ret, error.LinkError);
+            processFetchLog(global, specifier, source, &log, ret, error.LinkError);
             return;
         }
 
@@ -1647,14 +1644,14 @@ pub const VirtualMachine = struct {
         ret.success = true;
     }
 
-    fn processFetchLog(specifier: ZigString, referrer: ZigString, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {
+    fn processFetchLog(globalThis: *JSGlobalObject, specifier: ZigString, referrer: ZigString, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {
         switch (log.msgs.items.len) {
             0 => {
                 const msg = logger.Msg{
                     .data = logger.rangeData(null, logger.Range.None, std.fmt.allocPrint(vm.allocator, "{s} while building {s}", .{ @errorName(err), specifier.slice() }) catch unreachable),
                 };
                 {
-                    ret.* = ErrorableResolvedSource.err(err, @ptrCast(*anyopaque, BuildError.create(vm.bundler.allocator, msg)));
+                    ret.* = ErrorableResolvedSource.err(err, @ptrCast(*anyopaque, BuildError.create(globalThis, vm.bundler.allocator, msg)));
                 }
                 return;
             },
@@ -1662,8 +1659,9 @@ pub const VirtualMachine = struct {
             1 => {
                 const msg = log.msgs.items[0];
                 ret.* = ErrorableResolvedSource.err(err, switch (msg.metadata) {
-                    .build => BuildError.create(vm.bundler.allocator, msg).?,
+                    .build => BuildError.create(globalThis, vm.bundler.allocator, msg).?,
                     .resolve => ResolveError.create(
+                        globalThis,
                         vm.bundler.allocator,
                         msg,
                         referrer.slice(),
@@ -1676,8 +1674,9 @@ pub const VirtualMachine = struct {
 
                 for (log.msgs.items) |msg, i| {
                     errors[i] = switch (msg.metadata) {
-                        .build => BuildError.create(vm.bundler.allocator, msg).?,
+                        .build => BuildError.create(globalThis, vm.bundler.allocator, msg).?,
                         .resolve => ResolveError.create(
+                            globalThis,
                             vm.bundler.allocator,
                             msg,
                             referrer.slice(),
@@ -1687,7 +1686,7 @@ pub const VirtualMachine = struct {
 
                 ret.* = ErrorableResolvedSource.err(
                     err,
-                    vm.global.createAggregateError(
+                    globalThis.createAggregateError(
                         errors.ptr,
                         @intCast(u16, errors.len),
                         &ZigString.init(
@@ -2409,6 +2408,7 @@ pub const ResolveError = struct {
     );
 
     pub fn create(
+        globalThis: *JSGlobalObject,
         allocator: std.mem.Allocator,
         msg: logger.Msg,
         referrer: string,
@@ -2419,8 +2419,8 @@ pub const ResolveError = struct {
             .allocator = allocator,
             .referrer = Fs.Path.init(referrer),
         };
-        var ref = Class.make(VirtualMachine.vm.global.ctx(), resolve_error);
-        js.JSValueProtect(VirtualMachine.vm.global.ref(), ref);
+        var ref = Class.make(globalThis.ref(), resolve_error);
+        js.JSValueProtect(globalThis.ref(), ref);
         return ref;
     }
 
@@ -2436,32 +2436,32 @@ pub const ResolveError = struct {
 
     pub fn getMessage(
         this: *ResolveError,
-        _: js.JSContextRef,
+        ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(this.msg.data.text).toValue(VirtualMachine.vm.global).asRef();
+        return ZigString.init(this.msg.data.text).toValue(ctx.ptr()).asRef();
     }
 
     pub fn getSpecifier(
         this: *ResolveError,
-        _: js.JSContextRef,
+        ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(this.msg.metadata.resolve.specifier.slice(this.msg.data.text)).toValue(VirtualMachine.vm.global).asRef();
+        return ZigString.init(this.msg.metadata.resolve.specifier.slice(this.msg.data.text)).toValue(ctx.ptr()).asRef();
     }
 
     pub fn getImportKind(
         this: *ResolveError,
-        _: js.JSContextRef,
+        ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(@tagName(this.msg.metadata.resolve.import_kind)).toValue(VirtualMachine.vm.global).asRef();
+        return ZigString.init(@tagName(this.msg.metadata.resolve.import_kind)).toValue(ctx.ptr()).asRef();
     }
 
     pub fn getReferrer(
@@ -2472,7 +2472,7 @@ pub const ResolveError = struct {
         _: js.ExceptionRef,
     ) js.JSValueRef {
         if (this.referrer) |referrer| {
-            return ZigString.init(referrer.text).toValue(VirtualMachine.vm.global).asRef();
+            return ZigString.init(referrer.text).toValue(ctx.ptr()).asRef();
         } else {
             return js.JSValueMakeNull(ctx);
         }
@@ -2481,12 +2481,12 @@ pub const ResolveError = struct {
     const BuildErrorName = "ResolveError";
     pub fn getName(
         _: *ResolveError,
-        _: js.JSContextRef,
+        ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(BuildErrorName).toValue(VirtualMachine.vm.global).asRef();
+        return ZigString.init(BuildErrorName).toValue(ctx.ptr()).asRef();
     }
 };
 
@@ -2521,6 +2521,7 @@ pub const BuildError = struct {
     );
 
     pub fn create(
+        globalThis: *JSGlobalObject,
         allocator: std.mem.Allocator,
         msg: logger.Msg,
         // resolve_result: *const Resolver.Result,
@@ -2532,8 +2533,8 @@ pub const BuildError = struct {
             .allocator = allocator,
         };
 
-        var ref = Class.make(VirtualMachine.vm.global.ref(), build_error);
-        js.JSValueProtect(VirtualMachine.vm.global.ref(), ref);
+        var ref = Class.make(globalThis.ref(), build_error);
+        js.JSValueProtect(globalThis.ref(), ref);
         return ref;
     }
 
@@ -2673,23 +2674,23 @@ pub const BuildError = struct {
 
     pub fn getMessage(
         this: *BuildError,
-        _: js.JSContextRef,
+        ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(this.msg.data.text).toValue(VirtualMachine.vm.global).asRef();
+        return ZigString.init(this.msg.data.text).toValue(ctx.ptr()).asRef();
     }
 
     const BuildErrorName = "BuildError";
     pub fn getName(
         _: *BuildError,
-        _: js.JSContextRef,
+        ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(BuildErrorName).toValue(VirtualMachine.vm.global).asRef();
+        return ZigString.init(BuildErrorName).toValue(ctx.ptr()).asRef();
     }
 };
 

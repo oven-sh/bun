@@ -146,7 +146,7 @@ pub const To = struct {
                 bool => JSC.C.JSValueMakeBoolean(context, value),
                 []const u8, [:0]const u8, [*:0]const u8, []u8, [:0]u8, [*:0]u8 => brk: {
                     zig_str = ZigString.init(value);
-                    const val = zig_str.toValueAuto(context.asJSGlobalObject());
+                    const val = zig_str.toValueAuto(context.ptr());
 
                     break :brk val.asObjectRef();
                 },
@@ -167,7 +167,7 @@ pub const To = struct {
                         }
                     }
 
-                    var array = JSC.JSValue.createStringArray(context.asJSGlobalObject(), zig_strings.ptr, zig_strings.len, clone).asObjectRef();
+                    var array = JSC.JSValue.createStringArray(context.ptr(), zig_strings.ptr, zig_strings.len, clone).asObjectRef();
 
                     if (clone) {
                         for (value) |path_string| {
@@ -191,7 +191,7 @@ pub const To = struct {
                         const Enum: std.builtin.TypeInfo.Enum = Info.Enum;
                         if (comptime !std.meta.trait.isNumber(Enum.tag_type)) {
                             zig_str = JSC.ZigString.init(@tagName(value));
-                            return zig_str.toValue(context.asJSGlobalObject()).asObjectRef();
+                            return zig_str.toValue(context.ptr()).asObjectRef();
                         }
                     }
 
@@ -253,7 +253,7 @@ pub const To = struct {
 
                     if (comptime std.meta.trait.isZigString(Type)) {
                         zig_str = JSC.ZigString.init(value);
-                        return zig_str.toValue(context.asJSGlobalObject()).asObjectRef();
+                        return zig_str.toValue(context.ptr()).asObjectRef();
                     }
 
                     if (comptime Info == .Pointer) {
@@ -1664,14 +1664,14 @@ pub fn JSError(
     if (comptime std.meta.fields(@TypeOf(args)).len == 0) {
         var zig_str = JSC.ZigString.init(fmt);
         zig_str.detectEncoding();
-        error_args[0] = zig_str.toValueAuto(JavaScript.VirtualMachine.vm.global).asObjectRef();
+        error_args[0] = zig_str.toValueAuto(ctx.ptr()).asObjectRef();
         exception.* = js.JSObjectMakeError(ctx, 1, &error_args, null);
     } else {
         var buf = std.fmt.allocPrint(default_allocator, fmt, args) catch unreachable;
         var zig_str = JSC.ZigString.init(buf);
         zig_str.detectEncoding();
 
-        error_args[0] = zig_str.toValueGC(JavaScript.VirtualMachine.vm.global).asObjectRef();
+        error_args[0] = zig_str.toValueGC(ctx.ptr()).asObjectRef();
         exception.* = js.JSObjectMakeError(ctx, 1, &error_args, null);
     }
 }
@@ -1695,7 +1695,7 @@ pub fn throwTypeError(
         zig_str.mark();
     }
     const code_str = ZigString.init(@tagName(code));
-    exception.* = JSC.JSValue.createTypeError(&zig_str, &code_str, ctx.asJSGlobalObject()).asObjectRef();
+    exception.* = JSC.JSValue.createTypeError(&zig_str, &code_str, ctx.ptr()).asObjectRef();
 }
 
 pub fn throwInvalidArguments(

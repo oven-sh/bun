@@ -1,6 +1,6 @@
 const cpp = @import("./bindings/bindings.zig");
 const generic = opaque {
-    pub inline fn asJSGlobalObject(this: *@This()) *cpp.JSGlobalObject {
+    pub inline fn ptr(this: *@This()) *cpp.JSGlobalObject {
         return @ptrCast(*cpp.JSGlobalObject, @alignCast(@alignOf(*cpp.JSGlobalObject), this));
     }
 };

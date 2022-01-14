@@ -353,7 +353,7 @@ pub const Expect = struct {
             return js.JSValueMakeUndefined(ctx);
         }
         this.scope.tests.items[this.test_id].counter.actual += 1;
-        if (!JSValue.fromRef(arguments[0]).isSameValue(JSValue.fromRef(this.value), VirtualMachine.vm.global)) {
+        if (!JSValue.fromRef(arguments[0]).isSameValue(JSValue.fromRef(this.value), ctx.ptr())) {
             JSC.JSError(
                 getAllocator(ctx),
                 "fail",
@@ -537,7 +537,7 @@ pub const TestScope = struct {
 
         if (js.JSValueIsString(ctx, args[0])) {
             var label_ = ZigString.init("");
-            JSC.JSValue.fromRef(arguments[0]).toZigString(&label_, VirtualMachine.vm.global);
+            JSC.JSValue.fromRef(arguments[0]).toZigString(&label_, ctx.ptr());
             label = if (label_.is16Bit())
                 (strings.toUTF8AllocWithType(getAllocator(ctx), @TypeOf(label_.utf16Slice()), label_.utf16Slice()) catch unreachable)
             else
@@ -663,7 +663,7 @@ pub const DescribeScope = struct {
         var args = arguments;
 
         if (js.JSValueIsString(ctx, arguments[0])) {
-            JSC.JSValue.fromRef(arguments[0]).toZigString(&label, JSC.VirtualMachine.vm.global);
+            JSC.JSValue.fromRef(arguments[0]).toZigString(&label, ctx.ptr());
             args = args[1..];
         }
 
@@ -697,7 +697,7 @@ pub const DescribeScope = struct {
 
         {
             var result = js.JSObjectCallAsFunctionReturnValue(ctx, callback, thisObject, 0, null);
-            if (result.isException(VirtualMachine.vm.global.vm())) {
+            if (result.isException(ctx.ptr().vm())) {
                 exception.* = result.asObjectRef();
                 return null;
             }
@@ -766,7 +766,7 @@ pub const DescribeScope = struct {
         while (i < callbacks.items.len) : (i += 1) {
             var callback = callbacks.items[i];
             var result = js.JSObjectCallAsFunctionReturnValue(ctx, callback, this, 0);
-            if (result.isException(VirtualMachine.vm.global.vm())) {
+            if (result.isException(ctx.ptr().vm())) {
                 exception.* = result.asObjectRef();
                 return false;
             }

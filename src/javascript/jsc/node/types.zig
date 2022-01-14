@@ -291,7 +291,7 @@ pub const PathLike = union(Tag) {
             JSC.JSValue.JSType.DerivedStringObject,
             => {
                 var zig_str = JSC.ZigString.init("");
-                arg.toZigString(&zig_str, ctx.asJSGlobalObject());
+                arg.toZigString(&zig_str, ctx.ptr());
 
                 if (!Valid.pathString(zig_str, ctx, exception)) return null;
 
@@ -448,7 +448,7 @@ pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.
         //        digit (5 in the example), specifies the permissions for others.
 
         var zig_str = JSC.ZigString.init("");
-        value.toZigString(&zig_str, ctx.asJSGlobalObject());
+        value.toZigString(&zig_str, ctx.ptr());
         var slice = zig_str.slice();
         if (strings.hasPrefix(slice, "0o")) {
             slice = slice[2..];
@@ -558,7 +558,7 @@ pub const FileSystemFlags = enum(Mode) {
         const jsType = val.jsType();
         if (jsType.isStringLike()) {
             var zig_str = JSC.ZigString.init("");
-            val.toZigString(&zig_str, ctx.asJSGlobalObject());
+            val.toZigString(&zig_str, ctx.ptr());
 
             var buf: [4]u8 = .{ 0, 0, 0, 0 };
             @memcpy(&buf, zig_str.ptr, @minimum(buf.len, zig_str.len));

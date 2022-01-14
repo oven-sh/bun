@@ -486,10 +486,10 @@ const Arguments = struct {
             const big_int = brk: {
                 if (arguments.next()) |next_val| {
                     if (next_val.isObject()) {
-                        if (next_val.isCallable(ctx.asJSGlobalObject().vm())) break :brk false;
+                        if (next_val.isCallable(ctx.ptr().vm())) break :brk false;
                         arguments.eat();
 
-                        if (next_val.getIfPropertyExists(ctx.asJSGlobalObject(), "bigint")) |big_int| {
+                        if (next_val.getIfPropertyExists(ctx.ptr(), "bigint")) |big_int| {
                             break :brk big_int.toBoolean();
                         }
                     }
@@ -535,10 +535,10 @@ const Arguments = struct {
             const big_int = brk: {
                 if (arguments.next()) |next_val| {
                     if (next_val.isObject()) {
-                        if (next_val.isCallable(ctx.asJSGlobalObject().vm())) break :brk false;
+                        if (next_val.isCallable(ctx.ptr().vm())) break :brk false;
                         arguments.eat();
 
-                        if (next_val.getIfPropertyExists(ctx.asJSGlobalObject(), "bigint")) |big_int| {
+                        if (next_val.getIfPropertyExists(ctx.ptr(), "bigint")) |big_int| {
                             break :brk big_int.toBoolean();
                         }
                     }
@@ -667,12 +667,12 @@ const Arguments = struct {
 
                 switch (val.jsType()) {
                     JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject => {
-                        encoding = Encoding.fromStringValue(val, ctx.asJSGlobalObject()) orelse Encoding.utf8;
+                        encoding = Encoding.fromStringValue(val, ctx.ptr()) orelse Encoding.utf8;
                     },
                     else => {
                         if (val.isObject()) {
-                            if (val.getIfPropertyExists(ctx.asJSGlobalObject(), "encoding")) |encoding_| {
-                                encoding = Encoding.fromStringValue(encoding_, ctx.asJSGlobalObject()) orelse Encoding.utf8;
+                            if (val.getIfPropertyExists(ctx.ptr(), "encoding")) |encoding_| {
+                                encoding = Encoding.fromStringValue(encoding_, ctx.ptr()) orelse Encoding.utf8;
                             }
                         }
                     },
@@ -707,12 +707,12 @@ const Arguments = struct {
 
                 switch (val.jsType()) {
                     JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject => {
-                        encoding = Encoding.fromStringValue(val, ctx.asJSGlobalObject()) orelse Encoding.utf8;
+                        encoding = Encoding.fromStringValue(val, ctx.ptr()) orelse Encoding.utf8;
                     },
                     else => {
                         if (val.isObject()) {
-                            if (val.getIfPropertyExists(ctx.asJSGlobalObject(), "encoding")) |encoding_| {
-                                encoding = Encoding.fromStringValue(encoding_, ctx.asJSGlobalObject()) orelse Encoding.utf8;
+                            if (val.getIfPropertyExists(ctx.ptr(), "encoding")) |encoding_| {
+                                encoding = Encoding.fromStringValue(encoding_, ctx.ptr()) orelse Encoding.utf8;
                             }
                         }
                     },
@@ -796,11 +796,11 @@ const Arguments = struct {
                 arguments.eat();
 
                 if (val.isObject()) {
-                    if (val.getIfPropertyExists(ctx.asJSGlobalObject(), "recursive")) |recursive_| {
+                    if (val.getIfPropertyExists(ctx.ptr(), "recursive")) |recursive_| {
                         recursive = recursive_.toBoolean();
                     }
 
-                    if (val.getIfPropertyExists(ctx.asJSGlobalObject(), "mode")) |mode_| {
+                    if (val.getIfPropertyExists(ctx.ptr(), "mode")) |mode_| {
                         mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse mode;
                     }
                 }
@@ -822,7 +822,7 @@ const Arguments = struct {
             const prefix_value = arguments.next() orelse return MkdirTemp{};
 
             var prefix = JSC.ZigString.Empty;
-            prefix_value.toZigString(&prefix, ctx.asJSGlobalObject());
+            prefix_value.toZigString(&prefix, ctx.ptr());
 
             if (exception.* != null) return null;
 
@@ -835,12 +835,12 @@ const Arguments = struct {
 
                 switch (val.jsType()) {
                     JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject => {
-                        encoding = Encoding.fromStringValue(val, ctx.asJSGlobalObject()) orelse Encoding.utf8;
+                        encoding = Encoding.fromStringValue(val, ctx.ptr()) orelse Encoding.utf8;
                     },
                     else => {
                         if (val.isObject()) {
-                            if (val.getIfPropertyExists(ctx.asJSGlobalObject(), "encoding")) |encoding_| {
-                                encoding = Encoding.fromStringValue(encoding_, ctx.asJSGlobalObject()) orelse Encoding.utf8;
+                            if (val.getIfPropertyExists(ctx.ptr(), "encoding")) |encoding_| {
+                                encoding = Encoding.fromStringValue(encoding_, ctx.ptr()) orelse Encoding.utf8;
                             }
                         }
                     },
@@ -882,15 +882,15 @@ const Arguments = struct {
 
                 switch (val.jsType()) {
                     JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject => {
-                        encoding = Encoding.fromStringValue(val, ctx.asJSGlobalObject()) orelse Encoding.utf8;
+                        encoding = Encoding.fromStringValue(val, ctx.ptr()) orelse Encoding.utf8;
                     },
                     else => {
                         if (val.isObject()) {
-                            if (val.getIfPropertyExists(ctx.asJSGlobalObject(), "encoding")) |encoding_| {
-                                encoding = Encoding.fromStringValue(encoding_, ctx.asJSGlobalObject()) orelse Encoding.utf8;
+                            if (val.getIfPropertyExists(ctx.ptr(), "encoding")) |encoding_| {
+                                encoding = Encoding.fromStringValue(encoding_, ctx.ptr()) orelse Encoding.utf8;
                             }
 
-                            if (val.getIfPropertyExists(ctx.asJSGlobalObject(), "withFileTypes")) |with_file_types_| {
+                            if (val.getIfPropertyExists(ctx.ptr(), "withFileTypes")) |with_file_types_| {
                                 with_file_types = with_file_types_.toBoolean();
                             }
                         }
@@ -967,11 +967,11 @@ const Arguments = struct {
                 arguments.eat();
 
                 if (val.isObject()) {
-                    if (val.getIfPropertyExists(ctx.asJSGlobalObject(), "flags")) |flags_| {
+                    if (val.getIfPropertyExists(ctx.ptr(), "flags")) |flags_| {
                         flags = FileSystemFlags.fromJS(ctx, flags_, exception) orelse flags;
                     }
 
-                    if (val.getIfPropertyExists(ctx.asJSGlobalObject(), "mode")) |mode_| {
+                    if (val.getIfPropertyExists(ctx.ptr(), "mode")) |mode_| {
                         mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse mode;
                     }
                 }
@@ -1175,7 +1175,7 @@ const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            const buffer = StringOrBuffer.fromJS(ctx.asJSGlobalObject(), arguments.next() orelse {
+            const buffer = StringOrBuffer.fromJS(ctx.ptr(), arguments.next() orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "data is required",
@@ -1223,7 +1223,7 @@ const Arguments = struct {
                             }
 
                             if (current.isString()) {
-                                args.encoding = Encoding.fromStringValue(current, ctx.asJSGlobalObject()) orelse Encoding.utf8;
+                                args.encoding = Encoding.fromStringValue(current, ctx.ptr()) orelse Encoding.utf8;
                                 arguments.eat();
                             }
                         },
@@ -1289,7 +1289,7 @@ const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            const buffer = Buffer.fromJS(ctx.asJSGlobalObject(), arguments.next() orelse {
+            const buffer = Buffer.fromJS(ctx.ptr(), arguments.next() orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "buffer is required",
@@ -1358,15 +1358,15 @@ const Arguments = struct {
                     args.position = if (position > -1) @intCast(ReadPosition, position) else null;
                     arguments.remaining = arguments.remaining[2..];
                 } else if (current.isObject()) {
-                    if (current.getIfPropertyExists(ctx.asJSGlobalObject(), "offset")) |num| {
+                    if (current.getIfPropertyExists(ctx.ptr(), "offset")) |num| {
                         args.offset = num.toU32();
                     }
 
-                    if (current.getIfPropertyExists(ctx.asJSGlobalObject(), "length")) |num| {
+                    if (current.getIfPropertyExists(ctx.ptr(), "length")) |num| {
                         args.length = num.toU32();
                     }
 
-                    if (current.getIfPropertyExists(ctx.asJSGlobalObject(), "position")) |num| {
+                    if (current.getIfPropertyExists(ctx.ptr(), "position")) |num| {
                         const position: i32 = if (num.isUndefinedOrNull()) -1 else num.toInt32();
                         if (position > -1) {
                             args.position = @intCast(ReadPosition, position);
@@ -1411,7 +1411,7 @@ const Arguments = struct {
             if (arguments.next()) |arg| {
                 arguments.eat();
                 if (arg.isString()) {
-                    encoding = Encoding.fromStringValue(arg, ctx.asJSGlobalObject()) orelse {
+                    encoding = Encoding.fromStringValue(arg, ctx.ptr()) orelse {
                         if (exception.* == null) {
                             JSC.throwInvalidArguments(
                                 "Invalid encoding",
@@ -1423,9 +1423,9 @@ const Arguments = struct {
                         return null;
                     };
                 } else if (arg.isObject()) {
-                    if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "encoding")) |encoding_| {
+                    if (arg.getIfPropertyExists(ctx.ptr(), "encoding")) |encoding_| {
                         if (!encoding_.isUndefinedOrNull()) {
-                            encoding = Encoding.fromStringValue(encoding_, ctx.asJSGlobalObject()) orelse {
+                            encoding = Encoding.fromStringValue(encoding_, ctx.ptr()) orelse {
                                 if (exception.* == null) {
                                     JSC.throwInvalidArguments(
                                         "Invalid encoding",
@@ -1439,7 +1439,7 @@ const Arguments = struct {
                         }
                     }
 
-                    if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "flag")) |flag_| {
+                    if (arg.getIfPropertyExists(ctx.ptr(), "flag")) |flag_| {
                         flag = FileSystemFlags.fromJS(ctx, flag_, exception) orelse {
                             if (exception.* == null) {
                                 JSC.throwInvalidArguments(
@@ -1486,7 +1486,7 @@ const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            const data = StringOrBuffer.fromJS(ctx.asJSGlobalObject(), arguments.next() orelse {
+            const data = StringOrBuffer.fromJS(ctx.ptr(), arguments.next() orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "data is required",
@@ -1518,7 +1518,7 @@ const Arguments = struct {
             if (arguments.next()) |arg| {
                 arguments.eat();
                 if (arg.isString()) {
-                    encoding = Encoding.fromStringValue(arg, ctx.asJSGlobalObject()) orelse {
+                    encoding = Encoding.fromStringValue(arg, ctx.ptr()) orelse {
                         if (exception.* == null) {
                             JSC.throwInvalidArguments(
                                 "Invalid encoding",
@@ -1530,9 +1530,9 @@ const Arguments = struct {
                         return null;
                     };
                 } else if (arg.isObject()) {
-                    if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "encoding")) |encoding_| {
+                    if (arg.getIfPropertyExists(ctx.ptr(), "encoding")) |encoding_| {
                         if (!encoding_.isUndefinedOrNull()) {
-                            encoding = Encoding.fromStringValue(encoding_, ctx.asJSGlobalObject()) orelse {
+                            encoding = Encoding.fromStringValue(encoding_, ctx.ptr()) orelse {
                                 if (exception.* == null) {
                                     JSC.throwInvalidArguments(
                                         "Invalid encoding",
@@ -1546,7 +1546,7 @@ const Arguments = struct {
                         }
                     }
 
-                    if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "flag")) |flag_| {
+                    if (arg.getIfPropertyExists(ctx.ptr(), "flag")) |flag_| {
                         flag = FileSystemFlags.fromJS(ctx, flag_, exception) orelse {
                             if (exception.* == null) {
                                 JSC.throwInvalidArguments(
@@ -1560,7 +1560,7 @@ const Arguments = struct {
                         };
                     }
 
-                    if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "mode")) |mode_| {
+                    if (arg.getIfPropertyExists(ctx.ptr(), "mode")) |mode_| {
                         mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse {
                             if (exception.* == null) {
                                 JSC.throwInvalidArguments(
@@ -1617,7 +1617,7 @@ const Arguments = struct {
             if (arguments.next()) |arg| {
                 arguments.eat();
                 if (arg.isString()) {
-                    encoding = Encoding.fromStringValue(arg, ctx.asJSGlobalObject()) orelse {
+                    encoding = Encoding.fromStringValue(arg, ctx.ptr()) orelse {
                         if (exception.* == null) {
                             JSC.throwInvalidArguments(
                                 "Invalid encoding",
@@ -1629,9 +1629,9 @@ const Arguments = struct {
                         return null;
                     };
                 } else if (arg.isObject()) {
-                    if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "encoding")) |encoding_| {
+                    if (arg.getIfPropertyExists(ctx.ptr(), "encoding")) |encoding_| {
                         if (!encoding_.isUndefinedOrNull()) {
-                            encoding = Encoding.fromStringValue(encoding_, ctx.asJSGlobalObject()) orelse {
+                            encoding = Encoding.fromStringValue(encoding_, ctx.ptr()) orelse {
                                 if (exception.* == null) {
                                     JSC.throwInvalidArguments(
                                         "Invalid encoding",
@@ -1645,7 +1645,7 @@ const Arguments = struct {
                         }
                     }
 
-                    if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "bufferSize")) |buffer_size_| {
+                    if (arg.getIfPropertyExists(ctx.ptr(), "bufferSize")) |buffer_size_| {
                         buffer_size = buffer_size_.toInt32();
                         if (buffer_size < 0) {
                             if (exception.* == null) {
@@ -1772,7 +1772,7 @@ const Arguments = struct {
                 if (arguments.next()) |arg| {
                     arguments.eat();
                     if (arg.isString()) {
-                        stream.encoding = Encoding.fromStringValue(arg, ctx.asJSGlobalObject()) orelse {
+                        stream.encoding = Encoding.fromStringValue(arg, ctx.ptr()) orelse {
                             if (exception.* == null) {
                                 JSC.throwInvalidArguments(
                                     "Invalid encoding",
@@ -1784,9 +1784,9 @@ const Arguments = struct {
                             return null;
                         };
                     } else if (arg.isObject()) {
-                        if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "encoding")) |encoding_| {
+                        if (arg.getIfPropertyExists(ctx.ptr(), "encoding")) |encoding_| {
                             if (!encoding_.isUndefinedOrNull()) {
-                                stream.encoding = Encoding.fromStringValue(encoding_, ctx.asJSGlobalObject()) orelse {
+                                stream.encoding = Encoding.fromStringValue(encoding_, ctx.ptr()) orelse {
                                     if (exception.* == null) {
                                         JSC.throwInvalidArguments(
                                             "Invalid encoding",
@@ -1800,7 +1800,7 @@ const Arguments = struct {
                             }
                         }
 
-                        if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "flags")) |flags_| {
+                        if (arg.getIfPropertyExists(ctx.ptr(), "flags")) |flags_| {
                             stream.flags = FileSystemFlags.fromJS(ctx, flags_, exception) orelse {
                                 if (exception.* == null) {
                                     JSC.throwInvalidArguments(
@@ -1814,7 +1814,7 @@ const Arguments = struct {
                             };
                         }
 
-                        if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "mode")) |mode_| {
+                        if (arg.getIfPropertyExists(ctx.ptr(), "mode")) |mode_| {
                             stream.mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse {
                                 if (exception.* == null) {
                                     JSC.throwInvalidArguments(
@@ -1828,19 +1828,19 @@ const Arguments = struct {
                             };
                         }
 
-                        if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "autoClose")) |auto_close_| {
+                        if (arg.getIfPropertyExists(ctx.ptr(), "autoClose")) |auto_close_| {
                             stream.auto_close = auto_close_.toBoolean();
                         }
 
-                        if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "emitClose")) |emit_close_| {
+                        if (arg.getIfPropertyExists(ctx.ptr(), "emitClose")) |emit_close_| {
                             stream.emit_close = emit_close_.toBoolean();
                         }
 
-                        if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "start")) |start_| {
+                        if (arg.getIfPropertyExists(ctx.ptr(), "start")) |start_| {
                             stream.start = start_.toU32();
                         }
 
-                        if (arg.getIfPropertyExists(ctx.asJSGlobalObject(), "highWaterMark")) |highwater_mark_| {
+                        if (arg.getIfPropertyExists(ctx.ptr(), "highWaterMark")) |highwater_mark_| {
                             stream.highwater_mark = highwater_mark_.toU32();
                         }
                     }
@@ -2188,7 +2188,7 @@ const Return = struct {
         // Excited for the issue that's like "cannot read file bigger than 2 GB"
         pub fn toJS(this: Read, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
             return JSC.JSValue.createObject2(
-                ctx.asJSGlobalObject(),
+                ctx.ptr(),
                 &fields.bytesRead,
                 &fields.buffer,
                 JSC.JSValue.jsNumberFromInt32(@intCast(i32, @minimum(std.math.maxInt(i32), this.bytes_read))),
@@ -2207,7 +2207,7 @@ const Return = struct {
         // Excited for the issue that's like "cannot read file bigger than 2 GB"
         pub fn toJS(this: Write, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
             return JSC.JSValue.createObject2(
-                ctx.asJSGlobalObject(),
+                ctx.ptr(),
                 &fields.bytesWritten,
                 &fields.buffer,
                 JSC.JSValue.jsNumberFromInt32(@intCast(i32, @minimum(std.math.maxInt(i32), this.bytes_written))),

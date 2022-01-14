@@ -370,6 +370,6 @@ pub const Error = struct {
             sys.path = JSC.ZigString.init(this.path);
         }
 
-        return sys.toErrorInstance(ctx.asJSGlobalObject()).asObjectRef();
+        return sys.toErrorInstance(ctx.ptr()).asObjectRef();
     }
 };

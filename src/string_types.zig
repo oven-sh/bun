@@ -35,7 +35,7 @@ pub const PathString = packed struct {
         var zig_str = JSC.ZigString.init(this.slice());
         zig_str.detectEncoding();
 
-        return zig_str.toValueAuto(ctx.asJSGlobalObject()).asObjectRef();
+        return zig_str.toValueAuto(ctx.ptr()).asObjectRef();
     }
 
     pub inline fn slice(this: anytype) string {

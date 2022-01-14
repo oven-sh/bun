@@ -105,9 +105,16 @@ pub const StringOrBuffer = union(Tag) {
         };
     }
 
+    pub export fn external_string_finalizer(_: ?*anyopaque, _: JSC.C.JSStringRef, buffer: *anyopaque, byteLength: usize) void {
+        _global.default_allocator.free(@ptrCast([*]const u8, buffer)[0..byteLength]);
+    }
+
     pub fn toJS(this: StringOrBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
         return switch (this) {
-            .string => JSC.To.JS.withType(string, this.string, ctx, exception),
+            .string => {
+                var external = JSC.C.JSStringCreateExternal(this.string.ptr, this.string.len, null, external_string_finalizer);
+                return JSC.C.JSValueMakeString(ctx, external);
+            },
             .buffer => this.buffer.toJSObjectRef(ctx, exception),
         };
     }
@@ -163,10 +170,10 @@ pub const Encoding = enum {
         const slice = str.slice();
         return switch (slice.len) {
             0...2 => null,
-            else => switch (Eight.match(slice)) {
-                Eight.case("utf8") => Encoding.utf8,
-                Eight.case("ucs2") => Encoding.ucs2,
-                Eight.case("utf16le") => Encoding.utf16le,
+            else => switch (Eight.matchLower(slice)) {
+                Eight.case("utf-8"), Eight.case("utf8") => Encoding.utf8,
+                Eight.case("ucs-2"), Eight.case("ucs2") => Encoding.ucs2,
+                Eight.case("utf16-le"), Eight.case("utf16le") => Encoding.utf16le,
                 Eight.case("latin1") => Encoding.latin1,
                 Eight.case("ascii") => Encoding.ascii,
                 Eight.case("base64") => Encoding.base64,
@@ -175,7 +182,7 @@ pub const Encoding = enum {
                 else => null,
             },
             "base64url".len => brk: {
-                if (strings.eqlComptime(slice, "base64url")) {
+                if (strings.eqlCaseInsensitiveASCII(slice, "base64url", false)) {
                     break :brk Encoding.base64url;
                 }
                 break :brk null;

@@ -730,14 +730,22 @@ pub const ZigConsoleClient = struct {
             return;
         }
 
+        var console = JS.VirtualMachine.vm.console;
+
         if (message_type == .Clear) {
             Output.resetTerminal();
             return;
         }
 
-        if (len == 0) return;
+        if (message_type == .Assert and len == 0) {
+            const text = if (Output.enable_ansi_colors_stderr)
+                Output.prettyFmt("<r><red>Assertion failed<r>\n", true)
+            else
+                "Assertion failed\n";
+            console.error_writer.unbuffered_writer.writeAll(text) catch unreachable;
+            return;
+        }
 
-        var console = JS.VirtualMachine.vm.console;
         const enable_colors = if (level == .Warning or level == .Error)
             Output.enable_ansi_colors_stderr
         else
@@ -758,6 +766,7 @@ pub const ZigConsoleClient = struct {
                 node.release();
             }
         }
+
         if (len == 1) {
             fmt = Formatter{ .remaining_values = &[_]JSValue{} };
             const tag = Formatter.Tag.get(vals[0], global);
@@ -767,6 +776,9 @@ pub const ZigConsoleClient = struct {
 
             if (tag.tag == .String) {
                 if (enable_colors) {
+                    if (level == .Error) {
+                        unbuffered_writer.writeAll(comptime Output.prettyFmt("<r><red>", true)) catch unreachable;
+                    }
                     fmt.format(
                         tag,
                         UnbufferedWriterType,
@@ -775,6 +787,9 @@ pub const ZigConsoleClient = struct {
                         global,
                         true,
                     );
+                    if (level == .Error) {
+                        unbuffered_writer.writeAll(comptime Output.prettyFmt("<r>", true)) catch unreachable;
+                    }
                 } else {
                     fmt.format(
                         tag,
@@ -821,6 +836,9 @@ pub const ZigConsoleClient = struct {
 
         var any = false;
         if (enable_colors) {
+            if (level == .Error) {
+                writer.writeAll(comptime Output.prettyFmt("<r><red>", true)) catch unreachable;
+            }
             while (true) {
                 if (any) {
                     _ = writer.write(" ") catch 0;
@@ -839,6 +857,9 @@ pub const ZigConsoleClient = struct {
 
                 this_value = fmt.remaining_values[0];
                 fmt.remaining_values = fmt.remaining_values[1..];
+            }
+            if (level == .Error) {
+                writer.writeAll(comptime Output.prettyFmt("<r>", true)) catch unreachable;
             }
         } else {
             while (true) {

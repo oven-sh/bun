@@ -3090,7 +3090,7 @@ pub const NodeFS = struct {
                     }
                 }
 
-                return .{ .result = @unionInit(Return.Readdir, file_type, entries.toOwnedSlice()) };
+                return .{ .result = @unionInit(Return.Readdir, file_type, entries.items) };
             },
             else => {},
         }
@@ -3163,12 +3163,12 @@ pub const NodeFS = struct {
                 return switch (args.encoding) {
                     .buffer => .{
                         .result = .{
-                            .buffer = Buffer.fromBytes(buf.toOwnedSlice(), _global.default_allocator, JSC.C.JSTypedArrayType.kJSTypedArrayTypeUint8Array),
+                            .buffer = Buffer.fromBytes(buf.items, _global.default_allocator, JSC.C.JSTypedArrayType.kJSTypedArrayTypeUint8Array),
                         },
                     },
                     else => .{
                         .result = .{
-                            .string = buf.toOwnedSlice(),
+                            .string = buf.items,
                         },
                     },
                 };

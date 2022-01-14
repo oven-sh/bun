@@ -1331,6 +1331,7 @@ pub const RequestContext = struct {
                 handler.env_loader,
             ) catch |err| {
                 handler.handleJSError(.create_vm, err) catch {};
+                javascript_disabled = true;
                 return;
             };
             vm.is_from_devserver = true;
@@ -1346,11 +1347,13 @@ pub const RequestContext = struct {
                 vm.bundler.configureRouter(false) catch |err| {
                     handler.handleJSError(.configure_router, err) catch {};
                     vm.flush();
+                    javascript_disabled = true;
                     return;
                 };
                 vm.bundler.configureDefines() catch |err| {
                     handler.handleJSError(.configure_defines, err) catch {};
                     vm.flush();
+                    javascript_disabled = true;
                     return;
                 };
 
@@ -1365,6 +1368,7 @@ pub const RequestContext = struct {
                             .resolve_entry_point,
                             err,
                         );
+                        javascript_disabled = true;
                         return;
                     };
                     entry_point = (resolved_entry_point.pathConst() orelse {
@@ -1374,7 +1378,7 @@ pub const RequestContext = struct {
                             "<r>JavaScript VM failed to start due to disabled entry point: <r><b>\"{s}\"",
                             .{resolved_entry_point.path_pair.primary.text},
                         ) catch {};
-
+                        javascript_disabled = true;
                         return;
                     }).text;
                 }

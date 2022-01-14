@@ -74,17 +74,14 @@ class JSMicrotaskCallback : public RefCounted<JSMicrotaskCallback> {
     public:
   static Ref<JSMicrotaskCallback> create(JSC::JSGlobalObject &globalObject,
                                          Ref<JSC::Microtask> &&task) {
-    return adoptRef(*new JSMicrotaskCallback(globalObject, WTFMove(task)));
+    return adoptRef(*new JSMicrotaskCallback(globalObject, WTFMove(task).leakRef()));
   }
 
   void call() {
     auto protectedThis{makeRef(*this)};
     JSC::VM &vm = m_globalObject->vm();
-    JSC::JSLockHolder lock(vm);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
     auto task = &m_task.get();
     task->run(m_globalObject.get());
-    scope.assertNoExceptionExceptTermination();
   }
 
     private:

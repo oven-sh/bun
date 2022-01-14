@@ -1069,6 +1069,9 @@ pub const RequestContext = struct {
             env_loader: *DotEnv.Loader,
             origin: ZigURL,
             client_bundler: Bundler,
+            vm: *JavaScript.VirtualMachine = undefined,
+            start_timer: std.time.Timer = undefined,
+            entry_point: string = "",
 
             pub fn handleJSError(
                 this: *HandlerThread,
@@ -1233,11 +1236,86 @@ pub const RequestContext = struct {
             _spawn(handler) catch {};
         }
 
-        pub fn _spawn(handler: *HandlerThread) !void {
+        pub fn startJavaScript(handler: *HandlerThread) void {
             defer {
                 javascript_disabled = true;
             }
-            var start_timer = std.time.Timer.start() catch unreachable;
+            var vm = handler.vm;
+            const entry_point = handler.entry_point;
+            {
+                var load_result = vm.loadEntryPoint(
+                    entry_point,
+                ) catch |err| {
+                    handler.handleJSErrorFmt(
+                        .load_entry_point,
+                        err,
+                        "<r>JavaScript VM failed to start.\n<red>{s}:<r> while loading <r><b>\"{s}\"",
+                        .{ @errorName(err), entry_point },
+                    ) catch {};
+                    vm.flush();
+
+                    return;
+                };
+
+                switch (load_result.status(vm.global.vm())) {
+                    JavaScript.JSPromise.Status.Fulfilled => {},
+                    else => {
+                        var result = load_result.result(vm.global.vm());
+
+                        handler.handleRuntimeJSError(
+                            result,
+                            .eval_entry_point,
+                            "<r>JavaScript VM failed to start.\nwhile loading <r><b>\"{s}\"",
+                            .{entry_point},
+                        ) catch {};
+                        vm.flush();
+                        return;
+                    },
+                }
+
+                if (vm.event_listeners.count() == 0) {
+                    handler.handleJSErrorFmt(
+                        .eval_entry_point,
+                        error.MissingFetchHandler,
+                        "<r><red>error<r>: Framework didn't run <b><cyan>addEventListener(\"fetch\", callback)<r>, which means it can't accept HTTP requests.\nShutting down JS.",
+                        .{},
+                    ) catch {};
+                    vm.flush();
+                    return;
+                }
+            }
+
+            js_ast.Stmt.Data.Store.reset();
+            js_ast.Expr.Data.Store.reset();
+            JavaScript.Bun.flushCSSImports();
+            vm.flush();
+
+            Output.printElapsed(@intToFloat(f64, (handler.start_timer.read())) / std.time.ns_per_ms);
+
+            if (vm.bundler.options.framework.?.display_name.len > 0) {
+                Output.prettyError(
+                    " {s} ready<d>! (powered by bun)\n<r>",
+                    .{
+                        vm.bundler.options.framework.?.display_name,
+                    },
+                );
+            } else {
+                Output.prettyError(
+                    " bun.js started\n<r>",
+                    .{},
+                );
+            }
+
+            Output.flush();
+
+            runLoop(
+                vm,
+                handler,
+            ) catch {};
+        }
+
+        pub fn _spawn(handler: *HandlerThread) !void {
+            handler.start_timer = std.time.Timer.start() catch unreachable;
 
             Output.Source.configureThread();
             @import("javascript/jsc/javascript_core_c_api.zig").JSCInitialize();
@@ -1265,13 +1343,14 @@ pub const RequestContext = struct {
             errdefer vm.deinit();
             vm.watcher = handler.watcher;
             {
-                defer vm.flush();
                 vm.bundler.configureRouter(false) catch |err| {
                     handler.handleJSError(.configure_router, err) catch {};
+                    vm.flush();
                     return;
                 };
                 vm.bundler.configureDefines() catch |err| {
                     handler.handleJSError(.configure_defines, err) catch {};
+                    vm.flush();
                     return;
                 };
 
@@ -1300,73 +1379,10 @@ pub const RequestContext = struct {
                     }).text;
                 }
 
-                var load_result = vm.loadEntryPoint(
-                    entry_point,
-                ) catch |err| {
-                    handler.handleJSErrorFmt(
-                        .load_entry_point,
-                        err,
-                        "<r>JavaScript VM failed to start.\n<red>{s}:<r> while loading <r><b>\"{s}\"",
-                        .{ @errorName(err), entry_point },
-                    ) catch {};
-
-                    return;
-                };
-
-                switch (load_result.status(vm.global.vm())) {
-                    JavaScript.JSPromise.Status.Fulfilled => {},
-                    else => {
-                        var result = load_result.result(vm.global.vm());
-
-                        handler.handleRuntimeJSError(
-                            result,
-                            .eval_entry_point,
-                            "<r>JavaScript VM failed to start.\nwhile loading <r><b>\"{s}\"",
-                            .{entry_point},
-                        ) catch {};
-                        return;
-                    },
-                }
-
-                if (vm.event_listeners.count() == 0) {
-                    handler.handleJSErrorFmt(
-                        .eval_entry_point,
-                        error.MissingFetchHandler,
-                        "<r><red>error<r>: Framework didn't run <b><cyan>addEventListener(\"fetch\", callback)<r>, which means it can't accept HTTP requests.\nShutting down JS.",
-                        .{},
-                    ) catch {};
-                    return;
-                }
+                handler.entry_point = entry_point;
             }
-
-            js_ast.Stmt.Data.Store.reset();
-            js_ast.Expr.Data.Store.reset();
-            JavaScript.Bun.flushCSSImports();
-
-            vm.flush();
-
-            Output.printElapsed(@intToFloat(f64, (start_timer.read())) / std.time.ns_per_ms);
-
-            if (vm.bundler.options.framework.?.display_name.len > 0) {
-                Output.prettyError(
-                    " {s} ready<d>! (powered by bun)\n<r>",
-                    .{
-                        vm.bundler.options.framework.?.display_name,
-                    },
-                );
-            } else {
-                Output.prettyError(
-                    " bun.js started\n<r>",
-                    .{},
-                );
-            }
-
-            Output.flush();
-
-            try runLoop(
-                vm,
-                handler,
-            );
+            handler.vm = vm;
+            vm.global.vm().holdAPILock(handler, JavaScript.OpaqueWrap(HandlerThread, startJavaScript));
         }
 
         var __arena: std.heap.ArenaAllocator = undefined;
@@ -1396,7 +1412,7 @@ pub const RequestContext = struct {
                     Output.flush();
                     JavaScript.VirtualMachine.vm.arena.deinit();
                     JavaScript.VirtualMachine.vm.has_loaded = false;
-                    mimalloc.mi_collect(false);
+                    Global.mimalloc_cleanup(false);
                 }
 
                 var handler: *JavaScriptHandler = try channel.readItem();

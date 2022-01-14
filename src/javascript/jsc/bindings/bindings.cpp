@@ -1721,6 +1721,11 @@ JSC__VM *JSC__VM__create(unsigned char HeapType0) {
   return vm;
 }
 
+void JSC__VM__holdAPILock(JSC__VM *arg0, void *ctx, void (*callback)(void *arg0)) {
+  JSC::JSLockHolder locker(arg0);
+  callback(ctx);
+}
+
 void JSC__VM__deleteAllCode(JSC__VM *arg1, JSC__JSGlobalObject *globalObject) {
   JSC::JSLockHolder locker(globalObject->vm());
 

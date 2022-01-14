@@ -1900,6 +1900,10 @@ pub const VM = extern struct {
         return cppFn("isJITEnabled", .{});
     }
 
+    pub fn holdAPILock(this: *VM, ctx: ?*anyopaque, callback: fn (ctx: ?*anyopaque) callconv(.C) void) void {
+        cppFn("holdAPILock", .{ this, ctx, callback });
+    }
+
     pub fn deleteAllCode(
         vm: *VM,
         global_object: *JSGlobalObject,
@@ -1979,7 +1983,7 @@ pub const VM = extern struct {
         });
     }
 
-    pub const Extern = [_][]const u8{ "runGC", "generateHeapSnapshot", "isJITEnabled", "deleteAllCode", "apiLock", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
+    pub const Extern = [_][]const u8{ "holdAPILock", "runGC", "generateHeapSnapshot", "isJITEnabled", "deleteAllCode", "apiLock", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
 };
 
 pub const ThrowScope = extern struct {

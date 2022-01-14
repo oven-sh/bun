@@ -111,10 +111,12 @@ ZLIB_LIB_DIR ?= $(BUN_DEPS_DIR)/zlib
 
 JSC_FILES := $(JSC_LIB)/libJavaScriptCore.a $(JSC_LIB)/libWTF.a  $(JSC_LIB)/libbmalloc.a
 
+ENABLE_MIMALLOC ?= 1
+
 # https://github.com/microsoft/mimalloc/issues/512
 # Linking mimalloc via object file on macOS x64 can cause heap corruption
-MIMALLOC_FILE = libmimalloc.o
-MIMALLOC_INPUT_PATH = CMakeFiles/mimalloc-obj.dir/src/static.c.o
+_MIMALLOC_FILE = libmimalloc.o
+_MIMALLOC_INPUT_PATH = CMakeFiles/mimalloc-obj.dir/src/static.c.o
 
 DEFAULT_LINKER_FLAGS =
 
@@ -125,9 +127,21 @@ DEFAULT_LINKER_FLAGS= -pthread -ldl
 endif
 ifeq ($(OS_NAME),darwin)
 	JSC_BUILD_STEPS += jsc-build-mac jsc-copy-headers
-	MIMALLOC_FILE = libmimalloc.a
-	MIMALLOC_INPUT_PATH = libmimalloc.a
+	_MIMALLOC_FILE = libmimalloc.a
+	_MIMALLOC_INPUT_PATH = libmimalloc.a
 endif
+
+MIMALLOC_FILE=
+MIMALLOC_INPUT_PATH=
+MIMALLOC_FILE_PATH=
+ifeq ($(ENABLE_MIMALLOC), 1)
+MIMALLOC_FILE=$(_MIMALLOC_FILE)
+MIMALLOC_FILE_PATH=$(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE)
+MIMALLOC_INPUT_PATH=$(_MIMALLOC_INPUT_PATH)
+endif
+
+
+
 
 
 MACOSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION)
@@ -218,7 +232,7 @@ endif
 
 
 
-ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE) \
+ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MIMALLOC_FILE_PATH) \
 		$(BUN_DEPS_OUT_DIR)/libz.a \
 		$(BUN_DEPS_OUT_DIR)/libarchive.a \
 		$(BUN_DEPS_OUT_DIR)/libssl.a \
@@ -724,7 +738,6 @@ bun-link-lld-release:
 		-O3
 	rm -rf $(BUN_RELEASE_BIN).dSYM
 	cp $(BUN_RELEASE_BIN) $(BUN_RELEASE_BIN)-profile
-	$(DSYMUTIL) --flat $(BUN_RELEASE_BIN) -o $(BUN_RELEASE_BIN).dSYM
 	-$(STRIP) $(BUN_RELEASE_BIN)
 	mv $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
 

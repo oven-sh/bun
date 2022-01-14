@@ -77,6 +77,7 @@ const ZigGlobalObject = @import("../../jsc.zig").ZigGlobalObject;
 const VM = @import("../../jsc.zig").VM;
 const Config = @import("./config.zig");
 const URL = @import("../../query_string_map.zig").URL;
+const Dequeue = @import("../../dequeue.zig").Dequeue;
 pub const GlobalClasses = [_]type{
     Request.Class,
     Response.Class,
@@ -94,6 +95,7 @@ pub const GlobalClasses = [_]type{
 };
 const Blob = @import("../../blob.zig");
 pub const Buffer = MarkedArrayBuffer;
+const Lock = @import("../../lock.zig").Lock;
 
 pub const Bun = struct {
     threadlocal var css_imports_list_strings: [512]ZigString = undefined;
@@ -833,6 +835,16 @@ pub const Bun = struct {
     };
 };
 
+pub const OpaqueCallback = fn (current: ?*anyopaque) callconv(.C) void;
+pub fn OpaqueWrap(comptime Context: type, comptime Function: fn (this: *Context) void) OpaqueCallback {
+    return struct {
+        pub fn callback(ctx: ?*anyopaque) callconv(.C) void {
+            var context: *Context = @ptrCast(*Context, @alignCast(@alignOf(Context), ctx.?));
+            @call(.{}, Function, .{context});
+        }
+    }.callback;
+}
+
 pub const Performance = struct {
     pub const Class = NewClass(
         void,
@@ -912,80 +924,104 @@ pub const VirtualMachine = struct {
 
     has_any_macro_remappings: bool = false,
     is_from_devserver: bool = false,
+    has_enabled_macro_mode: bool = false,
 
     origin_timer: std.time.Timer = undefined,
 
     macro_event_loop: EventLoop = EventLoop{},
     regular_event_loop: EventLoop = EventLoop{},
+    event_loop: *EventLoop = undefined,
 
     pub inline fn eventLoop(this: *VirtualMachine) *EventLoop {
-        return if (this.macro_mode)
-            return &this.macro_event_loop
-        else
-            return &this.regular_event_loop;
+        return this.event_loop;
     }
 
     const EventLoop = struct {
         ready_tasks_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
         pending_tasks_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
         io_tasks_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
-        tasks: std.ArrayList(Task) = std.ArrayList(Task).init(default_allocator),
+        tasks: Queue = undefined,
+        concurrent_tasks: Queue = undefined,
+        concurrent_lock: Lock = Lock.init(),
+        pub const Queue = Dequeue(Task, 256);
 
         pub fn tickWithCount(this: *EventLoop) u32 {
             var finished: u32 = 0;
-            var i: usize = 0;
             var global = VirtualMachine.vm.global;
-            while (i < this.tasks.items.len) {
-                var task: Task = this.tasks.items[i];
+            while (this.tasks.pop()) |task| {
                 switch (task.tag()) {
                     .Microtask => {
-                        var micro: *Microtask = task.get(Microtask).?;
-                        _ = this.tasks.swapRemove(i);
-                        _ = this.pending_tasks_count.fetchSub(1, .Monotonic);
+                        var micro: *Microtask = task.as(Microtask);
                         micro.run(global);
-
                         finished += 1;
-                        continue;
                     },
                     .FetchTasklet => {
                         var fetch_task: *Fetch.FetchTasklet = task.get(Fetch.FetchTasklet).?;
-                        if (fetch_task.status == .done) {
-                            _ = this.ready_tasks_count.fetchSub(1, .Monotonic);
-                            _ = this.pending_tasks_count.fetchSub(1, .Monotonic);
-                            _ = this.tasks.swapRemove(i);
-                            fetch_task.onDone();
-                            finished += 1;
-                            continue;
-                        }
+                        fetch_task.onDone();
+                        finished += 1;
                     },
                     else => unreachable,
                 }
-                i += 1;
             }
+
+            if (finished > 0) {
+                _ = this.pending_tasks_count.fetchSub(finished, .Monotonic);
+            }
+
             return finished;
         }
 
+        pub fn tickConcurrent(this: *EventLoop) void {
+            if (this.ready_tasks_count.load(.Monotonic) > 0) {
+                this.concurrent_lock.lock();
+                defer this.concurrent_lock.unlock();
+                var add: u32 = 0;
+                while (this.concurrent_tasks.pop()) |task| {
+                    this.tasks.append(task);
+                    add += 1;
+                }
+                _ = this.pending_tasks_count.fetchAdd(add, .Monotonic);
+                _ = this.ready_tasks_count.fetchSub(add, .Monotonic);
+            }
+        }
         pub fn tick(this: *EventLoop) void {
+            this.tickConcurrent();
+
             while (this.tickWithCount() > 0) {}
         }
 
         pub fn waitForTasks(this: *EventLoop) void {
-            while (this.pending_tasks_count.load(.Monotonic) > 0 or this.ready_tasks_count.load(.Monotonic) > 0) {
+            this.tickConcurrent();
+
+            while (this.pending_tasks_count.load(.Monotonic) > 0) {
                 while (this.tickWithCount() > 0) {}
             }
         }
 
-        pub fn enqueueTask(this: *EventLoop, task: Task) !void {
+        pub fn enqueueTask(this: *EventLoop, task: Task) void {
             _ = this.pending_tasks_count.fetchAdd(1, .Monotonic);
-            try this.tasks.append(task);
+            this.tasks.append(task);
+        }
+
+        pub fn enqueueTaskConcurrent(this: *EventLoop, task: Task) void {
+            this.concurrent_lock.lock();
+            defer this.concurrent_lock.unlock();
+            this.concurrent_tasks.append(task);
+            _ = this.ready_tasks_count.fetchAdd(1, .Monotonic);
         }
     };
 
-    pub inline fn enqueueTask(this: *VirtualMachine, task: Task) !void {
-        try this.eventLoop().enqueueTask(task);
+    pub inline fn enqueueTask(this: *VirtualMachine, task: Task) void {
+        this.eventLoop().enqueueTask(task);
+    }
+
+    pub inline fn enqueueTaskConcurrent(this: *VirtualMachine, task: Task) void {
+        this.eventLoop().enqueueTaskConcurrent(task);
     }
 
     pub fn tick(this: *VirtualMachine) void {
+        this.eventLoop().tickConcurrent();
+
         while (this.eventLoop().tickWithCount() > 0) {}
     }
 
@@ -999,9 +1035,16 @@ pub const VirtualMachine = struct {
     pub threadlocal var vm: *VirtualMachine = undefined;
 
     pub fn enableMacroMode(this: *VirtualMachine) void {
+        if (!this.has_enabled_macro_mode) {
+            this.has_enabled_macro_mode = true;
+            this.macro_event_loop.tasks.init(default_allocator);
+            this.macro_event_loop.concurrent_tasks.init(default_allocator);
+        }
+
         this.bundler.options.platform = .bun_macro;
         this.bundler.resolver.caches.fs.is_macro_mode = true;
         this.macro_mode = true;
+        this.event_loop = &this.macro_event_loop;
         Analytics.Features.macros = true;
     }
 
@@ -1009,6 +1052,7 @@ pub const VirtualMachine = struct {
         this.bundler.options.platform = .bun;
         this.bundler.resolver.caches.fs.is_macro_mode = false;
         this.macro_mode = false;
+        this.event_loop = &this.regular_event_loop;
     }
 
     pub fn init(
@@ -1053,6 +1097,11 @@ pub const VirtualMachine = struct {
             .macro_entry_points = @TypeOf(VirtualMachine.vm.macro_entry_points).init(allocator),
             .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
         };
+
+        VirtualMachine.vm.regular_event_loop.tasks.init(default_allocator);
+        VirtualMachine.vm.regular_event_loop.concurrent_tasks.init(default_allocator);
+        VirtualMachine.vm.event_loop = &VirtualMachine.vm.regular_event_loop;
+
         vm.bundler.macro_context = null;
 
         VirtualMachine.vm.bundler.configureLinker();
@@ -1468,7 +1517,7 @@ pub const VirtualMachine = struct {
         std.debug.assert(VirtualMachine.vm_loaded);
         std.debug.assert(VirtualMachine.vm.global == global);
 
-        vm.enqueueTask(Task.init(microtask)) catch unreachable;
+        vm.enqueueTask(Task.init(microtask));
     }
     pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) void {
         var result = ResolveFunctionResult{ .path = "", .result = null };

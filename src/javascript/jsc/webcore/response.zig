@@ -645,14 +645,13 @@ pub const Fetch = struct {
             node.data.http.schedule(allocator, &batch);
             NetworkThread.global.pool.schedule(batch);
 
-            try VirtualMachine.vm.enqueueTask(Task.init(&node.data));
             return node;
         }
 
         pub fn callback(http_: *HTTPClient.AsyncHTTP, sender: *HTTPClient.AsyncHTTP.HTTPSender) void {
             var task: *FetchTasklet = @fieldParentPtr(FetchTasklet, "http", http_);
             @atomicStore(Status, &task.status, Status.done, .Monotonic);
-            _ = task.javascript_vm.eventLoop().ready_tasks_count.fetchAdd(1, .Monotonic);
+            task.javascript_vm.eventLoop().enqueueTaskConcurrent(Task.init(task));
             sender.release();
         }
     };

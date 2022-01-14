@@ -29,6 +29,9 @@ const NodeModuleBundle = @import("node_module_bundle.zig").NodeModuleBundle;
 const DotEnv = @import("env_loader.zig");
 const which = @import("which.zig").which;
 const VirtualMachine = @import("./javascript/jsc/javascript.zig").VirtualMachine;
+const JSC = @import("javascript_core");
+
+const OpaqueWrap = JSC.OpaqueWrap;
 
 pub const Run = struct {
     file: std.fs.File,
@@ -69,11 +72,12 @@ pub const Run = struct {
             std.os.exit(1);
         };
 
-        try run.start();
+        var callback = OpaqueWrap(Run, Run.start);
+        run.vm.global.vm().holdAPILock(&run, callback);
     }
 
-    pub fn start(this: *Run) !void {
-        var promise = try this.vm.loadEntryPoint(this.entry_path);
+    pub fn start(this: *Run) void {
+        var promise = this.vm.loadEntryPoint(this.entry_path) catch return;
         this.vm.tick();
 
         while (promise.status(this.vm.global.vm()) == .Pending) {

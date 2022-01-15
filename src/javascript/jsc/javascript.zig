@@ -77,7 +77,6 @@ const ZigGlobalObject = @import("../../jsc.zig").ZigGlobalObject;
 const VM = @import("../../jsc.zig").VM;
 const Config = @import("./config.zig");
 const URL = @import("../../query_string_map.zig").URL;
-const Dequeue = @import("../../dequeue.zig").Dequeue;
 pub const GlobalClasses = [_]type{
     Request.Class,
     Response.Class,
@@ -538,8 +537,8 @@ pub const Bun = struct {
         _: js.ExceptionRef,
     ) js.JSValueRef {
         if (js.JSValueIsNumber(ctx, arguments[0])) {
-            const ms = JSValue.fromRef(arguments[0]).asNumber();
-            if (ms > 0 and std.math.isFinite(ms)) std.time.sleep(@floatToInt(u64, @floor(@floatCast(f128, ms) * std.time.ns_per_ms)));
+            const seconds = JSValue.fromRef(arguments[0]).asNumber();
+            if (seconds > 0 and std.math.isFinite(seconds)) std.time.sleep(@floatToInt(u64, seconds * 1000) * std.time.ns_per_ms);
         }
 
         return js.JSValueMakeUndefined(ctx);

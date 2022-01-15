@@ -1409,6 +1409,29 @@ pub const JSValue = enum(i64) {
         MaxJS = 0b11111111,
         _,
 
+        pub fn isHidden(this: JSType) bool {
+            return switch (this) {
+                .APIValueWrapper,
+                .NativeExecutable,
+                .ProgramExecutable,
+                .ModuleProgramExecutable,
+                .EvalExecutable,
+                .FunctionExecutable,
+                .UnlinkedFunctionExecutable,
+                .UnlinkedProgramCodeBlock,
+                .UnlinkedModuleProgramCodeBlock,
+                .UnlinkedEvalCodeBlock,
+                .UnlinkedFunctionCodeBlock,
+                .CodeBlock,
+                .JSImmutableButterfly,
+                .JSSourceCode,
+                .JSScriptFetcher,
+                .JSScriptFetchParameters,
+                => true,
+                else => false,
+            };
+        }
+
         pub const LastMaybeFalsyCellPrimitive = JSType.HeapBigInt;
         pub const LastJSCObject = JSType.DerivedStringObject; // This is the last "JSC" Object type. After this, we have embedder's (e.g., WebCore) extended object types.
 

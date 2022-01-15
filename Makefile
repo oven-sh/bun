@@ -221,7 +221,8 @@ CLANG_FLAGS = $(INCLUDE_DIRS) \
 		-DENABLE_INSPECTOR_ALTERNATE_DISPATCHERS=0 \
 		-DBUILDING_JSCONLY__ \
 		-DASSERT_ENABLED=0 \
-		-fPIE
+		-fPIE \
+		-fvisibility=hidden
 		
 # This flag is only added to webkit builds on Apple platforms
 # It has something to do with ICU

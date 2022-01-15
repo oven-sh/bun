@@ -569,6 +569,7 @@ pub const Global = struct {
             Mimalloc.mi_collect(force);
         }
     }
+    pub const versions = @import("./generated_versions_list.zig");
 
     // Enabling huge pages slows down bun by 8x or so
     // Keeping this code for:

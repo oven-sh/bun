@@ -110,4 +110,17 @@ extern "C" ZigErrorCode Zig_ErrorCodeParserError;
 
 extern "C" void ZigString__free(const unsigned char *ptr, size_t len, void *allocator);
 extern "C" void Microtask__run(void *ptr, void *global);
+
+// Used in process.version
+extern "C" const char *Bun__version;
+
+// Used in process.versions
+extern "C" const char *Bun__versions_webkit;
+extern "C" const char *Bun__versions_mimalloc;
+extern "C" const char *Bun__versions_libarchive;
+extern "C" const char *Bun__versions_picohttpparser;
+extern "C" const char *Bun__versions_boringssl;
+extern "C" const char *Bun__versions_zlib;
+extern "C" const char *Bun__versions_zig;
+
 #endif

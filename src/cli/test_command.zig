@@ -128,6 +128,8 @@ pub const TestCommand = struct {
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);
         var vm = try JSC.VirtualMachine.init(ctx.allocator, ctx.args, null, ctx.log, env_loader);
+        vm.argv = ctx.positionals;
+
         try vm.bundler.configureDefines();
         const test_files = ctx.positionals[1..];
         for (test_files) |file| {

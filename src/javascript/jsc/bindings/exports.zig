@@ -301,6 +301,44 @@ pub const ZigStackFrameCode = enum(u8) {
     }
 };
 
+pub const Process = extern struct {
+    pub const shim = Shimmer("Bun", "Process", @This());
+    pub const name = "Process";
+    pub const namespace = shim.namespace;
+    const _bun: string = "bun";
+
+    pub fn getTitle(_: *JSGlobalObject, title: *ZigString) callconv(.C) void {
+        title.* = ZigString.init(_bun);
+    }
+
+    // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
+    pub fn setTitle(globalObject: *JSGlobalObject, _: *ZigString) callconv(.C) JSValue {
+        return ZigString.init(_bun).toValue(globalObject);
+    }
+
+    pub const getArgv = JSC.Node.Process.getArgv;
+
+    pub const Export = shim.exportFunctions(.{
+        .@"getTitle" = getTitle,
+        .@"setTitle" = setTitle,
+        .@"getArgv" = getArgv,
+    });
+
+    comptime {
+        if (!is_bindgen) {
+            @export(getTitle, .{
+                .name = Export[0].symbol_name,
+            });
+            @export(setTitle, .{
+                .name = Export[1].symbol_name,
+            });
+            @export(getArgv, .{
+                .name = Export[2].symbol_name,
+            });
+        }
+    }
+};
+
 pub const ZigStackTrace = extern struct {
     source_lines_ptr: [*c]ZigString,
     source_lines_numbers: [*c]i32,
@@ -963,12 +1001,18 @@ pub const ZigConsoleClient = struct {
                     };
                 }
 
-                if (value.isCell() and CAPI.JSObjectGetPrivate(value.asObjectRef()) != null)
+                const js_type = value.jsType();
+
+                if (js_type.isHidden()) return .{ .tag = .NativeCode };
+
+                if (js_type == JSC.JSValue.JSType.APIValueWrapper and CAPI.JSObjectGetPrivate(value.asObjectRef()) != null)
                     return .{
                         .tag = .Private,
                     };
 
-                const callable = value.isCallable(globalThis.vm());
+                // If we check an Object has a method table and it does not
+                // it will crash
+                const callable = js_type != .Object and value.isCallable(globalThis.vm());
 
                 if (value.isClass(globalThis) and !callable) {
                     return .{
@@ -982,7 +1026,6 @@ pub const ZigConsoleClient = struct {
                     };
                 }
 
-                const js_type = value.jsType();
                 return .{
                     .tag = switch (js_type) {
                         JSValue.JSType.ErrorInstance => .Error,
@@ -1742,4 +1785,11 @@ pub inline fn toGlobalContextRef(ptr: *JSGlobalObject) CAPI.JSGlobalContextRef {
 comptime {
     @export(ErrorCode.ParserError, .{ .name = "Zig_ErrorCodeParserError" });
     @export(ErrorCode.JSErrorObject, .{ .name = "Zig_ErrorCodeJSErrorObject" });
+}
+
+comptime {
+    if (!is_bindgen) {
+        _ = Process.getTitle;
+        _ = Process.setTitle;
+    }
 }

@@ -1,6 +1,8 @@
 // You can verify this test is correct by copy pasting this into a browser's console and checking it doesn't throw an error.
 var run = 0;
 
+var queueMicrotask = process.nextTick;
+
 await new Promise((resolve, reject) => {
   queueMicrotask(() => {
     if (run++ != 0) {
@@ -74,3 +76,16 @@ await new Promise((resolve, reject) => {
       "queueMicrotask should throw a TypeError if the argument is empty"
     );
 }
+
+// await new Promise((resolve, reject) => {
+//   process.nextTick(
+//     (first, second) => {
+//       console.log(first);
+//       if (first !== 12345 || second !== "hello")
+//         reject(new Error("process.nextTick called with wrong arguments"));
+//       resolve(true);
+//     },
+//     12345,
+//     "hello"
+//   );
+// });

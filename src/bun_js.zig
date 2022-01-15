@@ -51,6 +51,8 @@ pub const Run = struct {
             .entry_path = entry_path,
         };
 
+        run.vm.argv = ctx.positionals;
+
         run.vm.bundler.configureRouter(false) catch {
             if (Output.enable_ansi_colors) {
                 run.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};

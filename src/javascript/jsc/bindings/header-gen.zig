@@ -103,7 +103,7 @@ pub const C_Generator = struct {
     pub fn gen_func(
         self: *Self,
         comptime name: []const u8,
-        comptime func: FnDecl,
+        comptime func: anytype,
         comptime meta: FnMeta,
         comptime _: []const []const u8,
         comptime rewrite_return: bool,
@@ -121,16 +121,21 @@ pub const C_Generator = struct {
             .export_zig => self.write("ZIG_DECL "),
         }
 
+        const return_type: type = comptime if (@TypeOf(func.return_type) == ?type)
+            (func.return_type orelse void)
+        else
+            func.return_type;
+
         if (comptime rewrite_return) {
             self.writeType(void);
         } else {
-            self.writeType(comptime func.return_type);
+            self.writeType(comptime return_type);
         }
 
         self.write(" " ++ name ++ "(");
 
         if (comptime rewrite_return) {
-            self.writeType(comptime func.return_type);
+            self.writeType(comptime return_type);
             self.write("_buf ret_value");
 
             if (comptime meta.args.len > 0) {
@@ -515,9 +520,15 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
 
         pub fn processStaticExport(comptime _: Self, _: anytype, gen: *C_Generator, comptime static_export: StaticExport) void {
             const fn_meta = comptime @typeInfo(static_export.Type).Fn;
+            const DeclData = static_export.Decl().data;
+
             gen.gen_func(
                 comptime static_export.symbol_name,
-                comptime static_export.Decl().data.Fn,
+                comptime switch (DeclData) {
+                    .Fn => |Fn| Fn,
+                    .Var => |Var| @typeInfo(Var).Fn,
+                    else => unreachable,
+                },
                 comptime fn_meta,
                 comptime std.mem.zeroes([]const []const u8),
                 false,

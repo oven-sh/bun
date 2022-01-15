@@ -397,3 +397,71 @@ pub const SystemErrno = enum(u8) {
         break :brk map;
     };
 };
+
+// Courtesy of https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-stub.h
+pub const struct_CFArrayCallBacks = opaque {};
+pub const CFIndex = c_long;
+pub const struct_CFRunLoopSourceContext = extern struct {
+    version: CFIndex,
+    info: ?*anyopaque,
+    pad: [7]?*anyopaque,
+    perform: ?fn (?*anyopaque) callconv(.C) void,
+};
+pub const struct_FSEventStreamContext = extern struct {
+    version: CFIndex,
+    info: ?*anyopaque,
+    pad: [3]?*anyopaque,
+};
+pub const struct_CFRange = extern struct {
+    location: CFIndex,
+    length: CFIndex,
+};
+pub const CFAbsoluteTime = f64;
+pub const CFTimeInterval = f64;
+pub const FSEventStreamEventFlags = c_int;
+pub const OSStatus = c_int;
+pub const CFArrayCallBacks = struct_CFArrayCallBacks;
+pub const CFRunLoopSourceContext = struct_CFRunLoopSourceContext;
+pub const FSEventStreamContext = struct_FSEventStreamContext;
+pub const FSEventStreamCreateFlags = u32;
+pub const FSEventStreamEventId = u64;
+pub const CFStringEncoding = c_uint;
+pub const CFAllocatorRef = ?*anyopaque;
+pub const CFArrayRef = ?*anyopaque;
+pub const CFBundleRef = ?*anyopaque;
+pub const CFDataRef = ?*anyopaque;
+pub const CFDictionaryRef = ?*anyopaque;
+pub const CFMutableDictionaryRef = ?*anyopaque;
+pub const CFRange = struct_CFRange;
+pub const CFRunLoopRef = ?*anyopaque;
+pub const CFRunLoopSourceRef = ?*anyopaque;
+pub const CFStringRef = ?*anyopaque;
+pub const CFTypeRef = ?*anyopaque;
+pub const FSEventStreamRef = ?*anyopaque;
+pub const IOOptionBits = u32;
+pub const io_iterator_t = c_uint;
+pub const io_object_t = c_uint;
+pub const io_service_t = c_uint;
+pub const io_registry_entry_t = c_uint;
+pub const FSEventStreamCallback = ?fn (FSEventStreamRef, ?*anyopaque, c_int, ?*anyopaque, [*c]const FSEventStreamEventFlags, [*c]const FSEventStreamEventId) callconv(.C) void;
+pub const kCFStringEncodingUTF8: CFStringEncoding = @bitCast(CFStringEncoding, @as(c_int, 134217984));
+pub const noErr: OSStatus = 0;
+pub const kFSEventStreamEventIdSinceNow: FSEventStreamEventId = @bitCast(FSEventStreamEventId, @as(c_longlong, -@as(c_int, 1)));
+pub const kFSEventStreamCreateFlagNoDefer: c_int = 2;
+pub const kFSEventStreamCreateFlagFileEvents: c_int = 16;
+pub const kFSEventStreamEventFlagEventIdsWrapped: c_int = 8;
+pub const kFSEventStreamEventFlagHistoryDone: c_int = 16;
+pub const kFSEventStreamEventFlagItemChangeOwner: c_int = 16384;
+pub const kFSEventStreamEventFlagItemCreated: c_int = 256;
+pub const kFSEventStreamEventFlagItemFinderInfoMod: c_int = 8192;
+pub const kFSEventStreamEventFlagItemInodeMetaMod: c_int = 1024;
+pub const kFSEventStreamEventFlagItemIsDir: c_int = 131072;
+pub const kFSEventStreamEventFlagItemModified: c_int = 4096;
+pub const kFSEventStreamEventFlagItemRemoved: c_int = 512;
+pub const kFSEventStreamEventFlagItemRenamed: c_int = 2048;
+pub const kFSEventStreamEventFlagItemXattrMod: c_int = 32768;
+pub const kFSEventStreamEventFlagKernelDropped: c_int = 4;
+pub const kFSEventStreamEventFlagMount: c_int = 64;
+pub const kFSEventStreamEventFlagRootChanged: c_int = 32;
+pub const kFSEventStreamEventFlagUnmount: c_int = 128;
+pub const kFSEventStreamEventFlagUserDropped: c_int = 2;

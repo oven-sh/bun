@@ -766,9 +766,25 @@ pub const Bun = struct {
                 .getPropertyNames = .{
                     .rfn = getPropertyNames,
                 },
+
+                .call = .{
+                    .rfn = EnvironmentVariables.call,
+                    .ts = d.ts{},
+                },
             },
             .{},
         );
+
+        pub fn call(
+            _: void,
+            _: js.JSContextRef,
+            _: js.JSObjectRef,
+            _: js.JSObjectRef,
+            _: []const js.JSValueRef,
+            _: js.ExceptionRef,
+        ) js.JSObjectRef {
+            return JSValue.jsUndefined().asRef();
+        }
 
         pub fn getter(
             _: void,
@@ -924,6 +940,7 @@ pub const VirtualMachine = struct {
     has_any_macro_remappings: bool = false,
     is_from_devserver: bool = false,
     has_enabled_macro_mode: bool = false,
+    argv: []const []const u8 = &[_][]const u8{"bun"},
 
     origin_timer: std.time.Timer = undefined,
 

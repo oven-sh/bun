@@ -25,6 +25,14 @@ using namespace JSC;
     macro(errno) \
     macro(code) \
     macro(path) \
+    macro(versions) \
+    macro(argv) \
+    macro(execArgv) \
+    macro(nextTick) \
+    macro(version) \
+    macro(title) \
+    macro(pid) \
+    macro(ppid) \
     BUN_ADDITIONAL_PRIVATE_IDENTIFIERS(macro) \
 
 class BunBuiltinNames {
@@ -41,6 +49,7 @@ public:
         BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(EXPORT_NAME)
 #undef EXPORT_NAME
     }
+
 
     BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
 

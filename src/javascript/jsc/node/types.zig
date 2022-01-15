@@ -15,6 +15,27 @@ const Buffer = JSC.MarkedArrayBuffer;
 pub const TimeLike = c_int;
 pub const Mode = std.os.mode_t;
 
+pub fn DeclEnum(comptime T: type) type {
+    const fieldInfos = std.meta.declarations(T);
+    var enumFields: [fieldInfos.len]std.builtin.TypeInfo.EnumField = undefined;
+    var decls = [_]std.builtin.TypeInfo.Declaration{};
+    inline for (fieldInfos) |field, i| {
+        enumFields[i] = .{
+            .name = field.name,
+            .value = i,
+        };
+    }
+    return @Type(.{
+        .Enum = .{
+            .layout = .Auto,
+            .tag_type = std.math.IntFittingRange(0, fieldInfos.len - 1),
+            .fields = &enumFields,
+            .decls = &decls,
+            .is_exhaustive = true,
+        },
+    });
+}
+
 pub const FileDescriptor = os.fd_t;
 pub const Flavor = enum {
     sync,
@@ -907,3 +928,51 @@ pub const DirEnt = struct {
         _global.default_allocator.destroy(this);
     }
 };
+
+pub const Process = struct {
+    pub fn getArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        if (JSC.VirtualMachine.vm.argv.len == 0)
+            return JSC.JSValue.createStringArray(globalObject, null, 0, false);
+
+        var StackFallback = std.heap.stackFallback(32 * @sizeOf(JSC.ZigString), _global.default_allocator);
+        var allocator = StackFallback.get();
+
+        const count = JSC.VirtualMachine.vm.argv.len + 1;
+
+        // If it was launched with bun run or bun test, skip it
+        var skip: usize = 0;
+        if (JSC.VirtualMachine.vm.argv.len > 1 and (strings.eqlComptime(JSC.VirtualMachine.vm.argv[0], "run") or strings.eqlComptime(JSC.VirtualMachine.vm.argv[0], "test"))) {
+            skip += 1;
+        }
+        var args = allocator.alloc(
+            JSC.ZigString,
+            count - skip,
+        ) catch unreachable;
+        defer allocator.free(args);
+
+        // https://github.com/yargs/yargs/blob/adb0d11e02c613af3d9427b3028cc192703a3869/lib/utils/process-argv.ts#L1
+        args[0] = JSC.ZigString.init(std.mem.span(std.os.argv[0]));
+
+        if (JSC.VirtualMachine.vm.argv.len > skip) {
+            for (JSC.VirtualMachine.vm.argv[skip..]) |arg, i| {
+                args[i + 1] = JSC.ZigString.init(arg);
+                args[i + 1].detectEncoding();
+            }
+        }
+
+        return JSC.JSValue.createStringArray(globalObject, args.ptr, args.len, true);
+    }
+
+    pub export const Bun__version: [:0]const u8 = "v" ++ _global.Global.package_json_version;
+    pub export const Bun__versions_mimalloc: [:0]const u8 = _global.Global.versions.mimalloc;
+    pub export const Bun__versions_webkit: [:0]const u8 = _global.Global.versions.webkit;
+    pub export const Bun__versions_libarchive: [:0]const u8 = _global.Global.versions.libarchive;
+    pub export const Bun__versions_picohttpparser: [:0]const u8 = _global.Global.versions.picohttpparser;
+    pub export const Bun__versions_boringssl: [:0]const u8 = _global.Global.versions.boringssl;
+    pub export const Bun__versions_zlib: [:0]const u8 = _global.Global.versions.zlib;
+    pub export const Bun__versions_zig: [:0]const u8 = _global.Global.versions.zig;
+};
+
+comptime {
+    std.testing.refAllDecls(Process);
+}

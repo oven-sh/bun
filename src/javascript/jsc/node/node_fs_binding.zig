@@ -16,30 +16,9 @@ const NodeFSFunction = fn (
     JSC.C.ExceptionRef,
 ) JSC.C.JSValueRef;
 
-pub fn DeclEnum(comptime T: type) type {
-    const fieldInfos = std.meta.declarations(T);
-    var enumFields: [fieldInfos.len]std.builtin.TypeInfo.EnumField = undefined;
-    var decls = [_]std.builtin.TypeInfo.Declaration{};
-    inline for (fieldInfos) |field, i| {
-        enumFields[i] = .{
-            .name = field.name,
-            .value = i,
-        };
-    }
-    return @Type(.{
-        .Enum = .{
-            .layout = .Auto,
-            .tag_type = std.math.IntFittingRange(0, fieldInfos.len - 1),
-            .fields = &enumFields,
-            .decls = &decls,
-            .is_exhaustive = true,
-        },
-    });
-}
-
 pub const toJSTrait = std.meta.trait.hasFn("toJS");
 pub const fromJSTrait = std.meta.trait.hasFn("fromJS");
-const NodeFSFunctionEnum = DeclEnum(JSC.Node.NodeFS);
+const NodeFSFunctionEnum = JSC.Node.DeclEnum(JSC.Node.NodeFS);
 
 fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
     const Function = @field(JSC.Node.NodeFS, @tagName(FunctionEnum));

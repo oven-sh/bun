@@ -26,6 +26,7 @@
 #include <JavaScriptCore/JSCallbackObject.h>
 #include <JavaScriptCore/JSCast.h>
 #include <JavaScriptCore/JSClassRef.h>
+#include <JavaScriptCore/JSMicrotask.h>
 // #include <JavaScriptCore/JSContextInternal.h>
 #include <JavaScriptCore/CatchScope.h>
 #include <JavaScriptCore/JSInternalPromise.h>
@@ -260,12 +261,37 @@ void GlobalObject::setConsole(void *console) {
   this->setConsoleClient(makeWeakPtr(m_console));
 }
 
+static JSC_DECLARE_HOST_FUNCTION(functionQueueMicrotask);
+
+static JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
+                                (JSC::JSGlobalObject * globalObject, JSC::CallFrame *callFrame)) {
+  JSC::VM &vm = globalObject->vm();
+
+  if (callFrame->argumentCount() < 1) {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSC::throwTypeError(globalObject, scope, "queueMicrotask expects a function"_s);
+    return JSC::JSValue::encode(JSC::JSValue{});
+  }
+
+  JSC::JSValue job = callFrame->argument(0);
+
+  if (!job.isObject() || !job.getObject()->isCallable(vm)) {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSC::throwTypeError(globalObject, scope, "queueMicrotask expects a function"_s);
+    return JSC::JSValue::encode(JSC::JSValue{});
+  }
+
+  globalObject->queueMicrotask(JSC::createJSMicrotask(vm, job));
+
+  return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
 // This is not a publicly exposed API currently.
 // This is used by the bundler to make Response, Request, FetchEvent,
 // and any other objects available globally.
 void GlobalObject::installAPIGlobals(JSClassRef *globals, int count) {
   WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
-  extraStaticGlobals.reserveCapacity((size_t)count + 2);
+  extraStaticGlobals.reserveCapacity((size_t)count + 3);
 
   // This is not nearly a complete implementation. It's just enough to make some npm packages that
   // were compiled with Webpack to run without crashing in this environment.
@@ -332,6 +358,13 @@ void GlobalObject::installAPIGlobals(JSClassRef *globals, int count) {
 
   extraStaticGlobals.uncheckedAppend(
     GlobalPropertyInfo{JSC::Identifier::fromString(vm(), "process"), JSC::JSValue(process),
+                       JSC::PropertyAttribute::DontDelete | 0});
+
+  JSC::Identifier queueMicrotaskIdentifier = JSC::Identifier::fromString(vm(), "queueMicrotask"_s);
+  extraStaticGlobals.uncheckedAppend(
+    GlobalPropertyInfo{queueMicrotaskIdentifier,
+                       JSC::JSFunction::create(vm(), JSC::jsCast<JSC::JSGlobalObject *>(this), 0,
+                                               "queueMicrotask", functionQueueMicrotask),
                        JSC::PropertyAttribute::DontDelete | 0});
 
   this->addStaticGlobals(extraStaticGlobals.data(), extraStaticGlobals.size());

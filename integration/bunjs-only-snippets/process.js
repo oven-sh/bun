@@ -35,3 +35,6 @@ if (JSON.parse(JSON.stringify(process.env)).BACON !== "yummy") {
 if (typeof JSON.parse(JSON.stringify(process.env)).toJSON !== "undefined") {
   throw new Error("process.env should call toJSON to hide its internal state");
 }
+
+var { env, ...proces } = process;
+console.log(proces);

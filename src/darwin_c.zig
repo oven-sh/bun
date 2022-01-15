@@ -313,7 +313,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.EDEVERR, "Device error, for example paper out");
         map.put(.EDOM, "math software. Numerical argument out of domain");
         map.put(.EDQUOT, "Disc quota exceeded");
-        map.put(.EEXIST, "File exists");
+        map.put(.EEXIST, "File or folder exists");
         map.put(.EFAULT, "Bad address");
         map.put(.EFBIG, "File too large");
         map.put(.EFTYPE, "Inappropriate file type or format");

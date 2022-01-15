@@ -760,31 +760,26 @@ pub const Bun = struct {
                 .getProperty = .{
                     .rfn = getProperty,
                 },
-                // .hasProperty = .{
-                //     .rfn = hasProperty,
-                // },
+                .setProperty = .{
+                    .rfn = setProperty,
+                },
+                .deleteProperty = .{
+                    .rfn = deleteProperty,
+                },
+                .convertToType = .{ .rfn = convertToType },
+                .hasProperty = .{
+                    .rfn = hasProperty,
+                },
                 .getPropertyNames = .{
                     .rfn = getPropertyNames,
                 },
-
-                .call = .{
-                    .rfn = EnvironmentVariables.call,
-                    .ts = d.ts{},
+                .toJSON = .{
+                    .rfn = toJSON,
+                    .name = "toJSON",
                 },
             },
             .{},
         );
-
-        pub fn call(
-            _: void,
-            _: js.JSContextRef,
-            _: js.JSObjectRef,
-            _: js.JSObjectRef,
-            _: []const js.JSValueRef,
-            _: js.ExceptionRef,
-        ) js.JSObjectRef {
-            return JSValue.jsUndefined().asRef();
-        }
 
         pub fn getter(
             _: void,
@@ -824,6 +819,74 @@ pub const Bun = struct {
             return js.JSValueMakeUndefined(ctx);
         }
 
+        pub fn toJSON(
+            _: void,
+            ctx: js.JSContextRef,
+            _: js.JSObjectRef,
+            _: js.JSObjectRef,
+            _: []const js.JSValueRef,
+            _: js.ExceptionRef,
+        ) js.JSValueRef {
+            var map = VirtualMachine.vm.bundler.env.map.map;
+            var keys = map.keys();
+            var values = map.values();
+            const StackFallback = std.heap.StackFallbackAllocator(32 * 2 * @sizeOf(ZigString));
+            var stack = StackFallback{
+                .buffer = undefined,
+                .fallback_allocator = _global.default_allocator,
+                .fixed_buffer_allocator = undefined,
+            };
+            var allocator = stack.get();
+            var key_strings_ = allocator.alloc(ZigString, keys.len * 2) catch unreachable;
+            var key_strings = key_strings_[0..keys.len];
+            var value_strings = key_strings_[keys.len..];
+
+            for (keys) |key, i| {
+                key_strings[i] = ZigString.init(key);
+                key_strings[i].detectEncoding();
+                value_strings[i] = ZigString.init(values[i]);
+                value_strings[i].detectEncoding();
+            }
+
+            var result = JSValue.fromEntries(ctx.ptr(), key_strings.ptr, value_strings.ptr, keys.len, false).asObjectRef();
+            allocator.free(key_strings_);
+            return result;
+            // }
+            // ZigConsoleClient.Formatter.format(this: *Formatter, result: Tag.Result, comptime Writer: type, writer: Writer, value: JSValue, globalThis: *JSGlobalObject, comptime enable_ansi_colors: bool)
+        }
+
+        pub fn deleteProperty(
+            _: js.JSContextRef,
+            _: js.JSObjectRef,
+            propertyName: js.JSStringRef,
+            _: js.ExceptionRef,
+        ) callconv(.C) bool {
+            const len = js.JSStringGetLength(propertyName);
+            var ptr = js.JSStringGetCharacters8Ptr(propertyName);
+            var name = ptr[0..len];
+            _ = VirtualMachine.vm.bundler.env.map.map.swapRemove(name);
+            return true;
+        }
+
+        pub fn setProperty(
+            ctx: js.JSContextRef,
+            _: js.JSObjectRef,
+            propertyName: js.JSStringRef,
+            value: js.JSValueRef,
+            exception: js.ExceptionRef,
+        ) callconv(.C) bool {
+            const len = js.JSStringGetLength(propertyName);
+            var ptr = js.JSStringGetCharacters8Ptr(propertyName);
+            var name = ptr[0..len];
+            var val = ZigString.init("");
+            JSValue.fromRef(value).toZigString(&val, ctx.ptr());
+            if (exception.* != null) return false;
+            var result = std.fmt.allocPrint(VirtualMachine.vm.allocator, "{}", .{val}) catch unreachable;
+            VirtualMachine.vm.bundler.env.map.put(name, result) catch unreachable;
+
+            return true;
+        }
+
         pub fn hasProperty(
             _: js.JSContextRef,
             _: js.JSObjectRef,
@@ -833,6 +896,14 @@ pub const Bun = struct {
             const ptr = js.JSStringGetCharacters8Ptr(propertyName);
             const name = ptr[0..len];
             return VirtualMachine.vm.bundler.env.map.get(name) != null or (Output.enable_ansi_colors and strings.eqlComptime(name, "FORCE_COLOR"));
+        }
+
+        pub fn convertToType(ctx: js.JSContextRef, obj: js.JSObjectRef, kind: js.JSType, exception: js.ExceptionRef) callconv(.C) js.JSValueRef {
+            _ = ctx;
+            _ = obj;
+            _ = kind;
+            _ = exception;
+            return obj;
         }
 
         pub fn getPropertyNames(

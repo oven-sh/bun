@@ -472,6 +472,36 @@ JSC__JSValue JSC__JSValue__createTypeError(const ZigString *message, const ZigSt
   return JSC::JSValue::encode(typeError);
 }
 
+JSC__JSValue JSC__JSValue__fromEntries(JSC__JSGlobalObject *globalObject, ZigString *keys,
+                                       ZigString *values, size_t initialCapacity, bool clone) {
+  JSC::VM &vm = globalObject->vm();
+  auto scope = DECLARE_THROW_SCOPE(vm);
+  if (initialCapacity == 0) {
+    return JSC::JSValue::encode(JSC::constructEmptyObject(globalObject));
+  }
+
+  JSC::JSObject *object = nullptr;
+  {
+    JSC::ObjectInitializationScope initializationScope(vm);
+    object =
+      JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), initialCapacity);
+
+    if (!clone) {
+      for (size_t i = 0; i < initialCapacity; ++i) {
+        object->putDirect(
+          vm, JSC::PropertyName(JSC::Identifier::fromString(vm, Zig::toString(keys[i]))),
+          Zig::toJSStringValueGC(values[i], globalObject), 0);
+      }
+    } else {
+      for (size_t i = 0; i < initialCapacity; ++i) {
+        object->putDirect(vm, JSC::PropertyName(Zig::toIdentifier(keys[i], globalObject)),
+                          Zig::toJSStringValueGC(values[i], globalObject), 0);
+      }
+    }
+  }
+
+  return JSC::JSValue::encode(object);
+}
 JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject *globalObject, ZigString *arg1,
                                              size_t arg2, bool clone) {
   JSC::VM &vm = globalObject->vm();

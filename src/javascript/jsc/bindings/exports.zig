@@ -922,10 +922,11 @@ pub const ZigConsoleClient = struct {
         _ = writer.write("\n") catch 0;
     }
 
-    const Formatter = struct {
+    pub const Formatter = struct {
         remaining_values: []JSValue,
         map: Visited.Map = undefined,
         map_node: ?*Visited.Pool.Node = null,
+        hide_native: bool = false,
 
         // For detecting circular references
         pub const Visited = struct {
@@ -1005,7 +1006,7 @@ pub const ZigConsoleClient = struct {
 
                 if (js_type.isHidden()) return .{ .tag = .NativeCode };
 
-                if (js_type == JSC.JSValue.JSType.APIValueWrapper and CAPI.JSObjectGetPrivate(value.asObjectRef()) != null)
+                if (CAPI.JSObjectGetPrivate(value.asObjectRef()) != null)
                     return .{
                         .tag = .Private,
                     };
@@ -1015,6 +1016,14 @@ pub const ZigConsoleClient = struct {
                 const callable = js_type != .Object and value.isCallable(globalThis.vm());
 
                 if (value.isClass(globalThis) and !callable) {
+                    // Temporary workaround
+                    // console.log(process.env) shows up as [class JSCallbackObject]
+                    // We want to print it like an object
+                    if (CAPI.JSValueIsObjectOfClass(globalThis.ref(), value.asObjectRef(), JSC.Bun.EnvironmentVariables.Class.get().?[0])) {
+                        return .{
+                            .tag = .Object,
+                        };
+                    }
                     return .{
                         .tag = .Class,
                     };
@@ -1388,13 +1397,16 @@ pub const ZigConsoleClient = struct {
                         var property_name_ref = CAPI.JSPropertyNameArrayGetNameAtIndex(array, i);
                         defer CAPI.JSStringRelease(property_name_ref);
                         var prop = CAPI.JSStringGetCharacters8Ptr(property_name_ref)[0..CAPI.JSStringGetLength(property_name_ref)];
+
+                        var property_value = CAPI.JSObjectGetProperty(globalThis.ref(), object, property_name_ref, null);
+                        const tag = Tag.get(JSValue.fromRef(property_value), globalThis);
+
+                        if (tag.cell.isHidden()) continue;
+
                         writer.print(
                             comptime Output.prettyFmt("{s}<d>:<r> ", enable_ansi_colors),
                             .{prop[0..@minimum(prop.len, 128)]},
                         );
-
-                        var property_value = CAPI.JSObjectGetProperty(globalThis.ref(), object, property_name_ref, null);
-                        const tag = Tag.get(JSValue.fromRef(property_value), globalThis);
 
                         if (tag.cell.isStringLike()) {
                             if (comptime enable_ansi_colors) {

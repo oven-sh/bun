@@ -1553,6 +1553,8 @@ pub fn NewClass(
                                 def.deleteProperty = @field(staticFunctions, "deleteProperty").rfn;
                             } else if (comptime strings.eqlComptime(function_name_literal, "getPropertyNames")) {
                                 def.getPropertyNames = @field(staticFunctions, "getPropertyNames").rfn;
+                            } else if (comptime strings.eqlComptime(function_name_literal, "convertToType")) {
+                                def.convertToType = @field(staticFunctions, "convertToType").rfn;
                             } else {
                                 const CtxField = comptime @field(staticFunctions, function_name_literal);
                                 if (comptime !@hasField(@TypeOf(CtxField), "rfn")) {
@@ -1582,6 +1584,8 @@ pub fn NewClass(
                                 def.finalize = To.JS.Finalize(ZigType, staticFunctions.finalize).rfn;
                             } else if (comptime strings.eqlComptime(function_name_literal, "call")) {
                                 def.callAsFunction = To.JS.Callback(ZigType, staticFunctions.call).rfn;
+                            } else if (comptime strings.eqlComptime(function_name_literal, "getPropertyNames")) {
+                                def.getPropertyNames = To.JS.Callback(ZigType, staticFunctions.getPropertyNames).rfn;
                             } else if (comptime strings.eqlComptime(function_name_literal, "hasInstance")) {
                                 def.hasInstance = staticFunctions.hasInstance;
                             } else {

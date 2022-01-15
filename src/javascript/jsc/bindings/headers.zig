@@ -280,6 +280,7 @@ pub extern fn JSC__JSValue__createTypeError(arg0: [*c]const ZigString, arg1: [*c
 pub extern fn JSC__JSValue__eqlCell(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSCell) bool;
 pub extern fn JSC__JSValue__eqlValue(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__forEach(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, ArgFn2: ?fn ([*c]JSC__VM, [*c]JSC__JSGlobalObject, JSC__JSValue) callconv(.C) void) void;
+pub extern fn JSC__JSValue__fromEntries(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]ZigString, arg2: [*c]ZigString, arg3: usize, arg4: bool) JSC__JSValue;
 pub extern fn JSC__JSValue__getClassName(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]ZigString) void;
 pub extern fn JSC__JSValue__getErrorsProperty(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__getIfPropertyExistsImpl(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]const u8, arg3: u32) JSC__JSValue;

@@ -2442,22 +2442,12 @@ pub const NodeFS = struct {
         const path = args.path.sliceZ(&this.sync_error_buf);
         switch (comptime flavor) {
             .sync => {
-                // TODO: bench if faster to stat() or open() + close()
-                // I imagine stat() is slower for directories and faster for files
-                const flags = comptime if (Environment.isLinux)
-                    os.O.PATH
-                else
-                    @enumToInt(FileSystemFlags.@"r");
-                const fd = switch (Syscall.open(path, flags, 0)) {
-                    .result => |result| result,
-                    .err => |err| return switch (err.getErrno()) {
-                        .NOENT => .{ .result = false },
-                        else => .{ .err = err },
-                    },
-                };
-                _ = Syscall.close(fd);
-
-                return .{ .result = true };
+                // access() may not work correctly on NFS file systems with UID
+                // mapping enabled, because UID mapping is done on the server and
+                // hidden from the client, which checks permissions. Similar
+                // problems can occur to FUSE mounts.
+                const rc = (system.access(path, std.os.F_OK));
+                return Ret{ .result = rc == 0 };
             },
             else => {},
         }
@@ -2714,11 +2704,16 @@ pub const NodeFS = struct {
                 const len = @truncate(u16, path.len);
                 // First, attempt to create the desired directory
                 // If that fails, then walk back up the path until we have a match
-                if (Maybe(Return.Mkdir).errnoSys(system.mkdir(path, args.mode), .mkdir)) |err| {
-                    switch (err.getErrno()) {
-                        .EXIST => return Maybe(Return.Mkdir){ .result = "" },
-                        else => return .{ .err = err.err.withPath(args.path.slice()) },
+                if (Maybe(Return.Mkdir).errnoSys(system.mkdir(path, args.mode), .mkdir)) |maybe| {
+                    switch (maybe.getErrno()) {
+                        else => {
+                            @memcpy(&this.sync_error_buf, path.ptr, len);
+                            return .{ .err = maybe.err.withPath(this.sync_error_buf[0..len]) };
+                        },
 
+                        .EXIST => {
+                            return Maybe(Return.Mkdir){ .result = "" };
+                        },
                         // continue
                         .NOENT => {},
                     }
@@ -2736,7 +2731,7 @@ pub const NodeFS = struct {
                 while (i > 0) : (i -= 1) {
                     if (path[i] == std.fs.path.sep) {
                         working_mem[i] = 0;
-                        var parent: [:0]u8 = working_mem[0 .. i - 1 :0];
+                        var parent: [:0]u8 = working_mem[0..i :0];
 
                         if (Maybe(Return.Mkdir).errnoSysP(system.mkdir(parent, args.mode), .mkdir, parent)) |err| {
                             working_mem[i] = std.fs.path.sep;
@@ -2761,7 +2756,7 @@ pub const NodeFS = struct {
                 while (i < len) : (i += 1) {
                     if (path[i] == std.fs.path.sep) {
                         working_mem[i] = 0;
-                        var parent: [:0]u8 = working_mem[0 .. i - 1 :0];
+                        var parent: [:0]u8 = working_mem[0..i :0];
 
                         if (Maybe(Return.Mkdir).errnoSysP(system.mkdir(parent, args.mode), .mkdir, parent)) |err| {
                             working_mem[i] = std.fs.path.sep;
@@ -2774,15 +2769,13 @@ pub const NodeFS = struct {
                             }
                         } else {
                             working_mem[i] = std.fs.path.sep;
-                            break;
                         }
                     }
                 }
 
-                first_match = @truncate(u16, i);
                 // Our final directory will not have a trailing separator
                 // so we have to create it once again
-                if (Maybe(Return.Mkdir).errnoSysP(system.mkdir(path, args.mode), .mkdir, path)) |err| {
+                if (Maybe(Return.Mkdir).errnoSysP(system.mkdir(path, args.mode), .mkdir, working_mem[0..len])) |err| {
                     switch (err.getErrno()) {
                         // handle the race condition
                         .EXIST => {

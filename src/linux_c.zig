@@ -157,7 +157,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.EFAULT, "Bad address");
         map.put(.ENOTBLK, "Block device required");
         map.put(.EBUSY, "Device or resource busy");
-        map.put(.EEXIST, "File exists");
+        map.put(.EEXIST, "File or folder exists");
         map.put(.EXDEV, "Cross-device link");
         map.put(.ENODEV, "No such device");
         map.put(.ENOTDIR, "Not a directory");

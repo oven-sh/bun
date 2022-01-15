@@ -377,7 +377,7 @@ sign-macos-aarch64:
 cls: 
 	@echo "\n\n---\n\n"
 
-release: all-js jsc-bindings-mac build-obj cls bun-link-lld-release release-bin-entitlements
+release: all-js jsc-bindings-mac build-obj cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
 
 jsc-check:
 	@ls $(JSC_BASE_DIR)  >/dev/null 2>&1 || (echo "Failed to access WebKit build. Please compile the WebKit submodule using the Dockerfile at $(shell pwd)/src/javascript/WebKit/Dockerfile and then copy from /output in the Docker container to $(JSC_BASE_DIR). You can override the directory via JSC_BASE_DIR. \n\n 	DOCKER_BUILDKIT=1 docker build -t bun-webkit $(shell pwd)/src/javascript/jsc/WebKit -f $(shell pwd)/src/javascript/jsc/WebKit/Dockerfile --progress=plain\n\n 	docker container create bun-webkit\n\n 	# Get the container ID\n	docker container ls\n\n 	docker cp DOCKER_CONTAINER_ID_YOU_JUST_FOUND:/output $(JSC_BASE_DIR)" && exit 1)	
@@ -727,7 +727,7 @@ bun-link-lld-debug:
 bun-relink-copy:
 	cp /tmp/bun-$(PACKAGE_JSON_VERSION).o $(BUN_RELEASE_BIN).o
 
-bun-relink: bun-relink-copy bun-link-lld-release
+
 
 bun-link-lld-release:
 	$(CXX) $(BUN_LLD_FLAGS) \
@@ -739,8 +739,22 @@ bun-link-lld-release:
 		-O3
 	rm -rf $(BUN_RELEASE_BIN).dSYM
 	cp $(BUN_RELEASE_BIN) $(BUN_RELEASE_BIN)-profile
+
+bun-link-lld-release-dsym:
 	-$(STRIP) $(BUN_RELEASE_BIN)
 	mv $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
+
+ifeq ($(OS_NAME),darwin)
+bun-link-lld-release-dsym:
+	$(DSYMUTIL) -o $(BUN_RELEASE_BIN).dSYM $(BUN_RELEASE_BIN)
+	-$(STRIP) $(BUN_RELEASE_BIN)
+	mv $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
+
+endif
+
+
+bun-relink: bun-relink-copy bun-link-lld-release bun-link-lld-release-dsym
+
 
 # We do this outside of build.zig for performance reasons
 # The C compilation stuff with build.zig is really slow and we don't need to run this as often as the rest

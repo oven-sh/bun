@@ -943,12 +943,12 @@ pub const VirtualMachine = struct {
         tasks: Queue = undefined,
         concurrent_tasks: Queue = undefined,
         concurrent_lock: Lock = Lock.init(),
-        pub const Queue = Dequeue(Task, 256);
+        pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
 
         pub fn tickWithCount(this: *EventLoop) u32 {
             var finished: u32 = 0;
             var global = VirtualMachine.vm.global;
-            while (this.tasks.pop()) |task| {
+            while (this.tasks.readItem()) |task| {
                 switch (task.tag()) {
                     .Microtask => {
                         var micro: *Microtask = task.as(Microtask);
@@ -976,9 +976,11 @@ pub const VirtualMachine = struct {
                 this.concurrent_lock.lock();
                 defer this.concurrent_lock.unlock();
                 var add: u32 = 0;
-                while (this.concurrent_tasks.pop()) |task| {
-                    this.tasks.append(task);
-                    add += 1;
+
+                // TODO: optimzie
+                this.tasks.ensureUnusedCapacity(this.concurrent_tasks.readableLength()) catch unreachable;
+                while (this.concurrent_tasks.readItem()) |task| {
+                    this.tasks.writeItemAssumeCapacity(task);
                 }
                 _ = this.pending_tasks_count.fetchAdd(add, .Monotonic);
                 _ = this.ready_tasks_count.fetchSub(add, .Monotonic);
@@ -1000,13 +1002,13 @@ pub const VirtualMachine = struct {
 
         pub fn enqueueTask(this: *EventLoop, task: Task) void {
             _ = this.pending_tasks_count.fetchAdd(1, .Monotonic);
-            this.tasks.append(task);
+            this.tasks.writeItem(task) catch unreachable;
         }
 
         pub fn enqueueTaskConcurrent(this: *EventLoop, task: Task) void {
             this.concurrent_lock.lock();
             defer this.concurrent_lock.unlock();
-            this.concurrent_tasks.append(task);
+            this.concurrent_tasks.writeItem(task) catch unreachable;
             _ = this.ready_tasks_count.fetchAdd(1, .Monotonic);
         }
     };
@@ -1037,8 +1039,8 @@ pub const VirtualMachine = struct {
     pub fn enableMacroMode(this: *VirtualMachine) void {
         if (!this.has_enabled_macro_mode) {
             this.has_enabled_macro_mode = true;
-            this.macro_event_loop.tasks.init(default_allocator);
-            this.macro_event_loop.concurrent_tasks.init(default_allocator);
+            this.macro_event_loop.tasks = EventLoop.Queue.init(default_allocator);
+            this.macro_event_loop.concurrent_tasks = EventLoop.Queue.init(default_allocator);
         }
 
         this.bundler.options.platform = .bun_macro;
@@ -1098,8 +1100,8 @@ pub const VirtualMachine = struct {
             .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
         };
 
-        VirtualMachine.vm.regular_event_loop.tasks.init(default_allocator);
-        VirtualMachine.vm.regular_event_loop.concurrent_tasks.init(default_allocator);
+        VirtualMachine.vm.regular_event_loop.tasks = EventLoop.Queue.init(default_allocator);
+        VirtualMachine.vm.regular_event_loop.concurrent_tasks = EventLoop.Queue.init(default_allocator);
         VirtualMachine.vm.event_loop = &VirtualMachine.vm.regular_event_loop;
 
         vm.bundler.macro_context = null;

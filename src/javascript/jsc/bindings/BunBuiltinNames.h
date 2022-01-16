@@ -33,6 +33,8 @@ using namespace JSC;
     macro(title) \
     macro(pid) \
     macro(ppid) \
+    macro(chdir) \
+    macro(cwd) \
     BUN_ADDITIONAL_PRIVATE_IDENTIFIERS(macro) \
 
 class BunBuiltinNames {

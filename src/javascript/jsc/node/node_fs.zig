@@ -2696,35 +2696,38 @@ pub const NodeFS = struct {
     // TODO: windows
     // TODO: verify this works correctly with unicode codepoints
     fn mkdirRecursive(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor) Maybe(Return.Mkdir) {
+        const Option = Maybe(Return.Mkdir);
+        if (comptime Environment.isWindows) @compileError("This needs to be implemented on Windows.");
+
         switch (comptime flavor) {
             // The sync version does no allocation except when returning the path
             .sync => {
                 var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
                 const path = args.path.sliceZWithForceCopy(&buf, true);
                 const len = @truncate(u16, path.len);
+
                 // First, attempt to create the desired directory
                 // If that fails, then walk back up the path until we have a match
-                if (Maybe(Return.Mkdir).errnoSys(system.mkdir(path, args.mode), .mkdir)) |maybe| {
-                    switch (maybe.getErrno()) {
+                if (Option.errnoSys(system.mkdir(path, args.mode), .mkdir)) |option| {
+                    switch (option.getErrno()) {
                         else => {
                             @memcpy(&this.sync_error_buf, path.ptr, len);
-                            return .{ .err = maybe.err.withPath(this.sync_error_buf[0..len]) };
+                            return .{ .err = option.err.withPath(this.sync_error_buf[0..len]) };
                         },
 
                         .EXIST => {
-                            return Maybe(Return.Mkdir){ .result = "" };
+                            return Option{ .result = "" };
                         },
                         // continue
                         .NOENT => {},
                     }
                 } else {
-                    return Maybe(Return.Mkdir){ .result = args.path.slice() };
+                    return Option{ .result = args.path.slice() };
                 }
 
                 var working_mem = &this.sync_error_buf;
                 @memcpy(working_mem, path.ptr, len);
 
-                if (comptime Environment.isWindows) @compileError("This needs to be implemented on Windows.");
                 var i: u16 = len - 1;
 
                 // iterate backwards until creating the directory works successfully
@@ -2733,10 +2736,11 @@ pub const NodeFS = struct {
                         working_mem[i] = 0;
                         var parent: [:0]u8 = working_mem[0..i :0];
 
-                        if (Maybe(Return.Mkdir).errnoSysP(system.mkdir(parent, args.mode), .mkdir, parent)) |err| {
+                        if (Option.errnoSysP(system.mkdir(parent, args.mode), .mkdir, parent)) |err| {
                             working_mem[i] = std.fs.path.sep;
                             switch (err.getErrno()) {
                                 .EXIST => {
+                                    // Handle race condition
                                     break;
                                 },
                                 .NOENT => {
@@ -2745,6 +2749,7 @@ pub const NodeFS = struct {
                                 else => return .{ .err = err.err },
                             }
                         } else {
+                            // We found a parent that worked
                             working_mem[i] = std.fs.path.sep;
                             break;
                         }
@@ -2758,7 +2763,7 @@ pub const NodeFS = struct {
                         working_mem[i] = 0;
                         var parent: [:0]u8 = working_mem[0..i :0];
 
-                        if (Maybe(Return.Mkdir).errnoSysP(system.mkdir(parent, args.mode), .mkdir, parent)) |err| {
+                        if (Option.errnoSysP(system.mkdir(parent, args.mode), .mkdir, parent)) |err| {
                             working_mem[i] = std.fs.path.sep;
                             switch (err.getErrno()) {
                                 .EXIST => {
@@ -2775,7 +2780,7 @@ pub const NodeFS = struct {
 
                 // Our final directory will not have a trailing separator
                 // so we have to create it once again
-                if (Maybe(Return.Mkdir).errnoSysP(system.mkdir(path, args.mode), .mkdir, working_mem[0..len])) |err| {
+                if (Option.errnoSysP(system.mkdir(path, args.mode), .mkdir, working_mem[0..len])) |err| {
                     switch (err.getErrno()) {
                         // handle the race condition
                         .EXIST => {
@@ -2784,7 +2789,7 @@ pub const NodeFS = struct {
                                 // TODO: this leaks memory
                                 display_path = _global.default_allocator.dupe(u8, display_path[0..first_match]) catch unreachable;
                             }
-                            return Maybe(Return.Mkdir){ .result = display_path };
+                            return Option{ .result = display_path };
                         },
 
                         // NOENT shouldn't happen here
@@ -2796,7 +2801,7 @@ pub const NodeFS = struct {
                         // TODO: this leaks memory
                         display_path = _global.default_allocator.dupe(u8, display_path[0..first_match]) catch unreachable;
                     }
-                    return Maybe(Return.Mkdir){ .result = display_path };
+                    return Option{ .result = display_path };
                 }
             },
             else => {},

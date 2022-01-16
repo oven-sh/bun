@@ -56,6 +56,8 @@ pub const Tag = enum(u8) {
     unlink,
     utimes,
     write,
+    getcwd,
+    chdir,
 
     pub var strings = std.EnumMap(Tag, JSC.C.JSStringRef).initFull(null);
 };
@@ -74,6 +76,21 @@ else
     system.fstat;
 
 const mem = std.mem;
+
+pub fn getcwd(buf: *[std.fs.MAX_PATH_BYTES]u8) Maybe([]const u8) {
+    const Result = Maybe([]const u8);
+    buf[0] = 0;
+    const rc = std.c.getcwd(buf, std.fs.MAX_PATH_BYTES);
+    return if (rc != null)
+        Result{ .result = std.mem.sliceTo(rc.?[0..std.fs.MAX_PATH_BYTES], 0) }
+    else
+        Result.errnoSys(0, .getcwd).?;
+}
+
+pub fn chdir(destination: [:0]const u8) Maybe(void) {
+    const rc = system.chdir(destination);
+    return Maybe(void).errnoSys(rc, .chdir) orelse Maybe(void).success;
+}
 
 pub fn stat(path: [:0]const u8) Maybe(os.Stat) {
     var stat_ = mem.zeroes(os.Stat);
@@ -351,7 +368,7 @@ pub const Error = struct {
     pub const todo_errno = std.math.maxInt(Int) - 1;
     pub const todo = Error{ .errno = todo_errno };
 
-    pub fn toJS(this: Error, ctx: JSC.C.JSContextRef) JSC.C.JSObjectRef {
+    pub fn toSystemError(this: Error) SystemError {
         var sys = SystemError{
             .errno = @as(c_int, this.errno) * -1,
             .syscall = JSC.ZigString.init(@tagName(this.syscall)),
@@ -370,6 +387,14 @@ pub const Error = struct {
             sys.path = JSC.ZigString.init(this.path);
         }
 
-        return sys.toErrorInstance(ctx.ptr()).asObjectRef();
+        return sys;
+    }
+
+    pub fn toJS(this: Error, ctx: JSC.C.JSContextRef) JSC.C.JSObjectRef {
+        return this.toSystemError().toErrorInstance(ctx.ptr()).asObjectRef();
+    }
+
+    pub fn toJSC(this: Error, ptr: *JSC.JSGlobalObject) JSC.JSValue {
+        return this.toSystemError().toErrorInstance(ptr);
     }
 };

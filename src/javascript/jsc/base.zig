@@ -1687,6 +1687,15 @@ pub fn throwTypeError(
     ctx: js.JSContextRef,
     exception: ExceptionValueRef,
 ) void {
+    exception.* = toTypeError(code, fmt, args, ctx).asObjectRef();
+}
+
+pub fn toTypeError(
+    code: JSC.Node.ErrorCode,
+    comptime fmt: string,
+    args: anytype,
+    ctx: js.JSContextRef,
+) JSC.JSValue {
     @setCold(true);
     var zig_str: JSC.ZigString = undefined;
     if (comptime std.meta.fields(@TypeOf(args)).len == 0) {
@@ -1699,7 +1708,7 @@ pub fn throwTypeError(
         zig_str.mark();
     }
     const code_str = ZigString.init(@tagName(code));
-    exception.* = JSC.JSValue.createTypeError(&zig_str, &code_str, ctx.ptr()).asObjectRef();
+    return JSC.JSValue.createTypeError(&zig_str, &code_str, ctx.ptr());
 }
 
 pub fn throwInvalidArguments(
@@ -1710,6 +1719,15 @@ pub fn throwInvalidArguments(
 ) void {
     @setCold(true);
     return throwTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE, fmt, args, ctx, exception);
+}
+
+pub fn toInvalidArguments(
+    comptime fmt: string,
+    args: anytype,
+    ctx: js.JSContextRef,
+) JSC.JSValue {
+    @setCold(true);
+    return toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE, fmt, args, ctx);
 }
 
 pub fn getAllocator(_: js.JSContextRef) std.mem.Allocator {
@@ -1729,6 +1747,12 @@ pub const ArrayBuffer = struct {
     typed_array_type: js.JSTypedArrayType,
 
     encoding: JSC.Node.Encoding = JSC.Node.Encoding.utf8,
+
+    pub const Stream = std.io.FixedBufferStream([]u8);
+
+    pub inline fn stream(this: ArrayBuffer) Stream {
+        return Stream{ .pos = 0, .buf = this.slice() };
+    }
 
     pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ArrayBuffer {
         return ArrayBuffer{
@@ -1762,6 +1786,12 @@ pub const ArrayBuffer = struct {
 pub const MarkedArrayBuffer = struct {
     buffer: ArrayBuffer,
     allocator: ?std.mem.Allocator = null,
+
+    pub const Stream = ArrayBuffer.Stream;
+
+    pub inline fn stream(this: *MarkedArrayBuffer) Stream {
+        return this.buffer.stream();
+    }
 
     pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) MarkedArrayBuffer {
         return MarkedArrayBuffer{

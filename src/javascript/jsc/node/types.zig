@@ -10,6 +10,7 @@ const C = _global.C;
 const Syscall = @import("./syscall.zig");
 const os = std.os;
 const Buffer = JSC.MarkedArrayBuffer;
+const IdentityContext = @import("../../../identity_context.zig").IdentityContext;
 
 /// Time in seconds. Not nanos!
 pub const TimeLike = c_int;
@@ -961,6 +962,51 @@ pub const Process = struct {
         }
 
         return JSC.JSValue.createStringArray(globalObject, args.ptr, args.len, true);
+    }
+
+    pub fn getCwd(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        var buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        switch (Syscall.getcwd(&buffer)) {
+            .err => |err| {
+                return err.toJSC(globalObject);
+            },
+            .result => |result| {
+                var zig_str = JSC.ZigString.init(result);
+                zig_str.detectEncoding();
+
+                const value = zig_str.toValueGC(globalObject);
+
+                return value;
+            },
+        }
+    }
+    pub fn setCwd(globalObject: *JSC.JSGlobalObject, to: *JSC.ZigString) callconv(.C) JSC.JSValue {
+        if (to.len == 0) {
+            return JSC.toInvalidArguments("path is required", .{}, globalObject.ref());
+        }
+
+        var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        const slice = to.sliceZBuf(&buf) catch {
+            return JSC.toInvalidArguments("Invalid path", .{}, globalObject.ref());
+        };
+        const result = Syscall.chdir(slice);
+
+        switch (result) {
+            .err => |err| {
+                return err.toJSC(globalObject);
+            },
+            .result => {
+                // When we update the cwd from JS, we have to update the bundler's version as well
+                // However, this might be called many times in a row, so we use a pre-allocated buffer
+                // that way we don't have to worry about garbage collector
+                var trimmed = std.mem.trimRight(u8, buf[0..slice.len], std.fs.path.sep_str);
+                buf[trimmed.len] = std.fs.path.sep;
+                const with_trailing_slash = buf[0 .. trimmed.len + 1];
+                std.mem.copy(u8, &JSC.VirtualMachine.vm.bundler.fs.top_level_dir_buf, with_trailing_slash);
+                JSC.VirtualMachine.vm.bundler.fs.top_level_dir = JSC.VirtualMachine.vm.bundler.fs.top_level_dir_buf[0..with_trailing_slash.len];
+                return JSC.JSValue.jsUndefined();
+            },
+        }
     }
 
     pub export const Bun__version: [:0]const u8 = "v" ++ _global.Global.package_json_version;

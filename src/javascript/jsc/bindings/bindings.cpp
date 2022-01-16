@@ -583,7 +583,7 @@ JSC__JSValue ZigString__to16BitValue(const ZigString *arg0, JSC__JSGlobalObject 
 
 JSC__JSValue ZigString__toValueGC(const ZigString *arg0, JSC__JSGlobalObject *arg1) {
   return JSC::JSValue::encode(
-    JSC::JSValue(JSC::jsMakeNontrivialString(arg1->vm(), Zig::toString(*arg0))));
+    JSC::JSValue(JSC::jsMakeNontrivialString(arg1->vm(), Zig::toStringCopy(*arg0))));
 }
 
 void JSC__JSValue__toZigString(JSC__JSValue JSValue0, ZigString *arg1, JSC__JSGlobalObject *arg2) {

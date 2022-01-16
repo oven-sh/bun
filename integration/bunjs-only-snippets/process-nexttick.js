@@ -77,15 +77,15 @@ await new Promise((resolve, reject) => {
     );
 }
 
-// await new Promise((resolve, reject) => {
-//   process.nextTick(
-//     (first, second) => {
-//       console.log(first);
-//       if (first !== 12345 || second !== "hello")
-//         reject(new Error("process.nextTick called with wrong arguments"));
-//       resolve(true);
-//     },
-//     12345,
-//     "hello"
-//   );
-// });
+await new Promise((resolve, reject) => {
+  process.nextTick(
+    (first, second) => {
+      console.log(first, second);
+      if (first !== 12345 || second !== "hello")
+        reject(new Error("process.nextTick called with wrong arguments"));
+      resolve(true);
+    },
+    12345,
+    "hello"
+  );
+});

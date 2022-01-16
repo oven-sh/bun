@@ -147,6 +147,10 @@ pub const ZigString = extern struct {
         return this.ptr[0..@minimum(this.len, std.math.maxInt(u32))];
     }
 
+    pub fn sliceZBuf(this: ZigString, buf: *[std.fs.MAX_PATH_BYTES]u8) ![:0]const u8 {
+        return try std.fmt.bufPrintZ(buf, "{}", .{this});
+    }
+
     pub inline fn full(this: *const ZigString) []const u8 {
         return this.ptr[0..this.len];
     }

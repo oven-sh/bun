@@ -1,4 +1,4 @@
-const interval = 0.5;
+const interval = 0.01;
 const now = performance.now();
 console.time("Slept");
 Bun.sleepSync(interval);

@@ -275,18 +275,17 @@ static JSC_DECLARE_CUSTOM_GETTER(Process_getPID);
 static JSC_DECLARE_CUSTOM_GETTER(Process_getPPID);
 
 static JSC_DECLARE_HOST_FUNCTION(Process_functionNextTick);
-
 static JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
                                 (JSC::JSGlobalObject * globalObject, JSC::CallFrame *callFrame)) {
   JSC::VM &vm = globalObject->vm();
-
-  if (callFrame->argumentCount() == 0) {
+  auto argCount = callFrame->argumentCount();
+  if (argCount == 0) {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSC::throwTypeError(globalObject, scope, "nextTick requires 1 argument (a function)"_s);
     return JSC::JSValue::encode(JSC::JSValue{});
   }
 
-  JSC::JSValue job = callFrame->argument(0);
+  JSC::JSValue job = callFrame->uncheckedArgument(0);
 
   if (!job.isObject() || !job.getObject()->isCallable(vm)) {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -294,31 +293,53 @@ static JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
     return JSC::JSValue::encode(JSC::JSValue{});
   }
 
-  if (callFrame->argumentCount() > 1) {
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    JSC::throwTypeError(globalObject, scope,
-                        "nextTick with multiple arguments isn't supported yet :("_s);
-    return JSC::JSValue::encode(JSC::JSValue{});
-    // JSC::MarkedArgumentBuffer args;
-    // for (unsigned i = 1; i < callFrame->argumentCount(); i++) {
-    //   args.append(callFrame->uncheckedArgument(i));
-    // }
+  switch (argCount) {
 
-    // JSC::ArgList argsList(args);
-    // JSC::gcProtect(job);
-    // JSC::JSFunction *callback = JSC::JSNativeStdFunction::create(
-    //   vm, globalObject, 0, String(),
-    //   [job, &argsList](JSC::JSGlobalObject *globalObject, JSC::CallFrame *callFrame) {
-    //     JSC::VM &vm = globalObject->vm();
-    //     auto callData = getCallData(vm, job);
+    case 1: {
+      // This is a JSC builtin function
+      globalObject->queueMicrotask(JSC::createJSMicrotask(vm, job));
+      break;
+    }
 
-    //     return JSC::JSValue::encode(JSC::call(globalObject, job, callData, job, argsList));
-    //   });
+    case 2:
+    case 3:
+    case 4:
+    case 5: {
+      JSC::JSValue argument0 = callFrame->uncheckedArgument(1);
+      JSC::JSValue argument1 = argCount > 2 ? callFrame->uncheckedArgument(2) : JSC::JSValue{};
+      JSC::JSValue argument2 = argCount > 3 ? callFrame->uncheckedArgument(3) : JSC::JSValue{};
+      JSC::JSValue argument3 = argCount > 4 ? callFrame->uncheckedArgument(4) : JSC::JSValue{};
+      globalObject->queueMicrotask(
+        JSC::createJSMicrotask(vm, job, argument0, argument1, argument2, argument3));
+      break;
+    }
 
-    // globalObject->queueMicrotask(JSC::createJSMicrotask(vm, JSC::JSValue(callback)));
-  } else {
-    // This is a JSC builtin function
-    globalObject->queueMicrotask(JSC::createJSMicrotask(vm, job));
+    default: {
+      auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+      JSC::throwTypeError(globalObject, scope,
+                          "nextTick doesn't support more than 4 arguments currently"_s);
+      return JSC::JSValue::encode(JSC::JSValue{});
+
+      break;
+    }
+
+      // JSC::MarkedArgumentBuffer args;
+      // for (unsigned i = 1; i < callFrame->argumentCount(); i++) {
+      //   args.append(callFrame->uncheckedArgument(i));
+      // }
+
+      // JSC::ArgList argsList(args);
+      // JSC::gcProtect(job);
+      // JSC::JSFunction *callback = JSC::JSNativeStdFunction::create(
+      //   vm, globalObject, 0, String(),
+      //   [job, &argsList](JSC::JSGlobalObject *globalObject, JSC::CallFrame *callFrame) {
+      //     JSC::VM &vm = globalObject->vm();
+      //     auto callData = getCallData(vm, job);
+
+      //     return JSC::JSValue::encode(JSC::call(globalObject, job, callData, job, argsList));
+      //   });
+
+      // globalObject->queueMicrotask(JSC::createJSMicrotask(vm, JSC::JSValue(callback)));
   }
 
   return JSC::JSValue::encode(JSC::jsUndefined());
@@ -354,6 +375,44 @@ class Process : public JSC::JSNonFinalObject {
   void finishCreation(JSC::VM &vm);
 };
 
+static JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
+
+static JSC_DEFINE_HOST_FUNCTION(Process_functionCwd,
+                                (JSC::JSGlobalObject * globalObject, JSC::CallFrame *callFrame)) {
+
+  auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+  JSC::JSValue result = JSC::JSValue::decode(Bun__Process__getCwd(globalObject));
+  JSC::JSObject *obj = result.getObject();
+  if (UNLIKELY(obj != nullptr && obj->isErrorInstance())) {
+    scope.throwException(globalObject, obj);
+    return JSValue::encode(JSC::jsUndefined());
+  }
+
+  return JSC::JSValue::encode(result);
+}
+
+static JSC_DECLARE_HOST_FUNCTION(Process_functionChdir);
+
+static JSC_DEFINE_HOST_FUNCTION(Process_functionChdir,
+                                (JSC::JSGlobalObject * globalObject, JSC::CallFrame *callFrame)) {
+
+  auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+  ZigString str = ZigString{nullptr, 0};
+  if (callFrame->argumentCount() > 0) {
+    str = Zig::toZigString(callFrame->uncheckedArgument(0).toWTFString(globalObject));
+  }
+
+  JSC::JSValue result = JSC::JSValue::decode(Bun__Process__setCwd(globalObject, &str));
+  JSC::JSObject *obj = result.getObject();
+  if (UNLIKELY(obj != nullptr && obj->isErrorInstance())) {
+    scope.throwException(globalObject, obj);
+    return JSValue::encode(JSC::jsUndefined());
+  }
+
+  return JSC::JSValue::encode(result);
+}
+
 void Process::finishCreation(JSC::VM &vm) {
   Base::finishCreation(vm);
   auto clientData = Bun::clientData(vm);
@@ -377,6 +436,16 @@ void Process::finishCreation(JSC::VM &vm) {
   this->putDirect(vm, clientData->builtinNames().nextTickPublicName(),
                   JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject *>(globalObject()), 0,
                                           WTF::String("nextTick"), Process_functionNextTick),
+                  0);
+
+  this->putDirect(vm, clientData->builtinNames().cwdPublicName(),
+                  JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject *>(globalObject()), 0,
+                                          WTF::String("cwd"), Process_functionCwd),
+                  0);
+
+  this->putDirect(vm, clientData->builtinNames().chdirPublicName(),
+                  JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject *>(globalObject()), 0,
+                                          WTF::String("chdir"), Process_functionChdir),
                   0);
 
   putDirectCustomAccessor(

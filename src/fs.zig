@@ -78,6 +78,10 @@ pub const BytecodeCacheFetcher = struct {
 pub const FileSystem = struct {
     allocator: std.mem.Allocator,
     top_level_dir: string = "/",
+
+    // used on subsequent updates
+    top_level_dir_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
+
     fs: Implementation,
 
     dirname_store: *DirnameStore,

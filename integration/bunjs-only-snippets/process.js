@@ -37,4 +37,9 @@ if (typeof JSON.parse(JSON.stringify(process.env)).toJSON !== "undefined") {
 }
 
 var { env, ...proces } = process;
+console.log(JSON.stringify(proces, null, 2));
 console.log(proces);
+
+console.log("CWD", process.cwd());
+console.log("SET CWD", process.chdir("../"));
+console.log("CWD", process.cwd());

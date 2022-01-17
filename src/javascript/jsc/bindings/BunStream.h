@@ -12,9 +12,12 @@ class Readable : public JSC::JSNonFinalObject {
   using Base = JSC::JSNonFinalObject;
 
     public:
+  Bun__Readable *state;
   Readable(JSC::VM &vm, Bun__Readable *readable, JSC::Structure *structure) : Base(vm, structure) {
-    readable_ = readable;
+    state = readable;
   }
+
+  ~Readable();
 
   DECLARE_INFO;
 
@@ -31,25 +34,23 @@ class Readable : public JSC::JSNonFinalObject {
                                   JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
   }
 
-  static Readable *create(JSC::VM &vm, Bun__readable *readable_, JSC::Structure *structure) {
+  static Readable *create(JSC::VM &vm, Bun__Readable *state, JSC::Structure *structure) {
     Readable *accessor =
-      new (NotNull, JSC::allocateCell<Readable>(vm.heap)) Readable(vm, structure);
+      new (NotNull, JSC::allocateCell<Bun::Readable>(vm.heap)) Readable(vm, state, structure);
     accessor->finishCreation(vm);
     return accessor;
   }
 
   void finishCreation(JSC::VM &vm);
-
-    private:
-  Bun__Readable *readable_;
 };
 
 class Writable : public JSC::JSNonFinalObject {
   using Base = JSC::JSNonFinalObject;
 
     public:
+  Bun__Writable *state;
   Writable(JSC::VM &vm, Bun__Writable *writable, JSC::Structure *structure) : Base(vm, structure) {
-    writable_ = writable;
+    state = writable;
   }
 
   DECLARE_INFO;
@@ -67,17 +68,15 @@ class Writable : public JSC::JSNonFinalObject {
                                   JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
   }
 
-  static Writable *create(JSC::VM &vm, Bun__Writable *writable_, JSC::Structure *structure) {
+  static Writable *create(JSC::VM &vm, Bun__Writable *state, JSC::Structure *structure) {
     Writable *accessor =
-      new (NotNull, JSC::allocateCell<Writable>(vm.heap)) Writable(vm, structure);
+      new (NotNull, JSC::allocateCell<Writable>(vm.heap)) Writable(vm, state, structure);
     accessor->finishCreation(vm);
     return accessor;
   }
+  ~Writable();
 
   void finishCreation(JSC::VM &vm);
-
-    private:
-  Bun__Writable *writable_;
 };
 
 } // namespace Bun

@@ -56,6 +56,8 @@ pub const bZig__JSMicrotaskCallback = struct_Zig__JSMicrotaskCallback;
 pub const SystemError = bindings.SystemError;
 const JSClassRef = bindings.C.JSClassRef;
 pub const JSC__CatchScope = bindings.CatchScope;
+pub const Bun__Readable = bindings.NodeReadableStream;
+pub const Bun__Writable = bindings.NodeWritableStream;
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
 pub const ptrdiff_t = c_long;
@@ -287,6 +289,8 @@ pub extern fn JSC__JSValue__getIfPropertyExistsImpl(JSValue0: JSC__JSValue, arg1
 pub extern fn JSC__JSValue__getLengthOfArray(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject) u32;
 pub extern fn JSC__JSValue__getNameProperty(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]ZigString) void;
 pub extern fn JSC__JSValue__getPrototype(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
+pub extern fn JSC__JSValue__getReadableStreamState(JSValue0: JSC__JSValue, arg1: [*c]JSC__VM) [*c]Bun__Readable;
+pub extern fn JSC__JSValue__getWritableStreamState(JSValue0: JSC__JSValue, arg1: [*c]JSC__VM) [*c]Bun__Writable;
 pub extern fn JSC__JSValue__isAggregateError(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject) bool;
 pub extern fn JSC__JSValue__isAnyInt(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isBigInt(JSValue0: JSC__JSValue) bool;
@@ -415,4 +419,6 @@ pub extern fn WTF__StringView__length(arg0: [*c]const WTF__StringView) usize;
 pub extern fn Zig__GlobalObject__create(arg0: [*c]JSClassRef, arg1: i32, arg2: ?*anyopaque) [*c]JSC__JSGlobalObject;
 pub extern fn Zig__GlobalObject__getModuleRegistryMap(arg0: [*c]JSC__JSGlobalObject) ?*anyopaque;
 pub extern fn Zig__GlobalObject__resetModuleRegistryMap(arg0: [*c]JSC__JSGlobalObject, arg1: ?*anyopaque) bool;
+pub extern fn Bun__Readable__create(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]Bun__Readable) JSC__JSValue;
+pub extern fn Bun__Writable__create(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]Bun__Writable) JSC__JSValue;
 pub extern fn ZigException__fromException(arg0: [*c]JSC__Exception) ZigException;

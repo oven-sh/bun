@@ -69,6 +69,9 @@ export var unlinkSync = fs.unlinkSync.bind(fs);
 export var utimesSync = fs.utimesSync.bind(fs);
 export var lutimesSync = fs.lutimesSync.bind(fs);
 
+export var createReadStream = fs.createReadStream.bind(fs);
+export var createWriteStream = fs.createWriteStream.bind(fs);
+
 // lol
 realpath.native = realpath;
 realpathSync.native = realpathSync;

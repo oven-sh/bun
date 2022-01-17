@@ -126,6 +126,7 @@ const WritableEvent WritableEvent__Finish = 3;
 const WritableEvent WritableEvent__Pipe = 4;
 const WritableEvent WritableEvent__Unpipe = 5;
 const WritableEvent WritableEvent__Open = 6;
+const WritableEvent WritableEventUser = 254;
 
 typedef uint8_t ReadableEvent;
 
@@ -137,17 +138,20 @@ const ReadableEvent ReadableEvent__Pause = 4;
 const ReadableEvent ReadableEvent__Readable = 5;
 const ReadableEvent ReadableEvent__Resume = 6;
 const ReadableEvent ReadableEvent__Open = 7;
+const ReadableEvent ReadableEventUser = 254;
 
 typedef struct {
   uint32_t highwater_mark;
   Encoding encoding;
-  uint32_t start;
-  uint32_t end;
+  int32_t start;
+  int32_t end;
   bool readable;
   bool aborted;
   bool did_read;
   bool ended;
   uint8_t flowing;
+  bool emit_close;
+  bool emit_end;
 } Bun__Readable;
 
 typedef struct {
@@ -158,11 +162,11 @@ typedef struct {
   bool ended;
   bool corked;
   bool finished;
-  bool auto_close;
-  bool emit_end;
+  bool emit_close;
 } Bun__Writable;
 
 #ifdef __cplusplus
+
 extern "C" ZigErrorCode Zig_ErrorCodeParserError;
 
 extern "C" void ZigString__free(const unsigned char *ptr, size_t len, void *allocator);

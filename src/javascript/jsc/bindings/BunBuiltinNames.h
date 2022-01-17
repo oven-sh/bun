@@ -36,11 +36,25 @@ using namespace JSC;
     macro(chdir) \
     macro(cwd) \
     macro(process) \
-    macro(_process) \
-    macro(addEventListener) \
-    macro(on) \
-    macro(removeEventListener) \
     macro(map) \
+    macro(addEventListener) \
+    macro(removeEventListener) \
+    macro(prependEventListener) \
+    macro(write) \
+    macro(end) \
+    macro(close) \
+    macro(destroy) \
+    macro(cork) \
+    macro(uncork) \
+    macro(isPaused) \
+    macro(read) \
+    macro(pipe) \
+    macro(unpipe) \
+    macro(once) \
+    macro(on) \
+    macro(unshift) \
+    macro(resume) \
+    macro(pause) \
     BUN_ADDITIONAL_PRIVATE_IDENTIFIERS(macro) \
 
 class BunBuiltinNames {

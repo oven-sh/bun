@@ -1742,43 +1742,68 @@ const Arguments = struct {
         }
     };
 
-    fn StreamOptions(comptime flags: FileSystemFlags, highwater_mark: u64) type {
-        return struct {
-            const Stream = @This();
+    pub const CreateReadStream = struct {
+        file: PathOrFileDescriptor,
+        flags: FileSystemFlags = FileSystemFlags.@"r",
+        encoding: Encoding = Encoding.utf8,
+        mode: Mode = 0o666,
+        autoClose: bool = true,
+        emitClose: bool = true,
+        start: i32 = 0,
+        end: i32 = std.math.maxInt(i32),
+        highwater_mark: u32 = 64 * 1024,
+        global_object: *JSC.JSGlobalObject,
 
-            path: PathLike,
-            flags: FileSystemFlags = flags,
-            encoding: Encoding = Encoding.buffer,
-            fd: FileDescriptor = 0,
-            mode: Mode = 0,
-            auto_close: bool = true,
-            emit_close: bool = true,
-            start: u32 = 0,
+        pub fn copyToState(this: CreateReadStream, state: *JSC.Node.Readable.State) void {
+            state.encoding = this.encoding;
+            state.highwater_mark = this.highwater_mark;
+            state.start = this.start;
+            state.end = this.end;
+        }
 
-            highwater_mark: u32 = highwater_mark,
+        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?CreateReadStream {
+            var path = PathLike.fromJS(ctx, arguments, exception);
+            if (exception.* != null) return null;
+            if (path == null) arguments.eat();
 
-            pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Stream {
-                var stream = Stream{
-                    .path = PathLike.fromJS(ctx, arguments, exception) orelse {
-                        if (exception.* == null) {
+            var stream = CreateReadStream{
+                .file = undefined,
+                .global_object = ctx.ptr(),
+            };
+            var fd: FileDescriptor = std.math.maxInt(FileDescriptor);
+
+            if (arguments.next()) |arg| {
+                arguments.eat();
+                if (arg.isString()) {
+                    stream.encoding = Encoding.fromStringValue(arg, ctx.ptr()) orelse {
+                        if (exception.* != null) {
                             JSC.throwInvalidArguments(
-                                "path must be a string or buffer",
+                                "Invalid encoding",
                                 .{},
                                 ctx,
                                 exception,
                             );
                         }
                         return null;
-                    },
-                };
+                    };
+                } else if (arg.isObject()) {
+                    if (arg.getIfPropertyExists(ctx.ptr(), "mode")) |mode_| {
+                        stream.mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse {
+                            if (exception.* != null) {
+                                JSC.throwInvalidArguments(
+                                    "Invalid mode",
+                                    .{},
+                                    ctx,
+                                    exception,
+                                );
+                            }
+                            return null;
+                        };
+                    }
 
-                if (exception.* != null) return null;
-
-                if (arguments.next()) |arg| {
-                    arguments.eat();
-                    if (arg.isString()) {
-                        stream.encoding = Encoding.fromStringValue(arg, ctx.ptr()) orelse {
-                            if (exception.* == null) {
+                    if (arg.getIfPropertyExists(ctx.ptr(), "encoding")) |encoding| {
+                        stream.encoding = Encoding.fromStringValue(encoding, ctx.ptr()) orelse {
+                            if (exception.* != null) {
                                 JSC.throwInvalidArguments(
                                     "Invalid encoding",
                                     .{},
@@ -1788,78 +1813,195 @@ const Arguments = struct {
                             }
                             return null;
                         };
-                    } else if (arg.isObject()) {
-                        if (arg.getIfPropertyExists(ctx.ptr(), "encoding")) |encoding_| {
-                            if (!encoding_.isUndefinedOrNull()) {
-                                stream.encoding = Encoding.fromStringValue(encoding_, ctx.ptr()) orelse {
-                                    if (exception.* == null) {
-                                        JSC.throwInvalidArguments(
-                                            "Invalid encoding",
-                                            .{},
-                                            ctx,
-                                            exception,
-                                        );
-                                    }
-                                    return null;
-                                };
+                    }
+
+                    if (arg.getIfPropertyExists(ctx.ptr(), "flags")) |flags| {
+                        stream.flags = FileSystemFlags.fromJS(ctx, flags, exception) orelse {
+                            if (exception.* != null) {
+                                JSC.throwInvalidArguments(
+                                    "Invalid flags",
+                                    .{},
+                                    ctx,
+                                    exception,
+                                );
                             }
-                        }
+                            return null;
+                        };
+                    }
 
-                        if (arg.getIfPropertyExists(ctx.ptr(), "flags")) |flags_| {
-                            stream.flags = FileSystemFlags.fromJS(ctx, flags_, exception) orelse {
-                                if (exception.* == null) {
-                                    JSC.throwInvalidArguments(
-                                        "Invalid flags",
-                                        .{},
-                                        ctx,
-                                        exception,
-                                    );
-                                }
-                                return null;
-                            };
-                        }
+                    if (arg.getIfPropertyExists(ctx.ptr(), "fd")) |flags| {
+                        fd = JSC.Node.fileDescriptorFromJS(ctx, flags, exception) orelse {
+                            if (exception.* != null) {
+                                JSC.throwInvalidArguments(
+                                    "Invalid file descriptor",
+                                    .{},
+                                    ctx,
+                                    exception,
+                                );
+                            }
+                            return null;
+                        };
+                    }
 
-                        if (arg.getIfPropertyExists(ctx.ptr(), "mode")) |mode_| {
-                            stream.mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse {
-                                if (exception.* == null) {
-                                    JSC.throwInvalidArguments(
-                                        "Invalid mode",
-                                        .{},
-                                        ctx,
-                                        exception,
-                                    );
-                                }
-                                return null;
-                            };
-                        }
+                    if (arg.getIfPropertyExists(ctx.ptr(), "autoClose")) |autoClose| {
+                        stream.autoClose = autoClose.toBoolean();
+                    }
 
-                        if (arg.getIfPropertyExists(ctx.ptr(), "autoClose")) |auto_close_| {
-                            stream.auto_close = auto_close_.toBoolean();
-                        }
+                    if (arg.getIfPropertyExists(ctx.ptr(), "emitClose")) |emitClose| {
+                        stream.emitClose = emitClose.toBoolean();
+                    }
 
-                        if (arg.getIfPropertyExists(ctx.ptr(), "emitClose")) |emit_close_| {
-                            stream.emit_close = emit_close_.toBoolean();
-                        }
+                    if (arg.getIfPropertyExists(ctx.ptr(), "start")) |start| {
+                        stream.start = start.toInt32();
+                    }
 
-                        if (arg.getIfPropertyExists(ctx.ptr(), "start")) |start_| {
-                            stream.start = start_.toU32();
-                        }
+                    if (arg.getIfPropertyExists(ctx.ptr(), "end")) |end| {
+                        stream.end = end.toInt32();
+                    }
 
-                        if (arg.getIfPropertyExists(ctx.ptr(), "highWaterMark")) |highwater_mark_| {
-                            stream.highwater_mark = highwater_mark_.toU32();
-                        }
+                    if (arg.getIfPropertyExists(ctx.ptr(), "highwaterMark")) |highwaterMark| {
+                        stream.highwater_mark = highwaterMark.toU32();
                     }
                 }
-
-                return stream;
             }
-        };
-    }
 
-    pub const CreateReadStream = struct {
-        readable: JSC.Node.Readable,
+            if (fd != std.math.maxInt(FileDescriptor)) {
+                stream.file = .{ .fd = fd };
+            } else if (path) |path_| {
+                stream.file = .{ .path = path_ };
+            } else {
+                JSC.throwInvalidArguments("Missing path or file descriptor", .{}, ctx, exception);
+                return null;
+            }
+            return stream;
+        }
     };
-    pub const CreateWriteStream = StreamOptions(FileSystemFlags.@"w", 256_000);
+
+    pub const CreateWriteStream = struct {
+        file: PathOrFileDescriptor,
+        flags: FileSystemFlags = FileSystemFlags.@"w",
+        encoding: Encoding = Encoding.utf8,
+        mode: Mode = 0o666,
+        autoClose: bool = true,
+        emitClose: bool = true,
+        start: i32 = 0,
+        highwater_mark: u32 = 256 * 1024,
+        global_object: *JSC.JSGlobalObject,
+
+        pub fn copyToState(this: CreateWriteStream, state: *JSC.Node.Writable.State) void {
+            state.encoding = this.encoding;
+            state.highwater_mark = this.highwater_mark;
+            state.start = this.start;
+            state.emit_close = this.emitClose;
+        }
+
+        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?CreateWriteStream {
+            var path = PathLike.fromJS(ctx, arguments, exception);
+            if (exception.* != null) return null;
+            if (path == null) arguments.eat();
+
+            var stream = CreateWriteStream{
+                .file = undefined,
+                .global_object = ctx.ptr(),
+            };
+            var fd: FileDescriptor = std.math.maxInt(FileDescriptor);
+
+            if (arguments.next()) |arg| {
+                arguments.eat();
+                if (arg.isString()) {
+                    stream.encoding = Encoding.fromStringValue(arg, ctx.ptr()) orelse {
+                        if (exception.* != null) {
+                            JSC.throwInvalidArguments(
+                                "Invalid encoding",
+                                .{},
+                                ctx,
+                                exception,
+                            );
+                        }
+                        return null;
+                    };
+                } else if (arg.isObject()) {
+                    if (arg.getIfPropertyExists(ctx.ptr(), "mode")) |mode_| {
+                        stream.mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse {
+                            if (exception.* != null) {
+                                JSC.throwInvalidArguments(
+                                    "Invalid mode",
+                                    .{},
+                                    ctx,
+                                    exception,
+                                );
+                            }
+                            return null;
+                        };
+                    }
+
+                    if (arg.getIfPropertyExists(ctx.ptr(), "encoding")) |encoding| {
+                        stream.encoding = Encoding.fromStringValue(encoding, ctx.ptr()) orelse {
+                            if (exception.* != null) {
+                                JSC.throwInvalidArguments(
+                                    "Invalid encoding",
+                                    .{},
+                                    ctx,
+                                    exception,
+                                );
+                            }
+                            return null;
+                        };
+                    }
+
+                    if (arg.getIfPropertyExists(ctx.ptr(), "flags")) |flags| {
+                        stream.flags = FileSystemFlags.fromJS(ctx, flags, exception) orelse {
+                            if (exception.* != null) {
+                                JSC.throwInvalidArguments(
+                                    "Invalid flags",
+                                    .{},
+                                    ctx,
+                                    exception,
+                                );
+                            }
+                            return null;
+                        };
+                    }
+
+                    if (arg.getIfPropertyExists(ctx.ptr(), "fd")) |flags| {
+                        fd = JSC.Node.fileDescriptorFromJS(ctx, flags, exception) orelse {
+                            if (exception.* != null) {
+                                JSC.throwInvalidArguments(
+                                    "Invalid file descriptor",
+                                    .{},
+                                    ctx,
+                                    exception,
+                                );
+                            }
+                            return null;
+                        };
+                    }
+
+                    if (arg.getIfPropertyExists(ctx.ptr(), "autoClose")) |autoClose| {
+                        stream.autoClose = autoClose.toBoolean();
+                    }
+
+                    if (arg.getIfPropertyExists(ctx.ptr(), "emitClose")) |emitClose| {
+                        stream.emitClose = emitClose.toBoolean();
+                    }
+
+                    if (arg.getIfPropertyExists(ctx.ptr(), "start")) |start| {
+                        stream.start = start.toInt32();
+                    }
+                }
+            }
+
+            if (fd != std.math.maxInt(FileDescriptor)) {
+                stream.file = .{ .fd = fd };
+            } else if (path) |path_| {
+                stream.file = .{ .path = path_ };
+            } else {
+                JSC.throwInvalidArguments("Missing path or file descriptor", .{}, ctx, exception);
+                return null;
+            }
+            return stream;
+        }
+    };
 
     pub const FdataSync = struct {
         fd: FileDescriptor,
@@ -2258,8 +2400,8 @@ const Return = struct {
     pub const WatchFile = void;
     pub const Utimes = void;
 
-    pub const CreateReadStream = void;
-    pub const CreateWriteStream = void;
+    pub const CreateReadStream = *JSC.Node.Stream;
+    pub const CreateWriteStream = *JSC.Node.Stream;
     pub const Chown = void;
     pub const Lutimes = void;
 };
@@ -3532,12 +3674,43 @@ pub const NodeFS = struct {
         _ = args;
         _ = this;
         _ = flavor;
-        return Maybe(Return.CreateReadStream).todo;
+        var stream = _global.default_allocator.create(JSC.Node.Stream) catch unreachable;
+        stream.* = JSC.Node.Stream{
+            .sink = .{
+                .readable = JSC.Node.Readable{
+                    .stream = stream,
+                    .global_object = args.global_object,
+                },
+            },
+            .sink_type = .readable,
+            .content = undefined,
+            .content_type = undefined,
+            .allocator = _global.default_allocator,
+        };
+
+        args.file.copyToStream(args.flags, args.autoClose, args.mode, _global.default_allocator, stream) catch unreachable;
+        args.copyToState(&stream.sink.readable.state);
+        return Maybe(Return.CreateReadStream){ .result = stream };
     }
     pub fn createWriteStream(this: *NodeFS, args: Arguments.CreateWriteStream, comptime flavor: Flavor) Maybe(Return.CreateWriteStream) {
         _ = args;
         _ = this;
         _ = flavor;
-        return Maybe(Return.CreateWriteStream).todo;
+        var stream = _global.default_allocator.create(JSC.Node.Stream) catch unreachable;
+        stream.* = JSC.Node.Stream{
+            .sink = .{
+                .writable = JSC.Node.Writable{
+                    .stream = stream,
+                    .global_object = args.global_object,
+                },
+            },
+            .sink_type = .writable,
+            .content = undefined,
+            .content_type = undefined,
+            .allocator = _global.default_allocator,
+        };
+        args.file.copyToStream(args.flags, args.autoClose, args.mode, _global.default_allocator, stream) catch unreachable;
+        args.copyToState(&stream.sink.writable.state);
+        return Maybe(Return.CreateWriteStream){ .result = stream };
     }
 };

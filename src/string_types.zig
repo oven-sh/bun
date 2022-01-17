@@ -43,6 +43,11 @@ pub const PathString = packed struct {
         return @intToPtr([*]u8, @intCast(usize, this.ptr))[0..this.len];
     }
 
+    pub inline fn sliceAssumeZ(this: anytype) stringZ {
+        @setRuntimeSafety(false); // "cast causes pointer to be null" is fine here. if it is null, the len will be 0.
+        return @intToPtr([*:0]u8, @intCast(usize, this.ptr))[0..this.len];
+    }
+
     pub inline fn init(str: string) @This() {
         @setRuntimeSafety(false); // "cast causes pointer to be null" is fine here. if it is null, the len will be 0.
 

@@ -56,3 +56,5 @@ pub const bZig__JSMicrotaskCallback = struct_Zig__JSMicrotaskCallback;
 pub const SystemError = bindings.SystemError;
 const JSClassRef = bindings.C.JSClassRef;
 pub const JSC__CatchScope = bindings.CatchScope;
+pub const Bun__Readable = bindings.NodeReadableStream;
+pub const Bun__Writable = bindings.NodeWritableStream;

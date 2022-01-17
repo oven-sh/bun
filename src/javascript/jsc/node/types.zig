@@ -500,6 +500,32 @@ pub const PathOrFileDescriptor = union(Tag) {
 
     pub const Tag = enum { fd, path };
 
+    pub fn copyToStream(this: PathOrFileDescriptor, flags: FileSystemFlags, auto_close: bool, mode: Mode, allocator: std.mem.Allocator, stream: *Stream) !void {
+        switch (this) {
+            .fd => |fd| {
+                stream.content = Stream.Content{
+                    .file = .{
+                        .fd = fd,
+                        .flags = flags,
+                        .mode = mode,
+                    },
+                };
+                stream.content_type = .file;
+            },
+            .path => |path| {
+                stream.content = Stream.Content{
+                    .file_path = .{
+                        .path = PathString.init(std.mem.span(try allocator.dupeZ(u8, path.slice()))),
+                        .flags = flags,
+                        .mode = mode,
+                        .auto_close = auto_close,
+                    },
+                };
+                stream.content_type = .file_path;
+            },
+        }
+    }
+
     pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?PathOrFileDescriptor {
         const first = arguments.next() orelse return null;
 
@@ -1007,14 +1033,11 @@ pub const Emitter = struct {
         };
     };
 
-    pub const UserListenerMap = std.HashMap(u64, Listener.List, IdentityContext(u64), 80);
-
     pub fn New(comptime EventType: type) type {
         return struct {
             const EventEmitter = @This();
             pub const Map = std.enums.EnumArray(EventType, Listener.List);
             listeners: Map = Map.initFill(Listener.List{}),
-            user_listeners: UserListenerMap,
 
             pub fn addListener(this: *EventEmitter, ctx: JSC.C.JSContextRef, event: EventType, listener: Emitter.Listener) !void {
                 try this.listeners.getPtr(event).append(_global.default_allocator, ctx, listener);
@@ -1051,6 +1074,26 @@ pub const Stream = struct {
     content_type: Content.Type,
     allocator: std.mem.Allocator,
 
+    // This allocates a new stream object
+    pub fn toJS(this: *Stream, ctx: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+        switch (this.sink_type) {
+            .readable => {
+                var readable = &this.sink.readable.state;
+                return readable.create(
+                    ctx.ptr(),
+                    readable,
+                );
+            },
+            .writable => {
+                var writable = &this.sink.writable.state;
+                return writable.create(
+                    ctx.ptr(),
+                    writable,
+                );
+            },
+        }
+    }
+
     pub fn deinit(this: *Stream) void {
         this.allocator.destroy(this);
     }
@@ -1066,21 +1109,6 @@ pub const Stream = struct {
     };
 
     pub const Consumed = u52;
-    pub const Chunk = struct {
-        consumed: Consumed = 0,
-        kind: Content.Type,
-        source: Content,
-
-        pub fn Reader(comptime ContentType: Content.Type) type {
-            return struct {
-                const This = @This();
-                ctx: ContentType,
-
-                // pub fn read(this: *This, amount: )
-
-            };
-        }
-    };
 
     const Response = struct {
         bytes: [8]u8 = std.mem.zeroes([8]u8),
@@ -1109,29 +1137,16 @@ pub const Stream = struct {
         pub const File = struct {
             fd: FileDescriptor,
             flags: FileSystemFlags,
-
-            pub fn write(this: *File, comptime Source: Content.Type, readable: Chunk.Reader(Source)) Response {
-                _ = this;
-                _ = readable;
-            }
+            mode: Mode,
 
             // pub fn read(this: *File, comptime chunk_type: Content.Type, chunk: Source.Type.of(chunk_type)) Response {}
         };
 
         pub const FilePath = struct {
-            path: PathLike,
-            flags: FileSystemFlags,
-
-            pub fn write(this: *File, writable: *Stream, comptime Source: Content.Type, readable: Chunk.Reader(Source)) Response {
-                _ = this;
-                _ = readable;
-                _ = writable;
-            }
-
-            pub fn read(this: *File, comptime Source: Content.Type, readable: Chunk.Reader(Source)) Response {
-                _ = this;
-                _ = readable;
-            }
+            path: PathString,
+            auto_close: bool = false,
+            file: File = File{ .fd = std.math.maxInt(FileDescriptor), .mode = 0o666, .flags = FileSystemFlags.@"r" },
+            opened: bool = false,
 
             // pub fn read(this: *File, comptime chunk_type: Content.Type, chunk: Source.Type.of(chunk_type)) Response {}
         };
@@ -1157,10 +1172,280 @@ pub const Stream = struct {
 
 pub const Writable = struct {
     state: State = State{},
-    emitter: Emitter.New(Events),
+    emitter: EventEmitter = EventEmitter{},
+
+    connection: ?*Stream = null,
+    globalObject: ?*JSC.JSGlobalObject = null,
 
     // workaround https://github.com/ziglang/zig/issues/6611
     stream: *Stream = undefined,
+    pipeline: Pipeline = Pipeline{},
+    started: bool = false,
+
+    pub const Chunk = struct {
+        data: StringOrBuffer,
+        encoding: Encoding = Encoding.utf8,
+    };
+
+    pub const Pipe = struct {
+        source: *Stream,
+        destination: *Stream,
+        progress: usize = 0,
+        // Might be the end of the stream
+        // or it might just be another stream
+        next: ?*Pipe = null,
+
+        pub const State = enum {
+            pending,
+            err,
+            backpressure,
+            complete,
+        };
+
+        pub fn start(this: *Pipe, pipeline: *Pipeline, chunk: ?*Chunk) void {
+            this.run(pipeline, chunk, null);
+        }
+
+        var disable_clonefile = false;
+
+        fn runCloneFileWithFallback(pipeline: *Pipeline, source: *Stream.Content, destination: *Stream.Content) void {
+            switch (Syscall.clonefile(source.path.sliceAssumeZ(), destination.path.sliceAssumeZ())) {
+                .result => return,
+                .err => |err| {
+                    switch (err.getErrno()) {
+                        // these are retryable
+                        .ENOTSUP, .EXDEV, .EXIST, .EIO, .ENOTDIR => |call| {
+                            if (call == .ENOTSUP) {
+                                disable_clonefile = true;
+                            }
+
+                            return runCopyfile(
+                                false,
+                                pipeline,
+                                source,
+                                .file_path,
+                                destination,
+                                .file_path,
+                            );
+                        },
+                        else => {
+                            pipeline.err = err;
+                            return;
+                        },
+                    }
+                },
+            }
+        }
+
+        fn runCopyfile(
+            must_open_files: bool,
+            pipeline: *Pipeline,
+            source: *Stream.Content,
+            source_type: Stream.Content.Type,
+            destination: *Stream.Content,
+            destination_type: Stream.Content.Type,
+        ) void {
+            do_the_work: {
+
+                // fallback-only
+                if (destination_type == .file_path and source_type == .file_path and !destination.file_path.opened and !must_open_files) {
+                    switch (Syscall.copyfile(source.path.sliceAssumeZ(), destination.path.sliceAssumeZ(), 0)) {
+                        .err => |err| {
+                            pipeline.err = err;
+
+                            return;
+                        },
+                        .result => break :do_the_work,
+                    }
+                }
+
+                if (source_type == .file_path and !source.file_path.opened) {
+                    switch (Syscall.open(source.path.sliceAssumeZ(), @enumToInt(source.file_path.file.flags))) {
+                        .err => |err| {
+                            pipeline.err = err;
+                            return;
+                        },
+                        .result => |fd| {
+                            source.file_path.file.fd = fd;
+                            source.file_path.opened = true;
+                            source.emit(.open);
+                        },
+                    }
+                }
+
+                const source_fd = if (source_type == .file_path)
+                    source.file_path.file.fd
+                else
+                    source.file.fd;
+
+                if (destination == .file_path and !destination.file_path.opened) {
+                    switch (Syscall.open(destination.path.sliceAssumeZ(), @enumToInt(destination.file_path.file.flags))) {
+                        .err => |err| {
+                            pipeline.err = err;
+                            return;
+                        },
+                        .result => |fd| {
+                            destination.file_path.file.fd = fd;
+                            destination.file_path.opened = true;
+                            destination.emit(.open);
+                        },
+                    }
+                }
+
+                const dest_fd = if (destination_type == .file_path)
+                    destination.file_path.file.fd
+                else
+                    destination.file.fd;
+
+                switch (Syscall.fcopyfile(source_fd, dest_fd, 0)) {
+                    .err => |err| {
+                        pipeline.err = err;
+                        return;
+                    },
+                    .result => break :do_the_work,
+                }
+            }
+
+            switch (destination.getFile().setPermissions()) {
+                .err => |err| {
+                    pipeline.err = err;
+                    return;
+                },
+                .result => return,
+            }
+        }
+
+        pub fn run(this: *Pipe, pipeline: *Pipeline) void {
+            var source = this.source;
+            var destination = this.destination;
+            const source_content_type = source.content_type;
+            const destination_content_type = destination.content_type;
+
+            if (pipeline.err != null) return;
+
+            switch (FastPath.get(source_content_type, destination_content_type, pipeline.tail == this)) {
+                .clonefile => {
+                    if (comptime !Environment.isMac) unreachable;
+                    if (destination.content.file_path.opened) {
+                        runCopyfile(
+                            // Can we skip sending a .open event?
+                            (!source.content.file_path.auto_close and !source.content.file_path.opened) or (!destination.content.file_path.auto_close and !destination.content.file_path.opened),
+                            pipeline,
+                            &source.content,
+                            .file_path,
+                            &destination.content,
+                            .file_path,
+                        );
+                    } else {
+                        runCloneFileWithFallback(pipeline, source.content.file_path, destination.content.file_path);
+                    }
+                },
+                .copyfile => {
+                    if (comptime !Environment.isMac) unreachable;
+                    runCopyfile(
+                        // Can we skip sending a .open event?
+                        (!source.content.file_path.auto_close and !source.content.file_path.opened) or (!destination.content.file_path.auto_close and !destination.content.file_path.opened),
+                        pipeline,
+                        &source.content,
+                        source_content_type,
+                        &destination.content,
+                        destination_content_type,
+                    );
+                },
+                else => {},
+            }
+
+            if (pipeline.err != null) {
+                pipeline;
+            }
+        }
+
+        pub const FastPath = enum {
+            none,
+            clonefile,
+            sendfile,
+            copyfile,
+            copy_file_range,
+
+            pub fn get(source: Stream.Content.Type, destination: Stream.Content.Type, is_final: bool) FastPath {
+                if (comptime Environment.isMac) {
+                    if (is_final) {
+                        if (source == .file_path and destination == .file_path and !disable_clonefile)
+                            return .clonefile;
+
+                        if ((source == .file or source == .file_path) and (destination == .file or destination == .file_path)) {
+                            return .copyfile;
+                        }
+                    }
+                }
+
+                return FastPath.none;
+            }
+        };
+    };
+
+    pub const Pipeline = struct {
+        head: ?*Pipe = null,
+        tail: ?*Pipe = null,
+
+        // Preallocate a single pipe so that
+        preallocated_tail_pipe: Pipe = undefined,
+
+        /// Does the data exit at any point to JavaScript?
+        closed_loop: bool = true,
+
+        // If there is a pending error, this is the error
+        err: ?Syscall.Error = null,
+
+        pub const StartTask = struct {
+            writable: *Writable,
+            pub fn run(this: *StartTask) void {
+                var writable = this.writable;
+                var head = writable.pipeline.head orelse return;
+                if (writable.started) {
+                    return;
+                }
+                writable.started = true;
+
+                head.start(&writable.pipeline, null);
+            }
+        };
+    };
+
+    pub fn appendReadable(this: *Writable, readable: *Stream) void {
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(readable.sink_type == .readable);
+        }
+        if (this.pipeline.tail == null) {
+            this.pipeline.head = &this.pipeline.preallocated_tail_pipe;
+            this.pipeline.head.?.* = Pipe{
+                .source = this.stream,
+                .destination = readable,
+            };
+            this.pipeline.tail = this.pipeline.head;
+            return;
+        }
+    }
+
+    pub const EventEmitter = Emitter.New(Events);
+
+    pub fn emit(this: *Writable, event: Events, value: JSC.JSValue) void {
+        if (this.shouldSkipEvent(event)) return;
+
+        this.emitter.emit(event, this.globalObject.?, value);
+    }
+
+    pub inline fn shouldEmitEvent(this: *const Writable, event: Events) bool {
+        return switch (event) {
+            .Close => this.state.emit_close and this.emitter.listeners.get(.Close).list.len > 0,
+            .Drain => this.emitter.listeners.get(.Drain).list.len > 0,
+            .Error => this.emitter.listeners.get(.Error).list.len > 0,
+            .Finish => this.emitter.listeners.get(.Finish).list.len > 0,
+            .Pipe => this.emitter.listeners.get(.Pipe).list.len > 0,
+            .Unpipe => this.emitter.listeners.get(.Unpipe).list.len > 0,
+            .Open => this.emitter.listeners.get(.Open).list.len > 0,
+        };
+    }
 
     pub const State = extern struct {
         highwater_mark: u32 = 256_000,
@@ -1170,14 +1455,17 @@ pub const Writable = struct {
         ended: bool = false,
         corked: bool = false,
         finished: bool = false,
-        auto_close: bool = true,
-        emit_end: bool = true,
+        emit_close: bool = true,
 
         pub fn deinit(state: *State) callconv(.C) void {
             if (comptime is_bindgen) return;
 
             var stream = state.getStream();
             stream.deinit();
+        }
+
+        pub fn create(globalObject: *JSC.JSGlobalObject, state: *State) callconv(.C) JSC.JSValue {
+            return shim.cppFn("create", .{ globalObject, state });
         }
 
         // i know.
@@ -1189,11 +1477,11 @@ pub const Writable = struct {
             return @fieldParentPtr(Writable, "state", state);
         }
 
-        pub fn addEventListener(state: *State, global: *JSC.JSGlobalObject, event: Events, callback: JSC.JSValue, once: bool) callconv(.C) void {
+        pub fn addEventListener(state: *State, global: *JSC.JSGlobalObject, event: Events, callback: JSC.JSValue, is_once: bool) callconv(.C) void {
             if (comptime is_bindgen) return;
             var writable = state.getWritable();
             writable.emitter.addListener(global.ref(), event, .{
-                .once = once,
+                .once = is_once,
                 .callback = callback,
             }) catch unreachable;
         }
@@ -1203,13 +1491,69 @@ pub const Writable = struct {
             var writable = state.getWritable();
             return writable.emitter.removeListener(global.ref(), event, callback);
         }
-        pub fn prependEventListener(state: *State, global: *JSC.JSGlobalObject, event: Events, callback: JSC.JSValue, once: bool) callconv(.C) void {
+
+        pub fn prependEventListener(state: *State, global: *JSC.JSGlobalObject, event: Events, callback: JSC.JSValue, is_once: bool) callconv(.C) void {
             if (comptime is_bindgen) return;
             var writable = state.getWritable();
             writable.emitter.prependListener(global.ref(), event, .{
-                .once = once,
+                .once = is_once,
                 .callback = callback,
             }) catch unreachable;
+        }
+
+        pub fn write(state: *State, global: *JSC.JSGlobalObject, args_ptr: [*]const JSC.JSValue, len: u16) callconv(.C) JSC.JSValue {
+            if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+            _ = state;
+            _ = global;
+            _ = args_ptr;
+            _ = len;
+
+            return JSC.JSValue.jsUndefined();
+        }
+        pub fn end(state: *State, global: *JSC.JSGlobalObject, args_ptr: [*]const JSC.JSValue, len: u16) callconv(.C) JSC.JSValue {
+            if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+            _ = state;
+            _ = global;
+            _ = args_ptr;
+            _ = len;
+
+            return JSC.JSValue.jsUndefined();
+        }
+        pub fn close(state: *State, global: *JSC.JSGlobalObject, args_ptr: [*]const JSC.JSValue, len: u16) callconv(.C) JSC.JSValue {
+            if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+            _ = state;
+            _ = global;
+            _ = args_ptr;
+            _ = len;
+
+            return JSC.JSValue.jsUndefined();
+        }
+        pub fn destroy(state: *State, global: *JSC.JSGlobalObject, args_ptr: [*]const JSC.JSValue, len: u16) callconv(.C) JSC.JSValue {
+            if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+            _ = state;
+            _ = global;
+            _ = args_ptr;
+            _ = len;
+
+            return JSC.JSValue.jsUndefined();
+        }
+        pub fn cork(state: *State, global: *JSC.JSGlobalObject, args_ptr: [*]const JSC.JSValue, len: u16) callconv(.C) JSC.JSValue {
+            if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+            _ = state;
+            _ = global;
+            _ = args_ptr;
+            _ = len;
+
+            return JSC.JSValue.jsUndefined();
+        }
+        pub fn uncork(state: *State, global: *JSC.JSGlobalObject, args_ptr: [*]const JSC.JSValue, len: u16) callconv(.C) JSC.JSValue {
+            if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+            _ = state;
+            _ = global;
+            _ = args_ptr;
+            _ = len;
+
+            return JSC.JSValue.jsUndefined();
         }
 
         pub const Flowing = enum(u8) {
@@ -1228,22 +1572,28 @@ pub const Writable = struct {
             .@"addEventListener" = addEventListener,
             .@"removeEventListener" = removeEventListener,
             .@"prependEventListener" = prependEventListener,
+            .@"write" = write,
+            .@"end" = end,
+            .@"close" = close,
+            .@"destroy" = destroy,
+            .@"cork" = cork,
+            .@"uncork" = uncork,
         });
+
+        pub const Extern = [_][]const u8{"create"};
 
         comptime {
             if (!is_bindgen) {
-                @export(deinit, .{
-                    .name = Export[0].symbol_name,
-                });
-                @export(addEventListener, .{
-                    .name = Export[1].symbol_name,
-                });
-                @export(removeEventListener, .{
-                    .name = Export[2].symbol_name,
-                });
-                @export(prependEventListener, .{
-                    .name = Export[3].symbol_name,
-                });
+                @export(deinit, .{ .name = Export[0].symbol_name });
+                @export(addEventListener, .{ .name = Export[1].symbol_name });
+                @export(removeEventListener, .{ .name = Export[2].symbol_name });
+                @export(prependEventListener, .{ .name = Export[3].symbol_name });
+                @export(write, .{ .name = Export[4].symbol_name });
+                @export(end, .{ .name = Export[5].symbol_name });
+                @export(close, .{ .name = Export[6].symbol_name });
+                @export(destroy, .{ .name = Export[7].symbol_name });
+                @export(cork, .{ .name = Export[8].symbol_name });
+                @export(uncork, .{ .name = Export[9].symbol_name });
             }
         }
     };
@@ -1263,8 +1613,31 @@ pub const Writable = struct {
 
 pub const Readable = struct {
     state: State = State{},
-    emitter: Emitter.New(Events),
+    emitter: EventEmitter = EventEmitter{},
     stream: *Stream = undefined,
+    destination: ?*Writable = null,
+    globalObject: ?*JSC.JSGlobalObject = null,
+
+    pub const EventEmitter = Emitter.New(Events);
+
+    pub fn emit(this: *Readable, event: Events, value: JSC.JSValue) void {
+        if (this.shouldEmitEvent(event)) return;
+
+        this.emitter.emit(event, this.globalObject.?, value);
+    }
+
+    pub fn shouldEmitEvent(this: *Readable, event: Events) bool {
+        return switch (event) {
+            .Close => this.state.emit_close and this.emitter.listeners.get(.Close).list.len > 0,
+            .Data => this.emitter.listeners.get(.Data).list.len > 0,
+            .End => this.state.emit_end and this.emitter.listeners.get(.End).list.len > 0,
+            .Error => this.emitter.listeners.get(.Error).list.len > 0,
+            .Pause => this.emitter.listeners.get(.Pause).list.len > 0,
+            .Readable => this.emitter.listeners.get(.Readable).list.len > 0,
+            .Resume => this.emitter.listeners.get(.Resume).list.len > 0,
+            .Open => this.emitter.listeners.get(.Open).list.len > 0,
+        };
+    }
 
     pub const Events = enum(u8) {
         Close,
@@ -1281,17 +1654,20 @@ pub const Readable = struct {
 
     // This struct is exposed to JavaScript
     pub const State = extern struct {
-        highwater_mark: u32 = 0,
+        highwater_mark: u32 = 256_000,
         encoding: Encoding = Encoding.utf8,
 
-        start: u32 = 0,
-        end: u32 = std.math.maxInt(u32),
+        start: i32 = 0,
+        end: i32 = std.math.maxInt(i32),
 
         readable: bool = false,
         aborted: bool = false,
         did_read: bool = false,
         ended: bool = false,
         flowing: Flowing = Flowing.pending,
+
+        emit_close: bool = true,
+        emit_end: bool = true,
 
         // i know.
         pub inline fn getStream(state: *State) *Stream {
@@ -1313,17 +1689,22 @@ pub const Readable = struct {
         pub const include = "BunStream.h";
         pub const namespace = shim.namespace;
 
+        pub fn create(globalObject: *JSC.JSGlobalObject, state: *State) callconv(.C) JSC.JSValue {
+            return shim.cppFn("create", .{ globalObject, state });
+        }
+
         pub fn deinit(state: *State) callconv(.C) void {
             if (comptime is_bindgen) return;
             var stream = state.getStream();
             stream.deinit();
         }
 
-        pub fn addEventListener(state: *State, global: *JSC.JSGlobalObject, event: Events, callback: JSC.JSValue, once: bool) callconv(.C) void {
+        pub fn addEventListener(state: *State, global: *JSC.JSGlobalObject, event: Events, callback: JSC.JSValue, is_once: bool) callconv(.C) void {
             if (comptime is_bindgen) return;
             var readable = state.getReadable();
+
             readable.emitter.addListener(global.ref(), event, .{
-                .once = once,
+                .once = is_once,
                 .callback = callback,
             }) catch unreachable;
         }
@@ -1333,13 +1714,82 @@ pub const Readable = struct {
             var readable = state.getReadable();
             return readable.emitter.removeListener(global.ref(), event, callback);
         }
-        pub fn prependEventListener(state: *State, global: *JSC.JSGlobalObject, event: Events, callback: JSC.JSValue, once: bool) callconv(.C) void {
+
+        pub fn prependEventListener(state: *State, global: *JSC.JSGlobalObject, event: Events, callback: JSC.JSValue, is_once: bool) callconv(.C) void {
             if (comptime is_bindgen) return;
             var readable = state.getReadable();
             readable.emitter.prependListener(global.ref(), event, .{
-                .once = once,
+                .once = is_once,
                 .callback = callback,
             }) catch unreachable;
+        }
+
+        pub fn pipe(state: *State, global: *JSC.JSGlobalObject, args_ptr: [*]const JSC.JSValue, len: u16) callconv(.C) JSC.JSValue {
+            if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+            _ = state;
+            _ = global;
+            _ = args_ptr;
+            _ = len;
+
+            if (len < 1) {
+                return JSC.toInvalidArguments("Writable is required", .{}, global.ref());
+            }
+            const args: []const JSC.JSValue = args_ptr[0..len];
+            var writable_state: *Writable.State = args[0].*.getWritableStreamState(global.vm()) orelse {
+                return JSC.toInvalidArguments("Expected Writable but didn't receive it", .{}, global.ref());
+            };
+            writable_state.getWritable().appendReadable(state);
+            return JSC.JSValue.jsUndefined();
+        }
+
+        pub fn unpipe(state: *State, global: *JSC.JSGlobalObject, args_ptr: [*]const JSC.JSValue, len: u16) callconv(.C) JSC.JSValue {
+            if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+            _ = state;
+            _ = global;
+            _ = args_ptr;
+            _ = len;
+
+            return JSC.JSValue.jsUndefined();
+        }
+
+        pub fn unshift(state: *State, global: *JSC.JSGlobalObject, args_ptr: [*]const JSC.JSValue, len: u16) callconv(.C) JSC.JSValue {
+            if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+            _ = state;
+            _ = global;
+            _ = args_ptr;
+            _ = len;
+
+            return JSC.JSValue.jsUndefined();
+        }
+
+        pub fn read(state: *State, global: *JSC.JSGlobalObject, args_ptr: [*]const JSC.JSValue, len: u16) callconv(.C) JSC.JSValue {
+            if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+            _ = state;
+            _ = global;
+            _ = args_ptr;
+            _ = len;
+
+            return JSC.JSValue.jsUndefined();
+        }
+
+        pub fn pause(state: *State, global: *JSC.JSGlobalObject, args_ptr: [*]const JSC.JSValue, len: u16) callconv(.C) JSC.JSValue {
+            if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+            _ = state;
+            _ = global;
+            _ = args_ptr;
+            _ = len;
+
+            return JSC.JSValue.jsUndefined();
+        }
+
+        pub fn @"resume"(state: *State, global: *JSC.JSGlobalObject, args_ptr: [*]const JSC.JSValue, len: u16) callconv(.C) JSC.JSValue {
+            if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+            _ = state;
+            _ = global;
+            _ = args_ptr;
+            _ = len;
+
+            return JSC.JSValue.jsUndefined();
         }
 
         pub const Export = shim.exportFunctions(.{
@@ -1347,7 +1797,15 @@ pub const Readable = struct {
             .@"addEventListener" = addEventListener,
             .@"removeEventListener" = removeEventListener,
             .@"prependEventListener" = prependEventListener,
+            .@"pipe" = pipe,
+            .@"unpipe" = unpipe,
+            .@"unshift" = unshift,
+            .@"read" = read,
+            .@"pause" = pause,
+            .@"resume" = State.@"resume",
         });
+
+        pub const Extern = [_][]const u8{"create"};
 
         comptime {
             if (!is_bindgen) {
@@ -1363,6 +1821,30 @@ pub const Readable = struct {
                 @export(prependEventListener, .{
                     .name = Export[3].symbol_name,
                 });
+                @export(
+                    pipe,
+                    .{ .name = Export[4].symbol_name },
+                );
+                @export(
+                    unpipe,
+                    .{ .name = Export[5].symbol_name },
+                );
+                @export(
+                    unshift,
+                    .{ .name = Export[6].symbol_name },
+                );
+                @export(
+                    read,
+                    .{ .name = Export[7].symbol_name },
+                );
+                @export(
+                    pause,
+                    .{ .name = Export[8].symbol_name },
+                );
+                @export(
+                    State.@"resume",
+                    .{ .name = Export[9].symbol_name },
+                );
             }
         }
     };

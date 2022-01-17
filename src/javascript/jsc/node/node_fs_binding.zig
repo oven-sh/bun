@@ -277,6 +277,16 @@ pub const NodeFSBindings = JSC.NewClass(
             .rfn = call(.lutimes),
         },
 
+        .createReadStream = .{
+            .name = "createReadStream",
+            .rfn = callSync(.createReadStream),
+        },
+
+        .createWriteStream = .{
+            .name = "createWriteStream",
+            .rfn = callSync(.createWriteStream),
+        },
+
         .accessSync = .{
             .name = "accessSync",
             .rfn = callSync(.access),

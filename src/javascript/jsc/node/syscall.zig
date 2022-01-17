@@ -58,6 +58,7 @@ pub const Tag = enum(u8) {
     write,
     getcwd,
     chdir,
+    fcopyfile,
 
     pub var strings = std.EnumMap(Tag, JSC.C.JSStringRef).initFull(null);
 };
@@ -264,6 +265,45 @@ pub fn chown(path: [:0]const u8, uid: os.uid_t, gid: os.gid_t) Maybe(void) {
 pub fn symlink(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
     while (true) {
         if (Maybe(void).errnoSys(system.symlink(from, to), .symlink)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return Maybe(void).success;
+    }
+    unreachable;
+}
+
+pub fn clonefile(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
+    if (comptime !Environment.isMac) @compileError("macOS only");
+
+    while (true) {
+        if (Maybe(void).errnoSys(C.darwin.clonefile(from, to, 0), .clonefile)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return Maybe(void).success;
+    }
+    unreachable;
+}
+
+pub fn copyfile(from: [:0]const u8, to: [:0]const u8, flags: c_int) Maybe(void) {
+    if (comptime !Environment.isMac) @compileError("macOS only");
+
+    while (true) {
+        if (Maybe(void).errnoSys(C.darwin.copyfile(from, to, null, flags), .copyfile)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return Maybe(void).success;
+    }
+    unreachable;
+}
+
+pub fn fcopyfile(fd_in: std.os.fd_t, fd_out: std.os.fd_t, flags: c_int) Maybe(void) {
+    if (comptime !Environment.isMac) @compileError("macOS only");
+
+    while (true) {
+        if (Maybe(void).errnoSys(darwin.fcopyfile(fd_in, fd_out, null, flags), .fcopyfile)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }

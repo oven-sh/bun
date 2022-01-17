@@ -9,11 +9,13 @@ class Identifier;
 
 } // namespace JSC
 
+#include "Process.h"
 #include "ZigConsoleClient.h"
 #include <JavaScriptCore/CatchScope.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSTypeInfo.h>
 #include <JavaScriptCore/Structure.h>
+
 namespace Zig {
 
 class GlobalObject : public JSC::JSGlobalObject {
@@ -22,7 +24,7 @@ class GlobalObject : public JSC::JSGlobalObject {
     public:
   DECLARE_EXPORT_INFO;
   static const JSC::GlobalObjectMethodTable s_globalObjectMethodTable;
-
+  Zig::Process *m_process;
   static constexpr bool needsDestruction = true;
   template <typename CellType, JSC::SubspaceAccess mode>
   static JSC::IsoSubspace *subspaceFor(JSC::VM &vm) {

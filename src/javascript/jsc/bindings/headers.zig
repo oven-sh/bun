@@ -55,6 +55,7 @@ pub const struct_Zig__JSMicrotaskCallback = bindings.Microtask;
 pub const bZig__JSMicrotaskCallback = struct_Zig__JSMicrotaskCallback;
 pub const SystemError = bindings.SystemError;
 const JSClassRef = bindings.C.JSClassRef;
+pub const JSC__CatchScope = bindings.CatchScope;
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
 pub const ptrdiff_t = c_long;
@@ -69,49 +70,31 @@ pub const __mbstate_t = extern union {
     _mbstateL: c_longlong,
 };
 
-pub const JSC__RegExpPrototype = struct_JSC__RegExpPrototype;
-
 pub const JSC__GeneratorPrototype = struct_JSC__GeneratorPrototype;
 
 pub const JSC__ArrayIteratorPrototype = struct_JSC__ArrayIteratorPrototype;
 
-pub const JSC__StringPrototype = struct_JSC__StringPrototype;
-pub const WTF__StringView = bWTF__StringView;
-
 pub const JSC__JSPromisePrototype = struct_JSC__JSPromisePrototype;
-pub const JSC__CatchScope = bJSC__CatchScope;
-pub const JSC__ThrowScope = bJSC__ThrowScope;
 pub const JSC__PropertyName = bJSC__PropertyName;
 pub const JSC__JSObject = bJSC__JSObject;
 pub const WTF__ExternalStringImpl = bWTF__ExternalStringImpl;
 
 pub const JSC__AsyncIteratorPrototype = struct_JSC__AsyncIteratorPrototype;
-pub const WTF__StringImpl = bWTF__StringImpl;
 pub const JSC__JSLock = bJSC__JSLock;
 pub const JSC__JSModuleLoader = bJSC__JSModuleLoader;
-pub const JSC__VM = bJSC__VM;
 
 pub const JSC__AsyncGeneratorPrototype = struct_JSC__AsyncGeneratorPrototype;
 
 pub const JSC__AsyncGeneratorFunctionPrototype = struct_JSC__AsyncGeneratorFunctionPrototype;
-pub const JSC__JSGlobalObject = bJSC__JSGlobalObject;
-pub const JSC__JSFunction = bJSC__JSFunction;
+pub const JSC__Identifier = bJSC__Identifier;
 
 pub const JSC__ArrayPrototype = struct_JSC__ArrayPrototype;
 
-pub const JSC__AsyncFunctionPrototype = struct_JSC__AsyncFunctionPrototype;
-pub const JSC__Identifier = bJSC__Identifier;
+pub const Zig__JSMicrotaskCallback = struct_Zig__JSMicrotaskCallback;
 pub const JSC__JSPromise = bJSC__JSPromise;
 
 pub const JSC__SetIteratorPrototype = struct_JSC__SetIteratorPrototype;
-pub const JSC__SourceCode = bJSC__SourceCode;
-
-pub const Zig__JSMicrotaskCallback = struct_Zig__JSMicrotaskCallback;
 pub const JSC__JSCell = bJSC__JSCell;
-
-pub const JSC__BigIntPrototype = struct_JSC__BigIntPrototype;
-
-pub const JSC__GeneratorFunctionPrototype = struct_JSC__GeneratorFunctionPrototype;
 pub const JSC__SourceOrigin = bJSC__SourceOrigin;
 pub const JSC__JSModuleRecord = bJSC__JSModuleRecord;
 pub const WTF__String = bWTF__String;
@@ -120,15 +103,32 @@ pub const WTF__URL = bWTF__URL;
 pub const JSC__IteratorPrototype = struct_JSC__IteratorPrototype;
 pub const JSC__JSInternalPromise = bJSC__JSInternalPromise;
 
+pub const JSC__RegExpPrototype = struct_JSC__RegExpPrototype;
+pub const JSC__CallFrame = bJSC__CallFrame;
+
+pub const JSC__MapIteratorPrototype = struct_JSC__MapIteratorPrototype;
+pub const WTF__StringView = bWTF__StringView;
+pub const JSC__ThrowScope = bJSC__ThrowScope;
+pub const WTF__StringImpl = bWTF__StringImpl;
+pub const JSC__VM = bJSC__VM;
+pub const JSC__JSGlobalObject = bJSC__JSGlobalObject;
+pub const JSC__JSFunction = bJSC__JSFunction;
+
+pub const JSC__AsyncFunctionPrototype = struct_JSC__AsyncFunctionPrototype;
+pub const JSC__SourceCode = bJSC__SourceCode;
+
+pub const JSC__BigIntPrototype = struct_JSC__BigIntPrototype;
+
+pub const JSC__GeneratorFunctionPrototype = struct_JSC__GeneratorFunctionPrototype;
+
 pub const JSC__FunctionPrototype = struct_JSC__FunctionPrototype;
 pub const Inspector__ScriptArguments = bInspector__ScriptArguments;
 pub const JSC__Exception = bJSC__Exception;
 pub const JSC__JSString = bJSC__JSString;
 
 pub const JSC__ObjectPrototype = struct_JSC__ObjectPrototype;
-pub const JSC__CallFrame = bJSC__CallFrame;
 
-pub const JSC__MapIteratorPrototype = struct_JSC__MapIteratorPrototype;
+pub const JSC__StringPrototype = struct_JSC__StringPrototype;
 pub extern fn JSC__JSObject__create(arg0: [*c]JSC__JSGlobalObject, arg1: usize, arg2: ?*anyopaque, ArgFn3: ?fn (?*anyopaque, [*c]JSC__JSObject, [*c]JSC__JSGlobalObject) callconv(.C) void) JSC__JSValue;
 pub extern fn JSC__JSObject__getArrayLength(arg0: [*c]JSC__JSObject) usize;
 pub extern fn JSC__JSObject__getDirect(arg0: [*c]JSC__JSObject, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]const ZigString) JSC__JSValue;

@@ -49,6 +49,10 @@ const ArrayBuffer = JSC.MarkedArrayBuffer;
 const Buffer = JSC.Buffer;
 const FileSystemFlags = JSC.Node.FileSystemFlags;
 
+// TODO: to improve performance for all of these
+// The tagged unions for each type should become regular unions
+// and the tags should be passed in as comptime arguments to the functions performing the syscalls
+// This would reduce stack size, at the cost of instruction cache misses
 const Arguments = struct {
     pub const Rename = struct {
         old_path: PathLike,
@@ -1750,6 +1754,7 @@ const Arguments = struct {
             auto_close: bool = true,
             emit_close: bool = true,
             start: u32 = 0,
+
             highwater_mark: u32 = highwater_mark,
 
             pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Stream {
@@ -1851,8 +1856,10 @@ const Arguments = struct {
         };
     }
 
-    pub const CreateReadStream = StreamOptions(FileSystemFlags.@"r", 64_384);
-    pub const CreateWriteStream = StreamOptions(FileSystemFlags.@"w", 16_384);
+    pub const CreateReadStream = struct {
+        readable: JSC.Node.Readable,
+    };
+    pub const CreateWriteStream = StreamOptions(FileSystemFlags.@"w", 256_000);
 
     pub const FdataSync = struct {
         fd: FileDescriptor,

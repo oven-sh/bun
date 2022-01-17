@@ -105,6 +105,63 @@ const JSErrorCode JSErrorCodeOutOfMemoryError = 8;
 const JSErrorCode JSErrorCodeStackOverflow = 253;
 const JSErrorCode JSErrorCodeUserErrorCode = 254;
 
+#pragma mark - Stream
+
+typedef uint8_t Encoding;
+const Encoding Encoding__utf8 = 0;
+const Encoding Encoding__ucs2 = 1;
+const Encoding Encoding__utf16le = 2;
+const Encoding Encoding__latin1 = 3;
+const Encoding Encoding__ascii = 4;
+const Encoding Encoding__base64 = 5;
+const Encoding Encoding__base64url = 6;
+const Encoding Encoding__hex = 7;
+const Encoding Encoding__buffer = 8;
+
+typedef uint8_t WritableEvent;
+const WritableEvent WritableEvent__Close = 0;
+const WritableEvent WritableEvent__Drain = 1;
+const WritableEvent WritableEvent__Error = 2;
+const WritableEvent WritableEvent__Finish = 3;
+const WritableEvent WritableEvent__Pipe = 4;
+const WritableEvent WritableEvent__Unpipe = 5;
+const WritableEvent WritableEvent__Open = 6;
+
+typedef uint8_t ReadableEvent;
+
+const ReadableEvent ReadableEvent__Close = 0;
+const ReadableEvent ReadableEvent__Data = 1;
+const ReadableEvent ReadableEvent__End = 2;
+const ReadableEvent ReadableEvent__Error = 3;
+const ReadableEvent ReadableEvent__Pause = 4;
+const ReadableEvent ReadableEvent__Readable = 5;
+const ReadableEvent ReadableEvent__Resume = 6;
+const ReadableEvent ReadableEvent__Open = 7;
+
+typedef struct {
+  uint32_t highwater_mark;
+  Encoding encoding;
+  uint32_t start;
+  uint32_t end;
+  bool readable;
+  bool aborted;
+  bool did_read;
+  bool ended;
+  uint8_t flowing;
+} Bun__Readable;
+
+typedef struct {
+  uint32_t highwater_mark;
+  Encoding encoding;
+  uint32_t start;
+  bool destroyed;
+  bool ended;
+  bool corked;
+  bool finished;
+  bool auto_close;
+  bool emit_end;
+} Bun__Writable;
+
 #ifdef __cplusplus
 extern "C" ZigErrorCode Zig_ErrorCodeParserError;
 

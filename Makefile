@@ -228,7 +228,9 @@ CLANG_FLAGS = $(INCLUDE_DIRS) \
 # It has something to do with ICU
 ifeq ($(OS_NAME), darwin)
 CLANG_FLAGS += -DDU_DISABLE_RENAMING=1 \
-		$(MACOS_MIN_FLAG) -lstdc++
+		$(MACOS_MIN_FLAG) -lstdc++ \
+		-ffunction-sections \
+		-fdata-sections 
 endif
 
 
@@ -762,6 +764,8 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	$(CXX) -c -o $@ $< \
 		$(CLANG_FLAGS) $(PLATFORM_LINKER_FLAGS) \
 		-O3 \
+		-fvectorize \
+		-fPIC \
 		-w -g
 
 sizegen:

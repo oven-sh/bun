@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const _global = @import("../../../global.zig");
 const strings = _global.strings;
 const string = _global.string;
@@ -11,11 +12,14 @@ const Syscall = @import("./syscall.zig");
 const os = std.os;
 const Buffer = JSC.MarkedArrayBuffer;
 const IdentityContext = @import("../../../identity_context.zig").IdentityContext;
+const logger = @import("../../../logger.zig");
+const Shimmer = @import("../bindings/shimmer.zig").Shimmer;
+const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 
 /// Time in seconds. Not nanos!
 pub const TimeLike = c_int;
 pub const Mode = std.os.mode_t;
-
+const heap_allocator = _global.default_allocator;
 pub fn DeclEnum(comptime T: type) type {
     const fieldInfos = std.meta.declarations(T);
     var enumFields: [fieldInfos.len]std.builtin.TypeInfo.EnumField = undefined;
@@ -171,7 +175,7 @@ pub const ErrorCode = @import("./nodejs_error_code.zig").Code;
 // and various issues with std.os that make it too unstable for arbitrary user input (e.g. how .BADF is marked as unreachable)
 
 /// https://github.com/nodejs/node/blob/master/lib/buffer.js#L587
-pub const Encoding = enum {
+pub const Encoding = enum(u8) {
     utf8,
     ucs2,
     utf16le,
@@ -930,26 +934,464 @@ pub const DirEnt = struct {
     }
 };
 
+pub const Emitter = struct {
+    pub const Listener = struct {
+        once: bool = false,
+        callback: JSC.JSValue,
+
+        pub const List = struct {
+            pub const ArrayList = std.MultiArrayList(Listener);
+            list: ArrayList = ArrayList{},
+            once_count: u32 = 0,
+
+            pub fn append(this: *List, allocator: std.mem.Allocator, ctx: JSC.C.JSContextRef, listener: Listener) !void {
+                JSC.C.JSValueProtect(ctx, listener.callback.asObjectRef());
+                try this.list.append(allocator, listener);
+                this.once_count +|= @as(u32, @boolToInt(listener.once));
+            }
+
+            pub fn prepend(this: *List, allocator: std.mem.Allocator, ctx: JSC.C.JSContextRef, listener: Listener) !void {
+                JSC.C.JSValueProtect(ctx, listener.callback.asObjectRef());
+                try this.list.ensureUnusedCapacity(allocator, 1);
+                this.list.insertAssumeCapacity(0, listener);
+                this.once_count +|= @as(u32, @boolToInt(listener.once));
+            }
+
+            // removeListener() will remove, at most, one instance of a listener from the
+            // listener array. If any single listener has been added multiple times to the
+            // listener array for the specified eventName, then removeListener() must be
+            // called multiple times to remove each instance.
+            pub fn remove(this: *List, ctx: JSC.C.JSContextRef, callback: JSC.JSValue) bool {
+                const callbacks = this.list.items(.callback);
+
+                for (callbacks) |item, i| {
+                    if (callback.eqlValue(item)) {
+                        JSC.C.JSValueUnprotect(ctx, callback.asObjectRef());
+                        this.once_count -|= @as(u32, @boolToInt(this.list.items(.once)[i]));
+                        this.list.orderedRemove(i);
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            pub fn emit(this: *List, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+                var i: usize = 0;
+                outer: while (true) {
+                    var slice = this.list.slice();
+                    var callbacks = slice.items(.callback);
+                    var once = slice.items(.once);
+                    while (i < callbacks.len) : (i += 1) {
+                        const callback = callbacks[i];
+
+                        globalThis.enqueueMicrotask1(
+                            callback,
+                            value,
+                        );
+
+                        if (once[i]) {
+                            this.once_count -= 1;
+                            JSC.C.JSValueUnprotect(globalThis.ref(), callback.asObjectRef());
+                            this.list.orderedRemove(i);
+                            slice = this.list.slice();
+                            callbacks = slice.items(.callback);
+                            once = slice.items(.once);
+                            continue :outer;
+                        }
+                    }
+
+                    return;
+                }
+            }
+        };
+    };
+
+    pub const UserListenerMap = std.HashMap(u64, Listener.List, IdentityContext(u64), 80);
+
+    pub fn New(comptime EventType: type) type {
+        return struct {
+            const EventEmitter = @This();
+            pub const Map = std.enums.EnumArray(EventType, Listener.List);
+            listeners: Map = Map.initFill(Listener.List{}),
+            user_listeners: UserListenerMap,
+
+            pub fn addListener(this: *EventEmitter, ctx: JSC.C.JSContextRef, event: EventType, listener: Emitter.Listener) !void {
+                try this.listeners.getPtr(event).append(_global.default_allocator, ctx, listener);
+            }
+
+            pub fn prependListener(this: *EventEmitter, ctx: JSC.C.JSContextRef, event: EventType, listener: Emitter.Listener) !void {
+                try this.listeners.getPtr(event).prepend(_global.default_allocator, ctx, listener);
+            }
+
+            pub fn emit(this: *EventEmitter, event: EventType, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+                this.listeners.getPtr(event).emit(globalThis, value);
+            }
+
+            pub fn removeListener(this: *EventEmitter, ctx: JSC.C.JSContextRef, event: EventType, callback: JSC.JSValue) bool {
+                return this.listeners.getPtr(event).remove(ctx, callback);
+            }
+        };
+    }
+};
+
+// pub fn Untag(comptime Union: type) type {
+//     const info: std.builtin.TypeInfo.Union = @typeInfo(Union);
+//     const tag = info.tag_type orelse @compileError("Must be tagged");
+//     return struct {
+//         pub const Tag = tag;
+//         pub const Union =
+//     };
+// }
+
+pub const Stream = struct {
+    sink_type: Sink.Type,
+    sink: Sink,
+    content: Content,
+    content_type: Content.Type,
+    allocator: std.mem.Allocator,
+
+    pub fn deinit(this: *Stream) void {
+        this.allocator.destroy(this);
+    }
+
+    pub const Sink = union {
+        readable: Readable,
+        writable: Writable,
+
+        pub const Type = enum(u8) {
+            readable,
+            writable,
+        };
+    };
+
+    pub const Consumed = u52;
+    pub const Chunk = struct {
+        consumed: Consumed = 0,
+        kind: Content.Type,
+        source: Content,
+
+        pub fn Reader(comptime ContentType: Content.Type) type {
+            return struct {
+                const This = @This();
+                ctx: ContentType,
+
+                // pub fn read(this: *This, amount: )
+
+            };
+        }
+    };
+
+    const Response = struct {
+        bytes: [8]u8 = std.mem.zeroes([8]u8),
+    };
+
+    const Error = union(Type) {
+        Syscall: Syscall.Error,
+        JavaScript: JSC.JSValue,
+        Internal: anyerror,
+
+        pub const Type = enum {
+            Syscall,
+            JavaScript,
+            Internal,
+        };
+    };
+
+    pub const Content = union {
+        file: File,
+        file_path: FilePath,
+        socket: Socket,
+        buffer: *Buffer,
+        stream: *Stream,
+        javascript: JSC.JSValue,
+
+        pub const File = struct {
+            fd: FileDescriptor,
+            flags: FileSystemFlags,
+
+            pub fn write(this: *File, comptime Source: Content.Type, readable: Chunk.Reader(Source)) Response {
+                _ = this;
+                _ = readable;
+            }
+
+            // pub fn read(this: *File, comptime chunk_type: Content.Type, chunk: Source.Type.of(chunk_type)) Response {}
+        };
+
+        pub const FilePath = struct {
+            path: PathLike,
+            flags: FileSystemFlags,
+
+            pub fn write(this: *File, writable: *Stream, comptime Source: Content.Type, readable: Chunk.Reader(Source)) Response {
+                _ = this;
+                _ = readable;
+                _ = writable;
+            }
+
+            pub fn read(this: *File, comptime Source: Content.Type, readable: Chunk.Reader(Source)) Response {
+                _ = this;
+                _ = readable;
+            }
+
+            // pub fn read(this: *File, comptime chunk_type: Content.Type, chunk: Source.Type.of(chunk_type)) Response {}
+        };
+
+        pub const Socket = struct {
+            fd: FileDescriptor,
+            flags: FileSystemFlags,
+
+            // pub fn write(this: *File, comptime chunk_type: Source.Type, chunk: Source.Type.of(chunk_type)) Response {}
+            // pub fn read(this: *File, comptime chunk_type: Source.Type, chunk: Source.Type.of(chunk_type)) Response {}
+        };
+
+        pub const Type = enum(u8) {
+            file,
+            file_path,
+            socket,
+            buffer,
+            stream,
+            javascript,
+        };
+    };
+};
+
+pub const Writable = struct {
+    state: State = State{},
+    emitter: Emitter.New(Events),
+
+    // workaround https://github.com/ziglang/zig/issues/6611
+    stream: *Stream = undefined,
+
+    pub const State = extern struct {
+        highwater_mark: u32 = 256_000,
+        encoding: Encoding = Encoding.utf8,
+        start: i32 = 0,
+        destroyed: bool = false,
+        ended: bool = false,
+        corked: bool = false,
+        finished: bool = false,
+        auto_close: bool = true,
+        emit_end: bool = true,
+
+        pub fn deinit(state: *State) callconv(.C) void {
+            if (comptime is_bindgen) return;
+
+            var stream = state.getStream();
+            stream.deinit();
+        }
+
+        // i know.
+        pub inline fn getStream(state: *State) *Stream {
+            return getWritable(state).stream;
+        }
+
+        pub inline fn getWritable(state: *State) *Writable {
+            return @fieldParentPtr(Writable, "state", state);
+        }
+
+        pub fn addEventListener(state: *State, global: *JSC.JSGlobalObject, event: Events, callback: JSC.JSValue, once: bool) callconv(.C) void {
+            if (comptime is_bindgen) return;
+            var writable = state.getWritable();
+            writable.emitter.addListener(global.ref(), event, .{
+                .once = once,
+                .callback = callback,
+            }) catch unreachable;
+        }
+
+        pub fn removeEventListener(state: *State, global: *JSC.JSGlobalObject, event: Events, callback: JSC.JSValue) callconv(.C) bool {
+            if (comptime is_bindgen) return true;
+            var writable = state.getWritable();
+            return writable.emitter.removeListener(global.ref(), event, callback);
+        }
+        pub fn prependEventListener(state: *State, global: *JSC.JSGlobalObject, event: Events, callback: JSC.JSValue, once: bool) callconv(.C) void {
+            if (comptime is_bindgen) return;
+            var writable = state.getWritable();
+            writable.emitter.prependListener(global.ref(), event, .{
+                .once = once,
+                .callback = callback,
+            }) catch unreachable;
+        }
+
+        pub const Flowing = enum(u8) {
+            pending,
+            yes,
+            paused,
+        };
+
+        pub const shim = Shimmer("Bun", "Writable", @This());
+        pub const name = "Bun__Writable";
+        pub const include = "BunStream.h";
+        pub const namespace = shim.namespace;
+
+        pub const Export = shim.exportFunctions(.{
+            .@"deinit" = deinit,
+            .@"addEventListener" = addEventListener,
+            .@"removeEventListener" = removeEventListener,
+            .@"prependEventListener" = prependEventListener,
+        });
+
+        comptime {
+            if (!is_bindgen) {
+                @export(deinit, .{
+                    .name = Export[0].symbol_name,
+                });
+                @export(addEventListener, .{
+                    .name = Export[1].symbol_name,
+                });
+                @export(removeEventListener, .{
+                    .name = Export[2].symbol_name,
+                });
+                @export(prependEventListener, .{
+                    .name = Export[3].symbol_name,
+                });
+            }
+        }
+    };
+
+    pub const Events = enum(u8) {
+        Close,
+        Drain,
+        Error,
+        Finish,
+        Pipe,
+        Unpipe,
+        Open,
+
+        pub const name = "WritableEvent";
+    };
+};
+
+pub const Readable = struct {
+    state: State = State{},
+    emitter: Emitter.New(Events),
+    stream: *Stream = undefined,
+
+    pub const Events = enum(u8) {
+        Close,
+        Data,
+        End,
+        Error,
+        Pause,
+        Readable,
+        Resume,
+        Open,
+
+        pub const name = "ReadableEvent";
+    };
+
+    // This struct is exposed to JavaScript
+    pub const State = extern struct {
+        highwater_mark: u32 = 0,
+        encoding: Encoding = Encoding.utf8,
+
+        start: u32 = 0,
+        end: u32 = std.math.maxInt(u32),
+
+        readable: bool = false,
+        aborted: bool = false,
+        did_read: bool = false,
+        ended: bool = false,
+        flowing: Flowing = Flowing.pending,
+
+        // i know.
+        pub inline fn getStream(state: *State) *Stream {
+            return getReadable(state).stream;
+        }
+
+        pub inline fn getReadable(state: *State) *Readable {
+            return @fieldParentPtr(Readable, "state", state);
+        }
+
+        pub const Flowing = enum(u8) {
+            pending,
+            yes,
+            paused,
+        };
+
+        pub const shim = Shimmer("Bun", "Readable", @This());
+        pub const name = "Bun__Readable";
+        pub const include = "BunStream.h";
+        pub const namespace = shim.namespace;
+
+        pub fn deinit(state: *State) callconv(.C) void {
+            if (comptime is_bindgen) return;
+            var stream = state.getStream();
+            stream.deinit();
+        }
+
+        pub fn addEventListener(state: *State, global: *JSC.JSGlobalObject, event: Events, callback: JSC.JSValue, once: bool) callconv(.C) void {
+            if (comptime is_bindgen) return;
+            var readable = state.getReadable();
+            readable.emitter.addListener(global.ref(), event, .{
+                .once = once,
+                .callback = callback,
+            }) catch unreachable;
+        }
+
+        pub fn removeEventListener(state: *State, global: *JSC.JSGlobalObject, event: Events, callback: JSC.JSValue) callconv(.C) bool {
+            if (comptime is_bindgen) return true;
+            var readable = state.getReadable();
+            return readable.emitter.removeListener(global.ref(), event, callback);
+        }
+        pub fn prependEventListener(state: *State, global: *JSC.JSGlobalObject, event: Events, callback: JSC.JSValue, once: bool) callconv(.C) void {
+            if (comptime is_bindgen) return;
+            var readable = state.getReadable();
+            readable.emitter.prependListener(global.ref(), event, .{
+                .once = once,
+                .callback = callback,
+            }) catch unreachable;
+        }
+
+        pub const Export = shim.exportFunctions(.{
+            .@"deinit" = deinit,
+            .@"addEventListener" = addEventListener,
+            .@"removeEventListener" = removeEventListener,
+            .@"prependEventListener" = prependEventListener,
+        });
+
+        comptime {
+            if (!is_bindgen) {
+                @export(deinit, .{
+                    .name = Export[0].symbol_name,
+                });
+                @export(addEventListener, .{
+                    .name = Export[1].symbol_name,
+                });
+                @export(removeEventListener, .{
+                    .name = Export[2].symbol_name,
+                });
+                @export(prependEventListener, .{
+                    .name = Export[3].symbol_name,
+                });
+            }
+        }
+    };
+};
+
 pub const Process = struct {
     pub fn getArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         if (JSC.VirtualMachine.vm.argv.len == 0)
             return JSC.JSValue.createStringArray(globalObject, null, 0, false);
 
-        var StackFallback = std.heap.stackFallback(32 * @sizeOf(JSC.ZigString), _global.default_allocator);
-        var allocator = StackFallback.get();
+        // Allocate up to 32 strings in stack
+        var stack_fallback_allocator = std.heap.stackFallback(
+            32 * @sizeOf(JSC.ZigString),
+            heap_allocator,
+        );
+        var allocator = stack_fallback_allocator.get();
 
         const count = JSC.VirtualMachine.vm.argv.len + 1;
+        var args = allocator.alloc(
+            JSC.ZigString,
+            count,
+        ) catch unreachable;
+        defer allocator.free(args);
 
         // If it was launched with bun run or bun test, skip it
         var skip: usize = 0;
         if (JSC.VirtualMachine.vm.argv.len > 1 and (strings.eqlComptime(JSC.VirtualMachine.vm.argv[0], "run") or strings.eqlComptime(JSC.VirtualMachine.vm.argv[0], "test"))) {
             skip += 1;
         }
-        var args = allocator.alloc(
-            JSC.ZigString,
-            count - skip,
-        ) catch unreachable;
-        defer allocator.free(args);
 
         // https://github.com/yargs/yargs/blob/adb0d11e02c613af3d9427b3028cc192703a3869/lib/utils/process-argv.ts#L1
         args[0] = JSC.ZigString.init(std.mem.span(std.os.argv[0]));
@@ -1021,4 +1463,7 @@ pub const Process = struct {
 
 comptime {
     std.testing.refAllDecls(Process);
+    std.testing.refAllDecls(Stream);
+    std.testing.refAllDecls(Readable);
+    std.testing.refAllDecls(Writable);
 }

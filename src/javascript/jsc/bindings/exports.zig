@@ -169,6 +169,11 @@ pub const ZigErrorType = extern struct {
     }
 };
 
+/// do not use this reference directly, use JSC.Node.Readable
+pub const NodeReadableStream = JSC.Node.Readable.State;
+/// do not use this reference directly, use JSC.Node.Writable
+pub const NodeWritableStream = JSC.Node.Writable.State;
+
 pub fn Errorable(comptime Type: type) type {
     return extern struct {
         result: Result,
@@ -1813,5 +1818,7 @@ comptime {
     if (!is_bindgen) {
         _ = Process.getTitle;
         _ = Process.setTitle;
+        std.testing.refAllDecls(NodeReadableStream);
+        std.testing.refAllDecls(NodeWritableStream);
     }
 }

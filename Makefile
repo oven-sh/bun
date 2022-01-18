@@ -213,6 +213,7 @@ CLANG_FLAGS = $(INCLUDE_DIRS) \
 		-DSTATICALLY_LINKED_WITH_JavaScriptCore=1 \
 		-DSTATICALLY_LINKED_WITH_WTF=1 \
 		-DSTATICALLY_LINKED_WITH_BMALLOC=1 \
+		-DBACKTRACE_DISABLED=0 \
 		-DBUILDING_WITH_CMAKE=1 \
 		-DNDEBUG=1 \
 		-DNOMINMAX \
@@ -221,8 +222,8 @@ CLANG_FLAGS = $(INCLUDE_DIRS) \
 		-DENABLE_INSPECTOR_ALTERNATE_DISPATCHERS=0 \
 		-DBUILDING_JSCONLY__ \
 		-DASSERT_ENABLED=0 \
-		-fPIE \
-		-fvisibility=hidden
+		-fvisibility=hidden \
+		-fvisibility-inlines-hidden
 		
 # This flag is only added to webkit builds on Apple platforms
 # It has something to do with ICU
@@ -230,7 +231,11 @@ ifeq ($(OS_NAME), darwin)
 CLANG_FLAGS += -DDU_DISABLE_RENAMING=1 \
 		$(MACOS_MIN_FLAG) -lstdc++ \
 		-ffunction-sections \
-		-fdata-sections 
+		-fdata-sections \
+		-Wl,-no_eh_labels \
+		-Wl,-dead_strip \
+		-Wl,-dead_strip_dylibs \
+		-force_flat_namespace
 endif
 
 
@@ -265,6 +270,13 @@ PLATFORM_LINKER_FLAGS = \
 		-static-libstdc++ \
 		-static-libgcc \
 		${STATIC_MUSL_FLAG} 
+endif
+
+ifeq ($(OS_NAME), darwin)
+PLATFORM_LINKER_FLAGS = \
+		-fno-asynchronous-unwind-tables \
+		-fno-exceptions \
+		-Wl,-keep_private_externs 
 endif
 
 
@@ -662,9 +674,31 @@ jsc-force-fastjit:
 	$(SED) -i "s/USE(PTHREAD_JIT_PERMISSIONS_API)/CPU(ARM64)/g" $(WEBKIT_DIR)/Source/JavaScriptCore/jit/ExecutableAllocator.h
 	$(SED) -i "s/USE(PTHREAD_JIT_PERMISSIONS_API)/CPU(ARM64)/g" $(WEBKIT_DIR)/Source/JavaScriptCore/assembler/FastJITPermissions.h
 	$(SED) -i "s/USE(PTHREAD_JIT_PERMISSIONS_API)/CPU(ARM64)/g" $(WEBKIT_DIR)/Source/JavaScriptCore/jit/ExecutableAllocator.cpp
+	$(SED) -i "s/GIGACAGE_ENABLED/0/g" $(WEBKIT_DIR)/Source/JavaScriptCore/Gigacage.h
 
 jsc-build-mac-compile:
-	cd $(WEBKIT_DIR) && ICU_INCLUDE_DIRS="$(HOMEBREW_PREFIX)opt/icu4c/include" ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo -DPTHREAD_JIT_PERMISSIONS_API=1 -DUSE_PTHREAD_JIT_PERMISSIONS_API=ON $(CMAKE_FLAGS_WITHOUT_RELEASE)"
+	mkdir -p $(WEBKIT_RELEASE_DIR) $(WEBKIT_DIR);
+	cd $(WEBKIT_RELEASE_DIR) && \
+		ICU_INCLUDE_DIRS="$(HOMEBREW_PREFIX)opt/icu4c/include" \
+		CMAKE_BUILD_TYPE=Release cmake \
+			-DPORT="JSCOnly" \
+			-DENABLE_STATIC_JSC=ON \
+			-DCMAKE_BUILD_TYPE=Release \
+			-DUSE_THIN_ARCHIVES=OFF \
+			-DBACKTRACE_DISABLED=0 \
+			-DENABLE_FTL_JIT=ON \
+			-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+			-G Ninja \
+			-DCMAKE_BUILD_TYPE=Release \
+			$(CMAKE_FLAGS_WITHOUT_RELEASE) \
+			-DPTHREAD_JIT_PERMISSIONS_API=1 \
+			-DUSE_PTHREAD_JIT_PERMISSIONS_API=ON \
+			-DCMAKE_BUILD_TYPE=Release \
+			$(WEBKIT_DIR) \
+			$(WEBKIT_RELEASE_DIR) && \
+	CFLAGS="$CFLAGS -ffat-lto-objects" CXXFLAGS="$CXXFLAGS -ffat-lto-objects" \
+		cmake --build $(WEBKIT_RELEASE_DIR) --config Release --target jsc
+
 jsc-build-linux-compile-config:
 	mkdir -p $(WEBKIT_RELEASE_DIR)
 	cd $(WEBKIT_RELEASE_DIR) && \
@@ -673,6 +707,7 @@ jsc-build-linux-compile-config:
 			-DENABLE_STATIC_JSC=ON \
 			-DCMAKE_BUILD_TYPE=relwithdebuginfo \
 			-DUSE_THIN_ARCHIVES=OFF \
+			-DBACKTRACE_DISABLED=0 \
 			-DENABLE_FTL_JIT=ON \
 			-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 			-G Ninja \
@@ -715,7 +750,7 @@ jsc-bindings-mac: $(OBJ_FILES)
 
 # mimalloc is built as object files so that it can overload the system malloc
 mimalloc:
-	cd $(BUN_DEPS_DIR)/mimalloc; cmake $(CMAKE_FLAGS) -DMI_BUILD_SHARED=OFF -DMI_BUILD_STATIC=ON -DMI_BUILD_TESTS=OFF -DMI_BUILD_OBJECT=ON ${MIMALLOC_OVERRIDE_FLAG} -DMI_USE_CXX=ON .; make; 
+	cd $(BUN_DEPS_DIR)/mimalloc; cmake $(CMAKE_FLAGS) -DMI_SKIP_COLLECT_ON_EXIT=ON -DMI_BUILD_SHARED=OFF -DMI_BUILD_STATIC=ON -DMI_BUILD_TESTS=OFF -DMI_BUILD_OBJECT=ON ${MIMALLOC_OVERRIDE_FLAG} -DMI_USE_CXX=ON .; make; 
 	cp $(BUN_DEPS_DIR)/mimalloc/$(MIMALLOC_INPUT_PATH) $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE)
 
 bun-link-lld-debug:
@@ -767,7 +802,6 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 		$(CLANG_FLAGS) $(PLATFORM_LINKER_FLAGS) \
 		-O3 \
 		-fvectorize \
-		-fPIC \
 		-w -g
 
 sizegen:
@@ -775,7 +809,7 @@ sizegen:
 	$(BUN_TMP_DIR)/sizegen > src/javascript/jsc/bindings/sizes.zig
 
 picohttp:
-	 $(CC) $(MARCH_NATIVE) $(MACOS_MIN_FLAG) -O3 -g -fPIE -c $(BUN_DEPS_DIR)/picohttpparser/picohttpparser.c -I$(BUN_DEPS_DIR) -o $(BUN_DEPS_OUT_DIR)/picohttpparser.o; cd ../../	
+	 $(CC) $(MARCH_NATIVE) $(MACOS_MIN_FLAG) -O3 -g -fPIC -c $(BUN_DEPS_DIR)/picohttpparser/picohttpparser.c -I$(BUN_DEPS_DIR) -o $(BUN_DEPS_OUT_DIR)/picohttpparser.o; cd ../../	
 
 analytics:
 	./node_modules/.bin/peechy --schema src/analytics/schema.peechy --zig src/analytics/analytics_schema.zig

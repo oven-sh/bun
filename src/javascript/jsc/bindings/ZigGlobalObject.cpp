@@ -97,11 +97,9 @@ extern "C" void JSCInitialize() {
   JSC::Options::exposeInternalModuleLoader() = true;
   JSC::Options::useSharedArrayBuffer() = true;
   // JSC::Options::useAtMethod() = true;
-
   // std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
-  WTF::initializeMainThread();
+  // WTF::initializeMainThread();
   JSC::initialize();
-  // Gigacage::disablePrimitiveGigacage();
 }
 
 extern "C" JSC__JSGlobalObject *Zig__GlobalObject__create(JSClassRef *globalObjectClass, int count,

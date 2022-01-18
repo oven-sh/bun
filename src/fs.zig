@@ -174,7 +174,7 @@ pub const FileSystem = struct {
     }
 
     pub const DirEntry = struct {
-        pub const EntryMap = hash_map.StringHashMap(*Entry);
+        pub const EntryMap = hash_map.StringHashMapUnmanaged(*Entry);
         pub const EntryStore = allocators.BSSList(Entry, Preallocate.Counts.files);
         dir: string,
         fd: StoredFileDescriptorType = 0,
@@ -184,7 +184,7 @@ pub const FileSystem = struct {
         //     // dir.data.remove(name);
         // }
 
-        pub fn addEntry(dir: *DirEntry, entry: std.fs.Dir.Entry) !void {
+        pub fn addEntry(dir: *DirEntry, entry: std.fs.Dir.Entry, allocator: std.mem.Allocator) !void {
             var _kind: Entry.Kind = undefined;
             switch (entry.kind) {
                 .Directory => {
@@ -232,7 +232,7 @@ pub const FileSystem = struct {
 
             const stored_name = stored.base();
 
-            try dir.data.put(stored.base_lowercase(), stored);
+            try dir.data.put(allocator, stored.base_lowercase(), stored);
             if (comptime FeatureFlags.verbose_fs) {
                 if (_kind == .dir) {
                     Output.prettyln("   + {s}/", .{stored_name});
@@ -242,16 +242,12 @@ pub const FileSystem = struct {
             }
         }
 
-        pub fn empty(dir: string, allocator: std.mem.Allocator) DirEntry {
-            return DirEntry{ .dir = dir, .data = EntryMap.init(allocator) };
-        }
-
-        pub fn init(dir: string, allocator: std.mem.Allocator) DirEntry {
+        pub fn init(dir: string) DirEntry {
             if (comptime FeatureFlags.verbose_fs) {
                 Output.prettyln("\n  {s}", .{dir});
             }
 
-            return DirEntry{ .dir = dir, .data = EntryMap.init(allocator) };
+            return DirEntry{ .dir = dir, .data = EntryMap{} };
         }
 
         pub const Err = struct {
@@ -259,9 +255,9 @@ pub const FileSystem = struct {
             canonical_error: anyerror,
         };
 
-        pub fn deinit(d: *DirEntry) void {
-            d.data.allocator.free(d.dir);
-            d.data.deinit();
+        pub fn deinit(d: *DirEntry, allocator: std.mem.Allocator) void {
+            d.data.deinit(allocator);
+            allocator.free(d.dir);
         }
 
         pub fn get(entry: *const DirEntry, _query: string) ?Entry.Lookup {
@@ -753,8 +749,9 @@ pub const FileSystem = struct {
             handle: std.fs.Dir,
         ) !DirEntry {
             var iter: std.fs.Dir.Iterator = handle.iterate();
-            var dir = DirEntry.init(_dir, fs.allocator);
-            errdefer dir.deinit();
+            var dir = DirEntry.init(_dir);
+            const allocator = fs.allocator;
+            errdefer dir.deinit(allocator);
 
             if (FeatureFlags.store_file_descriptors) {
                 FileSystem.setMaxFd(handle.fd);
@@ -762,7 +759,7 @@ pub const FileSystem = struct {
             }
 
             while (try iter.next()) |_entry| {
-                try dir.addEntry(_entry);
+                try dir.addEntry(_entry, allocator);
             }
 
             return dir;
@@ -1220,6 +1217,12 @@ pub const Path = struct {
         return strings.lastIndexOf(this.name.dir, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str) != null;
     }
 };
+
+// pub fn customRealpath(allocator: std.mem.Allocator, path: string) !string {
+//     var opened = try std.os.open(path, if (Environment.isLinux) std.os.O.PATH else std.os.O.RDONLY, 0);
+//     defer std.os.close(opened);
+
+// }
 
 test "PathName.init" {
     var file = "/root/directory/file.ext".*;

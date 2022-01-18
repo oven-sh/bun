@@ -991,7 +991,7 @@ pub const VirtualMachine = struct {
     event_listeners: EventListenerMixin.Map,
     main: string = "",
     process: js.JSObjectRef = null,
-    blobs: *Blob.Group = undefined,
+    blobs: ?*Blob.Group = null,
     flush_list: std.ArrayList(string),
     entry_point: ServerEntryPoint = undefined,
     origin: URL = URL{},
@@ -1179,7 +1179,7 @@ pub const VirtualMachine = struct {
             .node_modules = bundler.options.node_modules_bundle,
             .log = log,
             .flush_list = std.ArrayList(string).init(allocator),
-            .blobs = try Blob.Group.init(allocator),
+            .blobs = if (_args.serve orelse false) try Blob.Group.init(allocator) else null,
             .origin = bundler.options.origin,
 
             .macros = MacroMap.init(allocator),
@@ -1234,7 +1234,7 @@ pub const VirtualMachine = struct {
 
     pub fn preflush(this: *VirtualMachine) void {
         // We flush on the next tick so that if there were any errors you can still see them
-        this.blobs.temporary.reset() catch {};
+        this.blobs.?.temporary.reset() catch {};
     }
 
     pub fn flush(this: *VirtualMachine) void {
@@ -1717,17 +1717,19 @@ pub const VirtualMachine = struct {
 
         ret.result.value = result;
 
-        const specifier_blob = brk: {
-            if (strings.hasPrefix(spec, VirtualMachine.vm.bundler.fs.top_level_dir)) {
-                break :brk spec[VirtualMachine.vm.bundler.fs.top_level_dir.len..];
-            }
-            break :brk spec;
-        };
+        if (vm.blobs) |blobs| {
+            const specifier_blob = brk: {
+                if (strings.hasPrefix(spec, VirtualMachine.vm.bundler.fs.top_level_dir)) {
+                    break :brk spec[VirtualMachine.vm.bundler.fs.top_level_dir.len..];
+                }
+                break :brk spec;
+            };
 
-        if (vm.has_loaded) {
-            vm.blobs.temporary.put(specifier_blob, .{ .ptr = result.source_code.ptr, .len = result.source_code.len }) catch {};
-        } else {
-            vm.blobs.persistent.put(specifier_blob, .{ .ptr = result.source_code.ptr, .len = result.source_code.len }) catch {};
+            if (vm.has_loaded) {
+                blobs.temporary.put(specifier_blob, .{ .ptr = result.source_code.ptr, .len = result.source_code.len }) catch {};
+            } else {
+                blobs.persistent.put(specifier_blob, .{ .ptr = result.source_code.ptr, .len = result.source_code.len }) catch {};
+            }
         }
 
         ret.success = true;

@@ -68,11 +68,45 @@ pub const ItemStatus = enum(u3) {
     not_found,
 };
 
+fn OverflowGroup(comptime Block: type) type {
+    return struct {
+        const Overflow = @This();
+        // 16 million files should be good enough for anyone
+        // ...right?
+        const max = 4095;
+        const UsedSize = std.math.IntFittingRange(0, max + 1);
+        const default_allocator = @import("./global.zig").default_allocator;
+        used: UsedSize = 0,
+        allocated: UsedSize = 0,
+        ptrs: [max]*Block = undefined,
+
+        pub fn tail(this: *Overflow) *Block {
+            if (this.allocated > 0 and this.ptrs[this.used].isFull()) {
+                this.used +%= 1;
+                if (this.allocated > this.used) {
+                    this.ptrs[this.used].used = 0;
+                }
+            }
+
+            if (this.allocated <= this.used) {
+                this.ptrs[this.allocated] = default_allocator.create(Block) catch unreachable;
+                this.ptrs[this.allocated].* = Block{};
+                this.allocated +%= 1;
+            }
+
+            return this.ptrs[this.used];
+        }
+
+        pub inline fn slice(this: *Overflow) []*Block {
+            return this.ptrs[0..this.used];
+        }
+    };
+}
+
 pub fn OverflowList(comptime ValueType: type, comptime count: comptime_int) type {
     return struct {
         const This = @This();
         const SizeType = std.math.IntFittingRange(0, count);
-        const default_allocator = @import("./global.zig").default_allocator;
 
         const Block = struct {
             used: SizeType = 0,
@@ -90,37 +124,7 @@ pub fn OverflowList(comptime ValueType: type, comptime count: comptime_int) type
                 return &block.items[index];
             }
         };
-
-        const Overflow = struct {
-            // 16 million files should be good enough for anyone
-            // ...right?
-            const max = 4095;
-            const UsedSize = std.math.IntFittingRange(0, max + 1);
-            used: UsedSize = 0,
-            allocated: UsedSize = 0,
-            ptrs: [max]*Block = undefined,
-
-            pub fn tail(this: *Overflow) *Block {
-                if (this.allocated > 0 and this.ptrs[this.used].isFull()) {
-                    this.used +%= 1;
-                    if (this.allocated > this.used) {
-                        this.ptrs[this.used].used = 0;
-                    }
-                }
-
-                if (this.allocated <= this.used) {
-                    this.ptrs[this.allocated] = default_allocator.create(Block) catch unreachable;
-                    this.ptrs[this.allocated].* = Block{};
-                    this.allocated +%= 1;
-                }
-
-                return this.ptrs[this.used];
-            }
-
-            pub inline fn slice(this: *Overflow) []*Block {
-                return this.ptrs[0..this.used];
-            }
-        };
+        const Overflow = OverflowGroup(Block);
         list: Overflow = Overflow{},
         count: u31 = 0,
 

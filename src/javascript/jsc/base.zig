@@ -418,86 +418,12 @@ pub const Properties = struct {
         pub const follow = "follow";
     };
 
-    pub const UTF16 = struct {
-        pub const module: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.module);
-        pub const globalThis: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.globalThis);
-        pub const exports: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.exports);
-        pub const log: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.log);
-        pub const debug: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.debug);
-        pub const info: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.info);
-        pub const error_: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.error_);
-        pub const warn: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.warn);
-        pub const console: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.console);
-        pub const require: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.require);
-        pub const description: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.description);
-        pub const name: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.name);
-        pub const initialize_bundled_module = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.initialize_bundled_module);
-        pub const load_module_function: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.load_module_function);
-        pub const window: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.window);
-        pub const default: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.default);
-        pub const include: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.include);
-
-        pub const GET: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.GET);
-        pub const PUT: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.PUT);
-        pub const POST: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.POST);
-        pub const PATCH: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.PATCH);
-        pub const HEAD: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.HEAD);
-        pub const OPTIONS: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.OPTIONS);
-
-        pub const navigate: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.navigate);
-        pub const follow: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.follow);
-    };
-
     pub const Refs = struct {
-        pub var filepath: js.JSStringRef = undefined;
-
-        pub var module: js.JSStringRef = undefined;
-        pub var globalThis: js.JSStringRef = undefined;
-        pub var exports: js.JSStringRef = undefined;
-        pub var log: js.JSStringRef = undefined;
-        pub var debug: js.JSStringRef = undefined;
-        pub var info: js.JSStringRef = undefined;
-        pub var error_: js.JSStringRef = undefined;
-        pub var warn: js.JSStringRef = undefined;
-        pub var console: js.JSStringRef = undefined;
-        pub var require: js.JSStringRef = undefined;
-        pub var description: js.JSStringRef = undefined;
-        pub var name: js.JSStringRef = undefined;
-        pub var initialize_bundled_module: js.JSStringRef = undefined;
-        pub var load_module_function: js.JSStringRef = undefined;
-        pub var window: js.JSStringRef = undefined;
-        pub var default: js.JSStringRef = undefined;
-        pub var include: js.JSStringRef = undefined;
-        pub var GET: js.JSStringRef = undefined;
-        pub var PUT: js.JSStringRef = undefined;
-        pub var POST: js.JSStringRef = undefined;
-        pub var PATCH: js.JSStringRef = undefined;
-        pub var HEAD: js.JSStringRef = undefined;
-        pub var OPTIONS: js.JSStringRef = undefined;
-
         pub var empty_string_ptr = [_]u8{0};
         pub var empty_string: js.JSStringRef = undefined;
-
-        pub var navigate: js.JSStringRef = undefined;
-        pub var follow: js.JSStringRef = undefined;
-
-        pub const env: js.JSStringRef = undefined;
     };
 
     pub fn init() void {
-        inline for (std.meta.fieldNames(UTF8)) |name| {
-            @field(Refs, name) = js.JSStringCreateStatic(
-                @field(UTF8, name).ptr,
-                @field(UTF8, name).len,
-            );
-
-            if (comptime Environment.isDebug) {
-                std.debug.assert(
-                    js.JSStringIsEqualToString(@field(Refs, name), @field(UTF8, name).ptr, @field(UTF8, name).len),
-                );
-            }
-        }
-
         Refs.empty_string = js.JSStringCreateWithUTF8CString(&Refs.empty_string_ptr);
     }
 };

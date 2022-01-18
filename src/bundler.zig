@@ -1376,6 +1376,29 @@ pub const Bundler = struct {
                                 .module_id = package_json.hashModule(package_path),
                             };
                         }
+
+                        // This is our last resort.
+                        // The package is supposed to be bundled
+                        // package.json says its' in packages/@foo/bar/index.js
+                        // The file really is in packages/bar/index.js
+                        // But we need the import path to contain the package path for bundling to work
+                        // so we fake it
+                        // we say ""
+                        if (package_json.name[0] == '@') {
+                            if (std.mem.indexOfScalar(u8, package_json.name, '/')) |at| {
+                                const package_subpath = package_json.name[at + 1 ..];
+                                if (std.mem.lastIndexOf(u8, file_path, package_subpath)) |i| {
+                                    package_path = this.bundler.fs.dirname_store.print("{s}/{s}", .{ package_json.name, file_path[i + package_subpath.len ..] }) catch unreachable;
+                                    import_path = package_path[package_json.name.len + 1 ..];
+                                    return BundledModuleData{
+                                        .import_path = import_path,
+                                        .package_path = package_path,
+                                        .package = package_json,
+                                        .module_id = package_json.hashModule(package_path),
+                                    };
+                                }
+                            }
+                        }
                     }
                     unreachable;
                 }
@@ -1487,7 +1510,8 @@ pub const Bundler = struct {
             };
             var file_path = (resolve.pathConst() orelse unreachable).*;
             const source_dir = file_path.sourceDir();
-            const loader = this.bundler.options.loader(file_path.name.ext);
+            const loader = bundler.options.loader(file_path.name.ext);
+            const platform = bundler.options.platform;
 
             defer scan_pass_result.reset();
             defer shared_buffer.reset();
@@ -1656,7 +1680,7 @@ pub const Bundler = struct {
                                     } else |err| {
                                         if (comptime Environment.isDebug) {
                                             if (!import_record.handles_import_errors) {
-                                                Output.prettyErrorln("\n<r><red>{s}<r> on resolving \"{s}\" from \"{s}\"", .{
+                                                Output.prettyErrorln("\n<r><red>{s}<r> resolving \"{s}\" from \"{s}\"", .{
                                                     @errorName(err),
                                                     import_record.path.text,
                                                     file_path.text,
@@ -1672,29 +1696,36 @@ pub const Bundler = struct {
 
                                         switch (err) {
                                             error.ModuleNotFound => {
+                                                const addError = logger.Log.addResolveErrorWithTextDupeMaybeWarn;
+
                                                 if (!import_record.handles_import_errors) {
                                                     if (isPackagePath(import_record.path.text)) {
-                                                        if (this.bundler.options.platform.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
-                                                            try log.addResolveErrorWithTextDupe(
+                                                        if (platform.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
+                                                            try addError(
+                                                                log,
                                                                 &source,
                                                                 import_record.range,
                                                                 this.allocator,
                                                                 "Could not resolve Node.js builtin: \"{s}\".",
                                                                 .{import_record.path.text},
                                                                 import_record.kind,
+                                                                platform.isBun(),
                                                             );
                                                         } else {
-                                                            try log.addResolveErrorWithTextDupe(
+                                                            try addError(
+                                                                log,
                                                                 &source,
                                                                 import_record.range,
                                                                 this.allocator,
                                                                 "Could not resolve: \"{s}\". Maybe you need to \"bun install\"?",
                                                                 .{import_record.path.text},
                                                                 import_record.kind,
+                                                                platform.isBun(),
                                                             );
                                                         }
                                                     } else {
-                                                        try log.addResolveErrorWithTextDupe(
+                                                        try addError(
+                                                            log,
                                                             &source,
                                                             import_record.range,
                                                             this.allocator,
@@ -1703,6 +1734,7 @@ pub const Bundler = struct {
                                                                 import_record.path.text,
                                                             },
                                                             import_record.kind,
+                                                            platform.isBun(),
                                                         );
                                                     }
                                                 }
@@ -2098,28 +2130,34 @@ pub const Bundler = struct {
                                     switch (err) {
                                         error.ModuleNotFound => {
                                             if (!import_record.handles_import_errors) {
+                                                const addError = logger.Log.addResolveErrorWithTextDupeMaybeWarn;
                                                 if (isPackagePath(import_record.path.text)) {
-                                                    if (this.bundler.options.platform.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
-                                                        try log.addResolveErrorWithTextDupe(
+                                                    if (platform.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
+                                                        try addError(
+                                                            log,
                                                             &source,
                                                             import_record.range,
                                                             this.allocator,
                                                             "Could not resolve Node.js builtin: \"{s}\".",
                                                             .{import_record.path.text},
                                                             import_record.kind,
+                                                            platform.isBun(),
                                                         );
                                                     } else {
-                                                        try log.addResolveErrorWithTextDupe(
+                                                        try addError(
+                                                            log,
                                                             &source,
                                                             import_record.range,
                                                             this.allocator,
                                                             "Could not resolve: \"{s}\". Maybe you need to \"bun install\"?",
                                                             .{import_record.path.text},
                                                             import_record.kind,
+                                                            platform.isBun(),
                                                         );
                                                     }
                                                 } else {
-                                                    try log.addResolveErrorWithTextDupe(
+                                                    try addError(
+                                                        log,
                                                         &source,
                                                         import_record.range,
                                                         this.allocator,
@@ -2128,6 +2166,7 @@ pub const Bundler = struct {
                                                             import_record.path.text,
                                                         },
                                                         import_record.kind,
+                                                        platform.isBun(),
                                                     );
                                                 }
                                             }
@@ -2915,8 +2954,6 @@ pub const Bundler = struct {
             }
         }
 
-        if (bundler.options.write and bundler.options.output_dir.len > 0) {}
-
         //  100.00 µs std.fifo.LinearFifo(resolver.Result,std.fifo.LinearFifoBufferType { .Dynamic = {}}).writeItemAssumeCapacity
         if (bundler.options.resolve_mode != .lazy) {
             try bundler.resolve_queue.ensureUnusedCapacity(3);
@@ -3003,7 +3040,7 @@ pub const Bundler = struct {
 
         if (bundler.linker.any_needs_runtime) {
             try bundler.output_files.append(
-                options.OutputFile.initBuf(runtime.Runtime.sourceContent(), bundler.linker.runtime_source_path, .js),
+                options.OutputFile.initBuf(runtime.Runtime.sourceContent(), Linker.runtime_source_path, .js),
             );
         }
 

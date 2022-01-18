@@ -1630,8 +1630,9 @@ pub const Resolver = struct {
             }
 
             if (needs_iter) {
+                const allocator = r.fs.allocator;
                 dir_entries_option = try rfs.entries.put(&cached_dir_entry_result, .{
-                    .entries = Fs.FileSystem.DirEntry.init(dir_path, r.fs.allocator),
+                    .entries = Fs.FileSystem.DirEntry.init(dir_path),
                 });
 
                 if (FeatureFlags.store_file_descriptors) {
@@ -1640,7 +1641,7 @@ pub const Resolver = struct {
                 }
                 var dir_iterator = open_dir.iterate();
                 while (try dir_iterator.next()) |_value| {
-                    dir_entries_option.entries.addEntry(_value) catch unreachable;
+                    dir_entries_option.entries.addEntry(_value, allocator) catch unreachable;
                 }
             }
 

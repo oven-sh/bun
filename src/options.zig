@@ -440,10 +440,12 @@ pub const Platform = enum {
         const mjs = Extensions.Out.JavaScript[1];
 
         if (platform == .node) {
+            exts.ensureTotalCapacity(Extensions.In.JavaScript.len * 2) catch unreachable;
             for (Extensions.In.JavaScript) |ext| {
                 exts.put(ext, mjs) catch unreachable;
             }
         } else {
+            exts.ensureTotalCapacity(Extensions.In.JavaScript.len + 1) catch unreachable;
             exts.put(mjs, js) catch unreachable;
         }
 
@@ -963,9 +965,9 @@ pub const BundleOptions = struct {
     hot_module_reloading: bool = false,
     inject: ?[]string = null,
     origin: URL = URL{},
-
-    output_dir: string = "",
     output_dir_handle: ?std.fs.Dir = null,
+
+    output_dir: string = "out",
     node_modules_bundle_url: string = "",
     node_modules_bundle_pretty_path: string = "",
 
@@ -1088,13 +1090,12 @@ pub const BundleOptions = struct {
         transform: Api.TransformOptions,
         node_modules_bundle_existing: ?*NodeModuleBundle,
     ) !BundleOptions {
-        const output_dir_parts = [_]string{ try std.process.getCwdAlloc(allocator), transform.output_dir orelse "out" };
         var opts: BundleOptions = BundleOptions{
             .log = log,
             .resolve_mode = transform.resolve orelse .dev,
             .define = undefined,
             .loaders = try loadersFromTransformOptions(allocator, transform.loaders),
-            .output_dir = try fs.absAlloc(allocator, &output_dir_parts),
+            .output_dir = transform.output_dir orelse "out",
             .platform = Platform.from(transform.platform),
             .write = transform.write orelse false,
             .external = undefined,

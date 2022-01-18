@@ -2346,13 +2346,13 @@ pub const RequestContext = struct {
         const blob: Blob = brk: {
             // It could be a blob either for macros or for JS thread
             if (JavaScriptHandler.javascript_vm) |vm| {
-                if (vm.blobs.get(id)) |blob| {
+                if (vm.blobs.?.get(id)) |blob| {
                     break :brk blob;
                 }
             }
 
             if (JavaScript.VirtualMachine.vm_loaded) {
-                if (JavaScript.VirtualMachine.vm.blobs.get(id)) |blob| {
+                if (JavaScript.VirtualMachine.vm.blobs.?.get(id)) |blob| {
                     break :brk blob;
                 }
             }

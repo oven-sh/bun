@@ -52,11 +52,12 @@ pub const Linker = struct {
     resolve_results: *_bundler.ResolveResults,
     any_needs_runtime: bool = false,
     runtime_import_record: ?ImportRecord = null,
-    runtime_source_path: string,
     hashed_filenames: HashedFileNameMap,
     import_counter: usize = 0,
 
     onImportCSS: ?OnImportCallback = null,
+
+    pub const runtime_source_path = "__runtime.js";
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -77,7 +78,6 @@ pub const Linker = struct {
             .resolve_queue = resolve_queue,
             .resolver = resolver,
             .resolve_results = resolve_results,
-            .runtime_source_path = fs.absAlloc(allocator, &([_]string{"__runtime.js"})) catch unreachable,
             .hashed_filenames = HashedFileNameMap.init(allocator),
         };
     }
@@ -220,7 +220,7 @@ pub const Linker = struct {
                             } else {
                                 import_record.path = try linker.generateImportPath(
                                     source_dir,
-                                    linker.runtime_source_path,
+                                    Linker.runtime_source_path,
                                     false,
                                     "bun",
                                     origin,
@@ -430,7 +430,7 @@ pub const Linker = struct {
                 else
                     try linker.generateImportPath(
                         source_dir,
-                        linker.runtime_source_path,
+                        Linker.runtime_source_path,
                         false,
                         "bun",
                         origin,

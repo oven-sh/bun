@@ -51,14 +51,9 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
         .path = pkgPath("src/thread_pool.zig"),
     };
 
-    var crash_reporter_mac: std.build.Pkg = .{
+    var crash_reporter: std.build.Pkg = .{
         .name = "crash_reporter",
-        .path = pkgPath("src/deps/PLCrashReport.zig"),
-    };
-
-    var crash_reporter_linux: std.build.Pkg = .{
-        .name = "crash_reporter",
-        .path = pkgPath("src/deps/crash_reporter_linux.zig"),
+        .path = pkgPath("src/deps/backtrace.zig"),
     };
 
     var picohttp: std.build.Pkg = .{
@@ -79,11 +74,6 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
         io_darwin
     else
         io_linux;
-
-    var crash_reporter = if (target.isDarwin())
-        crash_reporter_mac
-    else
-        crash_reporter_linux;
 
     var strings: std.build.Pkg = .{
         .name = "strings",
@@ -283,6 +273,7 @@ pub fn build(b: *std.build.Builder) !void {
 
         obj.strip = false;
         obj.bundle_compiler_rt = true;
+        obj.omit_frame_pointer = false;
 
         b.default_step.dependOn(&obj.step);
 
@@ -292,6 +283,7 @@ pub fn build(b: *std.build.Builder) !void {
             obj.link_eh_frame_hdr = true;
             obj.link_function_sections = true;
         }
+
         var log_step = b.addLog("Destination: {s}/{s}\n", .{ output_dir, bun_executable_name });
         log_step.step.dependOn(&obj.step);
     }
@@ -422,8 +414,7 @@ pub fn linkObjectFiles(b: *std.build.Builder, obj: *std.build.LibExeObjStep, tar
         .{ "libJavaScriptCore.a", "libJavaScriptCore.a" },
         .{ "libWTF.a", "libWTF.a" },
         .{ "libbmalloc.a", "libbmalloc.a" },
-        .{ "libCrashReporter.a", "libCrashReporter.a" },
-        .{ "libCrashReporter.bindings.a", "libCrashReporter.bindings.a" },
+        .{ "libbacktrace.a", "libbacktrace.a" },
     });
 
     for (dirs_to_search.slice()) |deps_path| {

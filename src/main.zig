@@ -36,7 +36,7 @@ pub fn PLCrashReportHandler() void {
 
 pub var start_time: i128 = 0;
 pub fn main() void {
-    std.debug.assert(CrashReporter.start(Global.package_json_version));
+    std.debug.assert(CrashReporter.start(null, Report.CrashReportWriter.printFrame, Report.handleCrash));
 
     start_time = std.time.nanoTimestamp();
 

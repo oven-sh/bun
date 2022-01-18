@@ -291,6 +291,44 @@ JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSObjectRef obj
   return JSC::JSValue::encode(result);
 }
 
+JSC__JSValue JSObjectCallAsFunctionReturnValueHoldingAPILock(JSContextRef ctx, JSObjectRef object,
+                                                             JSObjectRef thisObject,
+                                                             size_t argumentCount,
+                                                             const JSValueRef *arguments);
+
+JSC__JSValue JSObjectCallAsFunctionReturnValueHoldingAPILock(JSContextRef ctx, JSObjectRef object,
+                                                             JSObjectRef thisObject,
+                                                             size_t argumentCount,
+                                                             const JSValueRef *arguments) {
+  JSC::JSGlobalObject *globalObject = toJS(ctx);
+  JSC::VM &vm = globalObject->vm();
+
+  JSC::JSLockHolder lock(vm);
+
+  if (!object) return JSC::JSValue::encode(JSC::JSValue());
+
+  JSC::JSObject *jsObject = toJS(object);
+  JSC::JSObject *jsThisObject = toJS(thisObject);
+
+  if (!jsThisObject) jsThisObject = globalObject->globalThis();
+
+  JSC::MarkedArgumentBuffer argList;
+  for (size_t i = 0; i < argumentCount; i++) argList.append(toJS(globalObject, arguments[i]));
+
+  auto callData = getCallData(vm, jsObject);
+  if (callData.type == JSC::CallData::Type::None) return JSC::JSValue::encode(JSC::JSValue());
+
+  NakedPtr<JSC::Exception> returnedException = nullptr;
+  auto result =
+    JSC::call(globalObject, jsObject, callData, jsThisObject, argList, returnedException);
+
+  if (returnedException.get()) {
+    return JSC::JSValue::encode(JSC::JSValue(returnedException.get()));
+  }
+
+  return JSC::JSValue::encode(result);
+}
+
 #pragma mark - JSC::Exception
 
 JSC__Exception *JSC__Exception__create(JSC__JSGlobalObject *arg0, JSC__JSObject *arg1,

@@ -213,7 +213,6 @@ CLANG_FLAGS = $(INCLUDE_DIRS) \
 		-DSTATICALLY_LINKED_WITH_JavaScriptCore=1 \
 		-DSTATICALLY_LINKED_WITH_WTF=1 \
 		-DSTATICALLY_LINKED_WITH_BMALLOC=1 \
-		-DBACKTRACE_DISABLED=0 \
 		-DBUILDING_WITH_CMAKE=1 \
 		-DNDEBUG=1 \
 		-DNOMINMAX \
@@ -223,7 +222,8 @@ CLANG_FLAGS = $(INCLUDE_DIRS) \
 		-DBUILDING_JSCONLY__ \
 		-DASSERT_ENABLED=0 \
 		-fvisibility=hidden \
-		-fvisibility-inlines-hidden
+		-fvisibility-inlines-hidden \
+		-fno-omit-frame-pointer
 		
 # This flag is only added to webkit builds on Apple platforms
 # It has something to do with ICU
@@ -245,12 +245,10 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MIMALLOC_FILE_PATH) \
 		$(BUN_DEPS_OUT_DIR)/libarchive.a \
 		$(BUN_DEPS_OUT_DIR)/libssl.a \
 		$(BUN_DEPS_OUT_DIR)/picohttpparser.o \
+		$(BUN_DEPS_OUT_DIR)/libbacktrace.a
 
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) $(BUN_DEPS_OUT_DIR)/libcrypto.boring.a
 
-ifeq ($(OS_NAME), darwin)
-# ARCHIVE_FILES += $(BUN_DEPS_OUT_DIR)/libCrashReporter.a $(BUN_DEPS_OUT_DIR)/libCrashReporter.bindings.a
-endif
 
 PLATFORM_LINKER_FLAGS =
 
@@ -260,7 +258,6 @@ ifeq ($(OS_NAME), linux)
 PLATFORM_LINKER_FLAGS = \
 	    -fuse-ld=lld \
 		-lc \
-		-fno-omit-frame-pointer \
 		-Wl,-z,now \
 		-Wl,--as-needed \
 		-Wl,--gc-sections \
@@ -274,8 +271,6 @@ endif
 
 ifeq ($(OS_NAME), darwin)
 PLATFORM_LINKER_FLAGS = \
-		-fno-asynchronous-unwind-tables \
-		-fno-exceptions \
 		-Wl,-keep_private_externs 
 endif
 
@@ -293,7 +288,7 @@ BUN_LLD_FLAGS = $(OBJ_FILES) \
 bun:
 
 
-vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive pl-crash-report
+vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace
 
 boringssl-build:
 	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && cmake $(CMAKE_FLAGS) -GNinja .. && ninja 
@@ -304,25 +299,12 @@ boringssl-copy:
 
 boringssl: boringssl-build boringssl-copy
 
-download-pl-crash-report:
-	rm -rf /tmp/PLCrashReporter.zip /tmp/PLCrashReporter
-	curl -L https://github.com/microsoft/plcrashreporter/releases/download/1.10.1/PLCrashReporter-Static-1.10.1.zip > /tmp/PLCrashReporter.zip
-	unzip /tmp/PLCrashReporter.zip -d /tmp
-	cp /tmp/PLCrashReporter/libCrashReporter-MacOSX-Static.a $(BUN_DEPS_OUT_DIR)/libCrashReporter.a
-	mkdir -p $(BUN_DEPS_DIR)/PLCrashReporter/include/PLCrashReporter
-	cp -r /tmp/PLCrashReporter/include/*.h $(BUN_DEPS_DIR)/PLCrashReporter/include/PLCrashReporter
-
-pl-crash-report:
-
-ifeq ($(OS_NAME), darwin)
-pl-crash-report: pl-crash-report-mac
-endif
-
-pl-crash-report-mac: download-pl-crash-report pl-crash-report-mac-compile
-
-pl-crash-report-mac-compile:
-	$(CC) $(MACOS_MIN_FLAG) -O3 -ObjC -I$(BUN_DEPS_DIR)/PLCrashReporter/include -I$(BUN_DEPS_DIR)/PLCrashReporter -c $(BUN_DEPS_DIR)/PLCrashReport.m \
-	-g	-o $(BUN_DEPS_OUT_DIR)/libCrashReporter.bindings.a
+libbacktrace:
+	cd $(BUN_DEPS_DIR)/libbacktrace; \
+	(make clean || echo ""); \
+	CFLAGS=$(CFLAGS) CC=$(CC) ./configure --disable-shared --enable-static  --with-pic; \
+	make -j$(CPUS); \
+	cp ./.libs/libbacktrace.a $(BUN_DEPS_OUT_DIR)/libbacktrace.a
 
 libarchive:
 	cd $(BUN_DEPS_DIR)/libarchive; \
@@ -685,7 +667,6 @@ jsc-build-mac-compile:
 			-DENABLE_STATIC_JSC=ON \
 			-DCMAKE_BUILD_TYPE=Release \
 			-DUSE_THIN_ARCHIVES=OFF \
-			-DBACKTRACE_DISABLED=0 \
 			-DENABLE_FTL_JIT=ON \
 			-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 			-G Ninja \
@@ -707,7 +688,6 @@ jsc-build-linux-compile-config:
 			-DENABLE_STATIC_JSC=ON \
 			-DCMAKE_BUILD_TYPE=relwithdebuginfo \
 			-DUSE_THIN_ARCHIVES=OFF \
-			-DBACKTRACE_DISABLED=0 \
 			-DENABLE_FTL_JIT=ON \
 			-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 			-G Ninja \

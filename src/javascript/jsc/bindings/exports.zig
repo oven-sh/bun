@@ -26,6 +26,7 @@ const JSModuleLoader = JSC.JSModuleLoader;
 const JSModuleRecord = JSC.JSModuleRecord;
 const Microtask = JSC.Microtask;
 const JSPrivateDataPtr = @import("../base.zig").JSPrivateDataPtr;
+const Backtrace = @import("../../../deps/backtrace.zig");
 
 pub const ZigGlobalObject = extern struct {
     pub const shim = Shimmer("Zig", "GlobalObject", @This());
@@ -37,7 +38,9 @@ pub const ZigGlobalObject = extern struct {
     pub const Interface: type = NewGlobalObject(JS.VirtualMachine);
 
     pub fn create(class_ref: [*]CAPI.JSClassRef, count: i32, console: *anyopaque) *JSGlobalObject {
-        return shim.cppFn("create", .{ class_ref, count, console });
+        var global = shim.cppFn("create", .{ class_ref, count, console });
+        Backtrace.reloadHandlers();
+        return global;
     }
 
     pub fn getModuleRegistryMap(global: *JSGlobalObject) *anyopaque {

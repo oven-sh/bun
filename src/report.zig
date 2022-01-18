@@ -18,9 +18,89 @@ const CrashReporter = @import("crash_reporter");
 
 const Report = @This();
 
+var crash_report_writer: CrashReportWriter = CrashReportWriter{ .file = null };
 var crash_reporter_path: [1024]u8 = undefined;
+pub const CrashReportWriter = struct {
+    file: ?std.io.BufferedWriter(4096, std.fs.File.Writer) = null,
+    file_path: []const u8 = "",
+
+    pub fn printFrame(_: ?*anyopaque, frame: CrashReporter.StackFrame) void {
+        const function_name = if (frame.function_name.len > 0) frame.function_name else "[function ?]";
+        const filename = if (frame.filename.len > 0) frame.function_name else "[file ?]";
+        crash_report_writer.print("[{d}] - <b>{s}<r> {s}:{d}\n", .{ frame.pc, function_name, filename, frame.line_number });
+    }
+
+    pub fn dump() void {
+        CrashReporter.print();
+    }
+
+    pub fn done() void {
+        CrashReporter.print();
+    }
+
+    pub fn print(this: *CrashReportWriter, comptime fmt: string, args: anytype) void {
+        Output.prettyError(fmt, args);
+        if (this.file) |*file| {
+            var writer = file.writer();
+            writer.print(comptime Output.prettyFmt(fmt, false), args) catch {};
+        }
+    }
+
+    pub fn flush(this: *CrashReportWriter) void {
+        if (this.file) |*file| {
+            file.flush() catch {};
+        }
+        Output.flush();
+    }
+
+    pub fn generateFile(this: *CrashReportWriter) void {
+        if (this.file != null) return;
+
+        var base_dir: []const u8 = ".";
+        if (std.os.getenv("BUN_INSTALL")) |install_dir| {
+            base_dir = std.mem.trimRight(u8, install_dir, std.fs.path.sep_str);
+        } else if (std.os.getenv("HOME")) |home_dir| {
+            base_dir = std.mem.trimRight(u8, home_dir, std.fs.path.sep_str);
+        }
+        const file_path = std.fmt.bufPrintZ(
+            &crash_reporter_path,
+            "{s}/.bun-crash/v{s}-{d}.crash",
+            .{ base_dir, Global.package_json_version, @intCast(u64, @maximum(std.time.milliTimestamp(), 0)) },
+        ) catch return;
+
+        std.fs.cwd().makeDir(std.fs.path.dirname(std.mem.span(file_path)).?) catch {};
+        var file = std.fs.cwd().createFileZ(file_path, .{ .truncate = true }) catch return;
+        this.file = std.io.bufferedWriter(
+            file.writer(),
+        );
+        this.file_path = std.mem.span(file_path);
+    }
+
+    pub fn printPath(this: *CrashReportWriter) void {
+        var display_path = this.file_path;
+
+        if (this.file_path.len > 0) {
+            var tilda = false;
+            if (std.os.getenv("HOME")) |home_dir| {
+                if (strings.hasPrefix(display_path, home_dir)) {
+                    display_path = display_path[home_dir.len..];
+                    tilda = true;
+                }
+            }
+
+            if (tilda) {
+                Output.prettyError("Crash report saved to:\n  <b>~/{s}<r>\n", .{this.file_path});
+            } else {
+                Output.prettyError("Crash report saved to:\n  <b>{s}<r>\n", .{this.file_path});
+            }
+        }
+    }
+};
+
 pub fn printMetadata() void {
     @setCold(true);
+    crash_report_writer.generateFile();
+
     const cmd_label: string = if (CLI.cmd) |tag| @tagName(tag) else "Unknown";
 
     const platform = if (Environment.isMac) "macOS" else "Linux";
@@ -29,7 +109,7 @@ pub fn printMetadata() void {
     else
         "x64";
 
-    Output.prettyError(
+    crash_report_writer.print(
         \\
         \\<r>–––– bun meta ––––
     ++ "\nBun v" ++ Global.package_json_version ++ " " ++ platform ++ " " ++ arch ++ "\n" ++
@@ -42,7 +122,7 @@ pub fn printMetadata() void {
 
     const http_count = HTTP.active_requests_count.loadUnchecked();
     if (http_count > 0)
-        Output.prettyError(
+        crash_report_writer.print(
             \\HTTP: {d}
             \\
         , .{http_count});
@@ -67,7 +147,7 @@ pub fn printMetadata() void {
             &peak_commit,
             &page_faults,
         );
-        Output.prettyError("Elapsed: {d}ms | User: {d}ms | Sys: {d}ms\nRSS: {:<3.2} | Peak: {:<3.2} | Commit: {:<3.2} | Faults: {d}\n", .{
+        crash_report_writer.print("Elapsed: {d}ms | User: {d}ms | Sys: {d}ms\nRSS: {:<3.2} | Peak: {:<3.2} | Commit: {:<3.2} | Faults: {d}\n", .{
             elapsed_msecs,
             user_msecs,
             system_msecs,
@@ -78,7 +158,7 @@ pub fn printMetadata() void {
         });
     }
 
-    Output.prettyError("–––– bun meta ––––\n", .{});
+    crash_report_writer.print("–––– bun meta ––––\n", .{});
 }
 var has_printed_fatal = false;
 var has_printed_crash = false;
@@ -86,15 +166,16 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
     const had_printed_fatal = has_printed_fatal;
     if (!has_printed_fatal) {
         has_printed_fatal = true;
+        crash_report_writer.generateFile();
 
         if (err_) |err| {
             if (Output.isEmojiEnabled()) {
-                Output.prettyError(
+                crash_report_writer.print(
                     "\n<r><red>error<r><d>:<r> <b>{s}<r>\n",
                     .{@errorName(err)},
                 );
             } else {
-                Output.prettyError(
+                crash_report_writer.print(
                     "\n<r>error: {s}\n\n",
                     .{@errorName(err)},
                 );
@@ -108,12 +189,12 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
 
                 if (len > 0) {
                     if (Output.isEmojiEnabled()) {
-                        Output.prettyError(
+                        crash_report_writer.print(
                             "\n<r><red>uh-oh<r><d>:<r> <b>{s}<r>\n",
                             .{msg[0..len]},
                         );
                     } else {
-                        Output.prettyError(
+                        crash_report_writer.print(
                             "\n<r>an uh-oh: {s}\n\n",
                             .{msg[0..len]},
                         );
@@ -125,51 +206,69 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
         if (err_ == null) {
             if (Output.isEmojiEnabled()) {
                 if (msg_ == null and err_ == null) {
-                    Output.prettyError("<r><red>", .{});
+                    crash_report_writer.print("<r><red>", .{});
                 } else {
-                    Output.prettyError("<r>", .{});
+                    crash_report_writer.print("<r>", .{});
                 }
-                Output.prettyErrorln("bun will crash now<r> 😭😭😭\n", .{});
+                crash_report_writer.print("bun will crash now<r> 😭😭😭\n", .{});
             } else {
-                Output.printError("bun has crashed :'(\n", .{});
+                crash_report_writer.print("bun has crashed :'(\n", .{});
             }
         }
-        Output.flush();
+        crash_report_writer.flush();
 
         printMetadata();
 
-        Output.flush();
-    }
+        crash_report_writer.flush();
 
-    // It only is a real crash report if it's not coming from Zig
-    if (err_ == null and msg_ == null and !has_printed_crash) {
-        var path = CrashReporter.crashReportPath(&crash_reporter_path);
+        // It only is a real crash report if it's not coming from Zig
 
-        if (path.len > 0) {
-            has_printed_crash = true;
+        CrashReportWriter.dump();
+        crash_report_writer.flush();
 
-            if (std.os.getenvZ("HOME")) |home| {
-                if (strings.hasPrefix(path, home) and home.len > 1) {
-                    crash_reporter_path[home.len - 1] = '~';
-                    crash_reporter_path[home.len] = '/';
-                    path = path[home.len - 1 ..];
-                }
-            }
-            Output.prettyErrorln("Crash report saved to:\n  {s}\n", .{path});
-            if (!had_printed_fatal) Output.prettyError("Ask for #help in https://bun.sh/discord or go to https://bun.sh/issues. Please include the crash report. \n\n", .{});
-            Output.flush();
-
-            std.os.exit(1);
-        }
+        crash_report_writer.printPath();
     }
 
     if (!had_printed_fatal) {
-        Output.prettyError("\nAsk for #help in https://bun.sh/discord or go to https://bun.sh/issues\n\n", .{});
-        Output.flush();
+        crash_report_writer.print("\nAsk for #help in https://bun.sh/discord or go to https://bun.sh/issues\n\n", .{});
+        crash_report_writer.flush();
     }
 }
 
 var globalError_ranOnce = false;
+
+pub noinline fn handleCrash(signal: i32, addr: usize) void {
+    const had_printed_fatal = has_printed_fatal;
+    if (has_printed_fatal) return;
+    has_printed_fatal = true;
+
+    crash_report_writer.generateFile();
+
+    const name = switch (signal) {
+        std.os.SIG.SEGV => error.SegmentationFault,
+        std.os.SIG.ILL => error.InstructionError,
+        std.os.SIG.BUS => error.BusError,
+        else => error.Crash,
+    };
+
+    crash_report_writer.print("\n<r><red>{s}<d> at {d}\n\n", .{ @errorName(name), addr });
+    printMetadata();
+    CrashReportWriter.dump();
+
+    if (!had_printed_fatal) {
+        crash_report_writer.print("\nAsk for #help in https://bun.sh/discord or go to https://bun.sh/issues\n\n", .{});
+    }
+    crash_report_writer.flush();
+
+    if (crash_report_writer.file) |file| {
+        // don't handle return codes here
+        _ = std.os.system.close(file.unbuffered_writer.context.handle);
+    }
+
+    crash_report_writer.file = null;
+
+    std.c._exit(128 + @truncate(u8, @intCast(u8, @maximum(signal, 0))));
+}
 
 pub noinline fn globalError(err: anyerror) noreturn {
     @setCold(true);
@@ -179,6 +278,23 @@ pub noinline fn globalError(err: anyerror) noreturn {
     }
 
     switch (err) {
+        error.SyntaxError => {
+            Output.prettyError(
+                "\n<r><red>SyntaxError<r><d>:<r> An error occurred while parsing code",
+                .{},
+            );
+            Output.flush();
+            std.os.exit(1);
+        },
+        error.OutOfMemory => {
+            Output.prettyError(
+                "\n<r><red>OutOfMemory<r><d>:<r> There might be an infinite loop somewhere",
+                .{},
+            );
+            printMetadata();
+            Output.flush();
+            std.os.exit(1);
+        },
         error.CurrentWorkingDirectoryUnlinked => {
             Output.prettyError(
                 "\n<r><red>error: <r>The current working directory was deleted, so that command didn't work. Please cd into a different directory and try again.",

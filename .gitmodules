@@ -25,3 +25,6 @@
 	path = src/deps/boringssl
 	url = https://github.com/google/boringssl.git
 	ignore = dirty
+[submodule "src/deps/libbacktrace"]
+	path = src/deps/libbacktrace
+	url = https://github.com/ianlancetaylor/libbacktrace

@@ -98,7 +98,7 @@ extern "C" void JSCInitialize() {
   JSC::Options::useSharedArrayBuffer() = true;
   // JSC::Options::useAtMethod() = true;
   // std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
-  // WTF::initializeMainThread();
+  WTF::initializeMainThread();
   JSC::initialize();
 }
 

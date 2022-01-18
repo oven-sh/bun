@@ -6761,7 +6761,7 @@ pub const Macro = struct {
             args_buf[1] = null;
 
             var macro_callback = macro.vm.macros.get(id) orelse return caller;
-            var result = js.JSObjectCallAsFunctionReturnValue(macro.vm.global.ref(), macro_callback, null, args.len + 1, &args_buf);
+            var result = js.JSObjectCallAsFunctionReturnValueHoldingAPILock(macro.vm.global.ref(), macro_callback, null, args.len + 1, &args_buf);
             js.JSValueProtect(macro.vm.global.ref(), result.asRef());
             defer js.JSValueUnprotect(macro.vm.global.ref(), result.asRef());
             var promise = JSC.JSPromise.resolvedPromise(macro.vm.global, result);

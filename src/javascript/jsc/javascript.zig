@@ -635,6 +635,9 @@ pub const Bun = struct {
                 .rfn = Router.match,
                 .ts = Router.match_type_definition,
             },
+            .__debug__doSegfault = .{
+                .rfn = Bun.__debug__doSegfault,
+            },
             .sleepSync = .{
                 .rfn = sleepSync,
             },
@@ -745,6 +748,21 @@ pub const Bun = struct {
             },
         },
     );
+
+    // For testing the segfault handler
+    pub fn __debug__doSegfault(
+        _: void,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        _: []const js.JSValueRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        _ = ctx;
+        var seggy: *VirtualMachine = undefined;
+        seggy.printErrorInstance(undefined, undefined, false) catch unreachable;
+        return JSValue.jsUndefined().asRef();
+    }
 
     /// EnvironmentVariables is runtime defined.
     /// Also, you can't iterate over process.env normally since it only exists at build-time otherwise
@@ -1861,9 +1879,35 @@ pub const VirtualMachine = struct {
         }
         var entry_point = entry_point_entry.value_ptr.*;
 
+        var loader = MacroEntryPointLoader{
+            .path = entry_point.source.path.text,
+        };
+
+        this.runWithAPILock(MacroEntryPointLoader, &loader, MacroEntryPointLoader.load);
+        return loader.promise;
+    }
+
+    /// A subtlelty of JavaScriptCore:
+    /// JavaScriptCore has many release asserts that check an API lock is currently held
+    /// We cannot hold it from Zig code because it relies on C++ ARIA to automatically release the lock
+    /// and it is not safe to copy the lock itself
+    /// So we have to wrap entry points to & from JavaScript with an API lock that calls out to C++
+    pub inline fn runWithAPILock(this: *VirtualMachine, comptime Context: type, ctx: *Context, comptime function: fn (ctx: *Context) void) void {
+        this.global.vm().holdAPILock(ctx, OpaqueWrap(Context, function));
+    }
+
+    const MacroEntryPointLoader = struct {
+        path: string,
+        promise: *JSInternalPromise = undefined,
+        pub fn load(this: *MacroEntryPointLoader) void {
+            this.promise = vm._loadMacroEntryPoint(this.path);
+        }
+    };
+
+    pub inline fn _loadMacroEntryPoint(this: *VirtualMachine, entry_path: string) *JSInternalPromise {
         var promise: *JSInternalPromise = undefined;
 
-        promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(entry_point.source.path.text));
+        promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(entry_path));
 
         this.tick();
 
@@ -1958,6 +2002,7 @@ pub const VirtualMachine = struct {
                 if (!build_error.logged) {
                     var writer = Output.errorWriter();
                     build_error.msg.formatWriter(@TypeOf(writer), writer, allow_ansi_color) catch {};
+                    writer.writeAll("\n") catch {};
                     build_error.logged = true;
                 }
                 this.had_errors = this.had_errors or build_error.msg.kind == .err;

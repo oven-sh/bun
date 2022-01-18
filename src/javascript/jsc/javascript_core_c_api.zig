@@ -250,6 +250,7 @@ pub const OpaqueJSPropertyNameAccumulator = struct_OpaqueJSPropertyNameAccumulat
 // This function lets us use the C API but returns a plain old JSValue
 // allowing us to have exceptions that include stack traces
 pub extern "c" fn JSObjectCallAsFunctionReturnValue(ctx: JSContextRef, object: JSObjectRef, thisObject: JSObjectRef, argumentCount: usize, arguments: [*c]const JSValueRef) cpp.JSValue;
+pub extern "c" fn JSObjectCallAsFunctionReturnValueHoldingAPILock(ctx: JSContextRef, object: JSObjectRef, thisObject: JSObjectRef, argumentCount: usize, arguments: [*c]const JSValueRef) cpp.JSValue;
 
 pub extern fn JSRemoteInspectorDisableAutoStart() void;
 pub extern fn JSRemoteInspectorStart() void;

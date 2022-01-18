@@ -1564,7 +1564,7 @@ pub const Writable = struct {
         }
 
         pub fn create(state: *State, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-            return shim.cppFn("create", .{ globalObject, state });
+            return shim.cppFn("create", .{ state, globalObject });
         }
 
         // i know.
@@ -1793,7 +1793,7 @@ pub const Readable = struct {
             state: *State,
             globalObject: *JSC.JSGlobalObject,
         ) callconv(.C) JSC.JSValue {
-            return shim.cppFn("create", .{ globalObject, state });
+            return shim.cppFn("create", .{ state, globalObject });
         }
 
         pub fn deinit(state: *State) callconv(.C) void {

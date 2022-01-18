@@ -354,16 +354,16 @@ static JSC_DEFINE_HOST_FUNCTION(Writable__uncork,
   DEFINE_CALLBACK_FUNCTION_BODY(Bun::Writable, Bun__Writable__uncork);
 }
 
-extern "C" JSC__JSValue Bun__Readable__create(JSC__JSGlobalObject *globalObject,
-                                              Bun__Readable *state) {
+extern "C" JSC__JSValue Bun__Readable__create(Bun__Readable *state,
+                                              JSC__JSGlobalObject *globalObject) {
   JSC::JSValue result = JSC::JSValue(Readable::create(
     globalObject->vm(), state,
     Readable::createStructure(globalObject->vm(), globalObject, globalObject->objectPrototype())));
 
   return JSC::JSValue::encode(result);
 }
-extern "C" JSC__JSValue Bun__Writable__create(JSC__JSGlobalObject *globalObject,
-                                              Bun__Writable *state) {
+extern "C" JSC__JSValue Bun__Writable__create(Bun__Writable *state,
+                                              JSC__JSGlobalObject *globalObject) {
   JSC::JSValue result = JSC::JSValue(Writable::create(
     globalObject->vm(), state,
     Writable::createStructure(globalObject->vm(), globalObject, globalObject->objectPrototype())));

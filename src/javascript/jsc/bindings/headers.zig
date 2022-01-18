@@ -419,6 +419,6 @@ pub extern fn WTF__StringView__length(arg0: [*c]const WTF__StringView) usize;
 pub extern fn Zig__GlobalObject__create(arg0: [*c]JSClassRef, arg1: i32, arg2: ?*anyopaque) [*c]JSC__JSGlobalObject;
 pub extern fn Zig__GlobalObject__getModuleRegistryMap(arg0: [*c]JSC__JSGlobalObject) ?*anyopaque;
 pub extern fn Zig__GlobalObject__resetModuleRegistryMap(arg0: [*c]JSC__JSGlobalObject, arg1: ?*anyopaque) bool;
-pub extern fn Bun__Readable__create(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]Bun__Readable) JSC__JSValue;
-pub extern fn Bun__Writable__create(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]Bun__Writable) JSC__JSValue;
+pub extern fn Bun__Readable__create(arg0: [*c]Bun__Readable, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
+pub extern fn Bun__Writable__create(arg0: [*c]Bun__Writable, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn ZigException__fromException(arg0: [*c]JSC__Exception) ZigException;

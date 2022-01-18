@@ -97,6 +97,7 @@ pub const CommandLineReporter = struct {
 };
 
 pub const TestCommand = struct {
+    pub const name = "__test__wip";
     pub fn exec(ctx: Command.Context) !void {
         var env_loader = brk: {
             var map = try ctx.allocator.create(DotEnv.Map);

@@ -742,16 +742,18 @@ bun-link-lld-release:
 	rm -rf $(BUN_RELEASE_BIN).dSYM
 	cp $(BUN_RELEASE_BIN) $(BUN_RELEASE_BIN)-profile
 
-bun-link-lld-release-dsym:
-	-$(STRIP) $(BUN_RELEASE_BIN)
-	mv $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
-
 ifeq ($(OS_NAME),darwin)
 bun-link-lld-release-dsym:
 	$(DSYMUTIL) -o $(BUN_RELEASE_BIN).dSYM $(BUN_RELEASE_BIN)
 	-$(STRIP) $(BUN_RELEASE_BIN)
 	mv $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
 
+endif
+
+ifeq ($(OS_NAME),linux)
+bun-link-lld-release-dsym:
+	-$(STRIP) $(BUN_RELEASE_BIN)
+	mv $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
 endif
 
 

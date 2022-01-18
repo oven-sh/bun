@@ -1965,18 +1965,17 @@ pub const Process = struct {
         );
         var allocator = stack_fallback_allocator.get();
 
-        const count = JSC.VirtualMachine.vm.argv.len + 1;
-        var args = allocator.alloc(
-            JSC.ZigString,
-            count,
-        ) catch unreachable;
-        defer allocator.free(args);
-
         // If it was launched with bun run or bun test, skip it
         var skip: usize = 0;
         if (JSC.VirtualMachine.vm.argv.len > 1 and (strings.eqlComptime(JSC.VirtualMachine.vm.argv[0], "run") or strings.eqlComptime(JSC.VirtualMachine.vm.argv[0], "test"))) {
             skip += 1;
         }
+        const count = JSC.VirtualMachine.vm.argv.len + 1;
+        var args = allocator.alloc(
+            JSC.ZigString,
+            count - skip,
+        ) catch unreachable;
+        defer allocator.free(args);
 
         // https://github.com/yargs/yargs/blob/adb0d11e02c613af3d9427b3028cc192703a3869/lib/utils/process-argv.ts#L1
         args[0] = JSC.ZigString.init(std.mem.span(std.os.argv[0]));

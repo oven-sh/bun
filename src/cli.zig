@@ -639,7 +639,7 @@ pub const Command = struct {
             RootCommandMatcher.case("i"), RootCommandMatcher.case("install") => .InstallCommand,
             RootCommandMatcher.case("c"), RootCommandMatcher.case("create") => .CreateCommand,
 
-            RootCommandMatcher.case("test") => .TestCommand,
+            RootCommandMatcher.case(TestCommand.name) => .TestCommand,
 
             RootCommandMatcher.case("pm") => .PackageManagerCommand,
 

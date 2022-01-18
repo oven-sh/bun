@@ -86,10 +86,12 @@ using JSObject = JSC::JSObject;
 using JSNonFinalObject = JSC::JSNonFinalObject;
 namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
-bool has_loaded_jsc = false;
+static bool has_loaded_jsc = false;
 
 extern "C" void JSCInitialize() {
   if (has_loaded_jsc) return;
+  has_loaded_jsc = true;
+
   JSC::Options::useSourceProviderCache() = true;
   JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
   JSC::Options::exposeInternalModuleLoader() = true;
@@ -100,7 +102,6 @@ extern "C" void JSCInitialize() {
   WTF::initializeMainThread();
   JSC::initialize();
   // Gigacage::disablePrimitiveGigacage();
-  has_loaded_jsc = true;
 }
 
 extern "C" JSC__JSGlobalObject *Zig__GlobalObject__create(JSClassRef *globalObjectClass, int count,

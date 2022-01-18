@@ -2640,8 +2640,7 @@ pub const NodeFS = struct {
     pub fn fchmod(this: *NodeFS, args: Arguments.FChmod, comptime flavor: Flavor) Maybe(Return.Fchmod) {
         switch (comptime flavor) {
             .sync => {
-                return Maybe(Return.Fchmod).errnoSys(C.fchmod(args.fd, args.mode), .fchmod) orelse
-                    Maybe(Return.Fchmod).success;
+                return Syscall.fchmod(args.fd, args.mode);
             },
             else => {},
         }
@@ -3679,7 +3678,7 @@ pub const NodeFS = struct {
             .sink = .{
                 .readable = JSC.Node.Readable{
                     .stream = stream,
-                    .global_object = args.global_object,
+                    .globalObject = args.global_object,
                 },
             },
             .sink_type = .readable,
@@ -3701,7 +3700,7 @@ pub const NodeFS = struct {
             .sink = .{
                 .writable = JSC.Node.Writable{
                     .stream = stream,
-                    .global_object = args.global_object,
+                    .globalObject = args.global_object,
                 },
             },
             .sink_type = .writable,

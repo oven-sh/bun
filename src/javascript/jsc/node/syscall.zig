@@ -88,6 +88,11 @@ pub fn getcwd(buf: *[std.fs.MAX_PATH_BYTES]u8) Maybe([]const u8) {
         Result.errnoSys(0, .getcwd).?;
 }
 
+pub fn fchmod(fd: JSC.Node.FileDescriptor, mode: JSC.Node.Mode) Maybe(void) {
+    return Maybe(void).errnoSys(C.fchmod(fd, mode), .fchmod) orelse
+        Maybe(void).success;
+}
+
 pub fn chdir(destination: [:0]const u8) Maybe(void) {
     const rc = system.chdir(destination);
     return Maybe(void).errnoSys(rc, .chdir) orelse Maybe(void).success;

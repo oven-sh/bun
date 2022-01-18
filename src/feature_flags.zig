@@ -86,3 +86,5 @@ pub const disable_compression_in_http_client = false;
 pub const use_libgit2 = true;
 
 pub const atomic_file_watcher = env.isLinux;
+
+pub const node_streams = env.isDebug or env.isTest;

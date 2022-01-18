@@ -15,6 +15,7 @@ const IdentityContext = @import("../../../identity_context.zig").IdentityContext
 const logger = @import("../../../logger.zig");
 const Shimmer = @import("../bindings/shimmer.zig").Shimmer;
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
+const meta = _global.meta;
 
 /// Time in seconds. Not nanos!
 pub const TimeLike = c_int;
@@ -516,9 +517,13 @@ pub const PathOrFileDescriptor = union(Tag) {
                 stream.content = Stream.Content{
                     .file_path = .{
                         .path = PathString.init(std.mem.span(try allocator.dupeZ(u8, path.slice()))),
-                        .flags = flags,
-                        .mode = mode,
                         .auto_close = auto_close,
+                        .file = .{
+                            .fd = std.math.maxInt(FileDescriptor),
+                            .flags = flags,
+                            .mode = mode,
+                        },
+                        .opened = false,
                     },
                 };
                 stream.content_type = .file_path;
@@ -1074,6 +1079,78 @@ pub const Stream = struct {
     content_type: Content.Type,
     allocator: std.mem.Allocator,
 
+    pub fn open(this: *Stream) ?JSC.Node.Syscall.Error {
+        switch (Syscall.open(this.content.file_path.path.sliceAssumeZ(), @enumToInt(this.content.file_path.file.flags))) {
+            .err => |err| {
+                return err.withPath(this.content.file_path.path.slice());
+            },
+            .result => |fd| {
+                this.content.file_path.file.fd = fd;
+                this.content.file_path.opened = true;
+                this.emit(.open);
+                return null;
+            },
+        }
+    }
+
+    pub fn getFd(this: *Stream) FileDescriptor {
+        return switch (this.content_type) {
+            .file => this.content.file.fd,
+            .file_path => if (comptime Environment.allow_assert) brk: {
+                std.debug.assert(this.content.file_path.opened);
+                break :brk this.content.file_path.file.fd;
+            } else this.content.file_path.file.fd,
+            else => unreachable,
+        };
+    }
+
+    pub fn close(this: *Stream) ?JSC.Node.Syscall.Error {
+        const fd = this.getFd();
+
+        // Don't ever close stdin, stdout, or stderr
+        // we are assuming that these are always 0 1 2, which is not strictly true in some cases
+        if (fd <= 2) {
+            return null;
+        }
+
+        if (Syscall.close(fd)) |err| {
+            return err;
+        }
+
+        switch (this.content_type) {
+            .file_path => {
+                this.content.file_path.opened = false;
+                this.content.file_path.file.fd = std.math.maxInt(FileDescriptor);
+            },
+            .file => {
+                this.content.file.fd = std.math.maxInt(FileDescriptor);
+            },
+            else => {},
+        }
+
+        this.emit(.Close);
+    }
+
+    const CommonEvent = enum { Error, Open, Close };
+    pub fn emit(this: *Stream, comptime event: CommonEvent) void {
+        switch (this.sink_type) {
+            .readable => {
+                switch (comptime event) {
+                    .Open => this.sink.readable.emit(.Open),
+                    .Close => this.sink.readable.emit(.Close),
+                    else => unreachable,
+                }
+            },
+            .writable => {
+                switch (comptime event) {
+                    .Open => this.sink.writable.emit(.Open),
+                    .Close => this.sink.writable.emit(.Close),
+                    else => unreachable,
+                }
+            },
+        }
+    }
+
     // This allocates a new stream object
     pub fn toJS(this: *Stream, ctx: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
         switch (this.sink_type) {
@@ -1081,15 +1158,13 @@ pub const Stream = struct {
                 var readable = &this.sink.readable.state;
                 return readable.create(
                     ctx.ptr(),
-                    readable,
-                );
+                ).asObjectRef();
             },
             .writable => {
                 var writable = &this.sink.writable.state;
                 return writable.create(
                     ctx.ptr(),
-                    writable,
-                );
+                ).asObjectRef();
             },
         }
     }
@@ -1134,12 +1209,25 @@ pub const Stream = struct {
         stream: *Stream,
         javascript: JSC.JSValue,
 
+        pub fn getFile(this: *Content, content_type: Content.Type) *File {
+            return switch (content_type) {
+                .file => &this.file,
+                .file_path => &this.file_path.file,
+                else => unreachable,
+            };
+        }
+
         pub const File = struct {
             fd: FileDescriptor,
             flags: FileSystemFlags,
             mode: Mode,
+            size: Consumed = std.math.maxInt(Consumed),
 
             // pub fn read(this: *File, comptime chunk_type: Content.Type, chunk: Source.Type.of(chunk_type)) Response {}
+
+            pub inline fn setPermissions(this: File) meta.ReturnOf(Syscall.fchmod) {
+                return Syscall.fchmod(this.fd, this.mode);
+            }
         };
 
         pub const FilePath = struct {
@@ -1190,17 +1278,10 @@ pub const Writable = struct {
     pub const Pipe = struct {
         source: *Stream,
         destination: *Stream,
-        progress: usize = 0,
+        chunk: ?*Chunk = null,
         // Might be the end of the stream
         // or it might just be another stream
         next: ?*Pipe = null,
-
-        pub const State = enum {
-            pending,
-            err,
-            backpressure,
-            complete,
-        };
 
         pub fn start(this: *Pipe, pipeline: *Pipeline, chunk: ?*Chunk) void {
             this.run(pipeline, chunk, null);
@@ -1244,9 +1325,9 @@ pub const Writable = struct {
             source_type: Stream.Content.Type,
             destination: *Stream.Content,
             destination_type: Stream.Content.Type,
+            is_end: bool,
         ) void {
             do_the_work: {
-
                 // fallback-only
                 if (destination_type == .file_path and source_type == .file_path and !destination.file_path.opened and !must_open_files) {
                     switch (Syscall.copyfile(source.path.sliceAssumeZ(), destination.path.sliceAssumeZ(), 0)) {
@@ -1259,17 +1340,28 @@ pub const Writable = struct {
                     }
                 }
 
+                defer {
+                    if (source_type == .file_path and source.file_path.auto_close and source.file_path.opened) {
+                        if (source.stream.close()) |err| {
+                            if (pipeline.err == null) {
+                                pipeline.err = err;
+                            }
+                        }
+                    }
+
+                    if (is_end and destination_type == .file_path and destination.file_path.auto_close and destination.file_path.opened) {
+                        if (destination.stream.close()) |err| {
+                            if (pipeline.err == null) {
+                                pipeline.err = err;
+                            }
+                        }
+                    }
+                }
+
                 if (source_type == .file_path and !source.file_path.opened) {
-                    switch (Syscall.open(source.path.sliceAssumeZ(), @enumToInt(source.file_path.file.flags))) {
-                        .err => |err| {
-                            pipeline.err = err;
-                            return;
-                        },
-                        .result => |fd| {
-                            source.file_path.file.fd = fd;
-                            source.file_path.opened = true;
-                            source.emit(.open);
-                        },
+                    if (source.stream.open()) |err| {
+                        pipeline.err = err;
+                        return;
                     }
                 }
 
@@ -1279,16 +1371,9 @@ pub const Writable = struct {
                     source.file.fd;
 
                 if (destination == .file_path and !destination.file_path.opened) {
-                    switch (Syscall.open(destination.path.sliceAssumeZ(), @enumToInt(destination.file_path.file.flags))) {
-                        .err => |err| {
-                            pipeline.err = err;
-                            return;
-                        },
-                        .result => |fd| {
-                            destination.file_path.file.fd = fd;
-                            destination.file_path.opened = true;
-                            destination.emit(.open);
-                        },
+                    if (destination.stream.open()) |err| {
+                        pipeline.err = err;
+                        return;
                     }
                 }
 
@@ -1306,8 +1391,9 @@ pub const Writable = struct {
                 }
             }
 
-            switch (destination.getFile().setPermissions()) {
+            switch (destination.getFile(destination_type).setPermissions()) {
                 .err => |err| {
+                    destination.stream.emitError(err);
                     pipeline.err = err;
                     return;
                 },
@@ -1323,7 +1409,12 @@ pub const Writable = struct {
 
             if (pipeline.err != null) return;
 
-            switch (FastPath.get(source_content_type, destination_content_type, pipeline.tail == this)) {
+            switch (FastPath.get(
+                source_content_type,
+                destination_content_type,
+                pipeline.head == this,
+                pipeline.tail == this,
+            )) {
                 .clonefile => {
                     if (comptime !Environment.isMac) unreachable;
                     if (destination.content.file_path.opened) {
@@ -1335,6 +1426,7 @@ pub const Writable = struct {
                             .file_path,
                             &destination.content,
                             .file_path,
+                            this.next == null,
                         );
                     } else {
                         runCloneFileWithFallback(pipeline, source.content.file_path, destination.content.file_path);
@@ -1350,13 +1442,10 @@ pub const Writable = struct {
                         source_content_type,
                         &destination.content,
                         destination_content_type,
+                        this.next == null,
                     );
                 },
                 else => {},
-            }
-
-            if (pipeline.err != null) {
-                pipeline;
             }
         }
 
@@ -1367,9 +1456,10 @@ pub const Writable = struct {
             copyfile,
             copy_file_range,
 
-            pub fn get(source: Stream.Content.Type, destination: Stream.Content.Type, is_final: bool) FastPath {
+            pub fn get(source: Stream.Content.Type, destination: Stream.Content.Type, is_head: bool, is_tail: bool) FastPath {
+                _ = is_tail;
                 if (comptime Environment.isMac) {
-                    if (is_final) {
+                    if (is_head) {
                         if (source == .file_path and destination == .file_path and !disable_clonefile)
                             return .clonefile;
 
@@ -1416,15 +1506,24 @@ pub const Writable = struct {
         if (comptime Environment.allow_assert) {
             std.debug.assert(readable.sink_type == .readable);
         }
+
         if (this.pipeline.tail == null) {
             this.pipeline.head = &this.pipeline.preallocated_tail_pipe;
             this.pipeline.head.?.* = Pipe{
-                .source = this.stream,
-                .destination = readable,
+                .destination = this.stream,
+                .source = readable,
             };
             this.pipeline.tail = this.pipeline.head;
             return;
         }
+
+        var pipe = readable.allocator.create(Pipe) catch unreachable;
+        pipe.* = Pipe{
+            .source = readable,
+            .destination = this.stream,
+        };
+        this.pipeline.tail.?.next = pipe;
+        this.pipeline.tail = pipe;
     }
 
     pub const EventEmitter = Emitter.New(Events);
@@ -1464,7 +1563,7 @@ pub const Writable = struct {
             stream.deinit();
         }
 
-        pub fn create(globalObject: *JSC.JSGlobalObject, state: *State) callconv(.C) JSC.JSValue {
+        pub fn create(state: *State, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
             return shim.cppFn("create", .{ globalObject, state });
         }
 
@@ -1620,7 +1719,8 @@ pub const Readable = struct {
 
     pub const EventEmitter = Emitter.New(Events);
 
-    pub fn emit(this: *Readable, event: Events, value: JSC.JSValue) void {
+    pub fn emit(this: *Readable, event: Events, comptime ValueType: type, value: JSC.JSValue) void {
+        _ = ValueType;
         if (this.shouldEmitEvent(event)) return;
 
         this.emitter.emit(event, this.globalObject.?, value);
@@ -1689,7 +1789,10 @@ pub const Readable = struct {
         pub const include = "BunStream.h";
         pub const namespace = shim.namespace;
 
-        pub fn create(globalObject: *JSC.JSGlobalObject, state: *State) callconv(.C) JSC.JSValue {
+        pub fn create(
+            state: *State,
+            globalObject: *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue {
             return shim.cppFn("create", .{ globalObject, state });
         }
 
@@ -1735,10 +1838,10 @@ pub const Readable = struct {
                 return JSC.toInvalidArguments("Writable is required", .{}, global.ref());
             }
             const args: []const JSC.JSValue = args_ptr[0..len];
-            var writable_state: *Writable.State = args[0].*.getWritableStreamState(global.vm()) orelse {
+            var writable_state: *Writable.State = args[0].getWritableStreamState(global.vm()) orelse {
                 return JSC.toInvalidArguments("Expected Writable but didn't receive it", .{}, global.ref());
             };
-            writable_state.getWritable().appendReadable(state);
+            writable_state.getWritable().appendReadable(state.getStream());
             return JSC.JSValue.jsUndefined();
         }
 
@@ -1948,4 +2051,6 @@ comptime {
     std.testing.refAllDecls(Stream);
     std.testing.refAllDecls(Readable);
     std.testing.refAllDecls(Writable);
+    std.testing.refAllDecls(Writable.State);
+    std.testing.refAllDecls(Readable.State);
 }

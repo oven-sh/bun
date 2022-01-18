@@ -12,6 +12,7 @@ pub const C = @import("c.zig");
 
 pub const FeatureFlags = @import("feature_flags.zig");
 const root = @import("root");
+pub const meta = @import("./meta.zig");
 
 pub const Output = struct {
     // These are threadlocal so we don't have stdout/stderr writing on top of each other

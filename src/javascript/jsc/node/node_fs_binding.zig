@@ -5,6 +5,7 @@ const ArgumentsSlice = JSC.Node.ArgumentsSlice;
 const system = std.os.system;
 const Maybe = JSC.Node.Maybe;
 const Encoding = JSC.Node.Encoding;
+const FeatureFlags = @import("../../../global.zig").FeatureFlags;
 const Args = JSC.Node.NodeFS.Arguments;
 
 const NodeFSFunction = fn (
@@ -279,12 +280,12 @@ pub const NodeFSBindings = JSC.NewClass(
 
         .createReadStream = .{
             .name = "createReadStream",
-            .rfn = callSync(.createReadStream),
+            .rfn = if (FeatureFlags.node_streams) callSync(.createReadStream) else call(.createReadStream),
         },
 
         .createWriteStream = .{
             .name = "createWriteStream",
-            .rfn = callSync(.createWriteStream),
+            .rfn = if (FeatureFlags.node_streams) callSync(.createWriteStream) else call(.createWriteStream),
         },
 
         .accessSync = .{

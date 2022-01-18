@@ -52,14 +52,15 @@ const ShellCompletions = @import("./cli/shell_completions.zig");
 const TestCommand = @import("./cli/test_command.zig").TestCommand;
 const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
 
+const Reporter = @import("./report.zig");
 var start_time: i128 = undefined;
 
 pub const Cli = struct {
     var wait_group: sync.WaitGroup = undefined;
     pub fn startTransform(_: std.mem.Allocator, _: Api.TransformOptions, _: *logger.Log) anyerror!void {}
-    pub fn start(allocator: std.mem.Allocator, _: anytype, _: anytype, comptime MainPanicHandler: type) anyerror!void {
+    pub fn start(allocator: std.mem.Allocator, _: anytype, _: anytype, comptime MainPanicHandler: type) void {
         start_time = std.time.nanoTimestamp();
-        var log = try allocator.create(logger.Log);
+        var log = allocator.create(logger.Log) catch unreachable;
         log.* = logger.Log.init(allocator);
         var panicker = MainPanicHandler.init(log);
         MainPanicHandler.Singleton = &panicker;
@@ -72,7 +73,14 @@ pub const Cli = struct {
                     std.os.exit(1);
                 },
                 else => {
-                    return err;
+                    // Always dump the logs
+                    if (Output.enable_ansi_colors_stderr) {
+                        log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                    } else {
+                        log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                    }
+
+                    Reporter.globalError(err);
                 },
             }
         };

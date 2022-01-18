@@ -54,7 +54,9 @@ pub fn main() anyerror!void {
     Output.Source.set(&output_source);
     defer Output.flush();
 
-    cli.Cli.start(default_allocator, stdout, stderr, MainPanicHandler) catch |err| Report.globalError(err);
+    cli.Cli.start(default_allocator, stdout, stderr, MainPanicHandler) catch |err| {
+        Report.globalError(err);
+    };
 
     std.mem.doNotOptimizeAway(JavaScriptVirtualMachine.fetch);
     std.mem.doNotOptimizeAway(JavaScriptVirtualMachine.init);

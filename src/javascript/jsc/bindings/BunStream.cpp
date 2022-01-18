@@ -156,16 +156,22 @@ static JSC_DEFINE_HOST_FUNCTION(Readable__on,
   return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-Bun__Readable *JSC__JSValue__getReadableStreamState(JSC__JSValue value, JSC__VM *vm) {
+extern "C" Bun__Readable *JSC__JSValue__getReadableStreamState(JSC__JSValue value, JSC__VM *vm) {
   auto *thisObject = JSC::jsDynamicCast<Bun::Readable *>(*vm, JSC::JSValue::decode(value));
   if (UNLIKELY(!thisObject)) { return nullptr; }
   return thisObject->state;
 }
-Bun__Writable *JSC__JSValue__getWritableStreamState(JSC__JSValue value, JSC__VM *vm) {
+extern "C" Bun__Writable *JSC__JSValue__getWritableStreamState(JSC__JSValue value, JSC__VM *vm) {
   auto *thisObject = JSC::jsDynamicCast<Bun::Writable *>(*vm, JSC::JSValue::decode(value));
   if (UNLIKELY(!thisObject)) { return nullptr; }
   return thisObject->state;
 }
+
+const JSC::ClassInfo Readable::s_info = {"Readable", &Base::s_info, nullptr, nullptr,
+                                         CREATE_METHOD_TABLE(Readable)};
+
+const JSC::ClassInfo Writable::s_info = {"Writable", &Base::s_info, nullptr, nullptr,
+                                         CREATE_METHOD_TABLE(Writable)};
 
 static JSC_DEFINE_HOST_FUNCTION(Readable__once,
                                 (JSC::JSGlobalObject * globalObject, JSC::CallFrame *callFrame)) {
@@ -348,14 +354,16 @@ static JSC_DEFINE_HOST_FUNCTION(Writable__uncork,
   DEFINE_CALLBACK_FUNCTION_BODY(Bun::Writable, Bun__Writable__uncork);
 }
 
-JSC__JSValue Bun__Readable__create(JSC__JSGlobalObject *globalObject, Bun__Readable *state) {
+extern "C" JSC__JSValue Bun__Readable__create(JSC__JSGlobalObject *globalObject,
+                                              Bun__Readable *state) {
   JSC::JSValue result = JSC::JSValue(Readable::create(
     globalObject->vm(), state,
     Readable::createStructure(globalObject->vm(), globalObject, globalObject->objectPrototype())));
 
   return JSC::JSValue::encode(result);
 }
-JSC__JSValue Bun__Writable__create(JSC__JSGlobalObject *globalObject, Bun__Writable *state) {
+extern "C" JSC__JSValue Bun__Writable__create(JSC__JSGlobalObject *globalObject,
+                                              Bun__Writable *state) {
   JSC::JSValue result = JSC::JSValue(Writable::create(
     globalObject->vm(), state,
     Writable::createStructure(globalObject->vm(), globalObject, globalObject->objectPrototype())));

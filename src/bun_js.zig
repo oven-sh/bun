@@ -54,7 +54,7 @@ pub const Run = struct {
         run.vm.argv = ctx.positionals;
 
         run.vm.bundler.configureRouter(false) catch {
-            if (Output.enable_ansi_colors) {
+            if (Output.enable_ansi_colors_stderr) {
                 run.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
             } else {
                 run.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
@@ -64,7 +64,7 @@ pub const Run = struct {
             std.os.exit(1);
         };
         run.vm.bundler.configureDefines() catch {
-            if (Output.enable_ansi_colors) {
+            if (Output.enable_ansi_colors_stderr) {
                 run.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
             } else {
                 run.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};

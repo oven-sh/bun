@@ -1976,10 +1976,10 @@ pub const Process = struct {
         var allocator = stack_fallback_allocator.get();
 
         // If it was launched with bun run or bun test, skip it
-        var skip: usize = 0;
-        if (JSC.VirtualMachine.vm.argv.len > 1 and (strings.eqlComptime(JSC.VirtualMachine.vm.argv[0], "run") or strings.eqlComptime(JSC.VirtualMachine.vm.argv[0], "test"))) {
-            skip += 1;
-        }
+        const skip: usize = @as(usize, @boolToInt(
+            JSC.VirtualMachine.vm.argv.len > 1 and (strings.eqlComptime(JSC.VirtualMachine.vm.argv[0], "run") or strings.eqlComptime(JSC.VirtualMachine.vm.argv[0], "wiptest")),
+        ));
+
         const count = JSC.VirtualMachine.vm.argv.len + 1;
         var args = allocator.alloc(
             JSC.ZigString,
@@ -1992,8 +1992,8 @@ pub const Process = struct {
 
         if (JSC.VirtualMachine.vm.argv.len > skip) {
             for (JSC.VirtualMachine.vm.argv[skip..]) |arg, i| {
-                args[i + 1] = JSC.ZigString.init(arg);
-                args[i + 1].detectEncoding();
+                args[i + skip] = JSC.ZigString.init(arg);
+                args[i + skip].detectEncoding();
             }
         }
 

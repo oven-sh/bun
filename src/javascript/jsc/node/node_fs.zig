@@ -2825,7 +2825,7 @@ pub const NodeFS = struct {
             .sync => {
                 const path = args.path.sliceZ(&this.sync_error_buf);
                 return switch (Syscall.mkdir(path, args.mode)) {
-                    .result => |result| Maybe(Return.Mkdir){ .result = "" },
+                    .result => Maybe(Return.Mkdir){ .result = "" },
                     .err => |err| Maybe(Return.Mkdir){ .err = err },
                 };
             },

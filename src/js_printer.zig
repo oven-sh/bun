@@ -368,7 +368,7 @@ pub fn NewPrinter(
                 p.printSpace();
                 p.print("=");
                 p.printSpaceBeforeIdentifier();
-                p.print("Bun.jest(import.meta.filePath)");
+                p.print("Bun.jest(import.meta.path)");
                 p.printSemicolonAfterStatement();
                 p.printIndent();
                 p.print("const ");
@@ -411,7 +411,7 @@ pub fn NewPrinter(
                 }
 
                 if (import.star_name_loc == null) {
-                    p.print("} = Bun.jest(import.meta.filePath)");
+                    p.print("} = Bun.jest(import.meta.path)");
                 } else {
                     p.print("} =");
                     p.printSpaceBeforeIdentifier();
@@ -3224,7 +3224,7 @@ pub fn NewPrinter(
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
 
-                    if (record.path.isBun() and strings.eqlComptime(record.path.text, "bun:jest")) {
+                    if (record.path.isBun() and strings.eqlComptime(record.path.text, "test")) {
                         p.printBunJestImportStatement(s.*);
                         return;
                     }

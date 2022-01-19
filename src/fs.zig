@@ -184,7 +184,7 @@ pub const FileSystem = struct {
         //     // dir.data.remove(name);
         // }
 
-        pub fn addEntry(dir: *DirEntry, entry: std.fs.Dir.Entry, allocator: std.mem.Allocator) !void {
+        pub fn addEntry(dir: *DirEntry, entry: std.fs.Dir.Entry, allocator: std.mem.Allocator, comptime Iterator: type, iterator: Iterator) !void {
             var _kind: Entry.Kind = undefined;
             switch (entry.kind) {
                 .Directory => {
@@ -233,6 +233,11 @@ pub const FileSystem = struct {
             const stored_name = stored.base();
 
             try dir.data.put(allocator, stored.base_lowercase(), stored);
+
+            if (comptime Iterator != void) {
+                iterator.next(stored, dir.fd);
+            }
+
             if (comptime FeatureFlags.verbose_fs) {
                 if (_kind == .dir) {
                     Output.prettyln("   + {s}/", .{stored_name});
@@ -371,7 +376,8 @@ pub const FileSystem = struct {
         pub fn kind(entry: *Entry, fs: *Implementation) Kind {
             if (entry.need_stat) {
                 entry.need_stat = false;
-                entry.cache = fs.kind(entry.dir, entry.base(), entry.cache.fd) catch unreachable;
+                // This is technically incorrect, but we are choosing not to handle errors here
+                entry.cache = fs.kind(entry.dir, entry.base(), entry.cache.fd) catch return entry.cache.kind;
             }
             return entry.cache.kind;
         }
@@ -379,7 +385,9 @@ pub const FileSystem = struct {
         pub fn symlink(entry: *Entry, fs: *Implementation) string {
             if (entry.need_stat) {
                 entry.need_stat = false;
-                entry.cache = fs.kind(entry.dir, entry.base(), entry.cache.fd) catch unreachable;
+                // This is technically incorrect, but we are choosing not to handle errors here
+                // This error can happen if the file was deleted between the time the directory was scanned and the time it was read
+                entry.cache = fs.kind(entry.dir, entry.base(), entry.cache.fd) catch return "";
             }
             return entry.cache.symlink.slice();
         }
@@ -747,6 +755,8 @@ pub const FileSystem = struct {
             fs: *RealFS,
             _dir: string,
             handle: std.fs.Dir,
+            comptime Iterator: type,
+            iterator: Iterator,
         ) !DirEntry {
             var iter: std.fs.Dir.Iterator = handle.iterate();
             var dir = DirEntry.init(_dir);
@@ -759,7 +769,7 @@ pub const FileSystem = struct {
             }
 
             while (try iter.next()) |_entry| {
-                try dir.addEntry(_entry, allocator);
+                try dir.addEntry(_entry, allocator, Iterator, iterator);
             }
 
             return dir;
@@ -784,6 +794,10 @@ pub const FileSystem = struct {
         threadlocal var temp_entries_option: EntriesOption = undefined;
 
         pub fn readDirectory(fs: *RealFS, _dir: string, _handle: ?std.fs.Dir) !*EntriesOption {
+            return readDirectoryWithIterator(fs, _dir, _handle, void, void{});
+        }
+
+        pub fn readDirectoryWithIterator(fs: *RealFS, _dir: string, _handle: ?std.fs.Dir, comptime Iterator: type, iterator: Iterator) !*EntriesOption {
             var dir = _dir;
             var cache_result: ?allocators.Result = null;
             if (comptime FeatureFlags.enable_entry_cache) {
@@ -822,6 +836,8 @@ pub const FileSystem = struct {
             var entries = fs.readdir(
                 dir,
                 handle,
+                Iterator,
+                iterator,
             ) catch |err| {
                 return fs.readDirectoryError(dir, err) catch unreachable;
             };

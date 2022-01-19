@@ -25,6 +25,7 @@ using namespace JSC;
     macro(errno) \
     macro(code) \
     macro(path) \
+    macro(dir) \
     macro(versions) \
     macro(argv) \
     macro(execArgv) \

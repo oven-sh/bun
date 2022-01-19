@@ -281,7 +281,7 @@
       "request": "launch",
       "name": "bun test",
       "program": "bun-debug",
-      "args": ["test", "./foo.test.js"],
+      "args": ["wiptest", "import-meta"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"
     },

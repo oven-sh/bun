@@ -485,7 +485,6 @@ JSC::JSObject *GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
                                                                     JSModuleRecord *record,
                                                                     JSValue val) {
 
-  ZigString specifier = Zig::toZigString(key, globalObject);
   JSC::VM &vm = globalObject->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -494,8 +493,15 @@ JSC::JSObject *GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
   RETURN_IF_EXCEPTION(scope, nullptr);
 
   auto clientData = Bun::clientData(vm);
-
-  metaProperties->putDirect(vm, clientData->builtinNames().filePathPublicName(), key);
+  JSString *keyString = key.toStringOrNull(globalObject);
+  if (UNLIKELY(!keyString)) { return metaProperties; }
+  auto view = keyString->value(globalObject);
+  auto index = view.reverseFind('/', view.length());
+  if (index != WTF::notFound) {
+    metaProperties->putDirect(vm, clientData->builtinNames().dirPublicName(),
+                              JSC::jsSubstring(globalObject, keyString, 0, index));
+  }
+  metaProperties->putDirect(vm, clientData->builtinNames().pathPublicName(), key);
   RETURN_IF_EXCEPTION(scope, nullptr);
 
   // metaProperties->putDirect(vm, Identifier::fromString(vm, "resolve"),

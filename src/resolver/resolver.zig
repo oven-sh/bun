@@ -1641,7 +1641,7 @@ pub const Resolver = struct {
                 }
                 var dir_iterator = open_dir.iterate();
                 while (try dir_iterator.next()) |_value| {
-                    dir_entries_option.entries.addEntry(_value, allocator) catch unreachable;
+                    dir_entries_option.entries.addEntry(_value, allocator, void, void{}) catch unreachable;
                 }
             }
 

@@ -35,7 +35,7 @@ pub extern "c" fn truncate(path: [*:0]const u8, len: os.off_t) c_int;
 pub extern "c" fn lutimes(path: [*:0]const u8, times: *const [2]std.os.timeval) c_int;
 pub extern "c" fn mkdtemp(template: [*c]u8) ?[*:0]u8;
 
-pub fn lstat_absolute(path: [:0]const u8) StatError!Stat {
+pub fn lstat_absolute(path: [:0]const u8) !Stat {
     if (builtin.os.tag == .windows) {
         @compileError("Not implemented yet");
     }
@@ -43,6 +43,7 @@ pub fn lstat_absolute(path: [:0]const u8) StatError!Stat {
     var st = zeroes(libc_stat);
     switch (errno(lstat64(path.ptr, &st))) {
         .SUCCESS => {},
+        .NOENT => return error.FileNotFound,
         // .EINVAL => unreachable,
         .BADF => unreachable, // Always a race condition.
         .NOMEM => return error.SystemResources,

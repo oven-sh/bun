@@ -5,7 +5,7 @@ const text = await response.text();
 
 if (
   fs.readFileSync(
-    import.meta.filePath.substring(0, import.meta.filePath.lastIndexOf("/")) +
+    import.meta.path.substring(0, import.meta.path.lastIndexOf("/")) +
       "/fetch.js.txt",
     "utf8"
   ) !== text

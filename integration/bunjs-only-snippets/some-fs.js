@@ -36,7 +36,7 @@ for (let i = 0; i < total; i++) {
   mkdirSync(iterations[i], recurse);
 }
 
-console.log("MKDIR " + count + " depth took:", performance.now() - start, "ms");
+console.log("MKDIR " + total + " depth took:", performance.now() - start, "ms");
 
 if (!existsSync(tempdir)) {
   throw new Error(

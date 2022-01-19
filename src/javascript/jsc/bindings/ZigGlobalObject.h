@@ -9,11 +9,13 @@ class Identifier;
 
 } // namespace JSC
 
+#include "Process.h"
 #include "ZigConsoleClient.h"
 #include <JavaScriptCore/CatchScope.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSTypeInfo.h>
 #include <JavaScriptCore/Structure.h>
+
 namespace Zig {
 
 class GlobalObject : public JSC::JSGlobalObject {
@@ -22,7 +24,7 @@ class GlobalObject : public JSC::JSGlobalObject {
     public:
   DECLARE_EXPORT_INFO;
   static const JSC::GlobalObjectMethodTable s_globalObjectMethodTable;
-
+  Zig::Process *m_process;
   static constexpr bool needsDestruction = true;
   template <typename CellType, JSC::SubspaceAccess mode>
   static JSC::IsoSubspace *subspaceFor(JSC::VM &vm) {
@@ -74,17 +76,14 @@ class JSMicrotaskCallback : public RefCounted<JSMicrotaskCallback> {
     public:
   static Ref<JSMicrotaskCallback> create(JSC::JSGlobalObject &globalObject,
                                          Ref<JSC::Microtask> &&task) {
-    return adoptRef(*new JSMicrotaskCallback(globalObject, WTFMove(task)));
+    return adoptRef(*new JSMicrotaskCallback(globalObject, WTFMove(task).leakRef()));
   }
 
   void call() {
     auto protectedThis{makeRef(*this)};
     JSC::VM &vm = m_globalObject->vm();
-    JSC::JSLockHolder lock(vm);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
     auto task = &m_task.get();
     task->run(m_globalObject.get());
-    scope.assertNoExceptionExceptTermination();
   }
 
     private:

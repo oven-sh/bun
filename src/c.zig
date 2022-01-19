@@ -3,6 +3,7 @@ const Enviroment = @import("./env.zig");
 
 const PlatformSpecific = switch (@import("builtin").target.os.tag) {
     .macos => @import("./darwin_c.zig"),
+    .linux => @import("./linux_c.zig"),
     else => struct {},
 };
 pub usingnamespace PlatformSpecific;
@@ -18,16 +19,23 @@ const errno = os.errno;
 const mode_t = C.mode_t;
 const libc_stat = C.Stat;
 const zeroes = mem.zeroes;
-
+pub const darwin = @import("./darwin_c.zig");
+pub const linux = @import("./linux_c.zig");
 pub extern "c" fn chmod([*c]const u8, mode_t) c_int;
 pub extern "c" fn fchmod(std.c.fd_t, mode_t) c_int;
 pub extern "c" fn umask(mode_t) mode_t;
 pub extern "c" fn fchmodat(c_int, [*c]const u8, mode_t, c_int) c_int;
 pub extern "c" fn fchown(std.c.fd_t, std.c.uid_t, std.c.gid_t) c_int;
+pub extern "c" fn lchown(path: [*:0]const u8, std.c.uid_t, std.c.gid_t) c_int;
+pub extern "c" fn chown(path: [*:0]const u8, std.c.uid_t, std.c.gid_t) c_int;
 pub extern "c" fn lstat([*c]const u8, [*c]libc_stat) c_int;
 pub extern "c" fn lstat64([*c]const u8, [*c]libc_stat) c_int;
+pub extern "c" fn lchmod(path: [*:0]const u8, mode: mode_t) c_int;
+pub extern "c" fn truncate(path: [*:0]const u8, len: os.off_t) c_int;
+pub extern "c" fn lutimes(path: [*:0]const u8, times: *const [2]std.os.timeval) c_int;
+pub extern "c" fn mkdtemp(template: [*c]u8) ?[*:0]u8;
 
-pub fn lstat_absolute(path: [:0]const u8) StatError!Stat {
+pub fn lstat_absolute(path: [:0]const u8) !Stat {
     if (builtin.os.tag == .windows) {
         @compileError("Not implemented yet");
     }
@@ -35,6 +43,7 @@ pub fn lstat_absolute(path: [:0]const u8) StatError!Stat {
     var st = zeroes(libc_stat);
     switch (errno(lstat64(path.ptr, &st))) {
         .SUCCESS => {},
+        .NOENT => return error.FileNotFound,
         // .EINVAL => unreachable,
         .BADF => unreachable, // Always a race condition.
         .NOMEM => return error.SystemResources,

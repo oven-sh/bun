@@ -25,6 +25,7 @@ const Options = @import("./options.zig");
 const Fallback = @import("./runtime.zig").Fallback;
 const ErrorCSS = @import("./runtime.zig").ErrorCSS;
 const ErrorJS = @import("./runtime.zig").ErrorJS;
+const Runtime = @import("./runtime.zig").Runtime;
 const Css = @import("css_scanner.zig");
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 const resolve_path = @import("./resolver/resolve_path.zig");
@@ -1069,6 +1070,9 @@ pub const RequestContext = struct {
             env_loader: *DotEnv.Loader,
             origin: ZigURL,
             client_bundler: Bundler,
+            vm: *JavaScript.VirtualMachine = undefined,
+            start_timer: std.time.Timer = undefined,
+            entry_point: string = "",
 
             pub fn handleJSError(
                 this: *HandlerThread,
@@ -1233,72 +1237,13 @@ pub const RequestContext = struct {
             _spawn(handler) catch {};
         }
 
-        pub fn _spawn(handler: *HandlerThread) !void {
+        pub fn startJavaScript(handler: *HandlerThread) void {
             defer {
                 javascript_disabled = true;
             }
-            var start_timer = std.time.Timer.start() catch unreachable;
-
-            Output.Source.configureThread();
-            @import("javascript/jsc/javascript_core_c_api.zig").JSCInitialize();
-
-            js_ast.Stmt.Data.Store.create(std.heap.c_allocator);
-            js_ast.Expr.Data.Store.create(std.heap.c_allocator);
-
-            var vm = JavaScript.VirtualMachine.init(
-                std.heap.c_allocator,
-                handler.args,
-                handler.existing_bundle,
-                handler.log,
-                handler.env_loader,
-            ) catch |err| {
-                handler.handleJSError(.create_vm, err) catch {};
-                return;
-            };
-            vm.bundler.log = handler.log;
-            std.debug.assert(JavaScript.VirtualMachine.vm_loaded);
-            javascript_vm = vm;
-            vm.bundler.options.origin = handler.origin;
-            const boot = vm.bundler.options.framework.?.server.path;
-            std.debug.assert(boot.len > 0);
-            errdefer vm.deinit();
-            vm.watcher = handler.watcher;
+            var vm = handler.vm;
+            const entry_point = handler.entry_point;
             {
-                defer vm.flush();
-                vm.bundler.configureRouter(false) catch |err| {
-                    handler.handleJSError(.configure_router, err) catch {};
-                    return;
-                };
-                vm.bundler.configureDefines() catch |err| {
-                    handler.handleJSError(.configure_defines, err) catch {};
-                    return;
-                };
-
-                var entry_point = boot;
-                if (!std.fs.path.isAbsolute(entry_point)) {
-                    const resolved_entry_point = vm.bundler.resolver.resolve(
-                        std.fs.path.dirname(boot) orelse vm.bundler.fs.top_level_dir,
-                        vm.bundler.normalizeEntryPointPath(boot),
-                        .entry_point,
-                    ) catch |err| {
-                        try handler.handleJSError(
-                            .resolve_entry_point,
-                            err,
-                        );
-                        return;
-                    };
-                    entry_point = (resolved_entry_point.pathConst() orelse {
-                        handler.handleJSErrorFmt(
-                            .resolve_entry_point,
-                            error.EntryPointDisabled,
-                            "<r>JavaScript VM failed to start due to disabled entry point: <r><b>\"{s}\"",
-                            .{resolved_entry_point.path_pair.primary.text},
-                        ) catch {};
-
-                        return;
-                    }).text;
-                }
-
                 var load_result = vm.loadEntryPoint(
                     entry_point,
                 ) catch |err| {
@@ -1308,6 +1253,7 @@ pub const RequestContext = struct {
                         "<r>JavaScript VM failed to start.\n<red>{s}:<r> while loading <r><b>\"{s}\"",
                         .{ @errorName(err), entry_point },
                     ) catch {};
+                    vm.flush();
 
                     return;
                 };
@@ -1323,6 +1269,7 @@ pub const RequestContext = struct {
                             "<r>JavaScript VM failed to start.\nwhile loading <r><b>\"{s}\"",
                             .{entry_point},
                         ) catch {};
+                        vm.flush();
                         return;
                     },
                 }
@@ -1334,6 +1281,7 @@ pub const RequestContext = struct {
                         "<r><red>error<r>: Framework didn't run <b><cyan>addEventListener(\"fetch\", callback)<r>, which means it can't accept HTTP requests.\nShutting down JS.",
                         .{},
                     ) catch {};
+                    vm.flush();
                     return;
                 }
             }
@@ -1341,10 +1289,9 @@ pub const RequestContext = struct {
             js_ast.Stmt.Data.Store.reset();
             js_ast.Expr.Data.Store.reset();
             JavaScript.Bun.flushCSSImports();
-
             vm.flush();
 
-            Output.printElapsed(@intToFloat(f64, (start_timer.read())) / std.time.ns_per_ms);
+            Output.printElapsed(@intToFloat(f64, (handler.start_timer.read())) / std.time.ns_per_ms);
 
             if (vm.bundler.options.framework.?.display_name.len > 0) {
                 Output.prettyError(
@@ -1362,10 +1309,85 @@ pub const RequestContext = struct {
 
             Output.flush();
 
-            try runLoop(
+            runLoop(
                 vm,
                 handler,
-            );
+            ) catch {};
+        }
+
+        pub fn _spawn(handler: *HandlerThread) !void {
+            handler.start_timer = std.time.Timer.start() catch unreachable;
+
+            Output.Source.configureThread();
+            @import("javascript/jsc/javascript_core_c_api.zig").JSCInitialize();
+
+            js_ast.Stmt.Data.Store.create(std.heap.c_allocator);
+            js_ast.Expr.Data.Store.create(std.heap.c_allocator);
+
+            var vm = JavaScript.VirtualMachine.init(
+                std.heap.c_allocator,
+                handler.args,
+                handler.existing_bundle,
+                handler.log,
+                handler.env_loader,
+            ) catch |err| {
+                handler.handleJSError(.create_vm, err) catch {};
+                javascript_disabled = true;
+                return;
+            };
+            vm.is_from_devserver = true;
+            vm.bundler.log = handler.log;
+            std.debug.assert(JavaScript.VirtualMachine.vm_loaded);
+            javascript_vm = vm;
+            vm.bundler.options.origin = handler.origin;
+            const boot = vm.bundler.options.framework.?.server.path;
+            std.debug.assert(boot.len > 0);
+            errdefer vm.deinit();
+            vm.watcher = handler.watcher;
+            {
+                vm.bundler.configureRouter(false) catch |err| {
+                    handler.handleJSError(.configure_router, err) catch {};
+                    vm.flush();
+                    javascript_disabled = true;
+                    return;
+                };
+                vm.bundler.configureDefines() catch |err| {
+                    handler.handleJSError(.configure_defines, err) catch {};
+                    vm.flush();
+                    javascript_disabled = true;
+                    return;
+                };
+
+                var entry_point = boot;
+                if (!std.fs.path.isAbsolute(entry_point)) {
+                    const resolved_entry_point = vm.bundler.resolver.resolve(
+                        std.fs.path.dirname(boot) orelse vm.bundler.fs.top_level_dir,
+                        vm.bundler.normalizeEntryPointPath(boot),
+                        .entry_point,
+                    ) catch |err| {
+                        try handler.handleJSError(
+                            .resolve_entry_point,
+                            err,
+                        );
+                        javascript_disabled = true;
+                        return;
+                    };
+                    entry_point = (resolved_entry_point.pathConst() orelse {
+                        handler.handleJSErrorFmt(
+                            .resolve_entry_point,
+                            error.EntryPointDisabled,
+                            "<r>JavaScript VM failed to start due to disabled entry point: <r><b>\"{s}\"",
+                            .{resolved_entry_point.path_pair.primary.text},
+                        ) catch {};
+                        javascript_disabled = true;
+                        return;
+                    }).text;
+                }
+
+                handler.entry_point = entry_point;
+            }
+            handler.vm = vm;
+            vm.global.vm().holdAPILock(handler, JavaScript.OpaqueWrap(HandlerThread, startJavaScript));
         }
 
         var __arena: std.heap.ArenaAllocator = undefined;
@@ -1395,7 +1417,7 @@ pub const RequestContext = struct {
                     Output.flush();
                     JavaScript.VirtualMachine.vm.arena.deinit();
                     JavaScript.VirtualMachine.vm.has_loaded = false;
-                    mimalloc.mi_collect(false);
+                    Global.mimalloc_cleanup(false);
                 }
 
                 var handler: *JavaScriptHandler = try channel.readItem();
@@ -1944,7 +1966,7 @@ pub const RequestContext = struct {
     };
 
     pub fn writeETag(this: *RequestContext, buffer: anytype) !bool {
-        const strong_etag = std.hash.Wyhash.hash(1, buffer);
+        const strong_etag = std.hash.Wyhash.hash(0, buffer);
         const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, .upper, .{});
 
         this.appendHeader("ETag", etag_content_slice);
@@ -2074,12 +2096,12 @@ pub const RequestContext = struct {
                             // Always cache css & json files, even big ones
                             // css is especially important because we want to try and skip having the browser parse it whenever we can
                             if (buf.len < 16 * 16 * 16 * 16 or chunky._loader == .css or chunky._loader == .json) {
-                                const strong_etag = std.hash.Wyhash.hash(1, buf);
+                                const strong_etag = std.hash.Wyhash.hash(0, buf);
                                 const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, .upper, .{});
                                 chunky.rctx.appendHeader("ETag", etag_content_slice);
 
                                 if (chunky.rctx.header("If-None-Match")) |etag_header| {
-                                    if (std.mem.eql(u8, etag_content_slice, etag_header)) {
+                                    if (strings.eqlLong(etag_content_slice, etag_header, true)) {
                                         try chunky.rctx.sendNotModified();
                                         return;
                                     }
@@ -2176,12 +2198,12 @@ pub const RequestContext = struct {
                         .css => try ctx.sendNoContent(),
                         .js, .jsx, .ts, .tsx, .json => {
                             const buf = "export default {};";
-                            const strong_etag = comptime std.hash.Wyhash.hash(1, buf);
+                            const strong_etag = comptime std.hash.Wyhash.hash(0, buf);
                             const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, .upper, .{});
                             ctx.appendHeader("ETag", etag_content_slice);
 
                             if (ctx.header("If-None-Match")) |etag_header| {
-                                if (std.mem.eql(u8, etag_content_slice, etag_header)) {
+                                if (strings.eqlLong(etag_content_slice, etag_header, true)) {
                                     try ctx.sendNotModified();
                                     return;
                                 }
@@ -2231,7 +2253,7 @@ pub const RequestContext = struct {
 
                 // if (result.mime_type.category != .html) {
                 // hash(absolute_file_path, size, mtime)
-                var weak_etag = std.hash.Wyhash.init(1);
+                var weak_etag = std.hash.Wyhash.init(0);
                 weak_etag_buffer[0] = 'W';
                 weak_etag_buffer[1] = '/';
                 weak_etag.update(result.file.input.text);
@@ -2249,7 +2271,7 @@ pub const RequestContext = struct {
                 ctx.appendHeader("ETag", complete_weak_etag);
 
                 if (ctx.header("If-None-Match")) |etag_header| {
-                    if (strings.eql(complete_weak_etag, etag_header)) {
+                    if (strings.eqlLong(complete_weak_etag, etag_header, true)) {
                         try ctx.sendNotModified();
                         return;
                     }
@@ -2325,13 +2347,13 @@ pub const RequestContext = struct {
         const blob: Blob = brk: {
             // It could be a blob either for macros or for JS thread
             if (JavaScriptHandler.javascript_vm) |vm| {
-                if (vm.blobs.get(id)) |blob| {
+                if (vm.blobs.?.get(id)) |blob| {
                     break :brk blob;
                 }
             }
 
             if (JavaScript.VirtualMachine.vm_loaded) {
-                if (JavaScript.VirtualMachine.vm.blobs.get(id)) |blob| {
+                if (JavaScript.VirtualMachine.vm.blobs.?.get(id)) |blob| {
                     break :brk blob;
                 }
             }
@@ -2366,6 +2388,9 @@ pub const RequestContext = struct {
         if (strings.eqlComptime(path, "error.js")) {
             const buffer = ErrorJS.sourceContent();
             ctx.appendHeader("Content-Type", MimeType.javascript.value);
+            ctx.appendHeader("Cache-Control", "public, max-age=3600");
+            ctx.appendHeader("Age", "0");
+
             if (FeatureFlags.strong_etags_for_built_files) {
                 const did_send = ctx.writeETag(buffer) catch false;
                 if (did_send) return;
@@ -2386,6 +2411,9 @@ pub const RequestContext = struct {
         if (strings.eqlComptime(path, "erro.css")) {
             const buffer = ErrorCSS.sourceContent();
             ctx.appendHeader("Content-Type", MimeType.css.value);
+            ctx.appendHeader("Cache-Control", "public, max-age=3600");
+            ctx.appendHeader("Age", "0");
+
             if (FeatureFlags.strong_etags_for_built_files) {
                 const did_send = ctx.writeETag(buffer) catch false;
                 if (did_send) return;
@@ -2415,6 +2443,28 @@ pub const RequestContext = struct {
                     mime_type_ext[1..],
                 ),
             });
+            return;
+        }
+
+        if (strings.eqlComptime(path, "runtime")) {
+            const buffer = Runtime.sourceContent();
+            ctx.appendHeader("Content-Type", MimeType.javascript.value);
+            ctx.appendHeader("Cache-Control", "public, max-age=3600");
+            ctx.appendHeader("Age", "0");
+            if (FeatureFlags.strong_etags_for_built_files) {
+                const did_send = ctx.writeETag(buffer) catch false;
+                if (did_send) return;
+            }
+
+            if (buffer.len == 0) {
+                return try ctx.sendNoContent();
+            }
+            const send_body = ctx.method == .GET;
+            defer ctx.done();
+            try ctx.writeStatus(200);
+            try ctx.prepareToSendBody(buffer.len, false);
+            if (!send_body) return;
+            _ = try ctx.writeSocket(buffer, SOCKET_FLAGS);
             return;
         }
 

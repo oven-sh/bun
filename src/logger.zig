@@ -1,6 +1,6 @@
 const std = @import("std");
 const Api = @import("./api/schema.zig").Api;
-const js = @import("javascript_core");
+const js = @import("./jsc.zig");
 const ImportKind = @import("./import_record.zig").ImportKind;
 const _global = @import("./global.zig");
 const string = _global.string;
@@ -645,11 +645,15 @@ pub const Log = struct {
         });
     }
 
-    inline fn _addResolveError(log: *Log, source: *const Source, r: Range, allocator: std.mem.Allocator, comptime fmt: string, args: anytype, import_kind: ImportKind, comptime dupe_text: bool) !void {
+    inline fn _addResolveErrorWithLevel(log: *Log, source: *const Source, r: Range, allocator: std.mem.Allocator, comptime fmt: string, args: anytype, import_kind: ImportKind, comptime dupe_text: bool, comptime is_error: bool) !void {
         const text = try std.fmt.allocPrint(allocator, fmt, args);
         // TODO: fix this. this is stupid, it should be returned in allocPrint.
         const specifier = BabyString.in(text, args.@"0");
-        log.errors += 1;
+        if (comptime is_error) {
+            log.errors += 1;
+        } else {
+            log.warnings += 1;
+        }
 
         const data = if (comptime dupe_text) brk: {
             var _data = rangeData(
@@ -670,12 +674,20 @@ pub const Log = struct {
         );
 
         const msg = Msg{
-            .kind = .err,
+            .kind = if (comptime is_error) Kind.err else Kind.warn,
             .data = data,
             .metadata = .{ .resolve = Msg.Metadata.Resolve{ .specifier = specifier, .import_kind = import_kind } },
         };
 
         try log.addMsg(msg);
+    }
+
+    inline fn _addResolveError(log: *Log, source: *const Source, r: Range, allocator: std.mem.Allocator, comptime fmt: string, args: anytype, import_kind: ImportKind, comptime dupe_text: bool) !void {
+        return _addResolveErrorWithLevel(log, source, r, allocator, fmt, args, import_kind, dupe_text, true);
+    }
+
+    inline fn _addResolveWarn(log: *Log, source: *const Source, r: Range, allocator: std.mem.Allocator, comptime fmt: string, args: anytype, import_kind: ImportKind, comptime dupe_text: bool) !void {
+        return _addResolveErrorWithLevel(log, source, r, allocator, fmt, args, import_kind, dupe_text, false);
     }
 
     pub fn addResolveError(
@@ -702,6 +714,24 @@ pub const Log = struct {
     ) !void {
         @setCold(true);
         return try _addResolveError(log, source, r, allocator, fmt, args, import_kind, true);
+    }
+
+    pub fn addResolveErrorWithTextDupeMaybeWarn(
+        log: *Log,
+        source: *const Source,
+        r: Range,
+        allocator: std.mem.Allocator,
+        comptime fmt: string,
+        args: anytype,
+        import_kind: ImportKind,
+        warn: bool,
+    ) !void {
+        @setCold(true);
+        if (warn) {
+            return try _addResolveError(log, source, r, allocator, fmt, args, import_kind, true);
+        } else {
+            return try _addResolveWarn(log, source, r, allocator, fmt, args, import_kind, true);
+        }
     }
 
     pub fn addRangeError(log: *Log, source: ?*const Source, r: Range, text: string) !void {

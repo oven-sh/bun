@@ -39,17 +39,17 @@ script_src_buf_writer: ScriptSrcStream = undefined,
 
 pub fn importRoute(
     this: *Router,
-    _: js.JSContextRef,
+    ctx: js.JSContextRef,
     _: js.JSObjectRef,
     _: js.JSObjectRef,
     _: []const js.JSValueRef,
     _: js.ExceptionRef,
 ) js.JSObjectRef {
-    const prom = JSC.JSModuleLoader.loadAndEvaluateModule(VirtualMachine.vm.global, &ZigString.init(this.route.file_path));
+    const prom = JSC.JSModuleLoader.loadAndEvaluateModule(ctx.ptr(), &ZigString.init(this.route.file_path));
 
     VirtualMachine.vm.tick();
 
-    return prom.result(VirtualMachine.vm.global.vm()).asRef();
+    return prom.result(ctx.ptr().vm()).asRef();
 }
 
 pub fn match(
@@ -69,9 +69,9 @@ pub fn match(
         return matchFetchEvent(ctx, To.Zig.ptr(FetchEvent, arguments[0]), exception);
     }
 
-    if (js.JSValueIsString(ctx, arguments[0])) {
-        return matchPathName(ctx, arguments[0], exception);
-    }
+    // if (js.JSValueIsString(ctx, arguments[0])) {
+    //     return matchPathName(ctx, arguments[0], exception);
+    // }
 
     if (js.JSValueIsObjectOfClass(ctx, arguments[0], Request.Class.get().*)) {
         return matchRequest(ctx, To.Zig.ptr(Request, arguments[0]), exception);
@@ -86,20 +86,6 @@ fn matchRequest(
     exception: js.ExceptionRef,
 ) js.JSObjectRef {
     return createRouteObject(ctx, request.request_context, exception);
-}
-
-fn matchPathNameString(
-    _: js.JSContextRef,
-    _: string,
-    _: js.ExceptionRef,
-) js.JSObjectRef {}
-
-fn matchPathName(
-    _: js.JSContextRef,
-    _: js.JSStringRef,
-    _: js.ExceptionRef,
-) js.JSObjectRef {
-    return null;
 }
 
 fn matchFetchEvent(
@@ -274,12 +260,12 @@ pub const Instance = NewClass(
 
 pub fn getFilePath(
     this: *Router,
-    _: js.JSContextRef,
+    ctx: js.JSContextRef,
     _: js.JSObjectRef,
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    return ZigString.init(this.route.file_path).toValue(VirtualMachine.vm.global).asRef();
+    return ZigString.init(this.route.file_path).toValue(ctx.ptr()).asRef();
 }
 
 pub fn finalize(
@@ -292,22 +278,22 @@ pub fn finalize(
 
 pub fn getPathname(
     this: *Router,
-    _: js.JSContextRef,
+    ctx: js.JSContextRef,
     _: js.JSObjectRef,
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    return ZigString.init(this.route.pathname).toValue(VirtualMachine.vm.global).asRef();
+    return ZigString.init(this.route.pathname).toValue(ctx.ptr()).asRef();
 }
 
 pub fn getRoute(
     this: *Router,
-    _: js.JSContextRef,
+    ctx: js.JSContextRef,
     _: js.JSObjectRef,
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    return ZigString.init(this.route.name).toValue(VirtualMachine.vm.global).asRef();
+    return ZigString.init(this.route.name).toValue(ctx.ptr()).asRef();
 }
 
 const KindEnum = struct {
@@ -332,17 +318,17 @@ const KindEnum = struct {
 
 pub fn getKind(
     this: *Router,
-    _: js.JSContextRef,
+    ctx: js.JSContextRef,
     _: js.JSObjectRef,
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    return KindEnum.init(this.route.name).toValue(VirtualMachine.vm.global).asRef();
+    return KindEnum.init(this.route.name).toValue(ctx.ptr()).asRef();
 }
 
 threadlocal var query_string_values_buf: [256]string = undefined;
 threadlocal var query_string_value_refs_buf: [256]ZigString = undefined;
-pub fn createQueryObject(_: js.JSContextRef, map: *QueryStringMap, _: js.ExceptionRef) callconv(.C) js.JSValueRef {
+pub fn createQueryObject(ctx: js.JSContextRef, map: *QueryStringMap, _: js.ExceptionRef) callconv(.C) js.JSValueRef {
     const QueryObjectCreator = struct {
         query: *QueryStringMap,
         pub fn create(this: *@This(), obj: *JSObject, global: *JSGlobalObject) void {
@@ -369,7 +355,7 @@ pub fn createQueryObject(_: js.JSContextRef, map: *QueryStringMap, _: js.Excepti
 
     var creator = QueryObjectCreator{ .query = map };
 
-    var value = JSObject.createWithInitializer(QueryObjectCreator, &creator, VirtualMachine.vm.global, map.getNameCount());
+    var value = JSObject.createWithInitializer(QueryObjectCreator, &creator, ctx.ptr(), map.getNameCount());
 
     return value.asRef();
 }
@@ -440,7 +426,7 @@ pub fn getParams(
     if (this.param_map) |*map| {
         return createQueryObject(ctx, map, exception);
     } else {
-        return JSValue.createEmptyObject(VirtualMachine.vm.global, 0).asRef();
+        return JSValue.createEmptyObject(ctx.ptr(), 0).asRef();
     }
 }
 
@@ -473,6 +459,6 @@ pub fn getQuery(
     if (this.query_string_map) |*map| {
         return createQueryObject(ctx, map, exception);
     } else {
-        return JSValue.createEmptyObject(VirtualMachine.vm.global, 0).asRef();
+        return JSValue.createEmptyObject(ctx.ptr(), 0).asRef();
     }
 }

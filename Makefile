@@ -11,6 +11,7 @@ endif
 
 MIN_MACOS_VERSION = 10.14
 
+
 MARCH_NATIVE =
 
 ARCH_NAME :=
@@ -73,7 +74,7 @@ OPENSSL_LINUX_DIR = $(BUN_DEPS_DIR)/openssl/openssl-OpenSSL_1_1_1l
 
 CMAKE_FLAGS_WITHOUT_RELEASE = -DCMAKE_C_COMPILER=$(CC) -DCMAKE_CXX_COMPILER=$(CXX) -DCMAKE_OSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION) 
 CMAKE_FLAGS = $(CMAKE_FLAGS_WITHOUT_RELEASE) -DCMAKE_BUILD_TYPE=Release
-CFLAGS = $(MACOS_MIN_FLAG)
+
 
 LIBTOOL=libtoolize
 ifeq ($(OS_NAME),darwin)
@@ -84,6 +85,8 @@ ifeq ($(OS_NAME),linux)
 LIBICONV_PATH = 
 endif
 
+
+CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE) -ffunction-sections -fdata-sections -g -O3
 BUN_TMP_DIR := /tmp/make-bun
 BUN_DEPLOY_DIR = /tmp/bun-v$(PACKAGE_JSON_VERSION)/$(PACKAGE_NAME)
 
@@ -111,10 +114,12 @@ ZLIB_LIB_DIR ?= $(BUN_DEPS_DIR)/zlib
 
 JSC_FILES := $(JSC_LIB)/libJavaScriptCore.a $(JSC_LIB)/libWTF.a  $(JSC_LIB)/libbmalloc.a
 
+ENABLE_MIMALLOC ?= 1
+
 # https://github.com/microsoft/mimalloc/issues/512
 # Linking mimalloc via object file on macOS x64 can cause heap corruption
-MIMALLOC_FILE = libmimalloc.o
-MIMALLOC_INPUT_PATH = CMakeFiles/mimalloc-obj.dir/src/static.c.o
+_MIMALLOC_FILE = libmimalloc.o
+_MIMALLOC_INPUT_PATH = CMakeFiles/mimalloc-obj.dir/src/static.c.o
 
 DEFAULT_LINKER_FLAGS =
 
@@ -125,9 +130,21 @@ DEFAULT_LINKER_FLAGS= -pthread -ldl
 endif
 ifeq ($(OS_NAME),darwin)
 	JSC_BUILD_STEPS += jsc-build-mac jsc-copy-headers
-	MIMALLOC_FILE = libmimalloc.a
-	MIMALLOC_INPUT_PATH = libmimalloc.a
+	_MIMALLOC_FILE = libmimalloc.a
+	_MIMALLOC_INPUT_PATH = libmimalloc.a
 endif
+
+MIMALLOC_FILE=
+MIMALLOC_INPUT_PATH=
+MIMALLOC_FILE_PATH=
+ifeq ($(ENABLE_MIMALLOC), 1)
+MIMALLOC_FILE=$(_MIMALLOC_FILE)
+MIMALLOC_FILE_PATH=$(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE)
+MIMALLOC_INPUT_PATH=$(_MIMALLOC_INPUT_PATH)
+endif
+
+
+
 
 
 MACOSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION)
@@ -207,28 +224,34 @@ CLANG_FLAGS = $(INCLUDE_DIRS) \
 		-DENABLE_INSPECTOR_ALTERNATE_DISPATCHERS=0 \
 		-DBUILDING_JSCONLY__ \
 		-DASSERT_ENABLED=0 \
-		-fPIE
+		-fvisibility=hidden \
+		-fvisibility-inlines-hidden \
+		-fno-omit-frame-pointer $(CFLAGS)
 		
 # This flag is only added to webkit builds on Apple platforms
 # It has something to do with ICU
 ifeq ($(OS_NAME), darwin)
 CLANG_FLAGS += -DDU_DISABLE_RENAMING=1 \
-		$(MACOS_MIN_FLAG) -lstdc++
+		-lstdc++ \
+		-ffunction-sections \
+		-fdata-sections \
+		-Wl,-no_eh_labels \
+		-Wl,-dead_strip \
+		-Wl,-dead_strip_dylibs \
+		-force_flat_namespace
 endif
 
 
 
-ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE) \
+ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MIMALLOC_FILE_PATH) \
 		$(BUN_DEPS_OUT_DIR)/libz.a \
 		$(BUN_DEPS_OUT_DIR)/libarchive.a \
 		$(BUN_DEPS_OUT_DIR)/libssl.a \
 		$(BUN_DEPS_OUT_DIR)/picohttpparser.o \
+		$(BUN_DEPS_OUT_DIR)/libbacktrace.a
 
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) $(BUN_DEPS_OUT_DIR)/libcrypto.boring.a
 
-ifeq ($(OS_NAME), darwin)
-ARCHIVE_FILES += $(BUN_DEPS_OUT_DIR)/libCrashReporter.a $(BUN_DEPS_OUT_DIR)/libCrashReporter.bindings.a
-endif
 
 PLATFORM_LINKER_FLAGS =
 
@@ -238,7 +261,6 @@ ifeq ($(OS_NAME), linux)
 PLATFORM_LINKER_FLAGS = \
 	    -fuse-ld=lld \
 		-lc \
-		-fno-omit-frame-pointer \
 		-Wl,-z,now \
 		-Wl,--as-needed \
 		-Wl,--gc-sections \
@@ -248,6 +270,11 @@ PLATFORM_LINKER_FLAGS = \
 		-static-libstdc++ \
 		-static-libgcc \
 		${STATIC_MUSL_FLAG} 
+endif
+
+ifeq ($(OS_NAME), darwin)
+PLATFORM_LINKER_FLAGS = \
+		-Wl,-keep_private_externs 
 endif
 
 
@@ -264,10 +291,10 @@ BUN_LLD_FLAGS = $(OBJ_FILES) \
 bun:
 
 
-vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive pl-crash-report
+vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace
 
 boringssl-build:
-	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && cmake $(CMAKE_FLAGS) -GNinja .. && ninja 
+	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) -GNinja .. && ninja 
 
 boringssl-copy:
 	cp $(BUN_DEPS_DIR)/boringssl/build/ssl/libssl.a $(BUN_DEPS_OUT_DIR)/libssl.a
@@ -275,32 +302,19 @@ boringssl-copy:
 
 boringssl: boringssl-build boringssl-copy
 
-download-pl-crash-report:
-	rm -rf /tmp/PLCrashReporter.zip /tmp/PLCrashReporter
-	curl -L https://github.com/microsoft/plcrashreporter/releases/download/1.10.1/PLCrashReporter-Static-1.10.1.zip > /tmp/PLCrashReporter.zip
-	unzip /tmp/PLCrashReporter.zip -d /tmp
-	cp /tmp/PLCrashReporter/libCrashReporter-MacOSX-Static.a $(BUN_DEPS_OUT_DIR)/libCrashReporter.a
-	mkdir -p $(BUN_DEPS_DIR)/PLCrashReporter/include/PLCrashReporter
-	cp -r /tmp/PLCrashReporter/include/*.h $(BUN_DEPS_DIR)/PLCrashReporter/include/PLCrashReporter
-
-pl-crash-report:
-
-ifeq ($(OS_NAME), darwin)
-pl-crash-report: pl-crash-report-mac
-endif
-
-pl-crash-report-mac: download-pl-crash-report pl-crash-report-mac-compile
-
-pl-crash-report-mac-compile:
-	$(CC) $(MACOS_MIN_FLAG) -O3 -ObjC -I$(BUN_DEPS_DIR)/PLCrashReporter/include -I$(BUN_DEPS_DIR)/PLCrashReporter -c $(BUN_DEPS_DIR)/PLCrashReport.m \
-	-g	-o $(BUN_DEPS_OUT_DIR)/libCrashReporter.bindings.a
+libbacktrace:
+	cd $(BUN_DEPS_DIR)/libbacktrace && \
+	(make clean || echo "") && \
+	CFLAGS="$(CFLAGS)" CC=$(CC) ./configure --disable-shared --enable-static  --with-pic && \
+	make -j$(CPUS) && \
+	cp ./.libs/libbacktrace.a $(BUN_DEPS_OUT_DIR)/libbacktrace.a
 
 libarchive:
 	cd $(BUN_DEPS_DIR)/libarchive; \
 	(make clean || echo ""); \
 	(./build/clean.sh || echo ""); \
 	./build/autogen.sh; \
-	CFLAGS=$(CFLAGS) CC=$(CC) ./configure --disable-shared --enable-static  --with-pic  --disable-bsdtar   --disable-bsdcat --disable-rpath --enable-posix-regex-lib  --without-xml2  --without-expat --without-openssl  --without-iconv --without-zlib; \
+	CFLAGS="$(CFLAGS)" CC=$(CC) ./configure --disable-shared --enable-static  --with-pic  --disable-bsdtar   --disable-bsdcat --disable-rpath --enable-posix-regex-lib  --without-xml2  --without-expat --without-openssl  --without-iconv --without-zlib; \
 	make -j${CPUS}; \
 	cp ./.libs/libarchive.a $(BUN_DEPS_OUT_DIR)/libarchive.a;
 
@@ -317,7 +331,7 @@ tgz-debug:
 vendor: require init-submodules vendor-without-check 
 
 zlib: 
-	cd $(BUN_DEPS_DIR)/zlib; cmake $(CMAKE_FLAGS) .; make CFLAGS=$(CFLAGS);
+	cd $(BUN_DEPS_DIR)/zlib; CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) .; CFLAGS="$(CFLAGS)" make;
 	cp $(BUN_DEPS_DIR)/zlib/libz.a $(BUN_DEPS_OUT_DIR)/libz.a
 
 docker-login:
@@ -362,7 +376,7 @@ sign-macos-aarch64:
 cls: 
 	@echo "\n\n---\n\n"
 
-release: all-js jsc-bindings-mac build-obj cls bun-link-lld-release release-bin-entitlements
+release: all-js jsc-bindings-mac build-obj cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
 
 jsc-check:
 	@ls $(JSC_BASE_DIR)  >/dev/null 2>&1 || (echo "Failed to access WebKit build. Please compile the WebKit submodule using the Dockerfile at $(shell pwd)/src/javascript/WebKit/Dockerfile and then copy from /output in the Docker container to $(JSC_BASE_DIR). You can override the directory via JSC_BASE_DIR. \n\n 	DOCKER_BUILDKIT=1 docker build -t bun-webkit $(shell pwd)/src/javascript/jsc/WebKit -f $(shell pwd)/src/javascript/jsc/WebKit/Dockerfile --progress=plain\n\n 	docker container create bun-webkit\n\n 	# Get the container ID\n	docker container ls\n\n 	docker cp DOCKER_CONTAINER_ID_YOU_JUST_FOUND:/output $(JSC_BASE_DIR)" && exit 1)	
@@ -645,9 +659,30 @@ jsc-force-fastjit:
 	$(SED) -i "s/USE(PTHREAD_JIT_PERMISSIONS_API)/CPU(ARM64)/g" $(WEBKIT_DIR)/Source/JavaScriptCore/jit/ExecutableAllocator.h
 	$(SED) -i "s/USE(PTHREAD_JIT_PERMISSIONS_API)/CPU(ARM64)/g" $(WEBKIT_DIR)/Source/JavaScriptCore/assembler/FastJITPermissions.h
 	$(SED) -i "s/USE(PTHREAD_JIT_PERMISSIONS_API)/CPU(ARM64)/g" $(WEBKIT_DIR)/Source/JavaScriptCore/jit/ExecutableAllocator.cpp
+	$(SED) -i "s/GIGACAGE_ENABLED/0/g" $(WEBKIT_DIR)/Source/JavaScriptCore/Gigacage.h
 
 jsc-build-mac-compile:
-	cd $(WEBKIT_DIR) && ICU_INCLUDE_DIRS="$(HOMEBREW_PREFIX)opt/icu4c/include" ./Tools/Scripts/build-jsc --jsc-only --cmakeargs="-DENABLE_STATIC_JSC=ON -DCMAKE_BUILD_TYPE=relwithdebinfo -DPTHREAD_JIT_PERMISSIONS_API=1 -DUSE_PTHREAD_JIT_PERMISSIONS_API=ON $(CMAKE_FLAGS_WITHOUT_RELEASE)"
+	mkdir -p $(WEBKIT_RELEASE_DIR) $(WEBKIT_DIR);
+	cd $(WEBKIT_RELEASE_DIR) && \
+		ICU_INCLUDE_DIRS="$(HOMEBREW_PREFIX)opt/icu4c/include" \
+		CMAKE_BUILD_TYPE=Release cmake \
+			-DPORT="JSCOnly" \
+			-DENABLE_STATIC_JSC=ON \
+			-DCMAKE_BUILD_TYPE=Release \
+			-DUSE_THIN_ARCHIVES=OFF \
+			-DENABLE_FTL_JIT=ON \
+			-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+			-G Ninja \
+			-DCMAKE_BUILD_TYPE=Release \
+			$(CMAKE_FLAGS_WITHOUT_RELEASE) \
+			-DPTHREAD_JIT_PERMISSIONS_API=1 \
+			-DUSE_PTHREAD_JIT_PERMISSIONS_API=ON \
+			-DCMAKE_BUILD_TYPE=Release \
+			$(WEBKIT_DIR) \
+			$(WEBKIT_RELEASE_DIR) && \
+	CFLAGS="$CFLAGS -ffat-lto-objects" CXXFLAGS="$CXXFLAGS -ffat-lto-objects" \
+		cmake --build $(WEBKIT_RELEASE_DIR) --config Release --target jsc
+
 jsc-build-linux-compile-config:
 	mkdir -p $(WEBKIT_RELEASE_DIR)
 	cd $(WEBKIT_RELEASE_DIR) && \
@@ -698,7 +733,7 @@ jsc-bindings-mac: $(OBJ_FILES)
 
 # mimalloc is built as object files so that it can overload the system malloc
 mimalloc:
-	cd $(BUN_DEPS_DIR)/mimalloc; cmake $(CMAKE_FLAGS) -DMI_BUILD_SHARED=OFF -DMI_BUILD_STATIC=ON -DMI_BUILD_TESTS=OFF -DMI_BUILD_OBJECT=ON ${MIMALLOC_OVERRIDE_FLAG} -DMI_USE_CXX=ON .; make; 
+	cd $(BUN_DEPS_DIR)/mimalloc; CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) -DMI_SKIP_COLLECT_ON_EXIT=ON -DMI_BUILD_SHARED=OFF -DMI_BUILD_STATIC=ON -DMI_BUILD_TESTS=OFF -DMI_BUILD_OBJECT=ON ${MIMALLOC_OVERRIDE_FLAG} -DMI_USE_CXX=ON .; make; 
 	cp $(BUN_DEPS_DIR)/mimalloc/$(MIMALLOC_INPUT_PATH) $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE)
 
 bun-link-lld-debug:
@@ -712,7 +747,7 @@ bun-link-lld-debug:
 bun-relink-copy:
 	cp /tmp/bun-$(PACKAGE_JSON_VERSION).o $(BUN_RELEASE_BIN).o
 
-bun-relink: bun-relink-copy bun-link-lld-release
+
 
 bun-link-lld-release:
 	$(CXX) $(BUN_LLD_FLAGS) \
@@ -724,24 +759,40 @@ bun-link-lld-release:
 		-O3
 	rm -rf $(BUN_RELEASE_BIN).dSYM
 	cp $(BUN_RELEASE_BIN) $(BUN_RELEASE_BIN)-profile
-	$(DSYMUTIL) --flat $(BUN_RELEASE_BIN) -o $(BUN_RELEASE_BIN).dSYM
+
+ifeq ($(OS_NAME),darwin)
+bun-link-lld-release-dsym:
+	$(DSYMUTIL) -o $(BUN_RELEASE_BIN).dSYM $(BUN_RELEASE_BIN)
 	-$(STRIP) $(BUN_RELEASE_BIN)
 	mv $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
+
+endif
+
+ifeq ($(OS_NAME),linux)
+bun-link-lld-release-dsym:
+	-$(STRIP) $(BUN_RELEASE_BIN)
+	mv $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
+endif
+
+
+bun-relink: bun-relink-copy bun-link-lld-release bun-link-lld-release-dsym
+
 
 # We do this outside of build.zig for performance reasons
 # The C compilation stuff with build.zig is really slow and we don't need to run this as often as the rest
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	$(CXX) -c -o $@ $< \
 		$(CLANG_FLAGS) $(PLATFORM_LINKER_FLAGS) \
-		-O3 \
-		-w
+		-O1 \
+		-fvectorize \
+		-w -g
 
 sizegen:
 	$(CXX) src/javascript/jsc/headergen/sizegen.cpp -o $(BUN_TMP_DIR)/sizegen $(CLANG_FLAGS) -O1
 	$(BUN_TMP_DIR)/sizegen > src/javascript/jsc/bindings/sizes.zig
 
 picohttp:
-	 $(CC) $(MARCH_NATIVE) $(MACOS_MIN_FLAG) -O3 -g -fPIE -c $(BUN_DEPS_DIR)/picohttpparser/picohttpparser.c -I$(BUN_DEPS_DIR) -o $(BUN_DEPS_OUT_DIR)/picohttpparser.o; cd ../../	
+	 $(CC) $(CFLAGS) -O3 -g -fPIC -c $(BUN_DEPS_DIR)/picohttpparser/picohttpparser.c -I$(BUN_DEPS_DIR) -o $(BUN_DEPS_OUT_DIR)/picohttpparser.o; cd ../../	
 
 analytics:
 	./node_modules/.bin/peechy --schema src/analytics/schema.peechy --zig src/analytics/analytics_schema.zig

@@ -1,10 +1,14 @@
 const cpp = @import("./bindings/bindings.zig");
-const generic = opaque {};
+const generic = opaque {
+    pub inline fn ptr(this: *@This()) *cpp.JSGlobalObject {
+        return @ptrCast(*cpp.JSGlobalObject, @alignCast(@alignOf(*cpp.JSGlobalObject), this));
+    }
+};
 pub const Private = anyopaque;
 pub const struct_OpaqueJSContextGroup = generic;
 pub const JSContextGroupRef = ?*const struct_OpaqueJSContextGroup;
 pub const struct_OpaqueJSContext = generic;
-pub const JSContextRef = ?*const struct_OpaqueJSContext;
+pub const JSContextRef = *struct_OpaqueJSContext;
 pub const JSGlobalContextRef = ?*struct_OpaqueJSContext;
 pub const struct_OpaqueJSString = generic;
 pub const JSStringRef = ?*struct_OpaqueJSString;
@@ -246,6 +250,7 @@ pub const OpaqueJSPropertyNameAccumulator = struct_OpaqueJSPropertyNameAccumulat
 // This function lets us use the C API but returns a plain old JSValue
 // allowing us to have exceptions that include stack traces
 pub extern "c" fn JSObjectCallAsFunctionReturnValue(ctx: JSContextRef, object: JSObjectRef, thisObject: JSObjectRef, argumentCount: usize, arguments: [*c]const JSValueRef) cpp.JSValue;
+pub extern "c" fn JSObjectCallAsFunctionReturnValueHoldingAPILock(ctx: JSContextRef, object: JSObjectRef, thisObject: JSObjectRef, argumentCount: usize, arguments: [*c]const JSValueRef) cpp.JSValue;
 
 pub extern fn JSRemoteInspectorDisableAutoStart() void;
 pub extern fn JSRemoteInspectorStart() void;

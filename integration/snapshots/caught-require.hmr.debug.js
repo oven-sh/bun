@@ -1,12 +1,12 @@
 import {
 __require as require
-} from "http://localhost:8080/__runtime.js";
+} from "http://localhost:8080/bun:runtime";
 import {
 __HMRModule as HMR
-} from "http://localhost:8080/__runtime.js";
+} from "http://localhost:8080/bun:runtime";
 import {
 __HMRClient as Bun
-} from "http://localhost:8080/__runtime.js";
+} from "http://localhost:8080/bun:runtime";
 Bun.activate(true);
 
 var hmr = new HMR(2398506918, "caught-require.js"), exports = hmr.exports;

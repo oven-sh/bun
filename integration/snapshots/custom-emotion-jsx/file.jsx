@@ -1,6 +1,6 @@
 import {
 __require as require
-} from "http://localhost:8080/__runtime.js";
+} from "http://localhost:8080/bun:runtime";
 import * as JSX from "http://localhost:8080/node_modules/@emotion/react/jsx-dev-runtime/dist/emotion-react-jsx-dev-runtime.browser.esm.js";
 var jsx = require(JSX).jsxDEV;
 

@@ -3996,12 +3996,12 @@ pub const Macro = struct {
             },
         );
 
-        pub fn makeFromExpr(allocator: std.mem.Allocator, expr: Expr) js.JSObjectRef {
+        pub fn makeFromExpr(ctx: js.JSContextRef, allocator: std.mem.Allocator, expr: Expr) js.JSObjectRef {
             var ptr = allocator.create(JSNode) catch unreachable;
             ptr.* = JSNode.initExpr(expr);
             // If we look at JSObjectMake, we can see that all it does with the ctx value is lookup what the global object is
             // so it's safe to just avoid that and do it here like this:
-            return JSNode.Class.make(JavaScript.VirtualMachine.vm.global.ref(), ptr);
+            return JSNode.Class.make(ctx, ptr);
         }
 
         pub fn updateSymbolsMap(this: *const JSNode, comptime Visitor: type, visitor: Visitor) void {
@@ -4121,11 +4121,11 @@ pub const Macro = struct {
 
             fn toStringValue(_: *JSNode, ctx: js.JSContextRef, str: E.String) js.JSObjectRef {
                 if (str.isBlank()) {
-                    return JSC.ZigString.init("").toValue(JavaScript.VirtualMachine.vm.global).asRef();
+                    return JSC.ZigString.init("").toValue(ctx.ptr()).asRef();
                 }
 
                 if (str.isUTF8()) {
-                    return JSC.ZigString.init(str.utf8).toValue(JavaScript.VirtualMachine.vm.global).asRef();
+                    return JSC.ZigString.init(str.utf8).toValue(ctx.ptr()).asRef();
                 } else {
                     return js.JSValueMakeString(ctx, js.JSStringCreateWithCharactersNoCopy(str.value.ptr, str.value.len));
                 }
@@ -4138,8 +4138,8 @@ pub const Macro = struct {
                     return js.JSObjectMakeRegExp(ctx, 0, null, exception);
                 }
 
-                regex_value_array[0] = JSC.ZigString.init(regex.pattern()).toValue(JavaScript.VirtualMachine.vm.global).asRef();
-                regex_value_array[1] = JSC.ZigString.init(regex.flags()).toValue(JavaScript.VirtualMachine.vm.global).asRef();
+                regex_value_array[0] = JSC.ZigString.init(regex.pattern()).toValue(ctx.ptr()).asRef();
+                regex_value_array[1] = JSC.ZigString.init(regex.flags()).toValue(ctx.ptr()).asRef();
 
                 return js.JSObjectMakeRegExp(ctx, 2, &regex_value_array, exception);
             }
@@ -4265,11 +4265,11 @@ pub const Macro = struct {
                         const str = template.head;
 
                         if (str.isBlank()) {
-                            return JSC.ZigString.init("").toValue(JavaScript.VirtualMachine.vm.global).asRef();
+                            return JSC.ZigString.init("").toValue(ctx.ptr()).asRef();
                         }
 
                         if (str.isUTF8()) {
-                            return JSC.ZigString.init(str.utf8).toValue(JavaScript.VirtualMachine.vm.global).asRef();
+                            return JSC.ZigString.init(str.utf8).toValue(ctx.ptr()).asRef();
                         } else {
                             return js.JSValueMakeString(ctx, js.JSStringCreateWithCharactersNoCopy(str.value.ptr, str.value.len));
                         }
@@ -4278,7 +4278,7 @@ pub const Macro = struct {
 
                     // },
                     else => {
-                        return JSC.ZigString.init("").toValue(JavaScript.VirtualMachine.vm.global).asRef();
+                        return JSC.ZigString.init("").toValue(ctx.ptr()).asRef();
                     },
                 }
             }
@@ -4338,16 +4338,16 @@ pub const Macro = struct {
             fn toValue(this: *JSNode, ctx: js.JSContextRef, exception: js.ExceptionRef) js.JSObjectRef {
                 switch (this.data) {
                     .e_await => |aw| {
-                        return JSNode.makeFromExpr(getAllocator(ctx), aw.value);
+                        return JSNode.makeFromExpr(ctx, getAllocator(ctx), aw.value);
                     },
                     .e_yield => |yi| {
-                        return JSNode.makeFromExpr(getAllocator(ctx), yi.value orelse return null);
+                        return JSNode.makeFromExpr(ctx, getAllocator(ctx), yi.value orelse return null);
                     },
                     .e_spread => |spread| {
-                        return JSNode.makeFromExpr(getAllocator(ctx), spread.value);
+                        return JSNode.makeFromExpr(ctx, getAllocator(ctx), spread.value);
                     },
                     .e_reg_exp => |reg| {
-                        return JSC.ZigString.toRef(reg.value, JavaScript.VirtualMachine.vm.global);
+                        return JSC.ZigString.toRef(reg.value, ctx.ptr());
                     },
 
                     .e_array => |array| {
@@ -4394,12 +4394,12 @@ pub const Macro = struct {
             }
             pub fn getTagName(
                 this: *JSNode,
-                _: js.JSContextRef,
+                ctx: js.JSContextRef,
                 _: js.JSValueRef,
                 _: js.JSStringRef,
                 _: js.ExceptionRef,
             ) js.JSObjectRef {
-                return JSC.ZigString.init(@tagName(this.data)).toValue(JavaScript.VirtualMachine.vm.global).asRef();
+                return JSC.ZigString.init(@tagName(this.data)).toValue(ctx.ptr()).asRef();
             }
             pub fn getPosition(
                 this: *JSNode,
@@ -5813,12 +5813,12 @@ pub const Macro = struct {
                 const i = this.args_i;
 
                 this.args_i += 1;
-                return JSC.JSObject.getIndex(this.args_value, JavaScript.VirtualMachine.vm.global, i);
+                return JSC.JSObject.getIndex(this.args_value, this.ctx.ptr(), i);
             }
 
             pub inline fn peekArg(this: *Writer) ?JSC.JSValue {
                 if (this.args_i >= this.args_len) return null;
-                return JSC.JSObject.getIndex(this.args_value, JavaScript.VirtualMachine.vm.global, this.args_i);
+                return JSC.JSObject.getIndex(this.args_value, this.ctx.ptr(), this.args_i);
             }
 
             pub inline fn nextJSValue(this: *Writer) ?JSC.JSValue {
@@ -5884,7 +5884,7 @@ pub const Macro = struct {
                 }
 
                 pub fn fromJSValue(writer: *Writer, value: JSC.JSValue) TagOrJSNode {
-                    return fromJSValueRef(writer, JavaScript.VirtualMachine.vm.global.ref(), value.asRef());
+                    return fromJSValueRef(writer, writer.ctx, value.asRef());
                 }
             };
 
@@ -5985,7 +5985,7 @@ pub const Macro = struct {
                         }
 
                         var path_zig_string = JSC.ZigString.Empty;
-                        path_arg.toZigString(&path_zig_string, JavaScript.VirtualMachine.vm.global);
+                        path_arg.toZigString(&path_zig_string, writer.ctx.ptr());
                         const import_path = path_zig_string.trimmedSlice();
 
                         if (import_path.len == 0) {
@@ -6006,7 +6006,7 @@ pub const Macro = struct {
                         const has_default = import_default_arg.isString();
 
                         var import_default_name_string = JSC.ZigString.Empty;
-                        if (has_default) import_default_arg.toZigString(&import_default_name_string, JavaScript.VirtualMachine.vm.global);
+                        if (has_default) import_default_arg.toZigString(&import_default_name_string, writer.ctx.ptr());
 
                         const import_default_name = import_default_name_string.slice();
 
@@ -6047,7 +6047,7 @@ pub const Macro = struct {
                                 }
 
                                 var property_value_zig_string = JSC.ZigString.Empty;
-                                property_value.toZigString(&property_value_zig_string, JavaScript.VirtualMachine.vm.global);
+                                property_value.toZigString(&property_value_zig_string, writer.ctx.ptr());
 
                                 const alias = property_value_zig_string.slice();
 
@@ -6103,7 +6103,7 @@ pub const Macro = struct {
                         while (i < count) {
                             var nextArg = writer.eatArg() orelse return false;
                             if (js.JSValueIsArray(writer.ctx, nextArg.asRef())) {
-                                const extras = nextArg.getLengthOfArray(JavaScript.VirtualMachine.vm.global);
+                                const extras = nextArg.getLengthOfArray(writer.ctx.ptr());
                                 count += std.math.max(@truncate(@TypeOf(count), extras), 1) - 1;
                                 items.ensureUnusedCapacity(extras) catch unreachable;
                                 items.expandToCapacity();
@@ -6194,7 +6194,7 @@ pub const Macro = struct {
                         return true;
                     },
                     .e_string => {
-                        var wtf_string = JSC.JSValue.toWTFString(writer.nextJSValue() orelse return false, JavaScript.VirtualMachine.vm.global);
+                        var wtf_string = JSC.JSValue.toWTFString(writer.nextJSValue() orelse return false, writer.ctx.ptr());
                         if (wtf_string.isEmpty()) {
                             expr.* = Expr{
                                 .loc = writer.loc,
@@ -6299,7 +6299,7 @@ pub const Macro = struct {
                                 const next_value = (writer.eatArg() orelse return null);
                                 const next_value_ref = next_value.asRef();
                                 if (js.JSValueIsArray(writer.ctx, next_value_ref)) {
-                                    var iter = JSC.JSArrayIterator.init(next_value, JavaScript.VirtualMachine.vm.global);
+                                    var iter = JSC.JSArrayIterator.init(next_value, writer.ctx.ptr());
                                     while (iter.next()) |current_value| {
                                         switch (TagOrJSNode.fromJSValueRef(writer, writer.ctx, current_value.asRef())) {
                                             .node => |node| {
@@ -6485,7 +6485,7 @@ pub const Macro = struct {
                 .allocator = JSCBase.getAllocator(ctx),
                 .exception = exception,
                 .args_value = args_value,
-                .args_len = args_value.getLengthOfArray(JavaScript.VirtualMachine.vm.global),
+                .args_len = args_value.getLengthOfArray(ctx.ptr()),
                 .args_i = 0,
                 .errored = false,
             };
@@ -6704,7 +6704,6 @@ pub const Macro = struct {
 
             _vm.enableMacroMode();
 
-            _vm.bundler.configureLinker();
             try _vm.bundler.configureDefines();
             break :brk _vm;
         };
@@ -6762,7 +6761,7 @@ pub const Macro = struct {
             args_buf[1] = null;
 
             var macro_callback = macro.vm.macros.get(id) orelse return caller;
-            var result = js.JSObjectCallAsFunctionReturnValue(macro.vm.global.ref(), macro_callback, null, args.len + 1, &args_buf);
+            var result = js.JSObjectCallAsFunctionReturnValueHoldingAPILock(macro.vm.global.ref(), macro_callback, null, args.len + 1, &args_buf);
             js.JSValueProtect(macro.vm.global.ref(), result.asRef());
             defer js.JSValueUnprotect(macro.vm.global.ref(), result.asRef());
             var promise = JSC.JSPromise.resolvedPromise(macro.vm.global, result);

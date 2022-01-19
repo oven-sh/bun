@@ -12,6 +12,7 @@ pub const C = @import("c.zig");
 
 pub const FeatureFlags = @import("feature_flags.zig");
 const root = @import("root");
+pub const meta = @import("./meta.zig");
 
 pub const Output = struct {
     // These are threadlocal so we don't have stdout/stderr writing on top of each other
@@ -215,6 +216,18 @@ pub const Output = struct {
         return source.stream.writer();
     }
 
+    pub fn resetTerminal() void {
+        if (!enable_ansi_colors) {
+            return;
+        }
+
+        if (enable_ansi_colors_stderr) {
+            _ = source.error_stream.write("\x1b[H\x1b[2J") catch 0;
+        } else {
+            _ = source.stream.write("\x1b[H\x1b[2J") catch 0;
+        }
+    }
+
     pub fn flush() void {
         if (Environment.isNative and source_set) {
             source.buffered_stream.flush() catch {};
@@ -336,7 +349,7 @@ pub const Output = struct {
     // <d> - dim
     // </r> - reset
     // <r> - reset
-    const ED = "\x1b[";
+    pub const ED = "\x1b[";
     pub const color_map = std.ComptimeStringMap(string, .{
         &.{ "black", ED ++ "30m" },
         &.{ "blue", ED ++ "34m" },
@@ -349,7 +362,7 @@ pub const Output = struct {
         &.{ "white", ED ++ "37m" },
         &.{ "yellow", ED ++ "33m" },
     });
-
+    pub const RESET = "\x1b[0m";
     pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
         comptime var new_fmt: [fmt.len * 4]u8 = undefined;
         comptime var new_fmt_i: usize = 0;
@@ -415,7 +428,7 @@ pub const Output = struct {
                         }
 
                         if (is_reset) {
-                            const reset_sequence = "\x1b[0m";
+                            const reset_sequence = RESET;
                             orig = new_fmt_i;
                             new_fmt_i += reset_sequence.len;
                             std.mem.copy(u8, new_fmt[orig..new_fmt_i], reset_sequence);
@@ -526,7 +539,10 @@ pub const Output = struct {
             source.error_stream.writer().print(fmt, args) catch unreachable;
             root.console_error(root.Uint8Array.fromSlice(source.err_buffer[0..source.error_stream.pos]));
         } else {
-            std.fmt.format(source.error_stream.writer(), fmt, args) catch unreachable;
+            if (enable_buffering)
+                std.fmt.format(source.buffered_error_stream.writer(), fmt, args) catch {}
+            else
+                std.fmt.format(source.error_stream.writer(), fmt, args) catch {};
         }
     }
 };
@@ -548,12 +564,13 @@ pub const Global = struct {
         long_running: bool = false,
     };
 
-    pub inline fn mimalloc_cleanup() void {
+    pub inline fn mimalloc_cleanup(force: bool) void {
         if (comptime use_mimalloc) {
             const Mimalloc = @import("./allocators/mimalloc.zig");
-            Mimalloc.mi_collect(false);
+            Mimalloc.mi_collect(force);
         }
     }
+    pub const versions = @import("./generated_versions_list.zig");
 
     // Enabling huge pages slows down bun by 8x or so
     // Keeping this code for:

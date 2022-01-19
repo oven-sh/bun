@@ -13,7 +13,9 @@ const C = _global.C;
 const JavaScript = @import("./javascript.zig");
 const ResolveError = JavaScript.ResolveError;
 const BuildError = JavaScript.BuildError;
+const JSC = @import("../../jsc.zig");
 const WebCore = @import("./webcore/response.zig");
+const Test = @import("./test/jest.zig");
 const Fetch = WebCore.Fetch;
 const Response = WebCore.Response;
 const Request = WebCore.Request;
@@ -128,6 +130,190 @@ pub const To = struct {
             };
         }
 
+        pub fn withType(comptime Type: type, value: Type, context: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+            return withTypeClone(Type, value, context, exception, false);
+        }
+
+        pub fn withTypeClone(comptime Type: type, value: Type, context: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef, clone: bool) JSC.C.JSValueRef {
+            if (comptime std.meta.trait.isNumber(Type)) {
+                return JSC.JSValue.jsNumberWithType(Type, value).asRef();
+            }
+
+            var zig_str: JSC.ZigString = undefined;
+
+            return switch (comptime Type) {
+                void => JSC.C.JSValueMakeUndefined(context),
+                bool => JSC.C.JSValueMakeBoolean(context, value),
+                []const u8, [:0]const u8, [*:0]const u8, []u8, [:0]u8, [*:0]u8 => brk: {
+                    zig_str = ZigString.init(value);
+                    const val = zig_str.toValueAuto(context.ptr());
+
+                    break :brk val.asObjectRef();
+                },
+                []const PathString, []const []const u8, []const []u8, [][]const u8, [][:0]const u8, [][:0]u8 => {
+                    var zig_strings_buf: [32]ZigString = undefined;
+                    var zig_strings: []ZigString = if (value.len < 32)
+                        &zig_strings_buf
+                    else
+                        (_global.default_allocator.alloc(ZigString, value.len) catch unreachable);
+                    defer if (zig_strings.ptr != &zig_strings_buf)
+                        _global.default_allocator.free(zig_strings);
+
+                    for (value) |path_string, i| {
+                        if (comptime Type == []const PathString) {
+                            zig_strings[i] = ZigString.init(path_string.slice());
+                        } else {
+                            zig_strings[i] = ZigString.init(path_string);
+                        }
+                    }
+
+                    var array = JSC.JSValue.createStringArray(context.ptr(), zig_strings.ptr, zig_strings.len, clone).asObjectRef();
+
+                    if (clone) {
+                        for (value) |path_string| {
+                            if (comptime Type == []const PathString) {
+                                _global.default_allocator.free(path_string.slice());
+                            } else {
+                                _global.default_allocator.free(path_string);
+                            }
+                        }
+                        _global.default_allocator.free(value);
+                    }
+
+                    return array;
+                },
+
+                JSC.C.JSValueRef => value,
+
+                else => {
+                    const Info: std.builtin.TypeInfo = comptime @typeInfo(Type);
+                    if (comptime Info == .Enum) {
+                        const Enum: std.builtin.TypeInfo.Enum = Info.Enum;
+                        if (comptime !std.meta.trait.isNumber(Enum.tag_type)) {
+                            zig_str = JSC.ZigString.init(@tagName(value));
+                            return zig_str.toValue(context.ptr()).asObjectRef();
+                        }
+                    }
+
+                    // Recursion can stack overflow here
+                    if (comptime std.meta.trait.isSlice(Type)) {
+                        const Child = std.meta.Child(Type);
+
+                        const prefill = 32;
+                        if (value.len <= prefill) {
+                            var array: [prefill]JSC.C.JSValueRef = undefined;
+                            var i: u8 = 0;
+                            const len = @minimum(@intCast(u8, value.len), prefill);
+                            while (i < len and exception.* == null) : (i += 1) {
+                                array[i] = if (comptime Child == JSC.C.JSValueRef)
+                                    value[i]
+                                else
+                                    To.JS.withType(Child, value[i], context, exception);
+                            }
+
+                            if (exception.* != null) {
+                                return null;
+                            }
+
+                            // TODO: this function copies to a MarkedArgumentsBuffer
+                            // That copy is unnecessary.
+                            const obj = JSC.C.JSObjectMakeArray(context, len, &array, exception);
+
+                            if (exception.* != null) {
+                                return null;
+                            }
+                            return obj;
+                        }
+
+                        {
+                            var array = _global.default_allocator.alloc(JSC.C.JSValueRef, value.len) catch unreachable;
+                            defer _global.default_allocator.free(array);
+                            var i: usize = 0;
+                            while (i < value.len and exception.* == null) : (i += 1) {
+                                array[i] = if (comptime Child == JSC.C.JSValueRef)
+                                    value[i]
+                                else
+                                    To.JS.withType(Child, value[i], context, exception);
+                            }
+
+                            if (exception.* != null) {
+                                return null;
+                            }
+
+                            // TODO: this function copies to a MarkedArgumentsBuffer
+                            // That copy is unnecessary.
+                            const obj = JSC.C.JSObjectMakeArray(context, value.len, array.ptr, exception);
+                            if (exception.* != null) {
+                                return null;
+                            }
+
+                            return obj;
+                        }
+                    }
+
+                    if (comptime std.meta.trait.isZigString(Type)) {
+                        zig_str = JSC.ZigString.init(value);
+                        return zig_str.toValue(context.ptr()).asObjectRef();
+                    }
+
+                    if (comptime Info == .Pointer) {
+                        const Child = comptime std.meta.Child(Type);
+                        if (comptime std.meta.trait.isContainer(Child) and @hasDecl(Child, "Class") and @hasDecl(Child.Class, "isJavaScriptCoreClass")) {
+                            return Child.Class.make(context, value);
+                        }
+                    }
+
+                    if (comptime Info == .Struct) {
+                        if (comptime @hasDecl(Type, "Class") and @hasDecl(Type.Class, "isJavaScriptCoreClass")) {
+                            if (comptime !@hasDecl(Type, "finalize")) {
+                                @compileError(comptime std.fmt.comptimePrint("JSC class {s} must implement finalize to prevent memory leaks", .{Type.Class.name}));
+                            }
+
+                            if (comptime !@hasDecl(Type, "toJS")) {
+                                var val = _global.default_allocator.create(Type) catch unreachable;
+                                val.* = value;
+                                return Type.Class.make(context, val);
+                            }
+                        }
+                    }
+
+                    const res = value.toJS(context, exception);
+
+                    if (@TypeOf(res) == JSC.C.JSValueRef) {
+                        return res;
+                    } else if (@TypeOf(res) == JSC.JSValue) {
+                        return res.asObjectRef();
+                    }
+                },
+            };
+        }
+
+        pub fn PropertyGetter(
+            comptime Type: type,
+        ) type {
+            return comptime fn (
+                this: ObjectPtrType(Type),
+                ctx: js.JSContextRef,
+                _: js.JSValueRef,
+                _: js.JSStringRef,
+                exception: js.ExceptionRef,
+            ) js.JSValueRef;
+        }
+
+        pub fn Getter(comptime Type: type, comptime field: std.meta.FieldEnum(Type)) PropertyGetter(Type) {
+            return struct {
+                pub fn rfn(
+                    this: ObjectPtrType(Type),
+                    ctx: js.JSContextRef,
+                    _: js.JSValueRef,
+                    _: js.JSStringRef,
+                    exception: js.ExceptionRef,
+                ) js.JSValueRef {
+                    return withType(std.meta.fieldInfo(Type, field).field_type, @field(this, @tagName(field)), ctx, exception);
+                }
+            }.rfn;
+        }
+
         pub fn Callback(
             comptime ZigContextType: type,
             comptime ctxfn: fn (
@@ -150,7 +336,7 @@ pub const To = struct {
                 ) callconv(.C) js.JSValueRef {
                     if (comptime ZigContextType == anyopaque) {
                         return ctxfn(
-                            js.JSObjectGetPrivate(function) or js.jsObjectGetPrivate(thisObject),
+                            js.JSObjectGetPrivate(function) orelse js.JSObjectGetPrivate(thisObject) orelse undefined,
                             ctx,
                             function,
                             thisObject,
@@ -232,86 +418,12 @@ pub const Properties = struct {
         pub const follow = "follow";
     };
 
-    pub const UTF16 = struct {
-        pub const module: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.module);
-        pub const globalThis: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.globalThis);
-        pub const exports: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.exports);
-        pub const log: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.log);
-        pub const debug: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.debug);
-        pub const info: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.info);
-        pub const error_: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.error_);
-        pub const warn: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.warn);
-        pub const console: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.console);
-        pub const require: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.require);
-        pub const description: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.description);
-        pub const name: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.name);
-        pub const initialize_bundled_module = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.initialize_bundled_module);
-        pub const load_module_function: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.load_module_function);
-        pub const window: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.window);
-        pub const default: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.default);
-        pub const include: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.include);
-
-        pub const GET: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.GET);
-        pub const PUT: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.PUT);
-        pub const POST: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.POST);
-        pub const PATCH: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.PATCH);
-        pub const HEAD: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.HEAD);
-        pub const OPTIONS: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.OPTIONS);
-
-        pub const navigate: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.navigate);
-        pub const follow: []c_ushort = std.unicode.utf8ToUtf16LeStringLiteral(UTF8.follow);
-    };
-
     pub const Refs = struct {
-        pub var filepath: js.JSStringRef = undefined;
-
-        pub var module: js.JSStringRef = undefined;
-        pub var globalThis: js.JSStringRef = undefined;
-        pub var exports: js.JSStringRef = undefined;
-        pub var log: js.JSStringRef = undefined;
-        pub var debug: js.JSStringRef = undefined;
-        pub var info: js.JSStringRef = undefined;
-        pub var error_: js.JSStringRef = undefined;
-        pub var warn: js.JSStringRef = undefined;
-        pub var console: js.JSStringRef = undefined;
-        pub var require: js.JSStringRef = undefined;
-        pub var description: js.JSStringRef = undefined;
-        pub var name: js.JSStringRef = undefined;
-        pub var initialize_bundled_module: js.JSStringRef = undefined;
-        pub var load_module_function: js.JSStringRef = undefined;
-        pub var window: js.JSStringRef = undefined;
-        pub var default: js.JSStringRef = undefined;
-        pub var include: js.JSStringRef = undefined;
-        pub var GET: js.JSStringRef = undefined;
-        pub var PUT: js.JSStringRef = undefined;
-        pub var POST: js.JSStringRef = undefined;
-        pub var PATCH: js.JSStringRef = undefined;
-        pub var HEAD: js.JSStringRef = undefined;
-        pub var OPTIONS: js.JSStringRef = undefined;
-
         pub var empty_string_ptr = [_]u8{0};
         pub var empty_string: js.JSStringRef = undefined;
-
-        pub var navigate: js.JSStringRef = undefined;
-        pub var follow: js.JSStringRef = undefined;
-
-        pub const env: js.JSStringRef = undefined;
     };
 
     pub fn init() void {
-        inline for (std.meta.fieldNames(UTF8)) |name| {
-            @field(Refs, name) = js.JSStringCreateStatic(
-                @field(UTF8, name).ptr,
-                @field(UTF8, name).len,
-            );
-
-            if (comptime Environment.isDebug) {
-                std.debug.assert(
-                    js.JSStringIsEqualToString(@field(Refs, name), @field(UTF8, name).ptr, @field(UTF8, name).len),
-                );
-            }
-        }
-
         Refs.empty_string = js.JSStringCreateWithUTF8CString(&Refs.empty_string_ptr);
     }
 };
@@ -720,6 +832,8 @@ pub const ClassOptions = struct {
     ts: d.ts.decl = d.ts.decl{ .empty = 0 },
 };
 
+// work around a comptime bug
+
 pub fn NewClass(
     comptime ZigType: type,
     comptime options: ClassOptions,
@@ -728,13 +842,16 @@ pub fn NewClass(
 ) type {
     const read_only = options.read_only;
     const singleton = options.singleton;
+    _ = read_only;
 
     return struct {
         const name = options.name;
+        pub const isJavaScriptCoreClass = true;
         const ClassDefinitionCreator = @This();
         const function_names = std.meta.fieldNames(@TypeOf(staticFunctions));
         const function_name_literals = function_names;
         var function_name_refs: [function_names.len]js.JSStringRef = undefined;
+        var function_name_refs_set = false;
         var class_name_str = name[0.. :0].ptr;
 
         var static_functions = brk: {
@@ -750,24 +867,10 @@ pub fn NewClass(
             );
             break :brk funcs;
         };
-        var instance_functions = std.mem.zeroes([function_names.len]js.JSObjectRef);
         const property_names = std.meta.fieldNames(@TypeOf(properties));
-        var property_name_refs = std.mem.zeroes([property_names.len]js.JSStringRef);
+        var property_name_refs: [property_names.len]js.JSStringRef = undefined;
+        var property_name_refs_set: bool = false;
         const property_name_literals = property_names;
-        var static_properties = brk: {
-            var props: [property_names.len + 1]js.JSStaticValue = undefined;
-            std.mem.set(
-                js.JSStaticValue,
-                &props,
-                js.JSStaticValue{
-                    .name = @intToPtr([*c]const u8, 0),
-                    .getProperty = null,
-                    .setProperty = null,
-                    .attributes = js.JSPropertyAttributes.kJSPropertyAttributeNone,
-                },
-            );
-            break :brk props;
-        };
 
         pub var ref: js.JSClassRef = null;
         pub var loaded = false;
@@ -821,8 +924,6 @@ pub fn NewClass(
         }
 
         pub const Constructor = ConstructorWrapper.rfn;
-
-        pub const static_value_count = static_properties.len;
 
         pub fn get() callconv(.C) [*c]js.JSClassRef {
             if (!loaded) {
@@ -883,39 +984,6 @@ pub fn NewClass(
             return ClassGetter;
         }
 
-        pub fn getPropertyCallback(
-            ctx: js.JSContextRef,
-            obj: js.JSObjectRef,
-            prop: js.JSStringRef,
-            exception: js.ExceptionRef,
-        ) callconv(.C) js.JSValueRef {
-            var pointer = GetJSPrivateData(ZigType, obj) orelse return js.JSValueMakeUndefined(ctx);
-
-            if (singleton) {
-                inline for (function_names) |_, i| {
-                    if (js.JSStringIsEqual(prop, function_name_refs[i])) {
-                        return instance_functions[i];
-                    }
-                }
-                unreachable;
-            } else {
-                inline for (property_names) |propname, i| {
-                    if (js.JSStringIsEqual(prop, property_name_refs[i])) {
-                        return @field(
-                            properties,
-                            propname,
-                        )(pointer, ctx, obj, exception);
-                    }
-                }
-
-                if (comptime std.meta.trait.hasFn("onMissingProperty")(ZigType)) {
-                    return pointer.onMissingProperty(ctx, obj, prop, exception);
-                }
-            }
-
-            return js.JSValueMakeUndefined(ctx);
-        }
-
         fn StaticProperty(comptime id: usize) type {
             return struct {
                 pub fn getter(
@@ -943,6 +1011,13 @@ pub fn NewClass(
                             );
                         },
                         .Struct => {
+                            comptime {
+                                if (!@hasField(@TypeOf(@field(properties, property_names[id])), "get")) {
+                                    @compileError(
+                                        "Cannot get static property " ++ property_names[id] ++ " of " ++ name ++ " because it is a struct without a getter",
+                                    );
+                                }
+                            }
                             const func = @field(
                                 @field(
                                     properties,
@@ -988,7 +1063,7 @@ pub fn NewClass(
                     value: js.JSValueRef,
                     exception: js.ExceptionRef,
                 ) callconv(.C) bool {
-                    var this = GetJSPrivateData(ZigType, obj) orelse return js.JSValueMakeUndefined(ctx);
+                    var this = GetJSPrivateData(ZigType, obj) orelse return false;
 
                     switch (comptime @typeInfo(@TypeOf(@field(
                         properties,
@@ -1180,6 +1255,41 @@ pub fn NewClass(
             return decl;
         }
 
+        pub fn getPropertyNames(
+            _: js.JSContextRef,
+            _: js.JSObjectRef,
+            props: js.JSPropertyNameAccumulatorRef,
+        ) callconv(.C) void {
+            if (comptime property_name_refs.len > 0) {
+                comptime var i: usize = 0;
+                if (!property_name_refs_set) {
+                    property_name_refs_set =true;
+                    inline while (i < property_name_refs.len) : (i += 1) {
+                        property_name_refs[i] = js.JSStringCreateStatic(property_names[i].ptr, property_names[i].len);
+                    }
+                    comptime i = 0;
+                }
+                inline while (i < property_name_refs.len) : (i += 1) {
+                    js.JSPropertyNameAccumulatorAddName(props, property_name_refs[i]);
+                }
+            }
+
+            if (comptime function_name_refs.len > 0) {
+                comptime var j: usize = 0;
+                if (!function_name_refs_set) {
+                    function_name_refs_set = true;
+                    inline while (j < function_name_refs.len) : (j += 1) {
+                        function_name_refs[j] = js.JSStringCreateStatic(function_names[j].ptr, function_names[j].len);
+                    }
+                    comptime j = 0;
+                }
+
+                inline while (j < function_name_refs.len) : (j += 1) {
+                    js.JSPropertyNameAccumulatorAddName(props, function_name_refs[j]);
+                }
+            }
+        }
+
         // This should only be run at comptime
         pub fn typescriptClassDeclaration() d.ts.class {
             comptime var class = options.ts.class;
@@ -1301,11 +1411,26 @@ pub fn NewClass(
             return comptime class;
         }
 
+        var static_properties = brk: {
+            var props: [property_names.len + 1]js.JSStaticValue = undefined;
+            std.mem.set(
+                js.JSStaticValue,
+                &props,
+                js.JSStaticValue{
+                    .name = @intToPtr([*c]const u8, 0),
+                    .getProperty = null,
+                    .setProperty = null,
+                    .attributes = js.JSPropertyAttributes.kJSPropertyAttributeNone,
+                },
+            );
+            break :brk props;
+        };
+
         pub fn define() js.JSClassDefinition {
             var def = js.JSClassDefinition{
                 .version = 0,
                 .attributes = js.JSClassAttributes.kJSClassAttributeNone,
-                .className = class_name_str,
+                .className = name.ptr[0..name.len :0],
                 .parentClass = null,
                 .staticValues = null,
                 .staticFunctions = null,
@@ -1322,58 +1447,59 @@ pub fn NewClass(
                 .convertToType = null,
             };
 
-            if (static_functions.len > 0) {
-                std.mem.set(js.JSStaticFunction, &static_functions, std.mem.zeroes(js.JSStaticFunction));
-                var count: usize = 0;
-                inline for (function_name_literals) |_, i| {
-                    switch (comptime @typeInfo(@TypeOf(@field(staticFunctions, function_names[i])))) {
+            // These workaround stage1 compiler bugs
+            var JSStaticValue_empty = std.mem.zeroes(js.JSStaticValue);
+            var count: usize = 0;
+
+            if (comptime static_functions.len > 0) {
+                inline for (function_name_literals) |function_name_literal, i| {
+                    _ = i;
+                    switch (comptime @typeInfo(@TypeOf(@field(staticFunctions, function_name_literal)))) {
                         .Struct => {
-                            if (comptime strings.eqlComptime(function_names[i], "constructor")) {
+                            if (comptime strings.eqlComptime(function_name_literal, "constructor")) {
                                 def.callAsConstructor = To.JS.Constructor(staticFunctions.constructor.rfn).rfn;
-                            } else if (comptime strings.eqlComptime(function_names[i], "finalize")) {
+                            } else if (comptime strings.eqlComptime(function_name_literal, "finalize")) {
                                 def.finalize = To.JS.Finalize(ZigType, staticFunctions.finalize.rfn).rfn;
-                            } else if (comptime strings.eqlComptime(function_names[i], "call")) {
+                            } else if (comptime strings.eqlComptime(function_name_literal, "call")) {
                                 def.callAsFunction = To.JS.Callback(ZigType, staticFunctions.call.rfn).rfn;
-                            } else if (comptime strings.eqlComptime(function_names[i], "callAsFunction")) {
-                                const ctxfn = @field(staticFunctions, function_names[i]).rfn;
+                            } else if (comptime strings.eqlComptime(function_name_literal, "callAsFunction")) {
+                                const ctxfn = @field(staticFunctions, function_name_literal).rfn;
                                 const Func: std.builtin.TypeInfo.Fn = @typeInfo(@TypeOf(ctxfn)).Fn;
 
                                 const PointerType = std.meta.Child(Func.args[0].arg_type.?);
 
-                                var callback = if (Func.calling_convention == .C) ctxfn else To.JS.Callback(
+                                def.callAsFunction = if (Func.calling_convention == .C) ctxfn else To.JS.Callback(
                                     PointerType,
                                     ctxfn,
                                 ).rfn;
-
-                                def.callAsFunction = callback;
-                            } else if (comptime strings.eqlComptime(function_names[i], "hasProperty")) {
+                            } else if (comptime strings.eqlComptime(function_name_literal, "hasProperty")) {
                                 def.hasProperty = @field(staticFunctions, "hasProperty").rfn;
-                            } else if (comptime strings.eqlComptime(function_names[i], "getProperty")) {
+                            } else if (comptime strings.eqlComptime(function_name_literal, "getProperty")) {
                                 def.getProperty = @field(staticFunctions, "getProperty").rfn;
-                            } else if (comptime strings.eqlComptime(function_names[i], "setProperty")) {
+                            } else if (comptime strings.eqlComptime(function_name_literal, "setProperty")) {
                                 def.setProperty = @field(staticFunctions, "setProperty").rfn;
-                            } else if (comptime strings.eqlComptime(function_names[i], "deleteProperty")) {
+                            } else if (comptime strings.eqlComptime(function_name_literal, "deleteProperty")) {
                                 def.deleteProperty = @field(staticFunctions, "deleteProperty").rfn;
-                            } else if (comptime strings.eqlComptime(function_names[i], "getPropertyNames")) {
+                            } else if (comptime strings.eqlComptime(function_name_literal, "getPropertyNames")) {
                                 def.getPropertyNames = @field(staticFunctions, "getPropertyNames").rfn;
+                            } else if (comptime strings.eqlComptime(function_name_literal, "convertToType")) {
+                                def.convertToType = @field(staticFunctions, "convertToType").rfn;
                             } else {
-                                const CtxField = @field(staticFunctions, function_names[i]);
+                                const CtxField = comptime @field(staticFunctions, function_name_literal);
                                 if (comptime !@hasField(@TypeOf(CtxField), "rfn")) {
-                                    @compileError("Expected " ++ options.name ++ "." ++ function_names[i] ++ " to have .rfn");
+                                    @compileError("Expected " ++ options.name ++ "." ++ function_name_literal ++ " to have .rfn");
                                 }
                                 const ctxfn = CtxField.rfn;
                                 const Func: std.builtin.TypeInfo.Fn = @typeInfo(@TypeOf(ctxfn)).Fn;
 
                                 const PointerType = if (Func.args[0].arg_type.? == void) void else std.meta.Child(Func.args[0].arg_type.?);
 
-                                var callback = if (Func.calling_convention == .C) ctxfn else To.JS.Callback(
-                                    PointerType,
-                                    ctxfn,
-                                ).rfn;
-
                                 static_functions[count] = js.JSStaticFunction{
                                     .name = (function_names[i][0.. :0]).ptr,
-                                    .callAsFunction = callback,
+                                    .callAsFunction = if (Func.calling_convention == .C) ctxfn else To.JS.Callback(
+                                        PointerType,
+                                        ctxfn,
+                                    ).rfn,
                                     .attributes = comptime if (read_only) js.JSPropertyAttributes.kJSPropertyAttributeReadOnly else js.JSPropertyAttributes.kJSPropertyAttributeNone,
                                 };
 
@@ -1381,27 +1507,30 @@ pub fn NewClass(
                             }
                         },
                         .Fn => {
-                            if (comptime strings.eqlComptime(function_names[i], "constructor")) {
+                            if (comptime strings.eqlComptime(function_name_literal, "constructor")) {
                                 def.callAsConstructor = To.JS.Constructor(staticFunctions.constructor).rfn;
-                            } else if (comptime strings.eqlComptime(function_names[i], "finalize")) {
+                            } else if (comptime strings.eqlComptime(function_name_literal, "finalize")) {
                                 def.finalize = To.JS.Finalize(ZigType, staticFunctions.finalize).rfn;
-                            } else if (comptime strings.eqlComptime(function_names[i], "call")) {
+                            } else if (comptime strings.eqlComptime(function_name_literal, "call")) {
                                 def.callAsFunction = To.JS.Callback(ZigType, staticFunctions.call).rfn;
+                            } else if (comptime strings.eqlComptime(function_name_literal, "getPropertyNames")) {
+                                def.getPropertyNames = To.JS.Callback(ZigType, staticFunctions.getPropertyNames).rfn;
+                            } else if (comptime strings.eqlComptime(function_name_literal, "hasInstance")) {
+                                def.hasInstance = staticFunctions.hasInstance;
                             } else {
-                                var callback = To.JS.Callback(
-                                    ZigType,
-                                    @field(staticFunctions, function_names[i]),
-                                ).rfn;
                                 static_functions[count] = js.JSStaticFunction{
                                     .name = (function_names[i][0.. :0]).ptr,
-                                    .callAsFunction = callback,
+                                    .callAsFunction = To.JS.Callback(
+                                        ZigType,
+                                        @field(staticFunctions, function_name_literal),
+                                    ).rfn,
                                     .attributes = comptime if (read_only) js.JSPropertyAttributes.kJSPropertyAttributeReadOnly else js.JSPropertyAttributes.kJSPropertyAttributeNone,
                                 };
 
                                 count += 1;
                             }
                         },
-                        else => unreachable,
+                        else => {},
                     }
 
                     // if (singleton) {
@@ -1413,13 +1542,9 @@ pub fn NewClass(
                 def.staticFunctions = static_functions[0..count].ptr;
             }
 
-            if (property_names.len > 0) {
-                inline for (comptime property_name_literals) |prop_name, i| {
-                    property_name_refs[i] = js.JSStringCreateStatic(
-                        prop_name.ptr,
-                        prop_name.len,
-                    );
-                    static_properties[i] = std.mem.zeroes(js.JSStaticValue);
+            if (comptime property_names.len > 0) {
+                inline for (property_name_literals) |_, i| {
+                    static_properties[i] = JSStaticValue_empty;
                     static_properties[i].getProperty = StaticProperty(i).getter;
 
                     const field = comptime @field(properties, property_names[i]);
@@ -1429,7 +1554,7 @@ pub fn NewClass(
                     }
                     static_properties[i].name = property_names[i][0.. :0].ptr;
                 }
-                def.staticValues = (&static_properties);
+                def.staticValues = &static_properties;
             }
 
             def.className = class_name_str;
@@ -1443,36 +1568,95 @@ pub fn NewClass(
                 def.callAsFunction = throwInvalidFunctionError;
             }
 
-            if (!singleton)
+            if (def.getPropertyNames == null) {
+                def.getPropertyNames = getPropertyNames;
+            }
+
+            if (!singleton and def.hasInstance == null)
                 def.hasInstance = customHasInstance;
             return def;
         }
     };
 }
 
+const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;
+
+pub const PathString = _global.PathString;
+
 threadlocal var error_args: [1]js.JSValueRef = undefined;
 pub fn JSError(
-    allocator: std.mem.Allocator,
+    _: std.mem.Allocator,
     comptime fmt: string,
     args: anytype,
     ctx: js.JSContextRef,
     exception: ExceptionValueRef,
 ) void {
+    @setCold(true);
+
     if (comptime std.meta.fields(@TypeOf(args)).len == 0) {
-        var message = js.JSStringCreateWithUTF8CString(fmt[0.. :0]);
-        defer js.JSStringRelease(message);
-        error_args[0] = js.JSValueMakeString(ctx, message);
+        var zig_str = JSC.ZigString.init(fmt);
+        zig_str.detectEncoding();
+        error_args[0] = zig_str.toValueAuto(ctx.ptr()).asObjectRef();
         exception.* = js.JSObjectMakeError(ctx, 1, &error_args, null);
     } else {
-        var buf = std.fmt.allocPrintZ(allocator, fmt, args) catch unreachable;
-        defer allocator.free(buf);
+        var buf = std.fmt.allocPrint(default_allocator, fmt, args) catch unreachable;
+        var zig_str = JSC.ZigString.init(buf);
+        zig_str.detectEncoding();
 
-        var message = js.JSStringCreateWithUTF8CString(buf);
-        defer js.JSStringRelease(message);
-
-        error_args[0] = js.JSValueMakeString(ctx, message);
+        error_args[0] = zig_str.toValueGC(ctx.ptr()).asObjectRef();
         exception.* = js.JSObjectMakeError(ctx, 1, &error_args, null);
     }
+}
+
+pub fn throwTypeError(
+    code: JSC.Node.ErrorCode,
+    comptime fmt: string,
+    args: anytype,
+    ctx: js.JSContextRef,
+    exception: ExceptionValueRef,
+) void {
+    exception.* = toTypeError(code, fmt, args, ctx).asObjectRef();
+}
+
+pub fn toTypeError(
+    code: JSC.Node.ErrorCode,
+    comptime fmt: string,
+    args: anytype,
+    ctx: js.JSContextRef,
+) JSC.JSValue {
+    @setCold(true);
+    var zig_str: JSC.ZigString = undefined;
+    if (comptime std.meta.fields(@TypeOf(args)).len == 0) {
+        zig_str = JSC.ZigString.init(fmt);
+        zig_str.detectEncoding();
+    } else {
+        var buf = std.fmt.allocPrint(default_allocator, fmt, args) catch unreachable;
+        zig_str = JSC.ZigString.init(buf);
+        zig_str.detectEncoding();
+        zig_str.mark();
+    }
+    const code_str = ZigString.init(@tagName(code));
+    return JSC.JSValue.createTypeError(&zig_str, &code_str, ctx.ptr());
+}
+
+pub fn throwInvalidArguments(
+    comptime fmt: string,
+    args: anytype,
+    ctx: js.JSContextRef,
+    exception: ExceptionValueRef,
+) void {
+    @setCold(true);
+    return throwTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE, fmt, args, ctx, exception);
+}
+
+pub fn toInvalidArguments(
+    comptime fmt: string,
+    args: anytype,
+    ctx: js.JSContextRef,
+) JSC.JSValue {
+    @setCold(true);
+    return toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE, fmt, args, ctx);
 }
 
 pub fn getAllocator(_: js.JSContextRef) std.mem.Allocator {
@@ -1491,14 +1675,78 @@ pub const ArrayBuffer = struct {
 
     typed_array_type: js.JSTypedArrayType,
 
-    pub inline fn slice(this: *const ArrayBuffer) []u8 {
+    encoding: JSC.Node.Encoding = JSC.Node.Encoding.utf8,
+
+    pub const Stream = std.io.FixedBufferStream([]u8);
+
+    pub inline fn stream(this: ArrayBuffer) Stream {
+        return Stream{ .pos = 0, .buf = this.slice() };
+    }
+
+    pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ArrayBuffer {
+        return ArrayBuffer{
+            .byte_len = @truncate(u32, JSC.C.JSObjectGetTypedArrayByteLength(ctx, value.asObjectRef(), exception)),
+            .offset = @truncate(u32, JSC.C.JSObjectGetTypedArrayByteOffset(ctx, value.asObjectRef(), exception)),
+            .ptr = @ptrCast([*]u8, JSC.C.JSObjectGetTypedArrayBytesPtr(ctx, value.asObjectRef(), exception).?),
+            // TODO
+            .typed_array_type = js.JSTypedArrayType.kJSTypedArrayTypeUint8Array,
+            .len = @truncate(u32, JSC.C.JSObjectGetTypedArrayLength(ctx, value.asObjectRef(), exception)),
+        };
+    }
+
+    pub fn fromArrayBuffer(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ArrayBuffer {
+        var buffer = ArrayBuffer{
+            .byte_len = @truncate(u32, JSC.C.JSObjectGetArrayBufferByteLength(ctx, value.asObjectRef(), exception)),
+            .ptr = @ptrCast([*]u8, JSC.C.JSObjectGetArrayBufferBytesPtr(ctx, value.asObjectRef(), exception).?),
+            // TODO
+            .typed_array_type = js.JSTypedArrayType.kJSTypedArrayTypeUint8Array,
+            .len = 0,
+            .offset = 0,
+        };
+        buffer.len = buffer.byte_len;
+        return buffer;
+    }
+
+    pub inline fn slice(this: *const @This()) []u8 {
         return this.ptr[this.offset .. this.offset + this.byte_len];
     }
 };
 
 pub const MarkedArrayBuffer = struct {
     buffer: ArrayBuffer,
-    allocator: std.mem.Allocator,
+    allocator: ?std.mem.Allocator = null,
+
+    pub const Stream = ArrayBuffer.Stream;
+
+    pub inline fn stream(this: *MarkedArrayBuffer) Stream {
+        return this.buffer.stream();
+    }
+
+    pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) MarkedArrayBuffer {
+        return MarkedArrayBuffer{
+            .allocator = null,
+            .buffer = ArrayBuffer.fromTypedArray(ctx, value, exception),
+        };
+    }
+    pub fn fromArrayBuffer(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) MarkedArrayBuffer {
+        return MarkedArrayBuffer{
+            .allocator = null,
+            .buffer = ArrayBuffer.fromArrayBuffer(ctx, value, exception),
+        };
+    }
+
+    pub fn fromString(str: []const u8, allocator: std.mem.Allocator) !MarkedArrayBuffer {
+        var buf = try allocator.dupe(u8, str);
+        return MarkedArrayBuffer.fromBytes(buf, allocator, js.JSTypedArrayType.kJSTypedArrayTypeUint8Array);
+    }
+
+    pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?MarkedArrayBuffer {
+        return switch (value.jsType()) {
+            JSC.JSValue.JSType.Uint16Array, JSC.JSValue.JSType.Uint32Array, JSC.JSValue.JSType.Uint8Array, JSC.JSValue.JSType.DataView => fromTypedArray(global.ref(), value, exception),
+            JSC.JSValue.JSType.ArrayBuffer => fromArrayBuffer(global.ref(), value, exception),
+            else => null,
+        };
+    }
 
     pub fn fromBytes(bytes: []u8, allocator: std.mem.Allocator, typed_array_type: js.JSTypedArrayType) MarkedArrayBuffer {
         return MarkedArrayBuffer{
@@ -1507,10 +1755,16 @@ pub const MarkedArrayBuffer = struct {
         };
     }
 
+    pub inline fn slice(this: *const @This()) []u8 {
+        return this.buffer.slice();
+    }
+
     pub fn destroy(this: *MarkedArrayBuffer) void {
         const content = this.*;
-        content.allocator.free(content.buffer.slice());
-        content.allocator.destroy(this);
+        if (this.allocator) |allocator| {
+            allocator.free(content.buffer.slice());
+            allocator.destroy(this);
+        }
     }
 
     pub fn init(allocator: std.mem.Allocator, size: u32, typed_array_type: js.JSTypedArrayType) !*MarkedArrayBuffer {
@@ -1520,9 +1774,11 @@ pub const MarkedArrayBuffer = struct {
         return container;
     }
 
-    pub fn toJSObjectRef(this: *MarkedArrayBuffer, ctx: js.JSContextRef, exception: js.ExceptionRef) js.JSObjectRef {
-        return js.JSObjectMakeTypedArrayWithBytesNoCopy(ctx, this.buffer.typed_array_type, this.buffer.ptr, this.buffer.byte_len, MarkedArrayBuffer_deallocator, this, exception);
+    pub fn toJSObjectRef(this: *const MarkedArrayBuffer, ctx: js.JSContextRef, exception: js.ExceptionRef) js.JSObjectRef {
+        return js.JSObjectMakeTypedArrayWithBytesNoCopy(ctx, this.buffer.typed_array_type, this.buffer.ptr, this.buffer.byte_len, MarkedArrayBuffer_deallocator, @intToPtr([*]u8, @ptrToInt(this)), exception);
     }
+
+    pub const toJS = toJSObjectRef;
 };
 
 export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, ctx_: *anyopaque) void {
@@ -1535,10 +1791,19 @@ export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, ctx_: *anyopaque) vo
 pub fn castObj(obj: js.JSObjectRef, comptime Type: type) *Type {
     return JSPrivateDataPtr.from(js.JSObjectGetPrivate(obj)).as(Type);
 }
+
 const JSNode = @import("../../js_ast.zig").Macro.JSNode;
 const LazyPropertiesObject = @import("../../js_ast.zig").Macro.LazyPropertiesObject;
 const ModuleNamespace = @import("../../js_ast.zig").Macro.ModuleNamespace;
 const FetchTaskletContext = Fetch.FetchTasklet.FetchTaskletContext;
+const Expect = Test.Expect;
+const DescribeScope = Test.DescribeScope;
+const TestScope = Test.TestScope;
+const ExpectPrototype = Test.ExpectPrototype;
+const NodeFS = JSC.Node.NodeFS;
+const DirEnt = JSC.Node.DirEnt;
+const Stats = JSC.Node.Stats;
+const BigIntStats = JSC.Node.BigIntStats;
 pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     ResolveError,
     BuildError,
@@ -1552,6 +1817,13 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     LazyPropertiesObject,
     ModuleNamespace,
     FetchTaskletContext,
+    DescribeScope,
+    Expect,
+    ExpectPrototype,
+    NodeFS,
+    Stats,
+    BigIntStats,
+    DirEnt,
 });
 
 pub inline fn GetJSPrivateData(comptime Type: type, ref: js.JSObjectRef) ?*Type {
@@ -1567,6 +1839,7 @@ pub const JSPropertyNameIterator = struct {
         if (this.i >= this.count) return null;
         const i = this.i;
         this.i += 1;
+
         return js.JSPropertyNameArrayGetNameAtIndex(this.array, i);
     }
 };

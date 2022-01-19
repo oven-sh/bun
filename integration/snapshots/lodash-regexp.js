@@ -1,6 +1,6 @@
 import {
 __require as require
-} from "http://localhost:8080/__runtime.js";
+} from "http://localhost:8080/bun:runtime";
 import * as $60f52dc2 from "http://localhost:8080/node_modules/lodash/lodash.js";
 var { shuffle} = require($60f52dc2);
 export function test() {

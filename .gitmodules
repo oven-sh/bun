@@ -11,7 +11,7 @@
 	ignore = dirty
 [submodule "src/deps/mimalloc"]
 	path = src/deps/mimalloc
-	url = https://github.com/microsoft/mimalloc.git
+	url = https://github.com/Jarred-Sumner/mimalloc.git
 	ignore = dirty
 [submodule "src/deps/zlib"]
 	path = src/deps/zlib
@@ -24,4 +24,8 @@
 [submodule "src/deps/boringssl"]
 	path = src/deps/boringssl
 	url = https://github.com/google/boringssl.git
+	ignore = dirty
+[submodule "src/deps/libbacktrace"]
+	path = src/deps/libbacktrace
+	url = https://github.com/ianlancetaylor/libbacktrace
 	ignore = dirty

@@ -12,32 +12,60 @@ pub const PathString = packed struct {
     pub const use_small_path_string = @bitSizeOf(usize) - @bitSizeOf(PathIntLen) >= 53;
     pub const PathInt = if (use_small_path_string) PathIntLen else usize;
     pub const PointerIntType = if (use_small_path_string) u53 else usize;
-    ptr: PointerIntType,
-    len: PathInt,
+    ptr: PointerIntType = 0,
+    len: PathInt = 0,
 
-    pub inline fn slice(this: PathString) string {
+    const JSC = @import("./jsc.zig");
+    pub fn fromJS(value: JSC.JSValue, global: *JSC.JSGlobalObject, exception: JSC.C.ExceptionRef) PathString {
+        if (!value.jsType().isStringLike()) {
+            JSC.JSError(JSC.getAllocator(global.ref()), "Only path strings are supported for now", .{}, global.ref(), exception);
+            return PathString{};
+        }
+        var zig_str = JSC.ZigString.init("");
+        value.toZigString(&zig_str, global);
+
+        return PathString.init(zig_str.slice());
+    }
+
+    pub inline fn asRef(this: PathString) JSC.JSValueRef {
+        return this.toValue().asObjectRef();
+    }
+
+    pub fn toJS(this: PathString, ctx: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+        var zig_str = JSC.ZigString.init(this.slice());
+        zig_str.detectEncoding();
+
+        return zig_str.toValueAuto(ctx.ptr()).asObjectRef();
+    }
+
+    pub inline fn slice(this: anytype) string {
         @setRuntimeSafety(false); // "cast causes pointer to be null" is fine here. if it is null, the len will be 0.
         return @intToPtr([*]u8, @intCast(usize, this.ptr))[0..this.len];
     }
 
-    pub inline fn init(str: string) PathString {
+    pub inline fn sliceAssumeZ(this: anytype) stringZ {
+        @setRuntimeSafety(false); // "cast causes pointer to be null" is fine here. if it is null, the len will be 0.
+        return @intToPtr([*:0]u8, @intCast(usize, this.ptr))[0..this.len];
+    }
+
+    pub inline fn init(str: string) @This() {
         @setRuntimeSafety(false); // "cast causes pointer to be null" is fine here. if it is null, the len will be 0.
 
-        return PathString{
+        return @This(){
             .ptr = @truncate(PointerIntType, @ptrToInt(str.ptr)),
             .len = @truncate(PathInt, str.len),
         };
     }
 
-    pub inline fn isEmpty(this: PathString) bool {
+    pub inline fn isEmpty(this: anytype) bool {
         return this.len == 0;
     }
 
-    pub const empty = PathString{ .ptr = 0, .len = 0 };
+    pub const empty = @This(){ .ptr = 0, .len = 0 };
     comptime {
-        if (use_small_path_string and @bitSizeOf(PathString) != 64) {
+        if (use_small_path_string and @bitSizeOf(@This()) != 64) {
             @compileError("PathString must be 64 bits");
-        } else if (!use_small_path_string and @bitSizeOf(PathString) != 128) {
+        } else if (!use_small_path_string and @bitSizeOf(@This()) != 128) {
             @compileError("PathString must be 128 bits");
         }
     }

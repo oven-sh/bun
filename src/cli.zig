@@ -36,30 +36,35 @@ const Router = @import("./router.zig");
 
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 
-const BunCommand = @import("./cli/bun_command.zig").BunCommand;
-const DevCommand = @import("./cli/dev_command.zig").DevCommand;
-const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
+const AddCommand = @import("./cli/add_command.zig").AddCommand;
 const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
+const BunCommand = @import("./cli/bun_command.zig").BunCommand;
 const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
 const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
-const RunCommand = @import("./cli/run_command.zig").RunCommand;
-const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
+const DevCommand = @import("./cli/dev_command.zig").DevCommand;
+const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
 const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
-const AddCommand = @import("./cli/add_command.zig").AddCommand;
-const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
-const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
 const InstallCompletionsCommand = @import("./cli/install_completions_command.zig").InstallCompletionsCommand;
+const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
+const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
+const RunCommand = @import("./cli/run_command.zig").RunCommand;
 const ShellCompletions = @import("./cli/shell_completions.zig");
+const TestCommand = @import("./cli/test_command.zig").TestCommand;
+const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
 
+const Reporter = @import("./report.zig");
 var start_time: i128 = undefined;
 
 pub const Cli = struct {
     var wait_group: sync.WaitGroup = undefined;
+    var log_: logger.Log = undefined;
     pub fn startTransform(_: std.mem.Allocator, _: Api.TransformOptions, _: *logger.Log) anyerror!void {}
-    pub fn start(allocator: std.mem.Allocator, _: anytype, _: anytype, comptime MainPanicHandler: type) anyerror!void {
+    pub fn start(allocator: std.mem.Allocator, _: anytype, _: anytype, comptime MainPanicHandler: type) void {
         start_time = std.time.nanoTimestamp();
-        var log = try allocator.create(logger.Log);
-        log.* = logger.Log.init(allocator);
+        log_ = logger.Log.init(allocator);
+
+        var log = &log_;
+
         var panicker = MainPanicHandler.init(log);
         MainPanicHandler.Singleton = &panicker;
 
@@ -71,7 +76,14 @@ pub const Cli = struct {
                     std.os.exit(1);
                 },
                 else => {
-                    return err;
+                    // Always dump the logs
+                    if (Output.enable_ansi_colors_stderr) {
+                        log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                    } else {
+                        log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                    }
+
+                    Reporter.globalError(err);
                 },
             }
         };
@@ -84,7 +96,13 @@ const LoaderMatcher = strings.ExactSizeMatcher(4);
 const ColonListType = @import("./cli/colon_list_type.zig").ColonListType;
 pub const LoaderColonList = ColonListType(Api.Loader, Arguments.loader_resolver);
 pub const DefineColonList = ColonListType(string, Arguments.noop_resolver);
-
+fn invalidPlatform(diag: *clap.Diagnostic, _platform: []const u8) noreturn {
+    @setCold(true);
+    diag.name.long = "--platform";
+    diag.arg = _platform;
+    diag.report(Output.errorWriter(), error.InvalidPlatform) catch {};
+    std.process.exit(1);
+}
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
         const Matcher = strings.ExactSizeMatcher(4);
@@ -199,11 +217,16 @@ pub const Arguments = struct {
             printVersionAndExit();
         }
 
-        var cwd_paths = [_]string{args.option("--cwd") orelse try std.process.getCwdAlloc(allocator)};
-        var cwd = try std.fs.path.resolve(allocator, &cwd_paths);
+        var cwd: []u8 = undefined;
+        if (args.option("--cwd")) |cwd_| {
+            var cwd_paths = [_]string{cwd_};
+            cwd = try std.fs.path.resolve(allocator, &cwd_paths);
+        } else {
+            cwd = try std.process.getCwdAlloc(allocator);
+        }
 
         var defines_tuple = try DefineColonList.resolve(allocator, args.options("--define"));
-        var loader_tuple = try LoaderColonList.resolve(allocator, args.options("--define"));
+        var loader_tuple = try LoaderColonList.resolve(allocator, args.options("--loader"));
         var externals = std.mem.zeroes([][]u8);
         if (args.options("--external").len > 0) {
             externals = try allocator.alloc([]u8, args.options("--external").len);
@@ -329,17 +352,19 @@ pub const Arguments = struct {
             else => true,
         };
 
-        opts.node_modules_bundle_path = args.option("--bunfile") orelse brk: {
-            const node_modules_bundle_path_absolute = resolve_path.joinAbs(cwd, .auto, "node_modules.bun");
+        if (comptime Command.Tag.cares_about_bun_file.get(cmd)) {
+            opts.node_modules_bundle_path = args.option("--bunfile") orelse brk: {
+                const node_modules_bundle_path_absolute = resolve_path.joinAbs(cwd, .auto, "node_modules.bun");
 
-            break :brk std.fs.realpathAlloc(allocator, node_modules_bundle_path_absolute) catch null;
-        };
+                break :brk std.fs.realpathAlloc(allocator, node_modules_bundle_path_absolute) catch null;
+            };
 
-        opts.node_modules_bundle_path_server = args.option("--server-bunfile") orelse brk: {
-            const node_modules_bundle_path_absolute = resolve_path.joinAbs(cwd, .auto, "node_modules.server.bun");
+            opts.node_modules_bundle_path_server = args.option("--server-bunfile") orelse brk: {
+                const node_modules_bundle_path_absolute = resolve_path.joinAbs(cwd, .auto, "node_modules.server.bun");
 
-            break :brk std.fs.realpathAlloc(allocator, node_modules_bundle_path_absolute) catch null;
-        };
+                break :brk std.fs.realpathAlloc(allocator, node_modules_bundle_path_absolute) catch null;
+            };
+        }
 
         switch (comptime cmd) {
             .AutoCommand, .DevCommand, .BuildCommand, .BunCommand => {
@@ -387,23 +412,12 @@ pub const Arguments = struct {
         const PlatformMatcher = strings.ExactSizeMatcher(8);
 
         if (args.option("--platform")) |_platform| {
-            switch (PlatformMatcher.match(_platform)) {
-                PlatformMatcher.case("browser") => {
-                    opts.platform = Api.Platform.browser;
-                },
-                PlatformMatcher.case("node") => {
-                    opts.platform = Api.Platform.node;
-                },
-                PlatformMatcher.case("macro"), PlatformMatcher.case("bun") => {
-                    opts.platform = Api.Platform.bun;
-                },
-                else => {
-                    diag.name.long = "--platform";
-                    diag.arg = _platform;
-                    try diag.report(Output.errorWriter(), error.InvalidPlatform);
-                    std.process.exit(1);
-                },
-            }
+            opts.platform = switch (PlatformMatcher.match(_platform)) {
+                PlatformMatcher.case("browser") => Api.Platform.browser,
+                PlatformMatcher.case("node") => Api.Platform.node,
+                PlatformMatcher.case("macro"), PlatformMatcher.case("bun") => Api.Platform.bun,
+                else => invalidPlatform(&diag, _platform),
+            };
         }
 
         if (jsx_factory != null or
@@ -577,22 +591,26 @@ pub const Command = struct {
 
     pub const Context = struct {
         start_time: i128,
-        args: Api.TransformOptions = std.mem.zeroes(Api.TransformOptions),
+        args: Api.TransformOptions,
         log: *logger.Log,
         allocator: std.mem.Allocator,
         positionals: []const string = &[_]string{},
 
         debug: DebugOptions = DebugOptions{},
 
+        const _ctx = Command.Context{
+            .args = std.mem.zeroes(Api.TransformOptions),
+            .log = undefined,
+            .start_time = 0,
+            .allocator = undefined,
+        };
+
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
             Cli.cmd = command;
-
-            var ctx = Command.Context{
-                .args = std.mem.zeroes(Api.TransformOptions),
-                .log = log,
-                .start_time = start_time,
-                .allocator = allocator,
-            };
+            var ctx = _ctx;
+            ctx.log = log;
+            ctx.start_time = start_time;
+            ctx.allocator = allocator;
 
             if (comptime Command.Tag.uses_global_options.get(command)) {
                 ctx.args = try Arguments.parse(allocator, &ctx, command);
@@ -602,8 +620,27 @@ pub const Command = struct {
         }
     };
 
-    pub fn which(allocator: std.mem.Allocator) Tag {
-        var args_iter = std.process.args();
+    // std.process.args allocates!
+    const ArgsIterator = struct {
+        buf: [][*:0]u8 = undefined,
+        i: u32 = 0,
+
+        pub fn next(this: *ArgsIterator) ?[]const u8 {
+            if (this.buf.len <= this.i) {
+                return null;
+            }
+            const i = this.i;
+            this.i += 1;
+            return std.mem.span(this.buf[i]);
+        }
+
+        pub fn skip(this: *ArgsIterator) bool {
+            return this.next() != null;
+        }
+    };
+
+    pub fn which() Tag {
+        var args_iter = ArgsIterator{ .buf = std.os.argv };
         // first one is the executable name
         const skipped = args_iter.skip();
 
@@ -611,9 +648,9 @@ pub const Command = struct {
             return .AutoCommand;
         }
 
-        var next_arg = ((args_iter.next(allocator) catch null) orelse return .AutoCommand);
+        var next_arg = ((args_iter.next()) orelse return .AutoCommand);
         while (next_arg[0] == '-') {
-            next_arg = ((args_iter.next(allocator) catch null) orelse return .AutoCommand);
+            next_arg = ((args_iter.next()) orelse return .AutoCommand);
         }
 
         const first_arg_name = std.mem.span(next_arg);
@@ -629,6 +666,8 @@ pub const Command = struct {
 
             RootCommandMatcher.case("i"), RootCommandMatcher.case("install") => .InstallCommand,
             RootCommandMatcher.case("c"), RootCommandMatcher.case("create") => .CreateCommand,
+
+            RootCommandMatcher.case(TestCommand.name) => .TestCommand,
 
             RootCommandMatcher.case("pm") => .PackageManagerCommand,
 
@@ -665,7 +704,7 @@ pub const Command = struct {
     };
 
     pub fn start(allocator: std.mem.Allocator, log: *logger.Log) !void {
-        const tag = which(allocator);
+        const tag = which();
         switch (tag) {
             .DiscordCommand => return try DiscordCommand.exec(allocator),
             .HelpCommand => return try HelpCommand.exec(allocator),
@@ -715,6 +754,12 @@ pub const Command = struct {
                 const ctx = try Command.Context.create(allocator, log, .PackageManagerCommand);
 
                 try PackageManagerCommand.exec(ctx);
+                return;
+            },
+            .TestCommand => {
+                const ctx = try Command.Context.create(allocator, log, .TestCommand);
+
+                try TestCommand.exec(ctx);
                 return;
             },
             .GetCompletionsCommand => {
@@ -881,6 +926,21 @@ pub const Command = struct {
                             const file_: std.fs.File.OpenError!std.fs.File = brk: {
                                 if (script_name_to_search[0] == std.fs.path.sep) {
                                     break :brk std.fs.openFileAbsolute(script_name_to_search, .{ .read = true });
+                                } else if (!strings.hasPrefix(script_name_to_search, "..") and script_name_to_search[0] != '~') {
+                                    const file_pathZ = brk2: {
+                                        if (!strings.hasPrefix(file_path, "./")) {
+                                            script_name_buf[0..2].* = "./".*;
+                                            @memcpy(script_name_buf[2..], file_path.ptr, file_path.len);
+                                            script_name_buf[file_path.len + 2] = 0;
+                                            break :brk2 script_name_buf[0 .. file_path.len + 2 :0];
+                                        } else {
+                                            @memcpy(&script_name_buf, file_path.ptr, file_path.len);
+                                            script_name_buf[file_path.len] = 0;
+                                            break :brk2 script_name_buf[0..file_path.len :0];
+                                        }
+                                    };
+
+                                    break :brk std.fs.cwd().openFileZ(file_pathZ, .{ .read = true });
                                 } else {
                                     var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
                                     const cwd = std.os.getcwd(&path_buf) catch break :possibly_open_with_bun_js;
@@ -954,6 +1014,16 @@ pub const Command = struct {
         RunCommand,
         UpgradeCommand,
         PackageManagerCommand,
+        TestCommand,
+
+        pub const cares_about_bun_file: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
+            .AutoCommand = true,
+            .BuildCommand = true,
+            .BunCommand = true,
+            .DevCommand = true,
+            .RunCommand = true,
+            .TestCommand = true,
+        });
 
         pub const uses_global_options: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(true, .{
             .CreateCommand = false,

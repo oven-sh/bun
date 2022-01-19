@@ -35,8 +35,8 @@ pub fn PLCrashReportHandler() void {
 }
 
 pub var start_time: i128 = 0;
-pub fn main() anyerror!void {
-    std.debug.assert(CrashReporter.start(Global.package_json_version));
+pub fn main() void {
+    std.debug.assert(CrashReporter.start(null, Report.CrashReportWriter.printFrame, Report.handleCrash));
 
     start_time = std.time.nanoTimestamp();
 
@@ -54,7 +54,7 @@ pub fn main() anyerror!void {
     Output.Source.set(&output_source);
     defer Output.flush();
 
-    cli.Cli.start(default_allocator, stdout, stderr, MainPanicHandler) catch |err| Report.globalError(err);
+    cli.Cli.start(default_allocator, stdout, stderr, MainPanicHandler);
 
     std.mem.doNotOptimizeAway(JavaScriptVirtualMachine.fetch);
     std.mem.doNotOptimizeAway(JavaScriptVirtualMachine.init);

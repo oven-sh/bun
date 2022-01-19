@@ -26,6 +26,7 @@
 #include <JavaScriptCore/JSCallbackObject.h>
 #include <JavaScriptCore/JSCast.h>
 #include <JavaScriptCore/JSClassRef.h>
+#include <JavaScriptCore/JSMicrotask.h>
 // #include <JavaScriptCore/JSContextInternal.h>
 #include <JavaScriptCore/CatchScope.h>
 #include <JavaScriptCore/JSInternalPromise.h>
@@ -51,6 +52,7 @@
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/VMEntryScope.h>
 #include <JavaScriptCore/WasmFaultSignalHandler.h>
+#include <unistd.h>
 #include <wtf/Gigacage.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/URL.h>
@@ -68,6 +70,8 @@
 #include <JavaScriptCore/JSCallbackObject.h>
 #include <JavaScriptCore/JSClassRef.h>
 
+#include "BunClientData.h"
+
 #include "ZigSourceProvider.h"
 
 using JSGlobalObject = JSC::JSGlobalObject;
@@ -82,21 +86,20 @@ using JSObject = JSC::JSObject;
 using JSNonFinalObject = JSC::JSNonFinalObject;
 namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
-bool has_loaded_jsc = false;
+static bool has_loaded_jsc = false;
 
 extern "C" void JSCInitialize() {
   if (has_loaded_jsc) return;
+  has_loaded_jsc = true;
+
   JSC::Options::useSourceProviderCache() = true;
   JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
   JSC::Options::exposeInternalModuleLoader() = true;
   JSC::Options::useSharedArrayBuffer() = true;
   // JSC::Options::useAtMethod() = true;
-
   // std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
   WTF::initializeMainThread();
   JSC::initialize();
-  // Gigacage::disablePrimitiveGigacage();
-  has_loaded_jsc = true;
 }
 
 extern "C" JSC__JSGlobalObject *Zig__GlobalObject__create(JSClassRef *globalObjectClass, int count,
@@ -104,6 +107,8 @@ extern "C" JSC__JSGlobalObject *Zig__GlobalObject__create(JSClassRef *globalObje
   auto heapSize = JSC::LargeHeap;
 
   JSC::VM &vm = JSC::VM::create(heapSize).leakRef();
+  Bun::JSVMClientData::create(&vm);
+
   vm.heap.acquireAccess();
 #if ENABLE(WEBASSEMBLY)
   JSC::Wasm::enableFastMemory();
@@ -257,33 +262,80 @@ void GlobalObject::setConsole(void *console) {
   this->setConsoleClient(makeWeakPtr(m_console));
 }
 
+#pragma mark - Globals
+
+static JSC_DECLARE_CUSTOM_SETTER(property_lazyProcessSetter);
+static JSC_DECLARE_CUSTOM_GETTER(property_lazyProcessGetter);
+
+JSC_DEFINE_CUSTOM_SETTER(property_lazyProcessSetter,
+                         (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
+                          JSC::EncodedJSValue value, JSC::PropertyName)) {
+  return false;
+}
+
+static JSClassRef dot_env_class_ref;
+JSC_DEFINE_CUSTOM_GETTER(property_lazyProcessGetter,
+                         (JSC::JSGlobalObject * _globalObject, JSC::EncodedJSValue thisValue,
+                          JSC::PropertyName)) {
+  Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject *>(_globalObject);
+  if (LIKELY(globalObject->m_process))
+    return JSValue::encode(JSC::JSValue(globalObject->m_process));
+
+  JSC::VM &vm = globalObject->vm();
+
+  globalObject->m_process = Zig::Process::create(
+    vm, Zig::Process::createStructure(vm, globalObject, globalObject->objectPrototype()));
+
+  {
+    auto jsClass = dot_env_class_ref;
+
+    JSC::JSCallbackObject<JSNonFinalObject> *object =
+      JSC::JSCallbackObject<JSNonFinalObject>::create(
+        globalObject, globalObject->callbackObjectStructure(), jsClass, nullptr);
+    if (JSObject *prototype = jsClass->prototype(globalObject))
+      object->setPrototypeDirect(vm, prototype);
+
+    globalObject->m_process->putDirect(vm, JSC::Identifier::fromString(vm, "env"),
+                                       JSC::JSValue(object),
+                                       JSC::PropertyAttribute::DontDelete | 0);
+  }
+
+  return JSC::JSValue::encode(JSC::JSValue(globalObject->m_process));
+}
+
+static JSC_DECLARE_HOST_FUNCTION(functionQueueMicrotask);
+
+static JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
+                                (JSC::JSGlobalObject * globalObject, JSC::CallFrame *callFrame)) {
+  JSC::VM &vm = globalObject->vm();
+
+  if (callFrame->argumentCount() == 0) {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSC::throwTypeError(globalObject, scope, "queueMicrotask requires 1 argument (a function)"_s);
+    return JSC::JSValue::encode(JSC::JSValue{});
+  }
+
+  JSC::JSValue job = callFrame->argument(0);
+
+  if (!job.isObject() || !job.getObject()->isCallable(vm)) {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSC::throwTypeError(globalObject, scope, "queueMicrotask expects a function"_s);
+    return JSC::JSValue::encode(JSC::JSValue{});
+  }
+
+  // This is a JSC builtin function
+  globalObject->queueMicrotask(JSC::createJSMicrotask(vm, job));
+
+  return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
 // This is not a publicly exposed API currently.
 // This is used by the bundler to make Response, Request, FetchEvent,
 // and any other objects available globally.
 void GlobalObject::installAPIGlobals(JSClassRef *globals, int count) {
   WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
-  extraStaticGlobals.reserveCapacity((size_t)count + 2);
+  extraStaticGlobals.reserveCapacity((size_t)count + 3);
 
-  // This is not nearly a complete implementation. It's just enough to make some npm packages that
-  // were compiled with Webpack to run without crashing in this environment.
-  JSC::JSObject *process = JSC::constructEmptyObject(this, this->objectPrototype(), 4);
-
-  // this should be transpiled out, but just incase
-  process->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "browser"),
-                     JSC::JSValue(false));
-
-  // this gives some way of identifying at runtime whether the SSR is happening in node or not.
-  // this should probably be renamed to what the name of the bundler is, instead of "notNodeJS"
-  // but it must be something that won't evaluate to truthy in Node.js
-  process->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "isBun"),
-                     JSC::JSValue(true));
-#if defined(__APPLE__)
-  process->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "platform"),
-                     JSC::jsString(this->vm(), WTF::String("darwin")));
-#else
-  process->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "platform"),
-                     JSC::jsString(this->vm(), WTF::String("linux")));
-#endif
   int i = 0;
   for (; i < count - 1; i++) {
     auto jsClass = globals[i];
@@ -300,23 +352,38 @@ void GlobalObject::installAPIGlobals(JSClassRef *globals, int count) {
 
   // The last one must be "process.env"
   // Runtime-support is for if they change
-  {
-    auto jsClass = globals[i];
+  dot_env_class_ref = globals[i];
 
-    JSC::JSCallbackObject<JSNonFinalObject> *object =
-      JSC::JSCallbackObject<JSNonFinalObject>::create(this, this->callbackObjectStructure(),
-                                                      jsClass, nullptr);
-    if (JSObject *prototype = jsClass->prototype(this)) object->setPrototypeDirect(vm(), prototype);
+  // // The last one must be "process.env"
+  // // Runtime-support is for if they change
+  // {
+  //   auto jsClass = globals[i];
 
-    process->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "env"),
-                       JSC::JSValue(object), JSC::PropertyAttribute::DontDelete | 0);
-  }
+  //   JSC::JSCallbackObject<JSNonFinalObject> *object =
+  //     JSC::JSCallbackObject<JSNonFinalObject>::create(this, this->callbackObjectStructure(),
+  //                                                     jsClass, nullptr);
+  //   if (JSObject *prototype = jsClass->prototype(this)) object->setPrototypeDirect(vm(),
+  //   prototype);
 
+  //   process->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "env"),
+  //                      JSC::JSValue(object), JSC::PropertyAttribute::DontDelete | 0);
+  // }
+
+  JSC::Identifier queueMicrotaskIdentifier = JSC::Identifier::fromString(vm(), "queueMicrotask"_s);
   extraStaticGlobals.uncheckedAppend(
-    GlobalPropertyInfo{JSC::Identifier::fromString(vm(), "process"), JSC::JSValue(process),
+    GlobalPropertyInfo{queueMicrotaskIdentifier,
+                       JSC::JSFunction::create(vm(), JSC::jsCast<JSC::JSGlobalObject *>(this), 0,
+                                               "queueMicrotask", functionQueueMicrotask),
                        JSC::PropertyAttribute::DontDelete | 0});
 
+  auto clientData = Bun::clientData(vm());
+
   this->addStaticGlobals(extraStaticGlobals.data(), extraStaticGlobals.size());
+  putDirectCustomAccessor(
+    vm(), clientData->builtinNames().processPublicName(),
+    JSC::CustomGetterSetter::create(vm(), property_lazyProcessGetter, property_lazyProcessSetter),
+    JSC::PropertyAttribute::CustomValue | 0);
+
   extraStaticGlobals.releaseBuffer();
 }
 
@@ -418,7 +485,6 @@ JSC::JSObject *GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
                                                                     JSModuleRecord *record,
                                                                     JSValue val) {
 
-  ZigString specifier = Zig::toZigString(key, globalObject);
   JSC::VM &vm = globalObject->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -426,7 +492,16 @@ JSC::JSObject *GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
   RETURN_IF_EXCEPTION(scope, nullptr);
 
-  metaProperties->putDirect(vm, Identifier::fromString(vm, "filePath"), key);
+  auto clientData = Bun::clientData(vm);
+  JSString *keyString = key.toStringOrNull(globalObject);
+  if (UNLIKELY(!keyString)) { return metaProperties; }
+  auto view = keyString->value(globalObject);
+  auto index = view.reverseFind('/', view.length());
+  if (index != WTF::notFound) {
+    metaProperties->putDirect(vm, clientData->builtinNames().dirPublicName(),
+                              JSC::jsSubstring(globalObject, keyString, 0, index));
+  }
+  metaProperties->putDirect(vm, clientData->builtinNames().pathPublicName(), key);
   RETURN_IF_EXCEPTION(scope, nullptr);
 
   // metaProperties->putDirect(vm, Identifier::fromString(vm, "resolve"),

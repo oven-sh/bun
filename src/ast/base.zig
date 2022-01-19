@@ -25,50 +25,54 @@ pub const NodeIndexNone = 4294967293;
 
 pub const RefHashCtx = struct {
     pub fn hash(_: @This(), key: Ref) u32 {
-        return @truncate(u32, std.hash.Wyhash.hash(0, std.mem.asBytes(&key)));
+        return key.hash();
     }
 
     pub fn eql(_: @This(), ref: Ref, b: Ref) bool {
-        return std.mem.readIntNative(u64, std.mem.asBytes(&ref)) == std.mem.readIntNative(u64, std.mem.asBytes(&b));
+        return ref.asBitInt() == b.asBitInt();
     }
 };
 
 pub const Ref = packed struct {
-    source_index: Int = std.math.maxInt(Ref.Int),
+    const max_ref_int = std.math.maxInt(Ref.Int);
+    pub const BitInt = std.meta.Int(.unsigned, @bitSizeOf(Ref));
+
+    source_index: Int = max_ref_int,
     inner_index: Int = 0,
     is_source_contents_slice: bool = false,
+
+    pub inline fn asBitInt(this: Ref) BitInt {
+        return @bitCast(BitInt, this);
+    }
 
     // 2 bits of padding for whatever is the parent
     pub const Int = u30;
     pub const None = Ref{
-        .inner_index = std.math.maxInt(Ref.Int),
-        .source_index = std.math.maxInt(Ref.Int),
+        .inner_index = max_ref_int,
+        .source_index = max_ref_int,
     };
     pub const RuntimeRef = Ref{
-        .inner_index = std.math.maxInt(Ref.Int),
-        .source_index = std.math.maxInt(Ref.Int) - 1,
+        .inner_index = max_ref_int,
+        .source_index = max_ref_int - 1,
     };
+
     pub fn toInt(int: anytype) Int {
         return @intCast(Int, int);
     }
 
     pub fn hash(key: Ref) u32 {
-        return @truncate(u32, std.hash.Wyhash.hash(0, std.mem.asBytes(&key)));
+        return @truncate(u32, std.hash.Wyhash.hash(0, &@bitCast([8]u8, @as(u64, key.asBitInt()))));
     }
 
     pub fn eql(ref: Ref, b: Ref) bool {
-        return std.mem.readIntNative(u64, std.mem.asBytes(&ref)) == std.mem.readIntNative(u64, std.mem.asBytes(&b));
+        return asBitInt(ref) == b.asBitInt();
     }
     pub fn isNull(self: *const Ref) bool {
-        return self.source_index == std.math.maxInt(Ref.Int) and self.inner_index == std.math.maxInt(Ref.Int);
-    }
-
-    pub fn isSourceNull(self: *const Ref) bool {
-        return self.source_index == std.math.maxInt(Ref.Int);
+        return self.source_index == max_ref_int and self.inner_index == max_ref_int;
     }
 
     pub fn isSourceIndexNull(int: anytype) bool {
-        return int == std.math.maxInt(Ref.Int);
+        return int == max_ref_int;
     }
 
     pub fn jsonStringify(self: *const Ref, options: anytype, writer: anytype) !void {

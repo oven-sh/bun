@@ -45,6 +45,8 @@ pub const allow_json_single_quotes = true;
 
 pub const react_specific_warnings = true;
 
+pub const log_allocations = false;
+
 pub const CSSInJSImportBehavior = enum {
     // When you import a .css file and you reference the import in JavaScript
     // Just return whatever the property key they referenced was
@@ -86,3 +88,5 @@ pub const disable_compression_in_http_client = false;
 pub const use_libgit2 = true;
 
 pub const atomic_file_watcher = env.isLinux;
+
+pub const node_streams = env.isDebug or env.isTest;

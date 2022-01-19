@@ -53,7 +53,11 @@ pub const ZigStackTrace = bindings.ZigStackTrace;
 pub const ReturnableException = bindings.ReturnableException;
 pub const struct_Zig__JSMicrotaskCallback = bindings.Microtask;
 pub const bZig__JSMicrotaskCallback = struct_Zig__JSMicrotaskCallback;
+pub const SystemError = bindings.SystemError;
 const JSClassRef = bindings.C.JSClassRef;
+pub const JSC__CatchScope = bindings.CatchScope;
+pub const Bun__Readable = bindings.NodeReadableStream;
+pub const Bun__Writable = bindings.NodeWritableStream;
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
 pub const ptrdiff_t = c_long;
@@ -68,49 +72,31 @@ pub const __mbstate_t = extern union {
     _mbstateL: c_longlong,
 };
 
-pub const JSC__RegExpPrototype = struct_JSC__RegExpPrototype;
-
 pub const JSC__GeneratorPrototype = struct_JSC__GeneratorPrototype;
 
 pub const JSC__ArrayIteratorPrototype = struct_JSC__ArrayIteratorPrototype;
 
-pub const JSC__StringPrototype = struct_JSC__StringPrototype;
-pub const WTF__StringView = bWTF__StringView;
-
 pub const JSC__JSPromisePrototype = struct_JSC__JSPromisePrototype;
-pub const JSC__CatchScope = bJSC__CatchScope;
-pub const JSC__ThrowScope = bJSC__ThrowScope;
 pub const JSC__PropertyName = bJSC__PropertyName;
 pub const JSC__JSObject = bJSC__JSObject;
 pub const WTF__ExternalStringImpl = bWTF__ExternalStringImpl;
 
 pub const JSC__AsyncIteratorPrototype = struct_JSC__AsyncIteratorPrototype;
-pub const WTF__StringImpl = bWTF__StringImpl;
 pub const JSC__JSLock = bJSC__JSLock;
 pub const JSC__JSModuleLoader = bJSC__JSModuleLoader;
-pub const JSC__VM = bJSC__VM;
 
 pub const JSC__AsyncGeneratorPrototype = struct_JSC__AsyncGeneratorPrototype;
 
 pub const JSC__AsyncGeneratorFunctionPrototype = struct_JSC__AsyncGeneratorFunctionPrototype;
-pub const JSC__JSGlobalObject = bJSC__JSGlobalObject;
-pub const JSC__JSFunction = bJSC__JSFunction;
+pub const JSC__Identifier = bJSC__Identifier;
 
 pub const JSC__ArrayPrototype = struct_JSC__ArrayPrototype;
 
-pub const JSC__AsyncFunctionPrototype = struct_JSC__AsyncFunctionPrototype;
-pub const JSC__Identifier = bJSC__Identifier;
+pub const Zig__JSMicrotaskCallback = struct_Zig__JSMicrotaskCallback;
 pub const JSC__JSPromise = bJSC__JSPromise;
 
 pub const JSC__SetIteratorPrototype = struct_JSC__SetIteratorPrototype;
-pub const JSC__SourceCode = bJSC__SourceCode;
-
-pub const Zig__JSMicrotaskCallback = struct_Zig__JSMicrotaskCallback;
 pub const JSC__JSCell = bJSC__JSCell;
-
-pub const JSC__BigIntPrototype = struct_JSC__BigIntPrototype;
-
-pub const JSC__GeneratorFunctionPrototype = struct_JSC__GeneratorFunctionPrototype;
 pub const JSC__SourceOrigin = bJSC__SourceOrigin;
 pub const JSC__JSModuleRecord = bJSC__JSModuleRecord;
 pub const WTF__String = bWTF__String;
@@ -119,24 +105,42 @@ pub const WTF__URL = bWTF__URL;
 pub const JSC__IteratorPrototype = struct_JSC__IteratorPrototype;
 pub const JSC__JSInternalPromise = bJSC__JSInternalPromise;
 
+pub const JSC__RegExpPrototype = struct_JSC__RegExpPrototype;
+pub const JSC__CallFrame = bJSC__CallFrame;
+
+pub const JSC__MapIteratorPrototype = struct_JSC__MapIteratorPrototype;
+pub const WTF__StringView = bWTF__StringView;
+pub const JSC__ThrowScope = bJSC__ThrowScope;
+pub const WTF__StringImpl = bWTF__StringImpl;
+pub const JSC__VM = bJSC__VM;
+pub const JSC__JSGlobalObject = bJSC__JSGlobalObject;
+pub const JSC__JSFunction = bJSC__JSFunction;
+
+pub const JSC__AsyncFunctionPrototype = struct_JSC__AsyncFunctionPrototype;
+pub const JSC__SourceCode = bJSC__SourceCode;
+
+pub const JSC__BigIntPrototype = struct_JSC__BigIntPrototype;
+
+pub const JSC__GeneratorFunctionPrototype = struct_JSC__GeneratorFunctionPrototype;
+
 pub const JSC__FunctionPrototype = struct_JSC__FunctionPrototype;
 pub const Inspector__ScriptArguments = bInspector__ScriptArguments;
 pub const JSC__Exception = bJSC__Exception;
 pub const JSC__JSString = bJSC__JSString;
 
 pub const JSC__ObjectPrototype = struct_JSC__ObjectPrototype;
-pub const JSC__CallFrame = bJSC__CallFrame;
 
-pub const JSC__MapIteratorPrototype = struct_JSC__MapIteratorPrototype;
+pub const JSC__StringPrototype = struct_JSC__StringPrototype;
 pub extern fn JSC__JSObject__create(arg0: [*c]JSC__JSGlobalObject, arg1: usize, arg2: ?*anyopaque, ArgFn3: ?fn (?*anyopaque, [*c]JSC__JSObject, [*c]JSC__JSGlobalObject) callconv(.C) void) JSC__JSValue;
 pub extern fn JSC__JSObject__getArrayLength(arg0: [*c]JSC__JSObject) usize;
 pub extern fn JSC__JSObject__getDirect(arg0: [*c]JSC__JSObject, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]const ZigString) JSC__JSValue;
 pub extern fn JSC__JSObject__getIndex(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: u32) JSC__JSValue;
-pub extern fn JSC__JSObject__putDirect(arg0: [*c]JSC__JSObject, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]const ZigString, JSValue3: JSC__JSValue) void;
 pub extern fn JSC__JSObject__putRecord(arg0: [*c]JSC__JSObject, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]ZigString, arg3: [*c]ZigString, arg4: usize) void;
+pub extern fn ZigString__to16BitValue(arg0: [*c]const ZigString, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toErrorInstance(arg0: [*c]const ZigString, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toValue(arg0: [*c]const ZigString, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toValueGC(arg0: [*c]const ZigString, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
+pub extern fn SystemError__toErrorInstance(arg0: [*c]const SystemError, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSCell__getObject(arg0: [*c]JSC__JSCell) [*c]JSC__JSObject;
 pub extern fn JSC__JSCell__getString(arg0: [*c]JSC__JSCell, arg1: [*c]JSC__JSGlobalObject) bWTF__String;
 pub extern fn JSC__JSCell__getType(arg0: [*c]JSC__JSCell) u8;
@@ -209,6 +213,7 @@ pub extern fn JSC__JSGlobalObject__createAggregateError(arg0: [*c]JSC__JSGlobalO
 pub extern fn JSC__JSGlobalObject__datePrototype(arg0: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__errorPrototype(arg0: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__functionPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__FunctionPrototype;
+pub extern fn JSC__JSGlobalObject__generateHeapSnapshot(arg0: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSGlobalObject__generatorFunctionPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__GeneratorFunctionPrototype;
 pub extern fn JSC__JSGlobalObject__generatorPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__GeneratorPrototype;
 pub extern fn JSC__JSGlobalObject__iteratorPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__IteratorPrototype;
@@ -270,15 +275,22 @@ pub extern fn JSC__JSValue__asNumber(JSValue0: JSC__JSValue) f64;
 pub extern fn JSC__JSValue__asObject(JSValue0: JSC__JSValue) bJSC__JSObject;
 pub extern fn JSC__JSValue__asString(JSValue0: JSC__JSValue) [*c]JSC__JSString;
 pub extern fn JSC__JSValue__createEmptyObject(arg0: [*c]JSC__JSGlobalObject, arg1: usize) JSC__JSValue;
-pub extern fn JSC__JSValue__createStringArray(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]ZigString, arg2: usize) JSC__JSValue;
+pub extern fn JSC__JSValue__createObject2(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const ZigString, arg2: [*c]const ZigString, JSValue3: JSC__JSValue, JSValue4: JSC__JSValue) JSC__JSValue;
+pub extern fn JSC__JSValue__createRangeError(arg0: [*c]const ZigString, arg1: [*c]const ZigString, arg2: [*c]JSC__JSGlobalObject) JSC__JSValue;
+pub extern fn JSC__JSValue__createStringArray(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]ZigString, arg2: usize, arg3: bool) JSC__JSValue;
+pub extern fn JSC__JSValue__createTypeError(arg0: [*c]const ZigString, arg1: [*c]const ZigString, arg2: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__eqlCell(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSCell) bool;
 pub extern fn JSC__JSValue__eqlValue(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__forEach(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, ArgFn2: ?fn ([*c]JSC__VM, [*c]JSC__JSGlobalObject, JSC__JSValue) callconv(.C) void) void;
+pub extern fn JSC__JSValue__fromEntries(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]ZigString, arg2: [*c]ZigString, arg3: usize, arg4: bool) JSC__JSValue;
 pub extern fn JSC__JSValue__getClassName(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]ZigString) void;
 pub extern fn JSC__JSValue__getErrorsProperty(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
+pub extern fn JSC__JSValue__getIfPropertyExistsImpl(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]const u8, arg3: u32) JSC__JSValue;
 pub extern fn JSC__JSValue__getLengthOfArray(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject) u32;
 pub extern fn JSC__JSValue__getNameProperty(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]ZigString) void;
 pub extern fn JSC__JSValue__getPrototype(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
+pub extern fn JSC__JSValue__getReadableStreamState(JSValue0: JSC__JSValue, arg1: [*c]JSC__VM) [*c]Bun__Readable;
+pub extern fn JSC__JSValue__getWritableStreamState(JSValue0: JSC__JSValue, arg1: [*c]JSC__VM) [*c]Bun__Writable;
 pub extern fn JSC__JSValue__isAggregateError(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject) bool;
 pub extern fn JSC__JSValue__isAnyInt(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isBigInt(JSValue0: JSC__JSValue) bool;
@@ -299,8 +311,10 @@ pub extern fn JSC__JSValue__isNull(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isNumber(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isObject(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isPrimitive(JSValue0: JSC__JSValue) bool;
+pub extern fn JSC__JSValue__isSameValue(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, arg2: [*c]JSC__JSGlobalObject) bool;
 pub extern fn JSC__JSValue__isString(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isSymbol(JSValue0: JSC__JSValue) bool;
+pub extern fn JSC__JSValue__isTerminationException(JSValue0: JSC__JSValue, arg1: [*c]JSC__VM) bool;
 pub extern fn JSC__JSValue__isUInt32AsAnyInt(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isUndefined(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isUndefinedOrNull(JSValue0: JSC__JSValue) bool;
@@ -313,7 +327,9 @@ pub extern fn JSC__JSValue__jsNumberFromInt32(arg0: i32) JSC__JSValue;
 pub extern fn JSC__JSValue__jsNumberFromInt64(arg0: i64) JSC__JSValue;
 pub extern fn JSC__JSValue__jsNumberFromU16(arg0: u16) JSC__JSValue;
 pub extern fn JSC__JSValue__jsNumberFromUint64(arg0: u64) JSC__JSValue;
+pub extern fn JSC__JSValue__jsonStringify(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: u32, arg3: [*c]ZigString) void;
 pub extern fn JSC__JSValue__jsTDZValue(...) JSC__JSValue;
+pub extern fn JSC__JSValue__jsType(JSValue0: JSC__JSValue) u8;
 pub extern fn JSC__JSValue__jsUndefined(...) JSC__JSValue;
 pub extern fn JSC__JSValue__putRecord(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]ZigString, arg3: [*c]ZigString, arg4: usize) void;
 pub extern fn JSC__JSValue__toBoolean(JSValue0: JSC__JSValue) bool;
@@ -334,14 +350,18 @@ pub extern fn JSC__Exception__create(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]JS
 pub extern fn JSC__Exception__getStackTrace(arg0: [*c]JSC__Exception, arg1: [*c]ZigStackTrace) void;
 pub extern fn JSC__Exception__value(arg0: [*c]JSC__Exception) JSC__JSValue;
 pub extern fn JSC__VM__apiLock(arg0: [*c]JSC__VM) [*c]JSC__JSLock;
+pub extern fn JSC__VM__clearExecutionTimeLimit(arg0: [*c]JSC__VM) void;
 pub extern fn JSC__VM__create(HeapType0: u8) [*c]JSC__VM;
 pub extern fn JSC__VM__deinit(arg0: [*c]JSC__VM, arg1: [*c]JSC__JSGlobalObject) void;
 pub extern fn JSC__VM__deleteAllCode(arg0: [*c]JSC__VM, arg1: [*c]JSC__JSGlobalObject) void;
 pub extern fn JSC__VM__drainMicrotasks(arg0: [*c]JSC__VM) void;
 pub extern fn JSC__VM__executionForbidden(arg0: [*c]JSC__VM) bool;
+pub extern fn JSC__VM__holdAPILock(arg0: [*c]JSC__VM, arg1: ?*anyopaque, ArgFn2: ?fn (?*anyopaque) callconv(.C) void) void;
 pub extern fn JSC__VM__isEntered(arg0: [*c]JSC__VM) bool;
 pub extern fn JSC__VM__isJITEnabled(...) bool;
+pub extern fn JSC__VM__runGC(arg0: [*c]JSC__VM, arg1: bool) JSC__JSValue;
 pub extern fn JSC__VM__setExecutionForbidden(arg0: [*c]JSC__VM, arg1: bool) void;
+pub extern fn JSC__VM__setExecutionTimeLimit(arg0: [*c]JSC__VM, arg1: f64) void;
 pub extern fn JSC__VM__shrinkFootprint(arg0: [*c]JSC__VM) void;
 pub extern fn JSC__VM__throwError(arg0: [*c]JSC__VM, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]JSC__ThrowScope, arg3: [*c]const u8, arg4: usize) bool;
 pub extern fn JSC__VM__whenIdle(arg0: [*c]JSC__VM, ArgFn1: ?fn (...) callconv(.C) void) void;
@@ -399,4 +419,6 @@ pub extern fn WTF__StringView__length(arg0: [*c]const WTF__StringView) usize;
 pub extern fn Zig__GlobalObject__create(arg0: [*c]JSClassRef, arg1: i32, arg2: ?*anyopaque) [*c]JSC__JSGlobalObject;
 pub extern fn Zig__GlobalObject__getModuleRegistryMap(arg0: [*c]JSC__JSGlobalObject) ?*anyopaque;
 pub extern fn Zig__GlobalObject__resetModuleRegistryMap(arg0: [*c]JSC__JSGlobalObject, arg1: ?*anyopaque) bool;
+pub extern fn Bun__Readable__create(arg0: [*c]Bun__Readable, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
+pub extern fn Bun__Writable__create(arg0: [*c]Bun__Writable, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn ZigException__fromException(arg0: [*c]JSC__Exception) ZigException;

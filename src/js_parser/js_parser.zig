@@ -2590,6 +2590,7 @@ pub const Parser = struct {
 
             while (runtime_imports_iter.next()) |entry| {
                 const imports = [_]u16{entry.key};
+                // TODO: remove these unnecessary allocations
                 p.generateImportStmt(
                     RuntimeImports.Name,
                     &imports,
@@ -3591,6 +3592,7 @@ pub fn NewParser(
             const allocator = p.allocator;
             const import_record_i = p.addImportRecordByRange(.stmt, logger.Range.None, import_path);
             var import_record: *ImportRecord = &p.import_records.items[import_record_i];
+            import_record.path.namespace = "runtime";
             import_record.is_internal = is_internal;
             var import_path_identifier = try import_record.path.name.nonUniqueNameString(allocator);
             var namespace_identifier = try allocator.alloc(u8, import_path_identifier.len + suffix.len);

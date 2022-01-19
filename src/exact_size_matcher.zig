@@ -17,8 +17,37 @@ pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
         pub fn match(str: anytype) T {
             switch (str.len) {
                 1...max_bytes - 1 => {
-                    var tmp = std.mem.zeroes([max_bytes]u8);
-                    std.mem.copy(u8, &tmp, str[0..str.len]);
+                    var tmp: [max_bytes]u8 = undefined;
+                    if (comptime std.meta.trait.isSlice(@TypeOf(str))) {
+                        @memcpy(&tmp, str.ptr, str.len);
+                        @memset(tmp[str.len..].ptr, 0, tmp[str.len..].len);
+                    } else {
+                        @memcpy(&tmp, str, str.len);
+                        @memset(tmp[str.len..], 0, tmp[str.len..].len);
+                    }
+
+                    return std.mem.readIntNative(T, &tmp);
+                },
+                max_bytes => {
+                    return std.mem.readIntSliceNative(T, str);
+                },
+                0 => {
+                    return 0;
+                },
+                else => {
+                    return std.math.maxInt(T);
+                },
+            }
+        }
+
+        pub fn matchLower(str: anytype) T {
+            switch (str.len) {
+                1...max_bytes - 1 => {
+                    var tmp: [max_bytes]u8 = undefined;
+                    for (str) |char, i| {
+                        tmp[i] = std.ascii.toLower(char);
+                    }
+                    @memset(tmp[str.len..].ptr, 0, tmp[str.len..].len);
                     return std.mem.readIntNative(T, &tmp);
                 },
                 max_bytes => {
@@ -58,7 +87,7 @@ test "ExactSizeMatcher 5 letter" {
 
 test "ExactSizeMatcher 4 letter" {
     const Four = ExactSizeMatcher(4);
-    const word = "from";
+    var word = "from".*;
     try expect(Four.match(word) == Four.case("from"));
     try expect(Four.match(word) != Four.case("fro"));
 }

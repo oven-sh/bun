@@ -52,11 +52,12 @@ pub const Linker = struct {
     resolve_results: *_bundler.ResolveResults,
     any_needs_runtime: bool = false,
     runtime_import_record: ?ImportRecord = null,
-    runtime_source_path: string,
     hashed_filenames: HashedFileNameMap,
     import_counter: usize = 0,
 
     onImportCSS: ?OnImportCallback = null,
+
+    pub const runtime_source_path = "__runtime.js";
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -77,7 +78,6 @@ pub const Linker = struct {
             .resolve_queue = resolve_queue,
             .resolver = resolver,
             .resolve_results = resolve_results,
-            .runtime_source_path = fs.absAlloc(allocator, &([_]string{"__runtime.js"})) catch unreachable,
             .hashed_filenames = HashedFileNameMap.init(allocator),
         };
     }
@@ -210,7 +210,7 @@ pub const Linker = struct {
 
                     const record_index = @truncate(u32, _record_index);
                     if (comptime !ignore_runtime) {
-                        if (strings.eqlComptime(import_record.path.text, Runtime.Imports.Name)) {
+                        if (strings.eqlComptime(import_record.path.namespace, "runtime")) {
                             // runtime is included in the bundle, so we don't need to dynamically import it
                             if (linker.options.node_modules_bundle != null) {
                                 node_module_bundle_import_path = node_module_bundle_import_path orelse
@@ -218,17 +218,36 @@ pub const Linker = struct {
                                 import_record.path.text = node_module_bundle_import_path.?;
                                 result.ast.runtime_import_record_id = record_index;
                             } else {
-                                import_record.path = try linker.generateImportPath(
-                                    source_dir,
-                                    linker.runtime_source_path,
-                                    false,
-                                    "bun",
-                                    origin,
-                                    import_path_format,
-                                );
+                                if (import_path_format == .absolute_url) {
+                                    import_record.path = Fs.Path.initWithNamespace(try origin.joinAlloc(linker.allocator, "", "", "bun:runtime", "", ""), "bun");
+                                } else {
+                                    import_record.path = try linker.generateImportPath(
+                                        source_dir,
+                                        Linker.runtime_source_path,
+                                        false,
+                                        "bun",
+                                        origin,
+                                        import_path_format,
+                                    );
+                                }
+
                                 result.ast.runtime_import_record_id = record_index;
                                 result.ast.needs_runtime = true;
                             }
+                            continue;
+                        }
+                    }
+
+                    if (linker.options.platform.isBun()) {
+                        if (strings.eqlComptime(import_record.path.text, "fs") or strings.eqlComptime(import_record.path.text, "node:fs")) {
+                            externals.append(record_index) catch unreachable;
+                            continue;
+                        }
+
+                        if (import_record.path.text.len > 4 and strings.eqlComptime(import_record.path.text[0.."bun:".len], "bun:")) {
+                            import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
+                            import_record.path.namespace = "bun";
+                            // don't link bun
                             continue;
                         }
                     }
@@ -413,15 +432,11 @@ pub const Linker = struct {
                 .kind = .stmt,
                 .path = if (linker.options.node_modules_bundle != null)
                     Fs.Path.init(node_module_bundle_import_path orelse linker.nodeModuleBundleImportPath(origin))
+                else if (import_path_format == .absolute_url)
+                    Fs.Path.initWithNamespace(try origin.joinAlloc(linker.allocator, "", "", "bun:runtime", "", ""), "bun")
                 else
-                    try linker.generateImportPath(
-                        source_dir,
-                        linker.runtime_source_path,
-                        false,
-                        "bun",
-                        origin,
-                        import_path_format,
-                    ),
+                    try linker.generateImportPath(source_dir, Linker.runtime_source_path, false, "bun", origin, import_path_format),
+
                 .range = logger.Range{ .loc = logger.Loc{ .start = 0 }, .len = 0 },
             };
             result.ast.runtime_import_record_id = @truncate(u32, import_records.len - 1);
@@ -454,6 +469,7 @@ pub const Linker = struct {
                 .data = .{ .s_import = &require_part_import_statement },
                 .loc = logger.Loc.Empty,
             };
+
             result.ast.prepend_part = js_ast.Part{ .stmts = std.mem.span(&require_part_stmts) };
         }
     }

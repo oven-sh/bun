@@ -95,7 +95,7 @@ pub const Response = struct {
 
     pub fn getText(
         this: *Response,
-        _: js.JSContextRef,
+        ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSObjectRef,
         _: []const js.JSValueRef,
@@ -104,30 +104,45 @@ pub const Response = struct {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/text
         defer this.body.value = .Empty;
         return JSPromise.resolvedPromiseValue(
-            VirtualMachine.vm.global,
+            ctx.ptr(),
             (brk: {
                 switch (this.body.value) {
                     .Unconsumed => {
                         if (this.body.len > 0) {
                             if (this.body.ptr) |_ptr| {
-                                var offset: usize = 0;
-                                while (offset < this.body.len and (_ptr[offset] > 127 or strings.utf8ByteSequenceLength(_ptr[offset]) == 0)) : (offset += 1) {}
-                                if (offset < this.body.len) {
-                                    break :brk ZigString.init(_ptr[offset..this.body.len]).toValue(VirtualMachine.vm.global);
+                                var zig_string = ZigString.init(_ptr[0..this.body.len]);
+                                zig_string.detectEncoding();
+                                if (zig_string.is16Bit()) {
+                                    var value = zig_string.to16BitValue(ctx.ptr());
+                                    this.body.ptr_allocator.?.free(_ptr[0..this.body.len]);
+                                    this.body.ptr_allocator = null;
+                                    this.body.ptr = null;
+                                    break :brk value;
                                 }
+
+                                break :brk zig_string.toValue(ctx.ptr());
                             }
                         }
 
-                        break :brk ZigString.init("").toValue(VirtualMachine.vm.global);
+                        break :brk ZigString.init("").toValue(ctx.ptr());
                     },
                     .Empty => {
-                        break :brk ZigString.init("").toValue(VirtualMachine.vm.global);
+                        break :brk ZigString.init("").toValue(ctx.ptr());
                     },
                     .String => |str| {
-                        break :brk ZigString.init(str).toValue(VirtualMachine.vm.global);
+                        var zig_string = ZigString.init(str);
+
+                        zig_string.detectEncoding();
+                        if (zig_string.is16Bit()) {
+                            var value = zig_string.to16BitValue(ctx.ptr());
+                            if (this.body.ptr_allocator) |allocator| this.body.deinit(allocator);
+                            break :brk value;
+                        }
+
+                        break :brk zig_string.toValue(ctx.ptr());
                     },
                     .ArrayBuffer => |buffer| {
-                        break :brk ZigString.init(buffer.ptr[buffer.offset..buffer.byte_len]).toValue(VirtualMachine.vm.global);
+                        break :brk ZigString.init(buffer.ptr[buffer.offset..buffer.byte_len]).toValue(ctx.ptr());
                     },
                 }
             }),
@@ -188,9 +203,9 @@ pub const Response = struct {
             },
         ) orelse {
             var out = std.fmt.bufPrint(&temp_error_buffer, "Invalid JSON\n\n \"{s}\"", .{zig_string.slice()[0..std.math.min(zig_string.len, 4000)]}) catch unreachable;
-            error_arg_list[0] = ZigString.init(out).toValueGC(VirtualMachine.vm.global).asRef();
+            error_arg_list[0] = ZigString.init(out).toValueGC(ctx.ptr()).asRef();
             return JSPromise.rejectedPromiseValue(
-                VirtualMachine.vm.global,
+                ctx.ptr(),
                 JSValue.fromRef(
                     js.JSObjectMakeError(
                         ctx,
@@ -203,7 +218,7 @@ pub const Response = struct {
         });
 
         return JSPromise.resolvedPromiseValue(
-            VirtualMachine.vm.global,
+            ctx.ptr(),
             JSValue.fromRef(json_value),
         ).asRef();
     }
@@ -217,7 +232,7 @@ pub const Response = struct {
     ) js.JSValueRef {
         defer this.body.value = .Empty;
         return JSPromise.resolvedPromiseValue(
-            VirtualMachine.vm.global,
+            ctx.ptr(),
             JSValue.fromRef(
                 (brk: {
                     switch (this.body.value) {
@@ -630,14 +645,13 @@ pub const Fetch = struct {
             node.data.http.schedule(allocator, &batch);
             NetworkThread.global.pool.schedule(batch);
 
-            try VirtualMachine.vm.enqueueTask(Task.init(&node.data));
             return node;
         }
 
         pub fn callback(http_: *HTTPClient.AsyncHTTP, sender: *HTTPClient.AsyncHTTP.HTTPSender) void {
             var task: *FetchTasklet = @fieldParentPtr(FetchTasklet, "http", http_);
             @atomicStore(Status, &task.status, Status.done, .Monotonic);
-            _ = task.javascript_vm.eventLoop().ready_tasks_count.fetchAdd(1, .Monotonic);
+            task.javascript_vm.eventLoop().enqueueTaskConcurrent(Task.init(task));
             sender.release();
         }
     };
@@ -650,23 +664,25 @@ pub const Fetch = struct {
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSObjectRef {
+        var globalThis = ctx.ptr();
+
         if (arguments.len == 0) {
             const fetch_error = fetch_error_no_args;
-            return JSPromise.rejectedPromiseValue(VirtualMachine.vm.global, ZigString.init(fetch_error).toErrorInstance(VirtualMachine.vm.global)).asRef();
+            return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
         }
 
         if (!js.JSValueIsString(ctx, arguments[0])) {
             const fetch_error = fetch_type_error_strings.get(js.JSValueGetType(ctx, arguments[0]));
-            return JSPromise.rejectedPromiseValue(VirtualMachine.vm.global, ZigString.init(fetch_error).toErrorInstance(VirtualMachine.vm.global)).asRef();
+            return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
         }
 
         var url_zig_str = ZigString.init("");
-        JSValue.fromRef(arguments[0]).toZigString(&url_zig_str, VirtualMachine.vm.global);
+        JSValue.fromRef(arguments[0]).toZigString(&url_zig_str, globalThis);
         var url_str = url_zig_str.slice();
 
         if (url_str.len == 0) {
             const fetch_error = fetch_error_blank_url;
-            return JSPromise.rejectedPromiseValue(VirtualMachine.vm.global, ZigString.init(fetch_error).toErrorInstance(VirtualMachine.vm.global)).asRef();
+            return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
         }
 
         if (url_str[0] == '/') {
@@ -680,7 +696,7 @@ pub const Fetch = struct {
 
         if (url.origin.len > 0 and strings.eql(url.origin, VirtualMachine.vm.bundler.options.origin.origin)) {
             const fetch_error = fetch_error_cant_fetch_same_origin;
-            return JSPromise.rejectedPromiseValue(VirtualMachine.vm.global, ZigString.init(fetch_error).toErrorInstance(VirtualMachine.vm.global)).asRef();
+            return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
         }
 
         var headers: ?Headers = null;
@@ -757,7 +773,7 @@ pub const Fetch = struct {
         // var resolve = FetchTasklet.FetchResolver.Class.make(ctx: js.JSContextRef, ptr: *ZigType)
         var queued = FetchTasklet.queue(
             default_allocator,
-            VirtualMachine.vm.global,
+            globalThis,
             method,
             url,
             header_entries,
@@ -1302,7 +1318,8 @@ pub const Body = struct {
     ptr_allocator: ?std.mem.Allocator = null,
 
     pub fn deinit(this: *Body, allocator: std.mem.Allocator) void {
-        if (this.init.headers) |headers| {
+        this.ptr_allocator = null;
+        if (this.init.headers) |*headers| {
             headers.deinit();
         }
 
@@ -1312,6 +1329,7 @@ pub const Body = struct {
                 allocator.free(str);
             },
             .Empty => {},
+            else => {},
         }
     }
 
@@ -1434,7 +1452,7 @@ pub const Body = struct {
                     } else |_| {}
                 }
 
-                var wtf_string = JSValue.fromRef(body_ref).toWTFString(VirtualMachine.vm.global);
+                var wtf_string = JSValue.fromRef(body_ref).toWTFString(ctx.ptr());
 
                 if (wtf_string.isEmpty()) {
                     body.value = .{ .String = "" };
@@ -1575,7 +1593,7 @@ pub const Request = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return js.JSValueMakeString(ctx, ZigString.init(Properties.UTF8.default).toValueGC(VirtualMachine.vm.global).asRef());
+        return js.JSValueMakeString(ctx, ZigString.init(Properties.UTF8.default).toValueGC(ctx.ptr()).asRef());
     }
     pub fn getCredentials(
         _: *Request,
@@ -1584,7 +1602,7 @@ pub const Request = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return js.JSValueMakeString(ctx, ZigString.init(Properties.UTF8.include).toValueGC(VirtualMachine.vm.global).asRef());
+        return js.JSValueMakeString(ctx, ZigString.init(Properties.UTF8.include).toValueGC(ctx.ptr()).asRef());
     }
     pub fn getDestination(
         _: *Request,
@@ -1593,7 +1611,7 @@ pub const Request = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return js.JSValueMakeString(ctx, ZigString.init("").toValueGC(VirtualMachine.vm.global).asRef());
+        return js.JSValueMakeString(ctx, ZigString.init("").toValueGC(ctx.ptr()).asRef());
     }
     pub fn getHeaders(
         this: *Request,
@@ -1610,16 +1628,16 @@ pub const Request = struct {
     }
     pub fn getIntegrity(
         _: *Request,
-        _: js.JSContextRef,
+        ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.Empty.toValueGC(VirtualMachine.vm.global).asRef();
+        return ZigString.Empty.toValueGC(ctx.ptr()).asRef();
     }
     pub fn getMethod(
         this: *Request,
-        _: js.JSContextRef,
+        ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSStringRef,
         _: js.ExceptionRef,
@@ -1634,48 +1652,48 @@ pub const Request = struct {
             else => "",
         };
 
-        return ZigString.init(string_contents).toValueGC(VirtualMachine.vm.global).asRef();
+        return ZigString.init(string_contents).toValueGC(ctx.ptr()).asRef();
     }
 
     pub fn getMode(
         _: *Request,
-        _: js.JSContextRef,
+        ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(Properties.UTF8.navigate).toValueGC(VirtualMachine.vm.global).asRef();
+        return ZigString.init(Properties.UTF8.navigate).toValueGC(ctx.ptr()).asRef();
     }
     pub fn getRedirect(
         _: *Request,
-        _: js.JSContextRef,
+        ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(Properties.UTF8.follow).toValueGC(VirtualMachine.vm.global).asRef();
+        return ZigString.init(Properties.UTF8.follow).toValueGC(ctx.ptr()).asRef();
     }
     pub fn getReferrer(
         this: *Request,
-        _: js.JSContextRef,
+        ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
         if (this.request_context.header("Referrer")) |referrer| {
-            return ZigString.init(referrer).toValueGC(VirtualMachine.vm.global).asRef();
+            return ZigString.init(referrer).toValueGC(ctx.ptr()).asRef();
         } else {
-            return ZigString.init("").toValueGC(VirtualMachine.vm.global).asRef();
+            return ZigString.init("").toValueGC(ctx.ptr()).asRef();
         }
     }
     pub fn getReferrerPolicy(
         _: *Request,
-        _: js.JSContextRef,
+        ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init("").toValueGC(VirtualMachine.vm.global).asRef();
+        return ZigString.init("").toValueGC(ctx.ptr()).asRef();
     }
     pub fn getUrl(
         this: *Request,
@@ -1775,6 +1793,7 @@ pub const FetchEvent = struct {
         exception: js.ExceptionRef,
     ) js.JSValueRef {
         if (this.request_context.has_called_done) return js.JSValueMakeUndefined(ctx);
+        var globalThis = ctx.ptr();
 
         // A Response or a Promise that resolves to a Response. Otherwise, a network error is returned to Fetch.
         if (arguments.len == 0 or !Response.Class.loaded or !js.JSValueIsObject(ctx, arguments[0])) {
@@ -1786,15 +1805,15 @@ pub const FetchEvent = struct {
         var arg = arguments[0];
 
         if (!js.JSValueIsObjectOfClass(ctx, arg, Response.Class.ref)) {
-            this.pending_promise = this.pending_promise orelse JSInternalPromise.resolvedPromise(VirtualMachine.vm.global, JSValue.fromRef(arguments[0]));
+            this.pending_promise = this.pending_promise orelse JSInternalPromise.resolvedPromise(globalThis, JSValue.fromRef(arguments[0]));
         }
 
         if (this.pending_promise) |promise| {
-            var status = promise.status(VirtualMachine.vm.global.vm());
+            var status = promise.status(globalThis.vm());
 
             if (status == .Pending) {
                 VirtualMachine.vm.tick();
-                status = promise.status(VirtualMachine.vm.global.vm());
+                status = promise.status(globalThis.vm());
             }
 
             switch (status) {
@@ -1806,13 +1825,13 @@ pub const FetchEvent = struct {
                         this.onPromiseRejectionCtx,
                         error.PromiseRejection,
                         this,
-                        promise.result(VirtualMachine.vm.global.vm()),
+                        promise.result(globalThis.vm()),
                     );
                     return js.JSValueMakeUndefined(ctx);
                 },
             }
 
-            arg = promise.result(VirtualMachine.vm.global.vm()).asRef();
+            arg = promise.result(ctx.ptr().vm()).asRef();
         }
 
         if (!js.JSValueIsObjectOfClass(ctx, arg, Response.Class.ref)) {

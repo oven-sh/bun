@@ -35,6 +35,14 @@ typedef struct ErrorableResolvedSource {
   bool success;
 } ErrorableResolvedSource;
 
+typedef struct SystemError {
+  int errno_;
+  ZigString code;
+  ZigString message;
+  ZigString path;
+  ZigString syscall;
+} SystemError;
+
 typedef uint8_t ZigStackFrameCode;
 const ZigStackFrameCode ZigStackFrameCodeNone = 0;
 const ZigStackFrameCode ZigStackFrameCodeEval = 1;
@@ -74,6 +82,10 @@ typedef struct ZigStackTrace {
 typedef struct ZigException {
   unsigned char code;
   uint16_t runtime_type;
+  int errno_;
+  ZigString syscall;
+  ZigString code_;
+  ZigString path;
   ZigString name;
   ZigString message;
   ZigStackTrace stack;
@@ -93,9 +105,83 @@ const JSErrorCode JSErrorCodeOutOfMemoryError = 8;
 const JSErrorCode JSErrorCodeStackOverflow = 253;
 const JSErrorCode JSErrorCodeUserErrorCode = 254;
 
+#pragma mark - Stream
+
+typedef uint8_t Encoding;
+const Encoding Encoding__utf8 = 0;
+const Encoding Encoding__ucs2 = 1;
+const Encoding Encoding__utf16le = 2;
+const Encoding Encoding__latin1 = 3;
+const Encoding Encoding__ascii = 4;
+const Encoding Encoding__base64 = 5;
+const Encoding Encoding__base64url = 6;
+const Encoding Encoding__hex = 7;
+const Encoding Encoding__buffer = 8;
+
+typedef uint8_t WritableEvent;
+const WritableEvent WritableEvent__Close = 0;
+const WritableEvent WritableEvent__Drain = 1;
+const WritableEvent WritableEvent__Error = 2;
+const WritableEvent WritableEvent__Finish = 3;
+const WritableEvent WritableEvent__Pipe = 4;
+const WritableEvent WritableEvent__Unpipe = 5;
+const WritableEvent WritableEvent__Open = 6;
+const WritableEvent WritableEventUser = 254;
+
+typedef uint8_t ReadableEvent;
+
+const ReadableEvent ReadableEvent__Close = 0;
+const ReadableEvent ReadableEvent__Data = 1;
+const ReadableEvent ReadableEvent__End = 2;
+const ReadableEvent ReadableEvent__Error = 3;
+const ReadableEvent ReadableEvent__Pause = 4;
+const ReadableEvent ReadableEvent__Readable = 5;
+const ReadableEvent ReadableEvent__Resume = 6;
+const ReadableEvent ReadableEvent__Open = 7;
+const ReadableEvent ReadableEventUser = 254;
+
+typedef struct {
+  uint32_t highwater_mark;
+  Encoding encoding;
+  int32_t start;
+  int32_t end;
+  bool readable;
+  bool aborted;
+  bool did_read;
+  bool ended;
+  uint8_t flowing;
+  bool emit_close;
+  bool emit_end;
+} Bun__Readable;
+
+typedef struct {
+  uint32_t highwater_mark;
+  Encoding encoding;
+  uint32_t start;
+  bool destroyed;
+  bool ended;
+  bool corked;
+  bool finished;
+  bool emit_close;
+} Bun__Writable;
+
 #ifdef __cplusplus
+
 extern "C" ZigErrorCode Zig_ErrorCodeParserError;
 
 extern "C" void ZigString__free(const unsigned char *ptr, size_t len, void *allocator);
 extern "C" void Microtask__run(void *ptr, void *global);
+
+// Used in process.version
+extern "C" const char *Bun__version;
+
+// Used in process.versions
+extern "C" const char *Bun__versions_webkit;
+extern "C" const char *Bun__versions_mimalloc;
+extern "C" const char *Bun__versions_libarchive;
+extern "C" const char *Bun__versions_picohttpparser;
+extern "C" const char *Bun__versions_boringssl;
+extern "C" const char *Bun__versions_zlib;
+extern "C" const char *Bun__versions_zig;
+
 #endif

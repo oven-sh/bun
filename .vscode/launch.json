@@ -1,7 +1,6 @@
 {
   "version": "0.2.0",
   "configurations": [
-
     {
       "type": "lldb",
       "request": "launch",
@@ -61,8 +60,17 @@
       "request": "launch",
       "name": "bun create debug",
       "program": "bun-debug",
-      "args": ["create", "hanford/trends", "foo"],
-      "cwd": "/tmp/",
+      "args": ["create", "next", "foo", "--open", "--force"],
+      "cwd": "/tmp",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun dev debug",
+      "program": "bun-debug",
+      "args": ["dev"],
+      "cwd": "/tmp/foo",
       "console": "internalConsole"
     },
     {
@@ -70,8 +78,9 @@
       "request": "launch",
       "name": "bun run debug",
       "program": "bun-debug",
-      "args": ["paoskdpoasdk"],
-      "cwd": "/tmp/",
+      "args": ["run", "./integration/bunjs-only-snippets/some-fs.js"],
+      // "args": ["--version"],
+      "cwd": "${workspaceFolder}",
       "console": "internalConsole"
     },
     {
@@ -231,17 +240,49 @@
       "request": "launch",
       "name": "Dazzle serve",
       "program": "bun-debug",
-      "args": ["--origin=http://localhost:5001", "--disable-bun.js", "--disable-hmr"],
-      "cwd": "/Users/jarred/Build/lattice/apps/dazzle",
+      "args": [
+        "--origin=http://localhost:5001",
+        "--disable-bun.js",
+        "--disable-hmr"
+      ],
+      "cwd": "/Users/jarred/Build/big-app/apps/dazzle",
       "console": "internalConsole"
     },
     {
       "type": "lldb",
       "request": "launch",
-      "name": "bun",
+      "name": "Dazzle bun",
       "program": "bun-debug",
       "args": ["bun", "--use=next"],
-      "cwd": "/Users/jarred/Build/lattice/apps/dazzle",
+      "cwd": "/Users/jarred/Build/big-app/apps/dazzle",
+      "console": "internalConsole",
+      "env": { "GOMAXPROCS": "1" }
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun run",
+      "program": "bun-debug",
+      "args": ["cat.js", "./node_modules/@babel/standalone/babel.js"],
+      "cwd": "/Users/jarred/Build/foobar",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun run callback bench",
+      "program": "bun-debug",
+      "args": ["/Users/jarred/Code/bun/bench/snippets/callbacks-overhead.mjs"],
+      "cwd": "/Users/jarred/Build/foobar",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun test",
+      "program": "bun-debug",
+      "args": ["wiptest", "import-meta"],
+      "cwd": "${workspaceFolder}",
       "console": "internalConsole"
     },
     {
@@ -367,9 +408,7 @@
       "program": "bun-debug",
       "args": ["install", "--backend=clonefile", "--force"],
       "cwd": "/Users/jarred/Build/octokit-test",
-      "env": {
-
-      },
+      "env": {},
       "console": "internalConsole"
     },
     {
@@ -379,8 +418,7 @@
       "program": "bun-debug",
       "args": ["add", "typescript"],
       "cwd": "/tmp/wow-such-npm",
-      "env": {
-      },
+      "env": {},
       "console": "internalConsole"
     },
     {
@@ -390,8 +428,7 @@
       "program": "bun-debug",
       "args": ["add", "react"],
       "cwd": "/tmp/wow-such-npm",
-      "env": {
-      },
+      "env": {},
       "console": "internalConsole"
     },
     {
@@ -401,8 +438,7 @@
       "program": "bun-debug",
       "args": ["remove", "foo"],
       "cwd": "/Users/jarred/Build/athena.yarn",
-      "env": {
-      },
+      "env": {},
       "console": "internalConsole"
     },
     {
@@ -414,7 +450,6 @@
       "cwd": "/tmp/wow-such-npm",
       "env": {
         "BUN_CONFIG_SKIP_SAVE_LOCKFILE": "1"
-      
       },
       "console": "internalConsole"
     },
@@ -530,7 +565,6 @@
       "cwd": "${workspaceFolder}/src/test/fixtures",
       "console": "internalConsole"
     },
- 
 
     // {
     //   "type": "lldb",

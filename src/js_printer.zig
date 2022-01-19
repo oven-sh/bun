@@ -360,7 +360,7 @@ pub fn NewPrinter(
         }
 
         //
-        fn printBunImportStatement(p: *Printer, import: S.Import) void {
+        fn printBunJestImportStatement(p: *Printer, import: S.Import) void {
             p.print("const ");
 
             if (import.star_name_loc != null) {
@@ -3224,8 +3224,8 @@ pub fn NewPrinter(
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
 
-                    if (record.path.isBun()) {
-                        p.printBunImportStatement(s.*);
+                    if (record.path.isBun() and strings.eqlComptime(record.path.text, "bun:jest")) {
+                        p.printBunJestImportStatement(s.*);
                         return;
                     }
 

@@ -2779,13 +2779,6 @@ pub const Bundler = struct {
 
         var path_to_use = path_to_use_;
 
-        if (strings.eqlComptime(path_to_use, "__runtime.js")) {
-            return ServeResult{
-                .file = options.OutputFile.initBuf(runtime.Runtime.sourceContent(), "__runtime.js", .js),
-                .mime_type = MimeType.javascript,
-            };
-        }
-
         defer {
             js_ast.Expr.Data.Store.reset();
             js_ast.Stmt.Data.Store.reset();

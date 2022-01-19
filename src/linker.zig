@@ -210,7 +210,7 @@ pub const Linker = struct {
 
                     const record_index = @truncate(u32, _record_index);
                     if (comptime !ignore_runtime) {
-                        if (strings.eqlComptime(import_record.path.text, Runtime.Imports.Name)) {
+                        if (strings.eqlComptime(import_record.path.namespace, "runtime")) {
                             // runtime is included in the bundle, so we don't need to dynamically import it
                             if (linker.options.node_modules_bundle != null) {
                                 node_module_bundle_import_path = node_module_bundle_import_path orelse
@@ -218,14 +218,19 @@ pub const Linker = struct {
                                 import_record.path.text = node_module_bundle_import_path.?;
                                 result.ast.runtime_import_record_id = record_index;
                             } else {
-                                import_record.path = try linker.generateImportPath(
-                                    source_dir,
-                                    Linker.runtime_source_path,
-                                    false,
-                                    "bun",
-                                    origin,
-                                    import_path_format,
-                                );
+                                if (import_path_format == .absolute_url) {
+                                    import_record.path = Fs.Path.initWithNamespace(try origin.joinAlloc(linker.allocator, "", "", "bun:runtime", "", ""), "bun");
+                                } else {
+                                    import_record.path = try linker.generateImportPath(
+                                        source_dir,
+                                        Linker.runtime_source_path,
+                                        false,
+                                        "bun",
+                                        origin,
+                                        import_path_format,
+                                    );
+                                }
+
                                 result.ast.runtime_import_record_id = record_index;
                                 result.ast.needs_runtime = true;
                             }

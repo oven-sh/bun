@@ -25,6 +25,7 @@ const Options = @import("./options.zig");
 const Fallback = @import("./runtime.zig").Fallback;
 const ErrorCSS = @import("./runtime.zig").ErrorCSS;
 const ErrorJS = @import("./runtime.zig").ErrorJS;
+const Runtime = @import("./runtime.zig").Runtime;
 const Css = @import("css_scanner.zig");
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 const resolve_path = @import("./resolver/resolve_path.zig");
@@ -1965,7 +1966,7 @@ pub const RequestContext = struct {
     };
 
     pub fn writeETag(this: *RequestContext, buffer: anytype) !bool {
-        const strong_etag = std.hash.Wyhash.hash(1, buffer);
+        const strong_etag = std.hash.Wyhash.hash(0, buffer);
         const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, .upper, .{});
 
         this.appendHeader("ETag", etag_content_slice);
@@ -2095,12 +2096,12 @@ pub const RequestContext = struct {
                             // Always cache css & json files, even big ones
                             // css is especially important because we want to try and skip having the browser parse it whenever we can
                             if (buf.len < 16 * 16 * 16 * 16 or chunky._loader == .css or chunky._loader == .json) {
-                                const strong_etag = std.hash.Wyhash.hash(1, buf);
+                                const strong_etag = std.hash.Wyhash.hash(0, buf);
                                 const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, .upper, .{});
                                 chunky.rctx.appendHeader("ETag", etag_content_slice);
 
                                 if (chunky.rctx.header("If-None-Match")) |etag_header| {
-                                    if (std.mem.eql(u8, etag_content_slice, etag_header)) {
+                                    if (strings.eqlLong(etag_content_slice, etag_header, true)) {
                                         try chunky.rctx.sendNotModified();
                                         return;
                                     }
@@ -2197,12 +2198,12 @@ pub const RequestContext = struct {
                         .css => try ctx.sendNoContent(),
                         .js, .jsx, .ts, .tsx, .json => {
                             const buf = "export default {};";
-                            const strong_etag = comptime std.hash.Wyhash.hash(1, buf);
+                            const strong_etag = comptime std.hash.Wyhash.hash(0, buf);
                             const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, .upper, .{});
                             ctx.appendHeader("ETag", etag_content_slice);
 
                             if (ctx.header("If-None-Match")) |etag_header| {
-                                if (std.mem.eql(u8, etag_content_slice, etag_header)) {
+                                if (strings.eqlLong(etag_content_slice, etag_header, true)) {
                                     try ctx.sendNotModified();
                                     return;
                                 }
@@ -2252,7 +2253,7 @@ pub const RequestContext = struct {
 
                 // if (result.mime_type.category != .html) {
                 // hash(absolute_file_path, size, mtime)
-                var weak_etag = std.hash.Wyhash.init(1);
+                var weak_etag = std.hash.Wyhash.init(0);
                 weak_etag_buffer[0] = 'W';
                 weak_etag_buffer[1] = '/';
                 weak_etag.update(result.file.input.text);
@@ -2270,7 +2271,7 @@ pub const RequestContext = struct {
                 ctx.appendHeader("ETag", complete_weak_etag);
 
                 if (ctx.header("If-None-Match")) |etag_header| {
-                    if (strings.eql(complete_weak_etag, etag_header)) {
+                    if (strings.eqlLong(complete_weak_etag, etag_header, true)) {
                         try ctx.sendNotModified();
                         return;
                     }
@@ -2387,6 +2388,9 @@ pub const RequestContext = struct {
         if (strings.eqlComptime(path, "error.js")) {
             const buffer = ErrorJS.sourceContent();
             ctx.appendHeader("Content-Type", MimeType.javascript.value);
+            ctx.appendHeader("Cache-Control", "public, max-age=3600");
+            ctx.appendHeader("Age", "0");
+
             if (FeatureFlags.strong_etags_for_built_files) {
                 const did_send = ctx.writeETag(buffer) catch false;
                 if (did_send) return;
@@ -2407,6 +2411,9 @@ pub const RequestContext = struct {
         if (strings.eqlComptime(path, "erro.css")) {
             const buffer = ErrorCSS.sourceContent();
             ctx.appendHeader("Content-Type", MimeType.css.value);
+            ctx.appendHeader("Cache-Control", "public, max-age=3600");
+            ctx.appendHeader("Age", "0");
+
             if (FeatureFlags.strong_etags_for_built_files) {
                 const did_send = ctx.writeETag(buffer) catch false;
                 if (did_send) return;
@@ -2436,6 +2443,28 @@ pub const RequestContext = struct {
                     mime_type_ext[1..],
                 ),
             });
+            return;
+        }
+
+        if (strings.eqlComptime(path, "runtime")) {
+            const buffer = Runtime.sourceContent();
+            ctx.appendHeader("Content-Type", MimeType.javascript.value);
+            ctx.appendHeader("Cache-Control", "public, max-age=3600");
+            ctx.appendHeader("Age", "0");
+            if (FeatureFlags.strong_etags_for_built_files) {
+                const did_send = ctx.writeETag(buffer) catch false;
+                if (did_send) return;
+            }
+
+            if (buffer.len == 0) {
+                return try ctx.sendNoContent();
+            }
+            const send_body = ctx.method == .GET;
+            defer ctx.done();
+            try ctx.writeStatus(200);
+            try ctx.prepareToSendBody(buffer.len, false);
+            if (!send_body) return;
+            _ = try ctx.writeSocket(buffer, SOCKET_FLAGS);
             return;
         }
 

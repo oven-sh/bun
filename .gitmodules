@@ -28,3 +28,6 @@
 [submodule "src/deps/libbacktrace"]
 	path = src/deps/libbacktrace
 	url = https://github.com/ianlancetaylor/libbacktrace
+[submodule "libbacktrace"]
+	path = libbacktrace
+	url = https://github.com/Jarred-Sumner/libbacktrace.git

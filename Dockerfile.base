@@ -88,7 +88,7 @@ ARG BUILDARCH=amd64
 WORKDIR $GITHUB_WORKSPACE
 
 RUN cd $GITHUB_WORKSPACE && \
-    curl -o zig-linux-$BUILDARCH.zip -L https://github.com/Jarred-Sumner/zig/releases/download/jan1/zig-linux-$BUILDARCH.zip && \
+    curl -o zig-linux-$BUILDARCH.zip -L https://github.com/Jarred-Sumner/zig/releases/download/jan17/zig-linux-$BUILDARCH.zip && \
     unzip -q zig-linux-$BUILDARCH.zip && \
     rm zig-linux-$BUILDARCH.zip;
 

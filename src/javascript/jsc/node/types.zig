@@ -88,7 +88,7 @@ pub fn Maybe(comptime ResultType: type) type {
         }
 
         pub inline fn errno(rc: anytype) ?@This() {
-            return switch (std.os.errno(rc)) {
+            return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,
                 else => |err| @This(){
                     // always truncate
@@ -98,7 +98,7 @@ pub fn Maybe(comptime ResultType: type) type {
         }
 
         pub inline fn errnoSys(rc: anytype, syscall: Syscall.Tag) ?@This() {
-            return switch (std.os.errno(rc)) {
+            return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,
                 else => |err| @This(){
                     // always truncate
@@ -108,7 +108,7 @@ pub fn Maybe(comptime ResultType: type) type {
         }
 
         pub inline fn errnoSysP(rc: anytype, syscall: Syscall.Tag, path: anytype) ?@This() {
-            return switch (std.os.errno(rc)) {
+            return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,
                 else => |err| @This(){
                     // always truncate

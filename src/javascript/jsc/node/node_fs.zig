@@ -2824,14 +2824,10 @@ pub const NodeFS = struct {
         switch (comptime flavor) {
             .sync => {
                 const path = args.path.sliceZ(&this.sync_error_buf);
-                if (Maybe(Return.Mkdir).errnoSysP(Syscall.system.mkdir(path, args.mode), .mkdir, path)) |err| {
-                    return switch (err.getErrno()) {
-                        .EXIST => Maybe(Return.Mkdir){ .result = "" },
-                        else => .{ .err = err.err },
-                    };
-                }
-
-                return Maybe(Return.Mkdir){ .result = args.path.slice() };
+                return switch (Syscall.mkdir(path, args.mode)) {
+                    .result => |result| Maybe(Return.Mkdir){ .result = "" },
+                    .err => |err| Maybe(Return.Mkdir){ .err = err },
+                };
             },
             else => {},
         }
@@ -2856,21 +2852,24 @@ pub const NodeFS = struct {
 
                 // First, attempt to create the desired directory
                 // If that fails, then walk back up the path until we have a match
-                if (Option.errnoSys(Syscall.system.mkdir(path, args.mode), .mkdir)) |option| {
-                    switch (option.getErrno()) {
-                        else => {
-                            @memcpy(&this.sync_error_buf, path.ptr, len);
-                            return .{ .err = option.err.withPath(this.sync_error_buf[0..len]) };
-                        },
+                switch (Syscall.mkdir(path, args.mode)) {
+                    .err => |err| {
+                        switch (err.getErrno()) {
+                            else => {
+                                @memcpy(&this.sync_error_buf, path.ptr, len);
+                                return .{ .err = err.withPath(this.sync_error_buf[0..len]) };
+                            },
 
-                        .EXIST => {
-                            return Option{ .result = "" };
-                        },
-                        // continue
-                        .NOENT => {},
-                    }
-                } else {
-                    return Option{ .result = args.path.slice() };
+                            .EXIST => {
+                                return Option{ .result = "" };
+                            },
+                            // continue
+                            .NOENT => {},
+                        }
+                    },
+                    .result => {
+                        return Option{ .result = args.path.slice() };
+                    },
                 }
 
                 var working_mem = &this.sync_error_buf;
@@ -2884,22 +2883,25 @@ pub const NodeFS = struct {
                         working_mem[i] = 0;
                         var parent: [:0]u8 = working_mem[0..i :0];
 
-                        if (Option.errnoSysP(Syscall.system.mkdir(parent, args.mode), .mkdir, parent)) |err| {
-                            working_mem[i] = std.fs.path.sep;
-                            switch (err.getErrno()) {
-                                .EXIST => {
-                                    // Handle race condition
-                                    break;
-                                },
-                                .NOENT => {
-                                    continue;
-                                },
-                                else => return .{ .err = err.err },
-                            }
-                        } else {
-                            // We found a parent that worked
-                            working_mem[i] = std.fs.path.sep;
-                            break;
+                        switch (Syscall.mkdir(parent, args.mode)) {
+                            .err => |err| {
+                                working_mem[i] = std.fs.path.sep;
+                                switch (err.getErrno()) {
+                                    .EXIST => {
+                                        // Handle race condition
+                                        break;
+                                    },
+                                    .NOENT => {
+                                        continue;
+                                    },
+                                    else => return .{ .err = err.withPath(parent) },
+                                }
+                            },
+                            .result => {
+                                // We found a parent that worked
+                                working_mem[i] = std.fs.path.sep;
+                                break;
+                            },
                         }
                     }
                 }
@@ -2911,45 +2913,54 @@ pub const NodeFS = struct {
                         working_mem[i] = 0;
                         var parent: [:0]u8 = working_mem[0..i :0];
 
-                        if (Option.errnoSysP(Syscall.system.mkdir(parent, args.mode), .mkdir, parent)) |err| {
-                            working_mem[i] = std.fs.path.sep;
-                            switch (err.getErrno()) {
-                                .EXIST => {
-                                    std.debug.assert(false);
-                                    continue;
-                                },
-                                else => return .{ .err = err.err },
-                            }
-                        } else {
-                            working_mem[i] = std.fs.path.sep;
+                        switch (Syscall.mkdir(parent, args.mode)) {
+                            .err => |err| {
+                                working_mem[i] = std.fs.path.sep;
+                                switch (err.getErrno()) {
+                                    .EXIST => {
+                                        std.debug.assert(false);
+                                        continue;
+                                    },
+                                    else => return .{ .err = err },
+                                }
+                            },
+
+                            .result => {
+                                working_mem[i] = std.fs.path.sep;
+                            },
                         }
                     }
                 }
 
                 // Our final directory will not have a trailing separator
                 // so we have to create it once again
-                if (Option.errnoSysP(Syscall.system.mkdir(path, args.mode), .mkdir, working_mem[0..len])) |err| {
-                    switch (err.getErrno()) {
-                        // handle the race condition
-                        .EXIST => {
-                            var display_path: []const u8 = "";
-                            if (first_match != std.math.maxInt(u16)) {
-                                // TODO: this leaks memory
-                                display_path = _global.default_allocator.dupe(u8, display_path[0..first_match]) catch unreachable;
-                            }
-                            return Option{ .result = display_path };
-                        },
+                switch (Syscall.mkdir(working_mem[0..len :0], args.mode)) {
+                    .err => |err| {
+                        switch (err.getErrno()) {
+                            // handle the race condition
+                            .EXIST => {
+                                var display_path: []const u8 = "";
+                                if (first_match != std.math.maxInt(u16)) {
+                                    // TODO: this leaks memory
+                                    display_path = _global.default_allocator.dupe(u8, display_path[0..first_match]) catch unreachable;
+                                }
+                                return Option{ .result = display_path };
+                            },
 
-                        // NOENT shouldn't happen here
-                        else => return .{ .err = err.err },
-                    }
-                } else {
-                    var display_path = args.path.slice();
-                    if (first_match != std.math.maxInt(u16)) {
-                        // TODO: this leaks memory
-                        display_path = _global.default_allocator.dupe(u8, display_path[0..first_match]) catch unreachable;
-                    }
-                    return Option{ .result = display_path };
+                            // NOENT shouldn't happen here
+                            else => return .{
+                                .err = err.withPath(path),
+                            },
+                        }
+                    },
+                    .result => {
+                        var display_path = args.path.slice();
+                        if (first_match != std.math.maxInt(u16)) {
+                            // TODO: this leaks memory
+                            display_path = _global.default_allocator.dupe(u8, display_path[0..first_match]) catch unreachable;
+                        }
+                        return Option{ .result = display_path };
+                    },
                 }
             },
             else => {},

@@ -78,7 +78,7 @@
       "request": "launch",
       "name": "bun run debug",
       "program": "bun-debug",
-      "args": ["run", "./integration/bunjs-only-snippets/console-log.js"],
+      "args": ["run", "./integration/bunjs-only-snippets/some-fs.js"],
       // "args": ["--version"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"

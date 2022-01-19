@@ -8,7 +8,7 @@
   "search.useIgnoreFiles": true,
   "zig.buildOnSave": false,
   "[zig]": {
-    "editor.defaultFormatter": "tiehuis.zig"
+    "editor.defaultFormatter": "AugusteRame.zls-vscode"
   },
   "[ts]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode"

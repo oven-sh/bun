@@ -11,6 +11,7 @@ endif
 
 MIN_MACOS_VERSION = 10.14
 
+
 MARCH_NATIVE =
 
 ARCH_NAME :=
@@ -73,7 +74,7 @@ OPENSSL_LINUX_DIR = $(BUN_DEPS_DIR)/openssl/openssl-OpenSSL_1_1_1l
 
 CMAKE_FLAGS_WITHOUT_RELEASE = -DCMAKE_C_COMPILER=$(CC) -DCMAKE_CXX_COMPILER=$(CXX) -DCMAKE_OSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION) 
 CMAKE_FLAGS = $(CMAKE_FLAGS_WITHOUT_RELEASE) -DCMAKE_BUILD_TYPE=Release
-CFLAGS = $(MACOS_MIN_FLAG)
+
 
 LIBTOOL=libtoolize
 ifeq ($(OS_NAME),darwin)
@@ -84,6 +85,8 @@ ifeq ($(OS_NAME),linux)
 LIBICONV_PATH = 
 endif
 
+
+CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE) -ffunction-sections -fdata-sections -g -O3
 BUN_TMP_DIR := /tmp/make-bun
 BUN_DEPLOY_DIR = /tmp/bun-v$(PACKAGE_JSON_VERSION)/$(PACKAGE_NAME)
 
@@ -223,13 +226,13 @@ CLANG_FLAGS = $(INCLUDE_DIRS) \
 		-DASSERT_ENABLED=0 \
 		-fvisibility=hidden \
 		-fvisibility-inlines-hidden \
-		-fno-omit-frame-pointer
+		-fno-omit-frame-pointer $(CFLAGS)
 		
 # This flag is only added to webkit builds on Apple platforms
 # It has something to do with ICU
 ifeq ($(OS_NAME), darwin)
 CLANG_FLAGS += -DDU_DISABLE_RENAMING=1 \
-		$(MACOS_MIN_FLAG) -lstdc++ \
+		-lstdc++ \
 		-ffunction-sections \
 		-fdata-sections \
 		-Wl,-no_eh_labels \
@@ -291,7 +294,7 @@ bun:
 vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace
 
 boringssl-build:
-	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && cmake $(CMAKE_FLAGS) -GNinja .. && ninja 
+	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) -GNinja .. && ninja 
 
 boringssl-copy:
 	cp $(BUN_DEPS_DIR)/boringssl/build/ssl/libssl.a $(BUN_DEPS_OUT_DIR)/libssl.a
@@ -300,10 +303,10 @@ boringssl-copy:
 boringssl: boringssl-build boringssl-copy
 
 libbacktrace:
-	cd $(BUN_DEPS_DIR)/libbacktrace; \
-	(make clean || echo ""); \
-	CFLAGS=$(CFLAGS) CC=$(CC) ./configure --disable-shared --enable-static  --with-pic; \
-	make -j$(CPUS); \
+	cd $(BUN_DEPS_DIR)/libbacktrace && \
+	(make clean || echo "") && \
+	CFLAGS="$(CFLAGS)" CC=$(CC) ./configure --disable-shared --enable-static  --with-pic && \
+	make -j$(CPUS) && \
 	cp ./.libs/libbacktrace.a $(BUN_DEPS_OUT_DIR)/libbacktrace.a
 
 libarchive:
@@ -311,7 +314,7 @@ libarchive:
 	(make clean || echo ""); \
 	(./build/clean.sh || echo ""); \
 	./build/autogen.sh; \
-	CFLAGS=$(CFLAGS) CC=$(CC) ./configure --disable-shared --enable-static  --with-pic  --disable-bsdtar   --disable-bsdcat --disable-rpath --enable-posix-regex-lib  --without-xml2  --without-expat --without-openssl  --without-iconv --without-zlib; \
+	CFLAGS="$(CFLAGS)" CC=$(CC) ./configure --disable-shared --enable-static  --with-pic  --disable-bsdtar   --disable-bsdcat --disable-rpath --enable-posix-regex-lib  --without-xml2  --without-expat --without-openssl  --without-iconv --without-zlib; \
 	make -j${CPUS}; \
 	cp ./.libs/libarchive.a $(BUN_DEPS_OUT_DIR)/libarchive.a;
 
@@ -328,7 +331,7 @@ tgz-debug:
 vendor: require init-submodules vendor-without-check 
 
 zlib: 
-	cd $(BUN_DEPS_DIR)/zlib; cmake $(CMAKE_FLAGS) .; make CFLAGS=$(CFLAGS);
+	cd $(BUN_DEPS_DIR)/zlib; CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) .; CFLAGS="$(CFLAGS)" make;
 	cp $(BUN_DEPS_DIR)/zlib/libz.a $(BUN_DEPS_OUT_DIR)/libz.a
 
 docker-login:
@@ -730,7 +733,7 @@ jsc-bindings-mac: $(OBJ_FILES)
 
 # mimalloc is built as object files so that it can overload the system malloc
 mimalloc:
-	cd $(BUN_DEPS_DIR)/mimalloc; cmake $(CMAKE_FLAGS) -DMI_SKIP_COLLECT_ON_EXIT=ON -DMI_BUILD_SHARED=OFF -DMI_BUILD_STATIC=ON -DMI_BUILD_TESTS=OFF -DMI_BUILD_OBJECT=ON ${MIMALLOC_OVERRIDE_FLAG} -DMI_USE_CXX=ON .; make; 
+	cd $(BUN_DEPS_DIR)/mimalloc; CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) -DMI_SKIP_COLLECT_ON_EXIT=ON -DMI_BUILD_SHARED=OFF -DMI_BUILD_STATIC=ON -DMI_BUILD_TESTS=OFF -DMI_BUILD_OBJECT=ON ${MIMALLOC_OVERRIDE_FLAG} -DMI_USE_CXX=ON .; make; 
 	cp $(BUN_DEPS_DIR)/mimalloc/$(MIMALLOC_INPUT_PATH) $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE)
 
 bun-link-lld-debug:
@@ -789,7 +792,7 @@ sizegen:
 	$(BUN_TMP_DIR)/sizegen > src/javascript/jsc/bindings/sizes.zig
 
 picohttp:
-	 $(CC) $(MARCH_NATIVE) $(MACOS_MIN_FLAG) -O3 -g -fPIC -c $(BUN_DEPS_DIR)/picohttpparser/picohttpparser.c -I$(BUN_DEPS_DIR) -o $(BUN_DEPS_OUT_DIR)/picohttpparser.o; cd ../../	
+	 $(CC) $(CFLAGS) -O3 -g -fPIC -c $(BUN_DEPS_DIR)/picohttpparser/picohttpparser.c -I$(BUN_DEPS_DIR) -o $(BUN_DEPS_OUT_DIR)/picohttpparser.o; cd ../../	
 
 analytics:
 	./node_modules/.bin/peechy --schema src/analytics/schema.peechy --zig src/analytics/analytics_schema.zig

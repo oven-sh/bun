@@ -115,10 +115,31 @@ pub fn fstat(fd: JSC.Node.FileDescriptor) Maybe(os.Stat) {
     return Maybe(os.Stat){ .result = stat_ };
 }
 
+pub fn mkdir(file_path: [:0]const u8, flags: JSC.Node.Mode) Maybe(void) {
+    if (comptime Environment.isMac) {
+        return Maybe(void).errnoSysP(darwin.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success;
+    }
+
+    if (comptime Environment.isLinux) {
+        return Maybe(void).errnoSysP(linux.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success;
+    }
+}
+
+pub fn getErrno(rc: anytype) std.os.E {
+    if (comptime Environment.isMac) return std.os.errno(rc);
+    const Type = @TypeOf(rc);
+
+    return switch (Type) {
+        comptime_int, usize => std.os.linux.getErrno(@as(usize, rc)),
+        i32, c_int, isize => std.os.linux.getErrno(@bitCast(usize, @as(isize, rc))),
+        else => @compileError("Not implemented yet for type " ++ @typeName(Type)),
+    };
+}
+
 pub fn open(file_path: [:0]const u8, flags: JSC.Node.Mode, perm: JSC.Node.Mode) Maybe(JSC.Node.FileDescriptor) {
     while (true) {
-        const rc = open_sym(file_path, flags | os.O.CLOEXEC, perm);
-        return switch (libc.getErrno(rc)) {
+        const rc = Syscall.system.open(file_path, flags, perm);
+        return switch (Syscall.getErrno(rc)) {
             .SUCCESS => .{ .result = @intCast(JSC.Node.FileDescriptor, rc) },
             .INTR => continue,
             else => |err| {

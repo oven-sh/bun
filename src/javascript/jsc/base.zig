@@ -851,6 +851,7 @@ pub fn NewClass(
         const function_names = std.meta.fieldNames(@TypeOf(staticFunctions));
         const function_name_literals = function_names;
         var function_name_refs: [function_names.len]js.JSStringRef = undefined;
+        var function_name_refs_set = false;
         var class_name_str = name[0.. :0].ptr;
 
         var static_functions = brk: {
@@ -866,9 +867,9 @@ pub fn NewClass(
             );
             break :brk funcs;
         };
-        var instance_functions = std.mem.zeroes([function_names.len]js.JSObjectRef);
         const property_names = std.meta.fieldNames(@TypeOf(properties));
-        var property_name_refs = std.mem.zeroes([property_names.len]js.JSStringRef);
+        var property_name_refs: [property_names.len]js.JSStringRef = undefined;
+        var property_name_refs_set: bool = false;
         const property_name_literals = property_names;
 
         pub var ref: js.JSClassRef = null;
@@ -1261,7 +1262,8 @@ pub fn NewClass(
         ) callconv(.C) void {
             if (comptime property_name_refs.len > 0) {
                 comptime var i: usize = 0;
-                if (property_name_refs[0] == null) {
+                if (!property_name_refs_set) {
+                    property_name_refs_set =true;
                     inline while (i < property_name_refs.len) : (i += 1) {
                         property_name_refs[i] = js.JSStringCreateStatic(property_names[i].ptr, property_names[i].len);
                     }
@@ -1274,7 +1276,8 @@ pub fn NewClass(
 
             if (comptime function_name_refs.len > 0) {
                 comptime var j: usize = 0;
-                if (function_name_refs[0] == null) {
+                if (!function_name_refs_set) {
+                    function_name_refs_set = true;
                     inline while (j < function_name_refs.len) : (j += 1) {
                         function_name_refs[j] = js.JSStringCreateStatic(function_names[j].ptr, function_names[j].len);
                     }

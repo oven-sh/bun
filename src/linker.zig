@@ -432,15 +432,11 @@ pub const Linker = struct {
                 .kind = .stmt,
                 .path = if (linker.options.node_modules_bundle != null)
                     Fs.Path.init(node_module_bundle_import_path orelse linker.nodeModuleBundleImportPath(origin))
+                else if (import_path_format == .absolute_url)
+                    Fs.Path.initWithNamespace(try origin.joinAlloc(linker.allocator, "", "", "bun:runtime", "", ""), "bun")
                 else
-                    try linker.generateImportPath(
-                        source_dir,
-                        Linker.runtime_source_path,
-                        false,
-                        "bun",
-                        origin,
-                        import_path_format,
-                    ),
+                    try linker.generateImportPath(source_dir, Linker.runtime_source_path, false, "bun", origin, import_path_format),
+
                 .range = logger.Range{ .loc = logger.Loc{ .start = 0 }, .len = 0 },
             };
             result.ast.runtime_import_record_id = @truncate(u32, import_records.len - 1);

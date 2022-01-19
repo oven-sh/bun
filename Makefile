@@ -304,7 +304,6 @@ boringssl: boringssl-build boringssl-copy
 
 libbacktrace:
 	cd $(BUN_DEPS_DIR)/libbacktrace && \
-	(make clean || echo "") && \
 	CFLAGS="$(CFLAGS)" CC=$(CC) ./configure --disable-shared --enable-static  --with-pic && \
 	make -j$(CPUS) && \
 	cp ./.libs/libbacktrace.a $(BUN_DEPS_OUT_DIR)/libbacktrace.a

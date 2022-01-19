@@ -570,18 +570,29 @@ release-bin-check: release-bin-check-version
 	@make -B check-glibc-version-dependency
 endif
 
+
+release-bin-push-bin: 
+	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_ZIP)
+	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_ZIP) --repo $(BUN_AUTO_UPDATER_REPO)
+
+
+ifeq ($(OS_NAME),darwin)
+release-bin-push-dsym:
+	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_DSYM)
+	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_DSYM) --repo $(BUN_AUTO_UPDATER_REPO)
+endif
+
+ifeq ($(OS_NAME),linux)
+release-bin-push-dsym:
+endif
+
+
+release-bin-push: release-bin-push-bin release-bin-push-dsym
 release-bin-without-push: test-all release-bin-check release-bin-generate release-bin-codesign 
 release-bin: release-bin-without-push release-bin-push
 
 release-bin-dir:
 	echo $(PACKAGE_DIR)
-
-
-release-bin-push: 
-	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_ZIP)
-	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_ZIP) --repo $(BUN_AUTO_UPDATER_REPO)
-	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_DSYM)
-	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_DSYM) --repo $(BUN_AUTO_UPDATER_REPO)
 
 dev-obj:
 	$(ZIG) build obj

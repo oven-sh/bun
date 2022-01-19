@@ -783,7 +783,7 @@ bun-relink: bun-relink-copy bun-link-lld-release bun-link-lld-release-dsym
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	$(CXX) -c -o $@ $< \
 		$(CLANG_FLAGS) $(PLATFORM_LINKER_FLAGS) \
-		-O1 \
+		-O3 \
 		-fvectorize \
 		-w -g
 

@@ -1,12 +1,12 @@
 import {
 __HMRClient as Bun
-} from "http://localhost:8080/__runtime.js";
+} from "http://localhost:8080/bun:runtime";
 import {
 __require as require
-} from "http://localhost:8080/__runtime.js";
+} from "http://localhost:8080/bun:runtime";
 import {
 __HMRModule as HMR
-} from "http://localhost:8080/__runtime.js";
+} from "http://localhost:8080/bun:runtime";
 import * as JSX from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
 import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
 var JSXClassic = require($bbcd215f);

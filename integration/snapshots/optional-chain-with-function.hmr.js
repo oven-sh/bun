@@ -1,9 +1,9 @@
 import {
 __HMRModule as HMR
-} from "http://localhost:8080/__runtime.js";
+} from "http://localhost:8080/bun:runtime";
 import {
 __HMRClient as Bun
-} from "http://localhost:8080/__runtime.js";
+} from "http://localhost:8080/bun:runtime";
 Bun.activate(false);
 
 var hmr = new HMR(3608848620, "optional-chain-with-function.js"), exports = hmr.exports;

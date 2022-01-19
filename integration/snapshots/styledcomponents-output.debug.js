@@ -1,6 +1,6 @@
 import {
 __require as require
-} from "http://localhost:8080/__runtime.js";
+} from "http://localhost:8080/bun:runtime";
 import * as JSX from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
 var jsx = require(JSX).jsxDEV;
 

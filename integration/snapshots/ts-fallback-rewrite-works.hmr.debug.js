@@ -1,9 +1,9 @@
 import {
 __HMRModule as HMR
-} from "http://localhost:8080/__runtime.js";
+} from "http://localhost:8080/bun:runtime";
 import {
 __HMRClient as Bun
-} from "http://localhost:8080/__runtime.js";
+} from "http://localhost:8080/bun:runtime";
 Bun.activate(true);
 
 var hmr = new HMR(421762902, "ts-fallback-rewrite-works.ts"), exports = hmr.exports;

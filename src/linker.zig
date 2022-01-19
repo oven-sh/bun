@@ -469,6 +469,7 @@ pub const Linker = struct {
                 .data = .{ .s_import = &require_part_import_statement },
                 .loc = logger.Loc.Empty,
             };
+
             result.ast.prepend_part = js_ast.Part{ .stmts = std.mem.span(&require_part_stmts) };
         }
     }

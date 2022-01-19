@@ -1452,6 +1452,27 @@ pub const JSValue = enum(i64) {
         return @intToEnum(JSValue, @intCast(i64, @ptrToInt(ptr)));
     }
 
+    pub fn to(this: JSValue, comptime T: type) T {
+        return switch (comptime T) {
+            u32 => toU32(this),
+            u16 => toU16(this),
+            c_uint => @intCast(c_uint, toU32(this)),
+            c_int => @intCast(c_int, toInt32(this)),
+
+            // TODO: BigUint64?
+            u64 => @as(u64, toU32(this)),
+
+            u8 => @truncate(u8, toU32(this)),
+            i16 => @truncate(i16, toInt32(this)),
+            i8 => @truncate(i8, toInt32(this)),
+            i32 => @truncate(i32, toInt32(this)),
+
+            // TODO: BigInt64
+            i64 => @as(i64, toInt32(this)),
+            else => @compileError("Not implemented yet"),
+        };
+    }
+
     pub fn jsType(
         this: JSValue,
     ) JSType {

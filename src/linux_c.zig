@@ -95,7 +95,10 @@ pub const SystemErrno = enum(u8) {
     ENOPROTOOPT = 92,
     EPROTONOSUPPORT = 93,
     ESOCKTNOSUPPORT = 94,
-    EOPNOTSUPP = 95,
+    /// For Linux, EOPNOTSUPP is the real value
+    /// but it's ~the same and is incompatible across operating systems
+    /// https://lists.gnu.org/archive/html/bug-glibc/2002-08/msg00017.html
+    ENOTSUP = 95,
     EPFNOSUPPORT = 96,
     EAFNOSUPPORT = 97,
     EADDRINUSE = 98,
@@ -139,7 +142,7 @@ pub const SystemErrno = enum(u8) {
 
     const LabelMap = std.EnumMap(SystemErrno, []const u8);
     pub const labels: LabelMap = brk: {
-        var map: LabelMap = LabelMap.initEmpty();
+        var map: LabelMap = LabelMap.initFull("");
 
         map.put(.EPERM, "Operation not permitted");
         map.put(.ENOENT, "No such file or directory");
@@ -233,7 +236,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.ENOPROTOOPT, "Protocol not available");
         map.put(.EPROTONOSUPPORT, "Protocol not supported");
         map.put(.ESOCKTNOSUPPORT, "Socket type not supported");
-        map.put(.EOPNOTSUPP, "Operation not supported on transport endpoint");
+        map.put(.ENOTSUP, "Operation not supported on transport endpoint");
         map.put(.EPFNOSUPPORT, "Protocol family not supported");
         map.put(.EAFNOSUPPORT, "Address family not supported by protocol");
         map.put(.EADDRINUSE, "Address already in use");

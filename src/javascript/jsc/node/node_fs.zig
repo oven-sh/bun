@@ -29,7 +29,7 @@ const FileSystem = @import("../../../fs.zig").FileSystem;
 const StringOrBuffer = JSC.Node.StringOrBuffer;
 const ArgumentsSlice = JSC.Node.ArgumentsSlice;
 const TimeLike = JSC.Node.TimeLike;
-const Mode = c_uint;
+const Mode = JSC.Node.Mode;
 
 const uid_t = std.os.uid_t;
 const gid_t = std.os.gid_t;
@@ -2423,7 +2423,7 @@ pub const NodeFS = struct {
 
     pub fn access(this: *NodeFS, args: Arguments.Access, comptime _: Flavor) Maybe(Return.Access) {
         var path = args.path.sliceZ(&this.sync_error_buf);
-        const rc = system.access(path, @enumToInt(args.mode));
+        const rc = Syscall.system.access(path, @enumToInt(args.mode));
         return Maybe(Return.Access).errnoSysP(rc, .access, path) orelse Maybe(Return.Access).success;
     }
 
@@ -2540,12 +2540,12 @@ pub const NodeFS = struct {
                     };
 
                     if (!os.S.ISREG(stat_.mode)) {
-                        return Maybe(Return.CopyFile){ .err = .{ .errno = @enumToInt(os.E.NOTSUP) } };
+                        return Maybe(Return.CopyFile){ .err = .{ .errno = @enumToInt(C.SystemErrno.ENOTSUP) } };
                     }
 
-                    var flags: Mode = std.os.O_CREAT | std.os.O_WRONLY | std.os.O_TRUNC;
-                    if (!args.mode.shouldOverwrite()) {
-                        flags |= std.os.O_EXCL;
+                    var flags: Mode = std.os.O.CREAT | std.os.O.WRONLY | std.os.O.TRUNC;
+                    if (args.mode.shouldntOverwrite()) {
+                        flags |= std.os.O.EXCL;
                     }
 
                     const dest_fd = switch (Syscall.open(dest, flags, flags)) {
@@ -2564,14 +2564,14 @@ pub const NodeFS = struct {
                         return Maybe(Return.CopyFile).todo;
                     }
 
-                    var size = stat_.size;
+                    var size = @intCast(usize, @maximum(stat_.size, 0));
                     while (size > 0) {
                         // Linux Kernel 5.3 or later
                         const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, size, 0);
                         if (ret.errnoSysP(written, .copy_file_range, dest)) |err| return err;
                         // wrote zero bytes means EOF
                         if (written == 0) break;
-                        size -= written;
+                        size -|= written;
                     }
 
                     return ret.success;
@@ -2824,7 +2824,7 @@ pub const NodeFS = struct {
         switch (comptime flavor) {
             .sync => {
                 const path = args.path.sliceZ(&this.sync_error_buf);
-                if (Maybe(Return.Mkdir).errnoSysP(system.mkdir(path, args.mode), .mkdir, path)) |err| {
+                if (Maybe(Return.Mkdir).errnoSysP(Syscall.system.mkdir(path, args.mode), .mkdir, path)) |err| {
                     return switch (err.getErrno()) {
                         .EXIST => Maybe(Return.Mkdir){ .result = "" },
                         else => .{ .err = err.err },
@@ -2856,7 +2856,7 @@ pub const NodeFS = struct {
 
                 // First, attempt to create the desired directory
                 // If that fails, then walk back up the path until we have a match
-                if (Option.errnoSys(system.mkdir(path, args.mode), .mkdir)) |option| {
+                if (Option.errnoSys(Syscall.system.mkdir(path, args.mode), .mkdir)) |option| {
                     switch (option.getErrno()) {
                         else => {
                             @memcpy(&this.sync_error_buf, path.ptr, len);
@@ -2884,7 +2884,7 @@ pub const NodeFS = struct {
                         working_mem[i] = 0;
                         var parent: [:0]u8 = working_mem[0..i :0];
 
-                        if (Option.errnoSysP(system.mkdir(parent, args.mode), .mkdir, parent)) |err| {
+                        if (Option.errnoSysP(Syscall.system.mkdir(parent, args.mode), .mkdir, parent)) |err| {
                             working_mem[i] = std.fs.path.sep;
                             switch (err.getErrno()) {
                                 .EXIST => {
@@ -2911,7 +2911,7 @@ pub const NodeFS = struct {
                         working_mem[i] = 0;
                         var parent: [:0]u8 = working_mem[0..i :0];
 
-                        if (Option.errnoSysP(system.mkdir(parent, args.mode), .mkdir, parent)) |err| {
+                        if (Option.errnoSysP(Syscall.system.mkdir(parent, args.mode), .mkdir, parent)) |err| {
                             working_mem[i] = std.fs.path.sep;
                             switch (err.getErrno()) {
                                 .EXIST => {
@@ -2928,7 +2928,7 @@ pub const NodeFS = struct {
 
                 // Our final directory will not have a trailing separator
                 // so we have to create it once again
-                if (Option.errnoSysP(system.mkdir(path, args.mode), .mkdir, working_mem[0..len])) |err| {
+                if (Option.errnoSysP(Syscall.system.mkdir(path, args.mode), .mkdir, working_mem[0..len])) |err| {
                     switch (err.getErrno()) {
                         // handle the race condition
                         .EXIST => {

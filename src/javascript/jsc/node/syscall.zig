@@ -1,7 +1,6 @@
 // This file is entirely based on Zig's std.os
 // The differences are in error handling
 const std = @import("std");
-const system = std.os.system;
 const os = std.os;
 const builtin = @import("builtin");
 
@@ -16,6 +15,9 @@ const fd_t = std.os.fd_t;
 const C = @import("../../../global.zig").C;
 const linux = os.linux;
 const Maybe = JSC.Node.Maybe;
+
+pub const system = if (Environment.isLinux) linux else darwin;
+const libc = std.os.system;
 
 pub const Tag = enum(u8) {
     TODO,
@@ -66,15 +68,12 @@ const PathString = @import("../../../global.zig").PathString;
 
 const mode_t = os.mode_t;
 
-const open_sym = if (builtin.os.tag == .linux and builtin.link_libc)
-    system.open64
-else
-    system.open;
+const open_sym = system.open;
 
 const fstat_sym = if (builtin.os.tag == .linux and builtin.link_libc)
-    system.fstat64
+    libc.fstat64
 else
-    system.fstat;
+    libc.fstat;
 
 const mem = std.mem;
 
@@ -94,13 +93,13 @@ pub fn fchmod(fd: JSC.Node.FileDescriptor, mode: JSC.Node.Mode) Maybe(void) {
 }
 
 pub fn chdir(destination: [:0]const u8) Maybe(void) {
-    const rc = system.chdir(destination);
+    const rc = libc.chdir(destination);
     return Maybe(void).errnoSys(rc, .chdir) orelse Maybe(void).success;
 }
 
 pub fn stat(path: [:0]const u8) Maybe(os.Stat) {
     var stat_ = mem.zeroes(os.Stat);
-    if (Maybe(os.Stat).errnoSys(system.stat(path, &stat_), .stat)) |err| return err;
+    if (Maybe(os.Stat).errnoSys(libc.stat(path, &stat_), .stat)) |err| return err;
     return Maybe(os.Stat){ .result = stat_ };
 }
 
@@ -110,17 +109,17 @@ pub fn lstat(path: [:0]const u8) Maybe(os.Stat) {
     return Maybe(os.Stat){ .result = stat_ };
 }
 
-pub fn fstat(fd: std.os.fd_t) Maybe(os.Stat) {
+pub fn fstat(fd: JSC.Node.FileDescriptor) Maybe(os.Stat) {
     var stat_ = mem.zeroes(os.Stat);
     if (Maybe(os.Stat).errnoSys(fstat_sym(fd, &stat_), .fstat)) |err| return err;
     return Maybe(os.Stat){ .result = stat_ };
 }
 
-pub fn open(file_path: [:0]const u8, flags: u32, perm: std.os.mode_t) Maybe(std.os.fd_t) {
+pub fn open(file_path: [:0]const u8, flags: JSC.Node.Mode, perm: JSC.Node.Mode) Maybe(JSC.Node.FileDescriptor) {
     while (true) {
         const rc = open_sym(file_path, flags | os.O.CLOEXEC, perm);
-        return switch (system.getErrno(rc)) {
-            .SUCCESS => .{ .result = rc },
+        return switch (libc.getErrno(rc)) {
+            .SUCCESS => .{ .result = @intCast(JSC.Node.FileDescriptor, rc) },
             .INTR => continue,
             else => |err| {
                 return Maybe(std.os.fd_t){
@@ -150,7 +149,7 @@ pub fn close(fd: std.os.fd_t) ?Syscall.Error {
     if (comptime Environment.isLinux) {
         return switch (linux.getErrno(linux.close(fd))) {
             .BADF => Syscall.Error{ .errno = @enumToInt(os.E.BADF), .syscall = .close },
-            else => void{},
+            else => null,
         };
     }
 
@@ -167,7 +166,7 @@ pub fn write(fd: os.fd_t, bytes: []const u8) Maybe(usize) {
     const adjusted_len = @minimum(max_count, bytes.len);
 
     while (true) {
-        const rc = system.write(fd, bytes.ptr, adjusted_len);
+        const rc = libc.write(fd, bytes.ptr, adjusted_len);
         if (Maybe(usize).errnoSys(rc, .write)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
@@ -178,9 +177,9 @@ pub fn write(fd: os.fd_t, bytes: []const u8) Maybe(usize) {
 }
 
 const pread_sym = if (builtin.os.tag == .linux and builtin.link_libc)
-    system.pread64
+    libc.pread64
 else
-    system.pread;
+    libc.pread;
 
 pub fn pread(fd: os.fd_t, buf: []u8, offset: i64) Maybe(usize) {
     const adjusted_len = @minimum(buf.len, max_count);
@@ -198,9 +197,9 @@ pub fn pread(fd: os.fd_t, buf: []u8, offset: i64) Maybe(usize) {
 }
 
 const pwrite_sym = if (builtin.os.tag == .linux and builtin.link_libc)
-    system.pwrite64
+    libc.pwrite64
 else
-    system.pwrite;
+    libc.pwrite;
 
 pub fn pwrite(fd: os.fd_t, bytes: []const u8, offset: i64) Maybe(usize) {
     const adjusted_len = @minimum(bytes.len, max_count);
@@ -222,7 +221,7 @@ pub fn pwrite(fd: os.fd_t, bytes: []const u8, offset: i64) Maybe(usize) {
 pub fn read(fd: os.fd_t, buf: []u8) Maybe(usize) {
     const adjusted_len = @minimum(buf.len, max_count);
     while (true) {
-        const rc = system.read(fd, buf.ptr, adjusted_len);
+        const rc = libc.read(fd, buf.ptr, adjusted_len);
         if (Maybe(usize).errnoSys(rc, .read)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
@@ -234,7 +233,7 @@ pub fn read(fd: os.fd_t, buf: []u8) Maybe(usize) {
 
 pub fn readlink(in: [:0]const u8, buf: []u8) Maybe(usize) {
     while (true) {
-        const rc = system.readlink(in, buf.ptr, buf.len);
+        const rc = libc.readlink(in, buf.ptr, buf.len);
 
         if (Maybe(usize).errnoSys(rc, .readlink)) |err| {
             if (err.getErrno() == .INTR) continue;
@@ -247,7 +246,7 @@ pub fn readlink(in: [:0]const u8, buf: []u8) Maybe(usize) {
 
 pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
     while (true) {
-        if (Maybe(void).errnoSys(system.rename(from, to), .rename)) |err| {
+        if (Maybe(void).errnoSys(libc.rename(from, to), .rename)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -269,7 +268,7 @@ pub fn chown(path: [:0]const u8, uid: os.uid_t, gid: os.gid_t) Maybe(void) {
 
 pub fn symlink(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
     while (true) {
-        if (Maybe(void).errnoSys(system.symlink(from, to), .symlink)) |err| {
+        if (Maybe(void).errnoSys(libc.symlink(from, to), .symlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -319,7 +318,7 @@ pub fn fcopyfile(fd_in: std.os.fd_t, fd_out: std.os.fd_t, flags: c_int) Maybe(vo
 
 pub fn unlink(from: [:0]const u8) Maybe(void) {
     while (true) {
-        if (Maybe(void).errno(system.unlink(from), .unlink)) |err| {
+        if (Maybe(void).errno(libc.unlink(from), .unlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -353,9 +352,9 @@ pub fn getFdPath(fd: fd_t, out_buffer: *[MAX_PATH_BYTES]u8) Maybe([]u8) {
         },
         .linux => {
             var procfs_buf: ["/proc/self/fd/-2147483648".len:0]u8 = undefined;
-            const proc_path = std.fmt.bufPrint(procfs_buf[0..], "/proc/self/fd/{d}\x00", .{fd}) catch unreachable;
+            const proc_path = std.fmt.bufPrintZ(procfs_buf[0..], "/proc/self/fd/{d}\x00", .{fd}) catch unreachable;
 
-            return switch (readlink(std.meta.assumeSentinel(proc_path.ptr, 0), out_buffer)) {
+            return switch (readlink(proc_path, out_buffer)) {
                 .err => |err| return .{ .err = err },
                 .result => |len| return .{ .result = out_buffer[0..len] },
             };

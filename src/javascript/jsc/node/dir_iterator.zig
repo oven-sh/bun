@@ -112,7 +112,7 @@ pub const Iterator = switch (builtin.os.tag) {
             start_over: while (true) {
                 if (self.index >= self.end_index) {
                     const rc = linux.getdents64(self.dir.fd, &self.buf, self.buf.len);
-                    if (Result.errno(rc, .getdents64)) |err| return err;
+                    if (Result.errnoSys(rc, .getdents64)) |err| return err;
                     if (rc == 0) return .{ .result = null };
                     self.index = 0;
                     self.end_index = rc;

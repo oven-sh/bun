@@ -19,7 +19,7 @@ const meta = _global.meta;
 
 /// Time in seconds. Not nanos!
 pub const TimeLike = c_int;
-pub const Mode = std.os.mode_t;
+pub const Mode = if (Environment.isLinux) u32 else std.os.mode_t;
 const heap_allocator = _global.default_allocator;
 pub fn DeclEnum(comptime T: type) type {
     const fieldInfos = std.meta.declarations(T);
@@ -464,7 +464,7 @@ pub fn timeLikeFromJS(ctx: JSC.C.JSContextRef, value_: JSC.JSValue, exception: J
 
 pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Mode {
     const mode_int = if (value.isNumber())
-        @truncate(Mode, value.toU32())
+        @truncate(Mode, value.to(Mode))
     else brk: {
         if (value.isUndefinedOrNull()) return null;
 
@@ -803,11 +803,21 @@ fn StatsLike(comptime name: string, comptime T: type) type {
                 .atime_ms = @truncate(T, @intCast(i64, if (atime.tv_nsec > 0) (@intCast(usize, atime.tv_nsec) / std.time.ns_per_ms) else 0)),
                 .mtime_ms = @truncate(T, @intCast(i64, if (mtime.tv_nsec > 0) (@intCast(usize, mtime.tv_nsec) / std.time.ns_per_ms) else 0)),
                 .ctime_ms = @truncate(T, @intCast(i64, if (ctime.tv_nsec > 0) (@intCast(usize, ctime.tv_nsec) / std.time.ns_per_ms) else 0)),
-                .birthtime_ms = @truncate(T, @intCast(i64, if (stat_.birthtimensec > 0) (@intCast(usize, stat_.birthtimensec) / std.time.ns_per_ms) else 0)),
                 .atime = @intToEnum(Date, @intCast(u64, @maximum(atime.tv_sec, 0))),
                 .mtime = @intToEnum(Date, @intCast(u64, @maximum(mtime.tv_sec, 0))),
                 .ctime = @intToEnum(Date, @intCast(u64, @maximum(ctime.tv_sec, 0))),
-                .birthtime = @intToEnum(Date, @intCast(u64, @maximum(stat_.birthtimesec, 0))),
+
+                // Linux doesn't include this info in stat
+                // maybe it does in statx, but do you really need birthtime? If you do please file an issue.
+                .birthtime_ms = if (Environment.isLinux)
+                    0
+                else
+                    @truncate(T, @intCast(i64, if (stat_.birthtimensec > 0) (@intCast(usize, stat_.birthtimensec) / std.time.ns_per_ms) else 0)),
+
+                .birthtime = if (Environment.isLinux)
+                    @intToEnum(Date, 0)
+                else
+                    @intToEnum(Date, @intCast(u64, @maximum(stat_.birthtimesec, 0))),
             };
         }
 

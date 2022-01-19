@@ -91,13 +91,12 @@ pub const UpgradeCheckerThread = struct {
 
         Output.Source.configureThread();
         NetworkThread.init() catch unreachable;
+
         defer {
             js_ast.Expr.Data.Store.deinit();
             js_ast.Stmt.Data.Store.deinit();
         }
-        var arena = std.heap.ArenaAllocator.init(default_allocator);
-        defer arena.deinit();
-        const version = (try UpgradeCommand.getLatestVersion(arena.allocator(), env_loader, undefined, undefined, true)) orelse return;
+        var version = (try UpgradeCommand.getLatestVersion(default_allocator, env_loader, undefined, undefined, true)) orelse return;
 
         if (!version.isCurrent()) {
             if (version.name()) |name| {
@@ -105,6 +104,8 @@ pub const UpgradeCheckerThread = struct {
                 Output.flush();
             }
         }
+
+        version.buf.deinit();
     }
 
     fn run(env_loader: *DotEnv.Loader) void {
@@ -118,7 +119,7 @@ pub const UpgradeCheckerThread = struct {
 
 pub const UpgradeCommand = struct {
     pub const timeout: u32 = 30000;
-    const default_github_headers = "Acceptapplication/vnd.github.v3+json";
+    const default_github_headers: string = "Acceptapplication/vnd.github.v3+json";
     var github_repository_url_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     var current_executable_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     var unzip_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
@@ -132,6 +133,12 @@ pub const UpgradeCommand = struct {
         comptime silent: bool,
     ) !?Version {
         var headers_buf: string = default_github_headers;
+        // gonna have to free memory myself like a goddamn caveman due to a thread safety issue with ArenaAllocator
+        defer {
+            if (comptime silent) {
+                if (headers_buf.ptr != default_github_headers.ptr) allocator.free(headers_buf);
+            }
+        }
 
         var header_entries: Headers.Entries = .{};
         const accept = Headers.Kv{
@@ -139,6 +146,7 @@ pub const UpgradeCommand = struct {
             .value = Api.StringPointer{ .offset = @intCast(u32, "Accept".len), .length = @intCast(u32, "application/vnd.github.v3+json".len) },
         };
         try header_entries.append(allocator, accept);
+        defer if (comptime silent) header_entries.deinit(allocator);
 
         // Incase they're using a GitHub proxy in e.g. China
         var github_api_domain: string = "api.github.com";
@@ -196,6 +204,7 @@ pub const UpgradeCommand = struct {
         }
 
         var log = logger.Log.init(allocator);
+        defer if (comptime silent) log.deinit();
         var source = logger.Source.initPathString("releases.json", metadata_body.list.items);
         initializeStore();
         var expr = ParseJSON(&source, &log, allocator) catch |err| {
@@ -325,8 +334,6 @@ pub const UpgradeCommand = struct {
             Output.flush();
             std.os.exit(0);
         }
-
-        version.buf.deinit();
 
         return null;
     }

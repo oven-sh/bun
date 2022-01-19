@@ -63,7 +63,7 @@ const CAllocator = struct {
             // multiple of the pointer size
             const eff_alignment = @maximum(alignment, @sizeOf(usize));
 
-            var aligned_ptr: ?*anyopaque = undefined;
+            var aligned_ptr: ?*anyopaque = null;
             if (c.posix_memalign(&aligned_ptr, eff_alignment, len) != 0)
                 return null;
 

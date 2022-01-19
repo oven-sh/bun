@@ -24,8 +24,10 @@ pub const MutableString = struct {
     }
 
     pub fn deinit(str: *MutableString) void {
-        str.list.expandToCapacity();
-        str.list.deinit(str.allocator);
+        if (str.list.capacity > 0) {
+            str.list.expandToCapacity();
+            str.list.deinit(str.allocator);
+        }
     }
 
     pub fn growIfNeeded(self: *MutableString, amount: usize) !void {

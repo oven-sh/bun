@@ -1263,7 +1263,7 @@ pub fn NewClass(
             if (comptime property_name_refs.len > 0) {
                 comptime var i: usize = 0;
                 if (!property_name_refs_set) {
-                    property_name_refs_set =true;
+                    property_name_refs_set = true;
                     inline while (i < property_name_refs.len) : (i += 1) {
                         property_name_refs[i] = js.JSStringCreateStatic(property_names[i].ptr, property_names[i].len);
                     }
@@ -1687,7 +1687,8 @@ pub const ArrayBuffer = struct {
         return ArrayBuffer{
             .byte_len = @truncate(u32, JSC.C.JSObjectGetTypedArrayByteLength(ctx, value.asObjectRef(), exception)),
             .offset = @truncate(u32, JSC.C.JSObjectGetTypedArrayByteOffset(ctx, value.asObjectRef(), exception)),
-            .ptr = @ptrCast([*]u8, JSC.C.JSObjectGetTypedArrayBytesPtr(ctx, value.asObjectRef(), exception).?),
+            .ptr = @ptrCast([*]u8, JSC.C.JSObjectGetArrayBufferBytesPtr(ctx, value.asObjectRef(), exception) orelse
+                JSC.C.JSObjectGetTypedArrayBytesPtr(ctx, value.asObjectRef(), exception).?),
             // TODO
             .typed_array_type = js.JSTypedArrayType.kJSTypedArrayTypeUint8Array,
             .len = @truncate(u32, JSC.C.JSObjectGetTypedArrayLength(ctx, value.asObjectRef(), exception)),
@@ -1697,7 +1698,8 @@ pub const ArrayBuffer = struct {
     pub fn fromArrayBuffer(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ArrayBuffer {
         var buffer = ArrayBuffer{
             .byte_len = @truncate(u32, JSC.C.JSObjectGetArrayBufferByteLength(ctx, value.asObjectRef(), exception)),
-            .ptr = @ptrCast([*]u8, JSC.C.JSObjectGetArrayBufferBytesPtr(ctx, value.asObjectRef(), exception).?),
+            .ptr = @ptrCast([*]u8, JSC.C.JSObjectGetArrayBufferBytesPtr(ctx, value.asObjectRef(), exception) orelse
+                JSC.C.JSObjectGetTypedArrayBytesPtr(ctx, value.asObjectRef(), exception).?),
             // TODO
             .typed_array_type = js.JSTypedArrayType.kJSTypedArrayTypeUint8Array,
             .len = 0,
@@ -1804,6 +1806,7 @@ const NodeFS = JSC.Node.NodeFS;
 const DirEnt = JSC.Node.DirEnt;
 const Stats = JSC.Node.Stats;
 const BigIntStats = JSC.Node.BigIntStats;
+const Transpiler = @import("./api/transpiler.zig");
 pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     ResolveError,
     BuildError,
@@ -1824,6 +1827,7 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     Stats,
     BigIntStats,
     DirEnt,
+    Transpiler,
 });
 
 pub inline fn GetJSPrivateData(comptime Type: type, ref: js.JSObjectRef) ?*Type {

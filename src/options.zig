@@ -24,6 +24,7 @@ const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
 const C = _global.C;
 const StoredFileDescriptorType = _global.StoredFileDescriptorType;
+const JSC = @import("./jsc.zig");
 
 const Analytics = @import("./analytics/analytics_thread.zig");
 
@@ -259,7 +260,6 @@ pub const ExternalModules = struct {
         "dns",
         "domain",
         "events",
-        "fs",
         "http",
         "http2",
         "https",
@@ -368,6 +368,43 @@ pub const Platform = enum {
     bun_macro,
     node,
 
+    pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Platform {
+        if (!value.jsType().isStringLike()) {
+            JSC.throwInvalidArguments("platform must be a string", .{}, global.ref(), exception);
+
+            return null;
+        }
+        var zig_str = JSC.ZigString.init("");
+        value.toZigString(&zig_str, global);
+
+        var slice = zig_str.slice();
+
+        const Eight = strings.ExactSizeMatcher(8);
+
+        return switch (Eight.match(slice)) {
+            Eight.case("deno"), Eight.case("browser") => Platform.browser,
+            Eight.case("bun") => Platform.bun,
+            Eight.case("macro") => Platform.bun_macro,
+            Eight.case("node") => Platform.node,
+            Eight.case("neutral") => Platform.neutral,
+            else => {
+                JSC.throwInvalidArguments("platform must be one of: deno, browser, bun, macro, node, neutral", .{}, global.ref(), exception);
+
+                return null;
+            },
+        };
+    }
+
+    pub fn toAPI(this: Platform) Api.Platform {
+        return switch (this) {
+            .node => .node,
+            .browser => .browser,
+            .bun => .bun,
+            .bun_macro => .bun_macro,
+            else => ._none,
+        };
+    }
+
     pub inline fn isServerSide(this: Platform) bool {
         return switch (this) {
             .bun_macro, .node, .bun => true,
@@ -461,6 +498,7 @@ pub const Platform = enum {
             .node => .node,
             .browser => .browser,
             .bun => .bun,
+            .bun_macro => .bun_macro,
             else => .browser,
         };
     }
@@ -584,6 +622,55 @@ pub const Loader = enum(u3) {
     css,
     file,
     json,
+    pub const Map = std.EnumArray(Loader, string);
+    pub const stdin_name: Map = brk: {
+        var map = Map.initFill("");
+        map.set(Loader.jsx, "input.jsx");
+        map.set(Loader.js, "input.js");
+        map.set(Loader.ts, "input.ts");
+        map.set(Loader.tsx, "input.tsx");
+        map.set(Loader.css, "input.css");
+        map.set(Loader.file, "input");
+        map.set(Loader.json, "input.json");
+        break :brk map;
+    };
+
+    pub inline fn stdinName(this: Loader) string {
+        return stdin_name.get(this);
+    }
+
+    pub fn fromJS(global: *JSC.JSGlobalObject, loader: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Loader {
+        if (loader.isUndefinedOrNull()) return null;
+
+        if (!loader.jsType().isStringLike()) {
+            JSC.throwInvalidArguments("loader must be a string", .{}, global.ref(), exception);
+            return null;
+        }
+
+        var zig_str = JSC.ZigString.init("");
+        loader.toZigString(&zig_str, global);
+        if (zig_str.len == 0) return null;
+
+        const LoaderMatcher = strings.ExactSizeMatcher(4);
+        var slice = zig_str.slice();
+        if (slice.len > 0 and slice[0] == '.') {
+            slice = slice[1..];
+        }
+
+        return switch (LoaderMatcher.matchLower(slice)) {
+            LoaderMatcher.case("js") => Loader.js,
+            LoaderMatcher.case("jsx") => Loader.jsx,
+            LoaderMatcher.case("ts") => Loader.ts,
+            LoaderMatcher.case("tsx") => Loader.tsx,
+            LoaderMatcher.case("css") => Loader.css,
+            LoaderMatcher.case("file") => Loader.file,
+            LoaderMatcher.case("json") => Loader.json,
+            else => {
+                JSC.throwInvalidArguments("invalid loader – must be js, jsx, tsx, ts, css, file, or json", .{}, global.ref(), exception);
+                return null;
+            },
+        };
+    }
 
     pub fn supportsClientEntryPoint(this: Loader) bool {
         return switch (this) {

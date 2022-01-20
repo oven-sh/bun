@@ -797,6 +797,9 @@ pub const Api = struct {
         /// bun
         bun,
 
+        /// bun_macro
+        bun_macro,
+
         _,
 
         pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {

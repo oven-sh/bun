@@ -77,6 +77,7 @@ const ZigGlobalObject = @import("../../jsc.zig").ZigGlobalObject;
 const VM = @import("../../jsc.zig").VM;
 const Config = @import("./config.zig");
 const URL = @import("../../query_string_map.zig").URL;
+const Transpiler = @import("./api/transpiler.zig");
 pub const GlobalClasses = [_]type{
     Request.Class,
     Response.Class,
@@ -746,8 +747,22 @@ pub const Bun = struct {
             .enableANSIColors = .{
                 .get = enableANSIColors,
             },
+            .Transpiler = .{
+                .get = getTranspilerConstructor,
+                .ts = d.ts{ .name = "Transpiler", .@"return" = "Transpiler.prototype" },
+            },
         },
     );
+
+    pub fn getTranspilerConstructor(
+        _: void,
+        ctx: js.JSContextRef,
+        _: js.JSValueRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        return js.JSObjectMake(ctx, Transpiler.TranspilerConstructor.get().?[0], null);
+    }
 
     // For testing the segfault handler
     pub fn __debug__doSegfault(
@@ -1702,7 +1717,7 @@ pub const VirtualMachine = struct {
     }
 
     const main_file_name: string = "bun:main";
-    threadlocal var errors_stack: [256]*anyopaque = undefined;
+    pub threadlocal var errors_stack: [256]*anyopaque = undefined;
     pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) void {
         var log = logger.Log.init(vm.bundler.allocator);
         const spec = specifier.slice();

@@ -12,7 +12,7 @@ const MutableString = _global.MutableString;
 const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
 const C = _global.C;
-
+const JSC = @import("./jsc.zig");
 const fs = @import("fs.zig");
 const unicode = std.unicode;
 
@@ -520,6 +520,33 @@ pub const Log = struct {
             .kind = .verbose,
             .data = rangeData(source, Range{ .loc = loc }, text),
         });
+    }
+
+    pub fn toJS(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, comptime fmt: string) JSC.JSValue {
+        const msgs: []const Msg = this.msgs.items;
+        const count = @intCast(u16, @minimum(msgs.len, JSC.VirtualMachine.errors_stack.len));
+        switch (count) {
+            0 => return JSC.JSValue.jsUndefined(),
+            1 => {
+                const msg = msgs[0];
+                return JSC.JSValue.fromRef(JSC.BuildError.create(global, allocator, msg));
+            },
+            else => {
+                for (msgs[0..count]) |msg, i| {
+                    switch (msg.metadata) {
+                        .build => {
+                            JSC.VirtualMachine.errors_stack[i] = JSC.BuildError.create(global, allocator, msg).?;
+                        },
+                        .resolve => {
+                            JSC.VirtualMachine.errors_stack[i] = JSC.ResolveError.create(global, allocator, msg, "").?;
+                        },
+                    }
+                }
+                const out = JSC.ZigString.init(fmt);
+                const agg = global.createAggregateError(JSC.VirtualMachine.errors_stack[0..count].ptr, count, &out);
+                return agg;
+            },
+        }
     }
 
     pub fn appendTo(self: *Log, other: *Log) !void {

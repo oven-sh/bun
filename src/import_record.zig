@@ -31,6 +31,23 @@ pub const ImportKind = enum(u8) {
 
     internal,
 
+    pub const Label = std.EnumArray(ImportKind, []const u8);
+    pub const all_labels: Label = brk: {
+        var labels = Label.initFill("internal");
+        labels.set(ImportKind.entry_point, "entry-point");
+        labels.set(ImportKind.stmt, "import-statement");
+        labels.set(ImportKind.require, "require-call");
+        labels.set(ImportKind.dynamic, "dynamic-import");
+        labels.set(ImportKind.require_resolve, "require-resolve");
+        labels.set(ImportKind.at, "import-rule");
+        labels.set(ImportKind.url, "url-token");
+        break :brk labels;
+    };
+
+    pub inline fn label(this: ImportKind) []const u8 {
+        return all_labels.get(this);
+    }
+
     pub inline fn isCommonJS(this: ImportKind) bool {
         return switch (this) {
             .require, .require_resolve => true,

@@ -534,17 +534,21 @@ const Platform = {
   1: 1,
   2: 2,
   3: 3,
+  4: 4,
   browser: 1,
   node: 2,
   bun: 3,
+  bun_macro: 4,
 };
 const PlatformKeys = {
   1: "browser",
   2: "node",
   3: "bun",
+  4: "bun_macro",
   browser: "browser",
   node: "node",
   bun: "bun",
+  bun_macro: "bun_macro",
 };
 const CSSInJSBehavior = {
   1: 1,

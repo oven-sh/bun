@@ -107,6 +107,22 @@ pub const ZigString = extern struct {
         };
     }
 
+    pub fn sortDesc(slice_: []ZigString) void {
+        std.sort.sort(ZigString, slice_, {}, cmpDesc);
+    }
+
+    pub fn cmpDesc(_: void, a: ZigString, b: ZigString) bool {
+        return strings.cmpStringsDesc(void{}, a.slice(), b.slice());
+    }
+
+    pub fn sortAsc(slice_: []ZigString) void {
+        std.sort.sort(ZigString, slice_, {}, cmpAsc);
+    }
+
+    pub fn cmpAsc(_: void, a: ZigString, b: ZigString) bool {
+        return strings.cmpStringsAsc(void{}, a.slice(), b.slice());
+    }
+
     pub fn init(slice_: []const u8) ZigString {
         return ZigString{ .ptr = slice_.ptr, .len = slice_.len };
     }
@@ -1446,6 +1462,13 @@ pub const JSValue = enum(i64) {
                 else => false,
             };
         }
+
+        pub inline fn isArray(this: JSType) bool {
+            return switch (this) {
+                .Array, .DerivedArray => true,
+                else => false,
+            };
+        }
     };
 
     pub inline fn cast(ptr: anytype) JSValue {
@@ -1735,10 +1758,13 @@ pub const JSValue = enum(i64) {
         return cppFn("getIfPropertyExistsImpl", .{ this, global, ptr, len });
     }
 
-    pub fn getIfPropertyExists(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
+    pub fn get(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
         const value = getIfPropertyExistsImpl(this, global, property.ptr, @intCast(u32, property.len));
         return if (@enumToInt(value) != 0) value else return null;
     }
+
+    /// Alias for getIfPropertyExists
+    pub const getIfPropertyExists = get;
 
     pub fn createTypeError(message: *const ZigString, code: *const ZigString, global: *JSGlobalObject) JSValue {
         return cppFn("createTypeError", .{ message, code, global });

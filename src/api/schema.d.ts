@@ -120,6 +120,7 @@ export enum Platform {
   browser = 1,
   node = 2,
   bun = 3,
+  bun_macro = 4,
 }
 export const PlatformKeys = {
   1: "browser",
@@ -128,6 +129,8 @@ export const PlatformKeys = {
   node: "node",
   3: "bun",
   bun: "bun",
+  4: "bun_macro",
+  bun_macro: "bun_macro",
 };
 export enum CSSInJSBehavior {
   facade = 1,

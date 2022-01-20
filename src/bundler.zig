@@ -237,7 +237,7 @@ pub const Bundler = struct {
         };
     }
 
-    pub fn configureLinker(bundler: *ThisBundler) void {
+    pub fn configureLinkerWithAutoJSX(bundler: *ThisBundler, auto_jsx: bool) void {
         bundler.linker = Linker.init(
             bundler.allocator,
             bundler.log,
@@ -248,15 +248,21 @@ pub const Bundler = struct {
             bundler.fs,
         );
 
-        // If we don't explicitly pass JSX, try to get it from the root tsconfig
-        if (bundler.options.transform_options.jsx == null) {
-            // Most of the time, this will already be cached
-            if (bundler.resolver.readDirInfo(bundler.fs.top_level_dir) catch null) |root_dir| {
-                if (root_dir.tsconfig_json) |tsconfig| {
-                    bundler.options.jsx = tsconfig.jsx;
+        if (auto_jsx) {
+            // If we don't explicitly pass JSX, try to get it from the root tsconfig
+            if (bundler.options.transform_options.jsx == null) {
+                // Most of the time, this will already be cached
+                if (bundler.resolver.readDirInfo(bundler.fs.top_level_dir) catch null) |root_dir| {
+                    if (root_dir.tsconfig_json) |tsconfig| {
+                        bundler.options.jsx = tsconfig.jsx;
+                    }
                 }
             }
         }
+    }
+
+    pub fn configureLinker(bundler: *ThisBundler) void {
+        bundler.configureLinkerWithAutoJSX(true);
     }
 
     pub fn runEnvLoader(this: *ThisBundler) !void {

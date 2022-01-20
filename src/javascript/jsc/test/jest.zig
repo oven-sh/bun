@@ -365,6 +365,47 @@ pub const Expect = struct {
         }
         return thisObject;
     }
+
+    pub fn toHaveLength(
+        this: *Expect,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        thisObject: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        if (arguments.len != 1) {
+            JSC.JSError(
+                getAllocator(ctx),
+                ".toHaveLength() takes 1 argument",
+                .{},
+                ctx,
+                exception,
+            );
+            return js.JSValueMakeUndefined(ctx);
+        }
+        this.scope.tests.items[this.test_id].counter.actual += 1;
+
+        const expected = JSC.JSValue.fromRef(arguments[0]).toU32();
+        const actual = JSC.JSValue.fromRef(this.value).getLengthOfArray(ctx.ptr());
+        if (expected != actual) {
+            JSC.JSError(
+                getAllocator(ctx),
+                "Expected length to equal {d} but received {d}\n  Expected: {d}\n    Actual: {d}\n",
+                .{
+                    expected,
+                    actual,
+                    expected,
+                    actual,
+                },
+                ctx,
+                exception,
+            );
+            return null;
+        }
+        return thisObject;
+    }
+
     pub const toHaveBeenCalledTimes = notImplementedFn;
     pub const toHaveBeenCalledWith = notImplementedFn;
     pub const toHaveBeenLastCalledWith = notImplementedFn;
@@ -373,7 +414,6 @@ pub const Expect = struct {
     pub const toHaveReturnedWith = notImplementedFn;
     pub const toHaveLastReturnedWith = notImplementedFn;
     pub const toHaveNthReturnedWith = notImplementedFn;
-    pub const toHaveLength = notImplementedFn;
     pub const toHaveProperty = notImplementedFn;
     pub const toBeCloseTo = notImplementedFn;
     pub const toBeGreaterThan = notImplementedFn;

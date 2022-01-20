@@ -109,6 +109,7 @@ smol Platform {
   browser = 1;
   node = 2;
   bun = 3;
+  bun_macro = 4;
 }
 
 smol CSSInJSBehavior {

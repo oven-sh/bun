@@ -448,6 +448,74 @@ pub const PackageJSON = struct {
         }
     }
 
+    pub fn parseMacrosJSON(
+        allocator: std.mem.Allocator,
+        macros: js_ast.Expr,
+        log: *logger.Log,
+        json_source: *const logger.Source,
+    ) MacroMap {
+        var macro_map = MacroMap{};
+        if (macros.data != .e_object) return macro_map;
+
+        const properties = macros.data.e_object.properties;
+
+        for (properties) |property| {
+            const key = property.key.?.asString(allocator) orelse continue;
+            if (!resolver.isPackagePath(key)) {
+                log.addRangeWarningFmt(
+                    json_source,
+                    json_source.rangeOfString(property.key.?.loc),
+                    allocator,
+                    "\"{s}\" is not a package path. \"macros\" remaps package paths to macros. Skipping.",
+                    .{key},
+                ) catch unreachable;
+                continue;
+            }
+
+            const value = property.value.?;
+            if (value.data != .e_object) {
+                log.addWarningFmt(
+                    json_source,
+                    value.loc,
+                    allocator,
+                    "Invalid macro remapping in \"{s}\": expected object where the keys are import names and the value is a string path to replace",
+                    .{key},
+                ) catch unreachable;
+                continue;
+            }
+
+            const remap_properties = value.data.e_object.properties;
+            if (remap_properties.len == 0) continue;
+
+            var map = MacroImportReplacementMap.init(allocator);
+            map.ensureUnusedCapacity(remap_properties.len) catch unreachable;
+            for (remap_properties) |remap| {
+                const import_name = remap.key.?.asString(allocator) orelse continue;
+                const remap_value = remap.value.?;
+                if (remap_value.data != .e_string or remap_value.data.e_string.utf8.len == 0) {
+                    log.addWarningFmt(
+                        json_source,
+                        remap_value.loc,
+                        allocator,
+                        "Invalid macro remapping for import \"{s}\": expected string to remap to. e.g. \"graphql\": \"bun-macro-relay\" ",
+                        .{import_name},
+                    ) catch unreachable;
+                    continue;
+                }
+
+                const remap_value_str = remap_value.data.e_string.utf8;
+
+                map.putAssumeCapacityNoClobber(import_name, remap_value_str);
+            }
+
+            if (map.count() > 0) {
+                macro_map.put(allocator, key, map) catch unreachable;
+            }
+        }
+
+        return macro_map;
+    }
+
     pub fn parse(
         comptime ResolverType: type,
         r: *ResolverType,
@@ -569,64 +637,7 @@ pub const PackageJSON = struct {
             }
 
             if (bun_json.expr.asProperty("macros")) |macros| {
-                if (macros.expr.data == .e_object) {
-                    const properties = macros.expr.data.e_object.properties;
-
-                    for (properties) |property| {
-                        const key = property.key.?.asString(r.allocator) orelse continue;
-                        if (!resolver.isPackagePath(key)) {
-                            r.log.addRangeWarningFmt(
-                                &json_source,
-                                json_source.rangeOfString(property.key.?.loc),
-                                r.allocator,
-                                "\"{s}\" is not a package path. \"macros\" remaps package paths to macros. Skipping.",
-                                .{key},
-                            ) catch unreachable;
-                            continue;
-                        }
-
-                        const value = property.value.?;
-                        if (value.data != .e_object) {
-                            r.log.addWarningFmt(
-                                &json_source,
-                                value.loc,
-                                r.allocator,
-                                "Invalid macro remapping in \"{s}\": expected object where the keys are import names and the value is a string path to replace",
-                                .{key},
-                            ) catch unreachable;
-                            continue;
-                        }
-
-                        const remap_properties = value.data.e_object.properties;
-                        if (remap_properties.len == 0) continue;
-
-                        var map = MacroImportReplacementMap.init(r.allocator);
-                        map.ensureUnusedCapacity(remap_properties.len) catch unreachable;
-                        for (remap_properties) |remap| {
-                            const import_name = remap.key.?.asString(r.allocator) orelse continue;
-                            const remap_value = remap.value.?;
-                            if (remap_value.data != .e_string or remap_value.data.e_string.utf8.len == 0) {
-                                r.log.addWarningFmt(
-                                    &json_source,
-                                    remap_value.loc,
-                                    r.allocator,
-                                    "Invalid macro remapping for import \"{s}\": expected string to remap to. e.g. \"graphql\": \"bun-macro-relay\" ",
-                                    .{import_name},
-                                ) catch unreachable;
-                                continue;
-                            }
-
-                            const remap_value_str = remap_value.data.e_string.utf8;
-
-                            map.putAssumeCapacityNoClobber(import_name, remap_value_str);
-                        }
-
-                        if (map.count() > 0) {
-                            package_json.macros.put(r.allocator, key, map) catch unreachable;
-                        }
-                    }
-                    // for (var i = 0; i < bundle_.expr.data.e_array.len; i++) {
-                }
+                package_json.macros = parseMacrosJSON(r.allocator, macros.expr, r.log, &json_source);
             }
         }
 

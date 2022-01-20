@@ -478,6 +478,9 @@ pub fn scan(
 }
 
 fn namedExportsToJS(global: *JSGlobalObject, named_exports: JSAst.Ast.NamedExports) JSC.JSValue {
+    if (named_exports.count() == 0)
+        return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArray(global.ref(), 0, null, null));
+
     var named_exports_iter = named_exports.iterator();
     var stack_fallback = std.heap.stackFallback(@sizeOf(JSC.ZigString) * 32, getAllocator(global.ref()));
     var allocator = stack_fallback.get();

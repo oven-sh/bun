@@ -1,4 +1,5 @@
 import { build, buildSync } from "esbuild";
+import { readFileSync } from "fs";
 const fixture = ["action", "default", "loader"];
 const ITERATIONS = parseInt(process.env.ITERATIONS || "1") || 1;
 
@@ -8,12 +9,16 @@ const opts = {
   platform: "neutral",
   write: false,
   logLevel: "silent",
-  entryPoints: ["remix-route.ts"],
+  stdin: {
+    contents: readFileSync("remix-route.ts", "utf8"),
+    loader: "ts",
+    sourcefile: "remix-route.js",
+  },
 };
 
 const getExports = ({ metafile }) => {
   for (let i = 0; i < fixture.length; i++) {
-    if (fixture[i] !== metafile.outputs["remix-route.js"].exports[i]) {
+    if (fixture[i] !== metafile.outputs["stdin.js"].exports[i]) {
       throw new Error("Mismatch");
     }
   }

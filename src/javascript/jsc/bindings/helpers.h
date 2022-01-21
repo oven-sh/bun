@@ -90,19 +90,11 @@ static const WTF::String toString(ZigString str) {
 }
 
 static const WTF::String toStringCopy(ZigString str) {
-  if (str.len == 0 || str.ptr == nullptr) { return WTF::String(); }
-
-  return !isTaggedUTF16Ptr(str.ptr) ? WTF::String(WTF::StringImpl::create(str.ptr, str.len))
-                                    : WTF::String(WTF::StringImpl::create(
-                                        reinterpret_cast<const UChar *>(str.ptr), str.len));
+  return toString(str).isolatedCopy();
 }
 
 static WTF::String toStringNotConst(ZigString str) {
-  if (str.len == 0 || str.ptr == nullptr) { return WTF::String(); }
-
-  return !isTaggedUTF16Ptr(str.ptr) ? WTF::String(WTF::StringImpl::create(str.ptr, str.len))
-                                    : WTF::String(WTF::StringImpl::create(
-                                        reinterpret_cast<const UChar *>(str.ptr), str.len));
+  return toString(str).isolatedCopy();
 }
 
 static const JSC::JSString *toJSString(ZigString str, JSC::JSGlobalObject *global) {

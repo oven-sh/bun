@@ -97,7 +97,7 @@ pub const ZigString = extern struct {
     }
 
     pub inline fn utf16Slice(this: *const ZigString) []align(1) const u16 {
-        return @ptrCast([*]align(1) const u16, this.ptr)[0..this.len];
+        return @ptrCast([*]align(1) const u16, untagged(this.ptr))[0..this.len];
     }
 
     pub fn fromStringPointer(ptr: StringPointer, buf: string, to: *ZigString) void {
@@ -163,8 +163,14 @@ pub const ZigString = extern struct {
 
     pub const Empty = ZigString{ .ptr = "", .len = 0 };
 
+    inline fn untagged(ptr: [*]const u8) [*]const u8 {
+        // this can be null ptr, so long as it's also a 0 length string
+        @setRuntimeSafety(false);
+        return @intToPtr([*]const u8, @truncate(u53, @ptrToInt(ptr)));
+    }
+
     pub fn slice(this: *const ZigString) []const u8 {
-        return this.ptr[0..@minimum(this.len, std.math.maxInt(u32))];
+        return untagged(this.ptr)[0..@minimum(this.len, std.math.maxInt(u32))];
     }
 
     pub fn sliceZBuf(this: ZigString, buf: *[std.fs.MAX_PATH_BYTES]u8) ![:0]const u8 {
@@ -172,7 +178,7 @@ pub const ZigString = extern struct {
     }
 
     pub inline fn full(this: *const ZigString) []const u8 {
-        return this.ptr[0..this.len];
+        return untagged(this.ptr)[0..this.len];
     }
 
     pub fn trimmedSlice(this: *const ZigString) []const u8 {

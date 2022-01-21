@@ -138,7 +138,7 @@ pub const Options = struct {
     // line_offset_tables: []LineOffsetTable
 
     pub fn unindent(self: *Options) void {
-        self.indent = std.math.max(self.indent, 1) - 1;
+        self.indent = @maximum(self.indent, 1) - 1;
     }
 };
 
@@ -4423,7 +4423,7 @@ pub fn printAst(
         js_ast.SymbolPool.release(symbol_pool);
     }
 
-    return @intCast(usize, std.math.max(printer.writer.written, 0));
+    return @intCast(usize, @maximum(printer.writer.written, 0));
 }
 
 pub fn printJSON(
@@ -4456,7 +4456,7 @@ pub fn printJSON(
     }
     try printer.writer.done();
 
-    return @intCast(usize, std.math.max(printer.writer.written, 0));
+    return @intCast(usize, @maximum(printer.writer.written, 0));
 }
 
 pub fn printCommonJS(
@@ -4507,7 +4507,7 @@ pub fn printCommonJS(
         js_ast.SymbolPool.release(symbol_pool);
     }
 
-    return @intCast(usize, std.math.max(printer.writer.written, 0));
+    return @intCast(usize, @maximum(printer.writer.written, 0));
 }
 
 pub const WriteResult = struct {
@@ -4591,7 +4591,7 @@ pub fn printCommonJSThreaded(
         @atomicStore(u32, end_off_ptr, result.end_off, .SeqCst);
     }
 
-    result.len = @intCast(usize, std.math.max(printer.writer.written, 0));
+    result.len = @intCast(usize, @maximum(printer.writer.written, 0));
     if (tree.symbol_pool) |symbol_pool| {
         js_ast.SymbolPool.release(symbol_pool);
     }

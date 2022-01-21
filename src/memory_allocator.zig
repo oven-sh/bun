@@ -57,48 +57,26 @@ const CAllocator = struct {
         return @intToPtr(*[*]u8, @ptrToInt(ptr) - @sizeOf(usize));
     }
 
+    const MI_MAX_ALIGN_SIZE = 16;
+    inline fn mi_malloc_satisfies_alignment(alignment: usize, size: usize) bool {
+        return (alignment == @sizeOf(*anyopaque) or (alignment == MI_MAX_ALIGN_SIZE and size > (MI_MAX_ALIGN_SIZE / 2)));
+    }
+
     fn alignedAlloc(len: usize, alignment: usize) ?[*]u8 {
-        if (supports_posix_memalign) {
-            // The posix_memalign only accepts alignment values that are a
-            // multiple of the pointer size
-            const eff_alignment = @maximum(alignment, @sizeOf(usize));
+        var ptr = if (mi_malloc_satisfies_alignment(alignment, len))
+            mimalloc.mi_malloc(len)
+        else
+            mimalloc.mi_malloc_aligned(len, alignment);
 
-            var aligned_ptr: ?*anyopaque = null;
-            if (c.posix_memalign(&aligned_ptr, eff_alignment, len) != 0)
-                return null;
-
-            return @ptrCast([*]u8, aligned_ptr);
-        }
-
-        // Thin wrapper around regular malloc, overallocate to account for
-        // alignment padding and store the orignal malloc()'ed pointer before
-        // the aligned address.
-        var unaligned_ptr = @ptrCast([*]u8, c.malloc(len + alignment - 1 + @sizeOf(usize)) orelse return null);
-        const unaligned_addr = @ptrToInt(unaligned_ptr);
-        const aligned_addr = mem.alignForward(unaligned_addr + @sizeOf(usize), alignment);
-        var aligned_ptr = unaligned_ptr + (aligned_addr - unaligned_addr);
-        getHeader(aligned_ptr).* = unaligned_ptr;
-
-        return aligned_ptr;
+        return @ptrCast([*]u8, ptr orelse null);
     }
 
     fn alignedFree(ptr: [*]u8) void {
-        if (supports_posix_memalign) {
-            return c.free(ptr);
-        }
-
-        const unaligned_ptr = getHeader(ptr).*;
-        c.free(unaligned_ptr);
+        return c.free(ptr);
     }
 
     fn alignedAllocSize(ptr: [*]u8) usize {
-        if (supports_posix_memalign) {
-            return CAllocator.malloc_size(ptr);
-        }
-
-        const unaligned_ptr = getHeader(ptr).*;
-        const delta = @ptrToInt(ptr) - @ptrToInt(unaligned_ptr);
-        return CAllocator.malloc_size(unaligned_ptr) - delta;
+        return CAllocator.malloc_size(ptr);
     }
 
     fn alloc(
@@ -116,15 +94,7 @@ const CAllocator = struct {
         if (len_align == 0) {
             return ptr[0..len];
         }
-        const full_len = init: {
-            if (CAllocator.supports_malloc_size) {
-                const s = alignedAllocSize(ptr);
-                assert(s >= len);
-                break :init s;
-            }
-            break :init len;
-        };
-        return ptr[0..mem.alignBackwardAnyAlign(full_len, len_align)];
+        return ptr[0..mem.alignBackwardAnyAlign(mimalloc.mi_usable_size(ptr), len_align)];
     }
 
     fn resize(
@@ -140,12 +110,12 @@ const CAllocator = struct {
         if (new_len <= buf.len) {
             return mem.alignAllocLen(buf.len, new_len, len_align);
         }
-        if (CAllocator.supports_malloc_size) {
-            const full_len = alignedAllocSize(buf.ptr);
-            if (new_len <= full_len) {
-                return mem.alignAllocLen(full_len, new_len, len_align);
-            }
+
+        const full_len = alignedAllocSize(buf.ptr);
+        if (new_len <= full_len) {
+            return mem.alignAllocLen(full_len, new_len, len_align);
         }
+
         return null;
     }
 
@@ -157,7 +127,7 @@ const CAllocator = struct {
     ) void {
         _ = buf_align;
         _ = return_address;
-        alignedFree(buf.ptr);
+        mimalloc.mi_free(buf.ptr);
     }
 };
 

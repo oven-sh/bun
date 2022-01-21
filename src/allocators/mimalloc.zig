@@ -46,21 +46,25 @@ pub extern fn mi_thread_done() void;
 pub extern fn mi_thread_stats_print_out(out: ?mi_output_fun, arg: ?*anyopaque) void;
 pub extern fn mi_process_info(elapsed_msecs: *usize, user_msecs: *usize, system_msecs: *usize, current_rss: *usize, peak_rss: *usize, current_commit: *usize, peak_commit: *usize, page_faults: *usize) void;
 pub extern fn mi_malloc_aligned(size: usize, alignment: usize) ?*anyopaque;
-pub extern fn mi_malloc_aligned_at(size: usize, alignment: usize, offset: usize) ?*anyopaque;
+pub extern fn mi_malloc_aligned_at(size: usize, alignment: usize, offset: usize) ?[*]u8;
 pub extern fn mi_zalloc_aligned(size: usize, alignment: usize) ?*anyopaque;
 pub extern fn mi_zalloc_aligned_at(size: usize, alignment: usize, offset: usize) ?*anyopaque;
 pub extern fn mi_calloc_aligned(count: usize, size: usize, alignment: usize) ?*anyopaque;
 pub extern fn mi_calloc_aligned_at(count: usize, size: usize, alignment: usize, offset: usize) ?*anyopaque;
 pub extern fn mi_realloc_aligned(p: ?*anyopaque, newsize: usize, alignment: usize) ?*anyopaque;
 pub extern fn mi_realloc_aligned_at(p: ?*anyopaque, newsize: usize, alignment: usize, offset: usize) ?*anyopaque;
-pub const struct_mi_heap_s = opaque {};
+pub const struct_mi_heap_s = opaque {
+    pub inline fn backing(_: anytype) *mi_heap_t {
+        return mi_heap_get_backing();
+    }
+};
 pub const mi_heap_t = struct_mi_heap_s;
 pub extern fn mi_heap_new() ?*mi_heap_t;
 pub extern fn mi_heap_delete(heap: ?*mi_heap_t) void;
 pub extern fn mi_heap_destroy(heap: ?*mi_heap_t) void;
 pub extern fn mi_heap_set_default(heap: ?*mi_heap_t) ?*mi_heap_t;
 pub extern fn mi_heap_get_default() ?*mi_heap_t;
-pub extern fn mi_heap_get_backing() ?*mi_heap_t;
+pub extern fn mi_heap_get_backing() *mi_heap_t;
 pub extern fn mi_heap_collect(heap: ?*mi_heap_t, force: bool) void;
 pub extern fn mi_heap_malloc(heap: ?*mi_heap_t, size: usize) ?*anyopaque;
 pub extern fn mi_heap_zalloc(heap: ?*mi_heap_t, size: usize) ?*anyopaque;

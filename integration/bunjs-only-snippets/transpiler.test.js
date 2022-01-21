@@ -42,9 +42,25 @@ describe("Bun.Transpiler", () => {
     it("reports all export names", () => {
       const { imports, exports } = transpiler.scan(code);
 
-      expect(exports[0]).toBe("loader");
-      expect(exports[1]).toBe("action");
-      expect(exports[2]).toBe("default");
+      expect(exports[0]).toBe("action");
+      expect(exports[2]).toBe("loader");
+      expect(exports[1]).toBe("default");
+
+      expect(exports).toHaveLength(3);
+    });
+  });
+
+  describe("transform", () => {
+    it("removes types", () => {
+      const out = transpiler.transform(code);
+      expect(out.includes("ActionFunction")).toBe(false);
+      expect(out.includes("LoaderFunction")).toBe(false);
+
+      const { exports } = transpiler.scan(out);
+
+      expect(exports[0]).toBe("action");
+      expect(exports[2]).toBe("loader");
+      expect(exports[1]).toBe("default");
       expect(exports).toHaveLength(3);
     });
   });

@@ -209,6 +209,16 @@ void JSC__JSValue__putRecord(JSC__JSValue objectValue, JSC__JSGlobalObject *glob
   scope.release();
 }
 
+JSC__JSInternalPromise *JSC__JSValue__asInternalPromise(JSC__JSValue JSValue0) {
+  JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+  return JSC::jsCast<JSC::JSInternalPromise *>(value);
+}
+JSC__JSValue JSC__JSValue__createInternalPromise(JSC__JSGlobalObject *globalObject) {
+  JSC::VM &vm = globalObject->vm();
+  return JSC::JSValue::encode(
+    JSC::JSValue(JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure())));
+}
+
 void JSC__JSValue__jsonStringify(JSC__JSValue JSValue0, JSC__JSGlobalObject *arg1, uint32_t arg2,
                                  ZigString *arg3) {
   JSC::JSValue value = JSC::JSValue::decode(JSValue0);
@@ -656,13 +666,20 @@ JSC__JSValue ZigString__to16BitValue(const ZigString *arg0, JSC__JSGlobalObject 
 }
 
 JSC__JSValue ZigString__toValueGC(const ZigString *arg0, JSC__JSGlobalObject *arg1) {
-  return JSC::JSValue::encode(
-    JSC::JSValue(JSC::jsMakeNontrivialString(arg1->vm(), Zig::toStringCopy(*arg0))));
+  return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(arg1->vm(), Zig::toStringCopy(*arg0))));
 }
 
 void JSC__JSValue__toZigString(JSC__JSValue JSValue0, ZigString *arg1, JSC__JSGlobalObject *arg2) {
   JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+
+  // if (!value.isString()) {
+  //   arg1->len = 0;
+  //   arg1->ptr = nullptr;
+  //   return;
+  // }
+
   auto str = value.toWTFString(arg2);
+
   if (str.is8Bit()) {
     arg1->ptr = str.characters8();
   } else {

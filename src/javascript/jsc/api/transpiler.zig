@@ -37,12 +37,14 @@ const Platform = options.Platform;
 const JSAst = @import("../../../js_ast.zig");
 const Transpiler = @This();
 const JSParser = @import("../../../js_parser.zig");
+const JSPrinter = @import("../../../js_printer.zig");
 const ScanPassResult = JSParser.ScanPassResult;
 
 bundler: Bundler.Bundler,
 arena: std.heap.ArenaAllocator,
 transpiler_options: TranspilerOptions,
 scan_pass_result: ScanPassResult,
+buffer_writer: ?JSPrinter.BufferWriter = null,
 
 pub const Class = NewClass(
     Transpiler,
@@ -53,6 +55,12 @@ pub const Class = NewClass(
         },
         .scan = .{
             .rfn = scan,
+        },
+        .transform = .{
+            .rfn = transform,
+        },
+        .transformSync = .{
+            .rfn = transformSync,
         },
         .finalize = finalize,
     },
@@ -85,6 +93,178 @@ const TranspilerOptions = struct {
     tsconfig_buf: []const u8 = "",
     macros_buf: []const u8 = "",
     log: logger.Log,
+    pending_tasks: u32 = 0,
+};
+
+// Mimalloc gets unstable if we try to move this to a different thread
+// threadlocal var transform_buffer: _global.MutableString = undefined;
+// threadlocal var transform_buffer_loaded: bool = false;
+
+// This is going to be hard to not leak
+pub const TransformTask = struct {
+    input_code: ZigString = ZigString.init(""),
+    protected_input_value: JSC.JSValue = @intToEnum(JSC.JSValue, 0),
+    output_code: ZigString = ZigString.init(""),
+    bundler: Bundler.Bundler = undefined,
+    log: logger.Log,
+    err: ?anyerror = null,
+    macro_map: MacroMap = MacroMap{},
+    tsconfig: ?*TSConfigJSON = null,
+    loader: Loader,
+    global: *JSGlobalObject,
+
+    pub const AsyncTransformTask = JSC.ConcurrentPromiseTask(TransformTask);
+    pub const AsyncTransformEventLoopTask = AsyncTransformTask.EventLoopTask;
+
+    pub fn create(transpiler: *Transpiler, protected_input_value: JSC.C.JSValueRef, globalThis: *JSGlobalObject, input_code: ZigString, loader: Loader) !*AsyncTransformTask {
+        var transform_task = try _global.default_allocator.create(TransformTask);
+        transform_task.* = .{
+            .input_code = input_code,
+            .protected_input_value = if (protected_input_value != null) JSC.JSValue.fromRef(protected_input_value) else @intToEnum(JSC.JSValue, 0),
+            .bundler = undefined,
+            .global = globalThis,
+            .macro_map = transpiler.transpiler_options.macro_map,
+            .tsconfig = transpiler.transpiler_options.tsconfig,
+            .log = logger.Log.init(_global.default_allocator),
+            .loader = loader,
+        };
+        transform_task.bundler = transpiler.bundler;
+        transform_task.bundler.linker.resolver = &transform_task.bundler.resolver;
+
+        transform_task.bundler.setLog(&transform_task.log);
+        transform_task.bundler.setAllocator(_global.default_allocator);
+        return try AsyncTransformTask.createOnJSThread(_global.default_allocator, globalThis, transform_task);
+    }
+
+    pub fn run(this: *TransformTask) void {
+        const name = this.loader.stdinName();
+        const source = logger.Source.initPathString(name, this.input_code.slice());
+        const Mimalloc = @import("../../../mimalloc_arena.zig");
+
+        JSAst.Stmt.Data.Store.create(_global.default_allocator);
+        JSAst.Expr.Data.Store.create(_global.default_allocator);
+
+        var arena = Mimalloc.Arena.init() catch unreachable;
+
+        const allocator = arena.allocator();
+
+        defer {
+            JSAst.Stmt.Data.Store.reset();
+            JSAst.Expr.Data.Store.reset();
+            arena.deinit();
+        }
+
+        this.bundler.setAllocator(allocator);
+        const jsx = if (this.tsconfig != null)
+            this.tsconfig.?.mergeJSX(this.bundler.options.jsx)
+        else
+            this.bundler.options.jsx;
+
+        const parse_options = Bundler.Bundler.ParseOptions{
+            .allocator = allocator,
+            .macro_remappings = this.macro_map,
+            .dirname_fd = 0,
+            .file_descriptor = null,
+            .loader = this.loader,
+            .jsx = jsx,
+            .path = source.path,
+            .virtual_source = &source,
+            // .allocator = this.
+        };
+
+        const parse_result = this.bundler.parse(parse_options, null) orelse {
+            this.err = error.ParseError;
+            return;
+        };
+        defer {
+            if (parse_result.ast.symbol_pool) |pool| {
+                pool.release();
+            }
+        }
+        if (parse_result.empty) {
+            this.output_code = ZigString.init("");
+            return;
+        }
+
+        var global_allocator = arena.backingAllocator();
+        var buffer_writer = JSPrinter.BufferWriter.init(global_allocator) catch |err| {
+            this.err = err;
+            return;
+        };
+        // defer {
+        //     transform_buffer = buffer_writer.buffer;
+        // }
+
+        var printer = JSPrinter.BufferPrinter.init(buffer_writer);
+        const printed = this.bundler.print(parse_result, @TypeOf(&printer), &printer, .esm_ascii) catch |err| {
+            this.err = err;
+            return;
+        };
+
+        if (printed > 0) {
+            buffer_writer = printer.ctx;
+            buffer_writer.buffer.list.expandToCapacity();
+
+            // This works around a mimalloc and/or Zig allocator bug
+            buffer_writer.buffer.list.items = buffer_writer.buffer.list.items[0..printed];
+            var output_code = JSC.ZigString.init(buffer_writer.buffer.toOwnedSlice());
+            output_code.mark();
+            this.output_code = output_code;
+        } else {
+            this.output_code = ZigString.init("");
+        }
+    }
+
+    pub fn then(this: *TransformTask, promise: *JSC.JSInternalPromise) void {
+        if (this.log.hasAny() or this.err != null) {
+            const error_value: JSValue = brk: {
+                if (this.err) |err| {
+                    if (!this.log.hasAny()) {
+                        break :brk JSC.JSValue.fromRef(JSC.BuildError.create(
+                            this.global,
+                            _global.default_allocator,
+                            logger.Msg{
+                                .data = logger.Data{ .text = std.mem.span(@errorName(err)) },
+                            },
+                        ));
+                    }
+                }
+
+                break :brk this.log.toJS(this.global, _global.default_allocator, "Transform failed");
+            };
+
+            promise.reject(this.global, error_value);
+            return;
+        }
+
+        finish(this.output_code, this.global, promise);
+
+        if (@enumToInt(this.protected_input_value) != 0) {
+            this.protected_input_value = @intToEnum(JSC.JSValue, 0);
+        }
+        this.deinit();
+    }
+
+    noinline fn finish(code: ZigString, global: *JSGlobalObject, promise: *JSC.JSInternalPromise) void {
+        promise.resolve(global, code.toValueGC(global));
+    }
+
+    pub fn deinit(this: *TransformTask) void {
+        var should_cleanup = false;
+        defer if (should_cleanup) _global.Global.mimalloc_cleanup(false);
+
+        this.log.deinit();
+        if (this.input_code.isGloballyAllocated()) {
+            this.input_code.deinitGlobal();
+        }
+
+        if (this.output_code.isGloballyAllocated()) {
+            should_cleanup = this.output_code.len > 512_000;
+            this.output_code.deinitGlobal();
+        }
+
+        _global.default_allocator.destroy(this);
+    }
 };
 
 fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allocator, args: *JSC.Node.ArgumentsSlice, exception: JSC.C.ExceptionRef) TranspilerOptions {
@@ -372,6 +552,9 @@ pub fn finalize(
     this.scan_pass_result.named_imports.deinit();
     this.scan_pass_result.import_records.deinit();
     this.scan_pass_result.used_symbols.deinit();
+    if (this.buffer_writer != null) {
+        this.buffer_writer.?.buffer.deinit();
+    }
 
     // _global.default_allocator.free(this.transpiler_options.tsconfig_buf);
     // _global.default_allocator.free(this.transpiler_options.macros_buf);
@@ -475,6 +658,140 @@ pub fn scan(
         parse_result.ast.named_exports,
     );
     return JSC.JSValue.createObject2(ctx.ptr(), &imports_label, &exports_label, named_imports_value, named_exports_value).asObjectRef();
+}
+
+// pub fn build(
+//     this: *Transpiler,
+//     ctx: js.JSContextRef,
+//     _: js.JSObjectRef,
+//     _: js.JSObjectRef,
+//     arguments: []const js.JSValueRef,
+//     exception: js.ExceptionRef,
+// ) JSC.C.JSObjectRef {}
+
+pub fn transform(
+    this: *Transpiler,
+    ctx: js.JSContextRef,
+    _: js.JSObjectRef,
+    _: js.JSObjectRef,
+    arguments: []const js.JSValueRef,
+    exception: js.ExceptionRef,
+) JSC.C.JSObjectRef {
+    var args = JSC.Node.ArgumentsSlice.init(@ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);
+    defer args.arena.deinit();
+    const code_arg = args.next() orelse {
+        JSC.throwInvalidArguments("Expected a string or Uint8Array", .{}, ctx, exception);
+        return null;
+    };
+
+    const code_holder = JSC.Node.StringOrBuffer.fromJS(ctx.ptr(), code_arg, exception) orelse {
+        if (exception.* == null) JSC.throwInvalidArguments("Expected a string or Uint8Array", .{}, ctx, exception);
+        return null;
+    };
+
+    const code = code_holder.slice();
+    args.eat();
+    const loader: ?Loader = brk: {
+        if (args.next()) |arg| {
+            args.eat();
+            break :brk Loader.fromJS(ctx.ptr(), arg, exception);
+        }
+
+        break :brk null;
+    };
+
+    if (exception.* != null) return null;
+    if (code_holder == .string) {
+        JSC.C.JSValueProtect(ctx, arguments[0]);
+    }
+
+    var task = TransformTask.create(this, if (code_holder == .string) arguments[0] else null, ctx.ptr(), ZigString.init(code), loader orelse this.transpiler_options.default_loader) catch return null;
+    task.schedule();
+    return task.promise.asObjectRef();
+}
+
+pub fn transformSync(
+    this: *Transpiler,
+    ctx: js.JSContextRef,
+    _: js.JSObjectRef,
+    _: js.JSObjectRef,
+    arguments: []const js.JSValueRef,
+    exception: js.ExceptionRef,
+) JSC.C.JSObjectRef {
+    var args = JSC.Node.ArgumentsSlice.init(@ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);
+    defer args.arena.deinit();
+    const code_arg = args.next() orelse {
+        JSC.throwInvalidArguments("Expected a string or Uint8Array", .{}, ctx, exception);
+        return null;
+    };
+
+    const code_holder = JSC.Node.StringOrBuffer.fromJS(ctx.ptr(), code_arg, exception) orelse {
+        if (exception.* == null) JSC.throwInvalidArguments("Expected a string or Uint8Array", .{}, ctx, exception);
+        return null;
+    };
+
+    const code = code_holder.slice();
+    args.eat();
+    const loader: ?Loader = brk: {
+        if (args.next()) |arg| {
+            args.eat();
+            break :brk Loader.fromJS(ctx.ptr(), arg, exception);
+        }
+
+        break :brk null;
+    };
+
+    if (exception.* != null) return null;
+
+    defer {
+        JSAst.Stmt.Data.Store.reset();
+        JSAst.Expr.Data.Store.reset();
+    }
+
+    const parse_result = getParseResult(this, args.arena.allocator(), code, loader) orelse {
+        if ((this.bundler.log.warnings + this.bundler.log.errors) > 0) {
+            var out_exception = this.bundler.log.toJS(ctx.ptr(), getAllocator(ctx), "Parse error");
+            exception.* = out_exception.asObjectRef();
+            return null;
+        }
+
+        JSC.throwInvalidArguments("Failed to parse", .{}, ctx, exception);
+        return null;
+    };
+    defer {
+        if (parse_result.ast.symbol_pool) |symbols| {
+            symbols.release();
+        }
+    }
+
+    if ((this.bundler.log.warnings + this.bundler.log.errors) > 0) {
+        var out_exception = this.bundler.log.toJS(ctx.ptr(), getAllocator(ctx), "Parse error");
+        exception.* = out_exception.asObjectRef();
+        return null;
+    }
+    if (this.buffer_writer == null) {
+        this.buffer_writer = JSPrinter.BufferWriter.init(_global.default_allocator) catch {
+            JSC.throwInvalidArguments("Failed to create BufferWriter", .{}, ctx, exception);
+            return null;
+        };
+        this.buffer_writer.?.buffer.growIfNeeded(code.len) catch unreachable;
+        this.buffer_writer.?.buffer.list.expandToCapacity();
+    }
+
+    this.buffer_writer.?.reset();
+    var printer = JSPrinter.BufferPrinter.init(this.buffer_writer.?);
+    const printed = this.bundler.print(parse_result, @TypeOf(printer), printer, .esm_ascii) catch |err| {
+        JSC.JSError(_global.default_allocator, "Failed to print code: {s}", .{@errorName(err)}, ctx, exception);
+        return null;
+    };
+
+    // TODO: benchmark if pooling this way is faster or moving is faster
+    this.buffer_writer = printer.ctx;
+    this.buffer_writer.?.buffer.list.expandToCapacity();
+    var out = JSC.ZigString.init(this.buffer_writer.?.buffer.list.items[0..printed]);
+    out.mark();
+
+    return out.toValueGC(ctx.ptr()).asObjectRef();
 }
 
 fn namedExportsToJS(global: *JSGlobalObject, named_exports: JSAst.Ast.NamedExports) JSC.JSValue {

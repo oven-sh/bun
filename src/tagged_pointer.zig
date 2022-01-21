@@ -52,30 +52,54 @@ pub const TaggedPointer = packed struct {
 
 pub fn TaggedPointerUnion(comptime Types: anytype) type {
     const TagType: type = tag_break: {
-        var enumFields: [Types.len]std.builtin.TypeInfo.EnumField = undefined;
-        var decls = [_]std.builtin.TypeInfo.Declaration{};
+        if (std.meta.trait.isIndexable(@TypeOf(Types))) {
+            var enumFields: [Types.len]std.builtin.TypeInfo.EnumField = undefined;
+            var decls = [_]std.builtin.TypeInfo.Declaration{};
 
-        inline for (Types) |field, i| {
-            enumFields[i] = .{
-                .name = @typeName(field),
-                .value = 1024 - i,
-            };
+            inline for (Types) |field, i| {
+                enumFields[i] = .{
+                    .name = @typeName(field),
+                    .value = 1024 - i,
+                };
+            }
+
+            break :tag_break @Type(.{
+                .Enum = .{
+                    .layout = .Auto,
+                    .tag_type = TagSize,
+                    .fields = &enumFields,
+                    .decls = &decls,
+                    .is_exhaustive = false,
+                },
+            });
+        } else {
+            const Fields: []const std.builtin.TypeInfo.StructField = std.meta.fields(@TypeOf(Types));
+            var enumFields: [Fields.len]std.builtin.TypeInfo.EnumField = undefined;
+            var decls = [_]std.builtin.TypeInfo.Declaration{};
+
+            inline for (Fields) |field, i| {
+                enumFields[i] = .{
+                    .name = @typeName(field.default_value.?),
+                    .value = 1024 - i,
+                };
+            }
+
+            break :tag_break @Type(.{
+                .Enum = .{
+                    .layout = .Auto,
+                    .tag_type = TagSize,
+                    .fields = &enumFields,
+                    .decls = &decls,
+                    .is_exhaustive = false,
+                },
+            });
         }
-
-        break :tag_break @Type(.{
-            .Enum = .{
-                .layout = .Auto,
-                .tag_type = TagSize,
-                .fields = &enumFields,
-                .decls = &decls,
-                .is_exhaustive = false,
-            },
-        });
     };
 
     return struct {
         pub const Tag = TagType;
         repr: TaggedPointer,
+
         const This = @This();
         fn assert_type(comptime Type: type) void {
             if (!comptime @hasField(Tag, @typeName(Type))) {

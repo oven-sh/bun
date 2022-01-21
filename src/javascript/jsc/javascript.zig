@@ -93,6 +93,7 @@ pub const GlobalClasses = [_]type{
     // The last item in this array becomes "process.env"
     Bun.EnvironmentVariables.Class,
 };
+
 const Blob = @import("../../blob.zig");
 pub const Buffer = MarkedArrayBuffer;
 const Lock = @import("../../lock.zig").Lock;
@@ -1004,9 +1005,68 @@ const bun_file_import_path = "/node_modules.server.bun";
 
 const FetchTasklet = Fetch.FetchTasklet;
 const TaggedPointerUnion = @import("../../tagged_pointer.zig").TaggedPointerUnion;
+const WorkPool = @import("../../work_pool.zig");
+pub fn ConcurrentPromiseTask(comptime Context: type) type {
+    return struct {
+        const This = @This();
+        ctx: *Context,
+        task: WorkPool.Task = .{ .callback = runFromThreadPool },
+        event_loop: *VirtualMachine.EventLoop,
+        allocator: std.mem.Allocator,
+        promise: JSValue,
+
+        pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
+            var this = try allocator.create(This);
+            this.* = .{
+                .event_loop = VirtualMachine.vm.event_loop,
+                .ctx = value,
+                .allocator = allocator,
+                .promise = JSValue.createInternalPromise(globalThis),
+            };
+            js.JSValueProtect(globalThis.ref(), this.promise.asObjectRef());
+            return this;
+        }
+
+        pub fn runFromThreadPool(task: *WorkPool.Task) void {
+            var this = @fieldParentPtr(This, "task", task);
+            Context.run(this.ctx);
+            this.onFinish();
+        }
+
+        pub fn runFromJS(this: This) void {
+            var promise_value = this.promise;
+            var promise = promise_value.asInternalPromise() orelse {
+                if (comptime @hasDecl(Context, "deinit")) {
+                    @call(.{}, Context.deinit, .{this.ctx});
+                }
+                return;
+            };
+
+            var ctx = this.ctx;
+
+            js.JSValueUnprotect(VirtualMachine.vm.global.ref(), promise_value.asObjectRef());
+            ctx.then(promise);
+        }
+
+        pub fn schedule(this: *This) void {
+            WorkPool.schedule(&this.task);
+        }
+
+        pub fn onFinish(this: *This) void {
+            this.event_loop.enqueueTaskConcurrent(Task.init(this));
+        }
+
+        pub fn deinit(this: *This) void {
+            this.allocator.destroy(this);
+        }
+    };
+}
+const AsyncTransformTask = @import("./api/transpiler.zig").TransformTask.AsyncTransformTask;
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
     Microtask,
+    AsyncTransformTask,
+
     // TimeoutTasklet,
 });
 
@@ -1080,6 +1140,12 @@ pub const VirtualMachine = struct {
                         fetch_task.onDone();
                         finished += 1;
                     },
+                    @field(Task.Tag, @typeName(AsyncTransformTask)) => {
+                        var transform_task: *AsyncTransformTask = task.get(AsyncTransformTask).?;
+                        transform_task.*.runFromJS();
+                        transform_task.deinit();
+                        finished += 1;
+                    },
                     else => unreachable,
                 }
             }
@@ -1095,13 +1161,18 @@ pub const VirtualMachine = struct {
             if (this.ready_tasks_count.load(.Monotonic) > 0) {
                 this.concurrent_lock.lock();
                 defer this.concurrent_lock.unlock();
-                var add: u32 = 0;
+                const add: u32 = @truncate(u32, this.concurrent_tasks.readableLength());
 
                 // TODO: optimzie
-                this.tasks.ensureUnusedCapacity(this.concurrent_tasks.readableLength()) catch unreachable;
-                while (this.concurrent_tasks.readItem()) |task| {
-                    this.tasks.writeItemAssumeCapacity(task);
+                this.tasks.ensureUnusedCapacity(add) catch unreachable;
+
+                {
+                    @fence(.SeqCst);
+                    while (this.concurrent_tasks.readItem()) |task| {
+                        this.tasks.writeItemAssumeCapacity(task);
+                    }
                 }
+
                 _ = this.pending_tasks_count.fetchAdd(add, .Monotonic);
                 _ = this.ready_tasks_count.fetchSub(add, .Monotonic);
             }

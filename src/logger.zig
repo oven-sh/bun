@@ -485,6 +485,10 @@ pub const Log = struct {
     msgs: ArrayList(Msg),
     level: Level = if (Environment.isDebug) Level.info else Level.warn,
 
+    pub fn hasAny(this: *const Log) bool {
+        return (this.warnings + this.errors) > 0;
+    }
+
     pub fn toAPI(this: *const Log, allocator: std.mem.Allocator) !Api.Log {
         var warnings: u32 = 0;
         var errors: u32 = 0;

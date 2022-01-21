@@ -1,0 +1,12 @@
+{
+  "name": "snippets",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "dependencies": {
+    "@babel/core": "^7.16.10",
+    "@babel/preset-react": "^7.16.7",
+    "@swc/core": "^1.2.133",
+    "esbuild": "^0.14.12"
+  }
+}

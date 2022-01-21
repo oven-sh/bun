@@ -52,7 +52,11 @@ describe("Bun.Transpiler", () => {
 
   describe("transform", () => {
     it("removes types", () => {
-      const out = transpiler.transform(code);
+      expect(code.includes("ActionFunction")).toBe(true);
+      expect(code.includes("LoaderFunction")).toBe(true);
+
+      const out = transpiler.transformSync(code);
+
       expect(out.includes("ActionFunction")).toBe(false);
       expect(out.includes("LoaderFunction")).toBe(false);
 

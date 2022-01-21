@@ -238,31 +238,22 @@ pub const Response = struct {
                     switch (this.body.value) {
                         .Unconsumed => {
                             if (this.body.ptr) |_ptr| {
-                                break :brk js.JSObjectMakeTypedArrayWithBytesNoCopy(
-                                    ctx,
-                                    js.JSTypedArrayType.kJSTypedArrayTypeUint8Array,
-                                    _ptr,
-                                    this.body.len,
-                                    null,
-                                    null,
-                                    exception,
-                                );
+                                break :brk JSC.MarkedArrayBuffer.fromBytes(_ptr[0..this.body.len], default_allocator, .ArrayBuffer).toJSObjectRef(ctx, exception);
                             }
-
                             break :brk js.JSObjectMakeTypedArray(
                                 ctx,
-                                js.JSTypedArrayType.kJSTypedArrayTypeUint8Array,
+                                js.JSTypedArrayType.kJSTypedArrayTypeArrayBuffer,
                                 0,
                                 exception,
                             );
                         },
                         .Empty => {
-                            break :brk js.JSObjectMakeTypedArray(ctx, js.JSTypedArrayType.kJSTypedArrayTypeUint8Array, 0, exception);
+                            break :brk js.JSObjectMakeTypedArray(ctx, js.JSTypedArrayType.kJSTypedArrayTypeArrayBuffer, 0, exception);
                         },
                         .String => |str| {
                             break :brk js.JSObjectMakeTypedArrayWithBytesNoCopy(
                                 ctx,
-                                js.JSTypedArrayType.kJSTypedArrayTypeUint8Array,
+                                js.JSTypedArrayType.kJSTypedArrayTypeArrayBuffer,
                                 @intToPtr([*]u8, @ptrToInt(str.ptr)),
                                 str.len,
                                 null,
@@ -273,7 +264,7 @@ pub const Response = struct {
                         .ArrayBuffer => |buffer| {
                             break :brk js.JSObjectMakeTypedArrayWithBytesNoCopy(
                                 ctx,
-                                buffer.typed_array_type,
+                                js.JSTypedArrayType.kJSTypedArrayTypeArrayBuffer,
                                 buffer.ptr,
                                 buffer.byte_len,
                                 null,
@@ -1439,9 +1430,12 @@ pub const Body = struct {
         exception: js.ExceptionRef,
     ) Body {
         var body = Body{ .init = Init{ .headers = null, .status_code = 200 }, .value = .{ .Empty = 0 } };
-
-        switch (js.JSValueGetType(ctx, body_ref)) {
-            .kJSTypeString => {
+        const value = JSC.JSValue.fromRef(body_ref);
+        switch (value.jsType()) {
+            JSC.JSValue.JSType.String,
+            JSC.JSValue.JSType.StringObject,
+            JSC.JSValue.JSType.DerivedStringObject,
+            => {
                 var allocator = getAllocator(ctx);
 
                 if (comptime has_init) {
@@ -1451,68 +1445,50 @@ pub const Body = struct {
                         }
                     } else |_| {}
                 }
+                var zig_str = JSC.ZigString.init("");
+                value.toZigString(&zig_str, ctx.ptr());
 
-                var wtf_string = JSValue.fromRef(body_ref).toWTFString(ctx.ptr());
-
-                if (wtf_string.isEmpty()) {
-                    body.value = .{ .String = "" };
-                    return body;
-                }
-
-                if (!wtf_string.is8Bit()) {
-                    var js_string = js.JSValueToStringCopy(ctx, body_ref, exception);
-                    defer js.JSStringRelease(js_string);
-                    body.ptr_allocator = default_allocator;
-                    const len = js.JSStringGetLength(js_string);
-                    var body_string = default_allocator.alloc(u8, len + 1) catch unreachable;
-                    body.ptr = body_string.ptr;
-                    body.len = body_string.len;
-                    body.value = .{ .String = body_string.ptr[0..js.JSStringGetUTF8CString(js_string, body_string.ptr, body_string.len)] };
-                    return body;
-                }
-
-                var slice = wtf_string.characters8()[0..wtf_string.length()];
-
-                if (slice.len == 0) {
+                if (zig_str.len == 0) {
                     body.value = .{ .String = "" };
                     return body;
                 }
 
                 body.value = Value{
-                    .String = slice,
+                    .String = std.fmt.allocPrint(default_allocator, "{}", .{zig_str}) catch unreachable,
                 };
                 // body.ptr = body.
                 // body.len = body.value.String.len;str.characters8()[0..len] };
 
                 return body;
             },
-            .kJSTypeObject => {
-                const typed_array = js.JSValueGetTypedArrayType(ctx, body_ref, exception);
-                switch (typed_array) {
-                    js.JSTypedArrayType.kJSTypedArrayTypeNone => {},
-                    else => {
-                        const buffer = ArrayBuffer{
-                            .ptr = @ptrCast([*]u8, js.JSObjectGetTypedArrayBytesPtr(ctx, body_ref.?, exception).?),
-                            .offset = @truncate(u32, js.JSObjectGetTypedArrayByteOffset(ctx, body_ref.?, exception)),
-                            .len = @truncate(u32, js.JSObjectGetTypedArrayLength(ctx, body_ref.?, exception)),
-                            .byte_len = @truncate(u32, js.JSObjectGetTypedArrayLength(ctx, body_ref.?, exception)),
-                            .typed_array_type = typed_array,
-                        };
-                        var allocator = getAllocator(ctx);
 
-                        if (comptime has_init) {
-                            if (Init.init(allocator, ctx, init_ref.?)) |maybeInit| {
-                                if (maybeInit) |init_| {
-                                    body.init = init_;
-                                }
-                            } else |_| {}
+            JSC.JSValue.JSType.ArrayBuffer,
+            JSC.JSValue.JSType.Int8Array,
+            JSC.JSValue.JSType.Uint8Array,
+            JSC.JSValue.JSType.Uint8ClampedArray,
+            JSC.JSValue.JSType.Int16Array,
+            JSC.JSValue.JSType.Uint16Array,
+            JSC.JSValue.JSType.Int32Array,
+            JSC.JSValue.JSType.Uint32Array,
+            JSC.JSValue.JSType.Float32Array,
+            JSC.JSValue.JSType.Float64Array,
+            JSC.JSValue.JSType.BigInt64Array,
+            JSC.JSValue.JSType.BigUint64Array,
+            JSC.JSValue.JSType.DataView,
+            => {
+                var allocator = getAllocator(ctx);
+
+                if (comptime has_init) {
+                    if (Init.init(allocator, ctx, init_ref.?)) |maybeInit| {
+                        if (maybeInit) |init_| {
+                            body.init = init_;
                         }
-                        body.value = Value{ .ArrayBuffer = buffer };
-                        body.ptr = buffer.ptr[buffer.offset..buffer.byte_len].ptr;
-                        body.len = buffer.ptr[buffer.offset..buffer.byte_len].len;
-                        return body;
-                    },
+                    } else |_| {}
                 }
+                body.value = Value{ .ArrayBuffer = value.asArrayBuffer(ctx.ptr()).? };
+                body.ptr = body.value.ArrayBuffer.ptr[body.value.ArrayBuffer.offset..body.value.ArrayBuffer.byte_len].ptr;
+                body.len = body.value.ArrayBuffer.ptr[body.value.ArrayBuffer.offset..body.value.ArrayBuffer.byte_len].len;
+                return body;
             },
             else => {},
         }

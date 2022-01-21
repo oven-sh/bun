@@ -58,3 +58,4 @@ const JSClassRef = bindings.C.JSClassRef;
 pub const JSC__CatchScope = bindings.CatchScope;
 pub const Bun__Readable = bindings.NodeReadableStream;
 pub const Bun__Writable = bindings.NodeWritableStream;
+pub const Bun__ArrayBuffer = bindings.ArrayBuffer;

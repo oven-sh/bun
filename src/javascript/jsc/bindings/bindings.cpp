@@ -14,6 +14,7 @@
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/JSArrayInlines.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSCallbackObject.h>
@@ -539,6 +540,41 @@ JSC__JSValue JSC__JSValue__fromEntries(JSC__JSGlobalObject *globalObject, ZigStr
   }
 
   return JSC::JSValue::encode(object);
+}
+
+bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject *arg1,
+                                  Bun__ArrayBuffer *arg2) {
+  JSC::VM &vm = arg1->vm();
+
+  JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+  if (!value.isObject()) { return false; }
+
+  JSC::JSObject *object = value.getObject();
+
+  if (JSC::JSArrayBufferView *typedArray =
+        JSC::jsDynamicCast<JSC::JSArrayBufferView *>(vm, object)) {
+    if (JSC::ArrayBuffer *buffer = typedArray->possiblySharedBuffer()) {
+      buffer->pinAndLock();
+      arg2->ptr = reinterpret_cast<char *>(buffer->data());
+      arg2->len = typedArray->length();
+      arg2->byte_len = buffer->byteLength();
+      arg2->offset = typedArray->byteOffset();
+      arg2->cell_type = typedArray->type();
+      return true;
+    }
+  }
+
+  if (JSC::ArrayBuffer *buffer = JSC::toPossiblySharedArrayBuffer(vm, value)) {
+    buffer->pinAndLock();
+    arg2->ptr = reinterpret_cast<char *>(buffer->data());
+    arg2->len = buffer->byteLength();
+    arg2->byte_len = buffer->byteLength();
+    arg2->offset = 0;
+    arg2->cell_type = 40;
+    return true;
+  }
+
+  return false;
 }
 JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject *globalObject, ZigString *arg1,
                                              size_t arg2, bool clone) {

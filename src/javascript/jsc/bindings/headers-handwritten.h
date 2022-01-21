@@ -165,6 +165,14 @@ typedef struct {
   bool emit_close;
 } Bun__Writable;
 
+typedef struct {
+  char *ptr;
+  uint32_t offset;
+  uint32_t len;
+  uint32_t byte_len;
+  uint8_t cell_type;
+} Bun__ArrayBuffer;
+
 #ifdef __cplusplus
 
 extern "C" ZigErrorCode Zig_ErrorCodeParserError;

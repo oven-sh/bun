@@ -58,6 +58,7 @@ const JSClassRef = bindings.C.JSClassRef;
 pub const JSC__CatchScope = bindings.CatchScope;
 pub const Bun__Readable = bindings.NodeReadableStream;
 pub const Bun__Writable = bindings.NodeWritableStream;
+pub const Bun__ArrayBuffer = bindings.ArrayBuffer;
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
 pub const ptrdiff_t = c_long;
@@ -270,6 +271,7 @@ pub extern fn WTF__String__isEmpty(arg0: [*c]WTF__String) bool;
 pub extern fn WTF__String__isExternal(arg0: [*c]WTF__String) bool;
 pub extern fn WTF__String__isStatic(arg0: [*c]WTF__String) bool;
 pub extern fn WTF__String__length(arg0: [*c]WTF__String) usize;
+pub extern fn JSC__JSValue__asArrayBuffer_(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]Bun__ArrayBuffer) bool;
 pub extern fn JSC__JSValue__asCell(JSValue0: JSC__JSValue) [*c]JSC__JSCell;
 pub extern fn JSC__JSValue__asNumber(JSValue0: JSC__JSValue) f64;
 pub extern fn JSC__JSValue__asObject(JSValue0: JSC__JSValue) bJSC__JSObject;

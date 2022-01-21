@@ -431,7 +431,7 @@ pub const Bun = struct {
         marked_array_buffer.* = MarkedArrayBuffer.fromBytes(
             contents_buf[0..contents_len],
             VirtualMachine.vm.allocator,
-            js.JSTypedArrayType.kJSTypedArrayTypeUint8Array,
+            .Uint8Array,
         );
 
         return marked_array_buffer.toJSObjectRef(ctx, exception);

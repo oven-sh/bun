@@ -1665,49 +1665,43 @@ pub fn getAllocator(_: js.JSContextRef) std.mem.Allocator {
 
 pub const JSStringList = std.ArrayList(js.JSStringRef);
 
-pub const ArrayBuffer = struct {
+pub const ArrayBuffer = extern struct {
     ptr: [*]u8 = undefined,
     offset: u32,
-    // for the array type,
     len: u32,
-
     byte_len: u32,
+    typed_array_type: JSC.JSValue.JSType,
 
-    typed_array_type: js.JSTypedArrayType,
-
-    encoding: JSC.Node.Encoding = JSC.Node.Encoding.utf8,
-
+    pub const name = "Bun__ArrayBuffer";
     pub const Stream = std.io.FixedBufferStream([]u8);
 
     pub inline fn stream(this: ArrayBuffer) Stream {
         return Stream{ .pos = 0, .buf = this.slice() };
     }
 
-    pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ArrayBuffer {
-        return ArrayBuffer{
-            .byte_len = @truncate(u32, JSC.C.JSObjectGetTypedArrayByteLength(ctx, value.asObjectRef(), exception)),
-            .offset = @truncate(u32, JSC.C.JSObjectGetTypedArrayByteOffset(ctx, value.asObjectRef(), exception)),
-            .ptr = @ptrCast([*]u8, JSC.C.JSObjectGetArrayBufferBytesPtr(ctx, value.asObjectRef(), exception) orelse
-                JSC.C.JSObjectGetTypedArrayBytesPtr(ctx, value.asObjectRef(), exception).?),
-            // TODO
-            .typed_array_type = js.JSTypedArrayType.kJSTypedArrayTypeUint8Array,
-            .len = @truncate(u32, JSC.C.JSObjectGetTypedArrayLength(ctx, value.asObjectRef(), exception)),
-        };
+    pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue, _: JSC.C.ExceptionRef) ArrayBuffer {
+        var out = std.mem.zeroes(ArrayBuffer);
+        std.debug.assert(value.asArrayBuffer_(ctx.ptr(), &out));
+        return out;
     }
 
-    pub fn fromArrayBuffer(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ArrayBuffer {
-        var buffer = ArrayBuffer{
-            .byte_len = @truncate(u32, JSC.C.JSObjectGetArrayBufferByteLength(ctx, value.asObjectRef(), exception)),
-            .ptr = @ptrCast([*]u8, JSC.C.JSObjectGetArrayBufferBytesPtr(ctx, value.asObjectRef(), exception) orelse
-                JSC.C.JSObjectGetTypedArrayBytesPtr(ctx, value.asObjectRef(), exception).?),
-            // TODO
-            .typed_array_type = js.JSTypedArrayType.kJSTypedArrayTypeUint8Array,
-            .len = 0,
-            .offset = 0,
-        };
-        buffer.len = buffer.byte_len;
-        return buffer;
+    pub fn fromBytes(bytes: []u8, typed_array_type: JSC.JSValue.JSType) ArrayBuffer {
+        return ArrayBuffer{ .offset = 0, .len = @intCast(u32, bytes.len), .byte_len = @intCast(u32, bytes.len), .typed_array_type = typed_array_type, .ptr = bytes.ptr };
     }
+
+    pub fn toJS(this: ArrayBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.JSValue {
+        return JSC.JSValue.fromRef(JSC.C.JSObjectMakeTypedArrayWithBytesNoCopy(
+            ctx,
+            this.typed_array_type.toC(),
+            this.ptr,
+            this.byte_len,
+            MarkedArrayBuffer_deallocator,
+            &_global.default_allocator,
+            exception,
+        ));
+    }
+
+    pub const fromArrayBuffer = fromTypedArray;
 
     pub inline fn slice(this: *const @This()) []u8 {
         return this.ptr[this.offset .. this.offset + this.byte_len];
@@ -1739,7 +1733,7 @@ pub const MarkedArrayBuffer = struct {
 
     pub fn fromString(str: []const u8, allocator: std.mem.Allocator) !MarkedArrayBuffer {
         var buf = try allocator.dupe(u8, str);
-        return MarkedArrayBuffer.fromBytes(buf, allocator, js.JSTypedArrayType.kJSTypedArrayTypeUint8Array);
+        return MarkedArrayBuffer.fromBytes(buf, allocator, JSC.JSValue.JSType.Uint8Array);
     }
 
     pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?MarkedArrayBuffer {
@@ -1750,9 +1744,9 @@ pub const MarkedArrayBuffer = struct {
         };
     }
 
-    pub fn fromBytes(bytes: []u8, allocator: std.mem.Allocator, typed_array_type: js.JSTypedArrayType) MarkedArrayBuffer {
+    pub fn fromBytes(bytes: []u8, allocator: std.mem.Allocator, typed_array_type: JSC.JSValue.JSType) MarkedArrayBuffer {
         return MarkedArrayBuffer{
-            .buffer = ArrayBuffer{ .offset = 0, .len = @intCast(u32, bytes.len), .byte_len = @intCast(u32, bytes.len), .typed_array_type = typed_array_type, .ptr = bytes.ptr },
+            .buffer = ArrayBuffer.fromBytes(bytes, typed_array_type),
             .allocator = allocator,
         };
     }
@@ -1764,6 +1758,7 @@ pub const MarkedArrayBuffer = struct {
     pub fn destroy(this: *MarkedArrayBuffer) void {
         const content = this.*;
         if (this.allocator) |allocator| {
+            this.allocator = null;
             allocator.free(content.buffer.slice());
             allocator.destroy(this);
         }
@@ -1776,8 +1771,17 @@ pub const MarkedArrayBuffer = struct {
         return container;
     }
 
-    pub fn toJSObjectRef(this: *const MarkedArrayBuffer, ctx: js.JSContextRef, exception: js.ExceptionRef) js.JSObjectRef {
-        return js.JSObjectMakeTypedArrayWithBytesNoCopy(ctx, this.buffer.typed_array_type, this.buffer.ptr, this.buffer.byte_len, MarkedArrayBuffer_deallocator, @intToPtr([*]u8, @ptrToInt(this)), exception);
+    pub fn toJSObjectRef(this: MarkedArrayBuffer, ctx: js.JSContextRef, exception: js.ExceptionRef) js.JSObjectRef {
+        return js.JSObjectMakeTypedArrayWithBytesNoCopy(
+            ctx,
+            this.buffer.typed_array_type.toC(),
+            this.buffer.ptr,
+
+            this.buffer.byte_len,
+            MarkedArrayBuffer_deallocator,
+            this.buffer.ptr,
+            exception,
+        );
     }
 
     pub const toJS = toJSObjectRef;

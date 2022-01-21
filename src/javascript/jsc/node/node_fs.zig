@@ -3320,7 +3320,7 @@ pub const NodeFS = struct {
                 return switch (args.encoding) {
                     .buffer => .{
                         .result = .{
-                            .buffer = Buffer.fromBytes(buf.items, _global.default_allocator, JSC.C.JSTypedArrayType.kJSTypedArrayTypeUint8Array),
+                            .buffer = Buffer.fromBytes(buf.items, _global.default_allocator, .Uint8Array),
                         },
                     },
                     else => .{

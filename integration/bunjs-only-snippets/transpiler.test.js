@@ -85,19 +85,27 @@ describe("Bun.Transpiler", () => {
       expect(out.includes("keepSecondArgument")).toBe(false);
     });
 
-    it("sync supports macros remap", () => {
-      const out = transpiler.transformSync(`
-        import {createElement, bacon} from 'react';
+    const importLines = [
+      "import {createElement, bacon} from 'react';",
+      "import {bacon, createElement} from 'react';",
+    ];
+    describe("sync supports macros remap", () => {
+      for (let importLine of importLines) {
+        it(importLine, () => {
+          const out = transpiler.transformSync(`
+        ${importLine}  
         
         export default bacon("Test failed", "Test passed");
         export function hi() { createElement("hi"); }
       `);
 
-      expect(out.includes("Test failed")).toBe(false);
-      expect(out.includes("Test passed")).toBe(true);
+          expect(out.includes("Test failed")).toBe(false);
+          expect(out.includes("Test passed")).toBe(true);
 
-      expect(out.includes("bacon")).toBe(false);
-      expect(out.includes("createElement")).toBe(true);
+          expect(out.includes("bacon")).toBe(false);
+          expect(out.includes("createElement")).toBe(true);
+        });
+      }
     });
 
     it("macro remap removes import statement if its the only used one", () => {

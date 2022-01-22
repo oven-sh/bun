@@ -6247,6 +6247,44 @@ pub fn NewParser(
                     if (stmt.items.len > 0) {
                         var i: usize = 0;
                         var list = std.ArrayListUnmanaged(js_ast.ClauseItem){ .items = stmt.items };
+
+                        // I do not like two passes here. This works around a bug
+                        // where when the final import item of a remapped macro
+                        // is _not_ a macro we end up removing the Symbol's
+                        // namespace_alias...for some reason The specific issue
+                        // might be a pointer aliasing bug, might be a zig bug,
+                        // or might be undefined behavior but it's really
+                        // difficult to determine it only happens in ReleaseFast
+                        // mode – not in ReleaseSafe or Debug. so instead of
+                        // fixing it, we do an extra pass over import items
+                        // which have a macro remap that contain multiple items
+                        // and we just move any macro imports to the end of the
+                        // list This shouldn't have a meanigful impact on perf
+                        // because the number of imports will typically be small
+                        // like 2 it's an edgecase where it would be more than
+                        // that nobody uses this feature currently anyway except
+                        // for lattice
+                        if (macro_remap) |remap| {
+                            if (list.items.len > 1) {
+                                const Sorter = struct {
+                                    remap_content: js_ast.Macro.MacroRemapEntry,
+                                    pub fn isLessThan(this: @This(), lhs: js_ast.ClauseItem, rhs: js_ast.ClauseItem) bool {
+                                        const has_left = this.remap_content.contains(lhs.alias);
+                                        const has_right = this.remap_content.contains(rhs.alias);
+
+                                        // put the macro imports at the end of the list
+                                        if (has_left != has_right) {
+                                            return has_right;
+                                        }
+
+                                        // we don't care if its asc or desc, just has to be something deterministic
+                                        return strings.cmpStringsAsc(void{}, lhs.alias, rhs.alias);
+                                    }
+                                };
+                                std.sort.insertionSort(js_ast.ClauseItem, list.items, Sorter{ .remap_content = remap }, Sorter.isLessThan);
+                            }
+                        }
+
                         while (i < list.items.len) {
                             var item: *js_ast.ClauseItem = &list.items[i];
                             const name = p.loadNameFromRef(item.name.ref orelse unreachable);

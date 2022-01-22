@@ -443,7 +443,7 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
         macros: {
             if (macros.isUndefinedOrNull()) break :macros;
             const kind = macros.jsType();
-            const is_object = kind == JSC.JSValue.JSType.Object;
+            const is_object = kind.isObject();
             if (!(kind.isStringLike() or is_object)) {
                 JSC.throwInvalidArguments("macro must be an object", .{}, ctx, exception);
                 return transpiler;

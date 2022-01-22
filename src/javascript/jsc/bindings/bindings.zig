@@ -1439,6 +1439,13 @@ pub const JSValue = enum(i64) {
         MaxJS = 0b11111111,
         _,
 
+        pub fn isObject(this: JSType) bool {
+            return switch (this) {
+                .Object, .FinalObject => true,
+                else => false,
+            };
+        }
+
         pub fn toC(this: JSType) C_API.JSTypedArrayType {
             return switch (this) {
                 .Int8Array => .kJSTypedArrayTypeInt8Array,

@@ -4398,7 +4398,9 @@ pub fn printAst(
         opts,
         linker,
     );
-
+    defer {
+        imported_module_ids_list = printer.imported_module_ids;
+    }
     if (tree.prepend_part) |part| {
         for (part.stmts) |stmt| {
             try printer.printStmt(stmt);
@@ -4480,6 +4482,9 @@ pub fn printCommonJS(
         opts,
         linker,
     );
+    defer {
+        imported_module_ids_list = printer.imported_module_ids;
+    }
 
     if (tree.prepend_part) |part| {
         for (part.stmts) |stmt| {
@@ -4543,6 +4548,9 @@ pub fn printCommonJSThreaded(
         linker,
     );
 
+    defer {
+        imported_module_ids_list = printer.imported_module_ids;
+    }
     if (tree.prepend_part) |part| {
         for (part.stmts) |stmt| {
             try printer.printStmt(stmt);

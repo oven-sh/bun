@@ -2087,7 +2087,7 @@ pub const VirtualMachine = struct {
                 var build_error = private_data_ptr.as(BuildError);
                 if (!build_error.logged) {
                     var writer = Output.errorWriter();
-                    build_error.msg.formatWriter(@TypeOf(writer), writer, allow_ansi_color) catch {};
+                    build_error.msg.writeFormat(writer, allow_ansi_color) catch {};
                     writer.writeAll("\n") catch {};
                     build_error.logged = true;
                 }
@@ -2104,7 +2104,7 @@ pub const VirtualMachine = struct {
                 var resolve_error = private_data_ptr.as(ResolveError);
                 if (!resolve_error.logged) {
                     var writer = Output.errorWriter();
-                    resolve_error.msg.formatWriter(@TypeOf(writer), writer, allow_ansi_color) catch {};
+                    resolve_error.msg.writeFormat(writer, allow_ansi_color) catch {};
                     resolve_error.logged = true;
                 }
 

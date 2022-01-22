@@ -1326,12 +1326,12 @@ pub const ZigConsoleClient = struct {
                         switch (priv_data.tag()) {
                             .BuildError => {
                                 const build_error = priv_data.as(JS.BuildError);
-                                build_error.msg.formatWriter(Writer, writer_, enable_ansi_colors) catch {};
+                                build_error.msg.writeFormat(writer_, enable_ansi_colors) catch {};
                                 return;
                             },
                             .ResolveError => {
                                 const resolve_error = priv_data.as(JS.ResolveError);
-                                resolve_error.msg.formatWriter(Writer, writer_, enable_ansi_colors) catch {};
+                                resolve_error.msg.writeFormat(writer_, enable_ansi_colors) catch {};
                                 return;
                             },
                             else => {},

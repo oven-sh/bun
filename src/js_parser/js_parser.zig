@@ -325,7 +325,7 @@ pub const ImportScanner = struct {
                 .s_import => |st| {
                     var record: *ImportRecord = &p.import_records.items[st.import_record_index];
 
-                    if (strings.eqlComptime(record.path.namespace, "macro")) {
+                    if (record.path.isMacro()) {
                         record.is_unused = true;
                         record.path.is_disabled = true;
                         continue;

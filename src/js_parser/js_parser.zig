@@ -6204,50 +6204,11 @@ pub fn NewParser(
 
                     // Link the default item to the namespace
                     if (stmt.default_name) |*name_loc| {
-                        const name = p.loadNameFromRef(name_loc.ref orelse unreachable);
-                        const ref = try p.declareSymbol(.import, name_loc.loc, name);
-                        try p.is_import_item.put(p.allocator, ref, .{});
-                        name_loc.ref = ref;
-                        if (comptime ParsePassSymbolUsageType != void) {
-                            if (!is_macro) {
-                                p.parse_pass_symbol_uses.put(name, .{
-                                    .ref = ref,
-                                    .import_record_index = stmt.import_record_index,
-                                }) catch unreachable;
-                            }
-                        }
-
-                        if (is_macro) {
-                            try p.macro.refs.put(ref, stmt.import_record_index);
-                        }
-
-                        if (macro_remap) |remap| {
-                            if (remap.get("default")) |remapped_path| {
-                                const new_import_id = p.addImportRecord(.stmt, path.loc, remapped_path);
-                                try p.macro.refs.put(ref, new_import_id);
-                                stmt.default_name = null;
-                                p.import_records.items[new_import_id].path.namespace = js_ast.Macro.namespace;
-                                if (comptime only_scan_imports_and_do_not_visit) {
-                                    p.import_records.items[new_import_id].is_internal = true;
-                                    p.import_records.items[new_import_id].path.is_disabled = true;
-                                }
-                                remap_count += 1;
-                            }
-                        }
-
-                        item_refs.putAssumeCapacity(name, name_loc.*);
-                    }
-
-                    if (stmt.items.len > 0) {
-                        for (stmt.items) |*item| {
-                            const name = p.loadNameFromRef(item.name.ref orelse unreachable);
-
-                            const ref = try p.declareSymbol(.import, item.name.loc, name);
-                            p.checkForNonBMPCodePoint(item.alias_loc, item.alias);
+                        outer: {
+                            const name = p.loadNameFromRef(name_loc.ref orelse unreachable);
+                            const ref = try p.declareSymbol(.import, name_loc.loc, name);
                             try p.is_import_item.put(p.allocator, ref, .{});
-
-                            item.name.ref = ref;
-                            item_refs.putAssumeCapacity(item.alias, LocRef{ .loc = item.name.loc, .ref = ref });
+                            name_loc.ref = ref;
 
                             if (comptime ParsePassSymbolUsageType != void) {
                                 if (!is_macro) {
@@ -6258,8 +6219,45 @@ pub fn NewParser(
                                 }
                             }
 
+                            if (macro_remap) |remap| {
+                                if (remap.get("default")) |remapped_path| {
+                                    const new_import_id = p.addImportRecord(.stmt, path.loc, remapped_path);
+                                    try p.macro.refs.put(ref, new_import_id);
+                                    stmt.default_name = null;
+                                    p.import_records.items[new_import_id].path.namespace = js_ast.Macro.namespace;
+                                    if (comptime only_scan_imports_and_do_not_visit) {
+                                        p.import_records.items[new_import_id].is_internal = true;
+                                        p.import_records.items[new_import_id].path.is_disabled = true;
+                                    }
+                                    remap_count += 1;
+                                    break :outer;
+                                }
+                            }
+
                             if (is_macro) {
                                 try p.macro.refs.put(ref, stmt.import_record_index);
+                                stmt.default_name = null;
+                                break :outer;
+                            }
+
+                            item_refs.putAssumeCapacity(name, name_loc.*);
+                        }
+                    }
+
+                    if (stmt.items.len > 0) {
+                        var i: usize = 0;
+                        var list = std.ArrayListUnmanaged(js_ast.ClauseItem){ .items = stmt.items };
+                        while (i < list.items.len) {
+                            var item: *js_ast.ClauseItem = &list.items[i];
+                            const name = p.loadNameFromRef(item.name.ref orelse unreachable);
+                            const ref = try p.declareSymbol(.import, item.name.loc, name);
+                            try p.is_import_item.put(p.allocator, ref, .{});
+                            item.name.ref = ref;
+
+                            if (is_macro) {
+                                try p.macro.refs.put(ref, stmt.import_record_index);
+                                _ = list.swapRemove(i);
+                                continue;
                             }
 
                             if (macro_remap) |remap| {
@@ -6272,11 +6270,24 @@ pub fn NewParser(
                                     }
                                     try p.macro.refs.put(ref, new_import_id);
                                     remap_count += 1;
-
+                                    _ = list.swapRemove(i);
                                     continue;
                                 }
                             }
+
+                            p.checkForNonBMPCodePoint(item.alias_loc, item.alias);
+
+                            item_refs.putAssumeCapacity(item.alias, LocRef{ .loc = item.name.loc, .ref = ref });
+
+                            if (comptime ParsePassSymbolUsageType != void) {
+                                p.parse_pass_symbol_uses.put(name, .{
+                                    .ref = ref,
+                                    .import_record_index = stmt.import_record_index,
+                                }) catch unreachable;
+                            }
+                            i += 1;
                         }
+                        stmt.items = list.items;
                     }
 
                     // If we remapped the entire import away
@@ -6289,6 +6300,8 @@ pub fn NewParser(
                             p.import_records.items[stmt.import_record_index].path.is_disabled = true;
                             p.import_records.items[stmt.import_record_index].is_internal = true;
                         }
+
+                        return p.s(S.Empty{}, loc);
                     }
 
                     // Track the items for this namespace

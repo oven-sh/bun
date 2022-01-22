@@ -51,15 +51,42 @@ describe("Bun.Transpiler", () => {
   });
 
   describe("transform", () => {
+    it("supports macros", async () => {
+      const out = await transpiler.transform(`
+        import {keepSecondArgument} from 'macro:${
+          import.meta.dir
+        }/macro-check.js';
+        
+        export default keepSecondArgument("Test failed", "Test passed");
+      `);
+      expect(out.includes("Test failed")).toBe(false);
+      expect(out.includes("Test passed")).toBe(true);
+
+      // ensure both the import and the macro function call are removed
+      expect(out.includes("keepSecondArgument")).toBe(false);
+    });
+
+    it("sync supports macros", async () => {
+      const out = transpiler.transformSync(`
+        import {keepSecondArgument} from 'macro:${
+          import.meta.dir
+        }/macro-check.js';
+        
+        export default keepSecondArgument("Test failed", "Test passed");
+      `);
+      expect(out.includes("Test failed")).toBe(false);
+      expect(out.includes("Test passed")).toBe(true);
+
+      expect(out.includes("keepSecondArgument")).toBe(false);
+    });
+
     it("removes types", () => {
       expect(code.includes("ActionFunction")).toBe(true);
       expect(code.includes("LoaderFunction")).toBe(true);
-
       const out = transpiler.transformSync(code);
 
       expect(out.includes("ActionFunction")).toBe(false);
       expect(out.includes("LoaderFunction")).toBe(false);
-
       const { exports } = transpiler.scan(out);
 
       expect(exports[0]).toBe("action");

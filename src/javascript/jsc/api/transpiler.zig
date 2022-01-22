@@ -39,7 +39,7 @@ const Transpiler = @This();
 const JSParser = @import("../../../js_parser.zig");
 const JSPrinter = @import("../../../js_printer.zig");
 const ScanPassResult = JSParser.ScanPassResult;
-
+const Mimalloc = @import("../../../mimalloc_arena.zig");
 bundler: Bundler.Bundler,
 arena: std.heap.ArenaAllocator,
 transpiler_options: TranspilerOptions,
@@ -139,7 +139,6 @@ pub const TransformTask = struct {
     pub fn run(this: *TransformTask) void {
         const name = this.loader.stdinName();
         const source = logger.Source.initPathString(name, this.input_code.slice());
-        const Mimalloc = @import("../../../mimalloc_arena.zig");
 
         JSAst.Stmt.Data.Store.create(_global.default_allocator);
         JSAst.Expr.Data.Store.create(_global.default_allocator);
@@ -299,7 +298,8 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
             var array = JSC.C.JSObjectCopyPropertyNames(globalThis.ref(), define.asObjectRef());
             defer JSC.C.JSPropertyNameArrayRelease(array);
             const count = JSC.C.JSPropertyNameArrayGetCount(array);
-            var map_entries = temp_allocator.alloc([]u8, count * 2) catch unreachable;
+            // cannot be a temporary because it may be loaded on different threads.
+            var map_entries = allocator.alloc([]u8, count * 2) catch unreachable;
             var names = map_entries[0..count];
 
             var values = map_entries[count..];
@@ -729,6 +729,18 @@ pub fn transformSync(
     };
 
     const code = code_holder.slice();
+    JSC.C.JSValueProtect(ctx, arguments[0]);
+    defer JSC.C.JSValueUnprotect(ctx, arguments[0]);
+    var arena = Mimalloc.Arena.init() catch unreachable;
+    this.bundler.setAllocator(arena.allocator());
+    var log = logger.Log.init(arena.backingAllocator());
+    this.bundler.setLog(&log);
+    defer {
+        this.bundler.setLog(&this.transpiler_options.log);
+        this.bundler.setAllocator(_global.default_allocator);
+        arena.deinit();
+    }
+
     args.eat();
     const loader: ?Loader = brk: {
         if (args.next()) |arg| {
@@ -746,7 +758,7 @@ pub fn transformSync(
         JSAst.Expr.Data.Store.reset();
     }
 
-    const parse_result = getParseResult(this, args.arena.allocator(), code, loader) orelse {
+    const parse_result = getParseResult(this, arena.allocator(), code, loader) orelse {
         if ((this.bundler.log.warnings + this.bundler.log.errors) > 0) {
             var out_exception = this.bundler.log.toJS(ctx.ptr(), getAllocator(ctx), "Parse error");
             exception.* = out_exception.asObjectRef();
@@ -767,26 +779,31 @@ pub fn transformSync(
         exception.* = out_exception.asObjectRef();
         return null;
     }
-    if (this.buffer_writer == null) {
-        this.buffer_writer = JSPrinter.BufferWriter.init(_global.default_allocator) catch {
+
+    var buffer_writer = this.buffer_writer orelse brk: {
+        var writer = JSPrinter.BufferWriter.init(arena.backingAllocator()) catch {
             JSC.throwInvalidArguments("Failed to create BufferWriter", .{}, ctx, exception);
             return null;
         };
-        this.buffer_writer.?.buffer.growIfNeeded(code.len) catch unreachable;
-        this.buffer_writer.?.buffer.list.expandToCapacity();
+        writer.buffer.growIfNeeded(code.len) catch unreachable;
+        writer.buffer.list.expandToCapacity();
+        break :brk writer;
+    };
+
+    defer {
+        this.buffer_writer = buffer_writer;
     }
 
-    this.buffer_writer.?.reset();
-    var printer = JSPrinter.BufferPrinter.init(this.buffer_writer.?);
-    const printed = this.bundler.print(parse_result, @TypeOf(printer), printer, .esm_ascii) catch |err| {
+    buffer_writer.reset();
+    var printer = JSPrinter.BufferPrinter.init(buffer_writer);
+    _ = this.bundler.print(parse_result, @TypeOf(&printer), &printer, .esm_ascii) catch |err| {
         JSC.JSError(_global.default_allocator, "Failed to print code: {s}", .{@errorName(err)}, ctx, exception);
         return null;
     };
 
     // TODO: benchmark if pooling this way is faster or moving is faster
-    this.buffer_writer = printer.ctx;
-    this.buffer_writer.?.buffer.list.expandToCapacity();
-    var out = JSC.ZigString.init(this.buffer_writer.?.buffer.list.items[0..printed]);
+    buffer_writer = printer.ctx;
+    var out = JSC.ZigString.init(buffer_writer.written);
     out.mark();
 
     return out.toValueGC(ctx.ptr()).asObjectRef();

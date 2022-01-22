@@ -151,10 +151,10 @@ pub const StringOrBuffer = union(Tag) {
             JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
                 var zig_str = JSC.ZigString.init("");
                 value.toZigString(&zig_str, global);
-                if (zig_str.len == 0) {
-                    JSC.throwInvalidArguments("Expected string to have length > 0", .{}, global.ref(), exception);
-                    return null;
-                }
+                // if (zig_str.len == 0) {
+                //     JSC.throwInvalidArguments("Expected string to have length > 0", .{}, global.ref(), exception);
+                //     return null;
+                // }
 
                 return StringOrBuffer{
                     .string = zig_str.slice(),

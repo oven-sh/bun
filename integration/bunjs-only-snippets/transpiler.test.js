@@ -6,6 +6,11 @@ describe("Bun.Transpiler", () => {
     define: {
       "process.env.NODE_ENV": JSON.stringify("development"),
     },
+    macro: {
+      react: {
+        bacon: `${import.meta.dir}/macro-check.js`,
+      },
+    },
     platform: "browser",
   });
 
@@ -56,7 +61,7 @@ describe("Bun.Transpiler", () => {
         import {keepSecondArgument} from 'macro:${
           import.meta.dir
         }/macro-check.js';
-        
+
         export default keepSecondArgument("Test failed", "Test passed");
       `);
       expect(out.includes("Test failed")).toBe(false);
@@ -66,18 +71,47 @@ describe("Bun.Transpiler", () => {
       expect(out.includes("keepSecondArgument")).toBe(false);
     });
 
-    it("sync supports macros", async () => {
+    it("sync supports macros", () => {
       const out = transpiler.transformSync(`
         import {keepSecondArgument} from 'macro:${
           import.meta.dir
         }/macro-check.js';
-        
+
         export default keepSecondArgument("Test failed", "Test passed");
       `);
       expect(out.includes("Test failed")).toBe(false);
       expect(out.includes("Test passed")).toBe(true);
 
       expect(out.includes("keepSecondArgument")).toBe(false);
+    });
+
+    it("sync supports macros remap", () => {
+      const out = transpiler.transformSync(`
+        import {createElement, bacon} from 'react';
+        
+        export default bacon("Test failed", "Test passed");
+        export function hi() { createElement("hi"); }
+      `);
+
+      expect(out.includes("Test failed")).toBe(false);
+      expect(out.includes("Test passed")).toBe(true);
+
+      expect(out.includes("bacon")).toBe(false);
+      expect(out.includes("createElement")).toBe(true);
+    });
+
+    it("macro remap removes import statement if its the only used one", () => {
+      const out = transpiler.transformSync(`
+        import {bacon} from 'react';
+        
+        export default bacon("Test failed", "Test passed");
+      `);
+
+      expect(out.includes("Test failed")).toBe(false);
+      expect(out.includes("Test passed")).toBe(true);
+
+      expect(out.includes("bacon")).toBe(false);
+      expect(out.includes("import")).toBe(false);
     });
 
     it("removes types", () => {

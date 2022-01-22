@@ -1757,11 +1757,11 @@ const StringVoidMap = struct {
     pub const Pool = ObjectPool(StringVoidMap, init, true);
     pub const Node = Pool.Node;
 };
-
-const SymbolUseMap = Map(Ref, js_ast.Symbol.Use);
-const StringBoolMap = _hash_map.StringHashMapUnmanaged(bool);
-const RefMap = Map(Ref, void);
-const RefRefMap = Map(Ref, Ref);
+const RefCtx = @import("../ast/base.zig").RefCtx;
+const SymbolUseMap = std.HashMapUnmanaged(Ref, js_ast.Symbol.Use, RefCtx, 80);
+const StringBoolMap = std.StringHashMapUnmanaged(bool);
+const RefMap = std.HashMapUnmanaged(Ref, void, RefCtx, 80);
+const RefRefMap = std.HashMapUnmanaged(Ref, Ref, RefCtx, 80);
 const ImportRecord = importRecord.ImportRecord;
 const Flags = js_ast.Flags;
 const ScopeOrder = struct {
@@ -3490,9 +3490,9 @@ pub fn NewParser(
                 p.symbols.items[ref.inner_index].use_count_estimate += 1;
                 var result = p.symbol_uses.getOrPut(p.allocator, ref) catch unreachable;
                 if (!result.found_existing) {
-                    result.entry.value = Symbol.Use{ .count_estimate = 1 };
+                    result.value_ptr.* = Symbol.Use{ .count_estimate = 1 };
                 } else {
-                    result.entry.value.count_estimate += 1;
+                    result.value_ptr.count_estimate += 1;
                 }
             }
 
@@ -5031,7 +5031,7 @@ pub fn NewParser(
 
             var scope = p.current_scope;
 
-            try scope.generated.append(p.allocator, name.ref orelse unreachable);
+            try scope.generated.append(p.allocator, name.ref.?);
 
             return name;
         }
@@ -6195,17 +6195,21 @@ pub fn NewParser(
                     }
 
                     var item_refs = ImportItemForNamespaceMap.init(p.allocator);
-
-                    const total_count = @intCast(u16, stmt.items.len) +
-                        @intCast(u16, @boolToInt(stmt.default_name != null)) +
+                    const count_excluding_namespace = @intCast(u16, stmt.items.len) +
+                        @intCast(u16, @boolToInt(stmt.default_name != null));
+                    const total_count = count_excluding_namespace +
                         @intCast(u16, @boolToInt(stmt.star_name_loc != null));
 
                     try item_refs.ensureUnusedCapacity(total_count);
+                    // Even though we allocate ahead of time here
+                    // we cannot use putAssumeCapacity because a symbol can have existing links
+                    // those may write to this hash table, so this estimate may be innaccurate
+                    try p.is_import_item.ensureUnusedCapacity(p.allocator, count_excluding_namespace);
 
                     // Link the default item to the namespace
                     if (stmt.default_name) |*name_loc| {
                         outer: {
-                            const name = p.loadNameFromRef(name_loc.ref orelse unreachable);
+                            const name = p.loadNameFromRef(name_loc.ref.?);
                             const ref = try p.declareSymbol(.import, name_loc.loc, name);
                             try p.is_import_item.put(p.allocator, ref, .{});
                             name_loc.ref = ref;
@@ -9651,7 +9655,7 @@ pub fn NewParser(
                 var import = import_data.import;
                 import.import_record_index = record_id;
 
-                p.is_import_item.ensureCapacity(
+                p.is_import_item.ensureUnusedCapacity(
                     p.allocator,
                     @intCast(u32, p.is_import_item.count() + import.items.len),
                 ) catch unreachable;
@@ -12732,12 +12736,12 @@ pub fn NewParser(
                     try p.recordDeclaredSymbol(data.namespace_ref);
 
                     if (data.default_name) |default_name| {
-                        try p.recordDeclaredSymbol(default_name.ref orelse unreachable);
+                        try p.recordDeclaredSymbol(default_name.ref.?);
                     }
 
                     if (data.items.len > 0) {
                         for (data.items) |*item| {
-                            try p.recordDeclaredSymbol(item.name.ref orelse unreachable);
+                            try p.recordDeclaredSymbol(item.name.ref.?);
                         }
                     }
                 },
@@ -12746,7 +12750,7 @@ pub fn NewParser(
                     // "export {foo}"
                     var end: usize = 0;
                     for (data.items) |*item| {
-                        const name = p.loadNameFromRef(item.name.ref orelse unreachable);
+                        const name = p.loadNameFromRef(item.name.ref.?);
                         const symbol = try p.findSymbol(item.alias_loc, name);
                         const ref = symbol.ref;
 
@@ -12790,7 +12794,7 @@ pub fn NewParser(
 
                     // This is a re-export and the symbols created here are used to reference
                     for (data.items) |*item| {
-                        const _name = p.loadNameFromRef(item.name.ref orelse unreachable);
+                        const _name = p.loadNameFromRef(item.name.ref.?);
                         const ref = try p.newSymbol(.other, _name);
                         try p.current_scope.generated.append(p.allocator, data.namespace_ref);
                         try p.recordDeclaredSymbol(data.namespace_ref);
@@ -12992,7 +12996,7 @@ pub fn NewParser(
                 },
                 .s_label => |data| {
                     p.pushScopeForVisitPass(.label, stmt.loc) catch unreachable;
-                    const name = p.loadNameFromRef(data.name.ref orelse unreachable);
+                    const name = p.loadNameFromRef(data.name.ref.?);
                     const ref = p.newSymbol(.label, name) catch unreachable;
                     data.name.ref = ref;
                     p.current_scope.label_ref = ref;

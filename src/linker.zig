@@ -258,6 +258,11 @@ pub const Linker = struct {
                             // don't link bun
                             continue;
                         }
+
+                        // Resolve dynamic imports lazily for perf
+                        if (import_record.kind == .dynamic) {
+                            continue;
+                        }
                     }
 
                     if (linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |*_resolved_import| {

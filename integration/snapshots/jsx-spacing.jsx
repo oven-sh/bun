@@ -1,7 +1,8 @@
 import {
 __require as require
 } from "http://localhost:8080/bun:runtime";
-import * as JSX from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
+import * as $2f488e5b from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
+var JSX = require($2f488e5b);
 var jsx = require(JSX).jsxDEV;
 
 import * as $1f6f0e67 from "http://localhost:8080/node_modules/react-dom/server.browser.js";

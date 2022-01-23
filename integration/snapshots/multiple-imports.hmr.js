@@ -7,7 +7,8 @@ __require as require
 import {
 __HMRModule as HMR
 } from "http://localhost:8080/bun:runtime";
-import * as JSX from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
+import * as $2f488e5b from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
+var JSX = require($2f488e5b);
 import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
 var JSXClassic = require($bbcd215f);
 var jsx = require(JSX).jsxDEV, JSXFrag = require(JSXClassic).Fragment;

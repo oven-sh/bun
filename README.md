@@ -15,7 +15,7 @@ All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for develo
 
 ## Install
 
-Native: (macOS x64 & Silicon, Linux x64, WSL)
+Native: (macOS x64 & Silicon, Linux x64, Windows Subsystem for Linux)
 
 ```sh
 curl -fsSL https://bun.sh/install | bash

@@ -1980,24 +1980,33 @@ pub const Process = struct {
             JSC.VirtualMachine.vm.argv.len > 1 and (strings.eqlComptime(JSC.VirtualMachine.vm.argv[0], "run") or strings.eqlComptime(JSC.VirtualMachine.vm.argv[0], "wiptest")),
         ));
 
-        const count = JSC.VirtualMachine.vm.argv.len + 1;
         var args = allocator.alloc(
             JSC.ZigString,
-            count - skip,
+            JSC.VirtualMachine.vm.argv.len + 1,
         ) catch unreachable;
+        var args_list = std.ArrayListUnmanaged(JSC.ZigString){ .items = args, .capacity = args.len };
+        args_list.items.len = 0;
         defer allocator.free(args);
+        {
+            var args_iterator = std.process.args();
 
-        // https://github.com/yargs/yargs/blob/adb0d11e02c613af3d9427b3028cc192703a3869/lib/utils/process-argv.ts#L1
-        args[0] = JSC.ZigString.init(std.mem.span(std.os.argv[0]));
-
-        if (JSC.VirtualMachine.vm.argv.len > skip) {
-            for (JSC.VirtualMachine.vm.argv[skip..]) |arg, i| {
-                args[i + skip] = JSC.ZigString.init(arg);
-                args[i + skip].detectEncoding();
+            if (args_iterator.nextPosix()) |arg0| {
+                var argv0 = JSC.ZigString.init(std.mem.span(arg0));
+                argv0.detectEncoding();
+                // https://github.com/yargs/yargs/blob/adb0d11e02c613af3d9427b3028cc192703a3869/lib/utils/process-argv.ts#L1
+                args_list.appendAssumeCapacity(argv0);
             }
         }
 
-        return JSC.JSValue.createStringArray(globalObject, args.ptr, args.len, true);
+        if (JSC.VirtualMachine.vm.argv.len > skip) {
+            for (JSC.VirtualMachine.vm.argv[skip..]) |arg| {
+                var str = JSC.ZigString.init(arg);
+                str.detectEncoding();
+                args_list.appendAssumeCapacity(str);
+            }
+        }
+
+        return JSC.JSValue.createStringArray(globalObject, args_list.items.ptr, args_list.items.len, true);
     }
 
     pub fn getCwd(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {

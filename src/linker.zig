@@ -57,7 +57,7 @@ pub const Linker = struct {
 
     onImportCSS: ?OnImportCallback = null,
 
-    pub const runtime_source_path = "__runtime.js";
+    pub const runtime_source_path = "bun:wrap";
 
     pub fn init(
         allocator: std.mem.Allocator,

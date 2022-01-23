@@ -701,18 +701,13 @@ pub const Resolver = struct {
             // If you use mjs or mts, then you're using esm
             // If you use cjs or cts, then you're using cjs
             // This should win out over the module type from package.json
-            if (!kind.isFromCSS() and module_type == .unknown) {
-                getter: {
-                    if (strings.eqlAnyComptime(path.name.ext, &.{ ".mjs", ".mts" })) {
-                        module_type = .esm;
-                        break :getter;
-                    }
-
-                    if (strings.eqlAnyComptime(path.name.ext, &.{ ".cjs", ".cts" })) {
-                        module_type = .cjs;
-                        break :getter;
-                    }
-                }
+            if (!kind.isFromCSS() and module_type == .unknown and path.name.ext.len == 4) {
+                const FourLetterMatcher = strings.ExactSizeMatcher(4);
+                module_type = switch (FourLetterMatcher.match(path.name.ext)) {
+                    FourLetterMatcher.case(".mjs"), FourLetterMatcher.case(".mts") => .esm,
+                    FourLetterMatcher.case(".cjs"), FourLetterMatcher.case(".cts") => .cjs,
+                    else => .unknown,
+                };
             }
 
             if (dir.getEntries()) |entries| {

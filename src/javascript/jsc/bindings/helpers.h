@@ -89,13 +89,9 @@ static const WTF::String toString(ZigString str) {
                reinterpret_cast<const UChar *>(str.ptr), str.len));
 }
 
-static const WTF::String toStringCopy(ZigString str) {
-  return toString(str).isolatedCopy();
-}
+static const WTF::String toStringCopy(ZigString str) { return toString(str).isolatedCopy(); }
 
-static WTF::String toStringNotConst(ZigString str) {
-  return toString(str).isolatedCopy();
-}
+static WTF::String toStringNotConst(ZigString str) { return toString(str); }
 
 static const JSC::JSString *toJSString(ZigString str, JSC::JSGlobalObject *global) {
   return JSC::jsOwnedString(global->vm(), toString(str));

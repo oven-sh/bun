@@ -963,7 +963,13 @@ pub const Command = struct {
 
                             Global.configureAllocator(.{ .long_running = true });
 
-                            BunJS.Run.boot(ctx, file, ctx.allocator.dupe(u8, file_path) catch unreachable) catch |err| {
+                            // the case where this doesn't work is if the script name on disk doesn't end with a known JS-like file extension
+                            var absolute_script_path = std.os.getFdPath(file.handle, &script_name_buf) catch break :possibly_open_with_bun_js;
+                            BunJS.Run.boot(
+                                ctx,
+                                file,
+                                absolute_script_path,
+                            ) catch |err| {
                                 if (Output.enable_ansi_colors) {
                                     ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
                                 } else {

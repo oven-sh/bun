@@ -72,8 +72,8 @@ namespace Zig {
 // rest we zero out for consistentcy
 static const unsigned char *untag(const unsigned char *ptr) {
   return reinterpret_cast<const unsigned char *>(
-    ((reinterpret_cast<uintptr_t>(ptr) & (static_cast<uint64_t>(1) << 63) &
-      (static_cast<uint64_t>(1) << 62))));
+    ((reinterpret_cast<uintptr_t>(ptr) & ~(static_cast<uint64_t>(1) << 63) &
+      ~(static_cast<uint64_t>(1) << 62))));
 }
 
 static const JSC::Identifier toIdentifier(ZigString str, JSC::JSGlobalObject *global) {

@@ -555,7 +555,7 @@ BUN_DEPLOY_DSYM = /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET).dSYM.gz
 
 ifeq ($(OS_NAME),darwin)
 release-bin-generate-copy-dsym:
-	gzip -c --keep $(BUN_RELEASE_BIN).dSYM > $(BUN_DEPLOY_DSYM)
+    tar -czf $(BUN_RELEASE_BIN).dSYM $(BUN_DEPLOY_DSYM)
 endif
 
 ifeq ($(OS_NAME),linux)

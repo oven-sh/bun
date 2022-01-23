@@ -550,12 +550,15 @@ endif
 
 
 BUN_DEPLOY_ZIP = /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET).zip
-BUN_DEPLOY_DSYM = /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET).dSYM.gz
+BUN_DEPLOY_DSYM = /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET).dSYM.tar.gz
 
 
 ifeq ($(OS_NAME),darwin)
+
 release-bin-generate-copy-dsym:
-    tar -czf $(BUN_RELEASE_BIN).dSYM $(BUN_DEPLOY_DSYM)
+	cd $(shell dirname $(BUN_RELEASE_BIN)) && tar -czvf $(shell basename $(BUN_DEPLOY_DSYM)) $(shell basename $(BUN_RELEASE_BIN)).dSYM && \
+	mv $(shell basename $(BUN_DEPLOY_DSYM)) $(BUN_DEPLOY_DSYM)
+
 endif
 
 ifeq ($(OS_NAME),linux)

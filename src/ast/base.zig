@@ -29,7 +29,17 @@ pub const RefHashCtx = struct {
     }
 
     pub fn eql(_: @This(), ref: Ref, b: Ref) bool {
-        return ref.asBitInt() == b.asBitInt();
+        return ref.asU64() == b.asU64();
+    }
+};
+
+pub const RefCtx = struct {
+    pub fn hash(_: @This(), key: Ref) u64 {
+        return key.hash64();
+    }
+
+    pub fn eql(_: @This(), ref: Ref, b: Ref) bool {
+        return ref.asU64() == b.asU64();
     }
 };
 
@@ -61,14 +71,28 @@ pub const Ref = packed struct {
     }
 
     pub fn hash(key: Ref) u32 {
-        return @truncate(u32, std.hash.Wyhash.hash(0, &@bitCast([8]u8, @as(u64, key.asBitInt()))));
+        return @truncate(u32, key.hash64());
+    }
+
+    pub inline fn asU64(key: Ref) u64 {
+        // This type isn't quite a u64 because it is used in a few other packed structs which have variables in them
+        // But, there are some footguns with the stage1 implementation of packed structs
+        // so it is safer to do comparisons as u64
+        // but we want to ensure that the value of the unused bits in the u64 are 0
+        // i have not looked at the assembly to verify that the unused bits default to 0
+        // so we set it to u64 0 just to be sure
+        return @as(u64, 0) | @as(u64, key.asBitInt());
+    }
+
+    pub inline fn hash64(key: Ref) u64 {
+        return std.hash.Wyhash.hash(0, &@bitCast([8]u8, key.asU64()));
     }
 
     pub fn eql(ref: Ref, b: Ref) bool {
-        return asBitInt(ref) == b.asBitInt();
+        return asU64(ref) == b.asU64();
     }
-    pub fn isNull(self: *const Ref) bool {
-        return self.source_index == max_ref_int and self.inner_index == max_ref_int;
+    pub fn isNull(self: Ref) bool {
+        return self.eql(Ref.None);
     }
 
     pub fn isSourceIndexNull(int: anytype) bool {

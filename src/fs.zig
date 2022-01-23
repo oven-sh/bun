@@ -990,6 +990,7 @@ pub const File = struct { path: Path, contents: string };
 pub const PathName = struct {
     base: string,
     dir: string,
+    /// includes the leading .
     ext: string,
     filename: string,
 
@@ -1083,6 +1084,10 @@ pub const Path = struct {
 
     pub fn isBun(this: *const Path) bool {
         return strings.eqlComptime(this.namespace, "bun");
+    }
+
+    pub fn isMacro(this: *const Path) bool {
+        return strings.eqlComptime(this.namespace, "macro");
     }
 
     pub const PackageRelative = struct {

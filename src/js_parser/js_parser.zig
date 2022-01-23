@@ -6250,7 +6250,7 @@ pub fn NewParser(
 
                     if (stmt.items.len > 0) {
                         var i: usize = 0;
-                        var list = std.ArrayListUnmanaged(js_ast.ClauseItem){ .items = stmt.items };
+                        var list = std.ArrayListUnmanaged(js_ast.ClauseItem){ .items = stmt.items, .capacity = stmt.items.len };
 
                         // I do not like two passes here. This works around a bug
                         // where when the final import item of a remapped macro

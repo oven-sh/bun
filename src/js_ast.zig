@@ -18,6 +18,7 @@ const ObjectPool = @import("./pool.zig").ObjectPool;
 const ImportRecord = @import("import_record.zig").ImportRecord;
 const allocators = @import("allocators.zig");
 
+const RefCtx = @import("./ast/base.zig").RefCtx;
 const _hash_map = @import("hash_map.zig");
 const StringHashMap = _hash_map.StringHashMap;
 const AutoHashMap = _hash_map.AutoHashMap;
@@ -3555,7 +3556,7 @@ pub const Part = struct {
         jsx_import,
     };
 
-    pub const SymbolUseMap = _hash_map.AutoHashMapUnmanaged(Ref, Symbol.Use);
+    pub const SymbolUseMap = std.HashMapUnmanaged(Ref, Symbol.Use, RefCtx, 80);
     pub fn jsonStringify(self: *const Part, options: std.json.StringifyOptions, writer: anytype) !void {
         return std.json.stringify(self.stmts, options, writer);
     }
@@ -3613,6 +3614,7 @@ pub const Scope = struct {
     kind: Kind = Kind.block,
     parent: ?*Scope,
     children: std.ArrayListUnmanaged(*Scope) = .{},
+    // This is a special hash table that allows us to pass in the hash directly
     members: StringHashMapUnmanaged(Member) = .{},
     generated: std.ArrayListUnmanaged(Ref) = .{},
 
@@ -3794,7 +3796,7 @@ pub const Macro = struct {
     const Bundler = @import("./bundler.zig").Bundler;
     const MacroEntryPoint = @import("./bundler.zig").MacroEntryPoint;
     const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
-    const MacroRemapEntry = @import("./resolver/package_json.zig").MacroImportReplacementMap;
+    pub const MacroRemapEntry = @import("./resolver/package_json.zig").MacroImportReplacementMap;
 
     pub const namespace: string = "macro";
     pub const namespaceWithColon: string = namespace ++ ":";

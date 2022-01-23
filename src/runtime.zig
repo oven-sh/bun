@@ -259,8 +259,8 @@ pub const Runtime = struct {
             "__exportValue",
             "__exportDefault",
         };
-        pub const Name = "<RUNTIME";
-        pub const alt_name = "__runtime.js";
+        pub const Name = "bun:wrap";
+        pub const alt_name = "bun:wrap";
 
         pub const Iterator = struct {
             i: usize = 0,

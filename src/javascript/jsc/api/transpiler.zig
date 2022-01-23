@@ -190,6 +190,9 @@ pub const TransformTask = struct {
             this.err = err;
             return;
         };
+        buffer_writer.buffer.list.ensureTotalCapacity(global_allocator, 512) catch unreachable;
+        buffer_writer.reset();
+
         // defer {
         //     transform_buffer = buffer_writer.buffer;
         // }

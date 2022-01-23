@@ -227,7 +227,7 @@ pub const Linker = struct {
                                 result.ast.runtime_import_record_id = record_index;
                             } else {
                                 if (import_path_format == .absolute_url) {
-                                    import_record.path = Fs.Path.initWithNamespace(try origin.joinAlloc(linker.allocator, "", "", "bun:runtime", "", ""), "bun");
+                                    import_record.path = Fs.Path.initWithNamespace(try origin.joinAlloc(linker.allocator, "", "", "bun:wrap", "", ""), "bun");
                                 } else {
                                     import_record.path = try linker.generateImportPath(
                                         source_dir,
@@ -441,7 +441,7 @@ pub const Linker = struct {
                 .path = if (linker.options.node_modules_bundle != null)
                     Fs.Path.init(node_module_bundle_import_path orelse linker.nodeModuleBundleImportPath(origin))
                 else if (import_path_format == .absolute_url)
-                    Fs.Path.initWithNamespace(try origin.joinAlloc(linker.allocator, "", "", "bun:runtime", "", ""), "bun")
+                    Fs.Path.initWithNamespace(try origin.joinAlloc(linker.allocator, "", "", "bun:wrap", "", ""), "bun")
                 else
                     try linker.generateImportPath(source_dir, Linker.runtime_source_path, false, "bun", origin, import_path_format),
 

@@ -157,17 +157,19 @@ pub const Result = struct {
     // Most NPM modules are CommonJS
     // If unspecified, assume CommonJS.
     // If internal app code, assume ESM.
-    pub fn shouldAssumeCommonJS(r: *const Result, import_record: *const ast.ImportRecord) bool {
-        if (import_record.kind == .require or import_record.kind == .require_resolve or r.module_type == .cjs) {
-            return true;
-        }
+    pub fn shouldAssumeCommonJS(r: *const Result, kind: ast.ImportKind) bool {
+        switch (r.module_type) {
+            .esm => return false,
+            .cjs => return true,
+            else => {
+                if (kind == .require or kind == .require_resolve) {
+                    return true;
+                }
 
-        if (r.module_type == .esm) {
-            return false;
+                // If we rely just on isPackagePath, we mess up tsconfig.json baseUrl paths.
+                return r.isLikelyNodeModule();
+            },
         }
-
-        // If we rely just on isPackagePath, we mess up tsconfig.json baseUrl paths.
-        return r.isLikelyNodeModule();
     }
 
     pub const DebugMeta = struct {
@@ -672,17 +674,18 @@ pub const Resolver = struct {
         };
 
         if (!strings.eqlComptime(result.path_pair.primary.namespace, "node"))
-            try r.finalizeResult(&result);
+            try r.finalizeResult(&result, kind);
 
         r.flushDebugLogs(.success) catch {};
         result.import_kind = kind;
         return result;
     }
 
-    pub fn finalizeResult(r: *ThisResolver, result: *Result) !void {
+    pub fn finalizeResult(r: *ThisResolver, result: *Result, kind: ast.ImportKind) !void {
         if (result.is_external) return;
 
         var iter = result.path_pair.iter();
+        var module_type = result.module_type;
         while (iter.next()) |path| {
             var dir: *DirInfo = (r.readDirInfo(path.name.dir) catch continue) orelse continue;
             if (result.package_json) |existing| {
@@ -693,6 +696,23 @@ pub const Resolver = struct {
 
             if (dir.enclosing_tsconfig_json) |tsconfig| {
                 result.jsx = tsconfig.mergeJSX(result.jsx);
+            }
+
+            // If you use mjs or mts, then you're using esm
+            // If you use cjs or cts, then you're using cjs
+            // This should win out over the module type from package.json
+            if (!kind.isFromCSS() and module_type == .unknown) {
+                getter: {
+                    if (strings.eqlAnyComptime(path.name.ext, &.{ ".mjs", ".mts" })) {
+                        module_type = .esm;
+                        break :getter;
+                    }
+
+                    if (strings.eqlAnyComptime(path.name.ext, &.{ ".cjs", ".cts" })) {
+                        module_type = .cjs;
+                        break :getter;
+                    }
+                }
             }
 
             if (dir.getEntries()) |entries| {
@@ -752,12 +772,13 @@ pub const Resolver = struct {
             }
         }
 
-        if (result.package_json) |package_json| {
-            result.module_type = switch (package_json.module_type) {
-                .esm, .cjs => package_json.module_type,
-                .unknown => result.module_type,
-            };
+        if (!kind.isFromCSS() and module_type == .unknown) {
+            if (result.package_json) |package| {
+                module_type = package.module_type;
+            }
         }
+
+        result.module_type = module_type;
     }
 
     pub fn resolveWithoutSymlinks(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind) !?Result {
@@ -885,7 +906,6 @@ pub const Resolver = struct {
                             result = Result{
                                 .path_pair = _result.path_pair,
                                 .diff_case = _result.diff_case,
-                                .module_type = pkg.module_type,
                                 .dirname_fd = _result.dirname_fd,
                                 .package_json = pkg,
                             };

@@ -2446,7 +2446,7 @@ pub const RequestContext = struct {
             return;
         }
 
-        if (strings.eqlComptime(path, "runtime")) {
+        if (strings.eqlComptime(path, "wrap")) {
             const buffer = Runtime.sourceContent();
             ctx.appendHeader("Content-Type", MimeType.javascript.value);
             ctx.appendHeader("Cache-Control", "public, max-age=3600");

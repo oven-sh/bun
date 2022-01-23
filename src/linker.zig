@@ -454,7 +454,7 @@ pub const Linker = struct {
         // We _assume_ you're importing ESM.
         // But, that assumption can be wrong without parsing code of the imports.
         // That's where in here, we inject
-        // > import {require} from 'bun:runtime';
+        // > import {require} from 'bun:wrap';
         // Since they definitely aren't using require, we don't have to worry about the symbol being renamed.
         if (needs_require and !result.ast.uses_require_ref) {
             result.ast.uses_require_ref = true;

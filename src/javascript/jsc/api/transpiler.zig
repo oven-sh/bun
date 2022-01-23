@@ -207,9 +207,9 @@ pub const TransformTask = struct {
             buffer_writer = printer.ctx;
             buffer_writer.buffer.list.items = buffer_writer.written;
 
-            // This works around a mimalloc and/or Zig allocator bug
-            this.output_code = JSC.ZigString.init(buffer_writer.written);
-            this.output_code.mark();
+            var output = JSC.ZigString.init(buffer_writer.written);
+            output.mark();
+            this.output_code = output;
         } else {
             this.output_code = ZigString.init("");
         }

@@ -66,10 +66,16 @@ static const JSC::ArgList makeArgs(JSC__JSValue *v, size_t count) {
 
 namespace Zig {
 
+// 8 bit byte
+// we tag the final two bits
+// so 56 bits are copied over
+// rest we zero out for consistentcy
+static const unsigned char *untag(const unsigned char *ptr) { return ptr; }
+
 static const JSC::Identifier toIdentifier(ZigString str, JSC::JSGlobalObject *global) {
   if (str.len == 0 || str.ptr == nullptr) { return JSC::Identifier::EmptyIdentifier; }
 
-  return JSC::Identifier::fromString(global->vm(), str.ptr, str.len);
+  return JSC::Identifier::fromString(global->vm(), untag(str.ptr), str.len);
 }
 
 static bool isTaggedUTF16Ptr(const unsigned char *ptr) {
@@ -84,12 +90,18 @@ static const WTF::String toString(ZigString str) {
   if (str.len == 0 || str.ptr == nullptr) { return WTF::String(); }
 
   return !isTaggedUTF16Ptr(str.ptr)
-           ? WTF::String(WTF::StringImpl::createWithoutCopying(str.ptr, str.len))
+           ? WTF::String(WTF::StringImpl::createWithoutCopying(untag(str.ptr), str.len))
            : WTF::String(WTF::StringImpl::createWithoutCopying(
-               reinterpret_cast<const UChar *>(str.ptr), str.len));
+               reinterpret_cast<const UChar *>(untag(str.ptr)), str.len));
 }
 
-static const WTF::String toStringCopy(ZigString str) { return toString(str).isolatedCopy(); }
+static const WTF::String toStringCopy(ZigString str) {
+  if (str.len == 0 || str.ptr == nullptr) { return WTF::String(); }
+
+  return !isTaggedUTF16Ptr(str.ptr) ? WTF::String(WTF::StringImpl::create(untag(str.ptr), str.len))
+                                    : WTF::String(WTF::StringImpl::create(
+                                        reinterpret_cast<const UChar *>(untag(str.ptr)), str.len));
+}
 
 static WTF::String toStringNotConst(ZigString str) { return toString(str); }
 
@@ -162,7 +174,9 @@ static ZigString toZigString(JSC::Identifier *str, JSC::JSGlobalObject *global) 
   return toZigString(str->string());
 }
 
-static WTF::StringView toStringView(ZigString str) { return WTF::StringView(str.ptr, str.len); }
+static WTF::StringView toStringView(ZigString str) {
+  return WTF::StringView(untag(str.ptr), str.len);
+}
 
 static void throwException(JSC::ThrowScope &scope, ZigErrorType err, JSC::JSGlobalObject *global) {
   scope.throwException(global,

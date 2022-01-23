@@ -1,9 +1,9 @@
 import {
 __HMRModule as HMR
-} from "http://localhost:8080/bun:runtime";
+} from "http://localhost:8080/bun:wrap";
 import {
 __HMRClient as Bun
-} from "http://localhost:8080/bun:runtime";
+} from "http://localhost:8080/bun:wrap";
 Bun.activate(false);
 
 var hmr = new HMR(726376257, "code-simplification-neql-define.js"), exports = hmr.exports;

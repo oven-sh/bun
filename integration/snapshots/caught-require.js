@@ -1,6 +1,6 @@
 import {
 __require as require
-} from "http://localhost:8080/bun:runtime";
+} from "http://localhost:8080/bun:wrap";
 try {
   require((() => { throw (new Error(`Cannot require module '"this-package-should-not-exist"'`)); } )());
 

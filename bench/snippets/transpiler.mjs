@@ -51,8 +51,8 @@ if (process.isBun) {
 
 const code = readFileSync("src/test/fixtures/simple.jsx", "utf8");
 
-if (process.env.SYNC) {
-  console.log(transformSync(code, opts));
-} else {
+if (process.env.ASYNC) {
   console.log(await transform(code, opts));
+} else {
+  console.log(transformSync(code, opts));
 }

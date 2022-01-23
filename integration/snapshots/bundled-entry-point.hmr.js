@@ -1,12 +1,12 @@
 import {
 __require as require
-} from "http://localhost:8080/bun:runtime";
+} from "http://localhost:8080/bun:wrap";
 import {
 __HMRModule as HMR
-} from "http://localhost:8080/bun:runtime";
+} from "http://localhost:8080/bun:wrap";
 import {
 __HMRClient as Bun
-} from "http://localhost:8080/bun:runtime";
+} from "http://localhost:8080/bun:wrap";
 import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
 Bun.activate(false);
 

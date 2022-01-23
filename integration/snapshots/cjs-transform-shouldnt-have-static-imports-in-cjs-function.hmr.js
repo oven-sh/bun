@@ -1,9 +1,9 @@
 import {
 __HMRModule as HMR
-} from "http://localhost:8080/bun:runtime";
+} from "http://localhost:8080/bun:wrap";
 import {
 __HMRClient as Bun
-} from "http://localhost:8080/bun:runtime";
+} from "http://localhost:8080/bun:wrap";
 import _login from "http://localhost:8080/_login.js";
 import _auth from "http://localhost:8080/_auth.js";
 import * as _loginReally from "http://localhost:8080/_login.js";

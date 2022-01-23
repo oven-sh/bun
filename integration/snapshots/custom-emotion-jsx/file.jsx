@@ -1,6 +1,6 @@
 import {
 __require as require
-} from "http://localhost:8080/bun:runtime";
+} from "http://localhost:8080/bun:wrap";
 import * as $72625799 from "http://localhost:8080/node_modules/@emotion/react/jsx-dev-runtime/dist/emotion-react-jsx-dev-runtime.browser.esm.js";
 var JSX = require($72625799);
 var jsx = require(JSX).jsxDEV;

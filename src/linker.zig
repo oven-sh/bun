@@ -202,13 +202,21 @@ pub const Linker = struct {
         var needs_require = false;
         var node_module_bundle_import_path: ?string = null;
 
+        var import_records = result.ast.import_records;
+        defer {
+            result.ast.import_records = import_records;
+        }
         // Step 1. Resolve imports & requires
         switch (result.loader) {
             .jsx, .js, .ts, .tsx => {
-                for (result.ast.import_records) |*import_record, _record_index| {
+                var record_i: u32 = 0;
+                const record_count = @truncate(u32, import_records.len);
+
+                while (record_i < record_count) : (record_i += 1) {
+                    var import_record = &import_records[record_i];
                     if (import_record.is_unused) continue;
 
-                    const record_index = @truncate(u32, _record_index);
+                    const record_index = record_i;
                     if (comptime !ignore_runtime) {
                         if (strings.eqlComptime(import_record.path.namespace, "runtime")) {
                             // runtime is included in the bundle, so we don't need to dynamically import it
@@ -341,17 +349,12 @@ pub const Linker = struct {
                         // If it's a namespace import, assume it's safe.
                         // We can do this in the printer instead of creating a bunch of AST nodes here.
                         // But we need to at least tell the printer that this needs to happen.
-                        if (result.ast.exports_kind != .cjs and
-                            (import_record.kind == .require or
-                            (import_record.kind == .stmt and resolved_import.shouldAssumeCommonJS(import_record))))
-                        {
+                        if (resolved_import.shouldAssumeCommonJS(import_record.kind)) {
                             import_record.wrap_with_to_module = true;
                             import_record.module_id = @truncate(u32, std.hash.Wyhash.hash(0, path.pretty));
 
                             result.ast.needs_runtime = true;
                             needs_require = true;
-                        } else if (result.ast.exports_kind == .cjs) {
-                            import_record.module_id = @truncate(u32, std.hash.Wyhash.hash(0, path.pretty));
                         }
                     } else |err| {
                         switch (err) {
@@ -425,10 +428,10 @@ pub const Linker = struct {
         result.ast.externals = externals.toOwnedSlice();
 
         if (result.ast.needs_runtime and result.ast.runtime_import_record_id == null) {
-            var import_records = try linker.allocator.alloc(ImportRecord, result.ast.import_records.len + 1);
-            std.mem.copy(ImportRecord, import_records, result.ast.import_records);
+            var new_import_records = try linker.allocator.alloc(ImportRecord, import_records.len + 1);
+            std.mem.copy(ImportRecord, new_import_records, import_records);
 
-            import_records[import_records.len - 1] = ImportRecord{
+            new_import_records[new_import_records.len - 1] = ImportRecord{
                 .kind = .stmt,
                 .path = if (linker.options.node_modules_bundle != null)
                     Fs.Path.init(node_module_bundle_import_path orelse linker.nodeModuleBundleImportPath(origin))
@@ -439,8 +442,8 @@ pub const Linker = struct {
 
                 .range = logger.Range{ .loc = logger.Loc{ .start = 0 }, .len = 0 },
             };
-            result.ast.runtime_import_record_id = @truncate(u32, import_records.len - 1);
-            result.ast.import_records = import_records;
+            result.ast.runtime_import_record_id = @truncate(u32, new_import_records.len - 1);
+            import_records = new_import_records;
         }
 
         // We _assume_ you're importing ESM.

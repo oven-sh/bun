@@ -70,7 +70,11 @@ namespace Zig {
 // we tag the final two bits
 // so 56 bits are copied over
 // rest we zero out for consistentcy
-static const unsigned char *untag(const unsigned char *ptr) { return ptr; }
+static const unsigned char *untag(const unsigned char *ptr) {
+  return reinterpret_cast<const unsigned char *>(
+    ((reinterpret_cast<uintptr_t>(ptr) & (static_cast<uint64_t>(1) << 63) &
+      (static_cast<uint64_t>(1) << 62))));
+}
 
 static const JSC::Identifier toIdentifier(ZigString str, JSC::JSGlobalObject *global) {
   if (str.len == 0 || str.ptr == nullptr) { return JSC::Identifier::EmptyIdentifier; }

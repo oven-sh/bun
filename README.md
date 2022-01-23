@@ -15,6 +15,8 @@ All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for develo
 
 ## Install
 
+Windows is currently not supported, except through WSL (Windows Subsystem for Linux).
+
 Native: (macOS x64 & Silicon, Linux x64, WSL)
 
 ```sh

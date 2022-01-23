@@ -303,6 +303,14 @@ pub noinline fn globalError(err: anyerror) noreturn {
             Output.flush();
             std.os.exit(1);
         },
+        error.BundleFailed => {
+            Output.prettyError(
+                "\n<r><red>BundleFailed<r>",
+                .{},
+            );
+            Output.flush();
+            std.os.exit(1);
+        },
         error.SystemFdQuotaExceeded => {
             const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
             if (comptime Environment.isMac) {

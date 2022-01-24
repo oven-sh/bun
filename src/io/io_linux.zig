@@ -100,6 +100,7 @@ const os = struct {
     /// but it's ~the same and is incompatible across operating systems
     /// https://lists.gnu.org/archive/html/bug-glibc/2002-08/msg00017.html
     pub const ENOTSUP = 95;
+    pub const EOPNOTSUPP = ENOTSUP;
     pub const EPFNOSUPPORT = 96;
     pub const EAFNOSUPPORT = 97;
     pub const EADDRINUSE = 98;

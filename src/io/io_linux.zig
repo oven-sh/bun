@@ -1300,8 +1300,37 @@ pub fn write(
     self.enqueue(completion);
 }
 
+const SocketError = error{
+    AddressFamilyNotSupported,
+    ProtocolFamilyNotAvailable,
+    ProcessFdQuotaExceeded,
+    SystemFdQuotaExceeded,
+    SystemResources,
+    ProtocolNotSupported,
+    SocketTypeNotSupported,
+} || Errno;
+
+const Syscall = struct {
+    pub fn socket(domain: u32, socket_type: u32, protocol: u32) SocketError!os.socket_t {
+        const rc = linux.socket(domain, socket_type, protocol);
+        return switch (linux.getErrno(rc)) {
+            .SUCCESS => @intCast(os.fd_t, rc),
+            .ACCES => return error.PermissionDenied,
+            .AFNOSUPPORT => return error.AddressFamilyNotSupported,
+            .INVAL => return error.ProtocolFamilyNotAvailable,
+            .MFILE => return error.ProcessFdQuotaExceeded,
+            .NFILE => return error.SystemFdQuotaExceeded,
+            .NOBUFS => return error.SystemResources,
+            .NOMEM => return error.SystemResources,
+            .PROTONOSUPPORT => return error.ProtocolNotSupported,
+            .PROTOTYPE => return error.SocketTypeNotSupported,
+            else => |err| return asError(err),
+        };
+    }
+};
+
 pub fn openSocket(family: u32, sock_type: u32, protocol: u32) !os.socket_t {
-    return os.socket(family, sock_type, protocol);
+    return Syscall.socket(family, sock_type, protocol);
 }
 
 pub var global: IO = undefined;
@@ -1319,5 +1348,5 @@ fn buffer_limit(buffer_len: usize) usize {
         .macos, .ios, .watchos, .tvos => std.math.maxInt(i32),
         else => std.math.maxInt(isize),
     };
-    return std.math.min(limit, buffer_len);
+    return @minimum(limit, buffer_len);
 }

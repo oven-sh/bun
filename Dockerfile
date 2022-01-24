@@ -290,7 +290,8 @@ ARG BUILDARCH=amd64
 LABEL org.opencontainers.image.title="bun ${BUILDARCH} (glibc)"
 LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
 COPY --from=build_release ${BUN_RELEASE_DIR}/bun /opt/bun/bin/bun
-COPY --from=build_release ${BUN_RELEASE_DIR}/bun.dSYM.gz /opt/bun/bin/bun.dSYM.gz
+COPY --from=build_release ${BUN_RELEASE_DIR}/bun-profile /opt/bun/bin/bun-profile
+
 WORKDIR /opt/bun
 
 ENTRYPOINT [ "/opt/bun/bin/bun" ]

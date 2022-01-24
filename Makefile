@@ -269,6 +269,7 @@ PLATFORM_LINKER_FLAGS = \
 		-fdata-sections \
 		-static-libstdc++ \
 		-static-libgcc \
+		-Wl,--compress-debug-sections,zlib \
 		${STATIC_MUSL_FLAG} 
 endif
 

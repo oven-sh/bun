@@ -8,10 +8,11 @@ const AsyncIO = @import("io");
 
 const assert = std.debug.assert;
 const Atomic = std.atomic.Atomic;
-
+pub const OnSpawnCallback = fn () void;
 io: ?*AsyncIO = null,
 sleep_on_idle_network_thread: bool = true,
-
+/// executed on the thread
+on_thread_spawn: ?OnSpawnCallback = null,
 stack_size: u32,
 max_threads: u32,
 sync: Atomic(u32) = Atomic(u32).init(@bitCast(u32, Sync{})),
@@ -382,6 +383,10 @@ const Thread = struct {
 
         var self = Thread{};
         current = &self;
+
+        if (thread_pool.on_thread_spawn) |spawn| {
+            spawn();
+        }
 
         thread_pool.register(&self);
         defer thread_pool.unregister(&self);

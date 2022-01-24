@@ -341,7 +341,7 @@ pub const UpgradeCommand = struct {
 
     pub fn exec(ctx: Command.Context) !void {
         _exec(ctx) catch |err| {
-            Output.prettyErrorln("<r>bun upgrade <red>fail<r>ed with error: <b>{s}<r>\n\n<cyan>Please upgrade manually<r>:\n  <b>curl https://bun.sh/install | bash<r>\n\n", .{@errorName(err)});
+            Output.prettyErrorln("<r>bun upgrade failed with error: <red><b>{s}<r>\n\n<cyan>Please upgrade manually<r>:\n  <b>curl https://bun.sh/install | bash<r>\n\n", .{@errorName(err)});
             Output.flush();
             std.os.exit(1);
         };

@@ -13,6 +13,7 @@ const default_allocator = _global.default_allocator;
 const C = _global.C;
 const CLI = @import("./cli.zig").Cli;
 const Features = @import("./analytics/analytics_thread.zig").Features;
+const Platform = @import("./analytics/analytics_thread.zig").GenerateHeader.GeneratePlatform;
 const HTTP = @import("http").AsyncHTTP;
 const CrashReporter = @import("crash_reporter");
 
@@ -89,9 +90,9 @@ pub const CrashReportWriter = struct {
             }
 
             if (tilda) {
-                Output.prettyError("Crash report saved to:\n  <b>~/{s}<r>\n", .{this.file_path});
+                Output.prettyError("\nCrash report saved to:\n  <b>~{s}<r>\n", .{display_path});
             } else {
-                Output.prettyError("Crash report saved to:\n  <b>{s}<r>\n", .{this.file_path});
+                Output.prettyError("\nCrash report saved to:\n  <b>{s}<r>\n", .{display_path});
             }
         }
     }
@@ -109,13 +110,16 @@ pub fn printMetadata() void {
     else
         "x64";
 
+    var analytics_platform = Platform.forOS();
+
     crash_report_writer.print(
         \\
         \\<r>–––– bun meta ––––
-    ++ "\nBun v" ++ Global.package_json_version ++ " " ++ platform ++ " " ++ arch ++ "\n" ++
+    ++ "\nBun v" ++ Global.package_json_version ++ " " ++ platform ++ " " ++ arch ++ " {s}\n" ++
         \\{s}: {}
         \\
     , .{
+        analytics_platform.version,
         cmd_label,
         Features.formatter(),
     });

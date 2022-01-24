@@ -1308,6 +1308,7 @@ const SocketError = error{
     SystemResources,
     ProtocolNotSupported,
     SocketTypeNotSupported,
+    PermissionDenied,
 } || Errno;
 
 const Syscall = struct {

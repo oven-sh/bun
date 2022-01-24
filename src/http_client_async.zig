@@ -588,7 +588,11 @@ const AsyncSocket = struct {
     connect_completion: AsyncIO.Completion = undefined,
     close_completion: AsyncIO.Completion = undefined,
 
-    const ConnectError = AsyncIO.ConnectError || std.os.SocketError || std.os.SetSockOptError || error{UnknownHostName};
+    const ConnectError = AsyncIO.ConnectError || std.os.SocketError || std.os.SetSockOptError || error{
+        UnknownHostName,
+        ConnectionRefused,
+        AddressNotAvailable,
+    };
 
     pub fn init(io: *AsyncIO, socket: std.os.socket_t, allocator: std.mem.Allocator) !AsyncSocket {
         var head = AsyncMessage.get(allocator);

@@ -5,7 +5,7 @@ const std = @import("std");
 const AsyncIO = @import("io");
 const Output = @import("./global.zig").Output;
 const IdentityContext = @import("./identity_context.zig").IdentityContext;
-
+const HTTP = @import("./http_client_async.zig");
 const NetworkThread = @This();
 
 /// Single-thread in this pool
@@ -81,7 +81,7 @@ pub fn init() !void {
     global = NetworkThread{
         .pool = ThreadPool.init(.{ .max_threads = 1, .stack_size = 64 * 1024 * 1024 }),
     };
-
+    global.pool.on_thread_spawn = HTTP.onThreadStart;
     global.pool.io = &AsyncIO.global;
     address_list_cached = AddressListCache.init(@import("./global.zig").default_allocator);
 }

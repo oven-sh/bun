@@ -137,7 +137,7 @@ pub fn reloadHandlers() void {
     os.sigaction(os.SIG.TRAP, &act, null);
 }
 const os = std.os;
-pub fn start(ctx: ?*anyopaque, callback_: PrintCallback, onError: ErrorCallback) bool {
+pub fn start(ctx: ?*anyopaque, callback_: PrintCallback, onError: ErrorCallback) void {
     callback_ctx = ctx;
     callback = callback_;
     on_error = onError;
@@ -154,6 +154,4 @@ pub fn start(ctx: ?*anyopaque, callback_: PrintCallback, onError: ErrorCallback)
     os.sigaction(os.SIG.ILL, &act, null);
     os.sigaction(os.SIG.SEGV, &act, null);
     os.sigaction(os.SIG.TRAP, &act, null);
-
-    return true;
 }

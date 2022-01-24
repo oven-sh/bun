@@ -775,9 +775,8 @@ pub const Bun = struct {
         _: js.ExceptionRef,
     ) js.JSValueRef {
         _ = ctx;
-        var seggy: *VirtualMachine = undefined;
-        seggy.printErrorInstance(undefined, undefined, false) catch unreachable;
-        return JSValue.jsUndefined().asRef();
+        const Reporter = @import("../../report.zig");
+        Reporter.globalError(error.SegfaultTest);
     }
 
     /// EnvironmentVariables is runtime defined.

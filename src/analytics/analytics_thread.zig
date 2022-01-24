@@ -268,6 +268,14 @@ pub const GenerateHeader = struct {
 
         pub var linux_os_name: std.c.utsname = undefined;
 
+        pub fn forOS() Analytics.Platform {
+            if (comptime Environment.isMac) {
+                return forMac();
+            }
+
+            return forLinux();
+        }
+
         pub fn forLinux() Analytics.Platform {
             linux_os_name = std.mem.zeroes(@TypeOf(linux_os_name));
 

@@ -32,6 +32,15 @@ pub var default_arena: Arena = undefined;
 pub fn onThreadStart() void {
     default_arena = Arena.init() catch unreachable;
     default_allocator = default_arena.allocator();
+    NetworkThread.address_list_cached = NetworkThread.AddressListCache.init(default_allocator);
+    AsyncIO.global = AsyncIO.init(1024, 0) catch |err| {
+        Output.prettyErrorln("<r><red>error<r>: Failed to initialize network thread: <red><b>{s}<r>.\nHTTP requests will not work. Please file an issue and run strace().", .{@errorName(err)});
+        Output.flush();
+        os.exit(1);
+    };
+
+    AsyncIO.global_loaded = true;
+    NetworkThread.global.pool.io = &AsyncIO.global;
 }
 
 pub const Headers = struct {

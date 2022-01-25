@@ -4532,7 +4532,7 @@ pub const PackageManager = struct {
 
                     const response = task.http.response orelse {
                         if (comptime log_level != .silent) {
-                            const fmt = "<r><red>rerror<r>: Failed to download package manifest <b>{s}<r>";
+                            const fmt = "\n<r><red>error<r>: Failed to download package manifest <b>{s}<r>";
                             const args = .{name.slice()};
                             if (comptime log_level.showProgress()) {
                                 Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
@@ -4549,7 +4549,7 @@ pub const PackageManager = struct {
 
                     if (response.status_code > 399) {
                         if (comptime log_level != .silent) {
-                            const fmt = "<r><red><b>GET<r><red> {s}<d> - {d}<r>\n";
+                            const fmt = "\n<r><red><b>GET<r><red> {s}<d> - {d}<r>\n";
                             const args = .{
                                 task.http.client.url.href,
                                 response.status_code,
@@ -4568,7 +4568,7 @@ pub const PackageManager = struct {
                     if (comptime log_level.isVerbose()) {
                         Output.prettyError("    ", .{});
                         Output.printElapsed(@floatCast(f64, @intToFloat(f128, task.http.elapsed) / std.time.ns_per_ms));
-                        Output.prettyError(" <d>Downloaded <r><green>{s}<r> versions\n", .{name.slice()});
+                        Output.prettyError("\n <d>Downloaded <r><green>{s}<r> versions\n", .{name.slice()});
                         Output.flush();
                     }
 
@@ -4611,7 +4611,7 @@ pub const PackageManager = struct {
                 },
                 .extract => |extract| {
                     const response = task.http.response orelse {
-                        const fmt = "Failed to download package tarball for package {s}\n";
+                        const fmt = "\nFailed to download package tarball for package {s}\n";
                         const args = .{extract.name.slice()};
 
                         if (comptime log_level != .silent) {
@@ -4627,7 +4627,7 @@ pub const PackageManager = struct {
 
                     if (response.status_code > 399) {
                         if (comptime log_level != .silent) {
-                            const fmt = "<r><red><b>GET<r><red> {s}<d> - {d}<r>\n";
+                            const fmt = "\n<r><red><b>GET<r><red> {s}<d> - {d}<r>\n";
                             const args = .{
                                 task.http.client.url.href,
                                 response.status_code,
@@ -4682,7 +4682,7 @@ pub const PackageManager = struct {
                 .package_manifest => {
                     if (task.status == .fail) {
                         if (comptime log_level != .silent) {
-                            const fmt = "<r><red>rerror<r>: Failed to parse package manifest for <b>{s}<r>";
+                            const fmt = "\n<r><red>rerror<r>: Failed to parse package manifest for <b>{s}<r>";
                             const args = .{task.request.package_manifest.name.slice()};
                             if (comptime log_level.showProgress()) {
                                 Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);

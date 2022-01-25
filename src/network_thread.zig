@@ -37,14 +37,16 @@ const CachedAddressList = struct {
     }
 
     pub fn invalidate(this: *CachedAddressList) void {
-        this.invalidated = true;
-        this.address_list.deinit();
+        if (!this.invalidated) {
+            this.invalidated = true;
+            this.address_list.deinit();
+        }
         _ = address_list_cached.remove(this.key);
     }
 };
 
-const AddressListCache = std.HashMap(u64, CachedAddressList, IdentityContext(u64), 80);
-var address_list_cached: AddressListCache = undefined;
+pub const AddressListCache = std.HashMap(u64, CachedAddressList, IdentityContext(u64), 80);
+pub var address_list_cached: AddressListCache = undefined;
 pub fn getAddressList(allocator: std.mem.Allocator, name: []const u8, port: u16) !*CachedAddressList {
     const hash = CachedAddressList.hash(name, port);
     const now = @intCast(u64, @maximum(0, std.time.milliTimestamp()));
@@ -64,24 +66,9 @@ pub fn getAddressList(allocator: std.mem.Allocator, name: []const u8, port: u16)
 
 pub fn init() !void {
     if ((global_loaded.swap(1, .Monotonic)) == 1) return;
-    AsyncIO.global = AsyncIO.init(1024, 0) catch |err| {
-        Output.prettyErrorln("<r><red>error<r>: Failed to initialize network thread: <red><b>{s}<r>.\nHTTP requests will not work. Please file an issue and run strace().", .{@errorName(err)});
-        Output.flush();
-
-        global = NetworkThread{
-            .pool = ThreadPool.init(.{ .max_threads = 0, .stack_size = 64 * 1024 * 1024 }),
-        };
-        global.pool.max_threads = 0;
-        AsyncIO.global_loaded = true;
-        return;
-    };
-
-    AsyncIO.global_loaded = true;
 
     global = NetworkThread{
         .pool = ThreadPool.init(.{ .max_threads = 1, .stack_size = 64 * 1024 * 1024 }),
     };
     global.pool.on_thread_spawn = HTTP.onThreadStart;
-    global.pool.io = &AsyncIO.global;
-    address_list_cached = AddressListCache.init(@import("./global.zig").default_allocator);
 }

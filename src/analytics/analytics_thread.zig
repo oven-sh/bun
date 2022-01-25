@@ -20,6 +20,7 @@ const Analytics = @import("./analytics_schema.zig").analytics;
 const Writer = @import("./analytics_schema.zig").Writer;
 const Headers = @import("http").Headers;
 const Futex = @import("../futex.zig");
+const Semver = @import("../install/semver.zig");
 
 fn NewUint64(val: u64) Analytics.Uint64 {
     const bytes = std.mem.asBytes(&val);
@@ -267,13 +268,30 @@ pub const GenerateHeader = struct {
         }
 
         pub var linux_os_name: std.c.utsname = undefined;
+        var platform_: ?Analytics.Platform = null;
 
         pub fn forOS() Analytics.Platform {
+            if (platform_ != null) return platform_.?;
+
             if (comptime Environment.isMac) {
-                return forMac();
+                platform_ = forMac();
+                return platform_.?;
             }
 
-            return forLinux();
+            platform_ = forLinux();
+            return platform_.?;
+        }
+
+        pub fn kernelVersion() Semver.Version {
+            if (comptime !Environment.isLinux) {
+                @compileError("This function is only implemented on Linux");
+            }
+            _ = forOS();
+            const release = std.mem.span(&linux_os_name.release);
+            var sliced_string = Semver.SlicedString.init(release, release);
+            var result = Semver.Version.parse(sliced_string, _global.default_allocator);
+            // we only care about major, minor, patch so we don't care about the string
+            return result.version;
         }
 
         pub fn forLinux() Analytics.Platform {

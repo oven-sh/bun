@@ -94,6 +94,14 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
         .name = "javascript_core",
         .path = pkgPath("src/jsc.zig"),
     };
+
+    var analytics: std.build.Pkg = .{
+        .name = "analytics",
+        .path = pkgPath("src/analytics.zig"),
+    };
+
+    io.dependencies = &.{analytics};
+
     javascript_core.dependencies = &.{ http, strings, picohttp, io };
     http.dependencies = &.{
         strings,

@@ -798,7 +798,7 @@ pub const Completion = struct {
             },
             .connect => {
                 const result = if (completion.result < 0) switch (-completion.result) {
-                    os.EINTR => {
+                    os.EAGAIN, os.EINPROGRESS, os.EINTR => {
                         completion.io.enqueue(completion);
                         return;
                     },
@@ -806,7 +806,6 @@ pub const Completion = struct {
                     os.EADDRINUSE => error.AddressInUse,
                     os.EADDRNOTAVAIL => error.AddressNotAvailable,
                     os.EAFNOSUPPORT => error.AddressFamilyNotSupported,
-                    os.EAGAIN, os.EINPROGRESS => error.WouldBlock,
                     os.EALREADY => error.OpenAlreadyInProgress,
                     os.EBADF => error.FileDescriptorInvalid,
                     os.ECONNREFUSED => error.ConnectionRefused,
@@ -840,11 +839,10 @@ pub const Completion = struct {
             },
             .read => {
                 const result = if (completion.result < 0) switch (-completion.result) {
-                    os.EINTR => {
+                    os.EAGAIN, os.EINTR => {
                         completion.io.enqueue(completion);
                         return;
                     },
-                    os.EAGAIN => error.WouldBlock,
                     os.EBADF => error.NotOpenForReading,
                     os.ECONNRESET => error.ConnectionResetByPeer,
                     os.EINVAL => error.Alignment,
@@ -861,11 +859,10 @@ pub const Completion = struct {
             },
             .readev, .recv => {
                 const result = if (completion.result < 0) switch (-completion.result) {
-                    os.EINTR => {
+                    os.EAGAIN, os.EINTR => {
                         completion.io.enqueue(completion);
                         return;
                     },
-                    os.EAGAIN => error.WouldBlock,
                     os.EBADF => error.FileDescriptorInvalid,
                     os.ECONNREFUSED => error.ConnectionRefused,
                     os.ENOMEM => error.SystemResources,
@@ -878,12 +875,11 @@ pub const Completion = struct {
             },
             .writev, .send => {
                 const result = if (completion.result < 0) switch (-completion.result) {
-                    os.EINTR => {
+                    os.EAGAIN, os.EINTR => {
                         completion.io.enqueue(completion);
                         return;
                     },
                     os.EACCES => error.AccessDenied,
-                    os.EAGAIN => error.WouldBlock,
                     os.EALREADY => error.FastOpenAlreadyInProgress,
                     os.EAFNOSUPPORT => error.AddressFamilyNotSupported,
                     os.EBADF => error.FileDescriptorInvalid,

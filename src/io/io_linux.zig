@@ -675,7 +675,7 @@ pub const Completion = struct {
                 linux.io_uring_prep_poll_add(sqe, op.fd, linux.POLL.HUP | linux.POLL.IN | linux.POLL.OUT);
             },
             .connect_poll => |*op| {
-                linux.io_uring_prep_poll_add(sqe, op.socket, linux.POLL.HUP | linux.POLL.OUT);
+                linux.io_uring_prep_poll_add(sqe, op.socket, linux.POLL.HUP | linux.POLL.OUT | linux.POLL.IN);
             },
             .fsync => |op| {
                 linux.io_uring_prep_fsync(sqe, op.fd, 0);
@@ -769,11 +769,14 @@ pub const Completion = struct {
             },
             .connect_poll => {
                 var op = &completion.operation.connect_poll;
-                const rc = linux.connect(op.socket, &op.address.any, op.address.getOsSockLen());
+                var err_code: i32 = undefined;
+                var size: u32 = @sizeOf(u32);
+                const rc = linux.getsockopt(op.socket, os.SOL.SOCKET, os.SO.ERROR, @ptrCast([*]u8, &err_code), &size);
                 completion.result = @intCast(i32, rc);
 
                 const result = if (completion.result < 0) switch (-completion.result) {
                     os.EAGAIN, os.EWOULDBLOCK, os.EINPROGRESS, os.EINTR => {
+                        _ = linux.connect(op.socket, &op.address.any, op.address.getOsSockLen());
                         completion.io.enqueue(completion);
                         return;
                     },

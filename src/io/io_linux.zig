@@ -142,7 +142,7 @@ const os = struct {
     pub const EHWPOISON = 133;
 };
 
-pub const pretend_older_kernel = false;
+pub const pretend_older_kernel = true;
 const Features = struct {
     connect_poll: bool = pretend_older_kernel,
     close_poll: bool = pretend_older_kernel,
@@ -796,7 +796,16 @@ pub const Completion = struct {
                     os.EPROTOTYPE => error.ProtocolNotSupported,
                     os.ETIMEDOUT => error.ConnectionTimedOut,
                     else => |errno| asError(errno),
-                } else assert(completion.result == 0);
+                } else {
+                    // go back to blocking mode
+                    var opts = linux.fcntl(op.socket, os.F.GETFL, 0);
+                    if ((opts & os.O.NONBLOCK) != 0) {
+                        opts &= ~(@as(u32, os.O.NONBLOCK));
+                        _ = linux.fcntl(op.socket, os.F.SETFL, opts);
+                    }
+
+                    assert(completion.result == 0);
+                };
                 completion.callback(completion.context, completion, &result);
             },
             .connect => {
@@ -1080,6 +1089,13 @@ pub fn close(
     };
 
     if (features.close_poll) {
+        // go to non-blocking mode
+        var opts = linux.fcntl(fd, os.F.GETFL, 0);
+        if ((opts & os.O.NONBLOCK) == 0) {
+            opts |= os.O.NONBLOCK;
+            _ = linux.fcntl(fd, os.F.SETFL, opts);
+        }
+
         const rc = linux.close(fd);
         switch (linux.getErrno(rc)) {
             .AGAIN, .INPROGRESS, .INTR => {},

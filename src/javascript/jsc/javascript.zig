@@ -617,7 +617,7 @@ pub const Bun = struct {
         var stream = std.io.fixedBufferStream(&public_path_temp_str);
         var writer = stream.writer();
         getPublicPath(to, VirtualMachine.vm.origin, @TypeOf(&writer), &writer);
-        return ZigString.init(stream.buffer[0..stream.pos]).toValueGC(ctx.ptr()).asRef();
+        return ZigString.init(stream.buffer[0..stream.pos]).toValueGC(ctx.ptr()).asObjectRef();
     }
 
     pub const Class = NewClass(

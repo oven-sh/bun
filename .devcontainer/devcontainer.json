@@ -14,10 +14,7 @@
     "terminal.integrated.shell.linux": "/bin/zsh",
     "zigLanguageClient.path": "/home/ubuntu/zls/zig-out/bin/zls",
     "zig.zigPath": "/build/zig/zig",
-    "editor.defaultFormatter": "esbenp.prettier-vscode",
-    "[zig]": {
-      "editor.defaultFormatter": "tiehuis.zig"
-    }
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
 
   // Add the IDs of extensions you want installed when the container is created.

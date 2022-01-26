@@ -257,7 +257,7 @@ ENV PATH "/home/ubuntu/zls/zig-out/bin:$PATH"
 ENV BUN_INSTALL /home/ubuntu/.bun
 ENV XDG_CONFIG_HOME /home/ubuntu/.config
 
-RUN update-alternatives --install /usr/bin/lldb lldb /usr/bin/lldb-12 90
+RUN apt-get -y update && update-alternatives --install /usr/bin/lldb lldb /usr/bin/lldb-13 90
 
 COPY .devcontainer/workspace.code-workspace $GITHUB_WORKSPACE/workspace.code-workspace
 COPY .devcontainer/zls.json $GITHUB_WORKSPACE/workspace.code-workspace

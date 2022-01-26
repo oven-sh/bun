@@ -1565,7 +1565,7 @@ const Syscall = struct {
 };
 
 pub fn openSocket(family: u32, sock_type: u32, protocol: u32) !os.socket_t {
-    return Syscall.socket(family, sock_type | os.O.NONBLOCK | os.O.CLOEXEC, protocol);
+    return Syscall.socket(family, sock_type | os.O.NONBLOCK | os.SOCK.CLOEXEC, protocol);
 }
 
 pub var global: IO = undefined;

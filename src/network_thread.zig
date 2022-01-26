@@ -66,6 +66,7 @@ pub fn getAddressList(allocator: std.mem.Allocator, name: []const u8, port: u16)
 
 pub fn init() !void {
     if ((global_loaded.swap(1, .Monotonic)) == 1) return;
+    AsyncIO.global_loaded = true;
 
     global = NetworkThread{
         .pool = ThreadPool.init(.{ .max_threads = 1, .stack_size = 64 * 1024 * 1024 }),

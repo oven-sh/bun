@@ -520,6 +520,9 @@ pub noinline fn globalError(err: anyerror) noreturn {
             Output.flush();
             std.os.exit(1);
         },
+        error.MissingValue => {
+            std.os.exit(1);
+        },
         else => {},
     }
 

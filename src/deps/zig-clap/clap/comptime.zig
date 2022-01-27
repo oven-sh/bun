@@ -20,7 +20,7 @@ pub fn ComptimeClap(
         if (param.names.long != null or param.names.short != null) {
             const ptr = switch (param.takes_value) {
                 .none => &_flags,
-                .one => &_single_options,
+                .one_optional, .one => &_single_options,
                 .many => &_multi_options,
             };
             index = ptr.*;
@@ -71,10 +71,10 @@ pub fn ComptimeClap(
                 const param = arg.param;
                 if (param.names.long == null and param.names.short == null) {
                     try pos.append(arg.value.?);
-                } else if (param.takes_value == .one) {
+                } else if (param.takes_value == .one or param.takes_value == .one_optional) {
                     debug.assert(res.single_options.len != 0);
                     if (res.single_options.len != 0)
-                        res.single_options[param.id] = arg.value.?;
+                        res.single_options[param.id] = arg.value orelse "";
                 } else if (param.takes_value == .many) {
                     debug.assert(multis.len != 0);
                     if (multis.len != 0)
@@ -101,7 +101,7 @@ pub fn ComptimeClap(
 
         pub fn flag(parser: @This(), comptime name: []const u8) bool {
             const param = comptime findParam(name);
-            if (param.takes_value != .none)
+            if (param.takes_value != .none and param.takes_value != .one_optional)
                 @compileError(name ++ " is an option and not a flag.");
 
             return parser.flags[param.id];
@@ -120,7 +120,7 @@ pub fn ComptimeClap(
             const param = comptime findParam(name);
             if (param.takes_value == .none)
                 @compileError(name ++ " is a flag and not an option.");
-            if (param.takes_value == .one)
+            if (param.takes_value == .one or param.takes_value == .one_optional)
                 @compileError(name ++ " takes one option, not multiple.");
 
             return parser.multi_options[param.id];

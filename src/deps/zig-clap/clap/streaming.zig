@@ -56,8 +56,10 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
         }
 
         fn normal(parser: *@This()) !?Arg(Id) {
+            const ArgType = Arg(Id);
             const arg_info = (try parser.parseNextArg()) orelse return null;
             const arg = arg_info.arg;
+
             switch (arg_info.kind) {
                 .long => {
                     const eql_index = mem.indexOfScalar(u8, arg, '=');
@@ -73,18 +75,22 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                             if (maybe_value != null)
                                 return parser.err(arg, .{ .long = name }, error.DoesntTakeValue);
 
-                            return Arg(Id){ .param = param };
+                            return ArgType{ .param = param };
                         }
 
                         const value = blk: {
                             if (maybe_value) |v|
                                 break :blk v;
 
-                            break :blk (try parser.iter.next()) orelse
-                                return parser.err(arg, .{ .long = name }, error.MissingValue);
+                            break :blk (try parser.iter.next()) orelse brk2: {
+                                if (param.takes_value != .one_optional)
+                                    return parser.err(arg, .{ .long = name }, error.MissingValue);
+
+                                break :brk2 "";
+                            };
                         };
 
-                        return Arg(Id){ .param = param, .value = value };
+                        return ArgType{ .param = param, .value = value };
                     }
 
                     return null;
@@ -135,8 +141,8 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                 }
 
                 const next_is_eql = if (next_index < arg.len) arg[next_index] == '=' else false;
-                if (param.takes_value == .none) {
-                    if (next_is_eql)
+                if (param.takes_value == .none or param.takes_value == .one_optional) {
+                    if (next_is_eql and param.takes_value == .none)
                         return parser.err(arg, .{ .short = short }, error.DoesntTakeValue);
                     return Arg(Id){ .param = param };
                 }

@@ -29,6 +29,7 @@ pub const Values = enum {
     none,
     one,
     many,
+    one_optional,
 };
 
 /// Represents a parameter for the command line.
@@ -109,9 +110,10 @@ fn parseParamRest(line: []const u8) Param(Help) {
     if (mem.startsWith(u8, line, "<")) blk: {
         const len = mem.indexOfScalar(u8, line, '>') orelse break :blk;
         const takes_many = mem.startsWith(u8, line[len + 1 ..], "...");
+        const takes_one_optional = mem.startsWith(u8, line[len + 1 ..], "?");
         const help_start = len + 1 + @as(usize, 3) * @boolToInt(takes_many);
         return .{
-            .takes_value = if (takes_many) .many else .one,
+            .takes_value = if (takes_many) Values.many else if (takes_one_optional) Values.one_optional else Values.one,
             .id = .{
                 .msg = mem.trim(u8, line[help_start..], " \t"),
                 .value = line[1..len],
@@ -372,6 +374,7 @@ fn printParam(
     switch (param.takes_value) {
         .none => {},
         .one => try stream.print(" <{s}>", .{valueText(context, param)}),
+        .one_optional => try stream.print(" <{s}>?", .{valueText(context, param)}),
         .many => try stream.print(" <{s}>...", .{valueText(context, param)}),
     }
 }
@@ -477,6 +480,7 @@ pub fn usageFull(
         switch (param.takes_value) {
             .none => {},
             .one => try cs.print(" <{s}>", .{try valueText(context, param)}),
+            .one_optional => try cs.print(" <{s}>?", .{try valueText(context, param)}),
             .many => try cs.print(" <{s}>...", .{try valueText(context, param)}),
         }
 

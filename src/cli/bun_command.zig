@@ -52,7 +52,6 @@ const ServerBundleGeneratorThread = struct {
             env_loader_,
         );
         server_bundler.configureLinker();
-
         server_bundler.options.jsx.supports_fast_refresh = false;
 
         server_bundler.router = router;
@@ -60,6 +59,10 @@ const ServerBundleGeneratorThread = struct {
             Output.prettyErrorln("<r><red>{s}<r> loading --define or .env values for node_modules.server.bun\n", .{@errorName(err)});
             return err;
         };
+
+        if (ctx.debug.macros) |macros| {
+            server_bundler.options.macro_remap = macros;
+        }
 
         var estimated_input_lines_of_code: usize = 0;
         _ = try bundler.Bundler.GenerateNodeModuleBundle.generate(
@@ -69,6 +72,7 @@ const ServerBundleGeneratorThread = struct {
             route_conf_,
             _filepath,
             &estimated_input_lines_of_code,
+            ctx.debug.package_bundle_map,
         );
         std.mem.doNotOptimizeAway(&server_bundler);
     }
@@ -117,6 +121,10 @@ pub const BunCommand = struct {
             this_bundler.options.node_modules_bundle_pretty_path = "";
             this_bundler.options.node_modules_bundle_url = "";
         };
+
+        if (ctx.debug.macros) |macros| {
+            this_bundler.macro_context.?.remap = macros;
+        }
 
         var loaded_route_config: ?Api.LoadedRouteConfig = brk: {
             if (this_bundler.options.routes.routes_enabled) {
@@ -176,6 +184,7 @@ pub const BunCommand = struct {
                 loaded_route_config,
                 filepath,
                 &estimated_input_lines_of_code_,
+                ctx.debug.package_bundle_map,
             );
 
             const estimated_input_lines_of_code = estimated_input_lines_of_code_;

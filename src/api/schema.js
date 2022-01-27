@@ -1706,6 +1706,10 @@ function decodeTransformOptions(bb) {
         result["port"] = bb.readUint16();
         break;
 
+      case 26:
+        result["logLevel"] = MessageLevel[bb.readVarUint()];
+        break;
+
       default:
         throw new Error("Attempted to parse invalid message");
     }
@@ -1901,6 +1905,17 @@ function encodeTransformOptions(message, bb) {
   if (value != null) {
     bb.writeByte(25);
     bb.writeUint16(value);
+  }
+
+  var value = message["logLevel"];
+  if (value != null) {
+    bb.writeByte(26);
+    var encoded = MessageLevel[value];
+    if (encoded === void 0)
+      throw new Error(
+        "Invalid value " + JSON.stringify(value) + ' for enum "MessageLevel"'
+      );
+    bb.writeVarUint(encoded);
   }
   bb.writeByte(0);
 }
@@ -2104,19 +2119,23 @@ const MessageLevel = {
   2: 2,
   3: 3,
   4: 4,
+  5: 5,
   err: 1,
   warn: 2,
   note: 3,
-  debug: 4,
+  info: 4,
+  debug: 5,
 };
 const MessageLevelKeys = {
   1: "err",
   2: "warn",
   3: "note",
-  4: "debug",
+  4: "info",
+  5: "debug",
   err: "err",
   warn: "warn",
   note: "note",
+  info: "info",
   debug: "debug",
 };
 

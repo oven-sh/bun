@@ -83,9 +83,9 @@ pub const DefineData = struct {
             while (splitter.next()) |part| {
                 if (!js_lexer.isIdentifier(part)) {
                     if (strings.eql(part, entry.key_ptr)) {
-                        try log.addErrorFmt(null, logger.Loc{}, allocator, "The define key \"{s}\" must be a valid identifier", .{entry.key_ptr.*});
+                        try log.addErrorFmt(null, logger.Loc{}, allocator, "define key \"{s}\" must be a valid identifier", .{entry.key_ptr.*});
                     } else {
-                        try log.addErrorFmt(null, logger.Loc{}, allocator, "The define key \"{s}\" contains invalid  identifier \"{s}\"", .{ part, entry.value_ptr.* });
+                        try log.addErrorFmt(null, logger.Loc{}, allocator, "define key \"{s}\" contains invalid identifier \"{s}\"", .{ part, entry.value_ptr.* });
                     }
                     break;
                 }

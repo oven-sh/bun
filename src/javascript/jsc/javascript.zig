@@ -1517,16 +1517,8 @@ pub const VirtualMachine = struct {
 
                 const macro_remappings = if (vm.macro_mode or !vm.has_any_macro_remappings or is_node_override)
                     MacroRemap{}
-                else brk: {
-                    if (package_json) |pkg| {
-                        break :brk pkg.macros;
-                    }
-
-                    // TODO: find a way to pass the package_json through the resolve
-                    const resolve_result = vm.bundler.resolver.resolve(vm.bundler.fs.top_level_dir, specifier, .stmt) catch break :brk MacroRemap{};
-
-                    break :brk resolve_result.getMacroRemappings();
-                };
+                else
+                    vm.bundler.options.macro_remap;
 
                 var fallback_source: logger.Source = undefined;
 
@@ -1646,11 +1638,7 @@ pub const VirtualMachine = struct {
         );
 
         if (!vm.macro_mode) {
-            vm.has_any_macro_remappings = vm.has_any_macro_remappings or brk: {
-                if (result.package_json == null) break :brk false;
-
-                break :brk result.package_json.?.macros.count() > 0;
-            };
+            vm.has_any_macro_remappings = vm.has_any_macro_remappings or vm.bundler.options.macro_remap.count() > 0;
         }
         ret.result = result;
         const result_path = result.pathConst() orelse return error.ModuleNotFound;

@@ -202,7 +202,8 @@ export enum MessageLevel {
   err = 1,
   warn = 2,
   note = 3,
-  debug = 4,
+  info = 4,
+  debug = 5,
 }
 export const MessageLevelKeys = {
   1: "err",
@@ -211,7 +212,9 @@ export const MessageLevelKeys = {
   warn: "warn",
   3: "note",
   note: "note",
-  4: "debug",
+  4: "info",
+  info: "info",
+  5: "debug",
   debug: "debug",
 };
 export enum Reloader {
@@ -482,6 +485,7 @@ export interface TransformOptions {
   no_summary?: boolean;
   disable_hmr?: boolean;
   port?: uint16;
+  logLevel?: MessageLevel;
 }
 
 export interface FileHandle {

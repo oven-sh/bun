@@ -485,6 +485,8 @@ pub const Log = struct {
     msgs: ArrayList(Msg),
     level: Level = if (Environment.isDebug) Level.info else Level.warn,
 
+    pub var default_log_level = if (Environment.isDebug) Level.info else Level.warn;
+
     pub fn hasAny(this: *const Log) bool {
         return (this.warnings + this.errors) > 0;
     }
@@ -510,9 +512,26 @@ pub const Log = struct {
         info,
         warn,
         err,
+
+        pub const label: std.EnumArray(Level, string) = brk: {
+            var map = std.EnumArray(Level, string).initFill("");
+            map.set(Level.verbose, "verbose");
+            map.set(Level.debug, "debug");
+            map.set(Level.info, "info");
+            map.set(Level.warn, "warn");
+            map.set(Level.err, "error");
+            break :brk map;
+        };
     };
 
     pub fn init(allocator: std.mem.Allocator) Log {
+        return Log{
+            .msgs = ArrayList(Msg).init(allocator),
+            .level = default_log_level,
+        };
+    }
+
+    pub fn initComptime(allocator: std.mem.Allocator) Log {
         return Log{
             .msgs = ArrayList(Msg).init(allocator),
         };

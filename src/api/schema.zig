@@ -1735,6 +1735,9 @@ pub const Api = struct {
         /// port
         port: ?u16 = null,
 
+        /// logLevel
+        log_level: ?MessageLevel = null,
+
         pub fn decode(reader: anytype) anyerror!TransformOptions {
             var this = std.mem.zeroes(TransformOptions);
 
@@ -1818,6 +1821,9 @@ pub const Api = struct {
                     },
                     25 => {
                         this.port = try reader.readValue(u16);
+                    },
+                    26 => {
+                        this.log_level = try reader.readValue(MessageLevel);
                     },
                     else => {
                         return error.InvalidMessage;
@@ -1927,6 +1933,10 @@ pub const Api = struct {
             if (this.port) |port| {
                 try writer.writeFieldID(25);
                 try writer.writeInt(port);
+            }
+            if (this.log_level) |log_level| {
+                try writer.writeFieldID(26);
+                try writer.writeEnum(log_level);
             }
             try writer.endMessage();
         }
@@ -2103,6 +2113,9 @@ pub const Api = struct {
 
         /// note
         note,
+
+        /// info
+        info,
 
         /// debug
         debug,

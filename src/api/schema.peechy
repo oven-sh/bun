@@ -342,6 +342,8 @@ message TransformOptions {
   bool disable_hmr = 24;
 
   uint16 port = 25;
+  MessageLevel logLevel = 26;
+
 }
 
 struct FileHandle {
@@ -379,7 +381,8 @@ enum MessageLevel {
   err = 1;
   warn  =2;
   note = 3;
-  debug = 4;
+  info = 4;
+  debug = 5;
 }
 
 struct Location {

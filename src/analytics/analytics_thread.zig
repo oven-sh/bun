@@ -51,6 +51,7 @@ pub const Features = struct {
     pub var origin = false;
     pub var external = false;
     pub var fetch = false;
+    pub var bunfig = false;
 
     pub fn formatter() Formatter {
         return Formatter{};
@@ -77,6 +78,7 @@ pub const Features = struct {
                 "origin",
                 "external",
                 "fetch",
+                "bunfig",
             };
             inline for (fields) |field| {
                 if (@field(Features, field)) {

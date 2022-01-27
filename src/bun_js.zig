@@ -38,6 +38,7 @@ pub const Run = struct {
     ctx: Command.Context,
     vm: *VirtualMachine,
     entry_path: string,
+
     pub fn boot(ctx: Command.Context, file: std.fs.File, entry_path: string) !void {
         @import("javascript/jsc/javascript_core_c_api.zig").JSCInitialize();
 
@@ -52,6 +53,10 @@ pub const Run = struct {
         };
 
         run.vm.argv = ctx.positionals;
+
+        if (ctx.debug.macros) |macros| {
+            run.vm.bundler.options.macro_remap = macros;
+        }
 
         run.vm.bundler.configureRouter(false) catch {
             if (Output.enable_ansi_colors_stderr) {

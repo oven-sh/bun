@@ -538,9 +538,8 @@ pub fn constructor(
         .scan_pass_result = ScanPassResult.init(getAllocator(ctx)),
     };
 
-    transpiler.bundler.macro_context = JSAst.Macro.MacroContext.init(&transpiler.bundler);
     if (transpiler_options.macro_map.count() > 0) {
-        transpiler.bundler.macro_context.?.remap = transpiler_options.macro_map;
+        bundler.options.macro_remap = transpiler_options.macro_map;
     }
 
     return Class.make(ctx, transpiler);

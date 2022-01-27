@@ -21,6 +21,7 @@ const js_ast = @import("js_ast.zig");
 const linker = @import("linker.zig");
 const Ref = @import("ast/base.zig").Ref;
 const Define = @import("defines.zig").Define;
+const DebugOptions = @import("./cli.zig").Command.DebugOptions;
 
 const panicky = @import("panic_handler.zig");
 const Fs = @import("fs.zig");
@@ -692,6 +693,7 @@ pub const Bundler = struct {
 
         always_bundled_package_hashes: []u32 = &[_]u32{},
         always_bundled_package_jsons: []*const PackageJSON = &.{},
+        package_bundle_map: options.BundlePackage.Map = options.BundlePackage.Map{},
 
         const U32Map = std.AutoHashMap(u32, u32);
         pub const current_version: u32 = 1;
@@ -777,6 +779,7 @@ pub const Bundler = struct {
             route_config: ?Api.LoadedRouteConfig,
             destination: [*:0]const u8,
             estimated_input_lines_of_code: *usize,
+            package_bundle_map: options.BundlePackage.Map,
         ) !?Api.JavascriptBundleContainer {
             _ = try bundler.fs.fs.openTmpDir();
             var tmpname_buf: [64]u8 = undefined;
@@ -814,6 +817,7 @@ pub const Bundler = struct {
                 .package_list_map = std.AutoHashMap(u64, u32).init(allocator),
                 .pool = undefined,
                 .write_lock = Lock.init(),
+                .package_bundle_map = package_bundle_map,
             };
             // dist/index.js appears more common than /index.js
             // but this means we can store both "dist/index.js" and "index.js" in one.
@@ -850,15 +854,26 @@ pub const Bundler = struct {
                     break :brk read_dir.package_json.?;
                 };
                 Analytics.setProjectID(std.fs.path.dirname(root_package_json.source.path.text) orelse "/", root_package_json.name);
-                Analytics.Features.macros = Analytics.Features.macros or root_package_json.macros.count() > 0;
+                if (bundler.macro_context) |macro_ctx| {
+                    Analytics.Features.macros = macro_ctx.remap.count() > 0;
+                }
 
-                if (root_package_json.always_bundle.len > 0) {
+                const bundle_keys = package_bundle_map.keys();
+                const do_always_bundle = package_bundle_map.values();
+                var always_bundle_count: u32 = 0;
+                for (do_always_bundle) |always| {
+                    always_bundle_count += @as(u32, @boolToInt(always == .always));
+                }
+
+                if (always_bundle_count > 0) {
                     Analytics.Features.always_bundle = true;
-                    var always_bundled_package_jsons = bundler.allocator.alloc(*PackageJSON, root_package_json.always_bundle.len) catch unreachable;
-                    var always_bundled_package_hashes = bundler.allocator.alloc(u32, root_package_json.always_bundle.len) catch unreachable;
+                    var always_bundled_package_jsons = bundler.allocator.alloc(*PackageJSON, always_bundle_count) catch unreachable;
+                    var always_bundled_package_hashes = bundler.allocator.alloc(u32, always_bundle_count) catch unreachable;
                     var i: u16 = 0;
 
-                    inner: for (root_package_json.always_bundle) |name| {
+                    inner: for (bundle_keys) |name, k| {
+                        if (do_always_bundle[k] != .always) continue;
+
                         std.mem.copy(u8, &tmp_buildfile_buf, name);
                         std.mem.copy(u8, tmp_buildfile_buf[name.len..], "/package.json");
                         const package_json_import = tmp_buildfile_buf[0 .. name.len + "/package.json".len];
@@ -1294,6 +1309,10 @@ pub const Bundler = struct {
 
                 if (resolve_result.package_json) |pkg_| {
                     var pkg: *const PackageJSON = pkg_;
+                    if (this.package_bundle_map.get(pkg.name)) |result| {
+                        if (result == .never) return null;
+                    }
+
                     if (std.mem.indexOfScalar(u32, this.always_bundled_package_hashes, pkg.hash)) |pkg_i| {
                         pkg = this.always_bundled_package_jsons[pkg_i];
                         const key_path_source_dir = pkg.source.key_path.sourceDir();
@@ -1507,14 +1526,18 @@ pub const Bundler = struct {
 
             var shared_buffer = &worker.data.shared_buffer;
             var scan_pass_result = &worker.data.scan_pass_result;
-
-            const is_from_node_modules = resolve.isLikelyNodeModule() or brk: {
-                if (resolve.package_json) |pkg| {
-                    break :brk std.mem.indexOfScalar(u32, this.always_bundled_package_hashes, pkg.hash) != null;
-                }
-                break :brk false;
-            };
             var file_path = (resolve.pathConst() orelse unreachable).*;
+
+            const add_to_bundle = brk: {
+                if (resolve.package_json) |package_json| {
+                    if (this.package_bundle_map.get(package_json.name)) |result| {
+                        break :brk result == .always;
+                    }
+                }
+
+                break :brk resolve.isLikelyNodeModule();
+            };
+
             const source_dir = file_path.sourceDir();
             const loader = bundler.options.loader(file_path.name.ext);
             const platform = bundler.options.platform;
@@ -1525,7 +1548,7 @@ pub const Bundler = struct {
             var log = worker.data.log;
 
             // If we're in a node_module, build that almost normally
-            if (is_from_node_modules) {
+            if (add_to_bundle) {
                 var code_offset: u32 = 0;
 
                 const module_data = BundledModuleData.getForceBundleForMain(this, &resolve) orelse {
@@ -1625,7 +1648,7 @@ pub const Bundler = struct {
                             opts.enable_bundling = true;
                             opts.warn_about_unbundled_modules = false;
                             opts.macro_context = &worker.data.macro_context;
-                            opts.macro_context.remap = package.macros;
+
                             ast = (bundler.resolver.caches.js.parse(
                                 bundler.allocator,
                                 opts,
@@ -2024,7 +2047,6 @@ pub const Bundler = struct {
                         jsx.parse = loader.isJSX();
                         var opts = js_parser.Parser.Options.init(jsx, loader);
                         opts.macro_context = &worker.data.macro_context;
-                        opts.macro_context.remap = resolve.getMacroRemappings();
 
                         try bundler.resolver.caches.js.scan(
                             bundler.allocator,
@@ -2303,7 +2325,7 @@ pub const Bundler = struct {
                         .dirname_fd = resolve_result.dirname_fd,
                         .file_descriptor = file_descriptor,
                         .file_hash = filepath_hash,
-                        .macro_remappings = resolve_result.getMacroRemappings(),
+                        .macro_remappings = bundler.options.macro_remap,
                         .jsx = resolve_result.jsx,
                     },
                     client_entry_point,
@@ -2416,7 +2438,7 @@ pub const Bundler = struct {
                         .dirname_fd = resolve_result.dirname_fd,
                         .file_descriptor = null,
                         .file_hash = null,
-                        .macro_remappings = resolve_result.getMacroRemappings(),
+                        .macro_remappings = bundler.options.macro_remap,
                         .jsx = resolve_result.jsx,
                     },
                     client_entry_point_,
@@ -2720,7 +2742,7 @@ pub const Bundler = struct {
                 opts.features.top_level_await = true;
 
                 opts.macro_context = &bundler.macro_context.?;
-                opts.macro_context.remap = this_parse.macro_remappings;
+
                 opts.features.is_macro_runtime = bundler.options.platform == .bun_macro;
 
                 const value = (bundler.resolver.caches.js.parse(
@@ -2942,6 +2964,7 @@ pub const Bundler = struct {
         bundler.configureLinker();
         try bundler.configureRouter(false);
         try bundler.configureDefines();
+        bundler.macro_context = js_ast.Macro.MacroContext.init(&bundler);
 
         var skip_normalize = false;
         var load_from_routes = false;

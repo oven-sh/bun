@@ -837,14 +837,7 @@ pub const RequestContext = struct {
             const file_path_str = watchlist_slice.items(.file_path)[index];
             const fd = watchlist_slice.items(.fd)[index];
             const loader = watchlist_slice.items(.loader)[index];
-            const macro_remappings = brk: {
-                if (watchlist_slice.items(.package_json)[index]) |package_json| {
-                    break :brk package_json.macros;
-                }
-
-                break :brk MacroMap{};
-            };
-
+            const macro_remappings = this.bundler.options.macro_remap;
             const path = Fs.Path.init(file_path_str);
             var old_log = this.bundler.log;
             this.bundler.setLog(&log);
@@ -3348,8 +3341,6 @@ pub const Server = struct {
         const dir_info = (this.bundler.resolver.readDirInfo(this.bundler.fs.top_level_dir) catch return) orelse return;
 
         if (dir_info.package_json) |pkg| {
-            Analytics.Features.macros = Analytics.Features.macros or pkg.macros.count() > 0;
-            Analytics.Features.always_bundle = pkg.always_bundle.len > 0;
             Analytics.setProjectID(dir_info.abs_path, pkg.name);
         } else {
             Analytics.setProjectID(dir_info.abs_path, "");
@@ -3390,6 +3381,8 @@ pub const Server = struct {
             std.os.exit(0);
             return;
         }
+
+        server.bundler.options.macro_remap = debug.macros orelse .{};
 
         if (debug.fallback_only or server.bundler.env.map.get("BUN_DISABLE_BUN_JS") != null) {
             RequestContext.fallback_only = true;

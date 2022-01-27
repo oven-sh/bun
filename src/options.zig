@@ -27,7 +27,7 @@ const StoredFileDescriptorType = _global.StoredFileDescriptorType;
 const JSC = @import("./jsc.zig");
 
 const Analytics = @import("./analytics/analytics_thread.zig");
-
+const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const DotEnv = @import("./env_loader.zig");
 
 const assert = std.debug.assert;
@@ -350,6 +350,13 @@ pub const ExternalModules = struct {
     });
 };
 
+pub const BundlePackage = enum {
+    always,
+    never,
+
+    pub const Map = std.StringArrayHashMapUnmanaged(BundlePackage);
+};
+
 pub const ModuleType = enum {
     unknown,
     cjs,
@@ -651,8 +658,15 @@ pub const Loader = enum(u3) {
         loader.toZigString(&zig_str, global);
         if (zig_str.len == 0) return null;
 
+        return fromString(zig_str.slice()) orelse {
+            JSC.throwInvalidArguments("invalid loader – must be js, jsx, tsx, ts, css, file, or json", .{}, global.ref(), exception);
+            return null;
+        };
+    }
+
+    pub fn fromString(slice_: string) ?Loader {
         const LoaderMatcher = strings.ExactSizeMatcher(4);
-        var slice = zig_str.slice();
+        var slice = slice_;
         if (slice.len > 0 and slice[0] == '.') {
             slice = slice[1..];
         }
@@ -665,10 +679,7 @@ pub const Loader = enum(u3) {
             LoaderMatcher.case("css") => Loader.css,
             LoaderMatcher.case("file") => Loader.file,
             LoaderMatcher.case("json") => Loader.json,
-            else => {
-                JSC.throwInvalidArguments("invalid loader – must be js, jsx, tsx, ts, css, file, or json", .{}, global.ref(), exception);
-                return null;
-            },
+            else => null,
         };
     }
 
@@ -1085,6 +1096,8 @@ pub const BundleOptions = struct {
     env: Env = Env{},
     transform_options: Api.TransformOptions,
     polyfill_node_globals: bool = true,
+
+    macro_remap: MacroRemap = MacroRemap{},
 
     conditions: ESMConditions = undefined,
 

@@ -1107,6 +1107,11 @@ pub const E = struct {
             return @floatToInt(u32, @maximum(@trunc(self.value), 0));
         }
 
+        pub inline fn toU16(self: Number) u16 {
+            @setRuntimeSafety(false);
+            return @floatToInt(u16, @maximum(@trunc(self.value), 0));
+        }
+
         pub fn jsonStringify(self: *const Number, opts: anytype, o: anytype) !void {
             return try std.json.stringify(self.value, opts, o);
         }
@@ -1727,6 +1732,10 @@ pub const Expr = struct {
         return false;
     }
 
+    pub fn get(expr: *const Expr, name: string) ?Expr {
+        return if (asProperty(expr, name)) |query| query.expr else null;
+    }
+
     // Making this comptime bloats the binary and doesn't seem to impact runtime performance.
     pub fn asProperty(expr: *const Expr, name: string) ?Query {
         if (std.meta.activeTag(expr.data) != .e_object) return null;
@@ -2309,6 +2318,48 @@ pub const Expr = struct {
 
         // This should never make it to the printer
         inline_identifier,
+
+        pub fn format(tag: Tag, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try switch (tag) {
+                .e_string => writer.writeAll("string"),
+                .e_array => writer.writeAll("array"),
+                .e_unary => writer.writeAll("unary"),
+                .e_binary => writer.writeAll("binary"),
+                .e_boolean => writer.writeAll("boolean"),
+                .e_super => writer.writeAll("super"),
+                .e_null => writer.writeAll("null"),
+                .e_undefined => writer.writeAll("undefined"),
+                .e_new => writer.writeAll("new"),
+                .e_function => writer.writeAll("function"),
+                .e_new_target => writer.writeAll("new target"),
+                .e_import_meta => writer.writeAll("import.meta"),
+                .e_call => writer.writeAll("call"),
+                .e_dot => writer.writeAll("dot"),
+                .e_index => writer.writeAll("index"),
+                .e_arrow => writer.writeAll("arrow"),
+                .e_identifier => writer.writeAll("identifier"),
+                .e_import_identifier => writer.writeAll("import identifier"),
+                .e_private_identifier => writer.writeAll("#privateIdentifier"),
+                .e_jsx_element => writer.writeAll("<jsx>"),
+                .e_missing => writer.writeAll("<missing>"),
+                .e_number => writer.writeAll("number"),
+                .e_big_int => writer.writeAll("BigInt"),
+                .e_object => writer.writeAll("object"),
+                .e_spread => writer.writeAll("..."),
+                .e_template_part => writer.writeAll("template_part"),
+                .e_template => writer.writeAll("template"),
+                .e_reg_exp => writer.writeAll("regexp"),
+                .e_await => writer.writeAll("await"),
+                .e_yield => writer.writeAll("yield"),
+                .e_if => writer.writeAll("if"),
+                .e_require_or_require_resolve => writer.writeAll("require_or_require_resolve"),
+                .e_import => writer.writeAll("import"),
+                .e_this => writer.writeAll("this"),
+                .e_class => writer.writeAll("class"),
+                .e_require => writer.writeAll("require"),
+                else => writer.writeAll(@tagName(tag)),
+            };
+        }
 
         pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
             return try std.json.stringify(@tagName(self), opts, o);
@@ -3822,7 +3873,7 @@ pub const Macro = struct {
                 .macros = MacroMap.init(default_allocator),
                 .resolver = &bundler.resolver,
                 .env = bundler.env,
-                .remap = MacroRemap{},
+                .remap = bundler.options.macro_remap,
             };
         }
 

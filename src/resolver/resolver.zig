@@ -119,12 +119,6 @@ pub const Result = struct {
     file_fd: StoredFileDescriptorType = 0,
     import_kind: ast.ImportKind = undefined,
 
-    pub fn getMacroRemappings(this: *const Result) MacroRemap {
-        const pkg = this.package_json orelse return MacroRemap{};
-
-        return pkg.macros;
-    }
-
     pub fn path(this: *Result) ?*Path {
         if (!this.path_pair.primary.is_disabled)
             return &this.path_pair.primary;

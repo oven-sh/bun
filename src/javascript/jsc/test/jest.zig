@@ -117,7 +117,7 @@ pub const TestRunner = struct {
 
     pub const File = struct {
         source: logger.Source = logger.Source.initEmptyFile(""),
-        log: logger.Log = logger.Log.init(default_allocator),
+        log: logger.Log = logger.Log.initComptime(default_allocator),
         module_scope: *DescribeScope = undefined,
 
         pub const List = std.MultiArrayList(File);

@@ -52,8 +52,11 @@ const ShellCompletions = @import("./cli/shell_completions.zig");
 const TestCommand = @import("./cli/test_command.zig").TestCommand;
 const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
 
+const MacroMap = @import("./resolver/package_json.zig").MacroMap;
+
 const Reporter = @import("./report.zig");
 var start_time: i128 = undefined;
+const Bunfig = @import("./bunfig.zig").Bunfig;
 
 pub const Cli = struct {
     var wait_group: sync.WaitGroup = undefined;
@@ -160,6 +163,7 @@ pub const Arguments = struct {
         clap.parseParam("--bunfile <STR>                   Use a .bun file (default: node_modules.bun)") catch unreachable,
         clap.parseParam("--server-bunfile <STR>            Use a .server.bun file (default: node_modules.server.bun)") catch unreachable,
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
+        clap.parseParam("-c, --config <PATH>?               Config file to load bun from (e.g. -c bunfig.json") catch unreachable,
         clap.parseParam("--disable-react-fast-refresh      Disable React Fast Refresh") catch unreachable,
         clap.parseParam("--disable-hmr                     Disable Hot Module Reloading (disables fast refresh too)") catch unreachable,
         clap.parseParam("--extension-order <STR>...        defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
@@ -181,7 +185,7 @@ pub const Arguments = struct {
         clap.parseParam("-i, --inject <STR>...             Inject module at the top of every file") catch unreachable,
         clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: jsx, js, json, tsx, ts, css") catch unreachable,
         clap.parseParam("-u, --origin <STR>                Rewrite import URLs to start with --origin. Default: \"\"") catch unreachable,
-        clap.parseParam("-p, --port <STR>                      Port to serve bun's dev server on. Default: \"3000\"") catch unreachable,
+        clap.parseParam("-p, --port <STR>                  Port to serve bun's dev server on. Default: \"3000\"") catch unreachable,
         clap.parseParam("--silent                          Don't repeat the command for bun run") catch unreachable,
         clap.parseParam("<POS>...                          ") catch unreachable,
     };
@@ -225,40 +229,112 @@ pub const Arguments = struct {
             cwd = try std.process.getCwdAlloc(allocator);
         }
 
-        var defines_tuple = try DefineColonList.resolve(allocator, args.options("--define"));
-        var loader_tuple = try LoaderColonList.resolve(allocator, args.options("--loader"));
-        var externals = std.mem.zeroes([][]u8);
-        if (args.options("--external").len > 0) {
-            externals = try allocator.alloc([]u8, args.options("--external").len);
-            for (args.options("--external")) |external, i| {
-                externals[i] = constStrToU8(external);
+        var opts: Api.TransformOptions = ctx.args;
+        opts.absolute_working_dir = cwd;
+
+        if (comptime Command.Tag.loads_config.get(cmd)) {
+            if (args.option("--config")) |config_path__| {
+                var config_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                var config_path_ = config_path__;
+                if (config_path_.len == 0) {
+                    config_path_ = "bunfig.json";
+                }
+                var config_path: [:0]u8 = undefined;
+                if (config_path_[0] == '/') {
+                    @memcpy(&config_buf, config_path_.ptr, config_path_.len);
+                    config_buf[config_path_.len] = 0;
+                    config_path = config_buf[0..config_path_.len :0];
+                } else {
+                    var parts = [_]string{ cwd, config_path_ };
+                    config_path_ = resolve_path.joinAbsStringBuf(
+                        cwd,
+                        &config_buf,
+                        &parts,
+                        .auto,
+                    );
+                    config_buf[config_path_.len] = 0;
+                    config_path = config_buf[0..config_path_.len :0];
+                }
+
+                var config_file = std.fs.openFileAbsoluteZ(config_path, .{ .read = true }) catch |err| {
+                    Output.prettyErrorln("<r><red>error<r>: {s} opening config \"{s}\"", .{
+                        @errorName(err),
+                        std.mem.span(config_path),
+                    });
+                    Output.flush();
+                    std.os.exit(1);
+                };
+                var contents = config_file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
+                    Output.prettyErrorln("<r><red>error<r>: {s} reading config \"{s}\"", .{
+                        @errorName(err),
+                        std.mem.span(config_path),
+                    });
+                    Output.flush();
+                    std.os.exit(1);
+                };
+
+                js_ast.Stmt.Data.Store.create(allocator);
+                js_ast.Expr.Data.Store.create(allocator);
+                defer {
+                    js_ast.Stmt.Data.Store.reset();
+                    js_ast.Expr.Data.Store.reset();
+                }
+                var original_level = ctx.log.level;
+                defer {
+                    ctx.log.level = original_level;
+                }
+                ctx.log.level = logger.Log.Level.warn;
+                try Bunfig.parse(allocator, logger.Source.initPathString(std.mem.span(config_path), contents), ctx, cmd);
+                opts = ctx.args;
             }
         }
 
-        var opts = Api.TransformOptions{
-            .tsconfig_override = if (args.option("--tsconfig-override")) |ts| (Arguments.readFile(allocator, cwd, ts) catch |err| fileReadError(err, Output.errorStream(), ts, "tsconfig.json")) else null,
-            .external = externals,
-            .absolute_working_dir = cwd,
-            .origin = args.option("--origin"),
-            .define = .{
+        var defines_tuple = try DefineColonList.resolve(allocator, args.options("--define"));
+
+        if (defines_tuple.keys.len > 0) {
+            opts.define = .{
                 .keys = defines_tuple.keys,
                 .values = defines_tuple.values,
-            },
-            .loaders = .{
+            };
+        }
+
+        var loader_tuple = try LoaderColonList.resolve(allocator, args.options("--loader"));
+
+        if (loader_tuple.keys.len > 0) {
+            opts.loaders = .{
                 .extensions = loader_tuple.keys,
                 .loaders = loader_tuple.values,
-            },
-            .port = if (args.option("--port")) |port_str| std.fmt.parseInt(u16, port_str, 10) catch return error.InvalidPort else null,
+            };
+        }
 
-            .serve = cmd == .DevCommand or (FeatureFlags.dev_only and cmd == .AutoCommand),
-            .main_fields = args.options("--main-fields"),
-            .generate_node_module_bundle = cmd == .BunCommand,
-            .inject = args.options("--inject"),
-            .extension_order = args.options("--extension-order"),
-            .entry_points = undefined,
-            .no_summary = args.flag("--no-summary"),
-            .disable_hmr = args.flag("--disable-hmr"),
-        };
+        if (args.options("--external").len > 0) {
+            var externals = try allocator.alloc([]u8, args.options("--external").len);
+            for (args.options("--external")) |external, i| {
+                externals[i] = constStrToU8(external);
+            }
+            opts.external = externals;
+        }
+
+        opts.tsconfig_override = if (args.option("--tsconfig-override")) |ts|
+            (Arguments.readFile(allocator, cwd, ts) catch |err| fileReadError(err, Output.errorStream(), ts, "tsconfig.json"))
+        else
+            null;
+
+        if (args.option("--origin")) |origin| {
+            opts.origin = origin;
+        }
+
+        if (args.option("--port")) |port_str| {
+            opts.port = std.fmt.parseInt(u16, port_str, 10) catch return error.InvalidPort;
+        }
+        opts.serve = cmd == .DevCommand or (FeatureFlags.dev_only and cmd == .AutoCommand);
+        opts.main_fields = args.options("--main-fields");
+        opts.generate_node_module_bundle = cmd == .BunCommand;
+        opts.inject = args.options("--inject");
+        opts.extension_order = args.options("--extension-order");
+
+        opts.no_summary = args.flag("--no-summary");
+        opts.disable_hmr = args.flag("--disable-hmr");
 
         ctx.positionals = args.positionals();
         ctx.debug.silent = args.flag("--silent");
@@ -277,70 +353,70 @@ pub const Arguments = struct {
         }
 
         ctx.debug.dump_environment_variables = args.flag("--dump-environment-variables");
-        ctx.debug.fallback_only = args.flag("--disable-bun.js");
+        ctx.debug.fallback_only = ctx.debug.fallback_only or args.flag("--disable-bun.js");
         ctx.debug.dump_limits = args.flag("--dump-limits");
 
         // var output_dir = args.option("--outdir");
         var output_dir: ?string = null;
+        const production = false;
 
-        var entry_points = args.positionals();
+        if (opts.entry_points.len == 0) {
+            var entry_points = args.positionals();
 
-        switch (comptime cmd) {
-            .BunCommand => {
-                if (entry_points.len > 0 and (strings.eqlComptime(
-                    entry_points[0],
-                    "bun",
-                ))) {
-                    entry_points = entry_points[1..];
-                }
-            },
-            .DevCommand => {
-                if (entry_points.len > 0 and (strings.eqlComptime(
-                    entry_points[0],
-                    "dev",
-                ) or strings.eqlComptime(
-                    entry_points[0],
-                    "d",
-                ))) {
-                    entry_points = entry_points[1..];
-                }
-            },
-            .BuildCommand => {
-                if (entry_points.len > 0 and (strings.eqlComptime(
-                    entry_points[0],
-                    "build",
-                ) or strings.eqlComptime(
-                    entry_points[0],
-                    "b",
-                ))) {
-                    entry_points = entry_points[1..];
-                }
-            },
-            .RunCommand => {
-                if (entry_points.len > 0 and (strings.eqlComptime(
-                    entry_points[0],
-                    "run",
-                ) or strings.eqlComptime(
-                    entry_points[0],
-                    "r",
-                ))) {
-                    entry_points = entry_points[1..];
-                }
-            },
-            else => {},
-        }
+            switch (comptime cmd) {
+                .BunCommand => {
+                    if (entry_points.len > 0 and (strings.eqlComptime(
+                        entry_points[0],
+                        "bun",
+                    ))) {
+                        entry_points = entry_points[1..];
+                    }
+                },
+                .DevCommand => {
+                    if (entry_points.len > 0 and (strings.eqlComptime(
+                        entry_points[0],
+                        "dev",
+                    ) or strings.eqlComptime(
+                        entry_points[0],
+                        "d",
+                    ))) {
+                        entry_points = entry_points[1..];
+                    }
+                },
+                .BuildCommand => {
+                    if (entry_points.len > 0 and (strings.eqlComptime(
+                        entry_points[0],
+                        "build",
+                    ) or strings.eqlComptime(
+                        entry_points[0],
+                        "b",
+                    ))) {
+                        entry_points = entry_points[1..];
+                    }
 
-        const production = false; //args.flag("--production");
-        if (comptime cmd == .BuildCommand) {
-            var write = entry_points.len > 1 or output_dir != null;
-            if (write and output_dir == null) {
-                var _paths = [_]string{ cwd, "out" };
-                output_dir = try std.fs.path.resolve(allocator, &_paths);
+                    var write = entry_points.len > 1 or output_dir != null;
+                    if (write and output_dir == null) {
+                        var _paths = [_]string{ cwd, "out" };
+                        output_dir = try std.fs.path.resolve(allocator, &_paths);
+                    }
+                    opts.write = write;
+                },
+                .RunCommand => {
+                    if (entry_points.len > 0 and (strings.eqlComptime(
+                        entry_points[0],
+                        "run",
+                    ) or strings.eqlComptime(
+                        entry_points[0],
+                        "r",
+                    ))) {
+                        entry_points = entry_points[1..];
+                    }
+                },
+                else => {},
             }
-            opts.write = write;
-        }
 
-        opts.entry_points = entry_points;
+            opts.entry_points = entry_points;
+        }
 
         var jsx_factory = args.option("--jsx-factory");
         var jsx_fragment = args.option("--jsx-fragment");
@@ -353,13 +429,13 @@ pub const Arguments = struct {
         };
 
         if (comptime Command.Tag.cares_about_bun_file.get(cmd)) {
-            opts.node_modules_bundle_path = args.option("--bunfile") orelse brk: {
+            opts.node_modules_bundle_path = args.option("--bunfile") orelse opts.node_modules_bundle_path orelse brk: {
                 const node_modules_bundle_path_absolute = resolve_path.joinAbs(cwd, .auto, "node_modules.bun");
 
                 break :brk std.fs.realpathAlloc(allocator, node_modules_bundle_path_absolute) catch null;
             };
 
-            opts.node_modules_bundle_path_server = args.option("--server-bunfile") orelse brk: {
+            opts.node_modules_bundle_path_server = args.option("--server-bunfile") orelse opts.node_modules_bundle_path_server orelse brk: {
                 const node_modules_bundle_path_absolute = resolve_path.joinAbs(cwd, .auto, "node_modules.server.bun");
 
                 break :brk std.fs.realpathAlloc(allocator, node_modules_bundle_path_absolute) catch null;
@@ -412,10 +488,11 @@ pub const Arguments = struct {
         const PlatformMatcher = strings.ExactSizeMatcher(8);
 
         if (args.option("--platform")) |_platform| {
-            opts.platform = switch (PlatformMatcher.match(_platform)) {
+            opts.platform = opts.platform orelse switch (PlatformMatcher.match(_platform)) {
                 PlatformMatcher.case("browser") => Api.Platform.browser,
                 PlatformMatcher.case("node") => Api.Platform.node,
-                PlatformMatcher.case("macro"), PlatformMatcher.case("bun") => Api.Platform.bun,
+                PlatformMatcher.case("macro") => if (cmd == .BuildCommand) Api.Platform.bun_macro else Api.Platform.bun,
+                PlatformMatcher.case("bun") => Api.Platform.bun,
                 else => invalidPlatform(&diag, _platform),
             };
         }
@@ -447,9 +524,19 @@ pub const Arguments = struct {
         }
 
         if (cmd == .BunCommand or !FeatureFlags.dev_only) {
-            if (entry_points.len == 0 and opts.framework == null and opts.node_modules_bundle_path == null) {
+            if (opts.entry_points.len == 0 and opts.framework == null and opts.node_modules_bundle_path == null) {
                 return error.MissingEntryPoint;
             }
+        }
+
+        if (opts.log_level) |log_level| {
+            logger.Log.default_log_level = switch (log_level) {
+                .debug => logger.Log.Level.debug,
+                .err => logger.Log.Level.err,
+                .warn => logger.Log.Level.warn,
+                else => logger.Log.Level.err,
+            };
+            ctx.log.level = logger.Log.default_log_level;
         }
 
         opts.output_dir = output_dir;
@@ -587,6 +674,10 @@ pub const Command = struct {
         dump_limits: bool = false,
         fallback_only: bool = false,
         silent: bool = false,
+
+        // technical debt
+        macros: ?MacroMap = null,
+        package_bundle_map: std.StringArrayHashMapUnmanaged(options.BundlePackage) = std.StringArrayHashMapUnmanaged(options.BundlePackage){},
     };
 
     pub const Context = struct {
@@ -1029,7 +1120,12 @@ pub const Command = struct {
             .DevCommand = true,
             .RunCommand = true,
             .TestCommand = true,
+            .InstallCommand = true,
+            .AddCommand = true,
+            .RemoveCommand = true,
         });
+
+        pub const loads_config = cares_about_bun_file;
 
         pub const uses_global_options: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(true, .{
             .CreateCommand = false,

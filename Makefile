@@ -685,7 +685,7 @@ jsc-force-fastjit:
 	$(SED) -i "s/USE(PTHREAD_JIT_PERMISSIONS_API)/CPU(ARM64)/g" $(WEBKIT_DIR)/Source/JavaScriptCore/jit/ExecutableAllocator.h
 	$(SED) -i "s/USE(PTHREAD_JIT_PERMISSIONS_API)/CPU(ARM64)/g" $(WEBKIT_DIR)/Source/JavaScriptCore/assembler/FastJITPermissions.h
 	$(SED) -i "s/USE(PTHREAD_JIT_PERMISSIONS_API)/CPU(ARM64)/g" $(WEBKIT_DIR)/Source/JavaScriptCore/jit/ExecutableAllocator.cpp
-	$(SED) -i "s/GIGACAGE_ENABLED/0/g" $(WEBKIT_DIR)/Source/JavaScriptCore/Gigacage.h
+	$(SED) -i "s/GIGACAGE_ENABLED/0/g" $(WEBKIT_DIR)/Source/WTF/wtf/Gigacage.h
 
 jsc-build-mac-compile:
 	mkdir -p $(WEBKIT_RELEASE_DIR) $(WEBKIT_DIR);

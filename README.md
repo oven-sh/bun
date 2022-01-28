@@ -1189,7 +1189,6 @@ export const loader = () => import('./loader');
 ```
 
 ```ts
-// Note how it ignores the type-only import
 {
   "exports": [
     "loader"
@@ -1230,23 +1229,21 @@ export const loader = () => import('./loader');
 `);
 ```
 
-<sup> Note how it ignores the type-only import</sup>
-
 ```json
 [
   {
     "kind": "import-statement",
-    "path": "react",
+    "path": "react"
   },
   {
     "kind": "import-statement",
-    "path": "remix",
+    "path": "remix"
   },
   {
     "kind": "dynamic-import",
-    "path": "./loader",
-  },
-];
+    "path": "./loader"
+  }
+]
 ```
 
 ## Environment variables

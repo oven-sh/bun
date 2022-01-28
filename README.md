@@ -1105,20 +1105,26 @@ It is synchronous and runs in the same thread as other JavaScript code.
 ```js
 const transpiler = new Bun.Transpiler({ loader: "jsx" });
 transpiler.transformSync("<div>hi!</div>");
+```
 
-// This outputs the following:
-// Note that it automatically imports the modern JSX runtime
-`
-import {
-__require as require
-} from "bun:wrap";
+This outputs the following:
+Note that it automatically imports the modern JSX runtime
+
+```js
+import { __require as require } from "bun:wrap";
 import * as JSX from "react/jsx-dev-runtime";
 var jsx = require(JSX).jsxDEV;
 
-export default jsx("div", {
-  children: "hi!"
-}, undefined, false, undefined, this);
-`;
+export default jsx(
+  "div",
+  {
+    children: "hi!",
+  },
+  undefined,
+  false,
+  undefined,
+  this
+);
 ```
 
 If a macro is used, it will be run in the same thread as the transpiler, but in a separate event loop from the rest of your application. Currently, globals between macros and regular code are shared, which means it is possible (but not recommended) to share state between macros and regular code. Attempting to use AST nodes outside of a macro is undefined behavior.
@@ -1136,22 +1142,31 @@ Unless you're transpiling _many_ large files, you should probably use `Bun.Trans
 ```js
 const transpiler = new Bun.Transpiler({ loader: "jsx" });
 await transpiler.transform("<div>hi!</div>");
+```
 
-// This outputs the following:
-// Note that it automatically imports the modern JSX runtime
-`
-import {
-__require as require
-} from "bun:wrap";
+This outputs the following:
+<sup>Note that it automatically imports the modern JSX runtime</sup>
+
+```js
+import { __require as require } from "bun:wrap";
 import * as JSX from "react/jsx-dev-runtime";
 var jsx = require(JSX).jsxDEV;
 
-export default jsx("div", {
-  children: "hi!"
-}, undefined, false, undefined, this);
-`;
+export default jsx(
+  "div",
+  {
+    children: "hi!",
+  },
+  undefined,
+  false,
+  undefined,
+  this
+);
+```
 
-// You can also pass a Loader as a string
+You can also pass a `Loader` as a string
+
+```js
 await transpiler.transform("<div>hi!</div>", "tsx");
 ```
 
@@ -1171,8 +1186,9 @@ import type {ReactNode} from 'react';
 
 export const loader = () => import('./loader');
 `);
+```
 
-// Returns this
+```ts
 // Note how it ignores the type-only import
 {
   "exports": [
@@ -1212,21 +1228,23 @@ import type {ReactNode} from 'react';
 
 export const loader = () => import('./loader');
 `);
+```
 
-// Returns this
-// Note how it ignores the type-only import
+<sup> Note how it ignores the type-only import</sup>
+
+```json
 [
   {
-    kind: "import-statement",
-    path: "react",
+    "kind": "import-statement",
+    "path": "react",
   },
   {
-    kind: "import-statement",
-    path: "remix",
+    "kind": "import-statement",
+    "path": "remix",
   },
   {
-    kind: "dynamic-import",
-    path: "./loader",
+    "kind": "dynamic-import",
+    "path": "./loader",
   },
 ];
 ```

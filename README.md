@@ -1062,7 +1062,7 @@ interface MacroMap {
 }
 
 class Bun.Transpiler {
-  constructor(options: Bun.TranspilerOptions)
+  constructor(options: TranspilerOptions)
 
   transform(code: string, loader?: Loader): Promise<string>
   transformSync(code: string, loader?: Loader): string

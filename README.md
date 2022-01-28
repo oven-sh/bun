@@ -1018,7 +1018,7 @@ If you want to copy the completions manually, run `bun completions > path-to-fil
 
 ### `Bun.Transpiler`
 
-`Bun.Transpiler` lets you transform use Bun's transpiler from JavaScript (available in Bun.js)
+`Bun.Transpiler` lets you use Bun's transpiler from JavaScript (available in Bun.js)
 
 ````ts
 type Loader = "jsx" | "js" | "ts" | "tsx";
@@ -1100,7 +1100,7 @@ const transpiler = new Bun.Transpiler({ loader: "jsx" });
 
 This lets you transpile JavaScript, TypeScript, TSX, and JSX using Bun's transpiler. It does not resolve modules.
 
-It is synchronous and runs in the same thread as your other JavaScript code.
+It is synchronous and runs in the same thread as other JavaScript code.
 
 ```js
 const transpiler = new Bun.Transpiler({ loader: "jsx" });

@@ -1107,9 +1107,6 @@ const transpiler = new Bun.Transpiler({ loader: "jsx" });
 transpiler.transformSync("<div>hi!</div>");
 ```
 
-This outputs the following:
-Note that it automatically imports the modern JSX runtime
-
 ```js
 import { __require as require } from "bun:wrap";
 import * as JSX from "react/jsx-dev-runtime";
@@ -1126,6 +1123,8 @@ export default jsx(
   this
 );
 ```
+
+Note that it automatically imports the modern JSX runtime
 
 If a macro is used, it will be run in the same thread as the transpiler, but in a separate event loop from the rest of your application. Currently, globals between macros and regular code are shared, which means it is possible (but not recommended) to share state between macros and regular code. Attempting to use AST nodes outside of a macro is undefined behavior.
 
@@ -1144,9 +1143,6 @@ const transpiler = new Bun.Transpiler({ loader: "jsx" });
 await transpiler.transform("<div>hi!</div>");
 ```
 
-This outputs the following:
-<sup>Note that it automatically imports the modern JSX runtime</sup>
-
 ```js
 import { __require as require } from "bun:wrap";
 import * as JSX from "react/jsx-dev-runtime";
@@ -1163,6 +1159,8 @@ export default jsx(
   this
 );
 ```
+
+Note that it automatically imports the modern JSX runtime.
 
 You can also pass a `Loader` as a string
 

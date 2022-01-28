@@ -53,8 +53,17 @@ ZIG ?= $(shell which zig || echo -e "error: Missing zig. Please make sure zig is
 # This is easier to happen than you'd expect.
 # Using realpath here causes issues because clang uses clang++ as a symlink 
 # so if that's resolved, it won't build for C++
-CC ?= $(shell which clang-13 || which clang)
-CXX ?= $(shell which clang++-13 || which clang++)
+CC = $(shell which clang-13 || which clang)
+CXX = $(shell which clang++-13 || which clang++)
+
+ifeq ($(OS_NAME),darwin)
+LLVM_PREFIX = $(shell brew --prefix llvm)
+LDFLAGS += " -L$(LLVM_PREFIX)/lib"
+CPPFLAGS += " -I$(LLVM_PREFIX)/include"
+CC = $(LLVM_PREFIX)/bin/clang
+CXX = $(LLVM_PREFIX)/bin/clang++
+CODESIGN_IDENTITY ?= $(shell security find-identity -v -p codesigning | awk '/Apple Development/ { print $$2 }')
+endif
 
 # macOS sed is different
 SED = $(shell which gsed || which sed)
@@ -288,6 +297,8 @@ BUN_LLD_FLAGS = $(OBJ_FILES) \
 		$(DEFAULT_LINKER_FLAGS) \
 		$(PLATFORM_LINKER_FLAGS)
 
+CLANG_VERSION = $(shell $(CC) --version | awk '/version/ {for(i=1; i<=NF; i++){if($$i=="version"){split($$(i+1),v,".");print v[1]}}}')
+
 
 bun:
 
@@ -353,6 +364,7 @@ docker-push-base:
 
 require:
 	@echo "Checking if the required utilities are available..."
+	@if [ $(CLANG_VERSION) -lt "13" ]; then echo -e "ERROR: clang version >=13 required, found: $(CLANG_VERSION). Install with:\n\n    $(POSIX_PKG_MANAGER) install llvm@13"; exit 1; fi
 	@cmake --version >/dev/null 2>&1 || (echo -e "ERROR: cmake is required."; exit 1)
 	@esbuild --version >/dev/null 2>&1 || (echo -e "ERROR: esbuild is required."; exit 1)
 	@npm --version >/dev/null 2>&1 || (echo -e "ERROR: npm is required."; exit 1)

@@ -1124,8 +1124,6 @@ export default jsx(
 );
 ```
 
-Note that it automatically imports the modern JSX runtime
-
 If a macro is used, it will be run in the same thread as the transpiler, but in a separate event loop from the rest of your application. Currently, globals between macros and regular code are shared, which means it is possible (but not recommended) to share state between macros and regular code. Attempting to use AST nodes outside of a macro is undefined behavior.
 
 #### `Bun.Transpiler.transform`
@@ -1159,8 +1157,6 @@ export default jsx(
   this
 );
 ```
-
-Note that it automatically imports the modern JSX runtime.
 
 You can also pass a `Loader` as a string
 

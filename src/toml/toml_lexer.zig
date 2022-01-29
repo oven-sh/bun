@@ -179,7 +179,6 @@ pub const Lexer = struct {
     fn parseNumericLiteralOrDot(lexer: *Lexer) !void {
         // Number or dot;
         var first = lexer.code_point;
-        const start = lexer.current;
         lexer.step();
 
         // Dot without a digit after it;

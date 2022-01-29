@@ -621,7 +621,7 @@ pub const Platform = enum {
     };
 };
 
-pub const Loader = enum(u3) {
+pub const Loader = enum(u4) {
     jsx,
     js,
     ts,
@@ -629,6 +629,7 @@ pub const Loader = enum(u3) {
     css,
     file,
     json,
+    toml,
     pub const Map = std.EnumArray(Loader, string);
     pub const stdin_name: Map = brk: {
         var map = Map.initFill("");
@@ -639,6 +640,7 @@ pub const Loader = enum(u3) {
         map.set(Loader.css, "input.css");
         map.set(Loader.file, "input");
         map.set(Loader.json, "input.json");
+        map.set(Loader.toml, "input.toml");
         break :brk map;
     };
 
@@ -659,7 +661,7 @@ pub const Loader = enum(u3) {
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
-            JSC.throwInvalidArguments("invalid loader – must be js, jsx, tsx, ts, css, file, or json", .{}, global.ref(), exception);
+            JSC.throwInvalidArguments("invalid loader – must be js, jsx, tsx, ts, css, file, toml, or json", .{}, global.ref(), exception);
             return null;
         };
     }
@@ -679,6 +681,7 @@ pub const Loader = enum(u3) {
             LoaderMatcher.case("css") => Loader.css,
             LoaderMatcher.case("file") => Loader.file,
             LoaderMatcher.case("json") => Loader.json,
+            LoaderMatcher.case("toml") => Loader.toml,
             else => null,
         };
     }
@@ -698,6 +701,7 @@ pub const Loader = enum(u3) {
             .tsx => .tsx,
             .css => .css,
             .json => .json,
+            .toml => .toml,
             else => .file,
         };
     }
@@ -745,6 +749,8 @@ pub const defaultLoaders = std.ComptimeStringMap(Loader, .{
 
     .{ ".mts", Loader.ts },
     .{ ".cts", Loader.ts },
+
+    .{ ".toml", Loader.toml },
 });
 
 // https://webpack.js.org/guides/package-exports/#reference-syntax
@@ -1019,6 +1025,7 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
             .css => Loader.css,
             .tsx => Loader.tsx,
             .json => Loader.json,
+            .toml => Loader.toml,
             else => unreachable,
         };
 
@@ -1032,13 +1039,15 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
         loader_values,
     );
     const default_loader_ext = comptime [_]string{
-        ".jsx", ".json",
-        ".js",  ".mjs",
-        ".cjs", ".css",
+        ".jsx",  ".json",
+        ".js",   ".mjs",
+        ".cjs",  ".css",
 
         // https://devblogs.microsoft.com/typescript/announcing-typescript-4-5-beta/#new-file-extensions
-        ".ts",  ".tsx",
-        ".mts", ".cts",
+        ".ts",   ".tsx",
+        ".mts",  ".cts",
+
+        ".toml",
     };
 
     inline for (default_loader_ext) |ext| {

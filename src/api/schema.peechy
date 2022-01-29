@@ -8,6 +8,7 @@ smol Loader {
     css = 5;
     file = 6;
     json = 7;
+    toml = 8;
 }
 
 smol FrameworkEntryPointType {

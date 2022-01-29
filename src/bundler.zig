@@ -53,6 +53,7 @@ const URL = @import("./query_string_map.zig").URL;
 const Report = @import("./report.zig");
 const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
+const TOML = @import("./toml/toml_parser.zig").TOML;
 
 const EntryPoints = @import("./bundler/entry_points.zig");
 pub usingnamespace EntryPoints;
@@ -2429,7 +2430,7 @@ pub const Bundler = struct {
         }
 
         switch (loader) {
-            .jsx, .tsx, .js, .ts, .json => {
+            .jsx, .tsx, .js, .ts, .json, .toml => {
                 var result = bundler.parse(
                     ParseOptions{
                         .allocator = bundler.allocator,
@@ -2777,6 +2778,24 @@ pub const Bundler = struct {
                     .input_fd = input_fd,
                 };
             },
+            .toml => {
+                var expr = TOML.parse(&source, bundler.log, allocator) catch return null;
+                var stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
+                    .value = js_ast.StmtOrExpr{ .expr = expr },
+                    .default_name = js_ast.LocRef{ .loc = logger.Loc{}, .ref = Ref{} },
+                }, logger.Loc{ .start = 0 });
+                var stmts = allocator.alloc(js_ast.Stmt, 1) catch unreachable;
+                stmts[0] = stmt;
+                var parts = allocator.alloc(js_ast.Part, 1) catch unreachable;
+                parts[0] = js_ast.Part{ .stmts = stmts };
+
+                return ParseResult{
+                    .ast = js_ast.Ast.initTest(parts),
+                    .source = source,
+                    .loader = loader,
+                    .input_fd = input_fd,
+                };
+            },
             .css => {},
             else => Global.panic("Unsupported loader {s} for path: {s}", .{ loader, source.path.text }),
         }
@@ -2870,7 +2889,7 @@ pub const Bundler = struct {
                     ),
                 };
             },
-            .json => {
+            .toml, .json => {
                 return ServeResult{
                     .file = options.OutputFile.initPending(loader, resolved),
                     .mime_type = MimeType.transpiled_json,
@@ -3387,6 +3406,7 @@ pub const Transformer = struct {
 
                 ast = js_ast.Ast.initTest(parts);
             },
+
             .jsx, .tsx, .ts, .js => {
                 var parser = try js_parser.Parser.init(opts, log, source, define, allocator);
                 var res = try parser.parse();

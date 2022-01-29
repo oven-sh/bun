@@ -1574,6 +1574,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                             // this code is so hot that if you save lexer.raw() into a temporary variable
                             // it shows up in profiling
                             lexer.identifier = lexer.raw();
+                            // switching to strings.ExactSizeMatcher doesn't seem to have an impact here
                             lexer.token = Keywords.get(lexer.identifier) orelse T.t_identifier;
                         } else {
                             const scan_result = try lexer.scanIdentifierWithEscapes(.normal);

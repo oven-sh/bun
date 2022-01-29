@@ -28,6 +28,7 @@ const LoaderMap = std.StringArrayHashMapUnmanaged(options.Loader);
 const Analytics = @import("./analytics.zig");
 const JSONParser = @import("./json_parser.zig");
 const Command = @import("cli.zig").Command;
+const TOML = @import("./toml/toml_parser.zig").TOML;
 
 // TODO: replace Api.TransformOptions with Bunfig
 pub const Bunfig = struct {
@@ -262,7 +263,13 @@ pub const Bunfig = struct {
 
     pub fn parse(allocator: std.mem.Allocator, source: logger.Source, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
         const log_count = ctx.log.errors + ctx.log.warnings;
-        var expr = JSONParser.ParseTSConfig(&source, ctx.log, allocator) catch |err| {
+
+        var expr = if (strings.eqlComptime(source.path.name.ext[1..], "toml")) TOML.parse(&source, ctx.log, allocator) catch |err| {
+            if (ctx.log.errors + ctx.log.warnings == log_count) {
+                ctx.log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Failed to parse", .{}) catch unreachable;
+            }
+            return err;
+        } else JSONParser.ParseTSConfig(&source, ctx.log, allocator) catch |err| {
             if (ctx.log.errors + ctx.log.warnings == log_count) {
                 ctx.log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Failed to parse", .{}) catch unreachable;
             }

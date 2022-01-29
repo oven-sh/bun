@@ -17,6 +17,7 @@ const RefHashCtx = @import("ast/base.zig").RefHashCtx;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const ImportRecord = @import("import_record.zig").ImportRecord;
 const allocators = @import("allocators.zig");
+const JSC = @import("javascript_core");
 
 const RefCtx = @import("./ast/base.zig").RefCtx;
 const _hash_map = @import("hash_map.zig");
@@ -238,6 +239,10 @@ pub fn BabyList(comptime Type: type) type {
             return if (this.len > 0) this.ptr[0] else @as(?*Type, null);
         }
 
+        pub inline fn last(this: ListType) ?*Type {
+            return if (this.len > 0) &this.ptr[this.len - 1] else @as(?*Type, null);
+        }
+
         pub inline fn first_(this: ListType) Type {
             return this.ptr[0];
         }
@@ -255,8 +260,9 @@ pub fn BabyList(comptime Type: type) type {
         pub inline fn @"[0]"(this: ListType) Type {
             return this.ptr[0];
         }
+        const OOM = error{OutOfMemory};
 
-        pub fn push(this: *ListType, allocator: std.mem.Allocator, value: Type) !void {
+        pub fn push(this: *ListType, allocator: std.mem.Allocator, value: Type) OOM!void {
             var list_ = this.list();
             try list_.append(allocator, value);
             this.update(list_);
@@ -962,8 +968,29 @@ pub const E = struct {
         is_single_line: bool = false,
         is_parenthesized: bool = false,
 
+        pub fn push(this: *Array, allocator: std.mem.Allocator, item: Expr) !void {
+            try this.items.push(allocator, item);
+        }
+
         pub inline fn slice(this: Array) []Expr {
             return this.items.slice();
+        }
+
+        pub fn toJS(this: @This(), ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+            var stack = std.heap.stackFallback(32 * @sizeOf(ExprNodeList), JSC.getAllocator(ctx));
+            var allocator = stack.get();
+            var results = allocator.alloc(JSC.C.JSValueRef, this.items.len) catch {
+                return JSC.C.JSValueMakeUndefined(ctx);
+            };
+            defer if (stack.fixed_buffer_allocator.end_index >= stack.fixed_buffer_allocator.buffer.len - 1) allocator.free(results);
+
+            var i: usize = 0;
+            const items = this.items.slice();
+            while (i < results.len) : (i += 1) {
+                results[i] = items[i].toJS(ctx, exception);
+            }
+
+            return JSC.C.JSObjectMakeArray(ctx, results.len, results.ptr, exception);
         }
     };
 
@@ -978,7 +1005,12 @@ pub const E = struct {
         op: Op.Code,
     };
 
-    pub const Boolean = struct { value: bool };
+    pub const Boolean = struct {
+        value: bool,
+        pub fn toJS(this: @This(), ctx: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+            return JSC.C.JSValueMakeBoolean(ctx, this.value);
+        }
+    };
     pub const Super = struct {};
     pub const Null = struct {};
     pub const This = struct {};
@@ -1208,6 +1240,10 @@ pub const E = struct {
         pub fn jsonStringify(self: *const Number, opts: anytype, o: anytype) !void {
             return try std.json.stringify(self.value, opts, o);
         }
+
+        pub fn toJS(this: @This(), _: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+            return JSC.JSValue.jsNumber(this.value).asObjectRef();
+        }
     };
 
     pub const BigInt = struct {
@@ -1218,6 +1254,11 @@ pub const E = struct {
         pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
             return try std.json.stringify(self.value, opts, o);
         }
+
+        pub fn toJS(_: @This(), _: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+            // TODO:
+            return JSC.JSValue.jsNumber(0);
+        }
     };
 
     pub const Object = struct {
@@ -1225,6 +1266,226 @@ pub const E = struct {
         comma_after_spread: ?logger.Loc = null,
         is_single_line: bool = false,
         is_parenthesized: bool = false,
+
+        pub const Rope = struct {
+            head: Expr,
+            next: ?*Rope = null,
+            const OOM = error{OutOfMemory};
+            pub fn append(this: *Rope, expr: Expr, allocator: std.mem.Allocator) OOM!*Rope {
+                if (this.next) |next| {
+                    return try next.append(expr, allocator);
+                }
+
+                var rope = try allocator.create(Rope);
+                rope.* = .{
+                    .head = expr,
+                };
+                this.next = rope;
+                return rope;
+            }
+        };
+
+        // pub fn toJS(this: Object, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+        //     const Creator = struct {
+        //         object: Object,
+        //         pub fn create(this: *@This(), obj: *JSObject, global: *JSGlobalObject) void {
+        //             var iter = this.query.iter();
+        //             var str: ZigString = undefined;
+        //             while (iter.next(&query_string_values_buf)) |entry| {
+        //                 str = ZigString.init(entry.name);
+
+        //                 std.debug.assert(entry.values.len > 0);
+        //                 if (entry.values.len > 1) {
+        //                     var values = query_string_value_refs_buf[0..entry.values.len];
+        //                     for (entry.values) |value, i| {
+        //                         values[i] = ZigString.init(value);
+        //                     }
+        //                     obj.putRecord(global, &str, values.ptr, values.len);
+        //                 } else {
+        //                     query_string_value_refs_buf[0] = ZigString.init(entry.values[0]);
+
+        //                     obj.putRecord(global, &str, &query_string_value_refs_buf, 1);
+        //                 }
+        //             }
+        //         }
+        //     };
+        // }
+
+        pub fn get(self: *const Object, key: string) ?Expr {
+            return if (asProperty(self, key)) |query| query.expr else @as(?Expr, null);
+        }
+
+        pub const SetError = error{ OutOfMemory, Clobber };
+
+        pub fn set(self: *const Object, key: Expr, allocator: std.mem.Allocator, value: Expr) SetError!void {
+            if (self.hasProperty(key.data.e_string.utf8)) return error.Clobber;
+            try self.properties.push(allocator, .{
+                .key = key,
+                .value = value,
+            });
+        }
+
+        pub const RopeQuery = struct {
+            expr: Expr,
+            rope: *const Rope,
+        };
+
+        // this is terribly, shamefully slow
+        pub fn setRope(self: *Object, rope: *const Rope, allocator: std.mem.Allocator, value: Expr) SetError!void {
+            if (self.get(rope.head.data.e_string.utf8)) |existing| {
+                switch (existing.data) {
+                    .e_array => |array| {
+                        if (rope.next == null) {
+                            try array.push(allocator, value);
+                            return;
+                        }
+
+                        if (array.items.last()) |last| {
+                            if (last.data != .e_object) {
+                                return error.Clobber;
+                            }
+
+                            try last.data.e_object.setRope(rope.next.?, allocator, value);
+                            return;
+                        }
+
+                        try array.push(allocator, value);
+                        return;
+                    },
+                    .e_object => |object| {
+                        if (rope.next != null) {
+                            try object.setRope(rope.next.?, allocator, value);
+                            return;
+                        }
+
+                        return error.Clobber;
+                    },
+                    else => {
+                        return error.Clobber;
+                    },
+                }
+            }
+
+            var value_ = value;
+            if (rope.next) |next| {
+                var obj = Expr.init(E.Object, E.Object{ .properties = .{} }, rope.head.loc);
+                try obj.data.e_object.setRope(next, allocator, value);
+                value_ = obj;
+            }
+
+            try self.properties.push(allocator, .{
+                .key = rope.head,
+                .value = value_,
+            });
+        }
+
+        pub fn getOrPutObject(self: *Object, rope: *const Rope, allocator: std.mem.Allocator) SetError!Expr {
+            if (self.get(rope.head.data.e_string.utf8)) |existing| {
+                switch (existing.data) {
+                    .e_array => |array| {
+                        if (rope.next == null) {
+                            return error.Clobber;
+                        }
+
+                        if (array.items.last()) |last| {
+                            if (last.data != .e_object) {
+                                return error.Clobber;
+                            }
+
+                            return try last.data.e_object.getOrPutObject(rope.next.?, allocator);
+                        }
+
+                        return error.Clobber;
+                    },
+                    .e_object => |object| {
+                        if (rope.next == null) {
+                            // success
+                            return existing;
+                        }
+
+                        return try object.getOrPutObject(rope.next.?, allocator);
+                    },
+                    else => {
+                        return error.Clobber;
+                    },
+                }
+            }
+
+            if (rope.next) |next| {
+                var obj = Expr.init(E.Object, E.Object{ .properties = .{} }, rope.head.loc);
+                const out = try obj.data.e_object.getOrPutObject(next, allocator);
+                try self.properties.push(allocator, .{
+                    .key = rope.head,
+                    .value = obj,
+                });
+                return out;
+            }
+
+            const out = Expr.init(E.Object, E.Object{}, rope.head.loc);
+            try self.properties.push(allocator, .{
+                .key = rope.head,
+                .value = out,
+            });
+            return out;
+        }
+
+        pub fn getOrPutArray(self: *Object, rope: *const Rope, allocator: std.mem.Allocator) SetError!Expr {
+            if (self.get(rope.head.data.e_string.utf8)) |existing| {
+                switch (existing.data) {
+                    .e_array => |array| {
+                        if (rope.next == null) {
+                            return existing;
+                        }
+
+                        if (array.items.last()) |last| {
+                            if (last.data != .e_object) {
+                                return error.Clobber;
+                            }
+
+                            return try last.data.e_object.getOrPutArray(rope.next.?, allocator);
+                        }
+
+                        return error.Clobber;
+                    },
+                    .e_object => |object| {
+                        if (rope.next == null) {
+                            return error.Clobber;
+                        }
+
+                        return try object.getOrPutArray(rope.next.?, allocator);
+                    },
+                    else => {
+                        return error.Clobber;
+                    },
+                }
+            }
+
+            if (rope.next) |next| {
+                var obj = Expr.init(E.Object, E.Object{ .properties = .{} }, rope.head.loc);
+                const out = try obj.data.e_object.getOrPutArray(next, allocator);
+                try self.properties.push(allocator, .{
+                    .key = rope.head,
+                    .value = obj,
+                });
+                return out;
+            }
+
+            const out = Expr.init(E.Array, E.Array{}, rope.head.loc);
+            try self.properties.push(allocator, .{
+                .key = rope.head,
+                .value = out,
+            });
+            return out;
+        }
+
+        pub fn hasProperty(obj: *const Object, name: string) bool {
+            for (obj.properties.slice()) |prop| {
+                const key = prop.key orelse continue;
+                if (std.meta.activeTag(key.data) != .e_string) continue;
+                if (key.eql(string, name)) return true;
+            }
+            return false;
+        }
 
         pub fn asProperty(obj: *const Object, name: string) ?Expr.Query {
             for (obj.properties.slice()) |prop, i| {
@@ -1843,8 +2104,49 @@ pub const Expr = struct {
         return false;
     }
 
+    pub fn toJS(this: Expr, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+        return this.data.toJS(ctx, exception);
+    }
+
     pub fn get(expr: *const Expr, name: string) ?Expr {
         return if (asProperty(expr, name)) |query| query.expr else null;
+    }
+
+    pub fn getRope(self: *const Expr, rope: *const E.Object.Rope) ?E.Object.RopeQuery {
+        if (self.get(rope.head.data.e_string.utf8)) |existing| {
+            switch (existing.data) {
+                .e_array => |array| {
+                    if (rope.next) |next| {
+                        if (array.items.last()) |end| {
+                            return end.getRope(next);
+                        }
+                    }
+
+                    return E.Object.RopeQuery{
+                        .expr = existing,
+                        .rope = rope,
+                    };
+                },
+                .e_object => {
+                    if (rope.next) |next| {
+                        if (existing.getRope(next)) |end| {
+                            return end;
+                        }
+                    }
+
+                    return E.Object.RopeQuery{
+                        .expr = existing,
+                        .rope = rope,
+                    };
+                },
+                else => return E.Object.RopeQuery{
+                    .expr = existing,
+                    .rope = rope,
+                },
+            }
+        }
+
+        return null;
     }
 
     // Making this comptime bloats the binary and doesn't seem to impact runtime performance.
@@ -3005,6 +3307,22 @@ pub const Expr = struct {
         // If it ends up in JSParser or JSPrinter, it is a bug.
         inline_identifier: i32,
 
+        pub fn toJS(this: Data, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+            return switch (this) {
+                .e_array => |e| e.toJS(ctx, exception),
+                .e_null => |e| e.toJS(ctx, exception),
+                .e_undefined => |e| e.toJS(ctx, exception),
+                .e_object => |e| e.toJS(ctx, exception),
+                .e_boolean => |e| e.toJS(ctx, exception),
+                .e_number => |e| e.toJS(ctx, exception),
+                .e_big_int => |e| e.toJS(ctx, exception),
+                .e_string => |e| e.toJS(ctx, exception),
+                else => {
+                    return JSC.C.JSValueMakeUndefined(ctx);
+                },
+            };
+        }
+
         pub const Store = struct {
             const often = 512;
             const medium = 256;
@@ -3933,7 +4251,6 @@ pub fn printmem(comptime format: string, args: anytype) void {
 
 pub const Macro = struct {
     const JavaScript = @import("./javascript/jsc/javascript.zig");
-    const JSC = @import("./javascript/jsc/bindings/bindings.zig");
     const JSCBase = @import("./javascript/jsc/base.zig");
     const Resolver = @import("./resolver/resolver.zig").Resolver;
     const isPackagePath = @import("./resolver/resolver.zig").isPackagePath;

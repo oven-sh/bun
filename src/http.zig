@@ -847,7 +847,7 @@ pub const RequestContext = struct {
             }
 
             switch (loader) {
-                .json, .ts, .tsx, .js, .jsx => {
+                .toml, .json, .ts, .tsx, .js, .jsx => {
                     // Since we already have:
                     // - The file descriptor
                     // - The path
@@ -2189,7 +2189,7 @@ pub const RequestContext = struct {
                 if (written.empty) {
                     switch (loader) {
                         .css => try ctx.sendNoContent(),
-                        .js, .jsx, .ts, .tsx, .json => {
+                        .toml, .js, .jsx, .ts, .tsx, .json => {
                             const buf = "export default {};";
                             const strong_etag = comptime std.hash.Wyhash.hash(0, buf);
                             const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, .upper, .{});

@@ -353,6 +353,9 @@ pub const Api = struct {
         /// json
         json,
 
+        /// toml
+        toml,
+
         _,
 
         pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {

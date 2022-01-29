@@ -29,6 +29,7 @@ const Analytics = @import("./analytics.zig");
 const JSONParser = @import("./json_parser.zig");
 const Command = @import("cli.zig").Command;
 
+// TODO: replace Api.TransformOptions with Bunfig
 pub const Bunfig = struct {
     const Parser = struct {
         json: js_ast.Expr,
@@ -54,7 +55,7 @@ pub const Bunfig = struct {
             if (json.get("define")) |expr| {
                 try this.expect(expr, .e_object);
                 var valid_count: usize = 0;
-                const properties = expr.data.e_object.properties;
+                const properties = expr.data.e_object.properties.slice();
                 for (properties) |prop| {
                     if (prop.value.?.data != .e_string) continue;
                     valid_count += 1;
@@ -116,7 +117,7 @@ pub const Bunfig = struct {
                 if (comptime cmd == .BunCommand) {
                     if (bun.get("entryPoints")) |entryPoints| {
                         try this.expect(entryPoints, .e_array);
-                        const items = entryPoints.data.e_array.items;
+                        const items = entryPoints.data.e_array.items.slice();
                         var names = try this.allocator.alloc(string, items.len);
                         for (items) |item, i| {
                             try this.expect(item, .e_string);
@@ -131,14 +132,15 @@ pub const Bunfig = struct {
                         Analytics.Features.always_bundle = true;
 
                         const object = expr.data.e_object;
-                        for (object.properties) |prop| {
+                        const properties = object.properties.slice();
+                        for (properties) |prop| {
                             if (prop.value.?.data != .e_boolean) continue;
                             valid_count += 1;
                         }
 
                         try this.ctx.debug.package_bundle_map.ensureTotalCapacity(allocator, valid_count);
 
-                        for (object.properties) |prop| {
+                        for (properties) |prop| {
                             if (prop.value.?.data != .e_boolean) continue;
 
                             const path = try prop.key.?.data.e_string.string(allocator);
@@ -182,7 +184,7 @@ pub const Bunfig = struct {
                     .e_array => |array| {
                         var externals = try allocator.alloc(string, array.items.len);
 
-                        for (array.items) |item, i| {
+                        for (array.items.slice()) |item, i| {
                             try this.expect(item, .e_string);
                             externals[i] = try item.data.e_string.string(allocator);
                         }
@@ -202,7 +204,7 @@ pub const Bunfig = struct {
 
             if (json.get("loader")) |expr| {
                 try this.expect(expr, .e_object);
-                const properties = expr.data.e_object.properties;
+                const properties = expr.data.e_object.properties.slice();
                 var loader_names = try this.allocator.alloc(string, properties.len);
                 var loader_values = try this.allocator.alloc(Api.Loader, properties.len);
 

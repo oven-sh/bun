@@ -2332,7 +2332,7 @@ pub const Lockfile = struct {
             inline for (dependency_groups) |group| {
                 if (json.asProperty(group.prop)) |dependencies_q| {
                     if (dependencies_q.expr.data == .e_object) {
-                        for (dependencies_q.expr.data.e_object.properties) |item| {
+                        for (dependencies_q.expr.data.e_object.properties.slice()) |item| {
                             string_builder.count(item.key.?.asString(allocator) orelse "");
                             string_builder.count(item.value.?.asString(allocator) orelse "");
                         }
@@ -2381,7 +2381,7 @@ pub const Lockfile = struct {
             inline for (dependency_groups) |group| {
                 if (json.asProperty(group.prop)) |dependencies_q| {
                     if (dependencies_q.expr.data == .e_object) {
-                        const dependency_props: []const JSAst.G.Property = dependencies_q.expr.data.e_object.properties;
+                        const dependency_props: []const JSAst.G.Property = dependencies_q.expr.data.e_object.properties.slice();
                         var i: usize = 0;
                         outer: while (i < dependency_props.len) {
                             const item = dependency_props[i];
@@ -5170,7 +5170,7 @@ pub const PackageManager = struct {
                 var dependencies: []G.Property = &[_]G.Property{};
                 if (current_package_json.asProperty(dependency_list)) |query| {
                     if (query.expr.data == .e_object) {
-                        dependencies = query.expr.data.e_object.properties;
+                        dependencies = query.expr.data.e_object.properties.slice();
                     }
                 }
 
@@ -5233,7 +5233,7 @@ pub const PackageManager = struct {
                     dependencies_object = JSAst.Expr.init(
                         JSAst.E.Object,
                         JSAst.E.Object{
-                            .properties = new_dependencies,
+                            .properties = JSAst.G.Property.List.init(new_dependencies),
                         },
                         logger.Loc.Empty,
                     );
@@ -5251,10 +5251,10 @@ pub const PackageManager = struct {
                         ),
                         .value = dependencies_object,
                     };
-                    current_package_json.* = JSAst.Expr.init(JSAst.E.Object, JSAst.E.Object{ .properties = root_properties }, logger.Loc.Empty);
+                    current_package_json.* = JSAst.Expr.init(JSAst.E.Object, JSAst.E.Object{ .properties = JSAst.G.Property.List.init(root_properties) }, logger.Loc.Empty);
                 } else if (needs_new_dependency_list) {
                     var root_properties = try allocator.alloc(JSAst.G.Property, current_package_json.data.e_object.properties.len + 1);
-                    std.mem.copy(JSAst.G.Property, root_properties, current_package_json.data.e_object.properties);
+                    std.mem.copy(JSAst.G.Property, root_properties, current_package_json.data.e_object.properties.slice());
                     root_properties[root_properties.len - 1].key = JSAst.Expr.init(
                         JSAst.E.String,
                         JSAst.E.String{
@@ -5263,10 +5263,10 @@ pub const PackageManager = struct {
                         logger.Loc.Empty,
                     );
                     root_properties[root_properties.len - 1].value = dependencies_object;
-                    current_package_json.* = JSAst.Expr.init(JSAst.E.Object, JSAst.E.Object{ .properties = root_properties }, logger.Loc.Empty);
+                    current_package_json.* = JSAst.Expr.init(JSAst.E.Object, JSAst.E.Object{ .properties = JSAst.G.Property.List.init(root_properties) }, logger.Loc.Empty);
                 }
 
-                dependencies_object.data.e_object.properties = new_dependencies;
+                dependencies_object.data.e_object.properties = JSAst.G.Property.List.init(new_dependencies);
                 dependencies_object.data.e_object.packageJSONSort();
             }
 
@@ -5935,7 +5935,7 @@ pub const PackageManager = struct {
                     inline for (dependency_lists_to_check) |list| {
                         if (current_package_json.asProperty(list)) |query| {
                             if (query.expr.data == .e_object) {
-                                var dependencies = query.expr.data.e_object.properties;
+                                var dependencies = query.expr.data.e_object.properties.slice();
                                 var i: usize = 0;
                                 var new_len = dependencies.len;
                                 while (i < dependencies.len) : (i += 1) {
@@ -5955,17 +5955,14 @@ pub const PackageManager = struct {
 
                                 const changed = new_len != dependencies.len;
                                 if (changed) {
-                                    query.expr.data.e_object.properties = query.expr.data.e_object.properties[0..new_len];
+                                    query.expr.data.e_object.properties.len = @truncate(u32, new_len);
 
                                     // If the dependencies list is now empty, remove it from the package.json
                                     // since we're swapRemove, we have to re-sort it
                                     if (query.expr.data.e_object.properties.len == 0) {
-                                        var arraylist = std.ArrayListUnmanaged(JSAst.G.Property){
-                                            .items = current_package_json.data.e_object.properties,
-                                            .capacity = current_package_json.data.e_object.properties.len,
-                                        };
+                                        var arraylist = current_package_json.data.e_object.properties.list();
                                         _ = arraylist.swapRemove(query.i);
-                                        current_package_json.data.e_object.properties = arraylist.items;
+                                        current_package_json.data.e_object.properties.update(arraylist);
                                         current_package_json.data.e_object.packageJSONSort();
                                     } else {
                                         var obj = query.expr.data.e_object;

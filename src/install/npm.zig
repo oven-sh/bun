@@ -745,7 +745,7 @@ pub const PackageManifest = struct {
             if (json.asProperty("versions")) |versions_q| {
                 if (versions_q.expr.data != .e_object) break :get_versions;
 
-                const versions = versions_q.expr.data.e_object.properties;
+                const versions = versions_q.expr.data.e_object.properties.slice();
                 for (versions) |prop| {
                     const version_name = prop.key.?.asString(allocator) orelse continue;
 
@@ -764,8 +764,8 @@ pub const PackageManifest = struct {
                             switch (bin.expr.data) {
                                 .e_object => |obj| {
                                     if (obj.properties.len > 0) {
-                                        string_builder.count(obj.properties[0].key.?.asString(allocator) orelse break :bin);
-                                        string_builder.count(obj.properties[0].value.?.asString(allocator) orelse break :bin);
+                                        string_builder.count(obj.properties.ptr[0].key.?.asString(allocator) orelse break :bin);
+                                        string_builder.count(obj.properties.ptr[0].value.?.asString(allocator) orelse break :bin);
                                     }
                                 },
                                 .e_string => {
@@ -792,7 +792,7 @@ pub const PackageManifest = struct {
                         if (prop.value.?.asProperty(pair.prop)) |versioned_deps| {
                             if (versioned_deps.expr.data == .e_object) {
                                 dependency_sum += versioned_deps.expr.data.e_object.properties.len;
-                                const properties = versioned_deps.expr.data.e_object.properties;
+                                const properties = versioned_deps.expr.data.e_object.properties.slice();
                                 for (properties) |property| {
                                     if (property.key.?.asString(allocator)) |key| {
                                         string_builder.count(key);
@@ -811,7 +811,7 @@ pub const PackageManifest = struct {
         var dist_tags_count: usize = 0;
         if (json.asProperty("dist-tags")) |dist| {
             if (dist.expr.data == .e_object) {
-                const tags = dist.expr.data.e_object.properties;
+                const tags = dist.expr.data.e_object.properties.slice();
                 for (tags) |tag| {
                     if (tag.key.?.asString(allocator)) |key| {
                         string_builder.count(key);
@@ -890,7 +890,7 @@ pub const PackageManifest = struct {
             if (json.asProperty("versions")) |versions_q| {
                 if (versions_q.expr.data != .e_object) break :get_versions;
 
-                const versions = versions_q.expr.data.e_object.properties;
+                const versions = versions_q.expr.data.e_object.properties.slice();
 
                 var all_dependency_names_and_values = all_extern_strings[0..dependency_sum];
 
@@ -926,9 +926,10 @@ pub const PackageManifest = struct {
 
                         switch (cpu.expr.data) {
                             .e_array => |arr| {
-                                if (arr.items.len > 0) {
+                                const items = arr.slice();
+                                if (items.len > 0) {
                                     package_version.cpu = Architecture.none;
-                                    for (arr.items) |item| {
+                                    for (items) |item| {
                                         if (item.asString(allocator)) |cpu_str_| {
                                             package_version.cpu = package_version.cpu.apply(cpu_str_);
                                         }
@@ -947,9 +948,10 @@ pub const PackageManifest = struct {
 
                         switch (os.expr.data) {
                             .e_array => |arr| {
-                                if (arr.items.len > 0) {
+                                const items = arr.slice();
+                                if (items.len > 0) {
                                     package_version.os = OperatingSystem.none;
-                                    for (arr.items) |item| {
+                                    for (items) |item| {
                                         if (item.asString(allocator)) |cpu_str_| {
                                             package_version.os = package_version.os.apply(cpu_str_);
                                         }
@@ -967,9 +969,9 @@ pub const PackageManifest = struct {
                         if (prop.value.?.asProperty("bin")) |bin| {
                             switch (bin.expr.data) {
                                 .e_object => |obj| {
-                                    if (obj.properties.len > 0) {
-                                        const bin_name = obj.properties[0].key.?.asString(allocator) orelse break :bin;
-                                        const value = obj.properties[0].value.?.asString(allocator) orelse break :bin;
+                                    if (obj.properties.slice().len > 0) {
+                                        const bin_name = obj.properties.ptr[0].key.?.asString(allocator) orelse break :bin;
+                                        const value = obj.properties.ptr[0].value.?.asString(allocator) orelse break :bin;
                                         // For now, we're only supporting the first bin
                                         // We'll fix that later
                                         package_version.bin = Bin{
@@ -1057,7 +1059,7 @@ pub const PackageManifest = struct {
 
                     inline for (dependency_groups) |pair| {
                         if (prop.value.?.asProperty(comptime pair.prop)) |versioned_deps| {
-                            const items = versioned_deps.expr.data.e_object.properties;
+                            const items = versioned_deps.expr.data.e_object.properties.slice();
                             var count = items.len;
 
                             var this_names = dependency_names[0..count];
@@ -1073,7 +1075,7 @@ pub const PackageManifest = struct {
 
                                 if (prop.value.?.asProperty("peerDependenciesMeta")) |meta| {
                                     if (meta.expr.data == .e_object) {
-                                        const meta_props = meta.expr.data.e_object.properties;
+                                        const meta_props = meta.expr.data.e_object.properties.slice();
                                         try optional_peer_dep_names.ensureUnusedCapacity(meta_props.len);
                                         for (meta_props) |meta_prop| {
                                             if (meta_prop.value.?.asProperty("optional")) |optional| {
@@ -1246,7 +1248,7 @@ pub const PackageManifest = struct {
 
         if (json.asProperty("dist-tags")) |dist| {
             if (dist.expr.data == .e_object) {
-                const tags = dist.expr.data.e_object.properties;
+                const tags = dist.expr.data.e_object.properties.slice();
                 var extern_strings_slice = extern_strings[0..dist_tags_count];
                 var dist_tag_i: usize = 0;
 

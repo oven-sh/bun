@@ -184,7 +184,94 @@ pub const BindingNodeIndex = Binding;
 pub const StmtNodeIndex = Stmt;
 pub const ExprNodeIndex = Expr;
 
-pub const ExprNodeList = []Expr;
+pub fn BabyList(comptime Type: type) type {
+    return struct {
+        const ListType = @This();
+        ptr: [*]Type = undefined,
+        len: u32 = 0,
+        cap: u32 = 0,
+
+        pub inline fn init(items: []const Type) ListType {
+            @setRuntimeSafety(false);
+            return ListType{
+                // Remove the const qualifier from the items
+                .ptr = @intToPtr([*]Type, @ptrToInt(items.ptr)),
+
+                .len = @truncate(u32, items.len),
+                .cap = @truncate(u32, items.len),
+            };
+        }
+
+        pub inline fn fromList(list_: anytype) ListType {
+            @setRuntimeSafety(false);
+
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(list_.items.len <= list_.capacity);
+            }
+
+            return ListType{
+                .ptr = list_.items.ptr,
+                .len = @truncate(u32, list_.items.len),
+                .cap = @truncate(u32, list_.capacity),
+            };
+        }
+
+        pub fn update(this: *ListType, list_: anytype) void {
+            @setRuntimeSafety(false);
+            this.ptr = list_.items.ptr;
+            this.len = @truncate(u32, list_.items.len);
+            this.cap = @truncate(u32, list_.capacity);
+
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(this.len <= this.cap);
+            }
+        }
+
+        pub fn list(this: ListType) std.ArrayListUnmanaged(Type) {
+            return std.ArrayListUnmanaged(Type){
+                .items = this.ptr[0..this.len],
+                .capacity = this.cap,
+            };
+        }
+
+        pub inline fn first(this: ListType) ?*Type {
+            return if (this.len > 0) this.ptr[0] else @as(?*Type, null);
+        }
+
+        pub inline fn first_(this: ListType) Type {
+            return this.ptr[0];
+        }
+
+        pub fn one(allocator: std.mem.Allocator, value: Type) !ListType {
+            var items = try allocator.alloc(Type, 1);
+            items[0] = value;
+            return ListType{
+                .ptr = @ptrCast([*]Type, items.ptr),
+                .len = 1,
+                .cap = 1,
+            };
+        }
+
+        pub inline fn @"[0]"(this: ListType) Type {
+            return this.ptr[0];
+        }
+
+        pub fn push(this: *ListType, allocator: std.mem.Allocator, value: Type) !void {
+            var list_ = this.list();
+            try list_.append(allocator, value);
+            this.update(list_);
+        }
+
+        pub inline fn slice(this: ListType) []Type {
+            @setRuntimeSafety(false);
+            return this.ptr[0..this.len];
+        }
+    };
+}
+
+/// Slice that stores capacity and length in the same space as a regular slice.
+pub const ExprNodeList = BabyList(Expr);
+
 pub const StmtNodeList = []Stmt;
 pub const BindingNodeList = []Binding;
 
@@ -309,7 +396,7 @@ pub const Binding = struct {
                     };
                 }
 
-                return Expr.init(E.Array, E.Array{ .items = exprs, .is_single_line = b.is_single_line }, loc);
+                return Expr.init(E.Array, E.Array{ .items = ExprNodeList.init(exprs), .is_single_line = b.is_single_line }, loc);
             },
             .b_object => |b| {
                 var properties = wrapper.allocator.alloc(G.Property, b.properties.len) catch unreachable;
@@ -323,7 +410,7 @@ pub const Binding = struct {
                         .initializer = item.default_value,
                     };
                 }
-                return Expr.init(E.Object, E.Object{ .properties = properties, .is_single_line = b.is_single_line }, loc);
+                return Expr.init(E.Object, E.Object{ .properties = G.Property.List.init(properties), .is_single_line = b.is_single_line }, loc);
             },
             else => {
                 Global.panic("Interanl error", .{});
@@ -475,7 +562,7 @@ pub const G = struct {
 
     pub const Class = struct {
         class_keyword: logger.Range = logger.Range.None,
-        ts_decorators: ExprNodeList = &([_]Expr{}),
+        ts_decorators: ExprNodeList = ExprNodeList{},
         class_name: ?LocRef = null,
         extends: ?ExprNodeIndex = null,
         body_loc: logger.Loc = logger.Loc.Empty,
@@ -486,7 +573,7 @@ pub const G = struct {
     pub const Comment = struct { loc: logger.Loc, text: string };
 
     pub const Property = struct {
-        ts_decorators: ExprNodeList = &([_]ExprNodeIndex{}),
+        ts_decorators: ExprNodeList = ExprNodeList{},
         // Key is optional for spread
         key: ?ExprNodeIndex = null,
 
@@ -505,6 +592,8 @@ pub const G = struct {
         initializer: ?ExprNodeIndex = null,
         kind: Kind = Kind.normal,
         flags: Flags.Property = Flags.Property.None,
+
+        pub const List = BabyList(Property);
 
         pub const Kind = enum(u2) {
             normal,
@@ -534,7 +623,7 @@ pub const G = struct {
         flags: Flags.Function = Flags.Function.None,
     };
     pub const Arg = struct {
-        ts_decorators: ExprNodeList = &([_]Expr{}),
+        ts_decorators: ExprNodeList = ExprNodeList{},
         binding: BindingNodeIndex,
         default: ?ExprNodeIndex = null,
 
@@ -868,10 +957,14 @@ pub const OptionalChain = enum(u2) {
 
 pub const E = struct {
     pub const Array = struct {
-        items: ExprNodeList,
+        items: ExprNodeList = ExprNodeList{},
         comma_after_spread: ?logger.Loc = null,
         is_single_line: bool = false,
         is_parenthesized: bool = false,
+
+        pub inline fn slice(this: Array) []Expr {
+            return this.items.slice();
+        }
     };
 
     pub const Unary = struct {
@@ -892,7 +985,7 @@ pub const E = struct {
     pub const Undefined = struct {};
     pub const New = struct {
         target: ExprNodeIndex,
-        args: ExprNodeList,
+        args: ExprNodeList = ExprNodeList{},
 
         // True if there is a comment containing "@__PURE__" or "#__PURE__" preceding
         // this call expression. See the comment inside ECall for more details.
@@ -904,7 +997,7 @@ pub const E = struct {
     pub const Call = struct {
         // Node:
         target: ExprNodeIndex,
-        args: ExprNodeList = &([_]ExprNodeIndex{}),
+        args: ExprNodeList = ExprNodeList{},
         optional_chain: ?OptionalChain = null,
         is_direct_eval: bool = false,
 
@@ -1063,11 +1156,11 @@ pub const E = struct {
         /// null represents a fragment
         tag: ?ExprNodeIndex = null,
 
-        /// props
-        properties: []G.Property = &([_]G.Property{}),
+        /// JSX props
+        properties: G.Property.List = G.Property.List{},
 
-        /// element children
-        children: ExprNodeList = &([_]ExprNodeIndex{}),
+        /// JSX element children <div>{this_is_a_child_element}</div>
+        children: ExprNodeList = ExprNodeList{},
 
         /// key is the key prop like <ListItem key="foo">
         key: ?ExprNodeIndex = null,
@@ -1128,17 +1221,35 @@ pub const E = struct {
     };
 
     pub const Object = struct {
-        properties: []G.Property = &[_]G.Property{},
+        properties: G.Property.List = G.Property.List{},
         comma_after_spread: ?logger.Loc = null,
         is_single_line: bool = false,
         is_parenthesized: bool = false,
 
+        pub fn asProperty(obj: *const Object, name: string) ?Expr.Query {
+            for (obj.properties.slice()) |prop, i| {
+                const value = prop.value orelse continue;
+                const key = prop.key orelse continue;
+                if (std.meta.activeTag(key.data) != .e_string) continue;
+                const key_str = key.data.e_string;
+                if (key_str.eql(string, name)) {
+                    return Expr.Query{
+                        .expr = value,
+                        .loc = key.loc,
+                        .i = @truncate(u32, i),
+                    };
+                }
+            }
+
+            return null;
+        }
+
         pub fn alphabetizeProperties(this: *Object) void {
-            std.sort.sort(G.Property, this.properties, void{}, Sorter.isLessThan);
+            std.sort.sort(G.Property, this.properties.slice(), void{}, Sorter.isLessThan);
         }
 
         pub fn packageJSONSort(this: *Object) void {
-            std.sort.sort(G.Property, this.properties, void{}, PackageJSONSort.Fields.isLessThan);
+            std.sort.sort(G.Property, this.properties.slice(), void{}, PackageJSONSort.Fields.isLessThan);
         }
 
         const PackageJSONSort = struct {
@@ -1721,7 +1832,7 @@ pub const Expr = struct {
         const obj = expr.data.e_object;
         if (@ptrToInt(obj.properties.ptr) == 0) return false;
 
-        for (obj.properties) |prop| {
+        for (obj.properties.slice()) |prop| {
             if (prop.value == null) continue;
             const key = prop.key orelse continue;
             if (std.meta.activeTag(key.data) != .e_string) continue;
@@ -1742,21 +1853,7 @@ pub const Expr = struct {
         const obj = expr.data.e_object;
         if (@ptrToInt(obj.properties.ptr) == 0) return null;
 
-        for (obj.properties) |prop, i| {
-            const value = prop.value orelse continue;
-            const key = prop.key orelse continue;
-            if (std.meta.activeTag(key.data) != .e_string) continue;
-            const key_str = key.data.e_string;
-            if (key_str.eql(string, name)) {
-                return Query{
-                    .expr = value,
-                    .loc = key.loc,
-                    .i = @truncate(u32, i),
-                };
-            }
-        }
-
-        return null;
+        return obj.asProperty(name);
     }
 
     pub const ArrayIterator = struct {
@@ -1768,7 +1865,7 @@ pub const Expr = struct {
                 return null;
             }
             defer this.index += 1;
-            return this.array.items[this.index];
+            return this.array.items.ptr[this.index];
         }
     };
 
@@ -4099,7 +4196,7 @@ pub const Macro = struct {
                         var slice = temporary_call_args_array[0..args.len];
                         for (slice) |_, i| {
                             var node = JSCBase.getAllocator(ctx).create(JSNode) catch unreachable;
-                            node.* = JSNode.initExpr(args[i]);
+                            node.* = JSNode.initExpr(args.ptr[i]);
                             slice[i] = JSNode.Class.make(ctx, node);
                         }
                         return js.JSObjectMakeArray(ctx, args.len, slice.ptr, exception);
@@ -4135,7 +4232,7 @@ pub const Macro = struct {
                 _: js.JSStringRef,
                 exception: js.ExceptionRef,
             ) js.JSObjectRef {
-                const args = if (this.data == .e_object) this.data.e_object.properties else &[_]G.Property{};
+                const args = if (this.data == .e_object) this.data.e_object.properties.slice() else &[_]G.Property{};
 
                 switch (args.len) {
                     0 => return js.JSObjectMakeArray(ctx, 0, null, exception),
@@ -4198,31 +4295,34 @@ pub const Macro = struct {
             }
 
             fn toArrayValue(_: *JSNode, ctx: js.JSContextRef, array: E.Array, exception: js.ExceptionRef) js.JSObjectRef {
-                if (array.items.len == 0) {
+                const items = array.slice();
+
+                if (items.len == 0) {
                     return js.JSObjectMakeArray(ctx, 0, null, exception);
                 }
 
-                for (array.items) |expr, i| {
+                for (items) |expr, i| {
                     var node = JSCBase.getAllocator(ctx).create(JSNode) catch unreachable;
                     node.* = JSNode.initExpr(expr);
                     temporary_call_args_array[i] = JSNode.Class.make(ctx, node);
                 }
 
-                return js.JSObjectMakeArray(ctx, array.items.len, &temporary_call_args_array, exception);
+                return js.JSObjectMakeArray(ctx, items.len, &temporary_call_args_array, exception);
             }
 
             fn toArrayPrimitive(_: *JSNode, ctx: js.JSContextRef, array: E.Array, exception: js.ExceptionRef) js.JSObjectRef {
-                if (array.items.len == 0) {
+                const items = array.slice();
+                if (items.len == 0) {
                     return js.JSObjectMakeArray(ctx, 0, null, exception);
                 }
 
                 var node: JSNode = undefined;
-                for (array.items) |expr, i| {
+                for (items) |expr, i| {
                     node = JSNode.initExpr(expr);
                     temporary_call_args_array[i] = toPrimitive(&node, ctx, exception);
                 }
 
-                return js.JSObjectMakeArray(ctx, array.items.len, temporary_call_args_array[0..array.items.len].ptr, exception);
+                return js.JSObjectMakeArray(ctx, items.len, temporary_call_args_array[0..items.len].ptr, exception);
             }
 
             fn toObjectValue(this: *JSNode, ctx: js.JSContextRef, obj: E.Object, exception: js.ExceptionRef) js.JSObjectRef {
@@ -4242,11 +4342,11 @@ pub const Macro = struct {
 
                 defer if (did_allocate) getAllocator(ctx).free(properties_list);
 
-                for (obj.properties) |_, i| {
+                for (obj.properties.slice()) |_, i| {
                     var node = JSCBase.getAllocator(ctx).create(JSNode) catch unreachable;
                     node.* = JSNode{
                         .data = .{
-                            .g_property = &obj.properties[i],
+                            .g_property = &obj.properties.ptr[i],
                         },
                         .loc = this.loc,
                     };
@@ -4781,7 +4881,7 @@ pub const Macro = struct {
                 if (this == .e_call)
                     return this.e_call.args
                 else
-                    return &[_]Expr{};
+                    return ExprNodeList{};
             }
 
             pub fn booleanValue(this: Data) bool {
@@ -5750,8 +5850,14 @@ pub const Macro = struct {
                             .e_string => {
                                 self.p.recordUsage(self.bun_jsx_ref);
                                 _ = self.writeElement(element);
-                                var call_args = self.p.allocator.alloc(Expr, 1) catch unreachable;
-                                call_args[0] = Expr.init(E.Array, E.Array{ .items = self.args.items }, tag_expr.loc);
+                                var call_args = ExprNodeList.one(
+                                    self.allocator,
+                                    Expr.init(
+                                        E.Array,
+                                        E.Array{ .items = ExprNodeList.fromList(self.args) },
+                                        tag_expr.loc,
+                                    ),
+                                ) catch unreachable;
 
                                 return Expr.init(
                                     E.Call,
@@ -5773,9 +5879,11 @@ pub const Macro = struct {
                     } else {
                         const loc = logger.Loc.Empty;
                         self.p.recordUsage(self.bun_jsx_ref);
-                        _ = self.writeNodeType(JSNode.Tag.fragment, element.properties, element.children, loc);
-                        var call_args = self.p.allocator.alloc(Expr, 1) catch unreachable;
-                        call_args[0] = Expr.init(E.Array, E.Array{ .items = self.args.items }, loc);
+                        _ = self.writeNodeType(JSNode.Tag.fragment, element.properties.slice(), element.children.slice(), loc);
+                        var call_args = ExprNodeList.one(
+                            self.allocator,
+                            Expr.init(E.Array, E.Array{ .items = ExprNodeList.init(self.args.items) }, loc),
+                        ) catch unreachable;
 
                         return Expr.init(
                             E.Call,
@@ -5815,7 +5923,7 @@ pub const Macro = struct {
                         self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid here", .{str.utf8}) catch unreachable;
                     }
 
-                    return self.writeNodeType(node_type, element.properties, element.children, tag_expr.loc);
+                    return self.writeNodeType(node_type, element.properties.slice(), element.children.slice(), tag_expr.loc);
                 }
 
                 pub fn writeElement(self: *JSXWriter, element: E.JSXElement) bool {
@@ -5833,7 +5941,7 @@ pub const Macro = struct {
                         return false;
                     };
 
-                    return self.writeNodeType(node_type, element.properties, element.children, tag_expr.loc);
+                    return self.writeNodeType(node_type, element.properties.slice(), element.children.slice(), tag_expr.loc);
                 }
             };
         }
@@ -6210,7 +6318,8 @@ pub const Macro = struct {
                                 }
                             }
                         }
-                        expr.* = Expr.init(E.Array, E.Array{ .items = items.items[0..i] }, writer.loc);
+                        items.items = items.items[0..i];
+                        expr.* = Expr.init(E.Array, E.Array{ .items = ExprNodeList.fromList(items) }, writer.loc);
                         return true;
                     },
                     .e_boolean => {
@@ -6587,7 +6696,7 @@ pub const Macro = struct {
             var this: *LazyPropertiesObject = JSCBase.GetJSPrivateData(LazyPropertiesObject, thisObject) orelse return null;
 
             const len = js.JSStringGetLength(propertyName);
-            const properties = this.node.data.e_object.properties;
+            const properties = this.node.data.e_object.properties.slice();
             var ptr = js.JSStringGetCharacters8Ptr(propertyName);
             var property_slice = ptr[0..len];
             var value_node: JSNode = undefined;
@@ -6615,7 +6724,7 @@ pub const Macro = struct {
             var this: *LazyPropertiesObject = JSCBase.GetJSPrivateData(LazyPropertiesObject, thisObject) orelse return false;
 
             const len = js.JSStringGetLength(propertyName);
-            const properties = this.node.data.e_object.properties;
+            const properties = this.node.data.e_object.properties.slice();
             var ptr = js.JSStringGetCharacters8Ptr(propertyName);
             var property_slice = ptr[0..len];
 
@@ -6637,7 +6746,7 @@ pub const Macro = struct {
         ) callconv(.C) void {
             var this: *LazyPropertiesObject = JSCBase.GetJSPrivateData(LazyPropertiesObject, thisObject) orelse return;
 
-            const properties = this.node.data.e_object.properties;
+            const properties = this.node.data.e_object.properties.slice();
 
             for (properties) |property| {
                 const key = property.key orelse continue;

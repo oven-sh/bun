@@ -74,7 +74,7 @@ const UnsupportedPackages = struct {
     @"styled-jsx": bool = false,
 
     pub fn update(this: *UnsupportedPackages, expr: js_ast.Expr) void {
-        for (expr.data.e_object.properties) |prop| {
+        for (expr.data.e_object.properties.slice()) |prop| {
             inline for (comptime std.meta.fieldNames(UnsupportedPackages)) |field_name| {
                 if (strings.eqlComptime(prop.key.?.data.e_string.utf8, comptime field_name)) {
                     @field(this, field_name) = true;
@@ -727,7 +727,7 @@ pub const CreateCommand = struct {
                     break :process_package_json;
                 }
 
-                var properties_list = std.ArrayList(js_ast.G.Property).fromOwnedSlice(default_allocator, package_json_expr.data.e_object.properties);
+                var properties_list = std.ArrayList(js_ast.G.Property).fromOwnedSlice(default_allocator, package_json_expr.data.e_object.properties.slice());
 
                 if (ctx.log.errors > 0) {
                     if (Output.enable_ansi_colors) {
@@ -809,7 +809,7 @@ pub const CreateCommand = struct {
                         has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
                         has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
 
-                        property.data.e_object.properties = Prune.prune(property.data.e_object.properties);
+                        property.data.e_object.properties = js_ast.G.Property.List.init(Prune.prune(property.data.e_object.properties.slice()));
                         if (property.data.e_object.properties.len > 0) {
                             has_dependencies = true;
                             dev_dependencies = q.expr;
@@ -830,7 +830,7 @@ pub const CreateCommand = struct {
 
                         has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
                         has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
-                        property.data.e_object.properties = Prune.prune(property.data.e_object.properties);
+                        property.data.e_object.properties = js_ast.G.Property.List.init(Prune.prune(property.data.e_object.properties.slice()));
 
                         if (property.data.e_object.properties.len > 0) {
                             has_dependencies = true;
@@ -963,7 +963,7 @@ pub const CreateCommand = struct {
                     };
 
                     var bun_macro_relay_object = js_ast.E.Object{
-                        .properties = std.mem.span(&bun_macro_relay_properties),
+                        .properties = undefined,
                     };
 
                     var bun_macros_relay_object_properties = [_]js_ast.G.Property{
@@ -1012,11 +1012,11 @@ pub const CreateCommand = struct {
                     };
 
                     pub var bun_macros_relay_object = E.Object{
-                        .properties = &bun_macros_relay_object_properties,
+                        .properties = undefined,
                     };
 
                     var bun_macros_relay_only_object_string = js_ast.E.String{ .utf8 = "macros" };
-                    var bun_macros_relay_only_object_properties = [_]js_ast.G.Property{
+                    pub var bun_macros_relay_only_object_properties = [_]js_ast.G.Property{
                         js_ast.G.Property{
                             .key = js_ast.Expr{
                                 .data = .{
@@ -1032,9 +1032,7 @@ pub const CreateCommand = struct {
                             },
                         },
                     };
-                    pub var bun_macros_relay_only_object = E.Object{
-                        .properties = &bun_macros_relay_only_object_properties,
-                    };
+                    pub var bun_macros_relay_only_object = E.Object{ .properties = undefined };
 
                     var bun_only_macros_string = js_ast.E.String{ .utf8 = "bun" };
                     pub var bun_only_macros_relay_property = js_ast.G.Property{
@@ -1118,12 +1116,14 @@ pub const CreateCommand = struct {
                     pub const bun_bun_for_nextjs_task: string = "bun bun --use next";
                 };
 
+                InjectionPrefill.bun_macro_relay_object.properties = js_ast.G.Property.List.init(std.mem.span(&InjectionPrefill.bun_macro_relay_properties));
+                InjectionPrefill.bun_macros_relay_object.properties = js_ast.G.Property.List.init(&InjectionPrefill.bun_macros_relay_object_properties);
+                InjectionPrefill.bun_macros_relay_only_object.properties = js_ast.G.Property.List.init(&InjectionPrefill.bun_macros_relay_only_object_properties);
+
                 if (needs_to_inject_dev_dependency and dev_dependencies == null) {
                     var e_object = try ctx.allocator.create(E.Object);
 
-                    e_object.* = E.Object{
-                        .properties = &.{},
-                    };
+                    e_object.* = E.Object{};
 
                     const value = js_ast.Expr{ .data = .{ .e_object = e_object }, .loc = logger.Loc.Empty };
                     properties_list.appendAssumeCapacity(js_ast.G.Property{
@@ -1136,9 +1136,7 @@ pub const CreateCommand = struct {
                 if (needs_to_inject_dependency and dependencies == null) {
                     var e_object = try ctx.allocator.create(E.Object);
 
-                    e_object.* = E.Object{
-                        .properties = &.{},
-                    };
+                    e_object.* = E.Object{};
 
                     const value = js_ast.Expr{ .data = .{ .e_object = e_object }, .loc = logger.Loc.Empty };
                     properties_list.appendAssumeCapacity(js_ast.G.Property{
@@ -1163,7 +1161,7 @@ pub const CreateCommand = struct {
                     // "bun.macros.react-relay.graphql"
                     if (needs.bun_macro_relay and !needs_bun_prop and !needs_bun_macros_prop) {
                         // "graphql" is the only valid one for now, so anything else in this object is invalid.
-                        bun_relay_prop.?.data.e_object = InjectionPrefill.bun_macros_relay_object.properties[0].value.?.data.e_object;
+                        bun_relay_prop.?.data.e_object = InjectionPrefill.bun_macros_relay_object.properties.ptr[0].value.?.data.e_object;
                         needs_bun_macros_prop = false;
                         needs_bun_prop = false;
                         needs.bun_macro_relay = false;
@@ -1177,10 +1175,10 @@ pub const CreateCommand = struct {
                             ctx.allocator,
                             obj.properties.len + InjectionPrefill.bun_macros_relay_object.properties.len,
                         );
-                        defer obj.properties = properties.toOwnedSlice();
+                        defer obj.properties.update(properties);
 
-                        try properties.insertSlice(0, obj.properties);
-                        try properties.insertSlice(0, InjectionPrefill.bun_macros_relay_object.properties);
+                        try properties.insertSlice(0, obj.properties.slice());
+                        try properties.insertSlice(0, InjectionPrefill.bun_macros_relay_object.properties.slice());
 
                         needs_bun_macros_prop = false;
                         needs_bun_prop = false;
@@ -1205,8 +1203,8 @@ pub const CreateCommand = struct {
                         ctx.allocator,
                         obj.properties.len + dependencies_to_inject_count,
                     );
-                    try properties.insertSlice(0, obj.properties);
-                    defer obj.properties = properties.toOwnedSlice();
+                    try properties.insertSlice(0, obj.properties.slice());
+                    defer obj.properties.update(properties);
                     if (needs.bun_framework_next) {
                         properties.appendAssumeCapacity(InjectionPrefill.bun_framework_next_property);
                         needs.bun_framework_next = false;
@@ -1220,8 +1218,8 @@ pub const CreateCommand = struct {
                         ctx.allocator,
                         obj.properties.len + dev_dependencies_to_inject_count,
                     );
-                    try properties.insertSlice(0, obj.properties);
-                    defer obj.properties = properties.toOwnedSlice();
+                    try properties.insertSlice(0, obj.properties.slice());
+                    defer obj.properties.update(properties);
                     if (needs.bun_macro_relay_dependency) {
                         properties.appendAssumeCapacity(InjectionPrefill.bun_macro_relay_dependency);
                         needs.bun_macro_relay_dependency = false;
@@ -1330,17 +1328,17 @@ pub const CreateCommand = struct {
 
                 package_json_expr.data.e_object.is_single_line = false;
 
-                package_json_expr.data.e_object.properties = properties_list.items;
+                package_json_expr.data.e_object.properties = js_ast.G.Property.List.fromList(properties_list);
                 {
                     var i: usize = 0;
                     var property_i: usize = 0;
                     while (i < package_json_expr.data.e_object.properties.len) : (i += 1) {
-                        const property = package_json_expr.data.e_object.properties[i];
+                        const property = package_json_expr.data.e_object.properties.ptr[i];
                         const key = property.key.?.asString(ctx.allocator).?;
 
                         if (strings.eqlComptime(key, "scripts")) {
                             if (property.value.?.data == .e_object) {
-                                var scripts_properties = property.value.?.data.e_object.properties;
+                                var scripts_properties = property.value.?.data.e_object.properties.slice();
 
                                 // if they're starting the app with "react-scripts start" or "next dev", that won't make sense
                                 // if they launch with npm run start it will just be slower
@@ -1369,12 +1367,12 @@ pub const CreateCommand = struct {
                                     script_property_out_i += 1;
                                 }
 
-                                property.value.?.data.e_object.properties = scripts_properties[0..script_property_out_i];
+                                property.value.?.data.e_object.properties = js_ast.G.Property.List.init(scripts_properties[0..script_property_out_i]);
                             }
                         }
 
                         if (key.len == 0 or !strings.eqlComptime(key, "bun-create")) {
-                            package_json_expr.data.e_object.properties[property_i] = property;
+                            package_json_expr.data.e_object.properties.ptr[property_i] = property;
                             property_i += 1;
                             continue;
                         }
@@ -1389,7 +1387,8 @@ pub const CreateCommand = struct {
                                     );
                                 },
                                 .e_array => |tasks| {
-                                    for (tasks.items) |task| {
+                                    const items = tasks.slice();
+                                    for (items) |task| {
                                         if (task.asString(ctx.allocator)) |task_entry| {
                                             if (needs.bun_bun_for_nextjs or bun_bun_for_react_scripts) {
                                                 var iter = std.mem.split(u8, task_entry, " ");
@@ -1426,7 +1425,7 @@ pub const CreateCommand = struct {
                                     );
                                 },
                                 .e_array => |tasks| {
-                                    for (tasks.items) |task| {
+                                    for (tasks.items.slice()) |task| {
                                         if (task.asString(ctx.allocator)) |task_entry| {
                                             try preinstall_tasks.append(
                                                 ctx.allocator,
@@ -1439,7 +1438,7 @@ pub const CreateCommand = struct {
                             }
                         }
                     }
-                    package_json_expr.data.e_object.properties = package_json_expr.data.e_object.properties[0..property_i];
+                    package_json_expr.data.e_object.properties = js_ast.G.Property.List.init(package_json_expr.data.e_object.properties.ptr[0..property_i]);
                 }
 
                 var package_json_writer = JSPrinter.NewFileWriter(package_json_file.?);
@@ -2077,7 +2076,7 @@ pub const Example = struct {
                 const count = q.expr.data.e_object.properties.len;
 
                 var list = try ctx.allocator.alloc(Example, count);
-                for (q.expr.data.e_object.properties) |property, i| {
+                for (q.expr.data.e_object.properties.slice()) |property, i| {
                     const name = property.key.?.data.e_string.utf8;
                     list[i] = Example{
                         .name = if (std.mem.indexOfScalar(u8, name, '/')) |slash|

@@ -110,7 +110,7 @@ pub const PackageJSON = struct {
         allocator: std.mem.Allocator,
     ) !void {
         var valid_count: usize = 0;
-        for (json.properties) |prop| {
+        for (json.properties.slice()) |prop| {
             if (prop.value.?.data != .e_string) continue;
             valid_count += 1;
         }
@@ -118,7 +118,7 @@ pub const PackageJSON = struct {
         env.defaults.shrinkRetainingCapacity(0);
         env.defaults.ensureTotalCapacity(allocator, valid_count) catch {};
 
-        for (json.properties) |prop| {
+        for (json.properties.slice()) |prop| {
             if (prop.value.?.data != .e_string) continue;
             env.defaults.appendAssumeCapacity(.{
                 .key = prop.key.?.data.e_string.string(allocator) catch unreachable,
@@ -133,7 +133,7 @@ pub const PackageJSON = struct {
         allocator: std.mem.Allocator,
     ) void {
         var valid_count: usize = 0;
-        for (json.properties) |prop| {
+        for (json.properties.slice()) |prop| {
             if (prop.value.?.data != .e_string) continue;
             valid_count += 1;
         }
@@ -142,7 +142,7 @@ pub const PackageJSON = struct {
         var keys = buffer[0..valid_count];
         var values = buffer[valid_count..];
         var i: usize = 0;
-        for (json.properties) |prop| {
+        for (json.properties.slice()) |prop| {
             if (prop.value.?.data != .e_string) continue;
             keys[i] = prop.key.?.data.e_string.string(allocator) catch unreachable;
             values[i] = prop.value.?.data.e_string.string(allocator) catch unreachable;
@@ -156,7 +156,7 @@ pub const PackageJSON = struct {
         json: *const js_ast.E.Object,
         allocator: std.mem.Allocator,
     ) anyerror!void {
-        for (json.properties) |prop| {
+        for (json.properties.slice()) |prop| {
             switch (prop.key.?.data) {
                 .e_string => |e_str| {
                     const str = e_str.string(allocator) catch "";
@@ -332,13 +332,14 @@ pub const PackageJSON = struct {
                         },
                         .e_array => |array| {
                             var count: usize = 0;
-                            for (array.items) |item| {
+                            const items = array.items.slice();
+                            for (items) |item| {
                                 count += @boolToInt(item.data == .e_string and item.data.e_string.utf8.len > 0);
                             }
                             switch (count) {
                                 0 => {},
                                 1 => {
-                                    const str = array.items[0].data.e_string.string(allocator) catch unreachable;
+                                    const str = items[0].data.e_string.string(allocator) catch unreachable;
                                     if (str.len > 0) {
                                         pair.router.dir = str;
                                         pair.router.possible_dirs = &[_]string{};
@@ -350,7 +351,7 @@ pub const PackageJSON = struct {
                                     const list = allocator.alloc(string, count) catch unreachable;
 
                                     var list_i: usize = 0;
-                                    for (array.items) |item| {
+                                    for (items) |item| {
                                         if (item.data == .e_string and item.data.e_string.utf8.len > 0) {
                                             list[list_i] = item.data.e_string.string(allocator) catch unreachable;
                                             list_i += 1;
@@ -454,7 +455,7 @@ pub const PackageJSON = struct {
         var macro_map = MacroMap{};
         if (macros.data != .e_object) return macro_map;
 
-        const properties = macros.data.e_object.properties;
+        const properties = macros.data.e_object.properties.slice();
 
         for (properties) |property| {
             const key = property.key.?.asString(allocator) orelse continue;
@@ -481,7 +482,7 @@ pub const PackageJSON = struct {
                 continue;
             }
 
-            const remap_properties = value.data.e_object.properties;
+            const remap_properties = value.data.e_object.properties.slice();
             if (remap_properties.len == 0) continue;
 
             var map = MacroImportReplacementMap.init(allocator);
@@ -644,7 +645,7 @@ pub const PackageJSON = struct {
                         // The value is an object
 
                         // Remap all files in the browser field
-                        for (obj.properties) |*prop| {
+                        for (obj.properties.slice()) |*prop| {
                             var _key_str = (prop.key orelse continue).asString(r.allocator) orelse continue;
                             const value: js_ast.Expr = prop.value orelse continue;
 
@@ -694,7 +695,7 @@ pub const PackageJSON = struct {
                         const scripts_obj = scripts_prop.expr.data.e_object;
 
                         var count: usize = 0;
-                        for (scripts_obj.properties) |prop| {
+                        for (scripts_obj.properties.slice()) |prop| {
                             const key = prop.key.?.asString(r.allocator) orelse continue;
                             const value = prop.value.?.asString(r.allocator) orelse continue;
 
@@ -705,7 +706,7 @@ pub const PackageJSON = struct {
                         var scripts = ScriptsMap.init(r.allocator);
                         scripts.ensureUnusedCapacity(count) catch break :read_scripts;
 
-                        for (scripts_obj.properties) |prop| {
+                        for (scripts_obj.properties.slice()) |prop| {
                             const key = prop.key.?.asString(r.allocator) orelse continue;
                             const value = prop.value.?.asString(r.allocator) orelse continue;
 
@@ -792,7 +793,7 @@ pub const ExportsMap = struct {
                 },
                 .e_array => |e_array| {
                     var array = this.allocator.alloc(Entry, e_array.items.len) catch unreachable;
-                    for (e_array.items) |item, i| {
+                    for (e_array.items.slice()) |item, i| {
                         array[i] = this.visit(item);
                     }
                     return Entry{
@@ -815,7 +816,7 @@ pub const ExportsMap = struct {
                     var is_conditional_sugar = false;
                     first_token.loc = expr.loc;
                     first_token.len = 1;
-                    for (e_obj.properties) |prop, i| {
+                    for (e_obj.properties.slice()) |prop, i| {
                         const key: string = prop.key.?.data.e_string.string(this.allocator) catch unreachable;
                         const key_range: logger.Range = this.source.rangeOfString(prop.key.?.loc);
 

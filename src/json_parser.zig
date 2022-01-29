@@ -178,7 +178,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                         is_single_line = false;
                     }
                     try p.lexer.expect(.t_close_bracket);
-                    return p.e(E.Array{ .items = exprs.items }, loc);
+                    return p.e(E.Array{ .items = ExprNodeList.fromList(exprs), .is_single_line = is_single_line }, loc);
                 },
                 .t_open_brace => {
                     try p.lexer.next();
@@ -245,7 +245,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                     }
                     try p.lexer.expect(.t_close_brace);
                     return p.e(E.Object{
-                        .properties = properties.items,
+                        .properties = G.Property.List.fromList(properties),
                         .is_single_line = is_single_line,
                     }, loc);
                 },
@@ -484,7 +484,7 @@ const DotEnvJSONParser = JSONLikeParser(js_lexer.JSONOptions{
 var empty_string = E.String{ .utf8 = "" };
 const TSConfigParser = JSONLikeParser(js_lexer.JSONOptions{ .allow_comments = true, .is_json = true, .allow_trailing_commas = true });
 var empty_object = E.Object{};
-var empty_array = E.Array{ .items = &[_]ExprNodeIndex{} };
+var empty_array = E.Array{};
 var empty_string_data = Expr.Data{ .e_string = &empty_string };
 var empty_object_data = Expr.Data{ .e_object = &empty_object };
 var empty_array_data = Expr.Data{ .e_array = &empty_array };

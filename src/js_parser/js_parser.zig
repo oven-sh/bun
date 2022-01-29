@@ -1016,7 +1016,7 @@ pub const SideEffects = enum(u2) {
                 // can be removed. The annotation causes us to ignore the target.
                 if (call.can_be_unwrapped_if_unused) {
                     if (call.args.len > 0) {
-                        return Expr.joinAllWithCommaCallback(call.args, @TypeOf(p), p, simpifyUnusedExpr, p.allocator);
+                        return Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, simpifyUnusedExpr, p.allocator);
                     }
                 }
             },
@@ -1065,7 +1065,7 @@ pub const SideEffects = enum(u2) {
                 // can be removed. The annotation causes us to ignore the target.
                 if (call.can_be_unwrapped_if_unused) {
                     if (call.args.len > 0) {
-                        return Expr.joinAllWithComma(call.args, p.allocator);
+                        return Expr.joinAllWithComma(call.args.slice(), p.allocator);
                     }
                 }
             },
@@ -3315,8 +3315,8 @@ pub fn NewParser(
                         switch (call.target.data) {
                             .e_identifier => |ident| {
                                 // is this a require("something")
-                                if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args[0].data) == .e_string) {
-                                    _ = p.addImportRecord(.require, loc, call.args[0].data.e_string.string(p.allocator) catch unreachable);
+                                if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args.ptr[0].data) == .e_string) {
+                                    _ = p.addImportRecord(.require, loc, call.args.@"[0]"().data.e_string.string(p.allocator) catch unreachable);
                                 }
                             },
                             else => {},
@@ -3331,8 +3331,8 @@ pub fn NewParser(
                         switch (call.target.data) {
                             .e_identifier => |ident| {
                                 // is this a require("something")
-                                if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args[0].data) == .e_string) {
-                                    _ = p.addImportRecord(.require, loc, call.args[0].data.e_string.string(p.allocator) catch unreachable);
+                                if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args.ptr[0].data) == .e_string) {
+                                    _ = p.addImportRecord(.require, loc, call.args.@"[0]"().data.e_string.string(p.allocator) catch unreachable);
                                 }
                             },
                             else => {},
@@ -4029,8 +4029,8 @@ pub fn NewParser(
                     // p.markSyntaxFeature(Destructing)
                     var items = List(js_ast.ArrayBinding).initCapacity(p.allocator, ex.items.len) catch unreachable;
                     var is_spread = false;
-                    for (ex.items) |_, i| {
-                        var item = ex.items[i];
+                    for (ex.items.slice()) |_, i| {
+                        var item = ex.items.ptr[i];
                         if (item.data == .e_spread) {
                             is_spread = true;
                             item = item.data.e_spread.value;
@@ -4064,7 +4064,7 @@ pub fn NewParser(
                     // p.markSyntaxFeature(compat.Destructuring, p.source.RangeOfOperatorAfter(expr.Loc, "{"))
 
                     var properties = List(B.Property).initCapacity(p.allocator, ex.properties.len) catch unreachable;
-                    for (ex.properties) |item| {
+                    for (ex.properties.slice()) |item| {
                         if (item.flags.is_method or item.kind == .get or item.kind == .set) {
                             invalid_loc.append(item.key.?.loc) catch unreachable;
                             continue;
@@ -4388,7 +4388,7 @@ pub fn NewParser(
                 }
 
                 args.append(p.allocator, G.Arg{
-                    .ts_decorators = ts_decorators,
+                    .ts_decorators = ExprNodeList.init(ts_decorators),
                     .binding = arg,
                     .default = default_value,
 
@@ -6801,8 +6801,7 @@ pub fn NewParser(
                 const path = p.e(p.lexer.toEString(), p.lexer.loc());
                 try p.lexer.expect(.t_string_literal);
                 try p.lexer.expect(.t_close_paren);
-                const args = p.allocator.alloc(ExprNodeIndex, 1) catch unreachable;
-                args[0] = path;
+                const args = try ExprNodeList.one(p.allocator, path);
                 value.data = .{ .e_call = Expr.Data.Store.All.append(E.Call, E.Call{ .target = value, .args = args }) };
             } else {
                 // "import Foo = Bar"
@@ -8521,7 +8520,7 @@ pub fn NewParser(
                 try p.lexer.expectOrInsertSemicolon();
 
                 return G.Property{
-                    .ts_decorators = opts.ts_decorators,
+                    .ts_decorators = ExprNodeList.init(opts.ts_decorators),
                     .kind = kind,
                     .flags = Flags.Property{
                         .is_computed = is_computed,
@@ -8652,7 +8651,7 @@ pub fn NewParser(
                 }
 
                 return G.Property{
-                    .ts_decorators = opts.ts_decorators,
+                    .ts_decorators = ExprNodeList.init(opts.ts_decorators),
                     .kind = kind,
                     .flags = Flags.Property{
                         .is_computed = is_computed,
@@ -8669,7 +8668,6 @@ pub fn NewParser(
             const value = try p.parseExprOrBindings(.comma, errors);
 
             return G.Property{
-                .ts_decorators = &[_]Expr{},
                 .kind = kind,
                 .flags = Flags.Property{
                     .is_computed = is_computed,
@@ -8774,7 +8772,7 @@ pub fn NewParser(
             return G.Class{
                 .class_name = name,
                 .extends = extends,
-                .ts_decorators = class_opts.ts_decorators,
+                .ts_decorators = ExprNodeList.init(class_opts.ts_decorators),
                 .class_keyword = class_keyword,
                 .body_loc = body_loc,
                 .properties = properties.toOwnedSlice(),
@@ -8847,7 +8845,7 @@ pub fn NewParser(
             return expr;
         }
 
-        pub fn parseCallArgs(p: *P) anyerror![]Expr {
+        pub fn parseCallArgs(p: *P) anyerror!ExprNodeList {
             // Allow "in" inside call arguments
             const old_allow_in = p.allow_in;
             p.allow_in = true;
@@ -8875,7 +8873,7 @@ pub fn NewParser(
             }
 
             try p.lexer.expect(.t_close_paren);
-            return args.toOwnedSlice();
+            return ExprNodeList.fromList(args);
         }
 
         pub fn parseSuffix(p: *P, left: Expr, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
@@ -10042,7 +10040,7 @@ pub fn NewParser(
                     }
 
                     const target = try p.parseExprWithFlags(.member, flags);
-                    var args: []Expr = &([_]Expr{});
+                    var args = ExprNodeList{};
 
                     if (is_typescript_enabled) {
                         // Skip over TypeScript non-null assertions
@@ -10131,7 +10129,7 @@ pub fn NewParser(
                         self_errors.mergeInto(errors);
                     }
                     return p.e(E.Array{
-                        .items = items.toOwnedSlice(),
+                        .items = ExprNodeList.fromList(items),
                         .comma_after_spread = comma_after_spread.toNullable(),
                         .is_single_line = is_single_line,
                     }, loc);
@@ -10194,7 +10192,7 @@ pub fn NewParser(
                         self_errors.mergeInto(errors);
                     }
                     return p.e(E.Object{
-                        .properties = properties.toOwnedSlice(),
+                        .properties = G.Property.List.fromList(properties),
                         .comma_after_spread = comma_after_spread.toNullable(),
                         .is_single_line = is_single_line,
                     }, loc);
@@ -10477,7 +10475,7 @@ pub fn NewParser(
             }
 
             var previous_string_with_backslash_loc = logger.Loc{};
-            var properties: []G.Property = &([_]G.Property{});
+            var properties = G.Property.List{};
             var key_prop: ?ExprNodeIndex = null;
             var flags = Flags.JSXElement{};
             var start_tag: ?ExprNodeIndex = null;
@@ -10551,7 +10549,7 @@ pub fn NewParser(
                     try p.log.addWarning(p.source, spread_loc, "\"key\" prop before a {...spread} is deprecated in JSX. Falling back to classic runtime.");
                     p.has_classic_runtime_warned = true;
                 }
-                properties = props.toOwnedSlice();
+                properties = G.Property.List.fromList(props);
             }
 
             // People sometimes try to use the output of "JSON.stringify()" as a JSX
@@ -10650,7 +10648,7 @@ pub fn NewParser(
 
                         return p.e(E.JSXElement{
                             .tag = end_tag.data.asExpr(),
-                            .children = children.toOwnedSlice(),
+                            .children = ExprNodeList.fromList(children),
                             .properties = properties,
                             .key = key_prop,
                             .flags = flags,
@@ -11103,17 +11101,17 @@ pub fn NewParser(
                                 }
                             };
 
-                            for (e_.properties) |property, i| {
+                            for (e_.properties.slice()) |property, i| {
                                 if (property.kind != .spread) {
-                                    e_.properties[i].key = p.visitExpr(e_.properties[i].key.?);
+                                    e_.properties.ptr[i].key = p.visitExpr(e_.properties.ptr[i].key.?);
                                 }
 
                                 if (property.value != null) {
-                                    e_.properties[i].value = p.visitExpr(e_.properties[i].value.?);
+                                    e_.properties.ptr[i].value = p.visitExpr(e_.properties.ptr[i].value.?);
                                 }
 
                                 if (property.initializer != null) {
-                                    e_.properties[i].initializer = p.visitExpr(e_.properties[i].initializer.?);
+                                    e_.properties.ptr[i].initializer = p.visitExpr(e_.properties.ptr[i].initializer.?);
                                 }
                             }
 
@@ -11148,9 +11146,9 @@ pub fn NewParser(
                                     if (e_.properties.len > 0) {
                                         if (e_.key) |key| {
                                             var props = p.allocator.alloc(G.Property, e_.properties.len + 1) catch unreachable;
-                                            std.mem.copy(G.Property, props, e_.properties);
+                                            std.mem.copy(G.Property, props, e_.properties.slice());
                                             props[props.len - 1] = G.Property{ .key = Expr{ .loc = key.loc, .data = keyExprData }, .value = key };
-                                            args[1] = p.e(E.Object{ .properties = props }, expr.loc);
+                                            args[1] = p.e(E.Object{ .properties = G.Property.List.init(props) }, expr.loc);
                                         } else {
                                             args[1] = p.e(E.Object{ .properties = e_.properties }, expr.loc);
                                         }
@@ -11160,7 +11158,7 @@ pub fn NewParser(
                                         i = 2;
                                     }
 
-                                    for (e_.children[0..children_count]) |child| {
+                                    for (e_.children.slice()[0..children_count]) |child| {
                                         args[i] = p.visitExpr(child);
                                         i += @intCast(usize, @boolToInt(args[i].data != .e_missing));
                                     }
@@ -11168,7 +11166,7 @@ pub fn NewParser(
                                     // Call createElement()
                                     return p.e(E.Call{
                                         .target = p.jsxStringsToMemberExpression(expr.loc, p.jsx_factory.ref),
-                                        .args = args[0..i],
+                                        .args = ExprNodeList.init(args[0..i]),
                                         // Enable tree shaking
                                         .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
                                     }, expr.loc);
@@ -11181,7 +11179,8 @@ pub fn NewParser(
                                     const include_filename = FeatureFlags.include_filename_in_jsx and p.options.jsx.development;
                                     const args = p.allocator.alloc(Expr, if (p.options.jsx.development) @as(usize, 6) else @as(usize, 4)) catch unreachable;
                                     args[0] = tag;
-                                    var props = ListManaged(G.Property).fromOwnedSlice(p.allocator, e_.properties);
+                                    const allocator = p.allocator;
+                                    var props = e_.properties.list();
                                     // arguments needs to be like
                                     // {
                                     //    ...props,
@@ -11189,13 +11188,13 @@ pub fn NewParser(
                                     // }
 
                                     {
-                                        var last_child: usize = 0;
-                                        for (e_.children[0..children_count]) |child| {
-                                            e_.children[last_child] = p.visitExpr(child);
+                                        var last_child: u32 = 0;
+                                        for (e_.children.ptr[0..children_count]) |child| {
+                                            e_.children.ptr[last_child] = p.visitExpr(child);
                                             // if tree-shaking removes the element, we must also remove it here.
-                                            last_child += @intCast(usize, @boolToInt(e_.children[last_child].data != .e_missing));
+                                            last_child += @intCast(u32, @boolToInt(e_.children.ptr[last_child].data != .e_missing));
                                         }
-                                        e_.children = e_.children[0..last_child];
+                                        e_.children.len = last_child;
                                     }
 
                                     const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
@@ -11207,13 +11206,13 @@ pub fn NewParser(
                                     switch (e_.children.len) {
                                         0 => {},
                                         1 => {
-                                            props.append(G.Property{
+                                            props.append(allocator, G.Property{
                                                 .key = children_key,
-                                                .value = e_.children[0],
+                                                .value = e_.children.ptr[0],
                                             }) catch unreachable;
                                         },
                                         else => {
-                                            props.append(G.Property{
+                                            props.append(allocator, G.Property{
                                                 .key = children_key,
                                                 .value = p.e(E.Array{
                                                     .items = e_.children,
@@ -11224,7 +11223,7 @@ pub fn NewParser(
                                     }
 
                                     args[1] = p.e(E.Object{
-                                        .properties = props.toOwnedSlice(),
+                                        .properties = G.Property.List.fromList(props),
                                     }, expr.loc);
 
                                     if (e_.key) |key| {
@@ -11274,7 +11273,7 @@ pub fn NewParser(
                                             //     .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
                                             // };
                                             args[4] = p.e(E.Object{
-                                                .properties = source,
+                                                .properties = G.Property.List.init(source),
                                             }, expr.loc);
 
                                             // When disabled, this must specifically be undefined
@@ -11294,7 +11293,7 @@ pub fn NewParser(
 
                                     return p.e(E.Call{
                                         .target = p.jsxStringsToMemberExpressionAutomatic(expr.loc, is_static_jsx),
-                                        .args = args,
+                                        .args = ExprNodeList.init(args),
                                         // Enable tree shaking
                                         .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
                                         .was_jsx_element = true,
@@ -11465,7 +11464,7 @@ pub fn NewParser(
                                         },
                                         expr.loc,
                                     ),
-                                    .args = call_args,
+                                    .args = ExprNodeList.init(call_args),
                                     .can_be_unwrapped_if_unused = true,
                                 },
                                 expr.loc,
@@ -12061,8 +12060,8 @@ pub fn NewParser(
                             p.log.addRangeError(p.source, logger.Range{ .loc = spread, .len = 1 }, "Unexpected \",\" after rest pattern") catch unreachable;
                         }
                     }
-
-                    for (e_.items) |*item| {
+                    var items = e_.items.slice();
+                    for (items) |*item| {
                         switch (item.data) {
                             .e_missing => {},
                             .e_spread => |spread| {
@@ -12100,7 +12099,7 @@ pub fn NewParser(
                     var has_proto = false;
                     var i: usize = 0;
                     while (i < e_.properties.len) : (i += 1) {
-                        var property = &e_.properties[i];
+                        var property = e_.properties.ptr[i];
 
                         if (property.kind != .spread) {
                             property.key = p.visitExpr(property.key orelse Global.panic("Expected property key", .{}));
@@ -12216,9 +12215,9 @@ pub fn NewParser(
                         if (is_macro_ref)
                             p.options.ignore_dce_annotations = true;
 
-                        for (e_.args) |_, i| {
-                            const arg = e_.args[i];
-                            e_.args[i] = p.visitExpr(arg);
+                        for (e_.args.slice()) |_, i| {
+                            const arg = e_.args.ptr[i];
+                            e_.args.ptr[i] = p.visitExpr(arg);
                         }
                     }
 
@@ -12227,7 +12226,7 @@ pub fn NewParser(
                         // the try/catch statement is there to handle the potential run-time
                         // error from the unbundled require() call failing.
                         if (e_.args.len == 1) {
-                            return p.require_transposer.maybeTransposeIf(e_.args[0], null);
+                            return p.require_transposer.maybeTransposeIf(e_.args.first_(), null);
                         } else if (p.options.warn_about_unbundled_modules) {
                             const r = js_lexer.rangeOfIdentifier(p.source, e_.target.loc);
                             p.log.addRangeDebug(p.source, r, "This call to \"require\" will not be bundled because it has multiple arguments") catch unreachable;
@@ -12274,7 +12273,7 @@ pub fn NewParser(
                     e_.target = p.visitExpr(e_.target);
                     // p.warnA
 
-                    for (e_.args) |*arg| {
+                    for (e_.args.slice()) |*arg| {
                         arg.* = p.visitExpr(arg.*);
                     }
                 },
@@ -12375,7 +12374,7 @@ pub fn NewParser(
         pub fn visitTSDecorators(p: *P, decs: ExprNodeList) ExprNodeList {
             var i: usize = 0;
             while (i < decs.len) : (i += 1) {
-                decs[i] = p.visitExpr(decs[i]);
+                decs.ptr[i] = p.visitExpr(decs.ptr[i]);
             }
 
             return decs;
@@ -12535,7 +12534,7 @@ pub fn NewParser(
                     return p.exprCanBeRemovedIfUnused(&ex.test_) and p.exprCanBeRemovedIfUnused(&ex.yes) and p.exprCanBeRemovedIfUnused(&ex.no);
                 },
                 .e_array => |ex| {
-                    for (ex.items) |*item| {
+                    for (ex.items.slice()) |*item| {
                         if (!p.exprCanBeRemovedIfUnused(item)) {
                             return false;
                         }
@@ -12544,7 +12543,7 @@ pub fn NewParser(
                     return true;
                 },
                 .e_object => |ex| {
-                    for (ex.properties) |*property| {
+                    for (ex.properties.slice()) |*property| {
 
                         // The key must still be evaluated if it's computed or a spread
                         if (property.kind == .spread or property.flags.is_computed or property.flags.is_spread) {
@@ -12564,7 +12563,7 @@ pub fn NewParser(
                     // A call that has been marked "__PURE__" can be removed if all arguments
                     // can be removed. The annotation causes us to ignore the target.
                     if (ex.can_be_unwrapped_if_unused) {
-                        for (ex.args) |*arg| {
+                        for (ex.args.slice()) |*arg| {
                             if (!p.exprCanBeRemovedIfUnused(arg)) {
                                 return false;
                             }
@@ -12577,7 +12576,7 @@ pub fn NewParser(
                     // A call that has been marked "__PURE__" can be removed if all arguments
                     // can be removed. The annotation causes us to ignore the target.
                     if (ex.can_be_unwrapped_if_unused) {
-                        for (ex.args) |*arg| {
+                        for (ex.args.slice()) |*arg| {
                             if (!p.exprCanBeRemovedIfUnused(arg)) {
                                 return false;
                             }
@@ -13705,7 +13704,7 @@ pub fn NewParser(
                                     },
                                     name_loc,
                                 ),
-                                p.e(E.Object{ .properties = &[_]G.Property{} }, name_loc),
+                                p.e(E.Object{}, name_loc),
                                 allocator,
                             ),
                         },
@@ -13724,7 +13723,7 @@ pub fn NewParser(
                     .right = Expr.assign(
                         Expr.initIdentifier(name_ref, name_loc),
                         p.e(
-                            E.Object{ .properties = &[_]G.Property{} },
+                            E.Object{},
                             name_loc,
                         ),
                         allocator,
@@ -13757,7 +13756,7 @@ pub fn NewParser(
             const call = p.e(
                 E.Call{
                     .target = target,
-                    .args = args_list,
+                    .args = ExprNodeList.init(args_list),
                 },
                 stmt_loc,
             );
@@ -14258,7 +14257,7 @@ pub fn NewParser(
                 .target = p.e(E.Identifier{
                     .ref = ref,
                 }, loc),
-                .args = args,
+                .args = ExprNodeList.init(args),
             }, loc);
         }
 
@@ -14535,7 +14534,7 @@ pub fn NewParser(
             if (opts.is_async) {
                 p.logExprErrors(&errors);
                 const async_expr = p.e(E.Identifier{ .ref = try p.storeNameInRef("async") }, loc);
-                return p.e(E.Call{ .target = async_expr, .args = items }, loc);
+                return p.e(E.Call{ .target = async_expr, .args = ExprNodeList.init(items) }, loc);
             }
 
             // Is this a chain of expressions and comma operators?
@@ -14709,7 +14708,7 @@ pub fn NewParser(
                     }
                 }
 
-                commonjs_wrapper.data.e_call.args[0] = p.e(
+                commonjs_wrapper.data.e_call.args.ptr[0] = p.e(
                     E.Function{ .func = G.Fn{
                         .name = null,
                         .open_parens_loc = logger.Loc.Empty,
@@ -14728,7 +14727,7 @@ pub fn NewParser(
                         sourcefile_name = sourcefile_name[end..];
                     }
                 }
-                commonjs_wrapper.data.e_call.args[1] = p.e(E.String{ .utf8 = sourcefile_name }, logger.Loc.Empty);
+                commonjs_wrapper.data.e_call.args.ptr[1] = p.e(E.String{ .utf8 = sourcefile_name }, logger.Loc.Empty);
 
                 new_stmts_list[imports_list.len] = p.s(
                     S.ExportDefault{
@@ -14874,7 +14873,7 @@ pub fn NewParser(
                                 .name_loc = logger.Loc.Empty,
                             }, logger.Loc.Empty),
 
-                            .args = args_list,
+                            .args = ExprNodeList.init(args_list),
                         }, logger.Loc.Empty),
                     },
                     logger.Loc.Empty,
@@ -14892,7 +14891,7 @@ pub fn NewParser(
                 first_decl[0] = G.Decl{
                     .binding = p.b(B.Identifier{ .ref = p.hmr_module.ref }, logger.Loc.Empty),
                     .value = p.e(E.New{
-                        .args = new_call_args,
+                        .args = ExprNodeList.init(new_call_args),
                         .target = p.e(
                             E.Identifier{
                                 .ref = hmr_import_ref,
@@ -15015,7 +15014,7 @@ pub fn NewParser(
                 }
                 var export_all_args = call_args[new_call_args.len..];
                 export_all_args[0] = p.e(
-                    E.Object{ .properties = export_properties[0..named_export_i] },
+                    E.Object{ .properties = Property.List.init(export_properties[0..named_export_i]) },
                     logger.Loc.Empty,
                 );
 
@@ -15031,7 +15030,7 @@ pub fn NewParser(
                                     },
                                     logger.Loc.Empty,
                                 ),
-                                .args = export_all_args,
+                                .args = ExprNodeList.init(export_all_args),
                             },
                             logger.Loc.Empty,
                         ),

@@ -1790,7 +1790,7 @@ pub const Bundler = struct {
 
                                         json_e_call = js_ast.E.Call{
                                             .target = js_ast.Expr{ .data = .{ .e_identifier = json_e_identifier }, .loc = logger.Loc{ .start = 0 } },
-                                            .args = std.mem.span(&json_call_args),
+                                            .args = js_ast.ExprNodeList.init(std.mem.span(&json_call_args)),
                                         };
                                         break :brk js_ast.Expr{ .data = .{ .e_call = &json_e_call }, .loc = logger.Loc{ .start = 0 } };
                                         // If we're going to have to convert it to a UTF16, just make it an object actually
@@ -1885,7 +1885,7 @@ pub const Bundler = struct {
 
                             var properties: [1]js_ast.G.Property = undefined;
                             var e_object = E.Object{
-                                .properties = &properties,
+                                .properties = js_ast.G.Property.List.init(&properties),
                             };
                             const module_path_str = js_ast.Expr{ .data = .{ .e_string = &package_path }, .loc = logger.Loc.Empty };
                             properties[0] = js_ast.G.Property{
@@ -1912,7 +1912,7 @@ pub const Bundler = struct {
                                     .data = .{ .e_identifier = target_identifier },
                                     .loc = logger.Loc{ .start = 0 },
                                 },
-                                .args = &register_args,
+                                .args = js_ast.ExprNodeList.init(&register_args),
                             };
                             var register_expr = Expr{ .loc = call_register.target.loc, .data = .{ .e_call = &call_register } };
                             var decls: [1]js_ast.G.Decl = undefined;

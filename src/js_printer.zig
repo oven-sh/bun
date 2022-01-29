@@ -1152,14 +1152,14 @@ pub fn NewPrinter(
                     p.print("new");
                     p.printSpace();
                     p.printExpr(e.target, .new, ExprFlag.ForbidCall());
-
-                    if (e.args.len > 0 or level.gte(.postfix)) {
+                    const args = e.args.slice();
+                    if (args.len > 0 or level.gte(.postfix)) {
                         p.print("(");
 
-                        if (e.args.len > 0) {
-                            p.printExpr(e.args[0], .comma, ExprFlag.None());
+                        if (args.len > 0) {
+                            p.printExpr(args[0], .comma, ExprFlag.None());
 
-                            for (e.args[1..]) |arg| {
+                            for (args[1..]) |arg| {
                                 p.print(",");
                                 p.printSpace();
                                 p.printExpr(arg, .comma, ExprFlag.None());
@@ -1212,10 +1212,11 @@ pub fn NewPrinter(
                         p.print("?.");
                     }
                     p.print("(");
+                    const args = e.args.slice();
 
-                    if (e.args.len > 0) {
-                        p.printExpr(e.args[0], .comma, ExprFlag.None());
-                        for (e.args[1..]) |arg| {
+                    if (args.len > 0) {
+                        p.printExpr(args[0], .comma, ExprFlag.None());
+                        for (args[1..]) |arg| {
                             p.print(",");
                             p.printSpace();
                             p.printExpr(arg, .comma, ExprFlag.None());
@@ -1500,12 +1501,13 @@ pub fn NewPrinter(
                 },
                 .e_array => |e| {
                     p.print("[");
-                    if (e.items.len > 0) {
+                    const items = e.items.slice();
+                    if (items.len > 0) {
                         if (!e.is_single_line) {
                             p.options.indent += 1;
                         }
 
-                        for (e.items) |item, i| {
+                        for (items) |item, i| {
                             if (i != 0) {
                                 p.print(",");
                                 if (e.is_single_line) {
@@ -1518,7 +1520,7 @@ pub fn NewPrinter(
                             }
                             p.printExpr(item, .comma, ExprFlag.None());
 
-                            if (i == e.items.len - 1) {
+                            if (i == items.len - 1) {
                                 // Make sure there's a comma after trailing missing items
                                 switch (item.data) {
                                     .e_missing => {
@@ -1549,12 +1551,13 @@ pub fn NewPrinter(
                         p.print("(");
                     }
                     p.print("{");
-                    if (e.properties.len > 0) {
+                    const props = e.properties.slice();
+                    if (props.len > 0) {
                         if (!e.is_single_line) {
                             p.options.indent += 1;
                         }
 
-                        for (e.properties) |property, i| {
+                        for (props) |property, i| {
                             if (i != 0) {
                                 p.print(",");
                                 if (e.is_single_line) {
@@ -1573,7 +1576,7 @@ pub fn NewPrinter(
                             p.options.unindent();
                             p.printNewline();
                             p.printIndent();
-                        } else if (e.properties.len > 0) {
+                        } else if (props.len > 0) {
                             p.printSpace();
                         }
                     }

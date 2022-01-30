@@ -845,6 +845,7 @@ const StaticSymbolName = struct {
         pub const __HMRModule = NewStaticSymbol("HMR");
         pub const __HMRClient = NewStaticSymbol("Bun");
         pub const __FastRefreshModule = NewStaticSymbol("FastHMR");
+        pub const __FastRefreshRuntime = NewStaticSymbol("FastRefresh");
 
         pub const @"$$m" = NewStaticSymbol("$$m");
 
@@ -2468,33 +2469,35 @@ pub const Parser = struct {
                 if (p.options.features.react_fast_refresh) {
                     defer did_import_fast_refresh = true;
                     p.resolveGeneratedSymbol(&p.jsx_refresh_runtime);
-                    const refresh_runtime_symbol: *const Symbol = &p.symbols.items[p.jsx_refresh_runtime.ref.inner_index];
+                    if (!p.options.jsx.use_embedded_refresh_runtime) {
+                        const refresh_runtime_symbol: *const Symbol = &p.symbols.items[p.jsx_refresh_runtime.ref.inner_index];
 
-                    declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_refresh_runtime.ref, .is_top_level = true };
-                    declared_symbols_i += 1;
+                        declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_refresh_runtime.ref, .is_top_level = true };
+                        declared_symbols_i += 1;
 
-                    const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.refresh_runtime);
-                    p.import_records.items[import_record_id].tag = .react_refresh;
-                    jsx_part_stmts[stmt_i] = p.s(S.Import{
-                        .namespace_ref = p.jsx_refresh_runtime.ref,
-                        .star_name_loc = loc,
-                        .is_single_line = true,
-                        .import_record_index = import_record_id,
-                    }, loc);
-
-                    stmt_i += 1;
-                    p.named_imports.put(
-                        p.jsx_refresh_runtime.ref,
-                        js_ast.NamedImport{
-                            .alias = refresh_runtime_symbol.original_name,
-                            .alias_is_star = true,
-                            .alias_loc = loc,
+                        const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.refresh_runtime);
+                        p.import_records.items[import_record_id].tag = .react_refresh;
+                        jsx_part_stmts[stmt_i] = p.s(S.Import{
                             .namespace_ref = p.jsx_refresh_runtime.ref,
+                            .star_name_loc = loc,
+                            .is_single_line = true,
                             .import_record_index = import_record_id,
-                        },
-                    ) catch unreachable;
-                    p.is_import_item.put(p.allocator, p.jsx_refresh_runtime.ref, .{}) catch unreachable;
-                    import_records[import_record_i] = import_record_id;
+                        }, loc);
+
+                        stmt_i += 1;
+                        p.named_imports.put(
+                            p.jsx_refresh_runtime.ref,
+                            js_ast.NamedImport{
+                                .alias = refresh_runtime_symbol.original_name,
+                                .alias_is_star = true,
+                                .alias_loc = loc,
+                                .namespace_ref = p.jsx_refresh_runtime.ref,
+                                .import_record_index = import_record_id,
+                            },
+                        ) catch unreachable;
+                        p.is_import_item.put(p.allocator, p.jsx_refresh_runtime.ref, .{}) catch unreachable;
+                        import_records[import_record_i] = import_record_id;
+                    }
                     p.recordUsage(p.jsx_refresh_runtime.ref);
                 }
 
@@ -2513,46 +2516,48 @@ pub const Parser = struct {
 
         if (!did_import_fast_refresh and p.options.features.react_fast_refresh) {
             p.resolveGeneratedSymbol(&p.jsx_refresh_runtime);
-
-            std.debug.assert(!p.options.enable_bundling);
-            var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, 1);
-            const loc = logger.Loc.Empty;
-            const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.refresh_runtime);
-            p.import_records.items[import_record_id].tag = .react_refresh;
-
-            var import_stmt = p.s(S.Import{
-                .namespace_ref = p.jsx_refresh_runtime.ref,
-                .star_name_loc = loc,
-                .is_single_line = true,
-                .import_record_index = import_record_id,
-            }, loc);
-
             p.recordUsage(p.jsx_refresh_runtime.ref);
-            const refresh_runtime_symbol: *const Symbol = &p.symbols.items[p.jsx_refresh_runtime.ref.inner_index];
 
-            p.named_imports.put(
-                p.jsx_refresh_runtime.ref,
-                js_ast.NamedImport{
-                    .alias = refresh_runtime_symbol.original_name,
-                    .alias_is_star = true,
-                    .alias_loc = loc,
+            if (!p.options.jsx.use_embedded_refresh_runtime) {
+                std.debug.assert(!p.options.enable_bundling);
+                var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, 1);
+                const loc = logger.Loc.Empty;
+                const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.refresh_runtime);
+                p.import_records.items[import_record_id].tag = .react_refresh;
+
+                var import_stmt = p.s(S.Import{
                     .namespace_ref = p.jsx_refresh_runtime.ref,
+                    .star_name_loc = loc,
+                    .is_single_line = true,
                     .import_record_index = import_record_id,
-                },
-            ) catch unreachable;
-            p.is_import_item.put(p.allocator, p.jsx_refresh_runtime.ref, .{}) catch unreachable;
-            var import_records = try p.allocator.alloc(@TypeOf(import_record_id), 1);
-            import_records[0] = import_record_id;
-            declared_symbols[0] = .{ .ref = p.jsx_refresh_runtime.ref, .is_top_level = true };
-            var part_stmts = try p.allocator.alloc(Stmt, 1);
-            part_stmts[0] = import_stmt;
+                }, loc);
 
-            before.append(js_ast.Part{
-                .stmts = part_stmts,
-                .declared_symbols = declared_symbols,
-                .import_record_indices = import_records,
-                .symbol_uses = SymbolUseMap{},
-            }) catch unreachable;
+                const refresh_runtime_symbol: *const Symbol = &p.symbols.items[p.jsx_refresh_runtime.ref.inner_index];
+
+                p.named_imports.put(
+                    p.jsx_refresh_runtime.ref,
+                    js_ast.NamedImport{
+                        .alias = refresh_runtime_symbol.original_name,
+                        .alias_is_star = true,
+                        .alias_loc = loc,
+                        .namespace_ref = p.jsx_refresh_runtime.ref,
+                        .import_record_index = import_record_id,
+                    },
+                ) catch unreachable;
+                p.is_import_item.put(p.allocator, p.jsx_refresh_runtime.ref, .{}) catch unreachable;
+                var import_records = try p.allocator.alloc(@TypeOf(import_record_id), 1);
+                import_records[0] = import_record_id;
+                declared_symbols[0] = .{ .ref = p.jsx_refresh_runtime.ref, .is_top_level = true };
+                var part_stmts = try p.allocator.alloc(Stmt, 1);
+                part_stmts[0] = import_stmt;
+
+                before.append(js_ast.Part{
+                    .stmts = part_stmts,
+                    .declared_symbols = declared_symbols,
+                    .import_record_indices = import_records,
+                    .symbol_uses = SymbolUseMap{},
+                }) catch unreachable;
+            }
         }
 
         if (p.options.enable_bundling) p.resolveBundlingSymbols();
@@ -3734,7 +3739,13 @@ pub fn NewParser(
             if (p.options.features.hot_module_reloading) {
                 p.hmr_module = try p.declareGeneratedSymbol(.other, "hmr");
                 if (is_react_fast_refresh_enabled) {
-                    p.jsx_refresh_runtime = try p.declareGeneratedSymbol(.other, "Refresher");
+                    if (p.options.jsx.use_embedded_refresh_runtime) {
+                        p.runtime_imports.__FastRefreshRuntime = try p.declareGeneratedSymbol(.other, "__FastRefreshRuntime");
+                        p.recordUsage(p.runtime_imports.__FastRefreshRuntime.?.ref);
+                        p.jsx_refresh_runtime = p.runtime_imports.__FastRefreshRuntime.?;
+                    } else {
+                        p.jsx_refresh_runtime = try p.declareGeneratedSymbol(.other, "Refresher");
+                    }
 
                     p.runtime_imports.__FastRefreshModule = try p.declareGeneratedSymbol(.other, "__FastRefreshModule");
                     p.recordUsage(p.runtime_imports.__FastRefreshModule.?.ref);
@@ -3817,7 +3828,11 @@ pub fn NewParser(
 
         pub fn resolveHMRSymbols(p: *P) void {
             p.resolveGeneratedSymbol(&p.hmr_module);
-            if (p.runtime_imports.__FastRefreshModule != null) p.resolveGeneratedSymbol(&p.runtime_imports.__FastRefreshModule.?);
+            if (p.runtime_imports.__FastRefreshModule != null) {
+                p.resolveGeneratedSymbol(&p.runtime_imports.__FastRefreshModule.?);
+                if (p.options.jsx.use_embedded_refresh_runtime)
+                    p.resolveGeneratedSymbol(&p.runtime_imports.__FastRefreshRuntime.?);
+            }
             if (p.runtime_imports.__HMRModule != null) p.resolveGeneratedSymbol(&p.runtime_imports.__HMRModule.?);
             if (p.runtime_imports.__HMRClient != null) p.resolveGeneratedSymbol(&p.runtime_imports.__HMRClient.?);
         }

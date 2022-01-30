@@ -54,10 +54,17 @@ pub const Linker = struct {
     runtime_import_record: ?ImportRecord = null,
     hashed_filenames: HashedFileNameMap,
     import_counter: usize = 0,
+    tagged_resolutions: TaggedResolution = TaggedResolution{},
 
     onImportCSS: ?OnImportCallback = null,
 
     pub const runtime_source_path = "bun:wrap";
+
+    pub const TaggedResolution = struct {
+        react_refresh: ?Resolver.Result = null,
+        jsx_import: ?Resolver.Result = null,
+        jsx_classic: ?Resolver.Result = null,
+    };
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -212,7 +219,7 @@ pub const Linker = struct {
                 var record_i: u32 = 0;
                 const record_count = @truncate(u32, import_records.len);
 
-                while (record_i < record_count) : (record_i += 1) {
+                outer: while (record_i < record_count) : (record_i += 1) {
                     var import_record = &import_records[record_i];
                     if (import_record.is_unused) continue;
 
@@ -265,8 +272,75 @@ pub const Linker = struct {
                         }
                     }
 
-                    if (linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |*_resolved_import| {
-                        const resolved_import: *const Resolver.Result = _resolved_import;
+                    var resolved_import_ = brk: {
+                        switch (import_record.tag) {
+                            else => {},
+                            .jsx_import => {
+                                if (linker.tagged_resolutions.jsx_import != null) {
+                                    break :brk linker.tagged_resolutions.jsx_import.?;
+                                }
+                            },
+                            .jsx_classic => {
+                                if (linker.tagged_resolutions.jsx_classic != null) {
+                                    break :brk linker.tagged_resolutions.jsx_classic.?;
+                                }
+                            },
+                            // for fast refresh, attempt to read the version directly from the bundle instead of resolving it
+                            .react_refresh => {
+                                if (linker.options.node_modules_bundle) |node_modules_bundle| {
+                                    const runtime = linker.options.jsx.refresh_runtime;
+                                    const package_name = runtime[0 .. strings.indexOfChar(runtime, '/') orelse runtime.len];
+
+                                    if (node_modules_bundle.getPackage(package_name)) |pkg| {
+                                        const import_path = runtime[@minimum(runtime.len, package_name.len + 1)..];
+                                        if (node_modules_bundle.findModuleInPackage(pkg, import_path)) |found_module| {
+                                            import_record.is_bundled = true;
+                                            node_module_bundle_import_path = node_module_bundle_import_path orelse
+                                                linker.nodeModuleBundleImportPath(origin);
+
+                                            import_record.path.text = node_module_bundle_import_path.?;
+                                            import_record.module_id = found_module.id;
+                                            needs_bundle = true;
+                                            continue :outer;
+                                        }
+                                    }
+                                }
+
+                                if (linker.options.jsx.use_embedded_refresh_runtime) {
+                                    import_record.path = Fs.Path.initWithNamespace(try origin.joinAlloc(linker.allocator, "", "", linker.options.jsx.refresh_runtime, "", ""), "bun");
+                                    continue :outer;
+                                }
+
+                                if (linker.tagged_resolutions.react_refresh != null) {
+                                    break :brk linker.tagged_resolutions.react_refresh.?;
+                                }
+                            },
+                        }
+
+                        if (linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |_resolved_import| {
+                            switch (import_record.tag) {
+                                else => {},
+                                .jsx_import => {
+                                    linker.tagged_resolutions.jsx_import = _resolved_import;
+                                    linker.tagged_resolutions.jsx_import.?.path_pair.primary = linker.tagged_resolutions.jsx_import.?.path().?.dupeAlloc(_global.default_allocator) catch unreachable;
+                                },
+                                .jsx_classic => {
+                                    linker.tagged_resolutions.jsx_classic = _resolved_import;
+                                    linker.tagged_resolutions.jsx_classic.?.path_pair.primary = linker.tagged_resolutions.jsx_classic.?.path().?.dupeAlloc(_global.default_allocator) catch unreachable;
+                                },
+                                .react_refresh => {
+                                    linker.tagged_resolutions.react_refresh = _resolved_import;
+                                    linker.tagged_resolutions.react_refresh.?.path_pair.primary = linker.tagged_resolutions.react_refresh.?.path().?.dupeAlloc(_global.default_allocator) catch unreachable;
+                                },
+                            }
+
+                            break :brk _resolved_import;
+                        } else |err| {
+                            break :brk err;
+                        }
+                    };
+
+                    if (resolved_import_) |*resolved_import| {
                         if (resolved_import.is_external) {
                             externals.append(record_index) catch unreachable;
                             continue;

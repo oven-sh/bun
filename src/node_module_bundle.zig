@@ -152,8 +152,8 @@ pub const NodeModuleBundle = struct {
     }
 
     pub fn getPackage(this: *const NodeModuleBundle, name: string) ?*const Api.JavascriptBundledPackage {
-        const package_id = this.getPackageID(name) orelse return null;
-        return &this.bundle.packages[@intCast(usize, package_id)];
+        const package_id = this.getPackageIDByName(name) orelse return null;
+        return &this.bundle.packages[@intCast(usize, package_id[0])];
     }
 
     pub fn hasModule(this: *const NodeModuleBundle, name: string) ?*const Api.JavascriptBundledPackage {

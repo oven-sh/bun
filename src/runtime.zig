@@ -45,6 +45,8 @@ pub const ErrorCSS = struct {
     }
 };
 
+pub const ReactRefresh = @embedFile("./react-refresh.js");
+
 pub const ErrorJS = struct {
     const ErrorJSPath = "packages/bun-error/dist/index.js";
 
@@ -166,8 +168,9 @@ pub const Fallback = struct {
 
 pub const Runtime = struct {
     pub const ProdSourceContent = @embedFile("./runtime.out.js");
+    pub const ProdSourceContentWithRefresh = @embedFile("./runtime.out.refresh.js");
 
-    pub inline fn sourceContent() string {
+    pub inline fn sourceContentWithoutRefresh() string {
         if (comptime Environment.isDebug) {
             var dirpath = std.fs.path.dirname(@src().file).?;
             var env = std.process.getEnvMap(default_allocator) catch unreachable;
@@ -187,6 +190,33 @@ pub const Runtime = struct {
             return ProdSourceContent;
         }
     }
+
+    pub inline fn sourceContent(with_refresh: bool) string {
+        if (with_refresh) return sourceContentWithRefresh();
+        return sourceContentWithoutRefresh();
+    }
+
+    pub inline fn sourceContentWithRefresh() string {
+        if (comptime Environment.isDebug) {
+            var dirpath = std.fs.path.dirname(@src().file).?;
+            var env = std.process.getEnvMap(default_allocator) catch unreachable;
+
+            const dir = std.mem.replaceOwned(
+                u8,
+                default_allocator,
+                dirpath,
+                "jarred",
+                env.get("USER").?,
+            ) catch unreachable;
+            var runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "runtime.out.refresh.js" }) catch unreachable;
+            const file = std.fs.openFileAbsolute(runtime_path, .{}) catch @panic("Missing bun/src/runtime.out.refresh.js. " ++ "Please run \"make runtime_js_dev\"");
+            defer file.close();
+            return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
+        } else {
+            return ProdSourceContentWithRefresh;
+        }
+    }
+
     pub const version_hash = @embedFile("./runtime.version");
     var version_hash_int: u32 = 0;
     pub fn versionHash() u32 {
@@ -242,6 +272,7 @@ pub const Runtime = struct {
         __FastRefreshModule: ?GeneratedSymbol = null,
         __exportValue: ?GeneratedSymbol = null,
         __exportDefault: ?GeneratedSymbol = null,
+        __FastRefreshRuntime: ?GeneratedSymbol = null,
 
         pub const all = [_][]const u8{
             "__name",
@@ -258,6 +289,7 @@ pub const Runtime = struct {
             "__FastRefreshModule",
             "__exportValue",
             "__exportDefault",
+            "__FastRefreshRuntime",
         };
         pub const Name = "bun:wrap";
         pub const alt_name = "bun:wrap";
@@ -347,6 +379,11 @@ pub const Runtime = struct {
                                 return Entry{ .key = 13, .value = val.ref };
                             }
                         },
+                        14 => {
+                            if (@field(this.runtime_imports, all[14])) |val| {
+                                return Entry{ .key = 14, .value = val.ref };
+                            }
+                        },
                         else => {
                             return null;
                         },
@@ -405,6 +442,7 @@ pub const Runtime = struct {
                 11 => (@field(imports, all[11]) orelse return null).ref,
                 12 => (@field(imports, all[12]) orelse return null).ref,
                 13 => (@field(imports, all[13]) orelse return null).ref,
+                14 => (@field(imports, all[14]) orelse return null).ref,
                 else => null,
             };
         }

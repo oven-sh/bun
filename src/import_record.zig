@@ -128,6 +128,15 @@ pub const ImportRecord = struct {
 
     kind: ImportKind,
 
+    tag: Tag = Tag.none,
+
+    pub const Tag = enum {
+        none,
+        react_refresh,
+        jsx_import,
+        jsx_classic,
+    };
+
     pub const PrintMode = enum {
         normal,
         import_path,

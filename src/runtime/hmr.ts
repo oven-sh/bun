@@ -625,7 +625,7 @@ if (typeof window !== "undefined") {
         }).then(() => Promise.resolve())
       );
     }
-    static activate(verbose: boolean = false) {
+    static activate(verboseOrFastRefresh: boolean = false) {
       // Support browser-like envirnments where location and WebSocket exist
       // Maybe it'll work in Deno! Who knows.
       if (
@@ -656,7 +656,7 @@ if (typeof window !== "undefined") {
       //     } catch (exception) {}
       //   }
       // }
-      this.client.verbose = verbose;
+      this.client.verbose = verboseOrFastRefresh;
       this.client.start();
       globalThis["__BUN_HMR"] = this.client;
     }
@@ -871,12 +871,12 @@ if (typeof window !== "undefined") {
             .subarray(0, HMRModule.dependencies.graph_used)
             .indexOf(notification.id);
 
-          if (index > -1 && index) {
+          if (index > -1) {
             file_path = HMRModule.dependencies.modules[index].file_path;
           }
           break;
         }
-        
+
         default: {
           return;
         }
@@ -1128,17 +1128,40 @@ if (typeof window !== "undefined") {
         }
         case API.WebsocketMessageKind.welcome: {
           const now = performance.now();
-          __hmrlog.log(
-            "HMR connected in",
-            formatDuration(now - clientStartTime),
-            "ms"
-          );
-          clientStartTime = now;
+
           this.hasWelcomed = true;
           const welcome = API.decodeWebsocketMessageWelcome(buffer);
           this.epoch = welcome.epoch;
           this.javascriptReloader = welcome.javascriptReloader;
           this.cwd = welcome.cwd;
+
+          switch (this.javascriptReloader) {
+            case API.Reloader.fast_refresh: {
+              __hmrlog.log(
+                "HMR connected in",
+                formatDuration(now - clientStartTime),
+                "ms"
+              );
+              break;
+            }
+            case API.Reloader.live: {
+              __hmrlog.log(
+                "Live reload connected in",
+                formatDuration(now - clientStartTime),
+                "ms"
+              );
+              break;
+            }
+            default: {
+              __hmrlog.log(
+                "Bun connected in",
+                formatDuration(now - clientStartTime),
+                "ms"
+              );
+              break;
+            }
+          }
+          clientStartTime = now;
           if (!this.epoch) {
             __hmrlog.warn("Internal HMR error");
           }

@@ -12,6 +12,7 @@ yarn.lock
 dist
 *.log
 *.out.js
+*.out.refresh.js
 /package-lock.json
 build
 *.wat

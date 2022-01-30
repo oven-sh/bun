@@ -105,8 +105,9 @@ export var __commonJS = (cb, name) => {
 export var __cJS2eSM = __commonJS;
 
 export var __internalIsCommonJSNamespace = (namespace) =>
+  namespace != null &&
   typeof namespace === "object" &&
-  (("default" in namespace && namespace.default[cjsRequireSymbol]) ||
+  ((namespace.default && namespace.default[cjsRequireSymbol]) ||
     namespace[cjsRequireSymbol]);
 
 // require()

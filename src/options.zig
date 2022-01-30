@@ -800,8 +800,9 @@ pub const JSX = struct {
         import_source: string = "react/jsx-dev-runtime",
         classic_import_source: string = "react",
         package_name: []const u8 = "react",
-        refresh_runtime: string = "react-refresh/runtime",
+        refresh_runtime: string = "react-refresh/runtime.js",
         supports_fast_refresh: bool = true,
+        use_embedded_refresh_runtime: bool = false,
 
         jsx: string = Defaults.JSXFunctionDev,
         jsx_static: string = Defaults.JSXStaticFunction,
@@ -1461,7 +1462,10 @@ pub const BundleOptions = struct {
                 opts.routes.static_dir_enabled = opts.routes.static_dir_handle != null;
             }
 
-            if (opts.routes.static_dir_enabled and (opts.framework == null or !opts.framework.?.server.isEnabled()) and !opts.routes.routes_enabled) {
+            const should_try_to_find_a_index_html_file = (opts.framework == null or !opts.framework.?.server.isEnabled()) and
+                !opts.routes.routes_enabled;
+
+            if (opts.routes.static_dir_enabled and should_try_to_find_a_index_html_file) {
                 const dir = opts.routes.static_dir_handle.?;
                 var index_html_file = dir.openFile("index.html", .{ .read = true }) catch |err| brk: {
                     switch (err) {
@@ -1473,6 +1477,7 @@ pub const BundleOptions = struct {
                             );
                         },
                     }
+
                     opts.routes.single_page_app_routing = false;
                     break :brk null;
                 };
@@ -1480,6 +1485,33 @@ pub const BundleOptions = struct {
                 if (index_html_file) |index_dot_html| {
                     opts.routes.single_page_app_routing = true;
                     opts.routes.single_page_app_fd = index_dot_html.handle;
+                }
+            }
+
+            if (!opts.routes.single_page_app_routing and should_try_to_find_a_index_html_file) {
+                attempt: {
+                    var abs_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                    // If it's not in static-dir/index.html, check if it's in top level dir/index.html
+                    var parts = [_]string{"index.html"};
+                    var full_path = resolve_path.joinAbsStringBuf(fs.top_level_dir, &abs_buf, &parts, .auto);
+                    abs_buf[full_path.len] = 0;
+                    var abs_buf_z: [:0]u8 = abs_buf[0..full_path.len :0];
+
+                    const file = std.fs.openFileAbsoluteZ(abs_buf_z, .{ .read = true }) catch |err| {
+                        switch (err) {
+                            error.FileNotFound => {},
+                            else => {
+                                Output.prettyErrorln(
+                                    "{s} when trying to open {s}/index.html. single page app routing is disabled.",
+                                    .{ @errorName(err), fs.top_level_dir },
+                                );
+                            },
+                        }
+                        break :attempt;
+                    };
+
+                    opts.routes.single_page_app_routing = true;
+                    opts.routes.single_page_app_fd = file.handle;
                 }
             }
 

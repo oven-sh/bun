@@ -839,6 +839,7 @@ pub const Resolver = struct {
                     .diff_case = entry.diff_case,
                     .package_json = entry.package_json,
                     .file_fd = entry.file_fd,
+                    .jsx = r.opts.jsx,
                 };
             }
 
@@ -897,6 +898,7 @@ pub const Resolver = struct {
                                 .diff_case = _result.diff_case,
                                 .dirname_fd = _result.dirname_fd,
                                 .package_json = pkg,
+                                .jsx = r.opts.jsx,
                             };
                             check_relative = false;
                             check_package = false;
@@ -913,6 +915,7 @@ pub const Resolver = struct {
                         .diff_case = res.diff_case,
                         .dirname_fd = res.dirname_fd,
                         .package_json = res.package_json,
+                        .jsx = r.opts.jsx,
                     };
                 } else if (!check_package) {
                     return null;
@@ -1000,6 +1003,7 @@ pub const Resolver = struct {
                                     .dirname_fd = node_module.dirname_fd,
                                     .diff_case = node_module.diff_case,
                                     .package_json = package_json,
+                                    .jsx = r.opts.jsx,
                                 };
                             }
                         } else {
@@ -1009,6 +1013,7 @@ pub const Resolver = struct {
                                 .path_pair = PathPair{ .primary = primary },
                                 // this might not be null? i think it is
                                 .diff_case = null,
+                                .jsx = r.opts.jsx,
                             };
                         }
                     }
@@ -1022,6 +1027,7 @@ pub const Resolver = struct {
                 result.package_json = res.package_json;
                 result.diff_case = res.diff_case;
                 result.is_from_node_modules = result.is_from_node_modules or res.is_node_module;
+                result.jsx = r.opts.jsx;
 
                 if (res.path_pair.primary.is_disabled and res.path_pair.secondary == null) {
                     return result;
@@ -1045,6 +1051,7 @@ pub const Resolver = struct {
                                     result.file_fd = remapped.file_fd;
                                     result.package_json = remapped.package_json;
                                     result.diff_case = remapped.diff_case;
+
                                     result.is_from_node_modules = result.is_from_node_modules or remapped.is_node_module;
                                     return result;
                                 }

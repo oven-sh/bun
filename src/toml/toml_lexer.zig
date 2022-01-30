@@ -45,6 +45,8 @@ pub const T = enum {
 
     t_plus,
     t_minus,
+
+    t_empty_array,
 };
 
 pub const Lexer = struct {
@@ -527,6 +529,12 @@ pub const Lexer = struct {
                     if (lexer.code_point == '[' and lexer.allow_double_bracket) {
                         lexer.step();
                         lexer.token = T.t_open_bracket_double;
+                        return;
+                    }
+
+                    if (lexer.code_point == ']') {
+                        lexer.step();
+                        lexer.token = T.t_empty_array;
                     }
                 },
                 ']' => {
@@ -770,7 +778,7 @@ pub const Lexer = struct {
                     try lexer.parseNumericLiteralOrDot();
                 },
 
-                'a'...'z', 'A'...'Z', '$', '_' => {
+                '@', 'a'...'z', 'A'...'Z', '$', '_' => {
                     lexer.step();
                     while (isIdentifierPart(lexer.code_point)) {
                         lexer.step();
@@ -1168,6 +1176,7 @@ pub fn isIdentifierPart(code_point: CodePoint) bool {
         '$',
         '_',
         '-',
+        ':',
         => true,
         else => false,
     };

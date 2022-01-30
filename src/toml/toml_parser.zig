@@ -250,17 +250,24 @@ pub const TOML = struct {
     pub fn parseAssignment(p: *TOML, obj: *E.Object, allocator: std.mem.Allocator) anyerror!void {
         p.lexer.allow_double_bracket = false;
         var rope = try p.parseKey(allocator);
-        try p.lexer.expectAssignment();
 
-        obj.setRope(rope, p.allocator, try p.parseValue()) catch |err| {
-            switch (err) {
-                error.Clobber => {
-                    try p.lexer.addDefaultError("Cannot redefine key");
-                    return error.SyntaxError;
-                },
-                else => return err,
-            }
-        };
+        const is_array = p.lexer.token == .t_empty_array;
+        if (is_array) {
+            try p.lexer.next();
+        }
+
+        try p.lexer.expectAssignment();
+        if (!is_array) {
+            obj.setRope(rope, p.allocator, try p.parseValue()) catch |err| {
+                switch (err) {
+                    error.Clobber => {
+                        try p.lexer.addDefaultError("Cannot redefine key");
+                        return error.SyntaxError;
+                    },
+                    else => return err,
+                }
+            };
+        } else {}
         p.lexer.allow_double_bracket = true;
     }
 
@@ -343,6 +350,11 @@ pub const TOML = struct {
                 }
                 try p.lexer.expect(.t_close_brace);
                 return expr;
+            },
+            .t_empty_array => {
+                try p.lexer.next();
+                p.lexer.allow_double_bracket = true;
+                return p.e(E.Array{}, loc);
             },
             .t_open_bracket => {
                 try p.lexer.next();

@@ -599,6 +599,27 @@ pub const Bun = struct {
         return JSValue.jsUndefined().asRef();
     }
 
+    pub fn readAllStdinSync(
+        _: void,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        _: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        var stack = std.heap.stackFallback(2048, getAllocator(ctx));
+        var allocator = stack.get();
+
+        var stdin = std.io.getStdIn();
+        var result = stdin.readToEndAlloc(allocator, std.math.maxInt(u32)) catch |err| {
+            JSError(undefined, "{s} reading stdin", .{@errorName(err)}, ctx, exception);
+            return null;
+        };
+        var out = ZigString.init(result);
+        out.detectEncoding();
+        return out.toValueGC(ctx.ptr()).asObjectRef();
+    }
+
     var public_path_temp_str: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
     pub fn getPublicPathJS(
@@ -716,6 +737,10 @@ pub const Bun = struct {
                 .rfn = Bun.shrink,
                 .ts = d.ts{},
             },
+            .readAllStdinSync = .{
+                .rfn = Bun.readAllStdinSync,
+                .ts = d.ts{},
+            },
         },
         .{
             .main = .{
@@ -752,6 +777,10 @@ pub const Bun = struct {
                 .get = getTranspilerConstructor,
                 .ts = d.ts{ .name = "Transpiler", .@"return" = "Transpiler.prototype" },
             },
+            .TOML = .{
+                .get = getTOMLObject,
+                .ts = d.ts{ .name = "TOML", .@"return" = "TOML.prototype" },
+            },
         },
     );
 
@@ -763,6 +792,16 @@ pub const Bun = struct {
         _: js.ExceptionRef,
     ) js.JSValueRef {
         return js.JSObjectMake(ctx, Transpiler.TranspilerConstructor.get().?[0], null);
+    }
+
+    pub fn getTOMLObject(
+        _: void,
+        ctx: js.JSContextRef,
+        _: js.JSValueRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        return js.JSObjectMake(ctx, TOML.Class.get().?[0], null);
     }
 
     // For testing the segfault handler
@@ -778,6 +817,67 @@ pub const Bun = struct {
         const Reporter = @import("../../report.zig");
         Reporter.globalError(error.SegfaultTest);
     }
+
+    pub const TOML = struct {
+        const TOMLParser = @import("../../toml/toml_parser.zig").TOML;
+        pub const Class = NewClass(
+            void,
+            .{
+                .name = "TOML",
+                .read_only = true,
+            },
+            .{
+                .parse = .{
+                    .rfn = TOML.parse,
+                },
+            },
+            .{},
+        );
+
+        pub fn parse(
+            // this
+            _: void,
+            ctx: js.JSContextRef,
+            // function
+            _: js.JSObjectRef,
+            // thisObject
+            _: js.JSObjectRef,
+            arguments: []const js.JSValueRef,
+            exception: js.ExceptionRef,
+        ) js.JSValueRef {
+            var arena = std.heap.ArenaAllocator.init(getAllocator(ctx));
+            var allocator = arena.allocator();
+            defer arena.deinit();
+            var log = logger.Log.init(default_allocator);
+            var input_str = ZigString.init("");
+            JSValue.fromRef(arguments[0]).toZigString(&input_str, ctx.ptr());
+            var needs_deinit = false;
+            var input = input_str.slice();
+            if (input_str.is16Bit()) {
+                input = std.fmt.allocPrint(allocator, "{}", .{input_str}) catch unreachable;
+                needs_deinit = true;
+            }
+            var source = logger.Source.initPathString("input.toml", input);
+            var parse_result = TOMLParser.parse(&source, &log, allocator) catch {
+                exception.* = log.toJS(ctx.ptr(), default_allocator, "Failed to parse toml").asObjectRef();
+                return null;
+            };
+
+            // for now...
+            var buffer_writer = try js_printer.BufferWriter.init(allocator);
+            var writer = js_printer.BufferPrinter.init(buffer_writer);
+            _ = js_printer.printJSON(*js_printer.BufferPrinter, &writer, parse_result, &source) catch {
+                exception.* = log.toJS(ctx.ptr(), default_allocator, "Failed to print toml").asObjectRef();
+                return null;
+            };
+
+            var slice = writer.ctx.buffer.toOwnedSliceLeaky();
+            var out = ZigString.init(slice);
+
+            const out_value = js.JSValueMakeFromJSONString(ctx, out.toJSStringRef());
+            return out_value;
+        }
+    };
 
     /// EnvironmentVariables is runtime defined.
     /// Also, you can't iterate over process.env normally since it only exists at build-time otherwise
@@ -1381,7 +1481,7 @@ pub const VirtualMachine = struct {
         } else if (vm.node_modules == null and strings.eqlComptime(_specifier, Runtime.Runtime.Imports.Name)) {
             return ResolvedSource{
                 .allocator = null,
-                .source_code = ZigString.init(Runtime.Runtime.sourceContent()),
+                .source_code = ZigString.init(Runtime.Runtime.sourceContent(false)),
                 .specifier = ZigString.init(Runtime.Runtime.Imports.Name),
                 .source_url = ZigString.init(Runtime.Runtime.Imports.Name),
                 .hash = Runtime.Runtime.versionHash(),
@@ -1483,7 +1583,7 @@ pub const VirtualMachine = struct {
         const loader = vm.bundler.options.loaders.get(path.name.ext) orelse .file;
 
         switch (loader) {
-            .js, .jsx, .ts, .tsx, .json => {
+            .js, .jsx, .ts, .tsx, .json, .toml => {
                 vm.transpiled_count += 1;
                 vm.bundler.resetStore();
                 const hash = http.Watcher.getHash(path.text);

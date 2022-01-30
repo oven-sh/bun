@@ -426,7 +426,7 @@ pub const RequestContext = struct {
         try this.writeBodyBuf(bb.items);
     }
 
-    fn matchPublicFolder(this: *RequestContext) ?bundler.ServeResult {
+    fn matchPublicFolder(this: *RequestContext, comptime extensionless: bool) ?bundler.ServeResult {
         if (!this.bundler.options.routes.static_dir_enabled) return null;
         const relative_path = this.url.path;
         var extension = this.url.extname;
@@ -462,7 +462,7 @@ pub const RequestContext = struct {
             } else |_| {}
 
             // Okay is it actually a full path?
-        } else if (extension.len > 0) {
+        } else if (extension.len > 0 and (!extensionless or strings.eqlComptime(extension, "html"))) {
             if (public_dir.openFile(relative_unrooted_path, .{})) |file| {
                 _file = file;
             } else |_| {}
@@ -528,9 +528,18 @@ pub const RequestContext = struct {
             var output_file = OutputFile.initFile(file.*, absolute_path, stat.size);
             output_file.value.copy.close_handle_on_complete = true;
             output_file.value.copy.autowatch = false;
+
+            // if it wasn't a symlink, we never got the absolute path
+            // so it could still be missing a file extension
+            var ext = std.fs.path.extension(absolute_path);
+            if (ext.len > 0) ext = ext[1..];
+
+            // even if it was an absolute path, the file extension could just be a dot, like "foo."
+            if (ext.len == 0) ext = extension;
+
             return bundler.ServeResult{
                 .file = output_file,
-                .mime_type = MimeType.byExtension(std.fs.path.extension(absolute_path)[1..]),
+                .mime_type = MimeType.byExtension(ext),
             };
         }
 
@@ -798,13 +807,17 @@ pub const RequestContext = struct {
     }
 
     pub fn sendSinglePageHTML(ctx: *RequestContext) !void {
+        std.debug.assert(ctx.bundler.options.routes.single_page_app_fd > 0);
+        const file = std.fs.File{ .handle = ctx.bundler.options.routes.single_page_app_fd };
+        return try sendHTMLFile(ctx, file);
+    }
+
+    pub fn sendHTMLFile(ctx: *RequestContext, file: std.fs.File) !void {
         ctx.appendHeader("Content-Type", MimeType.html.value);
         ctx.appendHeader("Cache-Control", "no-cache");
 
         defer ctx.done();
 
-        std.debug.assert(ctx.bundler.options.routes.single_page_app_fd > 0);
-        const file = std.fs.File{ .handle = ctx.bundler.options.routes.single_page_app_fd };
         const stats = file.stat() catch |err| {
             Output.prettyErrorln("<r><red>Error {s}<r> reading index.html", .{@errorName(err)});
             ctx.writeStatus(500) catch {};
@@ -3040,17 +3053,33 @@ pub const Server = struct {
         const start_time = Global.getStartTime();
         const now = std.time.nanoTimestamp();
         Output.printStartEnd(start_time, now);
+
+        const display_path: string = brk: {
+            if (server.bundler.options.routes.single_page_app_routing) {
+                const lhs = std.mem.trimRight(u8, server.bundler.fs.top_level_dir, std.fs.path.sep_str);
+                const rhs = std.mem.trimRight(u8, server.bundler.options.routes.static_dir, std.fs.path.sep_str);
+
+                if (strings.eql(lhs, rhs)) {
+                    break :brk ".";
+                }
+
+                break :brk resolve_path.relative(lhs, rhs);
+            }
+
+            break :brk "";
+        };
+
         // This is technically imprecise.
         // However, we want to optimize for easy to copy paste
         // Nobody should get weird CORS errors when you go to the printed url.
         if (std.mem.readIntNative(u32, &addr.ipv4.host.octets) == 0 or std.mem.readIntNative(u128, &addr.ipv6.host.octets) == 0) {
             if (server.bundler.options.routes.single_page_app_routing) {
                 Output.prettyError(
-                    " bun!! <d>v{s}<r>\n\n\n  Link:<r> <b><cyan>http://localhost:{d}<r>\n        <d>./{s}/index.html<r> \n\n\n",
+                    " bun!! <d>v{s}<r>\n\n\n  Link:<r> <b><cyan>http://localhost:{d}<r>\n        <d>{s}/index.html<r> \n\n\n",
                     .{
                         Global.package_json_version,
                         addr.ipv4.port,
-                        resolve_path.relative(server.bundler.fs.top_level_dir, server.bundler.options.routes.static_dir),
+                        display_path,
                     },
                 );
             } else {
@@ -3061,10 +3090,10 @@ pub const Server = struct {
             }
         } else {
             if (server.bundler.options.routes.single_page_app_routing) {
-                Output.prettyError(" bun!! <d>v{s}<r>\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n       <d>./{s}/index.html<r> \n\n\n", .{
+                Output.prettyError(" bun!! <d>v{s}<r>\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n       <d>{s}/index.html<r> \n\n\n", .{
                     Global.package_json_version,
                     addr,
-                    resolve_path.relative(server.bundler.fs.top_level_dir, server.bundler.options.routes.static_dir),
+                    display_path,
                 });
             } else {
                 Output.prettyError(" bun!! <d>v{s}\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n\n\n", .{
@@ -3266,20 +3295,6 @@ pub const Server = struct {
 
         if (!finished) {
             switch (comptime features.public_folder) {
-                .first => {
-                    if (!finished) {
-                        if (req_ctx.matchPublicFolder()) |result| {
-                            finished = true;
-                            req_ctx.renderServeResult(result) catch |err| {
-                                Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
-                                did_print = true;
-                                return;
-                            };
-                        }
-
-                        finished = finished or req_ctx.has_called_done;
-                    }
-                },
                 .none => {
                     if (comptime features.single_page_app_routing) {
                         if (req_ctx.url.isRoot(server.bundler.options.routes.asset_prefix_path)) {
@@ -3291,7 +3306,23 @@ pub const Server = struct {
                         }
                     }
                 },
-                else => {},
+                else => {
+                    // Check if this is a route to an HTML file in the public folder.
+                    // Note: the public folder may actually just be the root folder
+                    // In this case, we only check if the pathname has no extension
+                    if (!finished) {
+                        if (req_ctx.matchPublicFolder(true)) |result| {
+                            finished = true;
+                            req_ctx.renderServeResult(result) catch |err| {
+                                Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                                did_print = true;
+                                return;
+                            };
+                        }
+
+                        finished = finished or req_ctx.has_called_done;
+                    }
+                },
             }
         }
 
@@ -3331,7 +3362,7 @@ pub const Server = struct {
 
         if (comptime features.public_folder == .last) {
             if (!finished) {
-                if (req_ctx.matchPublicFolder()) |result| {
+                if (req_ctx.matchPublicFolder(false)) |result| {
                     finished = true;
                     req_ctx.renderServeResult(result) catch |err| {
                         Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
@@ -3345,10 +3376,12 @@ pub const Server = struct {
 
         if (comptime features.single_page_app_routing or features.public_folder != .none) {
             if (!finished and (req_ctx.bundler.options.routes.single_page_app_routing and req_ctx.url.extname.len == 0)) {
-                req_ctx.sendSinglePageHTML() catch |err| {
-                    Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
-                    did_print = true;
-                };
+                if (!finished) {
+                    req_ctx.sendSinglePageHTML() catch |err| {
+                        Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                        did_print = true;
+                    };
+                }
                 finished = true;
             }
         }

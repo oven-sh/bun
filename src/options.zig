@@ -1393,7 +1393,7 @@ pub const BundleOptions = struct {
             opts.resolve_mode = .lazy;
 
             var dir_to_use: string = opts.routes.static_dir;
-            const static_dir_set = !opts.routes.static_dir_enabled or dir_to_use.len > 0;
+            const static_dir_set = opts.routes.static_dir_enabled or dir_to_use.len == 0;
             var disabled_static = false;
 
             var chosen_dir = dir_to_use;
@@ -2133,7 +2133,7 @@ pub const RouteConfig = struct {
     }
 
     pub const DefaultDir = "pages";
-    pub const DefaultStaticDir = "public";
+    pub const DefaultStaticDir: string = "public";
     pub const DefaultExtensions = [_]string{ "tsx", "ts", "mjs", "jsx", "js" };
     pub inline fn zero() RouteConfig {
         return RouteConfig{

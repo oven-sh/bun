@@ -4,17 +4,7 @@
 
 Bun implements a TOML parser with a few tweaks designed for better interopability with INI files and with JavaScript.
 
-### `:` == `=`
-
-Like `=`, `:` also assigns values to properties.
-
-```toml
-# In Bun-flavored TOML, these are semantically identical
-foo = '12345'
-foo : '12345'
-```
-
-### ';`&nbsp;==&nbsp;`#`
+### ; and # are comments
 
 In Bun-flavored TOML, comments start with `#` or `;`
 

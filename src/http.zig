@@ -1696,11 +1696,7 @@ pub const RequestContext = struct {
                 if (ctx.bundler.options.hot_module_reloading) {
                     reloader = Api.Reloader.live;
                     if (ctx.bundler.options.jsx.supports_fast_refresh) {
-                        if (ctx.bundler.options.node_modules_bundle) |bundle| {
-                            if (bundle.hasFastRefresh()) {
-                                reloader = Api.Reloader.fast_refresh;
-                            }
-                        }
+                        reloader = Api.Reloader.fast_refresh;
                     }
                 }
                 const welcome_message = Api.WebsocketMessageWelcome{
@@ -2440,7 +2436,29 @@ pub const RequestContext = struct {
         }
 
         if (strings.eqlComptime(path, "wrap")) {
-            const buffer = Runtime.sourceContent();
+            const buffer = Runtime.sourceContent(ctx.bundler.options.jsx.use_embedded_refresh_runtime);
+            ctx.appendHeader("Content-Type", MimeType.javascript.value);
+            ctx.appendHeader("Cache-Control", "public, max-age=3600");
+            ctx.appendHeader("Age", "0");
+            if (FeatureFlags.strong_etags_for_built_files) {
+                const did_send = ctx.writeETag(buffer) catch false;
+                if (did_send) return;
+            }
+
+            if (buffer.len == 0) {
+                return try ctx.sendNoContent();
+            }
+            const send_body = ctx.method == .GET;
+            defer ctx.done();
+            try ctx.writeStatus(200);
+            try ctx.prepareToSendBody(buffer.len, false);
+            if (!send_body) return;
+            _ = try ctx.writeSocket(buffer, SOCKET_FLAGS);
+            return;
+        }
+
+        if (strings.eqlComptime(path, "reactfsh-v0.11.0")) {
+            const buffer = @embedFile("react-refresh.js");
             ctx.appendHeader("Content-Type", MimeType.javascript.value);
             ctx.appendHeader("Cache-Control", "public, max-age=3600");
             ctx.appendHeader("Age", "0");
@@ -3044,7 +3062,6 @@ pub const Server = struct {
 
             // We want to bind to the network socket as quickly as possible so that opening the URL works
             // We use a secondary loop so that we avoid the extra branch in a hot code path
-            server.detectFastRefresh();
             Analytics.Features.fast_refresh = server.bundler.options.jsx.supports_fast_refresh;
             server.detectTSConfig();
             try server.initWatcher();
@@ -3328,11 +3345,16 @@ pub const Server = struct {
             if (node_modules_bundle.getPackageIDByName(package_name) != null) return;
         }
 
-        _ = this.bundler.resolver.resolve(this.bundler.fs.top_level_dir, runtime, .internal) catch {
-            // 2. Try react refresh from import source perspective
+        _ = this.bundler.resolver.resolve(this.bundler.fs.top_level_dir, this.bundler.options.jsx.import_source, .internal) catch {
+            // if they don't have React, they can't use fast refresh
             this.bundler.options.jsx.supports_fast_refresh = false;
             return;
         };
+
+        this.bundler.options.jsx.supports_fast_refresh = true;
+        this.bundler.options.jsx.refresh_runtime = "bun:reactfsh-v0.11.0";
+        this.bundler.options.jsx.use_embedded_refresh_runtime = true;
+        this.bundler.resolver.opts = this.bundler.options;
     }
 
     pub fn detectTSConfig(this: *Server) void {
@@ -3382,6 +3404,8 @@ pub const Server = struct {
             return;
         }
 
+        server.detectFastRefresh();
+
         server.bundler.options.macro_remap = debug.macros orelse .{};
 
         if (debug.fallback_only or server.bundler.env.map.get("BUN_DISABLE_BUN_JS") != null) {
@@ -3424,6 +3448,7 @@ pub const Server = struct {
                     },
                 );
             }
+        } else if (server.bundler.options.routes.single_page_app_routing) {
         } else {
             try server.run(
                 ConnectionFeatures{ .filesystem_router = false },

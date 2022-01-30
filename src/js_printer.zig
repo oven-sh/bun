@@ -3556,11 +3556,12 @@ pub fn NewPrinter(
                         if (s.default_name) |default_name| {
                             p.print(", ");
                             p.printSymbol(default_name.ref.?);
-                            p.print(" = ");
-
-                            p.print("(\"default\" in $");
+                            p.print(" = (($");
                             p.printModuleId(module_id);
-                            p.print(" ? $");
+
+                            p.print(" && \"default\" in $");
+                            p.printModuleId(module_id);
+                            p.print(") ? $");
                             p.printModuleId(module_id);
                             p.print(".default : $");
                             p.printModuleId(module_id);
@@ -3589,7 +3590,9 @@ pub fn NewPrinter(
                         p.print(" = ");
 
                         if (!bun) {
-                            p.print("(\"default\" in ");
+                            p.print("(");
+                            p.printSymbol(s.namespace_ref);
+                            p.print(" && \"default\" in ");
                             p.printSymbol(s.namespace_ref);
                             p.print(" ? ");
                             p.printSymbol(s.namespace_ref);

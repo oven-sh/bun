@@ -103,6 +103,27 @@ pub const RequestContext = struct {
     /// --disable-bun.js propagates here
     pub var fallback_only = false;
 
+    const default_favicon = @embedFile("favicon.png");
+    const default_favicon_shasum = "07877ad4cdfe472cc70759d1f237d358ae1f6a9b";
+    pub fn sendFavicon(ctx: *RequestContext) !void {
+        defer ctx.done();
+        ctx.appendHeader("Content-Type", MimeType.byExtension("png").value);
+        ctx.appendHeader("ETag", default_favicon_shasum);
+        ctx.appendHeader("Age", "0");
+        ctx.appendHeader("Cache-Control", "public, max-age=3600");
+
+        if (ctx.header("If-None-Match")) |etag_header| {
+            if (strings.eqlLong(default_favicon_shasum, etag_header, true)) {
+                try ctx.sendNotModified();
+                return;
+            }
+        }
+
+        try ctx.writeStatus(200);
+        try ctx.prepareToSendBody(default_favicon.len, false);
+        try ctx.writeBodyBuf(default_favicon);
+    }
+
     fn parseOrigin(this: *RequestContext) void {
         var protocol: ?string = null;
         var host: ?string = null;
@@ -3333,6 +3354,15 @@ pub const Server = struct {
         }
 
         if (!finished) {
+            // if we're about to 404 and it's the favicon, use our stand-in
+            if (strings.eqlComptime(req_ctx.url.path, "favicon.ico")) {
+                req_ctx.sendFavicon() catch |err| {
+                    Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                    did_print = true;
+                };
+                return;
+            }
+
             req_ctx.sendNotFound() catch {};
         }
     }

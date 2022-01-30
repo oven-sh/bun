@@ -831,12 +831,6 @@ pub const Bundler = struct {
             var this = generator;
             // Always inline the runtime into the bundle
             try generator.appendBytes(&initial_header);
-            if (Environment.isDebug) {
-                try generator.appendBytes(runtime.Runtime.sourceContent());
-                try generator.appendBytes("\n\n");
-            } else {
-                try generator.appendBytes(comptime runtime.Runtime.sourceContent() ++ "\n\n");
-            }
 
             if (bundler.log.level == .verbose) {
                 bundler.resolver.debug_logs = try DebugLogs.init(allocator);
@@ -926,8 +920,6 @@ pub const Bundler = struct {
                 this.bundler.options.jsx.supports_fast_refresh and
                 bundler.options.platform.isWebLike();
 
-            Analytics.Features.fast_refresh = this.bundler.options.jsx.supports_fast_refresh;
-
             if (bundler.router) |router| {
                 defer this.bundler.resetStore();
                 Analytics.Features.filesystem_router = true;
@@ -1004,6 +996,7 @@ pub const Bundler = struct {
                     .require,
                 )) |new_jsx_runtime| {
                     try this.enqueueItem(new_jsx_runtime);
+                    Analytics.Features.jsx = true;
                 } else |_| {}
             }
 
@@ -1017,6 +1010,8 @@ pub const Bundler = struct {
                     .require,
                 )) |refresh_runtime| {
                     try this.enqueueItem(refresh_runtime);
+                    Analytics.Features.fast_refresh = true;
+
                     if (BundledModuleData.get(this, &refresh_runtime)) |mod| {
                         refresh_runtime_module_id = mod.module_id;
                     }
@@ -1026,6 +1021,18 @@ pub const Bundler = struct {
             this.bundler.resetStore();
 
             if (bundler.options.platform != .bun) Analytics.enqueue(Analytics.EventName.bundle_start);
+
+            const include_fast_refresh_in_bundle = Analytics.Features.jsx and
+                include_refresh_runtime and
+                !Analytics.Features.fast_refresh;
+
+            if (Environment.isDebug) {
+                try generator.appendBytes(runtime.Runtime.sourceContent(include_fast_refresh_in_bundle));
+                try generator.appendBytes("\n\n");
+            } else {
+                try generator.appendBytes(comptime runtime.Runtime.sourceContent(include_fast_refresh_in_bundle) ++ "\n\n");
+            }
+
             this.pool.start(this) catch |err| {
                 Analytics.enqueue(Analytics.EventName.bundle_fail);
                 return err;
@@ -3081,7 +3088,7 @@ pub const Bundler = struct {
 
         if (bundler.linker.any_needs_runtime) {
             try bundler.output_files.append(
-                options.OutputFile.initBuf(runtime.Runtime.sourceContent(), Linker.runtime_source_path, .js),
+                options.OutputFile.initBuf(runtime.Runtime.sourceContent(false), Linker.runtime_source_path, .js),
             );
         }
 

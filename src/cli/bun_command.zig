@@ -123,7 +123,7 @@ pub const BunCommand = struct {
         };
 
         if (ctx.debug.macros) |macros| {
-            this_bundler.macro_context.?.remap = macros;
+            this_bundler.options.macro_remap = macros;
         }
 
         var loaded_route_config: ?Api.LoadedRouteConfig = brk: {

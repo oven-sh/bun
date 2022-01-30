@@ -22,6 +22,12 @@ first_segment: string = "",
 query_string: string = "",
 needs_redirect: bool = false,
 
+pub fn isRoot(this: *const URLPath, asset_prefix: string) bool {
+    const without = this.pathWithoutAssetPrefix(asset_prefix);
+    if (without.len == 1 and without[0] == '.') return true;
+    return strings.eqlComptime(without, "index");
+}
+
 // TODO: use a real URL parser
 // this treats a URL like /_next/ identically to /
 pub fn pathWithoutAssetPrefix(this: *const URLPath, asset_prefix: string) string {

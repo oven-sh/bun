@@ -662,12 +662,22 @@ pub const RequestContext = struct {
         return ctx;
     }
 
-    pub inline fn isBrowserNavigation(req: *RequestContext) bool {
+    // not all browsers send this
+    pub const BrowserNavigation = enum {
+        yes,
+        no,
+        maybe,
+    };
+
+    pub inline fn isBrowserNavigation(req: *RequestContext) BrowserNavigation {
         if (req.header("Sec-Fetch-Mode")) |mode| {
-            return strings.eqlComptime(mode, "navigate");
+            return switch (strings.eqlComptime(mode, "navigate")) {
+                true => BrowserNavigation.yes,
+                false => BrowserNavigation.no,
+            };
         }
 
-        return false;
+        return .maybe;
     }
 
     pub fn sendNotFound(req: *RequestContext) !void {
@@ -3085,6 +3095,7 @@ pub const Server = struct {
     pub const ConnectionFeatures = struct {
         public_folder: PublicFolderPriority = PublicFolderPriority.none,
         filesystem_router: bool = false,
+        single_page_app_routing: bool = false,
         pub const PublicFolderPriority = enum {
             none,
             first,
@@ -3132,7 +3143,7 @@ pub const Server = struct {
         req_ctx.timer.reset();
 
         const is_navigation_request = req_ctx_.isBrowserNavigation();
-        defer if (is_navigation_request) Analytics.enqueue(Analytics.EventName.http_build);
+        defer if (is_navigation_request == .yes) Analytics.enqueue(Analytics.EventName.http_build);
         req_ctx.parseOrigin();
 
         if (req_ctx.url.needs_redirect) {
@@ -3248,6 +3259,17 @@ pub const Server = struct {
                         finished = finished or req_ctx.has_called_done;
                     }
                 },
+                .none => {
+                    if (comptime features.single_page_app_routing) {
+                        if (req_ctx.url.isRoot(server.bundler.options.routes.asset_prefix_path)) {
+                            req_ctx.sendSinglePageHTML() catch |err| {
+                                Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                                did_print = true;
+                            };
+                            finished = true;
+                        }
+                    }
+                },
                 else => {},
             }
         }
@@ -3300,7 +3322,7 @@ pub const Server = struct {
             }
         }
 
-        if (comptime features.public_folder != .none) {
+        if (comptime features.single_page_app_routing or features.public_folder != .none) {
             if (!finished and (req_ctx.bundler.options.routes.single_page_app_routing and req_ctx.url.extname.len == 0)) {
                 req_ctx.sendSinglePageHTML() catch |err| {
                     Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
@@ -3449,6 +3471,11 @@ pub const Server = struct {
                 );
             }
         } else if (server.bundler.options.routes.single_page_app_routing) {
+            try server.run(
+                ConnectionFeatures{
+                    .single_page_app_routing = true,
+                },
+            );
         } else {
             try server.run(
                 ConnectionFeatures{ .filesystem_router = false },

@@ -61,12 +61,49 @@ if (typeof window !== "undefined") {
     },
   };
 
+  const BUN_ERROR_FAVICON =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIwAAACMCAMAAACZHrEMAAAAnFBMVEUAAAD////////////////////////////////////////////////////////////////////////////////////vjo798/Psdnb2wMD62dn3wMDrdnb3wcHjNzf4zc3mUFD////+8vL85ubugoLqaWnxm5vkRET1tLT75ubtgoLlQ0Pwj4/zp6foXV3vj4/zqKjsdXXnUFD62tqV2W1BAAAAFnRSTlMAYN8gEEDvv6B/gHAwz59Qr4+Qb7DQOIES+QAABFRJREFUeF7smNluwjAQRYEskJKwiPfxlg3o3v//t0owTlMV2+LBNw/lfMHRoHtIMvv3PHiQlFmWJbPpyYplrq5Um+2UJmnBIpZ8k0yuMmYanXKhbpKv8S4H5WSfgl0K5aFKp3PRRyGEdthAXUzb0AVZCzWwxLmUPyoNjZC9shSwTQ87eu/oN7VWTIb+kWr6gzS2xxiXRDFvRB4bTG5W7NLSTRobvxR4GEMOXtjmCSBTsUxDDs6aT5NEd5mzS09OatbdRJexs5bkRoDmffAehmkwHU74MEYSTX6a1ZAYL5JlFtBZh+a9BhympgBnHb18Gbt8UZDWUT7srJmzseXD9S5cvh38MPh5F45/61D5gL0Ln2YLnHW4fCmwd+F5Aw+DL9+WXQTR/afZA2YdxrBNAuodft5p4DDh8kF6hz/NMOuO7qVnmzlq1t3r6dQ4PKW25YP0rmuvOeklpHw732GkUZbaXz7ArNnF/ZL5bMsXv3e1GiG8umX0wwg1pos8b/sYo2/3Tqsxjb98sXvHFrm68OEtXxX7MebIGeHL+Mu3jtA7r0yEebsOE5aJWL6lLUhAhvkMfsyK+hgjHDIRPmY5eueXiTTvb2bNbidhIIjClkJBEUGDUH5k+2NLAQUj7/9uXnCx6elCppOdkXNPcjKzc2b3o7YwRDMEmCWJqSowI1aaV8g7nhmEWVKYCs3kJJglh6m+wYwQzHom8buSYgaTjz/WR7oZQ4RZUphqBmZIMEsKU+1JZnC8mZjqZ9PCzEIAZkHe0c1UZJglQ2NiMMOGWfy8w8pjT/njzS8MmiklYFaPjqmOYIYMsyQwVQJmfMMszDu6mU8GsfHJ7w50M5h8Apgqgwel39KEUSssX+HSpsMs//S5IAwTGWbx8w4vEWcGxveO5S9fFGWlf4wfwAImaVsUvyQbCLPIYy0ihFkSWF6EVXfFC4PJR8s7ndKMSFheWgiz+GONiHyx25kKdgFjvLl5h29K3B/85ENMtW7j5WzXwfzIKU3oYaxxGdDPGsIsb3mXpDWdWOPtqzBx3YzxlHxhh30MrXIPyQd5J24GYRZzrFF7fpsQZvHzDu/jzF9nztJ0I1ZhEKO13a+lc6ACwPJkHZapVdz615lroKbYc7qbCr4nZ5QGNlQEPW+jpFpm6W41g/htVZqeg2xuN9oyzXkaQ5f0NGsuqCHAHj3FzRP8JHTbJPOdzl2YSQhmtCszuoszUzRTL/jvaZo2c2aub+bDASQiWE1qsgls1Qf2IC28ldd20xDgg5Zy19buAoZWLkzgfsCdVBMvd1+Ce/Aq1NA2vwb3JupukjP84QP4V7NTRZ7CiYGBumiZKLTI3uSdj+03yxPMZyLqZL2ylN82CSfKKjOmkpGpfQDUCa/gxUmqK/SCnVLWe3iLA3dUvbzdBvbhQM9KH1iI006kZYWk8WAkfGwnw+5fO3BsAgAAwkAwgukC7r+tM1jY/ekgnvrhtK4AAMACYkDwBoJSQAkAAAAASUVORK5CYII=";
   const BunError = {
     module: null,
     prom: null,
     cancel: false,
     lastError: null,
+    previousFavicon: null,
+    setErrorFavicon() {
+      if (typeof document === "undefined" || BunError.previousFavicon) return;
+
+      try {
+        let linkTag = document.querySelector("link[rel='icon']");
+        BunError.previousFavicon =
+          (linkTag && linkTag.getAttribute("href")) || "/favicon.ico";
+        if (!linkTag) {
+          linkTag = document.createElement("link");
+          linkTag.setAttribute("rel", "icon");
+          linkTag.setAttribute("href", BUN_ERROR_FAVICON);
+          document.head.appendChild(linkTag);
+          return;
+        }
+
+        linkTag.setAttribute("href", BUN_ERROR_FAVICON);
+      } catch (e) {}
+    },
+
+    clearErrorFavicon() {
+      if (typeof document === "undefined") return;
+      if (BunError.previousFavicon) {
+        try {
+          const linkTag = document.querySelector("link[rel='icon']");
+          if (linkTag) {
+            linkTag.setAttribute("href", BunError.previousFavicon);
+          }
+
+          BunError.previousFavicon = null;
+        } catch (exception) {}
+      }
+    },
+
     render(error, cwd) {
+      BunError.setErrorFavicon();
       if ("__BunRenderBuildError" in globalThis) {
         globalThis.__BunRenderBuildError(error, cwd);
         return;
@@ -92,6 +129,7 @@ if (typeof window !== "undefined") {
     clear() {
       BunError.lastError = null;
       BunError.cancel = true;
+      BunError.clearErrorFavicon();
 
       if (BunError.module) {
         const { clearBuildFailure } = BunError.module;

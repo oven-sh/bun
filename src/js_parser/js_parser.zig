@@ -2351,6 +2351,7 @@ pub const Parser = struct {
 
                     // We do not mark this as .require becuase we are already wrapping it manually.
                     const import_record_id = p.addImportRecord(.internal, loc, p.options.jsx.import_source);
+                    p.import_records.items[import_record_id].tag = .jsx_import;
                     // When everything is CommonJS
                     // We import JSX like this:
                     // var {jsxDev} = require("react/jsx-dev")
@@ -2446,6 +2447,7 @@ pub const Parser = struct {
                         .is_single_line = true,
                         .import_record_index = import_record_id,
                     }, loc);
+                    p.import_records.items[import_record_id].tag = .jsx_classic;
                     stmt_i += 1;
                     p.named_imports.put(
                         classic_namespace_ref,
@@ -2472,6 +2474,7 @@ pub const Parser = struct {
                     declared_symbols_i += 1;
 
                     const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.refresh_runtime);
+                    p.import_records.items[import_record_id].tag = .react_refresh;
                     jsx_part_stmts[stmt_i] = p.s(S.Import{
                         .namespace_ref = p.jsx_refresh_runtime.ref,
                         .star_name_loc = loc,
@@ -2515,6 +2518,8 @@ pub const Parser = struct {
             var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, 1);
             const loc = logger.Loc.Empty;
             const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.refresh_runtime);
+            p.import_records.items[import_record_id].tag = .react_refresh;
+
             var import_stmt = p.s(S.Import{
                 .namespace_ref = p.jsx_refresh_runtime.ref,
                 .star_name_loc = loc,

@@ -12107,7 +12107,7 @@ pub fn NewParser(
                     var has_proto = false;
                     var i: usize = 0;
                     while (i < e_.properties.len) : (i += 1) {
-                        var property = e_.properties.ptr[i];
+                        var property = &e_.properties.ptr[i];
 
                         if (property.kind != .spread) {
                             property.key = p.visitExpr(property.key orelse Global.panic("Expected property key", .{}));

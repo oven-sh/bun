@@ -3321,7 +3321,7 @@ pub fn NewParser(
                             .e_identifier => |ident| {
                                 // is this a require("something")
                                 if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args.ptr[0].data) == .e_string) {
-                                    _ = p.addImportRecord(.require, loc, call.args.@"[0]"().data.e_string.string(p.allocator) catch unreachable);
+                                    _ = p.addImportRecord(.require, loc, call.args.first_().data.e_string.string(p.allocator) catch unreachable);
                                 }
                             },
                             else => {},
@@ -3337,7 +3337,7 @@ pub fn NewParser(
                             .e_identifier => |ident| {
                                 // is this a require("something")
                                 if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args.ptr[0].data) == .e_string) {
-                                    _ = p.addImportRecord(.require, loc, call.args.@"[0]"().data.e_string.string(p.allocator) catch unreachable);
+                                    _ = p.addImportRecord(.require, loc, call.args.first_().data.e_string.string(p.allocator) catch unreachable);
                                 }
                             },
                             else => {},
@@ -11106,7 +11106,8 @@ pub fn NewParser(
                                 }
                             };
 
-                            for (e_.properties.slice()) |property, i| {
+                            const jsx_props = e_.properties.slice();
+                            for (jsx_props) |property, i| {
                                 if (property.kind != .spread) {
                                     e_.properties.ptr[i].key = p.visitExpr(e_.properties.ptr[i].key.?);
                                 }
@@ -11163,7 +11164,8 @@ pub fn NewParser(
                                         i = 2;
                                     }
 
-                                    for (e_.children.slice()[0..children_count]) |child| {
+                                    const children_elements = e_.children.slice()[0..children_count];
+                                    for (children_elements) |child| {
                                         args[i] = p.visitExpr(child);
                                         i += @intCast(usize, @boolToInt(args[i].data != .e_missing));
                                     }
@@ -11194,7 +11196,8 @@ pub fn NewParser(
 
                                     {
                                         var last_child: u32 = 0;
-                                        for (e_.children.ptr[0..children_count]) |child| {
+                                        var children = e_.children.slice()[0..children_count];
+                                        for (children) |child| {
                                             e_.children.ptr[last_child] = p.visitExpr(child);
                                             // if tree-shaking removes the element, we must also remove it here.
                                             last_child += @intCast(u32, @boolToInt(e_.children.ptr[last_child].data != .e_missing));

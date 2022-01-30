@@ -2018,6 +2018,13 @@ pub fn NewPrinter(
                 p.printSymbol(namespace.namespace_ref);
             }
 
+            // In the case of code like this:
+            // module.exports = require("foo")
+            // if "foo" is bundled
+            // then we access it as the namespace symbol itself
+            // that means the namespace alias is empty
+            if (namespace.alias.len == 0) return;
+
             if (p.canPrintIdentifier(namespace.alias)) {
                 p.print(".");
                 p.printIdentifier(namespace.alias);

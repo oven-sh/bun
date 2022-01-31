@@ -68,10 +68,13 @@ if (typeof window !== "undefined") {
     prom: null,
     cancel: false,
     lastError: null,
-    previousFavicon: null,
+    previousFavicon: "",
     setErrorFavicon() {
       if (typeof document === "undefined" || BunError.previousFavicon) return;
 
+      // we wrap this in a try / catch because if for some reason an error occurs because of this
+      // we don't want it to break the rest of the error handling code
+      // if they set a CSP header, that could cause this to fail
       try {
         let linkTag = document.querySelector("link[rel='icon']");
         BunError.previousFavicon =
@@ -97,7 +100,7 @@ if (typeof window !== "undefined") {
             linkTag.setAttribute("href", BunError.previousFavicon);
           }
 
-          BunError.previousFavicon = null;
+          BunError.previousFavicon = "";
         } catch (exception) {}
       }
     },

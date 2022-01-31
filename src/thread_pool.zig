@@ -261,9 +261,12 @@ fn _wait(self: *ThreadPool, _is_waking: bool, comptime sleep_on_idle: bool) erro
         } else {
             if (self.io) |io| {
                 const HTTP = @import("http");
-                io.run_for_ns(std.time.ns_per_us * 100) catch {};
-                while (HTTP.AsyncHTTP.active_requests_count.load(.Monotonic) > HTTP.AsyncHTTP.max_simultaneous_requests) {
-                    io.run_for_ns(std.time.ns_per_us * 10) catch {};
+                io.tick() catch {};
+
+                if (HTTP.AsyncHTTP.active_requests_count.load(.Monotonic) > 0) {
+                    while (HTTP.AsyncHTTP.active_requests_count.load(.Monotonic) > HTTP.AsyncHTTP.max_simultaneous_requests) {
+                        io.run_for_ns(std.time.ns_per_us * 10) catch {};
+                    }
                 }
 
                 if (sleep_on_idle) {

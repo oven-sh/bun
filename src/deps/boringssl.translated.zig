@@ -18764,6 +18764,9 @@ pub const SSL = opaque {
         };
     }
 
+    const Output = @import("../global.zig").Output;
+    const Environment = @import("../global.zig").Environment;
+
     pub fn read(this: *SSL, buf: []u8) Error!usize {
         const rc = SSL_read(this, buf.ptr, @intCast(c_int, buf.len));
         return switch (SSL_get_error(this, rc)) {
@@ -18790,10 +18793,16 @@ pub const SSL = opaque {
         };
     }
 
-    pub fn write(this: *SSL, buf: []const u8) Error!usize {
+    pub fn write(this: *SSL, buf: []const u8) Error!u32 {
         const rc = SSL_write(this, buf.ptr, @intCast(c_int, buf.len));
         return switch (SSL_get_error(this, rc)) {
-            SSL_ERROR_SSL => error.SSL,
+            SSL_ERROR_SSL => {
+                if (comptime Environment.isDebug) {
+                    const errdescription = std.mem.span(SSL_error_description(SSL_ERROR_SSL).?);
+                    Output.prettyError("SSL_ERROR: {s}", .{errdescription});
+                }
+                return error.SSL;
+            },
             SSL_ERROR_WANT_READ => error.WantRead,
             SSL_ERROR_WANT_WRITE => error.WantWrite,
             SSL_ERROR_WANT_X509_LOOKUP => error.WantX509Lookup,
@@ -18812,7 +18821,7 @@ pub const SSL = opaque {
             SSL_ERROR_HANDBACK => error.Handback,
             SSL_ERROR_WANT_RENEGOTIATE => error.WantRenegotiate,
             SSL_ERROR_HANDSHAKE_HINTS_READY => error.HandshakeHintsReady,
-            else => @intCast(usize, rc),
+            else => @intCast(u32, rc),
         };
     }
 
@@ -18894,3 +18903,28 @@ pub const BIOMethod = struct {
         return method;
     }
 };
+
+pub fn getError(this: *SSL, rc: c_int) SSL.Error!u32 {
+    return switch (SSL_get_error(this, rc)) {
+        SSL_ERROR_SSL => error.SSL,
+        SSL_ERROR_WANT_READ => error.WantRead,
+        SSL_ERROR_WANT_WRITE => error.WantWrite,
+        SSL_ERROR_WANT_X509_LOOKUP => error.WantX509Lookup,
+        SSL_ERROR_SYSCALL => error.Syscall,
+        SSL_ERROR_ZERO_RETURN => error.ZeroReturn,
+        SSL_ERROR_WANT_CONNECT => error.WantConnect,
+        SSL_ERROR_WANT_ACCEPT => error.WantAccept,
+        SSL_ERROR_WANT_CHANNEL_ID_LOOKUP => error.WantChannelIdLookup,
+        SSL_ERROR_PENDING_SESSION => error.PendingSession,
+        SSL_ERROR_PENDING_CERTIFICATE => error.PendingCertificate,
+        SSL_ERROR_WANT_PRIVATE_KEY_OPERATION => error.WantPrivateKeyOperation,
+        SSL_ERROR_PENDING_TICKET => error.PendingTicket,
+        SSL_ERROR_EARLY_DATA_REJECTED => error.EarlyDataRejected,
+        SSL_ERROR_WANT_CERTIFICATE_VERIFY => error.WantCertificateVerify,
+        SSL_ERROR_HANDOFF => error.Handoff,
+        SSL_ERROR_HANDBACK => error.Handback,
+        SSL_ERROR_WANT_RENEGOTIATE => error.WantRenegotiate,
+        SSL_ERROR_HANDSHAKE_HINTS_READY => error.HandshakeHintsReady,
+        else => @intCast(u32, rc),
+    };
+}

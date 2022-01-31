@@ -61,7 +61,7 @@ else
 
 pub const OPEN_SOCKET_FLAGS = SOCK.CLOEXEC;
 
-pub const extremely_verbose = false;
+pub const extremely_verbose = true;
 
 fn writeRequest(
     comptime Writer: type,

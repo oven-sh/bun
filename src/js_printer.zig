@@ -2041,7 +2041,6 @@ pub fn NewPrinter(
                 p.printExpr(item.value.?, .comma, ExprFlag.None());
                 return;
             }
-            const _key = item.key orelse unreachable;
 
             if (item.flags.is_static) {
                 p.print("static");
@@ -2082,7 +2081,20 @@ pub fn NewPrinter(
                     },
                     else => {},
                 }
+
+                // If var is declared in a parent scope and var is then written via destructuring pattern, key is null
+                // example:
+                //  var foo = 1;
+                //  if (true) {
+                //      var { foo } = { foo: 2 };
+                //  }
+                if (item.key == null) {
+                    p.printExpr(val, .comma, ExprFlag.None());
+                    return;
+                }
             }
+
+            const _key = item.key.?;
 
             if (item.flags.is_computed) {
                 p.print("[");

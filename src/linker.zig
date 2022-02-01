@@ -62,8 +62,11 @@ pub const Linker = struct {
 
     pub const TaggedResolution = struct {
         react_refresh: ?Resolver.Result = null,
-        jsx_import: ?Resolver.Result = null,
-        jsx_classic: ?Resolver.Result = null,
+
+        // These tags cannot safely be used
+        // Projects may use different JSX runtimes across folders
+        // jsx_import: ?Resolver.Result = null,
+        // jsx_classic: ?Resolver.Result = null,
     };
 
     pub fn init(
@@ -275,16 +278,6 @@ pub const Linker = struct {
                     var resolved_import_ = brk: {
                         switch (import_record.tag) {
                             else => {},
-                            .jsx_import => {
-                                if (linker.tagged_resolutions.jsx_import != null) {
-                                    break :brk linker.tagged_resolutions.jsx_import.?;
-                                }
-                            },
-                            .jsx_classic => {
-                                if (linker.tagged_resolutions.jsx_classic != null) {
-                                    break :brk linker.tagged_resolutions.jsx_classic.?;
-                                }
-                            },
                             // for fast refresh, attempt to read the version directly from the bundle instead of resolving it
                             .react_refresh => {
                                 if (linker.options.node_modules_bundle) |node_modules_bundle| {
@@ -320,14 +313,6 @@ pub const Linker = struct {
                         if (linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |_resolved_import| {
                             switch (import_record.tag) {
                                 else => {},
-                                .jsx_import => {
-                                    linker.tagged_resolutions.jsx_import = _resolved_import;
-                                    linker.tagged_resolutions.jsx_import.?.path_pair.primary = linker.tagged_resolutions.jsx_import.?.path().?.dupeAlloc(_global.default_allocator) catch unreachable;
-                                },
-                                .jsx_classic => {
-                                    linker.tagged_resolutions.jsx_classic = _resolved_import;
-                                    linker.tagged_resolutions.jsx_classic.?.path_pair.primary = linker.tagged_resolutions.jsx_classic.?.path().?.dupeAlloc(_global.default_allocator) catch unreachable;
-                                },
                                 .react_refresh => {
                                     linker.tagged_resolutions.react_refresh = _resolved_import;
                                     linker.tagged_resolutions.react_refresh.?.path_pair.primary = linker.tagged_resolutions.react_refresh.?.path().?.dupeAlloc(_global.default_allocator) catch unreachable;

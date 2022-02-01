@@ -106,7 +106,6 @@ pub const RequestContext = struct {
     const default_favicon = @embedFile("favicon.png");
     const default_favicon_shasum = "07877ad4cdfe472cc70759d1f237d358ae1f6a9b";
     pub fn sendFavicon(ctx: *RequestContext) !void {
-        defer ctx.done();
         ctx.appendHeader("Content-Type", MimeType.byExtension("png").value);
         ctx.appendHeader("ETag", default_favicon_shasum);
         ctx.appendHeader("Age", "0");
@@ -118,6 +117,8 @@ pub const RequestContext = struct {
                 return;
             }
         }
+
+        defer ctx.done();
 
         try ctx.writeStatus(200);
         try ctx.prepareToSendBody(default_favicon.len, false);

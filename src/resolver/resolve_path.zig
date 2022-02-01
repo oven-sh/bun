@@ -253,8 +253,8 @@ pub fn relativeToCommonPath(
     }
 
     if (normalized_to.len > last_common_separator + 1) {
-        const tail = normalized_to[last_common_separator + 1 ..];
-        const insert_leading_slash = tail[0] != separator;
+        const tail = normalized_to[last_common_separator..];
+        const insert_leading_slash = last_common_separator > 0 and normalized_to[last_common_separator - 1] != separator;
 
         if (insert_leading_slash) {
             buf[out_slice.len] = separator;

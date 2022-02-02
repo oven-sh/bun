@@ -201,7 +201,7 @@ fn _wait(self: *ThreadPool, _is_waking: bool, comptime sleep_on_idle: bool) erro
     var is_idle = false;
     var is_waking = _is_waking;
     var sync = @bitCast(Sync, self.sync.load(.Monotonic));
-    var idle_network_ticks: if (sleep_on_idle) u16 else void = if (comptime sleep_on_idle) 0 else void{};
+    var idle_network_ticks: u32 = 0;
 
     while (true) {
         if (sync.state == .shutdown) return error.Shutdown;
@@ -262,22 +262,26 @@ fn _wait(self: *ThreadPool, _is_waking: bool, comptime sleep_on_idle: bool) erro
             if (self.io) |io| {
                 const HTTP = @import("http");
                 io.tick() catch {};
+                const end_count = HTTP.AsyncHTTP.active_requests_count.loadUnchecked();
 
-                if (HTTP.AsyncHTTP.active_requests_count.load(.Monotonic) > 0) {
-                    while (HTTP.AsyncHTTP.active_requests_count.load(.Monotonic) > HTTP.AsyncHTTP.max_simultaneous_requests) {
+                if (end_count > 0) {
+                    while (HTTP.AsyncHTTP.active_requests_count.loadUnchecked() > HTTP.AsyncHTTP.max_simultaneous_requests) {
                         io.run_for_ns(std.time.ns_per_us * 10) catch {};
                     }
                 }
 
+                const idle = HTTP.AsyncHTTP.active_requests_count.loadUnchecked() == 0;
+
                 if (sleep_on_idle) {
-                    idle_network_ticks += @as(u16, @boolToInt(HTTP.AsyncHTTP.active_requests_count.load(.Monotonic) == 0));
+                    idle_network_ticks += @as(u32, @boolToInt(idle));
 
                     // If it's been roughly 2ms since the last network request, go to sleep!
                     // this is 4ms because run_for_ns runs for 10 microseconds
                     // 10 microseconds * 400 == 4ms
                     if (idle_network_ticks > 40) {
-                        self.idle_event.wait();
                         idle_network_ticks = 0;
+                        HTTP.cleanup(true);
+                        self.idle_event.wait();
                     }
                 }
 

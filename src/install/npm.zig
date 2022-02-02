@@ -38,7 +38,7 @@ pub const Registry = struct {
     token: string = "",
     auth: string = "",
 
-    pub const BodyPool = ObjectPool(MutableString, MutableString.init2048, true);
+    pub const BodyPool = ObjectPool(MutableString, MutableString.init2048, true, 8);
 
     pub const Scope = struct {
         name: string = "",

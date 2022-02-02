@@ -784,7 +784,7 @@ pub const DescribeScope = struct {
         this.tests.deinit(getAllocator(ctx));
     }
 
-    const ScopeStack = ObjectPool(std.ArrayListUnmanaged(*DescribeScope), null, true);
+    const ScopeStack = ObjectPool(std.ArrayListUnmanaged(*DescribeScope), null, true, 16);
 
     // pub fn runBeforeAll(this: *DescribeScope, ctx: js.JSContextRef, exception: js.ExceptionRef) bool {
     //     var scopes = ScopeStack.get(default_allocator);

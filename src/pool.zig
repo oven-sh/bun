@@ -7,6 +7,7 @@ fn SinglyLinkedList(comptime T: type, comptime Parent: type) type {
         /// Node inside the linked list wrapping the actual data.
         pub const Node = struct {
             next: ?*Node = null,
+            allocator: std.mem.Allocator,
             data: T,
 
             pub const Data = T;
@@ -106,20 +107,30 @@ fn SinglyLinkedList(comptime T: type, comptime Parent: type) type {
     };
 }
 
-pub fn ObjectPool(comptime Type: type, comptime Init: (?fn (allocator: std.mem.Allocator) anyerror!Type), comptime threadsafe: bool) type {
+const log_allocations = true;
+
+pub fn ObjectPool(
+    comptime Type: type,
+    comptime Init: (?fn (allocator: std.mem.Allocator) anyerror!Type),
+    comptime threadsafe: bool,
+    comptime max_count: comptime_int,
+) type {
     return struct {
         const Pool = @This();
         const LinkedList = SinglyLinkedList(Type, Pool);
         pub const Node = LinkedList.Node;
+        const MaxCountInt = std.math.IntFittingRange(0, max_count);
         const Data = if (threadsafe)
             struct {
                 pub threadlocal var list: LinkedList = undefined;
                 pub threadlocal var loaded: bool = false;
+                pub threadlocal var count: MaxCountInt = 0;
             }
         else
             struct {
                 pub var list: LinkedList = undefined;
                 pub var loaded: bool = false;
+                pub var count: MaxCountInt = 0;
             };
 
         const data = Data;
@@ -128,12 +139,16 @@ pub fn ObjectPool(comptime Type: type, comptime Init: (?fn (allocator: std.mem.A
             if (data.loaded) {
                 if (data.list.popFirst()) |node| {
                     if (comptime std.meta.trait.isContainer(Type) and @hasDecl(Type, "reset")) node.data.reset();
+                    if (comptime max_count > 0) data.count -|= 1;
                     return node;
                 }
             }
 
+            if (comptime log_allocations) std.io.getStdErr().writeAll(comptime std.fmt.comptimePrint("Allocate {s} - {d} bytes\n", .{ @typeName(Type), @sizeOf(Type) })) catch {};
+
             var new_node = allocator.create(LinkedList.Node) catch unreachable;
             new_node.* = LinkedList.Node{
+                .allocator = allocator,
                 .data = if (comptime Init) |init_|
                     (init_(
                         allocator,
@@ -146,6 +161,17 @@ pub fn ObjectPool(comptime Type: type, comptime Init: (?fn (allocator: std.mem.A
         }
 
         pub fn release(node: *LinkedList.Node) void {
+            if (comptime max_count > 0) {
+                if (data.count >= max_count) {
+                    if (comptime log_allocations) std.io.getStdErr().writeAll(comptime std.fmt.comptimePrint("Free {s} - {d} bytes\n", .{ @typeName(Type), @sizeOf(Type) })) catch {};
+                    if (comptime std.meta.trait.isContainer(Type) and @hasDecl(Type, "deinit")) node.data.deinit();
+                    node.allocator.destroy(node);
+                    return;
+                }
+            }
+
+            if (comptime max_count > 0) data.count +|= 1;
+
             if (data.loaded) {
                 data.list.prepend(node);
                 return;

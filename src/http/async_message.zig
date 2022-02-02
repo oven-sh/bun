@@ -4,7 +4,7 @@ const AsyncIO = @import("io");
 
 pub const buffer_pool_len = std.math.maxInt(u16) - 64;
 pub const BufferPoolBytes = [buffer_pool_len]u8;
-pub const BufferPool = ObjectPool(BufferPoolBytes, null, false);
+pub const BufferPool = ObjectPool(BufferPoolBytes, null, false, 4);
 
 const AsyncMessage = @This();
 

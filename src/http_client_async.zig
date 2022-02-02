@@ -28,7 +28,7 @@ const AsyncMessage = @import("./http/async_message.zig");
 const AsyncBIO = @import("./http/async_bio.zig");
 const AsyncSocket = @import("./http/async_socket.zig");
 const ZlibPool = @import("./http/zlib.zig");
-const URLBufferPool = ObjectPool([4096]u8, null, false);
+const URLBufferPool = ObjectPool([4096]u8, null, false, 10);
 
 // This becomes Arena.allocator
 pub var default_allocator: std.mem.Allocator = undefined;
@@ -51,6 +51,10 @@ pub fn onThreadStart() void {
 
 pub inline fn getAllocator() std.mem.Allocator {
     return default_allocator;
+}
+
+pub inline fn cleanup(force: bool) void {
+    default_arena.gc(force);
 }
 
 pub const Headers = @import("./http/headers.zig");
@@ -558,6 +562,7 @@ pub fn sendAsync(this: *HTTPClient, body: []const u8, body_out_str: *MutableStri
 
 pub fn send(this: *HTTPClient, body: []const u8, body_out_str: *MutableString) !picohttp.Response {
     defer if (@enumToInt(this.stage) > @enumToInt(Stage.pending)) this.socket.deinit();
+
     // this prevents stack overflow
     redirect: while (this.remaining_redirect_count >= -1) {
         if (@enumToInt(this.stage) > @enumToInt(Stage.pending)) this.socket.deinit();

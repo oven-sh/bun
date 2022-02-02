@@ -958,6 +958,7 @@ pub const ZigConsoleClient = struct {
                     }
                 }.init,
                 true,
+                16,
             );
         };
 

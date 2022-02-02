@@ -1755,7 +1755,7 @@ const StringVoidMap = struct {
         Pool.release(node);
     }
 
-    pub const Pool = ObjectPool(StringVoidMap, init, true);
+    pub const Pool = ObjectPool(StringVoidMap, init, true, 32);
     pub const Node = Pool.Node;
 };
 const RefCtx = @import("../ast/base.zig").RefCtx;

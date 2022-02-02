@@ -603,6 +603,15 @@ pub const SSL = struct {
         this.completed_connect = true;
         this.next_handshake_state = .none;
         this.doPeek();
+        if (extremely_verbose) {
+            const version = std.mem.span(boring.SSL_get_version(this.ssl));
+            var hostname = std.mem.span(std.mem.sliceTo(&this.hostname, 0));
+            Output.prettyErrorln("[{s}] Handshake complete.\n[{s}] TLS Version: {s}", .{
+                hostname,
+                hostname,
+                version,
+            });
+        }
     }
 
     fn doPeek(this: *SSL) void {

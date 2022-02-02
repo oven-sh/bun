@@ -3851,6 +3851,7 @@ pub const SymbolPool = ObjectPool(
         }
     }.init,
     true,
+    4,
 );
 
 pub const Ast = struct {

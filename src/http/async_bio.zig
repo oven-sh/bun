@@ -22,7 +22,7 @@ const Packet = struct {
     min: u32 = 0,
     owned_slice: []u8 = &[_]u8{},
 
-    pub const Pool = ObjectPool(Packet, null, false);
+    pub const Pool = ObjectPool(Packet, null, false, 32);
 };
 
 bio: *boring.BIO = undefined,
@@ -34,7 +34,7 @@ pending_reads: u32 = 0,
 pending_sends: u32 = 0,
 
 recv_buffer: ?*BufferPool.Node = null,
-
+big_buffer: std.ArrayListUnmanaged(u8) = .{},
 send_buffer: ?*BufferPool.Node = null,
 
 write_error: c_int = 0,
@@ -231,10 +231,14 @@ pub fn scheduleSocketRead(this: *AsyncBIO, min: u32) void {
         this.recv_buffer = BufferPool.get(getAllocator());
     }
 
+    this.scheduleSocketReadBuf(min, this.readBuf());
+}
+
+pub fn scheduleSocketReadBuf(this: *AsyncBIO, min: u32, buf: []u8) void {
     var packet = Packet.Pool.get(getAllocator());
     packet.data.min = @truncate(u32, min);
 
-    AsyncIO.global.recv(*AsyncBIO, this, doSocketRead, &packet.data.completion, this.socket_fd, this.readBuf());
+    AsyncIO.global.recv(*AsyncBIO, this, doSocketRead, &packet.data.completion, this.socket_fd, buf);
 }
 
 pub fn scheduleSocketWrite(this: *AsyncBIO, buf: []const u8) void {
@@ -317,9 +321,6 @@ pub const Bio = struct {
             }
             return -1;
         }
-
-        const remaining_in_send_buffer = buffer_pool_len - this.bio_write_offset;
-        const total_remaining = remaining_in_send_buffer - @minimum(remaining_in_send_buffer, len);
 
         if (this.send_buffer == null) {
             this.send_buffer = BufferPool.get(getAllocator());

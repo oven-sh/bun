@@ -79,17 +79,9 @@ pub const Output = struct {
             source = Source.init(stdout_stream, stderr_stream);
         }
 
-        pub fn configureNamedThread(thread: std.Thread, name: StringTypes.stringZ) void {
-            if (source_set) return;
+        pub fn configureNamedThread(_: std.Thread, name: StringTypes.stringZ) void {
+            Global.setThreadName(name);
             configureThread();
-
-            // On Linux, thread may be undefined
-            // Fortunately, we can use a different syscall that only affects the current thread
-            if (Environment.isLinux) {
-                _ = std.os.prctl(.SET_NAME, .{@ptrToInt(name.ptr)}) catch 0;
-            } else {
-                thread.setName(name) catch {};
-            }
         }
 
         fn isForceColor() ?bool {
@@ -557,6 +549,14 @@ pub const Global = struct {
     pub inline fn getStartTime() i128 {
         if (Environment.isTest) return 0;
         return @import("root").start_time;
+    }
+
+    pub fn setThreadName(name: StringTypes.stringZ) void {
+        if (Environment.isLinux) {
+            _ = std.os.prctl(.SET_NAME, .{@ptrToInt(name.ptr)}) catch 0;
+        } else if (Environment.isMac) {
+            _ = std.c.pthread_setname_np(name);
+        }
     }
 
     pub const AllocatorConfiguration = struct {

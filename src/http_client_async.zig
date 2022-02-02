@@ -46,6 +46,7 @@ pub fn onThreadStart() void {
 
     AsyncIO.global_loaded = true;
     NetworkThread.global.pool.io = &AsyncIO.global;
+    Global.setThreadName("HTTP");
 }
 
 pub inline fn getAllocator() std.mem.Allocator {
@@ -61,7 +62,7 @@ else
 
 pub const OPEN_SOCKET_FLAGS = SOCK.CLOEXEC;
 
-pub const extremely_verbose = true;
+pub const extremely_verbose = Environment.isDebug;
 
 fn writeRequest(
     comptime Writer: type,

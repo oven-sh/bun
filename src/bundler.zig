@@ -1029,8 +1029,10 @@ pub const Bundler = struct {
             if (Environment.isDebug) {
                 try generator.appendBytes(runtime.Runtime.sourceContent(include_fast_refresh_in_bundle));
                 try generator.appendBytes("\n\n");
+            } else if (include_fast_refresh_in_bundle) {
+                try generator.appendBytes(comptime runtime.Runtime.sourceContent(true) ++ "\n\n");
             } else {
-                try generator.appendBytes(comptime runtime.Runtime.sourceContent(include_fast_refresh_in_bundle) ++ "\n\n");
+                try generator.appendBytes(comptime runtime.Runtime.sourceContent(false) ++ "\n\n");
             }
 
             this.pool.start(this) catch |err| {

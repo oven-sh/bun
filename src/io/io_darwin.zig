@@ -651,6 +651,17 @@ const Operation = union(enum) {
     event: struct {
         fd: os.fd_t,
     },
+    nextTick: struct {},
+
+    pub fn slice(this: Operation) []const u8 {
+        return switch (this) {
+            .write => |op| op.buf[0..op.len],
+            .send => |op| op.buf[0..op.len],
+            .recv => |op| op.buf[0..op.len],
+            .read => |op| op.buf[0..op.len],
+            else => &[_]u8{},
+        };
+    }
 };
 
 fn submit(
@@ -763,6 +774,29 @@ pub fn event(
         .{
             .fd = fd,
         },
+        struct {
+            fn doOperation(_: anytype) void {}
+        },
+    );
+}
+
+pub fn nextTick(
+    self: *IO,
+    comptime Context: type,
+    context: Context,
+    comptime callback: fn (
+        context: Context,
+        completion: *Completion,
+        result: void,
+    ) void,
+    completion: *Completion,
+) void {
+    self.submit(
+        context,
+        callback,
+        completion,
+        .nextTick,
+        .{},
         struct {
             fn doOperation(_: anytype) void {}
         },

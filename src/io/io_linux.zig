@@ -999,6 +999,16 @@ const Operation = union(enum) {
         buffer: []const u8,
         offset: u64,
     },
+
+    pub fn slice(this: Operation) []const u8 {
+        return switch (this) {
+            .write => |op| op.buffer,
+            .send => |op| op.buffer,
+            .recv => |op| op.buffer,
+            .read => |op| op.buffer,
+            else => &[_]u8{},
+        };
+    }
 };
 
 pub const AcceptError = error{

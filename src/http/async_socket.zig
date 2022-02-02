@@ -448,8 +448,19 @@ pub const SSL = struct {
 
         if (this.pending_read_buffer.len > 0) {
             reader: {
-                this.pending_read_result = this.doPayloadRead(this.pending_read_buffer) catch |err| brk: {
-                    if (err == error.WouldBlock) break :reader;
+                var count: u32 = 0;
+                this.pending_read_result = this.doPayloadRead(this.pending_read_buffer, &count) catch |err| brk: {
+                    if (err == error.WouldBlock) {
+                        // partial reads are a success case
+                        // allow the client to ask for more
+                        if (count > 0) {
+                            this.pending_read_result = count;
+                            this.read_frame.maybeResume();
+                            break :reader;
+                        }
+                        this.pending_read_buffer = this.pending_read_buffer[count..];
+                        break :reader;
+                    }
                     break :brk err;
                 };
 
@@ -479,7 +490,7 @@ pub const SSL = struct {
         return rv;
     }
 
-    pub fn doPayloadRead(this: *SSL, buffer: []u8) anyerror!u32 {
+    pub fn doPayloadRead(this: *SSL, buffer: []u8, count: *u32) anyerror!u32 {
         if (this.ssl_bio.?.socket_recv_error != null) {
             const pending = this.ssl_bio.?.socket_recv_error.?;
             this.ssl_bio.?.socket_recv_error = null;
@@ -511,6 +522,7 @@ pub const SSL = struct {
         // processed immediately, while the information still available in OpenSSL's
         // error queue.
         var result: anyerror!u32 = total_bytes_read;
+        count.* = total_bytes_read;
 
         if (ssl_ret <= 0) {
             switch (ssl_err) {
@@ -689,19 +701,14 @@ pub const SSL = struct {
         }
     }
 
-    fn readIfReady(this: *SSL, buf: []u8) anyerror!u32 {
-        return this.doPayloadRead(buf) catch |err| {
-            return err;
-        };
-    }
-
     pub fn read(this: *SSL, buf_: []u8, offset: u64) !u32 {
         var buf = buf_[offset..];
+        var read_bytes: u32 = 0;
 
-        return this.readIfReady(buf) catch |err| {
+        return this.doPayloadRead(buf, &read_bytes) catch |err| {
             if (err == error.WouldBlock) {
                 this.pending_read_result = 0;
-                this.pending_read_buffer = buf;
+                this.pending_read_buffer = buf[read_bytes..];
 
                 suspend {
                     this.read_frame.set(@frame());

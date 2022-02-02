@@ -15,7 +15,7 @@
       "request": "launch",
       "name": "fetch debug",
       "program": "${workspaceFolder}/misctools/fetch",
-      "args": ["https://lodash.com", "--verbose"],
+      "args": ["https://example.com", "--verbose"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"
     },

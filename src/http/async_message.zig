@@ -2,7 +2,7 @@ const std = @import("std");
 const ObjectPool = @import("../pool.zig").ObjectPool;
 const AsyncIO = @import("io");
 
-pub const buffer_pool_len = std.math.maxInt(u16) - 64;
+pub const buffer_pool_len = std.math.maxInt(u16);
 pub const BufferPoolBytes = [buffer_pool_len]u8;
 pub const BufferPool = ObjectPool(BufferPoolBytes, null, false, 4);
 

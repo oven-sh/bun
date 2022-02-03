@@ -804,6 +804,14 @@ pub fn processResponse(this: *HTTPClient, comptime report_progress: bool, compti
 
             var last_read: usize = 0;
             {
+                const buffered_amount = client.bufferedReadAmount();
+                if (buffered_amount > 0) {
+                    var end = request_buffer[read_length..];
+                    if (buffered_amount <= end.len) {
+                        std.debug.assert(client.read(end, buffered_amount) catch unreachable == buffered_amount);
+                        response.bytes_read += @intCast(c_int, buffered_amount);
+                    }
+                }
                 var remainder = request_buffer[@intCast(usize, response.bytes_read)..read_length];
                 last_read = remainder.len;
                 try buffer.inflate(std.math.max(remainder.len, 2048));
@@ -824,20 +832,86 @@ pub fn processResponse(this: *HTTPClient, comptime report_progress: bool, compti
             var total_size = rsize;
 
             while (pret == -2) {
-                if (buffer.list.items[total_size..].len < @intCast(usize, decoder.bytes_left_in_chunk) or buffer.list.items[total_size..].len < 512) {
-                    try buffer.inflate(std.math.max(total_size * 2, 1024));
+                var buffered_amount = client.bufferedReadAmount();
+                if (buffer.list.items.len < total_size + 512 or buffer.list.items[total_size..].len < @intCast(usize, @maximum(decoder.bytes_left_in_chunk, buffered_amount)) or buffer.list.items[total_size..].len < 512) {
+                    try buffer.inflate(std.math.max((buffered_amount + total_size) * 2, 1024));
+                    if (comptime Environment.isDebug) {
+                        var temp_buffer = buffer;
+                        temp_buffer.list.expandToCapacity();
+                        @memset(temp_buffer.list.items.ptr + buffer.list.items.len, 0, temp_buffer.list.items.len - buffer.list.items.len);
+                        buffer = temp_buffer;
+                    }
                     buffer.list.expandToCapacity();
                 }
 
-                rret = try client.read(buffer.list.items, total_size);
+                // while (true) {
+
+                if (extremely_verbose) {
+                    Output.prettyErrorln(
+                        \\  Buffered: {d}
+                        \\   Chunk
+                        \\    {d} left / {d} bytes total (buffer: {d})
+                        \\   Read
+                        \\    {d} bytes / {d} total ({d} parsed)
+                    , .{
+                        client.bufferedReadAmount(),
+                        decoder.bytes_left_in_chunk,
+                        total_size,
+                        buffer.list.items.len,
+                        rret,
+                        total_size,
+                        total_size,
+                    });
+                }
+
+                var remainder = buffer.list.items[total_size..];
+                const errorable_read = client.read(remainder, 0);
+
+                rret = errorable_read catch |err| {
+                    if (extremely_verbose) Output.prettyErrorln("Chunked transfoer encoding error: {s}", .{@errorName(err)});
+                    return err;
+                };
+
+                buffered_amount = client.bufferedReadAmount();
+                if (buffered_amount > 0) {
+                    try buffer.list.ensureTotalCapacity(default_allocator, rret + total_size + buffered_amount);
+                    buffer.list.expandToCapacity();
+                    remainder = buffer.list.items[total_size..];
+                    remainder = remainder[rret..][0..buffered_amount];
+                    rret += client.read(remainder, 0) catch |err| {
+                        if (extremely_verbose) Output.prettyErrorln("Chunked transfoer encoding error: {s}", .{@errorName(err)});
+                        return err;
+                    };
+                }
 
                 if (rret == 0) {
+                    if (extremely_verbose) Output.prettyErrorln("Unexpected 0", .{});
+
                     return error.ChunkedEncodingError;
                 }
 
                 rsize = rret;
                 pret = picohttp.phr_decode_chunked(&decoder, buffer.list.items[total_size..].ptr, &rsize);
-                if (pret == -1) return error.ChunkedEncodingParseError;
+                if (pret == -1) {
+                    if (extremely_verbose)
+                        Output.prettyErrorln(
+                            \\ buffered: {d} 
+                            \\ rsize: {d}
+                            \\ Read: {d} bytes / {d} total ({d} parsed)
+                            \\ Chunk {d} left
+                            \\ {}
+                        , .{
+                            client.bufferedReadAmount(),
+                            rsize,
+                            rret,
+                            buffer.list.items.len,
+                            total_size,
+                            decoder.bytes_left_in_chunk,
+
+                            decoder,
+                        });
+                    return error.ChunkedEncodingParseError;
+                }
 
                 total_size += rsize;
 

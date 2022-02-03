@@ -356,6 +356,7 @@ pub const Bio = struct {
         }
 
         var this = cast(this_bio);
+        assert(len_ < buffer_pool_len);
 
         var socket_recv_len = this.socket_recv_len;
         var bio_read_offset = this.bio_read_offset;
@@ -408,8 +409,20 @@ pub const Bio = struct {
 
         if (len__ > @truncate(u32, bytes.len)) {
             if (this.pending_reads == 0) {
+                // if this is true, we will never have enough space
+                if (socket_recv_len_ + len__ >= buffer_pool_len and len_ < buffer_pool_len) {
+                    const unread = socket_recv_len_ - bio_read_offset;
+                    // TODO: can we use virtual memory magic to skip the copy here?
+                    std.mem.copyBackwards(u8, this.recv_buffer.?.data[0..unread], bytes);
+                    bio_read_offset = 0;
+                    this.bio_read_offset = 0;
+                    this.socket_recv_len = @intCast(c_int, unread);
+                    socket_recv_len = this.socket_recv_len;
+                    bytes = this.recv_buffer.?.data[0..unread];
+                }
+
                 this.pending_reads += 1;
-                this.scheduleSocketRead(len);
+                this.scheduleSocketRead(@maximum(len__ - @truncate(u32, bytes.len), 1));
             }
 
             boring.BIO_set_retry_read(this_bio);

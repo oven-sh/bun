@@ -252,6 +252,10 @@ const Reader = struct {
     }
 };
 
+pub inline fn bufferedReadAmount(_: *AsyncSocket) usize {
+    return 0;
+}
+
 pub fn read(
     this: *AsyncSocket,
     bytes: []u8,
@@ -448,17 +452,19 @@ pub const SSL = struct {
 
         if (this.pending_read_buffer.len > 0) {
             reader: {
-                var count: u32 = 0;
+                var count: u32 = this.pending_read_result catch unreachable;
                 this.pending_read_result = this.doPayloadRead(this.pending_read_buffer, &count) catch |err| brk: {
+                    this.pending_read_result = count;
+
                     if (err == error.WouldBlock) {
-                        // partial reads are a success case
-                        // allow the client to ask for more
-                        if (count > 0) {
-                            this.pending_read_result = count;
-                            this.read_frame.maybeResume();
-                            break :reader;
-                        }
-                        this.pending_read_buffer = this.pending_read_buffer[count..];
+
+                        // // partial reads are a success case
+                        // // allow the client to ask for more
+                        // if (count > 0) {
+                        //     this.read_frame.maybeResume();
+                        //     break :reader;
+                        // }
+
                         break :reader;
                     }
                     break :brk err;
@@ -497,7 +503,7 @@ pub const SSL = struct {
             return pending;
         }
 
-        var total_bytes_read: u32 = 0;
+        var total_bytes_read: u32 = count.*;
         var ssl_ret: c_int = 0;
         var ssl_err: c_int = 0;
         const buf_len = @truncate(u32, buffer.len);
@@ -663,6 +669,14 @@ pub const SSL = struct {
         return this.unencrypted_bytes_to_send.?.writeAll(buffer_).written;
     }
 
+    pub fn bufferedReadAmount(this: *SSL) usize {
+        const pend = boring.SSL_pending(this.ssl);
+        return if (pend <= 0)
+            0
+        else
+            @intCast(usize, pend);
+    }
+
     pub fn send(this: *SSL) anyerror!usize {
         this.unencrypted_bytes_to_send.?.sent = 0;
         this.pending_write_buffer = this.unencrypted_bytes_to_send.?.buf[this.unencrypted_bytes_to_send.?.sent..this.unencrypted_bytes_to_send.?.used];
@@ -713,18 +727,18 @@ pub const SSL = struct {
     pub fn read(this: *SSL, buf_: []u8, offset: u64) !u32 {
         var buf = buf_[offset..];
         var read_bytes: u32 = 0;
+        this.pending_read_result = 0;
 
         return this.doPayloadRead(buf, &read_bytes) catch |err| {
             if (err == error.WouldBlock) {
-                this.pending_read_result = 0;
-                this.pending_read_buffer = buf[read_bytes..];
+                this.pending_read_result = (this.pending_read_result catch unreachable) + read_bytes;
+                this.pending_read_buffer = buf;
 
                 suspend {
                     this.read_frame.set(@frame());
                 }
                 const result = this.pending_read_result;
                 this.pending_read_result = 0;
-                this.pending_read_buffer = &[_]u8{};
 
                 return result;
             }

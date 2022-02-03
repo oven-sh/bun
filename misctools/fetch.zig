@@ -31,6 +31,7 @@ const params = [_]clap.Param(clap.Help){
     clap.parseParam("-r, --max-redirects <STR>  Maximum number of redirects to follow (default: 128)") catch unreachable,
     clap.parseParam("-b, --body <STR>           HTTP request body as a string") catch unreachable,
     clap.parseParam("-f, --file <STR>           File path to load as body") catch unreachable,
+    clap.parseParam("-q, --quiet  Quiet mode") catch unreachable,
     clap.parseParam("--no-gzip                  Disable gzip") catch unreachable,
     clap.parseParam("--no-deflate               Disable deflate") catch unreachable,
     clap.parseParam("--no-compression           Disable gzip & deflate") catch unreachable,
@@ -70,6 +71,7 @@ pub const Arguments = struct {
     headers_buf: string,
     body: string = "",
     turbo: bool = false,
+    quiet: bool = false,
 
     pub fn parse(allocator: std.mem.Allocator) !Arguments {
         var diag = clap.Diagnostic{};
@@ -159,6 +161,7 @@ pub const Arguments = struct {
             .headers_buf = "",
             .body = body_string,
             .turbo = args.flag("--turbo"),
+            .quiet = args.flag("--quiet"),
         };
     }
 };
@@ -213,7 +216,7 @@ pub fn main() anyerror!void {
     while (true) {
         while (channel.tryReadItem() catch null) |http| {
             var response = http.response orelse {
-                Output.printErrorln("<r><red>error<r><d>:<r> <b>HTTP response missing<r>", .{});
+                Output.prettyErrorln("<r><red>error<r><d>:<r> <b>HTTP response missing<r>", .{});
                 Output.flush();
                 std.os.exit(1);
             };
@@ -227,10 +230,12 @@ pub fn main() anyerror!void {
                 },
             }
 
-            Output.flush();
-            Output.disableBuffering();
-            try Output.writer().writeAll(response_body_string.list.items);
-            Output.enableBuffering();
+            if (!args.quiet) {
+                Output.flush();
+                Output.disableBuffering();
+                try Output.writer().writeAll(response_body_string.list.items);
+                Output.enableBuffering();
+            }
             return;
         }
     }

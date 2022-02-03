@@ -87,7 +87,7 @@ static bool isTaggedUTF16Ptr(const unsigned char *ptr) {
   return (reinterpret_cast<uintptr_t>(ptr) & (static_cast<uint64_t>(1) << 63)) != 0;
 }
 
-// Do we need to upcase the string?
+// Do we need to convert the string from UTF-8 to UTF-16?
 static bool isTaggedUTF8Ptr(const unsigned char *ptr) {
   return (reinterpret_cast<uintptr_t>(ptr) & (static_cast<uint64_t>(1) << 61)) != 0;
 }

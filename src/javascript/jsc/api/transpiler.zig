@@ -530,6 +530,10 @@ pub fn constructor(
         return null;
     };
 
+    if (transpiler_options.macro_map.count() > 0) {
+        bundler.options.macro_remap = transpiler_options.macro_map;
+    }
+
     var transpiler = getAllocator(ctx).create(Transpiler) catch unreachable;
     transpiler.* = Transpiler{
         .transpiler_options = transpiler_options,
@@ -537,10 +541,6 @@ pub fn constructor(
         .arena = args.arena,
         .scan_pass_result = ScanPassResult.init(getAllocator(ctx)),
     };
-
-    if (transpiler_options.macro_map.count() > 0) {
-        bundler.options.macro_remap = transpiler_options.macro_map;
-    }
 
     return Class.make(ctx, transpiler);
 }
@@ -907,6 +907,9 @@ pub fn scanImports(
         this.bundler.options.jsx;
 
     var opts = JSParser.Parser.Options.init(jsx, loader);
+    if (this.bundler.macro_context == null) {
+        this.bundler.macro_context = JSAst.Macro.MacroContext.init(&this.bundler);
+    }
     opts.macro_context = &this.bundler.macro_context.?;
     var log = logger.Log.init(getAllocator(ctx));
     defer log.deinit();

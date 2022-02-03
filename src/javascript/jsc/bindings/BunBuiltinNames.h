@@ -56,6 +56,20 @@ using namespace JSC;
     macro(unshift) \
     macro(resume) \
     macro(pause) \
+    macro(basename) \
+    macro(dirname) \
+    macro(file) \
+    macro(extname) \
+    macro(format) \
+    macro(isAbsolute) \
+    macro(join) \
+    macro(normalize) \
+    macro(parse) \
+    macro(relative) \
+    macro(resolve) \
+    macro(sep) \
+    macro(delimiter) \
+    macro(toNamespacedPath) \
     BUN_ADDITIONAL_PRIVATE_IDENTIFIERS(macro) \
 
 class BunBuiltinNames {

@@ -500,8 +500,13 @@ JSC::JSObject *GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
   if (index != WTF::notFound) {
     metaProperties->putDirect(vm, clientData->builtinNames().dirPublicName(),
                               JSC::jsSubstring(globalObject, keyString, 0, index));
+    metaProperties->putDirect(
+      vm, clientData->builtinNames().filePublicName(),
+      JSC::jsSubstring(globalObject, keyString, index + 1, keyString->length() - index - 1));
   }
+
   metaProperties->putDirect(vm, clientData->builtinNames().pathPublicName(), key);
+
   RETURN_IF_EXCEPTION(scope, nullptr);
 
   // metaProperties->putDirect(vm, Identifier::fromString(vm, "resolve"),

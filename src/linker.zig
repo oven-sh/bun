@@ -258,6 +258,13 @@ pub const Linker = struct {
 
                     if (linker.options.platform.isBun()) {
                         if (strings.eqlComptime(import_record.path.text, "fs") or strings.eqlComptime(import_record.path.text, "node:fs")) {
+                            import_record.path.text = "node:fs";
+                            externals.append(record_index) catch unreachable;
+                            continue;
+                        }
+
+                        if (strings.eqlComptime(import_record.path.text, "path") or strings.eqlComptime(import_record.path.text, "node:path")) {
+                            import_record.path.text = "node:path";
                             externals.append(record_index) catch unreachable;
                             continue;
                         }

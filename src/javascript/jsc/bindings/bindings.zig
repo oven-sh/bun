@@ -89,6 +89,27 @@ pub const ZigString = extern struct {
 
     pub const shim = Shimmer("", "ZigString", @This());
 
+    pub const Slice = struct {
+        allocator: std.mem.Allocator,
+        ptr: [*]const u8,
+        len: u32,
+        allocated: bool = false,
+
+        pub const empty = Slice{ .allocator = _global.default_allocator, .ptr = undefined, .len = 0, .allocated = false };
+
+        pub fn slice(this: Slice) []const u8 {
+            return this.ptr[0..this.len];
+        }
+
+        pub fn deinit(this: *Slice) void {
+            if (!this.allocated) {
+                return;
+            }
+
+            this.allocator.free(this.slice());
+        }
+    };
+
     pub const name = "ZigString";
     pub const namespace = "";
 
@@ -98,6 +119,10 @@ pub const ZigString = extern struct {
 
     pub inline fn utf16Slice(this: *const ZigString) []align(1) const u16 {
         return @ptrCast([*]align(1) const u16, untagged(this.ptr))[0..this.len];
+    }
+
+    pub inline fn isEmpty(this: *const ZigString) bool {
+        return this.len == 0;
     }
 
     pub fn fromStringPointer(ptr: StringPointer, buf: string, to: *ZigString) void {
@@ -171,6 +196,25 @@ pub const ZigString = extern struct {
 
     pub fn slice(this: *const ZigString) []const u8 {
         return untagged(this.ptr)[0..@minimum(this.len, std.math.maxInt(u32))];
+    }
+
+    pub fn toSlice(this: ZigString, allocator: std.mem.Allocator) Slice {
+        if (is16Bit(&this)) {
+            var buffer = std.fmt.allocPrint(allocator, "{}", .{this}) catch unreachable;
+            return Slice{
+                .ptr = buffer.ptr,
+                .len = @truncate(u32, buffer.len),
+                .allocated = true,
+                .allocator = allocator,
+            };
+        }
+
+        return Slice{
+            .ptr = untagged(this.ptr),
+            .len = @truncate(u32, this.len),
+            .allocated = false,
+            .allocator = allocator,
+        };
     }
 
     pub fn sliceZBuf(this: ZigString, buf: *[std.fs.MAX_PATH_BYTES]u8) ![:0]const u8 {
@@ -1509,6 +1553,20 @@ pub const JSValue = enum(i64) {
         return @intToEnum(JSValue, @intCast(i64, @ptrToInt(ptr)));
     }
 
+    pub const Formatter = struct {
+        value: JSValue,
+        global: *JSGlobalObject,
+
+        pub fn format(formatter: Formatter, comptime fmt: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
+            const self = formatter.value;
+            const kind = jsType(self);
+            if (kind.isStringLike()) {
+                var zig_str = self.getZigString();
+                return try zig_str.format(fmt, opts, writer);
+            }
+        }
+    };
+
     pub fn to(this: JSValue, comptime T: type) T {
         return switch (comptime T) {
             u32 => toU32(this),
@@ -1769,6 +1827,10 @@ pub const JSValue = enum(i64) {
         var str = ZigString.init("");
         this.toZigString(&str, global);
         return str;
+    }
+
+    pub inline fn toSlice(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) ZigString.Slice {
+        return getZigString(this, global).toSlice(allocator);
     }
 
     // On exception, this returns the empty string.

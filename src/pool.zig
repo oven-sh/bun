@@ -107,7 +107,7 @@ fn SinglyLinkedList(comptime T: type, comptime Parent: type) type {
     };
 }
 
-const log_allocations = true;
+const log_allocations = false;
 
 pub fn ObjectPool(
     comptime Type: type,

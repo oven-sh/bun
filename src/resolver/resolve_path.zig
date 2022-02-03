@@ -254,7 +254,7 @@ pub fn relativeToCommonPath(
 
     if (normalized_to.len > last_common_separator + 1) {
         const tail = normalized_to[last_common_separator..];
-        const insert_leading_slash = last_common_separator > 0 and normalized_to[last_common_separator - 1] != separator;
+        const insert_leading_slash = last_common_separator > 0 and normalized_to[last_common_separator - 1] != separator and tail[0] != separator;
 
         if (insert_leading_slash) {
             buf[out_slice.len] = separator;
@@ -521,6 +521,32 @@ pub fn normalizeString(str: []const u8, comptime allow_above_root: bool, comptim
     return normalizeStringBuf(str, &parser_buffer, allow_above_root, _platform, false);
 }
 
+pub fn normalizeBuf(str: []const u8, buf: []u8, comptime _platform: Platform) []u8 {
+    if (buf.len == 0) {
+        buf[0] = '.';
+        return buf[0..1];
+    }
+
+    const is_absolute = if (_platform == .posix or _platform == .auto)
+        (buf[0] == _platform.separator())
+    else
+        std.fs.path.isAbsoluteWindows(str);
+
+    const trailing_separator =
+        buf[buf.len - 1] == _platform.separator();
+
+    if (is_absolute and trailing_separator)
+        return normalizeStringBuf(str, buf, true, _platform, true);
+
+    if (is_absolute and !trailing_separator)
+        return normalizeStringBuf(str, buf, true, _platform, false);
+
+    if (!is_absolute and !trailing_separator)
+        return normalizeStringBuf(str, buf, false, _platform, false);
+
+    return normalizeStringBuf(str, buf, false, _platform, true);
+}
+
 pub fn normalizeStringBuf(str: []const u8, buf: []u8, comptime allow_above_root: bool, comptime _platform: Platform, comptime preserve_trailing_slash: anytype) []u8 {
     const platform = comptime _platform.resolve();
 
@@ -528,7 +554,13 @@ pub fn normalizeStringBuf(str: []const u8, buf: []u8, comptime allow_above_root:
         .auto => unreachable,
 
         .windows => {
-            @compileError("Not implemented");
+            // @compileError("Not implemented");
+            return normalizeStringLooseBuf(
+                str,
+                buf,
+                allow_above_root,
+                preserve_trailing_slash,
+            );
         },
         .posix => {
             return normalizeStringLooseBuf(
@@ -620,7 +652,7 @@ pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [
     if (_parts[0].len > 0 and _parts[0][0] == _platform.separator()) {
         const out = switch (comptime platform) {
             // .loose =>
-            .windows => @compileError("Not implemented yet"),
+            // .windows => @compileError("Not implemented yet"),
             else => normalizeStringLooseBuf(parser_join_input_buffer[0..written], buf[1..], false, false),
         };
         buf[0] = _platform.separator();
@@ -629,7 +661,7 @@ pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [
     } else {
         return switch (platform) {
             else => normalizeStringLooseBuf(parser_join_input_buffer[0..written], buf[0..], false, false),
-            .windows => @compileError("Not implemented yet"),
+            // .windows => @compileError("Not implemented yet"),
         };
     }
 }
@@ -956,6 +988,7 @@ test "relative" {
     _ = t.expect("index.js", try relativeAlloc(default_allocator, "/app/public/", "/app/public/index.js"), @src());
     _ = t.expect("..", try relativeAlloc(default_allocator, "/app/public/index.js", "/app/public/"), @src());
     _ = t.expect("../../src/bacon.ts", try relativeAlloc(default_allocator, "/app/public/index.html", "/app/src/bacon.ts"), @src());
+    _ = t.expect("../../../../bacon/foo/baz", try relativeAlloc(default_allocator, "/app/foo/bar/baz.js", "/bacon/foo/baz"), @src());
 }
 
 test "longestCommonPath" {

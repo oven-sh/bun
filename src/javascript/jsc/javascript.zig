@@ -356,6 +356,18 @@ pub const Bun = struct {
         return JSValue.createStringArray(ctx.ptr(), styles.ptr, styles.len, true).asRef();
     }
 
+    pub fn newPath(
+        _: void,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        args: []const js.JSValueRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        const is_windows = args.len == 1 and JSValue.fromRef(args[0]).toBoolean();
+        return Node.Path.create(ctx.ptr(), is_windows).asObjectRef();
+    }
+
     pub fn readFileAsStringCallback(
         ctx: js.JSContextRef,
         buf_z: [:0]const u8,
@@ -704,6 +716,10 @@ pub const Bun = struct {
                     .name = "getRouteFiles",
                     .@"return" = "string[]",
                 },
+            },
+            ._Path = .{
+                .rfn = Bun.newPath,
+                .ts = d.ts{},
             },
             .getRouteNames = .{
                 .rfn = Bun.getRouteNames,
@@ -1596,6 +1612,15 @@ pub const VirtualMachine = struct {
                 .hash = 0,
                 .bytecodecache_fd = 0,
             };
+        } else if (strings.eqlComptime(_specifier, "node:path")) {
+            return ResolvedSource{
+                .allocator = null,
+                .source_code = ZigString.init(Node.Path.code),
+                .specifier = ZigString.init("node:path"),
+                .source_url = ZigString.init("node:path"),
+                .hash = 0,
+                .bytecodecache_fd = 0,
+            };
         }
 
         const specifier = normalizeSpecifier(_specifier);
@@ -1746,9 +1771,14 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = specifier;
             return;
-        } else if (strings.eqlComptime(specifier, "fs") or strings.eqlComptime(specifier, "node:fs")) {
+        } else if (strings.eqlComptime(specifier, "node:fs")) {
             ret.result = null;
             ret.path = "node:fs";
+            return;
+        }
+        if (strings.eqlComptime(specifier, "node:path")) {
+            ret.result = null;
+            ret.path = "node:path";
             return;
         }
 

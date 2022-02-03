@@ -177,6 +177,8 @@ pub const NodeReadableStream = JSC.Node.Readable.State;
 /// do not use this reference directly, use JSC.Node.Writable
 pub const NodeWritableStream = JSC.Node.Writable.State;
 
+pub const NodePath = JSC.Node.Path;
+
 pub fn Errorable(comptime Type: type) type {
     return extern struct {
         result: Result,
@@ -1824,5 +1826,6 @@ comptime {
         _ = Process.setTitle;
         std.testing.refAllDecls(NodeReadableStream);
         std.testing.refAllDecls(NodeWritableStream);
+        std.testing.refAllDecls(NodePath);
     }
 }

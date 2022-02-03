@@ -13,10 +13,10 @@ const os = std.os;
 const Buffer = JSC.MarkedArrayBuffer;
 const IdentityContext = @import("../../../identity_context.zig").IdentityContext;
 const logger = @import("../../../logger.zig");
+const Fs = @import("../../../fs.zig");
 const Shimmer = @import("../bindings/shimmer.zig").Shimmer;
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const meta = _global.meta;
-
 /// Time in seconds. Not nanos!
 pub const TimeLike = c_int;
 pub const Mode = if (Environment.isLinux) u32 else std.os.mode_t;
@@ -1963,6 +1963,405 @@ pub const Readable = struct {
     };
 };
 
+pub const Path = struct {
+    pub const shim = Shimmer("Bun", "Path", @This());
+    pub const name = "Bun__Path";
+    pub const include = "Path.h";
+    pub const namespace = shim.namespace;
+    const PathHandler = @import("../../../resolver/resolve_path.zig");
+    const StringBuilder = @import("../../../string_builder.zig");
+    pub const code = @embedFile("../path.exports.js");
+
+    pub fn create(globalObject: *JSC.JSGlobalObject, isWindows: bool) callconv(.C) JSC.JSValue {
+        return shim.cppFn("create", .{ globalObject, isWindows });
+    }
+
+    pub fn basename(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
+        if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+        if (args_len == 0) {
+            return JSC.toInvalidArguments("path is required", .{}, globalThis.ref());
+        }
+        var stack_fallback = std.heap.stackFallback(4096, JSC.getAllocator(globalThis.ref()));
+        var allocator = stack_fallback.get();
+
+        var arguments: []JSC.JSValue = args_ptr[0..args_len];
+        var path = arguments[0].toSlice(globalThis, allocator);
+        defer path.deinit();
+        var extname_ = if (args_len > 1) arguments[1].toSlice(globalThis, allocator) else JSC.ZigString.Slice.empty;
+        defer extname_.deinit();
+
+        var base_slice = path.slice();
+        if (extname_.len > 0) {
+            if (strings.endsWith(base_slice, extname_.slice())) {
+                base_slice = base_slice[0 .. base_slice.len - extname_.len];
+            }
+        }
+        var out: []const u8 = undefined;
+
+        if (!isWindows) {
+            out = std.fs.path.basenamePosix(base_slice);
+        } else {
+            out = std.fs.path.basenameWindows(base_slice);
+        }
+
+        return JSC.ZigString.init(out).toValueGC(globalThis);
+    }
+    pub fn dirname(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
+        if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+        if (args_len == 0) {
+            return JSC.toInvalidArguments("path is required", .{}, globalThis.ref());
+        }
+        var stack_fallback = std.heap.stackFallback(4096, JSC.getAllocator(globalThis.ref()));
+        var allocator = stack_fallback.get();
+
+        var arguments: []JSC.JSValue = args_ptr[0..args_len];
+        var path = arguments[0].toSlice(globalThis, allocator);
+        defer path.deinit();
+
+        const base_slice = path.slice();
+
+        const out = if (!isWindows)
+            std.fs.path.dirnameWindows(base_slice) orelse "C:\\"
+        else
+            std.fs.path.dirnamePosix(base_slice) orelse "/";
+
+        return JSC.ZigString.init(out).toValueGC(globalThis);
+    }
+    pub fn extname(globalThis: *JSC.JSGlobalObject, _: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
+        if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+        if (args_len == 0) {
+            return JSC.toInvalidArguments("path is required", .{}, globalThis.ref());
+        }
+        var stack_fallback = std.heap.stackFallback(4096, JSC.getAllocator(globalThis.ref()));
+        var allocator = stack_fallback.get();
+        var arguments: []JSC.JSValue = args_ptr[0..args_len];
+
+        var path = arguments[0].toSlice(globalThis, allocator);
+        defer path.deinit();
+
+        const base_slice = path.slice();
+
+        return JSC.ZigString.init(std.fs.path.extension(base_slice)).toValueGC(globalThis);
+    }
+    pub fn format(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
+        if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+        if (args_len == 0) {
+            return JSC.toInvalidArguments("pathObject is required", .{}, globalThis.ref());
+        }
+        var path_object: JSC.JSValue = args_ptr[0];
+        const js_type = path_object.jsType();
+        if (!js_type.isObject()) {
+            return JSC.toInvalidArguments("pathObject is required", .{}, globalThis.ref());
+        }
+
+        var stack_fallback = std.heap.stackFallback(4096, JSC.getAllocator(globalThis.ref()));
+        var allocator = stack_fallback.get();
+        var dir = JSC.ZigString.Empty;
+        var name_ = JSC.ZigString.Empty;
+        var ext = JSC.ZigString.Empty;
+        var name_with_ext = JSC.ZigString.Empty;
+
+        var insert_separator = true;
+        if (path_object.get(globalThis, "dir")) |prop| {
+            prop.toZigString(&dir, globalThis);
+            insert_separator = !dir.isEmpty();
+        } else if (path_object.get(globalThis, "root")) |prop| {
+            prop.toZigString(&dir, globalThis);
+        }
+
+        if (path_object.get(globalThis, "base")) |prop| {
+            prop.toZigString(&name_with_ext, globalThis);
+        } else {
+            var had_ext = false;
+            if (path_object.get(globalThis, "ext")) |prop| {
+                prop.toZigString(&ext, globalThis);
+                had_ext = !ext.isEmpty();
+            }
+
+            if (path_object.get(globalThis, "name")) |prop| {
+                if (had_ext) {
+                    prop.toZigString(&name_, globalThis);
+                } else {
+                    prop.toZigString(&name_with_ext, globalThis);
+                }
+            }
+        }
+
+        if (dir.isEmpty()) {
+            if (!name_with_ext.isEmpty()) {
+                return name_with_ext.toValueAuto(globalThis);
+            }
+
+            if (name_.isEmpty()) {
+                return JSC.ZigString.Empty.toValue(globalThis);
+            }
+            const out = std.fmt.allocPrint(allocator, "{s}{s}", .{ name_, ext }) catch unreachable;
+            defer allocator.free(out);
+            return JSC.ZigString.init(out).toValueGC(globalThis);
+        }
+
+        if (insert_separator) {
+            const separator = if (!isWindows) "/" else "\\";
+            if (name_with_ext.isEmpty()) {
+                const out = std.fmt.allocPrint(allocator, "{}{s}{}{}", .{ dir, separator, name_, ext }) catch unreachable;
+                defer allocator.free(out);
+                return JSC.ZigString.init(out).toValueGC(globalThis);
+            }
+
+            {
+                const out = std.fmt.allocPrint(allocator, "{}{s}{}", .{
+                    dir,
+                    separator,
+                    name_with_ext,
+                }) catch unreachable;
+                defer allocator.free(out);
+                return JSC.ZigString.init(out).toValueGC(globalThis);
+            }
+        }
+
+        if (name_with_ext.isEmpty()) {
+            const out = std.fmt.allocPrint(allocator, "{}{}{}", .{ dir, name_, ext }) catch unreachable;
+            defer allocator.free(out);
+            return JSC.ZigString.init(out).toValueGC(globalThis);
+        }
+
+        {
+            const out = std.fmt.allocPrint(allocator, "{}{}", .{
+                dir,
+                name_with_ext,
+            }) catch unreachable;
+            defer allocator.free(out);
+            return JSC.ZigString.init(out).toValueGC(globalThis);
+        }
+    }
+    pub fn isAbsolute(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
+        if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+        if (args_len == 0) return JSC.JSValue.jsBoolean(false);
+        var zig_str: JSC.ZigString = args_ptr[0].getZigString(globalThis);
+        if (zig_str.isEmpty()) return JSC.JSValue.jsBoolean(false);
+
+        if (!isWindows) {
+            return JSC.JSValue.jsBoolean(zig_str.slice()[0] == '/');
+        }
+
+        return JSC.JSValue.jsBoolean(isZigStringAbsoluteWindows(zig_str));
+    }
+    fn isZigStringAbsoluteWindows(zig_str: JSC.ZigString) bool {
+        if (zig_str.is16Bit()) {
+            var buf = [4]u16{ 0, 0, 0, 0 };
+            var u16_slice = zig_str.utf16Slice();
+
+            buf[0] = u16_slice[0];
+            if (u16_slice.len > 1)
+                buf[1] = u16_slice[1];
+
+            if (u16_slice.len > 2)
+                buf[2] = u16_slice[2];
+
+            if (u16_slice.len > 3)
+                buf[3] = u16_slice[3];
+
+            return std.fs.path.isAbsoluteWindowsWTF16(buf[0..@minimum(u16_slice.len, buf.len)]);
+        }
+
+        return std.fs.path.isAbsoluteWindows(zig_str.slice());
+    }
+    pub fn join(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
+        if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+
+        var stack_fallback_allocator = std.heap.stackFallback(
+            (32 * @sizeOf(string)),
+            heap_allocator,
+        );
+        var allocator = stack_fallback_allocator.get();
+        var arena = std.heap.ArenaAllocator.init(heap_allocator);
+        var arena_allocator = arena.allocator();
+        defer arena.deinit();
+        var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var to_join = allocator.alloc(string, args_len) catch unreachable;
+        for (args_ptr[0..args_len]) |arg, i| {
+            const zig_str: JSC.ZigString = arg.getZigString(globalThis);
+            if (zig_str.is16Bit()) {
+                // TODO: remove this string conversion
+                to_join[i] = zig_str.toSlice(arena_allocator).slice();
+            } else {
+                to_join[i] = zig_str.slice();
+            }
+        }
+
+        const out = if (!isWindows)
+            PathHandler.joinStringBuf(&buf, to_join, .posix)
+        else
+            PathHandler.joinStringBuf(&buf, to_join, .windows);
+
+        var out_str = JSC.ZigString.init(out);
+        out_str.detectEncoding();
+        return out_str.toValueGC(globalThis);
+    }
+    pub fn normalize(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
+        if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+        if (args_len == 0) return JSC.ZigString.init("").toValue(globalThis);
+
+        var zig_str: JSC.ZigString = args_ptr[0].getZigString(globalThis);
+        if (zig_str.len == 0) return JSC.ZigString.init("").toValue(globalThis);
+
+        var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var str_slice = zig_str.toSlice(heap_allocator);
+        defer str_slice.deinit();
+        var str = str_slice.slice();
+
+        const out = if (!isWindows)
+            PathHandler.normalizeBuf(str, &buf, .posix)
+        else
+            PathHandler.normalizeBuf(str, &buf, .windows);
+
+        var out_str = JSC.ZigString.init(out);
+        out_str.detectEncoding();
+        return out_str.toValueGC(globalThis);
+    }
+    pub fn parse(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
+        if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+        if (args_len == 0 or !args_ptr[0].jsType().isStringLike()) {
+            return JSC.toInvalidArguments("path string is required", .{}, globalThis.ref());
+        }
+        var path_slice: JSC.ZigString.Slice = args_ptr[0].toSlice(globalThis, heap_allocator);
+        defer path_slice.deinit();
+        var path = path_slice.slice();
+        var path_name = Fs.PathName.init(path);
+        var root = JSC.ZigString.init(path_name.dir);
+        const is_absolute = (isWindows and isZigStringAbsoluteWindows(root)) or (!isWindows and path_name.dir.len > 0 and path_name.dir[0] == '/');
+
+        var dir = JSC.ZigString.init(path_name.dir);
+        if (is_absolute) {
+            root = JSC.ZigString.Empty;
+            if (path_name.dir.len == 0)
+                dir = JSC.ZigString.init(if (isWindows) std.fs.path.sep_str_windows else std.fs.path.sep_str_posix);
+        }
+
+        var base = JSC.ZigString.init(path_name.base);
+        var name_ = JSC.ZigString.init(path_name.filename);
+        var ext = JSC.ZigString.init(path_name.ext);
+        var entries = [10]JSC.ZigString{
+            JSC.ZigString.init("dir"),
+            JSC.ZigString.init("root"),
+            JSC.ZigString.init("base"),
+            JSC.ZigString.init("name"),
+            JSC.ZigString.init("ext"),
+            dir,
+            root,
+            base,
+            name_,
+            ext,
+        };
+
+        var keys: []JSC.ZigString = entries[0..5];
+        var values: []JSC.ZigString = entries[5..10];
+        return JSC.JSValue.fromEntries(globalThis, keys.ptr, values.ptr, 5, true);
+    }
+    pub fn relative(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
+        if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+        var arguments = args_ptr[0..args_len];
+
+        if (args_len > 1 and JSC.JSValue.eqlValue(args_ptr[0], args_ptr[1]))
+            return JSC.ZigString.init(".").toValue(globalThis);
+
+        var from_slice: JSC.ZigString.Slice = if (args_len > 0) arguments[0].toSlice(globalThis, heap_allocator) else JSC.ZigString.Slice.empty;
+        defer from_slice.deinit();
+        var to_slice: JSC.ZigString.Slice = if (args_len > 1) arguments[1].toSlice(globalThis, heap_allocator) else JSC.ZigString.Slice.empty;
+        defer to_slice.deinit();
+
+        var from = from_slice.slice();
+        var to = to_slice.slice();
+
+        var out = if (!isWindows)
+            PathHandler.relativeNormalized(from, to, .posix, false)
+        else
+            PathHandler.relativeNormalized(from, to, .windows, false);
+
+        var out_str = JSC.ZigString.init(out);
+        out_str.detectEncoding();
+        return out_str.toValueGC(globalThis);
+    }
+
+    pub fn resolve(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
+        if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+        if (args_len < 2) return normalize(globalThis, isWindows, args_ptr, args_len);
+
+        var stack_fallback_allocator = std.heap.stackFallback(
+            (32 * @sizeOf(string)),
+            heap_allocator,
+        );
+        var allocator = stack_fallback_allocator.get();
+        var out_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        // TODO:
+        _ = isWindows;
+        var parts = allocator.alloc(string, args_len) catch unreachable;
+        defer allocator.free(parts);
+        var i: u16 = 0;
+        var arena = std.heap.ArenaAllocator.init(heap_allocator);
+        var arena_allocator = arena.allocator();
+        defer arena.deinit();
+
+        while (i < args_len) : (i += 1) {
+            parts[i] = args_ptr[0].toSlice(globalThis, arena_allocator).slice();
+        }
+
+        var out = JSC.ZigString.init(PathHandler.joinStringBuf(&out_buf, parts, .posix));
+        out.detectEncoding();
+        return out.toValueGC(globalThis);
+    }
+
+    pub const Export = shim.exportFunctions(.{
+        .@"basename" = basename,
+        .@"dirname" = dirname,
+        .@"extname" = extname,
+        .@"format" = format,
+        .@"isAbsolute" = isAbsolute,
+        .@"join" = join,
+        .@"normalize" = normalize,
+        .@"parse" = parse,
+        .@"relative" = relative,
+        .@"resolve" = resolve,
+    });
+
+    pub const Extern = [_][]const u8{"create"};
+
+    comptime {
+        if (!is_bindgen) {
+            @export(Path.basename, .{
+                .name = Export[0].symbol_name,
+            });
+            @export(Path.dirname, .{
+                .name = Export[1].symbol_name,
+            });
+            @export(Path.extname, .{
+                .name = Export[2].symbol_name,
+            });
+            @export(Path.format, .{
+                .name = Export[3].symbol_name,
+            });
+            @export(Path.isAbsolute, .{
+                .name = Export[4].symbol_name,
+            });
+            @export(Path.join, .{
+                .name = Export[5].symbol_name,
+            });
+            @export(Path.normalize, .{
+                .name = Export[6].symbol_name,
+            });
+            @export(Path.parse, .{
+                .name = Export[7].symbol_name,
+            });
+            @export(Path.relative, .{
+                .name = Export[8].symbol_name,
+            });
+            @export(Path.resolve, .{
+                .name = Export[9].symbol_name,
+            });
+        }
+    }
+};
+
 pub const Process = struct {
     pub fn getArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         if (JSC.VirtualMachine.vm.argv.len == 0)
@@ -2068,6 +2467,7 @@ comptime {
     std.testing.refAllDecls(Process);
     std.testing.refAllDecls(Stream);
     std.testing.refAllDecls(Readable);
+    std.testing.refAllDecls(Path);
     std.testing.refAllDecls(Writable);
     std.testing.refAllDecls(Writable.State);
     std.testing.refAllDecls(Readable.State);

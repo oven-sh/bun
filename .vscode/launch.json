@@ -6,7 +6,7 @@
       "request": "launch",
       "name": "HTTP bench",
       "program": "${workspaceFolder}/misctools/http_bench",
-      "args": ["https://example.com", "--count=80"],
+      "args": ["https://twitter.com", "--count=100"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"
     },
@@ -16,6 +16,33 @@
       "name": "fetch debug",
       "program": "${workspaceFolder}/misctools/fetch",
       "args": ["https://example.com", "--verbose"],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "fetch debug #2",
+      "program": "${workspaceFolder}/misctools/fetch",
+      "args": ["https://twitter.com", "--verbose"],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "fetch debug #13w",
+      "program": "${workspaceFolder}/misctools/fetch",
+      "args": ["http://127.0.0.1:8080/next.json", "--quiet", "--verbose"],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "fetch debug #12w",
+      "program": "${workspaceFolder}/misctools/fetch",
+      "args": ["https://registry.npmjs.org/next", "--quiet", "--verbose"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"
     },
@@ -78,7 +105,7 @@
       "request": "launch",
       "name": "bun run debug",
       "program": "bun-debug",
-      "args": ["run", "./integration/bunjs-only-snippets/some-fs.js"],
+      "args": ["run", "/tmp/bar.js"],
       // "args": ["--version"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"
@@ -245,7 +272,7 @@
         "--disable-bun.js",
         "--disable-hmr"
       ],
-      "cwd": "/Users/jarred/Build/big-app/apps/dazzle",
+      "cwd": "/Users/jarred/Build/lattice/apps/dazzle",
       "console": "internalConsole"
     },
     {
@@ -254,7 +281,7 @@
       "name": "Dazzle bun",
       "program": "bun-debug",
       "args": ["bun", "--use=next"],
-      "cwd": "/Users/jarred/Build/big-app/apps/dazzle",
+      "cwd": "/Users/jarred/Build/lattice/apps/dazzle",
       "console": "internalConsole",
       "env": { "GOMAXPROCS": "1" }
     },

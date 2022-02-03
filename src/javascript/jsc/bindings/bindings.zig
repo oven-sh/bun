@@ -161,6 +161,15 @@ pub const ZigString = extern struct {
         }
     }
 
+    pub fn markUTF8(this: *ZigString) void {
+        this.ptr = @intToPtr([*]const u8, @ptrToInt(this.ptr) | (1 << 61));
+    }
+
+    pub fn setOutputEncoding(this: *ZigString) void {
+        if (!this.is16Bit()) this.detectEncoding();
+        if (this.is16Bit()) this.markUTF8();
+    }
+
     pub inline fn isGloballyAllocated(this: ZigString) bool {
         return (@ptrToInt(this.ptr) & (1 << 62)) != 0;
     }
@@ -247,6 +256,12 @@ pub const ZigString = extern struct {
 
     pub fn toValueGC(this: *const ZigString, global: *JSGlobalObject) JSValue {
         return shim.cppFn("toValueGC", .{ this, global });
+    }
+
+    pub fn withEncoding(this: *const ZigString) ZigString {
+        var out = this.*;
+        out.setOutputEncoding();
+        return out;
     }
 
     pub fn toJSStringRef(this: *const ZigString) C_API.JSStringRef {

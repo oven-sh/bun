@@ -73,7 +73,8 @@ namespace Zig {
 static const unsigned char *untag(const unsigned char *ptr) {
   return reinterpret_cast<const unsigned char *>(
     ((reinterpret_cast<uintptr_t>(ptr) & ~(static_cast<uint64_t>(1) << 63) &
-      ~(static_cast<uint64_t>(1) << 62))));
+      ~(static_cast<uint64_t>(1) << 62)) &
+     ~(static_cast<uint64_t>(1) << 61)));
 }
 
 static const JSC::Identifier toIdentifier(ZigString str, JSC::JSGlobalObject *global) {
@@ -86,12 +87,18 @@ static bool isTaggedUTF16Ptr(const unsigned char *ptr) {
   return (reinterpret_cast<uintptr_t>(ptr) & (static_cast<uint64_t>(1) << 63)) != 0;
 }
 
+// Do we need to upcase the string?
+static bool isTaggedUTF8Ptr(const unsigned char *ptr) {
+  return (reinterpret_cast<uintptr_t>(ptr) & (static_cast<uint64_t>(1) << 61)) != 0;
+}
+
 static bool isTaggedExternalPtr(const unsigned char *ptr) {
   return (reinterpret_cast<uintptr_t>(ptr) & (static_cast<uint64_t>(1) << 62)) != 0;
 }
 
 static const WTF::String toString(ZigString str) {
   if (str.len == 0 || str.ptr == nullptr) { return WTF::String(); }
+  if (UNLIKELY(isTaggedUTF8Ptr(str.ptr))) { return WTF::String::fromUTF8(untag(str.ptr), str.len); }
 
   return !isTaggedUTF16Ptr(str.ptr)
            ? WTF::String(WTF::StringImpl::createWithoutCopying(untag(str.ptr), str.len))
@@ -101,6 +108,7 @@ static const WTF::String toString(ZigString str) {
 
 static const WTF::String toStringCopy(ZigString str) {
   if (str.len == 0 || str.ptr == nullptr) { return WTF::String(); }
+  if (UNLIKELY(isTaggedUTF8Ptr(str.ptr))) { return WTF::String::fromUTF8(untag(str.ptr), str.len); }
 
   return !isTaggedUTF16Ptr(str.ptr) ? WTF::String(WTF::StringImpl::create(untag(str.ptr), str.len))
                                     : WTF::String(WTF::StringImpl::create(

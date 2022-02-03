@@ -2097,7 +2097,8 @@ pub const Path = struct {
             }
             const out = std.fmt.allocPrint(allocator, "{s}{s}", .{ name_, ext }) catch unreachable;
             defer allocator.free(out);
-            return JSC.ZigString.init(out).toValueGC(globalThis);
+
+            return JSC.ZigString.init(out).withEncoding().toValueGC(globalThis);
         }
 
         if (insert_separator) {
@@ -2105,7 +2106,7 @@ pub const Path = struct {
             if (name_with_ext.isEmpty()) {
                 const out = std.fmt.allocPrint(allocator, "{}{s}{}{}", .{ dir, separator, name_, ext }) catch unreachable;
                 defer allocator.free(out);
-                return JSC.ZigString.init(out).toValueGC(globalThis);
+                return JSC.ZigString.init(out).withEncoding().toValueGC(globalThis);
             }
 
             {
@@ -2115,14 +2116,14 @@ pub const Path = struct {
                     name_with_ext,
                 }) catch unreachable;
                 defer allocator.free(out);
-                return JSC.ZigString.init(out).toValueGC(globalThis);
+                return JSC.ZigString.init(out).withEncoding().toValueGC(globalThis);
             }
         }
 
         if (name_with_ext.isEmpty()) {
             const out = std.fmt.allocPrint(allocator, "{}{}{}", .{ dir, name_, ext }) catch unreachable;
             defer allocator.free(out);
-            return JSC.ZigString.init(out).toValueGC(globalThis);
+            return JSC.ZigString.init(out).withEncoding().toValueGC(globalThis);
         }
 
         {
@@ -2131,7 +2132,7 @@ pub const Path = struct {
                 name_with_ext,
             }) catch unreachable;
             defer allocator.free(out);
-            return JSC.ZigString.init(out).toValueGC(globalThis);
+            return JSC.ZigString.init(out).withEncoding().toValueGC(globalThis);
         }
     }
     pub fn isAbsolute(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
@@ -2180,11 +2181,13 @@ pub const Path = struct {
         defer arena.deinit();
         var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         var to_join = allocator.alloc(string, args_len) catch unreachable;
+        var possibly_utf16 = false;
         for (args_ptr[0..args_len]) |arg, i| {
             const zig_str: JSC.ZigString = arg.getZigString(globalThis);
             if (zig_str.is16Bit()) {
                 // TODO: remove this string conversion
                 to_join[i] = zig_str.toSlice(arena_allocator).slice();
+                possibly_utf16 = true;
             } else {
                 to_join[i] = zig_str.slice();
             }
@@ -2196,7 +2199,10 @@ pub const Path = struct {
             PathHandler.joinStringBuf(&buf, to_join, .windows);
 
         var out_str = JSC.ZigString.init(out);
-        out_str.detectEncoding();
+        if (possibly_utf16) {
+            out_str.setOutputEncoding();
+        }
+
         return out_str.toValueGC(globalThis);
     }
     pub fn normalize(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
@@ -2217,7 +2223,7 @@ pub const Path = struct {
             PathHandler.normalizeBuf(str, &buf, .windows);
 
         var out_str = JSC.ZigString.init(out);
-        out_str.detectEncoding();
+        if (str_slice.allocated) out_str.setOutputEncoding();
         return out_str.toValueGC(globalThis);
     }
     pub fn parse(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
@@ -2242,6 +2248,11 @@ pub const Path = struct {
         var base = JSC.ZigString.init(path_name.base);
         var name_ = JSC.ZigString.init(path_name.filename);
         var ext = JSC.ZigString.init(path_name.ext);
+        dir.setOutputEncoding();
+        root.setOutputEncoding();
+        base.setOutputEncoding();
+        name_.setOutputEncoding();
+        ext.setOutputEncoding();
         var entries = [10]JSC.ZigString{
             JSC.ZigString.init("dir"),
             JSC.ZigString.init("root"),
@@ -2280,7 +2291,7 @@ pub const Path = struct {
             PathHandler.relativePlatform(from, to, .windows, true);
 
         var out_str = JSC.ZigString.init(out);
-        out_str.detectEncoding();
+        if (from_slice.allocated or to_slice.allocated) out_str.setOutputEncoding();
         return out_str.toValueGC(globalThis);
     }
 
@@ -2307,8 +2318,8 @@ pub const Path = struct {
             parts[i] = args_ptr[0].toSlice(globalThis, arena_allocator).slice();
         }
 
-        var out = JSC.ZigString.init(PathHandler.joinStringBuf(&out_buf, parts, .posix));
-        out.detectEncoding();
+        var out = JSC.ZigString.init(PathHandler.joinAbsStringBuf(Fs.FileSystem.instance.top_level_dir, &out_buf, parts, .posix));
+        if (arena.state.buffer_list.first != null) out.setOutputEncoding();
         return out.toValueGC(globalThis);
     }
 
@@ -2392,7 +2403,7 @@ pub const Process = struct {
 
             if (args_iterator.nextPosix()) |arg0| {
                 var argv0 = JSC.ZigString.init(std.mem.span(arg0));
-                argv0.detectEncoding();
+                argv0.setOutputEncoding();
                 // https://github.com/yargs/yargs/blob/adb0d11e02c613af3d9427b3028cc192703a3869/lib/utils/process-argv.ts#L1
                 args_list.appendAssumeCapacity(argv0);
             }
@@ -2401,7 +2412,7 @@ pub const Process = struct {
         if (JSC.VirtualMachine.vm.argv.len > skip) {
             for (JSC.VirtualMachine.vm.argv[skip..]) |arg| {
                 var str = JSC.ZigString.init(arg);
-                str.detectEncoding();
+                str.setOutputEncoding();
                 args_list.appendAssumeCapacity(str);
             }
         }
@@ -2417,7 +2428,7 @@ pub const Process = struct {
             },
             .result => |result| {
                 var zig_str = JSC.ZigString.init(result);
-                zig_str.detectEncoding();
+                zig_str.setOutputEncoding();
 
                 const value = zig_str.toValueGC(globalObject);
 

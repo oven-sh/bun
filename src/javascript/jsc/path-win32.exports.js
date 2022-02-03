@@ -15,11 +15,7 @@ function bound(obj) {
     delimiter: obj.delimiter,
   };
 }
-var path = bound(Bun._Path());
-path.win32 = win32;
-path.posix = posix;
-export var posix = bound(Bun._Path(false));
-export var win32 = bound(Bun._Path(true));
+var path = bound(Bun._Path(true));
 
 export var {
   basename,
@@ -36,5 +32,4 @@ export var {
   sep,
   delimiter,
 } = path;
-
 export default path;

@@ -1,8 +1,6 @@
 const std = @import("std");
 const expect = std.testing.expect;
 
-const JavascriptString = @import("ast/base.zig").JavascriptString;
-
 const string = @import("string_types.zig").string;
 const stringZ = @import("string_types.zig").stringZ;
 const CodePoint = @import("string_types.zig").CodePoint;

@@ -1,16 +1,17 @@
 const tester = @import("../test/tester.zig");
 const std = @import("std");
+const strings = @import("../string_immutable.zig");
 const FeatureFlags = @import("../feature_flags.zig");
 const default_allocator = @import("../memory_allocator.zig").c_allocator;
 
-threadlocal var parser_join_input_buffer: [1024]u8 = undefined;
+threadlocal var parser_join_input_buffer: [4096]u8 = undefined;
 threadlocal var parser_buffer: [1024]u8 = undefined;
 
-inline fn nqlAtIndex(comptime string_count: comptime_int, index: usize, strings: []const []const u8) bool {
+inline fn nqlAtIndex(comptime string_count: comptime_int, index: usize, input: []const []const u8) bool {
     comptime var string_index = 1;
 
     inline while (string_index < string_count) : (string_index += 1) {
-        if (strings[0][index] != strings[string_index][index]) {
+        if (input[0][index] != input[string_index][index]) {
             return true;
         }
     }
@@ -19,13 +20,14 @@ inline fn nqlAtIndex(comptime string_count: comptime_int, index: usize, strings:
 }
 
 const IsSeparatorFunc = fn (char: u8) bool;
+const LastSeparatorFunction = fn (slice: []const u8) ?usize;
 
 // TODO: is it faster to determine longest_common_separator in the while loop
 // or as an extra step at the end?
 // only boether to check if this function appears in benchmarking
-pub fn longestCommonPathGeneric(strings: []const []const u8, comptime separator: u8, comptime isPathSeparator: IsSeparatorFunc) []const u8 {
+pub fn longestCommonPathGeneric(input: []const []const u8, comptime separator: u8, comptime isPathSeparator: IsSeparatorFunc) []const u8 {
     var min_length: usize = std.math.maxInt(usize);
-    for (strings) |str| {
+    for (input) |str| {
         min_length = @minimum(str.len, min_length);
     }
 
@@ -33,79 +35,79 @@ pub fn longestCommonPathGeneric(strings: []const []const u8, comptime separator:
     var last_common_separator: usize = 0;
 
     // try to use an unrolled version of this loop
-    switch (strings.len) {
+    switch (input.len) {
         0 => {
             return "";
         },
         1 => {
-            return strings[0];
+            return input[0];
         },
         2 => {
             while (index < min_length) : (index += 1) {
-                if (strings[0][index] != strings[1][index]) {
+                if (input[0][index] != input[1][index]) {
                     break;
                 }
-                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{strings[0][index]})) {
+                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{input[0][index]})) {
                     last_common_separator = index;
                 }
             }
         },
         3 => {
             while (index < min_length) : (index += 1) {
-                if (nqlAtIndex(3, index, strings)) {
+                if (nqlAtIndex(3, index, input)) {
                     break;
                 }
-                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{strings[0][index]})) {
+                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{input[0][index]})) {
                     last_common_separator = index;
                 }
             }
         },
         4 => {
             while (index < min_length) : (index += 1) {
-                if (nqlAtIndex(4, index, strings)) {
+                if (nqlAtIndex(4, index, input)) {
                     break;
                 }
-                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{strings[0][index]})) {
+                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{input[0][index]})) {
                     last_common_separator = index;
                 }
             }
         },
         5 => {
             while (index < min_length) : (index += 1) {
-                if (nqlAtIndex(5, index, strings)) {
+                if (nqlAtIndex(5, index, input)) {
                     break;
                 }
-                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{strings[0][index]})) {
+                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{input[0][index]})) {
                     last_common_separator = index;
                 }
             }
         },
         6 => {
             while (index < min_length) : (index += 1) {
-                if (nqlAtIndex(6, index, strings)) {
+                if (nqlAtIndex(6, index, input)) {
                     break;
                 }
-                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{strings[0][index]})) {
+                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{input[0][index]})) {
                     last_common_separator = index;
                 }
             }
         },
         7 => {
             while (index < min_length) : (index += 1) {
-                if (nqlAtIndex(7, index, strings)) {
+                if (nqlAtIndex(7, index, input)) {
                     break;
                 }
-                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{strings[0][index]})) {
+                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{input[0][index]})) {
                     last_common_separator = index;
                 }
             }
         },
         8 => {
             while (index < min_length) : (index += 1) {
-                if (nqlAtIndex(8, index, strings)) {
+                if (nqlAtIndex(8, index, input)) {
                     break;
                 }
-                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{strings[0][index]})) {
+                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{input[0][index]})) {
                     last_common_separator = index;
                 }
             }
@@ -113,12 +115,12 @@ pub fn longestCommonPathGeneric(strings: []const []const u8, comptime separator:
         else => {
             var string_index: usize = 1;
             while (index < min_length) : (index += 1) {
-                while (string_index < strings.len) : (string_index += 1) {
-                    if (strings[0][index] != strings[index][string_index]) {
+                while (string_index < input.len) : (string_index += 1) {
+                    if (input[0][index] != input[index][string_index]) {
                         break;
                     }
                 }
-                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{strings[0][index]})) {
+                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{input[0][index]})) {
                     last_common_separator = index;
                 }
             }
@@ -138,7 +140,7 @@ pub fn longestCommonPathGeneric(strings: []const []const u8, comptime separator:
     // /app/public/
     // To detect /app/public is actually a folder, we do one more loop through the strings
     // and say, "do one of you have a path separator after what we thought was the end?"
-    for (strings) |str| {
+    for (input) |str| {
         if (str.len > index + 1) {
             if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{str[index]})) {
                 return str[0 .. index + 2];
@@ -146,19 +148,19 @@ pub fn longestCommonPathGeneric(strings: []const []const u8, comptime separator:
         }
     }
 
-    return strings[0][0 .. last_common_separator + 1];
+    return input[0][0 .. last_common_separator + 1];
 }
 
-pub fn longestCommonPath(strings: []const []const u8) []const u8 {
-    return longestCommonPathGeneric(strings, '/', isSepAny);
+pub fn longestCommonPath(input: []const []const u8) []const u8 {
+    return longestCommonPathGeneric(input, '/', isSepAny);
 }
 
-pub fn longestCommonPathWindows(strings: []const []const u8) []const u8 {
-    return longestCommonPathGeneric(strings, std.fs.path.sep_windows, isSepWin32);
+pub fn longestCommonPathWindows(input: []const []const u8) []const u8 {
+    return longestCommonPathGeneric(input, std.fs.path.sep_windows, isSepWin32);
 }
 
-pub fn longestCommonPathPosix(strings: []const []const u8) []const u8 {
-    return longestCommonPathGeneric(strings, std.fs.path.sep_posix, isSepPosix);
+pub fn longestCommonPathPosix(input: []const []const u8) []const u8 {
+    return longestCommonPathGeneric(input, std.fs.path.sep_posix, isSepPosix);
 }
 
 threadlocal var relative_to_common_path_buf: [4096]u8 = undefined;
@@ -178,9 +180,9 @@ pub fn relativeToCommonPath(
 
     const common_path = if (has_leading_separator) _common_path[1..] else _common_path;
 
-    var shortest = @minimum(normalized_from.len, normalized_to.len);
+    const shortest = @minimum(normalized_from.len, normalized_to.len);
 
-    var last_common_separator = @maximum(common_path.len, 1) - 1;
+    var last_common_separator = std.mem.lastIndexOfScalar(u8, _common_path, separator) orelse 0;
 
     if (shortest == common_path.len) {
         if (normalized_to.len > normalized_from.len) {
@@ -209,20 +211,6 @@ pub fn relativeToCommonPath(
                 }
             }
         }
-
-        if (normalized_from.len > normalized_to.len) {
-            // We get here if `to` is the exact base path for `from`.
-            // For example: from='/foo/bar/baz'; to='/foo/bar'
-            if (normalized_from[common_path.len - 1] == separator) {
-                last_common_separator = common_path.len - 1;
-            } else if (normalized_from[common_path.len] == separator) {
-                last_common_separator = common_path.len;
-            } else if (common_path.len == 0) {
-                // We get here if `to` is the root.
-                // For example: from='/foo/bar'; to='/'
-                last_common_separator = 0;
-            }
-        }
     }
 
     // Generate the relative path based on the path difference between `to`
@@ -237,25 +225,27 @@ pub fn relativeToCommonPath(
             if (i == normalized_from.len or (normalized_from[i] == separator and i + 1 < normalized_from.len)) {
                 if (out_slice.len == 0) {
                     out_slice = buf[0 .. out_slice.len + 2];
-                    out_slice[0] = '.';
-                    out_slice[1] = '.';
+                    out_slice[0..2].* = "..".*;
                 } else {
-                    var old_len = out_slice.len;
-                    out_slice = buf[0 .. out_slice.len + 3];
-                    out_slice[old_len] = separator;
-                    old_len += 1;
-                    out_slice[old_len] = '.';
-                    old_len += 1;
-                    out_slice[old_len] = '.';
+                    const old_len = out_slice.len;
+                    out_slice.len += 3;
+                    out_slice[old_len..][0..3].* = "/..".*;
                 }
             }
         }
     }
 
     if (normalized_to.len > last_common_separator + 1) {
-        const tail = normalized_to[last_common_separator..];
-        const insert_leading_slash = last_common_separator > 0 and normalized_to[last_common_separator - 1] != separator and tail[0] != separator;
+        var tail = normalized_to[last_common_separator..];
+        if (normalized_from.len > 0 and (last_common_separator == normalized_from.len or (last_common_separator == normalized_from.len - 1))) {
+            if (tail[0] == separator) {
+                tail = tail[1..];
+            }
+        }
 
+        const insert_leading_slash = last_common_separator > 0 and normalized_to[last_common_separator] != separator and tail[0] != separator;
+
+        // avoid making non-absolute paths absolute
         if (insert_leading_slash) {
             buf[out_slice.len] = separator;
             out_slice = buf[0 .. out_slice.len + 1];
@@ -273,8 +263,13 @@ pub fn relativeToCommonPath(
 }
 
 pub fn relativeNormalized(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
+    if (from.len == to.len and strings.eqlLong(from, to, true)) {
+        return "";
+    }
+
     const two = [_][]const u8{ from, to };
     const common_path = longestCommonPathGeneric(&two, comptime platform.separator(), comptime platform.getSeparatorFunc());
+
     return relativeToCommonPath(common_path, from, to, &relative_to_common_path_buf, comptime platform.separator(), always_copy);
 }
 
@@ -308,8 +303,27 @@ pub fn relative(from: []const u8, to: []const u8) []const u8 {
 }
 
 pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
-    const normalized_from = normalizeStringBuf(from, &relative_from_buf, true, platform, true);
-    const normalized_to = normalizeStringBuf(to, &relative_to_buf, true, platform, true);
+    const from_allow_above_root = (from.len > 1 and from[0] == platform.separator());
+    const to_allow_above_root = (to.len > 1 and to[0] == platform.separator());
+    var normalized_from =
+        if (!from_allow_above_root)
+        normalizeStringBuf(from, relative_from_buf[1..], false, platform, true)
+    else
+        normalizeStringBuf(from, relative_from_buf[1..], true, platform, true);
+    var normalized_to =
+        if (!to_allow_above_root)
+        normalizeStringBuf(to, relative_to_buf[1..], false, platform, true)
+    else
+        normalizeStringBuf(to, relative_to_buf[1..], true, platform, true);
+
+    if (from_allow_above_root == to_allow_above_root and from_allow_above_root) {
+        relative_from_buf[0] = platform.separator();
+        normalized_from = relative_from_buf[0 .. normalized_from.len + 1];
+
+        relative_to_buf[0] = platform.separator();
+        normalized_to = relative_to_buf[0 .. normalized_to.len + 1];
+    }
+    //
 
     return relativeNormalized(normalized_from, normalized_to, platform, always_copy);
 }
@@ -348,7 +362,7 @@ pub fn normalizeStringGeneric(str: []const u8, buf: []u8, comptime allow_above_r
             if (last_slash == @intCast(i32, i) - 1 or dots == 1) {
                 // NOOP
             } else if (dots == 2) {
-                if (written_len < 2 or last_segment_length != 2 or buf[written_len - 1] != '.' or buf[written_len - 2] != '.') {
+                if (written_len < 2 or last_segment_length != 2 or @bitCast(u16, buf[written_len - 2 ..][0..2].*) != std.mem.readIntNative(u16, "..")) {
                     if (written_len > 2) {
                         if (lastIndexOfSeparator(buf[0..written_len])) |last_slash_index| {
                             written_len = last_slash_index;
@@ -373,10 +387,8 @@ pub fn normalizeStringGeneric(str: []const u8, buf: []u8, comptime allow_above_r
                             written_len += 1;
                         }
 
-                        buf[written_len] = '.';
-                        written_len += 1;
-                        buf[written_len] = '.';
-                        written_len += 1;
+                        buf[written_len .. written_len + 2][0..2].* = "..".*;
+                        written_len += 2;
 
                         last_segment_length = 2;
                     }
@@ -428,6 +440,14 @@ pub const Platform = enum {
         };
     }
 
+    pub fn separatorString(comptime platform: Platform) []const u8 {
+        return comptime switch (platform) {
+            .auto => platform.resolve().separatorString(),
+            .loose, .posix => std.fs.path.sep_str_posix,
+            .windows => std.fs.path.sep_str_windows,
+        };
+    }
+
     pub const current: Platform = switch (@import("builtin").target.os.tag) {
         .windows => Platform.windows,
         else => Platform.posix,
@@ -444,6 +464,21 @@ pub const Platform = enum {
             },
             .posix => {
                 return isSepPosix;
+            },
+        }
+    }
+
+    pub fn getLastSeparatorFunc(comptime _platform: Platform) LastSeparatorFunction {
+        switch (comptime _platform.resolve()) {
+            .auto => unreachable,
+            .loose => {
+                return lastIndexOfSeparatorLoose;
+            },
+            .windows => {
+                return lastIndexOfSeparatorWindows;
+            },
+            .posix => {
+                return lastIndexOfSeparatorPosix;
             },
         }
     }
@@ -630,12 +665,14 @@ pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [
     var written: usize = 0;
     const platform = comptime _platform.resolve();
 
+    parser_join_input_buffer[0] = 0;
+
     for (_parts) |part| {
-        if (part.len == 0 or (part.len == 1 and part[0] == '.')) {
+        if (part.len == 0) {
             continue;
         }
 
-        if (!platform.isSeparator(part[part.len - 1])) {
+        if (written > 0) {
             parser_join_input_buffer[written] = platform.separator();
             written += 1;
         }
@@ -648,22 +685,12 @@ pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [
         written += part.len;
     }
 
-    // Preserve leading separator
-    if (_parts[0].len > 0 and _parts[0][0] == _platform.separator()) {
-        const out = switch (comptime platform) {
-            // .loose =>
-            // .windows => @compileError("Not implemented yet"),
-            else => normalizeStringLooseBuf(parser_join_input_buffer[0..written], buf[1..], false, false),
-        };
-        buf[0] = _platform.separator();
-
-        return buf[0 .. out.len + 1];
-    } else {
-        return switch (platform) {
-            else => normalizeStringLooseBuf(parser_join_input_buffer[0..written], buf[0..], false, false),
-            // .windows => @compileError("Not implemented yet"),
-        };
+    if (written == 0) {
+        buf[0] = '.';
+        return buf[0..1];
     }
+
+    return normalizeStringNode(parser_join_input_buffer[0..written], buf, platform);
 }
 
 pub fn joinAbsStringBuf(_cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) []const u8 {
@@ -791,7 +818,12 @@ pub fn lastIndexOfSeparatorLoose(slice: []const u8) ?usize {
     return std.mem.lastIndexOfAny(u8, slice, "/\\");
 }
 
-pub fn normalizeStringLooseBuf(str: []const u8, buf: []u8, comptime allow_above_root: bool, comptime preserve_trailing_slash: bool) []u8 {
+pub fn normalizeStringLooseBuf(
+    str: []const u8,
+    buf: []u8,
+    comptime allow_above_root: bool,
+    comptime preserve_trailing_slash: bool,
+) []u8 {
     return normalizeStringGeneric(
         str,
         buf,
@@ -801,6 +833,70 @@ pub fn normalizeStringLooseBuf(str: []const u8, buf: []u8, comptime allow_above_
         lastIndexOfSeparatorLoose,
         preserve_trailing_slash,
     );
+}
+
+pub fn normalizeStringNode(
+    str: []const u8,
+    buf: []u8,
+    comptime platform: Platform,
+) []u8 {
+    if (str.len == 0) {
+        buf[0] = '.';
+        return buf[0..1];
+    }
+
+    const is_absolute = platform.isSeparator(str[0]);
+    const trailing_separator = platform.isSeparator(str[str.len - 1]);
+    var buf_ = buf[1..];
+
+    var out = if (!is_absolute) normalizeStringGeneric(
+        str,
+        buf_,
+        true,
+        comptime platform.resolve().separator(),
+        comptime platform.getSeparatorFunc(),
+        comptime platform.getLastSeparatorFunc(),
+        false,
+    ) else normalizeStringGeneric(
+        str,
+        buf_,
+        false,
+        comptime platform.resolve().separator(),
+        comptime platform.getSeparatorFunc(),
+        comptime platform.getLastSeparatorFunc(),
+        false,
+    );
+
+    if (out.len == 0) {
+        if (is_absolute) {
+            buf[0] = '/';
+            return buf[0..1];
+        }
+
+        if (trailing_separator) {
+            buf[0..2].* = "./".*;
+            return buf[0..2];
+        }
+
+        buf[0] = '.';
+        return buf[0..1];
+    }
+
+    if (trailing_separator) {
+        if (!platform.isSeparator(out[out.len - 1])) {
+            buf_[out.len] = platform.separator();
+            out = buf_[0 .. out.len + 1];
+        }
+    }
+
+    if (is_absolute) {
+        std.debug.assert(!platform.isSeparator(out[0]));
+
+        buf[0] = platform.separator();
+        out = buf[0 .. out.len + 1];
+    }
+
+    return out;
 }
 
 test "joinAbsStringPosix" {
@@ -984,7 +1080,29 @@ test "relative" {
     var t = tester.Tester.t(default_allocator);
     defer t.report(@src());
 
-    _ = t.expect("var/foo", try relativeAlloc(default_allocator, "/", "/var/foo/"), @src());
+    const fixtures = .{
+        .{ "/var/lib", "/var", ".." },
+        .{ "/var/lib", "/bin", "../../bin" },
+        .{ "/var/lib", "/var/lib", "" },
+        .{ "/var/lib", "/var/apache", "../apache" },
+        .{ "/var/", "/var/lib", "lib" },
+        .{ "/", "/var/lib", "var/lib" },
+        .{ "/foo/test", "/foo/test/bar/package.json", "bar/package.json" },
+        .{ "/Users/a/web/b/test/mails", "/Users/a/web/b", "../.." },
+        .{ "/foo/bar/baz-quux", "/foo/bar/baz", "../baz" },
+        .{ "/foo/bar/baz", "/foo/bar/baz-quux", "../baz-quux" },
+        .{ "/baz-quux", "/baz", "../baz" },
+        .{ "/baz", "/baz-quux", "../baz-quux" },
+        .{ "/page1/page2/foo", "/", "../../.." },
+    };
+
+    inline for (fixtures) |fixture| {
+        const from = fixture[0];
+        const to = fixture[1];
+        const expected = fixture[2];
+        _ = t.expect(expected, try relativeAlloc(default_allocator, from, to), @src());
+    }
+
     _ = t.expect("index.js", try relativeAlloc(default_allocator, "/app/public/", "/app/public/index.js"), @src());
     _ = t.expect("..", try relativeAlloc(default_allocator, "/app/public/index.js", "/app/public/"), @src());
     _ = t.expect("../../src/bacon.ts", try relativeAlloc(default_allocator, "/app/public/index.html", "/app/src/bacon.ts"), @src());

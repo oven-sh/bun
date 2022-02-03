@@ -2168,6 +2168,7 @@ pub const Path = struct {
     }
     pub fn join(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+        if (args_len == 0) return JSC.ZigString.init("").toValue(globalThis);
 
         var stack_fallback_allocator = std.heap.stackFallback(
             (32 * @sizeOf(string)),
@@ -2263,7 +2264,7 @@ pub const Path = struct {
         var arguments = args_ptr[0..args_len];
 
         if (args_len > 1 and JSC.JSValue.eqlValue(args_ptr[0], args_ptr[1]))
-            return JSC.ZigString.init(".").toValue(globalThis);
+            return JSC.ZigString.init("").toValue(globalThis);
 
         var from_slice: JSC.ZigString.Slice = if (args_len > 0) arguments[0].toSlice(globalThis, heap_allocator) else JSC.ZigString.Slice.empty;
         defer from_slice.deinit();
@@ -2274,9 +2275,9 @@ pub const Path = struct {
         var to = to_slice.slice();
 
         var out = if (!isWindows)
-            PathHandler.relativeNormalized(from, to, .posix, false)
+            PathHandler.relativePlatform(from, to, .posix, true)
         else
-            PathHandler.relativeNormalized(from, to, .windows, false);
+            PathHandler.relativePlatform(from, to, .windows, true);
 
         var out_str = JSC.ZigString.init(out);
         out_str.detectEncoding();

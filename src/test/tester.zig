@@ -64,19 +64,13 @@ pub const Tester = struct {
             stderr.writeAll(RESET) catch unreachable;
             stderr.writeAll("\n") catch unreachable;
         }
-
+        const strings = @import("../string_immutable.zig");
         pub fn evaluate_outcome(self: *const @This()) Outcome {
-            if (self.expected.len > self.result.len) {
+            if (strings.eql(self.expected, self.result)) {
+                return .pass;
+            } else {
                 return .fail;
             }
-
-            for (self.expected) |char, i| {
-                if (char != self.result[i]) {
-                    return Outcome.fail;
-                }
-            }
-
-            return Outcome.pass;
         }
     };
 

@@ -1,184 +1,307 @@
+const { file } = import.meta;
+
 import { describe, it, expect } from "bun:test";
 import * as path from "node:path";
+import assert from "assert";
 
-const __filename = import.meta.file;
+const strictEqual = (...args) => {
+  assert.strictEqual(...args);
+  expect(true).toBe(true);
+};
 
-describe("path.basename", () => {
-  it("basics", () => {
-    expect(path.basename(__filename)).toBe("path.test.js");
-    expect(path.basename(__filename, ".js")).toBe("path.test");
-    expect(path.basename(".js", ".js")).toBe("");
-    expect(path.basename("")).toBe("");
-    expect(path.basename("/dir/basename.ext")).toBe("basename.ext");
-    expect(path.basename("/basename.ext")).toBe("basename.ext");
-    expect(path.basename("basename.ext")).toBe("basename.ext");
-    expect(path.basename("basename.ext/")).toBe("basename.ext");
-    expect(path.basename("basename.ext//")).toBe("basename.ext");
-    expect(path.basename("aaa/bbb", "/bbb")).toBe("bbb");
-    expect(path.basename("aaa/bbb", "a/bbb")).toBe("bbb");
-    expect(path.basename("aaa/bbb", "bbb")).toBe("bbb");
-    expect(path.basename("aaa/bbb//", "bbb")).toBe("bbb");
-    expect(path.basename("aaa/bbb", "bb")).toBe("b");
-    expect(path.basename("aaa/bbb", "b")).toBe("bb");
-    expect(path.basename("/aaa/bbb", "/bbb")).toBe("bbb");
-    expect(path.basename("/aaa/bbb", "a/bbb")).toBe("bbb");
-    expect(path.basename("/aaa/bbb", "bbb")).toBe("bbb");
-    expect(path.basename("/aaa/bbb//", "bbb")).toBe("bbb");
-    expect(path.basename("/aaa/bbb", "bb")).toBe("b");
-    expect(path.basename("/aaa/bbb", "b")).toBe("bb");
-    expect(path.basename("/aaa/bbb")).toBe("bbb");
-    expect(path.basename("/aaa/")).toBe("aaa");
-    expect(path.basename("/aaa/b")).toBe("b");
-    expect(path.basename("/a/b")).toBe("b");
-    expect(path.basename("//a")).toBe("a");
-  });
+it("path.basename", () => {
+  strictEqual(path.basename(file), "path.test.js");
+  strictEqual(path.basename(file, ".js"), "path.test");
+  strictEqual(path.basename(".js", ".js"), "");
+  strictEqual(path.basename(""), "");
+  strictEqual(path.basename("/dir/basename.ext"), "basename.ext");
+  strictEqual(path.basename("/basename.ext"), "basename.ext");
+  strictEqual(path.basename("basename.ext"), "basename.ext");
+  strictEqual(path.basename("basename.ext/"), "basename.ext");
+  strictEqual(path.basename("basename.ext//"), "basename.ext");
+  strictEqual(path.basename("aaa/bbb", "/bbb"), "bbb");
+  strictEqual(path.basename("aaa/bbb", "a/bbb"), "bbb");
+  strictEqual(path.basename("aaa/bbb", "bbb"), "bbb");
+  strictEqual(path.basename("aaa/bbb//", "bbb"), "bbb");
+  strictEqual(path.basename("aaa/bbb", "bb"), "b");
+  strictEqual(path.basename("aaa/bbb", "b"), "bb");
+  strictEqual(path.basename("/aaa/bbb", "/bbb"), "bbb");
+  strictEqual(path.basename("/aaa/bbb", "a/bbb"), "bbb");
+  strictEqual(path.basename("/aaa/bbb", "bbb"), "bbb");
+  strictEqual(path.basename("/aaa/bbb//", "bbb"), "bbb");
+  strictEqual(path.basename("/aaa/bbb", "bb"), "b");
+  strictEqual(path.basename("/aaa/bbb", "b"), "bb");
+  strictEqual(path.basename("/aaa/bbb"), "bbb");
+  strictEqual(path.basename("/aaa/"), "aaa");
+  strictEqual(path.basename("/aaa/b"), "b");
+  strictEqual(path.basename("/a/b"), "b");
+  strictEqual(path.basename("//a"), "a");
+  strictEqual(path.basename("a", "a"), "");
 
-  it("On unix a backslash is just treated as any other character.", () => {
-    expect(path.posix.basename("\\dir\\basename.ext")).toBe(
-      "\\dir\\basename.ext"
-    );
-    expect(path.posix.basename("\\basename.ext")).toBe("\\basename.ext");
-    expect(path.posix.basename("basename.ext")).toBe("basename.ext");
-    expect(path.posix.basename("basename.ext\\")).toBe("basename.ext\\");
-    expect(path.posix.basename("basename.ext\\\\")).toBe("basename.ext\\\\");
-    expect(path.posix.basename("foo")).toBe("foo");
-  });
+  // On Windows a backslash acts as a path separator.
+  strictEqual(path.win32.basename("\\dir\\basename.ext"), "basename.ext");
+  strictEqual(path.win32.basename("\\basename.ext"), "basename.ext");
+  strictEqual(path.win32.basename("basename.ext"), "basename.ext");
+  strictEqual(path.win32.basename("basename.ext\\"), "basename.ext");
+  strictEqual(path.win32.basename("basename.ext\\\\"), "basename.ext");
+  strictEqual(path.win32.basename("foo"), "foo");
+  strictEqual(path.win32.basename("aaa\\bbb", "\\bbb"), "bbb");
+  strictEqual(path.win32.basename("aaa\\bbb", "a\\bbb"), "bbb");
+  strictEqual(path.win32.basename("aaa\\bbb", "bbb"), "bbb");
+  strictEqual(path.win32.basename("aaa\\bbb\\\\\\\\", "bbb"), "bbb");
+  strictEqual(path.win32.basename("aaa\\bbb", "bb"), "b");
+  strictEqual(path.win32.basename("aaa\\bbb", "b"), "bb");
+  strictEqual(path.win32.basename("C:"), "");
+  strictEqual(path.win32.basename("C:."), ".");
+  strictEqual(path.win32.basename("C:\\"), "");
+  strictEqual(path.win32.basename("C:\\dir\\base.ext"), "base.ext");
+  strictEqual(path.win32.basename("C:\\basename.ext"), "basename.ext");
+  strictEqual(path.win32.basename("C:basename.ext"), "basename.ext");
+  strictEqual(path.win32.basename("C:basename.ext\\"), "basename.ext");
+  strictEqual(path.win32.basename("C:basename.ext\\\\"), "basename.ext");
+  strictEqual(path.win32.basename("C:foo"), "foo");
+  strictEqual(path.win32.basename("file:stream"), "file:stream");
+  strictEqual(path.win32.basename("a", "a"), "");
 
-  it("POSIX filenames may include control characters", () => {
-    // c.f. http://www.dwheeler.com/essays/fixing-unix-linux-filenames.html
-    var controlCharFilename = "Icon" + String.fromCharCode(13);
-    expect(path.posix.basename("/a/b/" + controlCharFilename)).toBe(
-      controlCharFilename
-    );
-  });
+  // On unix a backslash is just treated as any other character.
+  strictEqual(
+    path.posix.basename("\\dir\\basename.ext"),
+    "\\dir\\basename.ext"
+  );
+  strictEqual(path.posix.basename("\\basename.ext"), "\\basename.ext");
+  strictEqual(path.posix.basename("basename.ext"), "basename.ext");
+  strictEqual(path.posix.basename("basename.ext\\"), "basename.ext\\");
+  strictEqual(path.posix.basename("basename.ext\\\\"), "basename.ext\\\\");
+  strictEqual(path.posix.basename("foo"), "foo");
+
+  // POSIX filenames may include control characters
+  // c.f. http://www.dwheeler.com/essays/fixing-unix-linux-filenames.html
+  const controlCharFilename = `Icon${String.fromCharCode(13)}`;
+  strictEqual(
+    path.posix.basename(`/a/b/${controlCharFilename}`),
+    controlCharFilename
+  );
 });
 
-it("path.posix.extname", () => {
-  var pairs = [
-    [__filename, ".js"],
-    ["", ""],
-    ["/path/to/file", ""],
-    ["/path/to/file.ext", ".ext"],
-    ["/path.to/file.ext", ".ext"],
-    ["/path.to/file", ""],
-    ["/path.to/.file", ""],
-    ["/path.to/.file.ext", ".ext"],
-    ["/path/to/f.ext", ".ext"],
-    ["/path/to/..ext", ".ext"],
-    ["/path/to/..", ""],
-    ["file", ""],
-    ["file.ext", ".ext"],
-    [".file", ""],
-    [".file.ext", ".ext"],
-    ["/file", ""],
-    ["/file.ext", ".ext"],
-    ["/.file", ""],
-    ["/.file.ext", ".ext"],
-    [".path/file.ext", ".ext"],
-    ["file.ext.ext", ".ext"],
-    ["file.", "."],
-    [".", ""],
-    ["./", ""],
-    [".file.ext", ".ext"],
-    [".file", ""],
-    [".file.", "."],
-    [".file..", "."],
-    ["..", ""],
-    ["../", ""],
-    ["..file.ext", ".ext"],
-    ["..file", ".file"],
-    ["..file.", "."],
-    ["..file..", "."],
-    ["...", "."],
-    ["...ext", ".ext"],
-    ["....", "."],
-    ["file.ext/", ".ext"],
-    ["file.ext//", ".ext"],
-    ["file/", ""],
-    ["file//", ""],
-    ["file./", "."],
-    ["file.//", "."],
+it("path.join", () => {
+  const failures = [];
+  const backslashRE = /\\/g;
+
+  const joinTests = [
+    [
+      [path.posix.join],
+      // Arguments                     result
+      [
+        [[".", "x/b", "..", "/b/c.js"], "x/b/c.js"],
+        // [[], '.'],
+        [["/.", "x/b", "..", "/b/c.js"], "/x/b/c.js"],
+        [["/foo", "../../../bar"], "/bar"],
+        [["foo", "../../../bar"], "../../bar"],
+        [["foo/", "../../../bar"], "../../bar"],
+        [["foo/x", "../../../bar"], "../bar"],
+        [["foo/x", "./bar"], "foo/x/bar"],
+        [["foo/x/", "./bar"], "foo/x/bar"],
+        [["foo/x/", ".", "bar"], "foo/x/bar"],
+        [["./"], "./"],
+        [[".", "./"], "./"],
+        [[".", ".", "."], "."],
+        [[".", "./", "."], "."],
+        [[".", "/./", "."], "."],
+        [[".", "/////./", "."], "."],
+        [["."], "."],
+        [["", "."], "."],
+        [["", "foo"], "foo"],
+        [["foo", "/bar"], "foo/bar"],
+        [["", "/foo"], "/foo"],
+        [["", "", "/foo"], "/foo"],
+        [["", "", "foo"], "foo"],
+        [["foo", ""], "foo"],
+        [["foo/", ""], "foo/"],
+        [["foo", "", "/bar"], "foo/bar"],
+        [["./", "..", "/foo"], "../foo"],
+        [["./", "..", "..", "/foo"], "../../foo"],
+        [[".", "..", "..", "/foo"], "../../foo"],
+        [["", "..", "..", "/foo"], "../../foo"],
+        [["/"], "/"],
+        [["/", "."], "/"],
+        [["/", ".."], "/"],
+        [["/", "..", ".."], "/"],
+        [[""], "."],
+        [["", ""], "."],
+        [[" /foo"], " /foo"],
+        [[" ", "foo"], " /foo"],
+        [[" ", "."], " "],
+        [[" ", "/"], " /"],
+        [[" ", ""], " "],
+        [["/", "foo"], "/foo"],
+        [["/", "/foo"], "/foo"],
+        [["/", "//foo"], "/foo"],
+        [["/", "", "/foo"], "/foo"],
+        [["", "/", "foo"], "/foo"],
+        [["", "/", "/foo"], "/foo"],
+      ],
+    ],
   ];
 
-  pairs.forEach(function (p) {
-    var input = p[0];
-    var expected = p[1];
-    expect(expected).toBe(path.posix.extname(input));
+  // Windows-specific join tests
+  // joinTests.push([
+  //   path.win32.join,
+  //   joinTests[0][1].slice(0).concat([
+  //     // Arguments                     result
+  //     // UNC path expected
+  //     [['//foo/bar'], '\\\\foo\\bar\\'],
+  //     [['\\/foo/bar'], '\\\\foo\\bar\\'],
+  //     [['\\\\foo/bar'], '\\\\foo\\bar\\'],
+  //     // UNC path expected - server and share separate
+  //     [['//foo', 'bar'], '\\\\foo\\bar\\'],
+  //     [['//foo/', 'bar'], '\\\\foo\\bar\\'],
+  //     [['//foo', '/bar'], '\\\\foo\\bar\\'],
+  //     // UNC path expected - questionable
+  //     [['//foo', '', 'bar'], '\\\\foo\\bar\\'],
+  //     [['//foo/', '', 'bar'], '\\\\foo\\bar\\'],
+  //     [['//foo/', '', '/bar'], '\\\\foo\\bar\\'],
+  //     // UNC path expected - even more questionable
+  //     [['', '//foo', 'bar'], '\\\\foo\\bar\\'],
+  //     [['', '//foo/', 'bar'], '\\\\foo\\bar\\'],
+  //     [['', '//foo/', '/bar'], '\\\\foo\\bar\\'],
+  //     // No UNC path expected (no double slash in first component)
+  //     [['\\', 'foo/bar'], '\\foo\\bar'],
+  //     [['\\', '/foo/bar'], '\\foo\\bar'],
+  //     [['', '/', '/foo/bar'], '\\foo\\bar'],
+  //     // No UNC path expected (no non-slashes in first component -
+  //     // questionable)
+  //     [['//', 'foo/bar'], '\\foo\\bar'],
+  //     [['//', '/foo/bar'], '\\foo\\bar'],
+  //     [['\\\\', '/', '/foo/bar'], '\\foo\\bar'],
+  //     [['//'], '\\'],
+  //     // No UNC path expected (share name missing - questionable).
+  //     [['//foo'], '\\foo'],
+  //     [['//foo/'], '\\foo\\'],
+  //     [['//foo', '/'], '\\foo\\'],
+  //     [['//foo', '', '/'], '\\foo\\'],
+  //     // No UNC path expected (too many leading slashes - questionable)
+  //     [['///foo/bar'], '\\foo\\bar'],
+  //     [['////foo', 'bar'], '\\foo\\bar'],
+  //     [['\\\\\\/foo/bar'], '\\foo\\bar'],
+  //     // Drive-relative vs drive-absolute paths. This merely describes the
+  //     // status quo, rather than being obviously right
+  //     [['c:'], 'c:.'],
+  //     [['c:.'], 'c:.'],
+  //     [['c:', ''], 'c:.'],
+  //     [['', 'c:'], 'c:.'],
+  //     [['c:.', '/'], 'c:.\\'],
+  //     [['c:.', 'file'], 'c:file'],
+  //     [['c:', '/'], 'c:\\'],
+  //     [['c:', 'file'], 'c:\\file'],
+  //   ]),
+  // ]);
+  joinTests.forEach((test) => {
+    if (!Array.isArray(test[0])) test[0] = [test[0]];
+    test[0].forEach((join) => {
+      test[1].forEach((test) => {
+        const actual = join.apply(null, test[0]);
+        const expected = test[1];
+        // For non-Windows specific tests with the Windows join(), we need to try
+        // replacing the slashes since the non-Windows specific tests' `expected`
+        // use forward slashes
+        let actualAlt;
+        let os;
+        if (join === path.win32.join) {
+          actualAlt = actual.replace(backslashRE, "/");
+          os = "win32";
+        } else {
+          os = "posix";
+        }
+        if (actual !== expected && actualAlt !== expected) {
+          const delimiter = test[0].map(JSON.stringify).join(",");
+          const message = `path.${os}.join(${delimiter})\n  expect=${JSON.stringify(
+            expected
+          )}\n  actual=${JSON.stringify(actual)}`;
+          failures.push(`\n${message}`);
+        }
+      });
+    });
   });
+  strictEqual(failures.length, 0, failures.join(""));
 });
 
-it("path.posix.dirname", function (t) {
-  expect(path.posix.dirname("/a/b/")).toBe("a");
-  expect(path.posix.dirname("/a/b")).toBe("a");
-  expect(path.posix.dirname("/a")).toBe("/");
-  expect(path.posix.dirname("")).toBe(".");
-  expect(path.posix.dirname("/")).toBe("/");
-  expect(path.posix.dirname("//a")).toBe("//");
-  expect(path.posix.dirname("foo")).toBe(".");
-});
+it("path.relative", () => {
+  const failures = [];
 
-it("path.posix.isAbsolute", () => {
-  expect(path.posix.isAbsolute("/home/foo")).toBe(true);
-  expect(path.posix.isAbsolute("/home/foo/..")).toBe(true);
-  expect(path.posix.isAbsolute("bar/")).toBe(false);
-  expect(path.posix.isAbsolute("./baz")).toBe(false);
-});
-
-tape("path.posix.join", () => {
-  var joinTests =
-    // arguments                     result
+  const relativeTests = [
+    // [
+    //   path.win32.relative,
+    //   // Arguments                     result
+    //   [
+    //     ["c:/blah\\blah", "d:/games", "d:\\games"],
+    //     ["c:/aaaa/bbbb", "c:/aaaa", ".."],
+    //     ["c:/aaaa/bbbb", "c:/cccc", "..\\..\\cccc"],
+    //     ["c:/aaaa/bbbb", "c:/aaaa/bbbb", ""],
+    //     ["c:/aaaa/bbbb", "c:/aaaa/cccc", "..\\cccc"],
+    //     ["c:/aaaa/", "c:/aaaa/cccc", "cccc"],
+    //     ["c:/", "c:\\aaaa\\bbbb", "aaaa\\bbbb"],
+    //     ["c:/aaaa/bbbb", "d:\\", "d:\\"],
+    //     ["c:/AaAa/bbbb", "c:/aaaa/bbbb", ""],
+    //     ["c:/aaaaa/", "c:/aaaa/cccc", "..\\aaaa\\cccc"],
+    //     ["C:\\foo\\bar\\baz\\quux", "C:\\", "..\\..\\..\\.."],
+    //     [
+    //       "C:\\foo\\test",
+    //       "C:\\foo\\test\\bar\\package.json",
+    //       "bar\\package.json",
+    //     ],
+    //     ["C:\\foo\\bar\\baz-quux", "C:\\foo\\bar\\baz", "..\\baz"],
+    //     ["C:\\foo\\bar\\baz", "C:\\foo\\bar\\baz-quux", "..\\baz-quux"],
+    //     ["\\\\foo\\bar", "\\\\foo\\bar\\baz", "baz"],
+    //     ["\\\\foo\\bar\\baz", "\\\\foo\\bar", ".."],
+    //     ["\\\\foo\\bar\\baz-quux", "\\\\foo\\bar\\baz", "..\\baz"],
+    //     ["\\\\foo\\bar\\baz", "\\\\foo\\bar\\baz-quux", "..\\baz-quux"],
+    //     ["C:\\baz-quux", "C:\\baz", "..\\baz"],
+    //     ["C:\\baz", "C:\\baz-quux", "..\\baz-quux"],
+    //     ["\\\\foo\\baz-quux", "\\\\foo\\baz", "..\\baz"],
+    //     ["\\\\foo\\baz", "\\\\foo\\baz-quux", "..\\baz-quux"],
+    //     ["C:\\baz", "\\\\foo\\bar\\baz", "\\\\foo\\bar\\baz"],
+    //     ["\\\\foo\\bar\\baz", "C:\\baz", "C:\\baz"],
+    //   ],
+    // ],
     [
-      [[".", "x/b", "..", "/b/c.js"], "x/b/c.js"],
-      [[], "."],
-      [["/.", "x/b", "..", "/b/c.js"], "/x/b/c.js"],
-      [["/foo", "../../../bar"], "/bar"],
-      [["foo", "../../../bar"], "../../bar"],
-      [["foo/", "../../../bar"], "../../bar"],
-      [["foo/x", "../../../bar"], "../bar"],
-      [["foo/x", "./bar"], "foo/x/bar"],
-      [["foo/x/", "./bar"], "foo/x/bar"],
-      [["foo/x/", ".", "bar"], "foo/x/bar"],
-      [["./"], "./"],
-      [[".", "./"], "./"],
-      [[".", ".", "."], "."],
-      [[".", "./", "."], "."],
-      [[".", "/./", "."], "."],
-      [[".", "/////./", "."], "."],
-      [["."], "."],
-      [["", "."], "."],
-      [["", "foo"], "foo"],
-      [["foo", "/bar"], "foo/bar"],
-      [["", "/foo"], "/foo"],
-      [["", "", "/foo"], "/foo"],
-      [["", "", "foo"], "foo"],
-      [["foo", ""], "foo"],
-      [["foo/", ""], "foo/"],
-      [["foo", "", "/bar"], "foo/bar"],
-      [["./", "..", "/foo"], "../foo"],
-      [["./", "..", "..", "/foo"], "../../foo"],
-      [[".", "..", "..", "/foo"], "../../foo"],
-      [["", "..", "..", "/foo"], "../../foo"],
-      [["/"], "/"],
-      [["/", "."], "/"],
-      [["/", ".."], "/"],
-      [["/", "..", ".."], "/"],
-      [[""], "."],
-      [["", ""], "."],
-      [[" /foo"], " /foo"],
-      [[" ", "foo"], " /foo"],
-      [[" ", "."], " "],
-      [[" ", "/"], " /"],
-      [[" ", ""], " "],
-      [["/", "foo"], "/foo"],
-      [["/", "/foo"], "/foo"],
-      [["/", "//foo"], "/foo"],
-      [["/", "", "/foo"], "/foo"],
-      [["", "/", "foo"], "/foo"],
-      [["", "/", "/foo"], "/foo"],
-    ];
+      path.posix.relative,
+      // Arguments          result
+      [
+        ["/var/lib", "/var", ".."],
+        ["/var/lib", "/bin", "../../bin"],
+        ["/var/lib", "/var/lib", ""],
+        ["/var/lib", "/var/apache", "../apache"],
+        ["/var/", "/var/lib", "lib"],
+        ["/", "/var/lib", "var/lib"],
+        ["/foo/test", "/foo/test/bar/package.json", "bar/package.json"],
+        ["/Users/a/web/b/test/mails", "/Users/a/web/b", "../.."],
+        ["/foo/bar/baz-quux", "/foo/bar/baz", "../baz"],
+        ["/foo/bar/baz", "/foo/bar/baz-quux", "../baz-quux"],
+        ["/baz-quux", "/baz", "../baz"],
+        ["/baz", "/baz-quux", "../baz-quux"],
+        ["/page1/page2/foo", "/", "../../.."],
+      ],
+    ],
+  ];
 
-  joinTests.forEach(() => {
-    var actual = path.posix.join.apply(null, p[0]);
-    expect(actual).toBe(p[1]);
+  relativeTests.forEach((test) => {
+    const relative = test[0];
+    test[1].forEach((test) => {
+      const actual = relative(test[0], test[1]);
+      const expected = test[2];
+      if (actual !== expected) {
+        const os = relative === path.win32.relative ? "win32" : "posix";
+        const message = `path.${os}.relative(${test
+          .slice(0, 2)
+          .map(JSON.stringify)
+          .join(",")})\n  expect=${JSON.stringify(
+          expected
+        )}\n  actual=${JSON.stringify(actual)}`;
+        failures.push(`\n${message}`);
+      }
+    });
   });
+
+  assert.strictEqual(failures.length, 0, failures.join(""));
+  expect(true).toBe(true);
 });

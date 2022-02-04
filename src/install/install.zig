@@ -4824,6 +4824,7 @@ pub const PackageManager = struct {
         //      1. In optionalDepenencies
         //      2. Has a platform and/or os specified, which evaluates to not disabled
         native_bin_link_allowlist: []const PackageNameHash = &default_native_bin_link_allowlist,
+        max_retry_count: u16 = 5,
 
         const default_native_bin_link_allowlist = [_]PackageNameHash{
             String.Builder.stringHash("esbuild"),
@@ -4954,6 +4955,12 @@ pub const PackageManager = struct {
 
             if (env_loader.map.get("BUN_CONFIG_YARN_LOCKFILE") != null) {
                 this.do.save_yarn_lock = true;
+            }
+
+            if (env_loader.map.get("BUN_CONFIG_HTTP_RETRY_COUNT")) |retry_count| {
+                if (std.fmt.parseInt(i32, retry_count, 10)) |int| {
+                    this.max_retry_count = @intCast(u16, @minimum(@maximum(int, 0), 65355));
+                } else |_| {}
             }
 
             if (env_loader.map.get("BUN_CONFIG_LINK_NATIVE_BINS")) |native_packages| {

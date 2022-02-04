@@ -47,6 +47,7 @@ pub fn onThreadStart() void {
     AsyncIO.global_loaded = true;
     NetworkThread.global.pool.io = &AsyncIO.global;
     Global.setThreadName("HTTP");
+    AsyncBIO.initBoringSSL();
 }
 
 pub inline fn getAllocator() std.mem.Allocator {
@@ -412,15 +413,14 @@ pub const AsyncHTTP = struct {
             this.state.store(.sending, .Monotonic);
             var timer = std.time.Timer.start() catch @panic("Timer failure");
             defer this.elapsed = timer.read();
-            _ = active_requests_count.fetchAdd(1, .Monotonic);
 
             this.response = await this.client.sendAsync(this.request_body.list.items, this.response_buffer) catch |err| {
-                _ = active_requests_count.fetchSub(1, .Monotonic);
                 this.state.store(.fail, .Monotonic);
                 this.err = err;
 
                 if (sender.http.max_retry_count > sender.http.retries_count) {
                     sender.http.retries_count += 1;
+                    sender.http.response_buffer.reset();
                     NetworkThread.global.pool.schedule(ThreadPool.Batch.from(&sender.task));
                     return;
                 }
@@ -430,7 +430,6 @@ pub const AsyncHTTP = struct {
             this.redirect_count = @intCast(u32, @maximum(127 - this.client.remaining_redirect_count, 0));
             this.state.store(.success, .Monotonic);
             this.gzip_elapsed = this.client.gzip_elapsed;
-            _ = active_requests_count.fetchSub(1, .Monotonic);
         }
 
         if (sender.http.callback) |callback| {
@@ -566,6 +565,10 @@ pub fn send(this: *HTTPClient, body: []const u8, body_out_str: *MutableString) !
     // this prevents stack overflow
     redirect: while (this.remaining_redirect_count >= -1) {
         if (@enumToInt(this.stage) > @enumToInt(Stage.pending)) this.socket.deinit();
+        _ = AsyncHTTP.active_requests_count.fetchAdd(1, .Monotonic);
+        defer {
+            _ = AsyncHTTP.active_requests_count.fetchSub(1, .Monotonic);
+        }
 
         this.stage = Stage.pending;
         body_out_str.reset();

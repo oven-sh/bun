@@ -266,7 +266,8 @@ fn _wait(self: *ThreadPool, _is_waking: bool, comptime sleep_on_idle: bool) erro
 
                 if (end_count > 0) {
                     while (HTTP.AsyncHTTP.active_requests_count.loadUnchecked() > HTTP.AsyncHTTP.max_simultaneous_requests) {
-                        io.run_for_ns(std.time.ns_per_us * 10) catch {};
+                        io.run_for_ns(std.time.ns_per_ms) catch {};
+                        io.tick() catch {};
                     }
                 }
 

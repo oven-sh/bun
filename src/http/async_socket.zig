@@ -196,6 +196,11 @@ pub const SendError = AsyncIO.SendError;
 
 pub fn deinit(this: *AsyncSocket) void {
     this.head.release();
+    this.err = null;
+    this.queued = 0;
+    this.sent = 0;
+    this.read_context = &[_]u8{};
+    this.read_offset = 0;
 }
 
 pub fn send(this: *AsyncSocket) SendError!usize {
@@ -309,7 +314,7 @@ pub const SSL = struct {
     ssl_loaded: bool = false,
     socket: AsyncSocket,
     handshake_complete: bool = false,
-    ssl_bio: ?*AsyncBIO = null,
+    ssl_bio: AsyncBIO = undefined,
     unencrypted_bytes_to_send: ?*AsyncMessage = null,
     connect_frame: Yield(SSL.handshake) = Yield(SSL.handshake){},
     send_frame: Yield(SSL.send) = Yield(SSL.send){},
@@ -329,6 +334,8 @@ pub const SSL = struct {
     pending_read_buffer: []u8 = &[_]u8{},
     pending_read_result: anyerror!u32 = 0,
     pending_write_result: anyerror!u32 = 0,
+
+    handshake_retry_count: u16 = 5,
 
     first_post_handshake_write: bool = true,
 
@@ -371,18 +378,16 @@ pub const SSL = struct {
             ssl.setHostname(name_);
         }
 
-        var bio = try AsyncBIO.init(this.socket.allocator);
-        errdefer bio.release();
-        bio.onReady = AsyncBIO.Callback.Wrap(SSL, SSL.retryAll).get(this);
-        bio.socket_fd = this.socket.socket;
-        this.ssl_bio = bio;
+        try this.ssl_bio.init();
+        this.ssl_bio.onReady = AsyncBIO.Callback.Wrap(SSL, SSL.retryAll).get(this);
+        this.ssl_bio.socket_fd = this.socket.socket;
 
-        boring.SSL_set_bio(ssl, bio.bio, bio.bio);
+        boring.SSL_set_bio(ssl, this.ssl_bio.bio.?, this.ssl_bio.bio.?);
 
         // boring.SSL_set_early_data_enabled(ssl, 1);
         _ = boring.SSL_clear_options(ssl, boring.SSL_OP_NO_COMPRESSION | boring.SSL_OP_LEGACY_SERVER_CONNECT);
         _ = boring.SSL_set_options(ssl, boring.SSL_OP_NO_COMPRESSION | boring.SSL_OP_LEGACY_SERVER_CONNECT);
-        const mode = boring.SSL_MODE_RELEASE_BUFFERS | boring.SSL_MODE_CBC_RECORD_SPLITTING | boring.SSL_MODE_ENABLE_FALSE_START;
+        const mode = boring.SSL_MODE_CBC_RECORD_SPLITTING | boring.SSL_MODE_ENABLE_FALSE_START;
 
         _ = boring.SSL_set_mode(ssl, mode);
         _ = boring.SSL_clear_mode(ssl, mode);
@@ -407,7 +412,7 @@ pub const SSL = struct {
 
         boring.SSL_set_shed_handshake_config(ssl, 1);
 
-        this.unencrypted_bytes_to_send = AsyncMessage.get(this.socket.allocator);
+        this.unencrypted_bytes_to_send = this.socket.head;
 
         try this.handshake();
 
@@ -497,9 +502,9 @@ pub const SSL = struct {
     }
 
     pub fn doPayloadRead(this: *SSL, buffer: []u8, count: *u32) anyerror!u32 {
-        if (this.ssl_bio.?.socket_recv_error != null) {
-            const pending = this.ssl_bio.?.socket_recv_error.?;
-            this.ssl_bio.?.socket_recv_error = null;
+        if (this.ssl_bio.socket_recv_error != null) {
+            const pending = this.ssl_bio.socket_recv_error.?;
+            this.ssl_bio.socket_recv_error = null;
             return pending;
         }
 
@@ -508,6 +513,7 @@ pub const SSL = struct {
         var ssl_err: c_int = 0;
         const buf_len = @truncate(u32, buffer.len);
         while (true) {
+            boring.ERR_clear_error();
             ssl_ret = boring.SSL_read(this.ssl, buffer.ptr + total_bytes_read, @intCast(c_int, buf_len - total_bytes_read));
             ssl_err = boring.SSL_get_error(this.ssl, ssl_ret);
 
@@ -521,7 +527,7 @@ pub const SSL = struct {
 
             // Continue processing records as long as there is more data available
             // synchronously.
-            if (!(ssl_err == boring.SSL_ERROR_WANT_RENEGOTIATE or (total_bytes_read < buf_len and ssl_ret > 0 and this.ssl_bio.?.hasPendingReadData()))) break;
+            if (!(ssl_err == boring.SSL_ERROR_WANT_RENEGOTIATE or (total_bytes_read < buf_len and ssl_ret > 0 and this.ssl_bio.hasPendingReadData()))) break;
         }
 
         // Although only the final SSL_read call may have failed, the failure needs to
@@ -547,6 +553,13 @@ pub const SSL = struct {
                     result = error.WouldBlock;
                 },
                 else => {
+                    if (extremely_verbose) {
+                        const err = boring.ERR_get_error();
+
+                        const version = std.mem.span(boring.SSL_get_version(this.ssl));
+                        var hostname = std.mem.span(std.mem.sliceTo(&this.hostname, 0));
+                        Output.prettyErrorln("[{s}] OpenSSLError reading (version: {s}, total read: {d}) - code: {d}", .{ hostname, version, total_bytes_read, err });
+                    }
                     result = error.OpenSSLError;
                 },
             }
@@ -556,8 +569,8 @@ pub const SSL = struct {
         // a connection, and instead terminate the TCP connection. This is reported
         // as ERR_CONNECTION_CLOSED. Because of this, map the unclean shutdown to a
         // graceful EOF, instead of treating it as an error as it should be.
-        if (this.ssl_bio.?.socket_recv_error) |err| {
-            this.ssl_bio.?.socket_recv_error = null;
+        if (this.ssl_bio.socket_recv_error) |err| {
+            this.ssl_bio.socket_recv_error = null;
             return err;
         }
 
@@ -630,6 +643,7 @@ pub const SSL = struct {
         }
 
         var byte: u8 = 0;
+        boring.ERR_clear_error();
         var rv = boring.SSL_peek(this.ssl, &byte, 1);
         var ssl_error = boring.SSL_get_error(this.ssl, rv);
         switch (ssl_error) {
@@ -641,6 +655,8 @@ pub const SSL = struct {
     }
 
     fn doHandshake(this: *SSL) HandshakeError!void {
+        boring.ERR_clear_error();
+
         const rv = boring.SSL_do_handshake(this.ssl);
         if (rv <= 0) {
             const ssl_error = boring.SSL_get_error(this.ssl, rv);
@@ -658,7 +674,25 @@ pub const SSL = struct {
                     this.next_handshake_state = HandshakeState.handshake;
                     return error.WouldBlock;
                 },
-                else => return error.OpenSSLError,
+                boring.SSL_ERROR_SYSCALL => {
+                    this.handshake_retry_count -|= 1;
+                    if (this.handshake_retry_count > 0) {
+                        this.next_handshake_state = HandshakeState.handshake;
+                        return error.WouldBlock;
+                    }
+
+                    return error.OpenSSLError;
+                },
+                else => {
+                    if (extremely_verbose) {
+                        const err = boring.ERR_get_error();
+                        var error_buf: [1024]u8 = undefined;
+                        @memset(&error_buf, 0, 1024);
+                        var err_msg = std.mem.span(boring.ERR_error_string(err, &error_buf));
+                        Output.prettyErrorln("Handshaking error {s}", .{err_msg});
+                    }
+                    return error.OpenSSLError;
+                },
             }
         }
 
@@ -748,38 +782,46 @@ pub const SSL = struct {
 
     pub inline fn init(allocator: std.mem.Allocator, io: *AsyncIO) !SSL {
         return SSL{
+            .ssl_bio = AsyncBIO{
+                .allocator = allocator,
+            },
             .socket = try AsyncSocket.init(io, 0, allocator),
         };
     }
 
     pub fn deinit(this: *SSL) void {
         this.socket.deinit();
-        if (!this.is_ssl) return;
-
-        if (this.ssl_bio) |bio| {
-            _ = boring.BIO_set_data(bio.bio, null);
-            bio.socket_fd = 0;
-            bio.onReady = null;
-            bio.release();
-            this.ssl_bio = null;
-        }
 
         if (this.ssl_loaded) {
+            _ = boring.SSL_shutdown(this.ssl);
             this.ssl.deinit();
             this.ssl_loaded = false;
         }
 
+        if (this.ssl_bio.recv_buffer) |recv| {
+            recv.release();
+        }
+
+        if (this.ssl_bio.send_buffer) |recv| {
+            recv.release();
+        }
+
+        this.ssl_bio.pending_reads = 0;
+        this.ssl_bio.pending_sends = 0;
+        this.ssl_bio.socket_recv_len = 0;
+        this.ssl_bio.socket_send_len = 0;
+        this.ssl_bio.bio_write_offset = 0;
+        this.ssl_bio.bio_read_offset = 0;
+        this.ssl_bio.socket_send_error = null;
+        this.ssl_bio.socket_recv_error = null;
+
+        this.ssl_bio.socket_fd = 0;
+        this.ssl_bio.onReady = null;
+
         this.handshake_complete = false;
 
-        if (this.unencrypted_bytes_to_send) |bio| {
-            var next_ = bio.next;
-            while (next_) |next| {
-                next.release();
-                next_ = next.next;
-            }
-
-            bio.release();
-            this.unencrypted_bytes_to_send = null;
-        }
+        this.* = SSL{
+            .socket = this.socket,
+        };
     }
 };

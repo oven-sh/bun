@@ -18848,6 +18848,7 @@ pub const SSL_CTX = opaque {
         SSL_CTX_set0_buffer_pool(ctx, auto_crypto_buffer_pool);
         // _ = SSL_CTX_set_mode(ctx, SSL_MODE_AUTO_RETRY);
         _ = SSL_CTX_set_cipher_list(ctx, SSL_DEFAULT_CIPHER_LIST);
+        SSL_CTX_set_quiet_shutdown(ctx, 1);
         return ctx;
     }
 

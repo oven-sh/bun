@@ -25,29 +25,21 @@ const Packet = struct {
     pub const Pool = ObjectPool(Packet, null, false, 32);
 };
 
-bio: *boring.BIO = undefined,
+bio: ?*boring.BIO = null,
 socket_fd: std.os.socket_t = 0,
 
 allocator: std.mem.Allocator,
 
 pending_reads: u32 = 0,
 pending_sends: u32 = 0,
-
 recv_buffer: ?*BufferPool.Node = null,
-big_buffer: std.ArrayListUnmanaged(u8) = .{},
 send_buffer: ?*BufferPool.Node = null,
-
-write_error: c_int = 0,
 socket_recv_len: c_int = 0,
 socket_send_len: u32 = 0,
-socket_recv_eof: bool = false,
 bio_write_offset: u32 = 0,
 bio_read_offset: u32 = 0,
-
 socket_send_error: ?anyerror = null,
 socket_recv_error: ?anyerror = null,
-
-next: ?*AsyncBIO = null,
 
 onReady: ?Callback = null,
 
@@ -82,7 +74,9 @@ pub fn nextFrame(this: *AsyncBIO) void {
 }
 
 var method: ?*boring.BIO_METHOD = null;
-var head: ?*AsyncBIO = null;
+pub fn initBoringSSL() void {
+    method = boring.BIOMethod.init(async_bio_name, Bio.create, Bio.destroy, Bio.write, Bio.read, null, Bio.ctrl);
+}
 
 const async_bio_name: [:0]const u8 = "AsyncBIO";
 
@@ -92,61 +86,14 @@ const Wait = enum {
     completed,
 };
 
-fn instance(allocator: std.mem.Allocator) *AsyncBIO {
-    if (head) |head_| {
-        var next = head_.next;
-        var ret = head_;
-        head = next;
-
-        return ret;
+pub fn init(this: *AsyncBIO) !void {
+    if (this.bio == null) {
+        this.bio = boring.BIO_new(
+            method.?,
+        );
     }
 
-    var bio = allocator.create(AsyncBIO) catch unreachable;
-    bio.* = AsyncBIO{
-        .allocator = allocator,
-    };
-
-    return bio;
-}
-
-pub fn release(this: *AsyncBIO) void {
-    if (head) |head_| {
-        this.next = head_;
-    }
-
-    this.socket_send_len = 0;
-    this.socket_recv_len = 0;
-    this.bio_write_offset = 0;
-    this.bio_read_offset = 0;
-    this.socket_recv_error = null;
-    this.socket_send_error = null;
-    this.onReady = null;
-
-    if (this.recv_buffer) |recv| {
-        recv.release();
-        this.recv_buffer = null;
-    }
-
-    if (this.send_buffer) |write| {
-        write.release();
-        this.send_buffer = null;
-    }
-
-    head = this;
-}
-
-pub fn init(allocator: std.mem.Allocator) !*AsyncBIO {
-    var bio = instance(allocator);
-
-    bio.bio = boring.BIO_new(
-        method orelse brk: {
-            method = boring.BIOMethod.init(async_bio_name, Bio.create, Bio.destroy, Bio.write, Bio.read, null, Bio.ctrl);
-            break :brk method.?;
-        },
-    ) orelse return error.OutOfMemory;
-
-    _ = boring.BIO_set_data(bio.bio, bio);
-    return bio;
+    _ = boring.BIO_set_data(this.bio.?, this);
 }
 
 const WaitResult = enum {
@@ -172,10 +119,6 @@ pub fn doSocketRead(this: *AsyncBIO, completion: *Completion, result_: AsyncIO.R
     if (extremely_verbose) {
         Output.prettyErrorln("onRead: {d}", .{socket_recv_len});
         Output.flush();
-    }
-
-    if (socket_recv_len == 0) {
-        this.socket_recv_eof = true;
     }
 
     // if (socket_recv_len == 0) {
@@ -296,7 +239,7 @@ pub const Bio = struct {
 
         if (boring.BIO_get_data(this_bio) != null) {
             var this = cast(this_bio);
-            this.release();
+            this.bio = null;
         }
 
         return 0;

@@ -308,11 +308,15 @@ vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder b
 boringssl-build:
 	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) -GNinja .. && ninja 
 
+boringssl-build-debug:
+	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS_WITHOUT_RELEASE) -GNinja .. && ninja 
+
 boringssl-copy:
 	cp $(BUN_DEPS_DIR)/boringssl/build/ssl/libssl.a $(BUN_DEPS_OUT_DIR)/libssl.a
 	cp $(BUN_DEPS_DIR)/boringssl/build/crypto/libcrypto.a $(BUN_DEPS_OUT_DIR)/libcrypto.boring.a
 
 boringssl: boringssl-build boringssl-copy
+boringssl-debug: boringssl-build-debug boringssl-copy
 
 libbacktrace:
 	cd $(BUN_DEPS_DIR)/libbacktrace && \

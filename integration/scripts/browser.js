@@ -104,8 +104,6 @@ async function main() {
   async function runPage(key) {
     var page;
     try {
-      console.log("launched");
-
       page = await browser.newPage();
       if (USE_EXISTING_PROCESS) {
         await page.evaluate(`

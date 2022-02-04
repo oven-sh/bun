@@ -3332,9 +3332,7 @@ pub const Server = struct {
             if (!finished) {
                 req_ctx.bundler.router.?.match(*Server, server, RequestContext, req_ctx) catch |err| {
                     switch (err) {
-                        error.ModuleNotFound => {
-                            req_ctx.sendNotFound() catch {};
-                        },
+                        error.ModuleNotFound => {},
                         else => {
                             Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
                             did_print = true;

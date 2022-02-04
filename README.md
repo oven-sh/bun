@@ -42,6 +42,7 @@ docker run --rm --init --ulimit memlock=-1:-1 jarredsumner/bun:edge
 - [Things that don’t work yet](#things-that-dont-work-yet)
   - [Limitations & intended usage](#limitations--intended-usage)
 - [Configuration](#configuration)
+  - [bunfig.toml](#bunfig-toml)
   - [Loaders](#loaders)
   - [CSS in JS](#css-in-js)
   - [CSS Loader](#css-loader)
@@ -282,6 +283,10 @@ Ideally, most projects can use bun with their existing tooling while making few 
 Longer-term, bun intends to replace Node.js, Webpack, Babel, and PostCSS (in production).
 
 ## Configuration
+
+### bunfig.toml
+
+TODO: document this
 
 ### Loaders
 

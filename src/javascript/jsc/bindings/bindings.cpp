@@ -232,6 +232,16 @@ unsigned char JSC__JSValue__jsType(JSC__JSValue JSValue0) {
   return jsValue.asCell()->type();
 }
 
+void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC__JSGlobalObject *global, ZigString *arg1) {
+  JSC::JSMap *map = JSC::jsDynamicCast<JSC::JSMap *>(
+    global->vm(), global->moduleLoader()->getDirect(
+                    global->vm(), JSC::Identifier::fromString(global->vm(), "registry")));
+  if (!map) return;
+  const JSC::Identifier identifier = Zig::toIdentifier(*arg1, global);
+  JSC::JSValue val = JSC::identifierToJSValue(global->vm(), identifier);
+
+  map->remove(global, val);
+}
 // This is very naive!
 JSC__JSInternalPromise *JSC__VM__reloadModule(JSC__VM *vm, JSC__JSGlobalObject *arg1,
                                               ZigString arg2) {

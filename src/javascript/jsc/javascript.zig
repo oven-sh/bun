@@ -1227,6 +1227,7 @@ pub const VirtualMachine = struct {
     entry_point: ServerEntryPoint = undefined,
     origin: URL = URL{},
     node_fs: ?*Node.NodeFS = null,
+    has_loaded_node_modules: bool = false,
 
     arena: *std.heap.ArenaAllocator = undefined,
     has_loaded: bool = false,
@@ -2061,6 +2062,17 @@ pub const VirtualMachine = struct {
         }
     }
 
+    pub fn clearEntryPoint(
+        this: *VirtualMachine,
+    ) void {
+        if (this.main.len == 0) {
+            return;
+        }
+
+        var str = ZigString.init(main_file_name);
+        this.global.deleteModuleRegistryEntry(&str);
+    }
+
     pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) !*JSInternalPromise {
         try this.entry_point.generate(@TypeOf(this.bundler), &this.bundler, Fs.PathName.init(entry_path), main_file_name);
         this.main = entry_path;
@@ -2068,7 +2080,8 @@ pub const VirtualMachine = struct {
         var promise: *JSInternalPromise = undefined;
         // We first import the node_modules bundle. This prevents any potential TDZ issues.
         // The contents of the node_modules bundle are lazy, so hopefully this should be pretty quick.
-        if (this.node_modules != null) {
+        if (this.node_modules != null and !this.has_loaded_node_modules) {
+            this.has_loaded_node_modules = true;
             promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(std.mem.span(bun_file_import_path)));
 
             this.tick();

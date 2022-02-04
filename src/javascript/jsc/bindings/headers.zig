@@ -212,6 +212,7 @@ pub extern fn JSC__JSGlobalObject__bigIntPrototype(arg0: [*c]JSC__JSGlobalObject
 pub extern fn JSC__JSGlobalObject__booleanPrototype(arg0: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__createAggregateError(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]*anyopaque, arg2: u16, arg3: [*c]const ZigString) JSC__JSValue;
 pub extern fn JSC__JSGlobalObject__datePrototype(arg0: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;
+pub extern fn JSC__JSGlobalObject__deleteModuleRegistryEntry(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]ZigString) void;
 pub extern fn JSC__JSGlobalObject__errorPrototype(arg0: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__functionPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__FunctionPrototype;
 pub extern fn JSC__JSGlobalObject__generateHeapSnapshot(arg0: [*c]JSC__JSGlobalObject) JSC__JSValue;

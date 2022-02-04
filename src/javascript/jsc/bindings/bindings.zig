@@ -1098,6 +1098,10 @@ pub const JSGlobalObject = extern struct {
         return cppFn("vm", .{this});
     }
 
+    pub fn deleteModuleRegistryEntry(this: *JSGlobalObject, name_: *ZigString) void {
+        return cppFn("deleteModuleRegistryEntry", .{ this, name_ });
+    }
+
     pub const Extern = [_][]const u8{
         "createAggregateError",
         "objectPrototype",
@@ -1113,6 +1117,7 @@ pub const JSGlobalObject = extern struct {
         "errorPrototype",
         "iteratorPrototype",
         "asyncIteratorPrototype",
+        "deleteModuleRegistryEntry",
         "generatorFunctionPrototype",
         "generatorPrototype",
         "asyncFunctionPrototype",
@@ -1574,11 +1579,13 @@ pub const JSValue = enum(i64) {
 
         pub fn format(formatter: Formatter, comptime fmt: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
             const self = formatter.value;
-            const kind = jsType(self);
+            const kind: JSType = jsType(self);
             if (kind.isStringLike()) {
                 var zig_str = self.getZigString();
                 return try zig_str.format(fmt, opts, writer);
             }
+
+            if (kind) {}
         }
     };
 

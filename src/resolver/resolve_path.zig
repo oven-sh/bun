@@ -337,118 +337,74 @@ pub fn relativeAlloc(allocator: std.mem.Allocator, from: []const u8, to: []const
     }
 }
 
-// This function is based on Node.js' path.normalize function.
-// https://github.com/nodejs/node/blob/36bb31be5f0b85a0f6cbcb36b64feb3a12c60984/lib/path.js#L66
-pub fn normalizeStringGeneric(str: []const u8, buf: []u8, comptime allow_above_root: bool, comptime separator: u8, comptime isPathSeparator: anytype, lastIndexOfSeparator: anytype, comptime preserve_trailing_slash: bool) []u8 {
-    var i: usize = 0;
-    var last_segment_length: i32 = 0;
-    var last_slash: i32 = -1;
-    var dots: i32 = 0;
-    var code: u8 = 0;
-    const DotSlashType = if (allow_above_root) i16 else u0;
-    var depth: DotSlashType = 0;
+// This function is based on Go's filepath.Clean function
+// https://cs.opensource.google/go/go/+/refs/tags/go1.17.6:src/path/filepath/path.go;l=89
+pub fn normalizeStringGeneric(path: []const u8, buf: []u8, comptime allow_above_root: bool, comptime separator: u8, comptime isSeparator: anytype, _: anytype, comptime preserve_trailing_slash: bool) []u8 {
+    var r: usize = 0;
+    var dotdot: usize = 0;
+    var buf_i: usize = 0;
+    const rooted = isSeparator(path[0]);
 
-    var written_len: usize = 0;
-    const stop_len = str.len;
+    r = @as(usize, @boolToInt(rooted));
 
-    while (i <= stop_len) : (i += 1) {
-        if (i < stop_len) {
-            code = str[i];
-        } else if (@call(std.builtin.CallOptions{ .modifier = .always_inline }, isPathSeparator, .{code})) {
-            break;
-        } else {
-            code = separator;
+    const n = path.len;
+
+    while (r < n) {
+        // empty path element
+        // or
+        // . element
+        if (isSeparator(path[r]) or
+            (path[r] == '.' and (r + 1 == n or isSeparator(path[r + 1]))))
+        {
+            r += 1;
+            continue;
         }
 
-        if (@call(std.builtin.CallOptions{ .modifier = .always_inline }, isPathSeparator, .{code})) {
-            if (last_slash == @intCast(i32, i) - 1 or dots == 1) {
-                // NOOP
-            } else if (dots == 2) {
-                if (written_len < 2 or last_segment_length != 2 or (@bitCast(u16, buf[written_len - 2 ..][0..2].*) != comptime std.mem.readIntNative(u16, ".."))) {
-                    if (written_len > 2) {
-                        if (lastIndexOfSeparator(buf[0..written_len])) |last_slash_index| {
-                            written_len = last_slash_index;
-                            last_segment_length = @intCast(i32, written_len - 1 - (lastIndexOfSeparator(buf[0..written_len]) orelse 0));
-                            if (comptime allow_above_root) depth +|= 1;
-                        } else {
-                            written_len = 0;
-                            if (comptime allow_above_root) depth -|= 1;
-                        }
-
-                        last_slash = @intCast(i32, i);
-                        dots = 0;
-
-                        continue;
-                    } else if (written_len != 0) {
-                        written_len = 0;
-                        last_segment_length = 0;
-                        last_slash = @intCast(i32, i);
-                        dots = 0;
-
-                        continue;
-                    }
-
-                    if (allow_above_root) {
-                        if (written_len > 0) {
-                            buf[written_len .. written_len + 3][0..3].* = [_]u8{ '.', '.', separator };
-                            written_len += 3;
-                        } else {
-                            buf[written_len .. written_len + 2][0..2].* = [_]u8{
-                                '.',
-                                '.',
-                            };
-                            written_len += 2;
-                        }
-                        depth = 0;
-                        last_segment_length = 2;
-                    }
-                } else if ((@bitCast(u16, buf[written_len - 2 ..][0..2].*) == comptime std.mem.readIntNative(u16, "..")) and allow_above_root) {
-                    if (comptime allow_above_root) depth -|= 1;
+        if (r + 2 == n or (n > r + 2 and isSeparator(path[r + 2])) and @bitCast(u16, path[r..][0..2].*) == comptime std.mem.readIntNative(u16, "..")) {
+            r += 2;
+            // .. element: remove to last separator
+            if (buf_i > dotdot) {
+                buf_i -= 1;
+                while (buf_i > dotdot and !isSeparator(buf[buf_i])) {
+                    buf_i -= 1;
                 }
-            } else {
-                if (written_len > 0) {
-                    buf[written_len] = separator;
-                    written_len += 1;
+            } else if (allow_above_root) {
+                if (buf_i > 0) {
+                    buf[buf_i..][0..3].* = [_]u8{ separator, '.', '.' };
+                    buf_i += 3;
+                } else {
+                    buf[buf_i..][0..2].* = [_]u8{ '.', '.' };
+                    buf_i += 2;
                 }
-
-                // above, we counted how many consecutive .. there are
-                // once we get an exact number, we flush it
-                if (comptime allow_above_root) {
-                    while (depth < 0) : (depth += 1) {
-                        buf[written_len..][0..3].* = [_]u8{
-                            '.',
-                            '.',
-                            separator,
-                        };
-                        written_len += 3;
-                    }
-                }
-
-                const slice = str[@intCast(usize, last_slash + 1)..i];
-                const base = buf[written_len..];
-                std.mem.copy(u8, base[0..slice.len], slice);
-                written_len += slice.len;
-                last_segment_length = @intCast(i32, i) - last_slash - 1;
+                dotdot = buf_i;
             }
 
-            last_slash = @intCast(i32, i);
-            dots = 0;
-        } else if (code == '.' and dots != -1) {
-            dots += 1;
-        } else {
-            dots = -1;
+            continue;
         }
+
+        // real path element.
+        // add slash if needed
+        if (buf_i != 0 and !isSeparator(buf[buf_i - 1])) {
+            buf[buf_i] = separator;
+            buf_i += 1;
+        }
+
+        const from = r;
+        while (r < n and !isSeparator(path[r])) : (r += 1) {}
+        const count = r - from;
+        @memcpy(buf[buf_i..].ptr, path[from..].ptr, count);
+        buf_i += count;
     }
 
     if (preserve_trailing_slash) {
         // Was there a trailing slash? Let's keep it.
-        if (stop_len == last_slash + 1 and last_segment_length > 0) {
-            buf[written_len] = separator;
-            written_len += 1;
+        if (buf_i > 0 and path[path.len - 1] == separator and buf[buf_i] != separator) {
+            buf[buf_i] = separator;
+            buf_i += 1;
         }
     }
 
-    return buf[0..written_len];
+    return buf[0..buf_i];
 }
 
 pub const Platform = enum {
@@ -456,6 +412,14 @@ pub const Platform = enum {
     loose,
     windows,
     posix,
+
+    pub fn isAbsolute(comptime platform: Platform, path: []const u8) bool {
+        return switch (comptime platform) {
+            .auto => platform.resolve().isAbsolute(path),
+            .loose, .posix => path.len > 0 and path[0] == '/',
+            .windows => std.fs.path.isAbsoluteWindows(path),
+        };
+    }
 
     pub fn separator(comptime platform: Platform) u8 {
         return comptime switch (platform) {
@@ -523,6 +487,14 @@ pub const Platform = enum {
         }
     }
 
+    pub fn trailingSeparator(comptime _platform: Platform) [2]u8 {
+        return comptime switch (_platform) {
+            .auto => _platform.resolve().trailingSeparator(),
+            .windows => ".\\".*,
+            .posix, .loose => "./".*,
+        };
+    }
+
     pub fn leadingSeparatorIndex(comptime _platform: Platform, path: anytype) ?usize {
         switch (comptime _platform.resolve()) {
             .windows => {
@@ -545,6 +517,8 @@ pub const Platform = enum {
                         return 2;
                     if (path[2] == '\\')
                         return 2;
+
+                    return 1;
                 }
 
                 return null;
@@ -587,10 +561,7 @@ pub fn normalizeBuf(str: []const u8, buf: []u8, comptime _platform: Platform) []
         return buf[0..1];
     }
 
-    const is_absolute = if (_platform == .posix or _platform == .auto)
-        (buf[0] == _platform.separator())
-    else
-        std.fs.path.isAbsoluteWindows(str);
+    const is_absolute = _platform.isAbsolute(str);
 
     const trailing_separator =
         buf[buf.len - 1] == _platform.separator();
@@ -839,6 +810,17 @@ pub fn lastIndexOfSeparatorPosix(slice: []const u8) ?usize {
     return std.mem.lastIndexOfScalar(u8, slice, std.fs.path.sep_posix);
 }
 
+pub fn lastIndexOfNonSeparatorPosix(slice: []const u8) ?u32 {
+    var i: usize = slice.len;
+    while (i != 0) : (i -= 1) {
+        if (slice[i] != std.fs.path.sep_posix) {
+            return @intCast(u32, i);
+        }
+    }
+
+    return null;
+}
+
 pub fn lastIndexOfSeparatorLoose(slice: []const u8) ?usize {
     return std.mem.lastIndexOfAny(u8, slice, "/\\");
 }
@@ -887,7 +869,7 @@ pub fn normalizeStringNode(
         return buf[0..1];
     }
 
-    const is_absolute = platform.isSeparator(str[0]);
+    const is_absolute = platform.isAbsolute(str);
     const trailing_separator = platform.isSeparator(str[str.len - 1]);
     var buf_ = buf[1..];
 
@@ -911,12 +893,12 @@ pub fn normalizeStringNode(
 
     if (out.len == 0) {
         if (is_absolute) {
-            buf[0] = '/';
+            buf[0] = platform.separator();
             return buf[0..1];
         }
 
         if (trailing_separator) {
-            buf[0..2].* = "./".*;
+            buf[0..2].* = platform.trailingSeparator();
             return buf[0..2];
         }
 
@@ -932,8 +914,6 @@ pub fn normalizeStringNode(
     }
 
     if (is_absolute) {
-        std.debug.assert(!platform.isSeparator(out[0]));
-
         buf[0] = platform.separator();
         out = buf[0 .. out.len + 1];
     }
@@ -1148,13 +1128,15 @@ test "joinStringBuf" {
 test "normalizeStringPosix" {
     var t = tester.Tester.t(default_allocator);
     defer t.report(@src());
-
+    var buf: [2048]u8 = undefined;
+    var buf2: [2048]u8 = undefined;
     // Don't mess up strings that
+    _ = t.expect("../../bar", normalizeStringNode("../foo../../../bar", &buf, .posix), @src());
     _ = t.expect("foo/bar.txt", try normalizeStringAlloc(default_allocator, "/foo/bar.txt", true, .posix), @src());
     _ = t.expect("foo/bar.txt", try normalizeStringAlloc(default_allocator, "/foo/bar.txt", false, .posix), @src());
     _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/foo/bar", true, .posix), @src());
     _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/foo/bar", false, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/././foo/././././././bar/../bar/../bar", true, .posix), @src());
+    _ = t.expect("/foo/bar", normalizeStringNode("/././foo/././././././bar/../bar/../bar", &buf2, .posix), @src());
     _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/foo/bar", false, .posix), @src());
     _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/foo/bar//////", false, .posix), @src());
     _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/////foo/bar//////", false, .posix), @src());

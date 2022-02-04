@@ -38,7 +38,7 @@ it("path.basename", () => {
   strictEqual(path.basename("//a"), "a");
   strictEqual(path.basename("a", "a"), "");
 
-  // On Windows a backslash acts as a path separator.
+  // // On Windows a backslash acts as a path separator.
   strictEqual(path.win32.basename("\\dir\\basename.ext"), "basename.ext");
   strictEqual(path.win32.basename("\\basename.ext"), "basename.ext");
   strictEqual(path.win32.basename("basename.ext"), "basename.ext");
@@ -143,56 +143,56 @@ it("path.join", () => {
     ],
   ];
 
-  // Windows-specific join tests
+  // // Windows-specific join tests
   // joinTests.push([
   //   path.win32.join,
   //   joinTests[0][1].slice(0).concat([
   //     // Arguments                     result
   //     // UNC path expected
-  //     [['//foo/bar'], '\\\\foo\\bar\\'],
-  //     [['\\/foo/bar'], '\\\\foo\\bar\\'],
-  //     [['\\\\foo/bar'], '\\\\foo\\bar\\'],
+  //     [["//foo/bar"], "\\\\foo\\bar\\"],
+  //     [["\\/foo/bar"], "\\\\foo\\bar\\"],
+  //     [["\\\\foo/bar"], "\\\\foo\\bar\\"],
   //     // UNC path expected - server and share separate
-  //     [['//foo', 'bar'], '\\\\foo\\bar\\'],
-  //     [['//foo/', 'bar'], '\\\\foo\\bar\\'],
-  //     [['//foo', '/bar'], '\\\\foo\\bar\\'],
+  //     [["//foo", "bar"], "\\\\foo\\bar\\"],
+  //     [["//foo/", "bar"], "\\\\foo\\bar\\"],
+  //     [["//foo", "/bar"], "\\\\foo\\bar\\"],
   //     // UNC path expected - questionable
-  //     [['//foo', '', 'bar'], '\\\\foo\\bar\\'],
-  //     [['//foo/', '', 'bar'], '\\\\foo\\bar\\'],
-  //     [['//foo/', '', '/bar'], '\\\\foo\\bar\\'],
+  //     [["//foo", "", "bar"], "\\\\foo\\bar\\"],
+  //     [["//foo/", "", "bar"], "\\\\foo\\bar\\"],
+  //     [["//foo/", "", "/bar"], "\\\\foo\\bar\\"],
   //     // UNC path expected - even more questionable
-  //     [['', '//foo', 'bar'], '\\\\foo\\bar\\'],
-  //     [['', '//foo/', 'bar'], '\\\\foo\\bar\\'],
-  //     [['', '//foo/', '/bar'], '\\\\foo\\bar\\'],
+  //     [["", "//foo", "bar"], "\\\\foo\\bar\\"],
+  //     [["", "//foo/", "bar"], "\\\\foo\\bar\\"],
+  //     [["", "//foo/", "/bar"], "\\\\foo\\bar\\"],
   //     // No UNC path expected (no double slash in first component)
-  //     [['\\', 'foo/bar'], '\\foo\\bar'],
-  //     [['\\', '/foo/bar'], '\\foo\\bar'],
-  //     [['', '/', '/foo/bar'], '\\foo\\bar'],
+  //     [["\\", "foo/bar"], "\\foo\\bar"],
+  //     [["\\", "/foo/bar"], "\\foo\\bar"],
+  //     [["", "/", "/foo/bar"], "\\foo\\bar"],
   //     // No UNC path expected (no non-slashes in first component -
   //     // questionable)
-  //     [['//', 'foo/bar'], '\\foo\\bar'],
-  //     [['//', '/foo/bar'], '\\foo\\bar'],
-  //     [['\\\\', '/', '/foo/bar'], '\\foo\\bar'],
-  //     [['//'], '\\'],
+  //     [["//", "foo/bar"], "\\foo\\bar"],
+  //     [["//", "/foo/bar"], "\\foo\\bar"],
+  //     [["\\\\", "/", "/foo/bar"], "\\foo\\bar"],
+  //     [["//"], "\\"],
   //     // No UNC path expected (share name missing - questionable).
-  //     [['//foo'], '\\foo'],
-  //     [['//foo/'], '\\foo\\'],
-  //     [['//foo', '/'], '\\foo\\'],
-  //     [['//foo', '', '/'], '\\foo\\'],
+  //     [["//foo"], "\\foo"],
+  //     [["//foo/"], "\\foo\\"],
+  //     [["//foo", "/"], "\\foo\\"],
+  //     [["//foo", "", "/"], "\\foo\\"],
   //     // No UNC path expected (too many leading slashes - questionable)
-  //     [['///foo/bar'], '\\foo\\bar'],
-  //     [['////foo', 'bar'], '\\foo\\bar'],
-  //     [['\\\\\\/foo/bar'], '\\foo\\bar'],
+  //     [["///foo/bar"], "\\foo\\bar"],
+  //     [["////foo", "bar"], "\\foo\\bar"],
+  //     [["\\\\\\/foo/bar"], "\\foo\\bar"],
   //     // Drive-relative vs drive-absolute paths. This merely describes the
   //     // status quo, rather than being obviously right
-  //     [['c:'], 'c:.'],
-  //     [['c:.'], 'c:.'],
-  //     [['c:', ''], 'c:.'],
-  //     [['', 'c:'], 'c:.'],
-  //     [['c:.', '/'], 'c:.\\'],
-  //     [['c:.', 'file'], 'c:file'],
-  //     [['c:', '/'], 'c:\\'],
-  //     [['c:', 'file'], 'c:\\file'],
+  //     [["c:"], "c:."],
+  //     [["c:."], "c:."],
+  //     [["c:", ""], "c:."],
+  //     [["", "c:"], "c:."],
+  //     [["c:.", "/"], "c:.\\"],
+  //     [["c:.", "file"], "c:file"],
+  //     [["c:", "/"], "c:\\"],
+  //     [["c:", "file"], "c:\\file"],
   //   ]),
   // ]);
   joinTests.forEach((test) => {
@@ -302,6 +302,91 @@ it("path.relative", () => {
     });
   });
 
-  assert.strictEqual(failures.length, 0, failures.join(""));
+  strictEqual(failures.length, 0, failures.join(""));
   expect(true).toBe(true);
+});
+
+it("path.normalize", () => {
+  // strictEqual(
+  //   path.win32.normalize("./fixtures///b/../b/c.js"),
+  //   "fixtures\\b\\c.js"
+  // );
+  // strictEqual(path.win32.normalize("/foo/../../../bar"), "\\bar");
+  // strictEqual(path.win32.normalize("a//b//../b"), "a\\b");
+  // strictEqual(path.win32.normalize("a//b//./c"), "a\\b\\c");
+  // strictEqual(path.win32.normalize("a//b//."), "a\\b");
+  // strictEqual(
+  //   path.win32.normalize("//server/share/dir/file.ext"),
+  //   "\\\\server\\share\\dir\\file.ext"
+  // );
+  // strictEqual(path.win32.normalize("/a/b/c/../../../x/y/z"), "\\x\\y\\z");
+  // strictEqual(path.win32.normalize("C:"), "C:.");
+  // strictEqual(path.win32.normalize("C:..\\abc"), "C:..\\abc");
+  // strictEqual(path.win32.normalize("C:..\\..\\abc\\..\\def"), "C:..\\..\\def");
+  // strictEqual(path.win32.normalize("C:\\."), "C:\\");
+  // strictEqual(path.win32.normalize("file:stream"), "file:stream");
+  // strictEqual(path.win32.normalize("bar\\foo..\\..\\"), "bar\\");
+  // strictEqual(path.win32.normalize("bar\\foo..\\.."), "bar");
+  // strictEqual(path.win32.normalize("bar\\foo..\\..\\baz"), "bar\\baz");
+  // strictEqual(path.win32.normalize("bar\\foo..\\"), "bar\\foo..\\");
+  // strictEqual(path.win32.normalize("bar\\foo.."), "bar\\foo..");
+  // strictEqual(path.win32.normalize("..\\foo..\\..\\..\\bar"), "..\\..\\bar");
+  // strictEqual(
+  //   path.win32.normalize("..\\...\\..\\.\\...\\..\\..\\bar"),
+  //   "..\\..\\bar"
+  // );
+  // strictEqual(
+  //   path.win32.normalize("../../../foo/../../../bar"),
+  //   "..\\..\\..\\..\\..\\bar"
+  // );
+  // strictEqual(
+  //   path.win32.normalize("../../../foo/../../../bar/../../"),
+  //   "..\\..\\..\\..\\..\\..\\"
+  // );
+  // strictEqual(
+  //   path.win32.normalize("../foobar/barfoo/foo/../../../bar/../../"),
+  //   "..\\..\\"
+  // );
+  // strictEqual(
+  //   path.win32.normalize("../.../../foobar/../../../bar/../../baz"),
+  //   "..\\..\\..\\..\\baz"
+  // );
+  // strictEqual(path.win32.normalize("foo/bar\\baz"), "foo\\bar\\baz");
+
+  strictEqual(
+    path.posix.normalize("./fixtures///b/../b/c.js"),
+    "fixtures/b/c.js"
+  );
+  strictEqual(path.posix.normalize("/foo/../../../bar"), "/bar");
+  strictEqual(path.posix.normalize("a//b//../b"), "a/b");
+  strictEqual(path.posix.normalize("a//b//./c"), "a/b/c");
+  strictEqual(path.posix.normalize("a//b//."), "a/b");
+  strictEqual(path.posix.normalize("/a/b/c/../../../x/y/z"), "/x/y/z");
+  strictEqual(path.posix.normalize("///..//./foo/.//bar"), "/foo/bar");
+  strictEqual(path.posix.normalize("bar/foo../../"), "bar/");
+  strictEqual(path.posix.normalize("bar/foo../.."), "bar");
+  strictEqual(path.posix.normalize("bar/foo../../baz"), "bar/baz");
+  strictEqual(path.posix.normalize("bar/foo../"), "bar/foo../");
+  strictEqual(path.posix.normalize("bar/foo.."), "bar/foo..");
+  console.log("A");
+  strictEqual(path.posix.normalize("../foo../../../bar"), "../../bar");
+  console.log("B");
+  strictEqual(path.posix.normalize("../.../.././.../../../bar"), "../../bar");
+  strictEqual(
+    path.posix.normalize("../../../foo/../../../bar"),
+    "../../../../../bar"
+  );
+  strictEqual(
+    path.posix.normalize("../../../foo/../../../bar/../../"),
+    "../../../../../../"
+  );
+  strictEqual(
+    path.posix.normalize("../foobar/barfoo/foo/../../../bar/../../"),
+    "../../"
+  );
+  strictEqual(
+    path.posix.normalize("../.../../foobar/../../../bar/../../baz"),
+    "../../../../baz"
+  );
+  strictEqual(path.posix.normalize("foo/bar\\baz"), "foo/bar\\baz");
 });

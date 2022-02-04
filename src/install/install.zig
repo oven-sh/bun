@@ -251,6 +251,7 @@ const NetworkTask = struct {
             &this.request_buffer,
             0,
         );
+        this.http.max_retry_count = PackageManager.instance.options.max_retry_count;
         this.callback = .{
             .package_manifest = .{
                 .name = try strings.StringOrTinyString.initAppendIfNeeded(name, *FileSystem.FilenameStore, &FileSystem.FilenameStore.instance),
@@ -303,6 +304,7 @@ const NetworkTask = struct {
             0,
         );
         this.http.callback = notify;
+        this.http.max_retry_count = PackageManager.instance.options.max_retry_count;
         this.callback = .{ .extract = tarball };
     }
 };
@@ -4532,8 +4534,9 @@ pub const PackageManager = struct {
 
                     const response = task.http.response orelse {
                         if (comptime log_level != .silent) {
-                            const fmt = "\n<r><red>error<r>: Failed to download package manifest <b>{s}<r>";
-                            const args = .{name.slice()};
+                            const fmt = "\n<r><red>error<r>: {s} downloading package manifest <b>{s}<r>\n";
+                            const error_name: string = if (task.http.err) |err| std.mem.span(@errorName(err)) else "failed";
+                            const args = .{ error_name, name.slice() };
                             if (comptime log_level.showProgress()) {
                                 Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
                             } else {
@@ -4611,8 +4614,9 @@ pub const PackageManager = struct {
                 },
                 .extract => |extract| {
                     const response = task.http.response orelse {
-                        const fmt = "\nFailed to download package tarball for package {s}\n";
-                        const args = .{extract.name.slice()};
+                        const fmt = "\n<r><red>error<r>: {s} downloading tarball <b>{s}@{s}<r>\n";
+                        const error_name: string = if (task.http.err) |err| std.mem.span(@errorName(err)) else "failed";
+                        const args = .{ error_name, extract.name.slice(), extract.resolution.fmt(manager.lockfile.buffers.string_bytes.items) };
 
                         if (comptime log_level != .silent) {
                             if (comptime log_level.showProgress()) {

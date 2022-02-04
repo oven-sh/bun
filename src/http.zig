@@ -3313,7 +3313,7 @@ pub const Server = struct {
                     // Note: the public folder may actually just be the root folder
                     // In this case, we only check if the pathname has no extension
                     if (!finished) {
-                        if (req_ctx.matchPublicFolder(true)) |result| {
+                        if (req_ctx.matchPublicFolder(comptime features.public_folder != .first)) |result| {
                             finished = true;
                             req_ctx.renderServeResult(result) catch |err| {
                                 Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
@@ -3341,7 +3341,7 @@ pub const Server = struct {
                         },
                     }
                 };
-                finished = true;
+                finished = req_ctx.controlled or req_ctx.has_called_done;
             }
         } else {
             request_handler: {
@@ -3357,7 +3357,7 @@ pub const Server = struct {
                             },
                         }
                     };
-                    finished = true;
+                    finished = finished or req_ctx.has_called_done;
                 }
             }
         }
@@ -3384,7 +3384,7 @@ pub const Server = struct {
                         did_print = true;
                     };
                 }
-                finished = true;
+                finished = finished or req_ctx.has_called_done;
             }
         }
 
@@ -3517,7 +3517,9 @@ pub const Server = struct {
             }
         } else if (server.bundler.router != null) {
             try server.run(
-                ConnectionFeatures{ .filesystem_router = true },
+                ConnectionFeatures{
+                    .filesystem_router = true,
+                },
             );
         } else if (server.bundler.options.routes.static_dir_enabled) {
             if (!public_folder_is_top_level) {

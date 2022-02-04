@@ -23,8 +23,17 @@ pub const Arena = struct {
         mimalloc.mi_heap_destroy(this.heap);
     }
 
+    pub fn reset(this: *Arena) void {
+        this.deinit();
+        this.* = initAssumeCapacity();
+    }
+
     pub fn init() !Arena {
         return Arena{ .heap = mimalloc.mi_heap_new() orelse return error.OutOfMemory };
+    }
+
+    pub fn initAssumeCapacity() Arena {
+        return Arena{ .heap = mimalloc.mi_heap_new().? };
     }
 
     pub fn gc(this: Arena, force: bool) void {

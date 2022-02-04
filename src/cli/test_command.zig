@@ -401,7 +401,5 @@ pub const TestCommand = struct {
         }
 
         reporter.updateDots();
-
-        vm.has_loaded = true;
     }
 };

@@ -315,6 +315,7 @@ pub const SSL = struct {
     socket: AsyncSocket,
     handshake_complete: bool = false,
     ssl_bio: AsyncBIO = undefined,
+    ssl_bio_loaded: bool = false,
     unencrypted_bytes_to_send: ?*AsyncMessage = null,
     connect_frame: Yield(SSL.handshake) = Yield(SSL.handshake){},
     send_frame: Yield(SSL.send) = Yield(SSL.send){},
@@ -379,6 +380,8 @@ pub const SSL = struct {
         }
 
         try this.ssl_bio.init();
+        this.ssl_bio_loaded = true;
+
         this.ssl_bio.onReady = AsyncBIO.Callback.Wrap(SSL, SSL.retryAll).get(this);
         this.ssl_bio.socket_fd = this.socket.socket;
 
@@ -798,25 +801,30 @@ pub const SSL = struct {
             this.ssl_loaded = false;
         }
 
-        if (this.ssl_bio.recv_buffer) |recv| {
-            recv.release();
+        if (this.ssl_bio_loaded) {
+            this.ssl_bio_loaded = false;
+            if (this.ssl_bio.recv_buffer) |recv| {
+                recv.release();
+                this.ssl_bio.recv_buffer = null;
+            }
+
+            if (this.ssl_bio.send_buffer) |recv| {
+                recv.release();
+                this.ssl_bio.send_buffer = null;
+            }
+
+            this.ssl_bio.pending_reads = 0;
+            this.ssl_bio.pending_sends = 0;
+            this.ssl_bio.socket_recv_len = 0;
+            this.ssl_bio.socket_send_len = 0;
+            this.ssl_bio.bio_write_offset = 0;
+            this.ssl_bio.bio_read_offset = 0;
+            this.ssl_bio.socket_send_error = null;
+            this.ssl_bio.socket_recv_error = null;
+
+            this.ssl_bio.socket_fd = 0;
+            this.ssl_bio.onReady = null;
         }
-
-        if (this.ssl_bio.send_buffer) |recv| {
-            recv.release();
-        }
-
-        this.ssl_bio.pending_reads = 0;
-        this.ssl_bio.pending_sends = 0;
-        this.ssl_bio.socket_recv_len = 0;
-        this.ssl_bio.socket_send_len = 0;
-        this.ssl_bio.bio_write_offset = 0;
-        this.ssl_bio.bio_read_offset = 0;
-        this.ssl_bio.socket_send_error = null;
-        this.ssl_bio.socket_recv_error = null;
-
-        this.ssl_bio.socket_fd = 0;
-        this.ssl_bio.onReady = null;
 
         this.handshake_complete = false;
 

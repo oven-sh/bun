@@ -345,6 +345,8 @@ pub fn normalizeStringGeneric(str: []const u8, buf: []u8, comptime allow_above_r
     var last_slash: i32 = -1;
     var dots: i32 = 0;
     var code: u8 = 0;
+    const DotSlashType = if (allow_above_root) i16 else u0;
+    var depth: DotSlashType = 0;
 
     var written_len: usize = 0;
     const stop_len = str.len;
@@ -362,41 +364,64 @@ pub fn normalizeStringGeneric(str: []const u8, buf: []u8, comptime allow_above_r
             if (last_slash == @intCast(i32, i) - 1 or dots == 1) {
                 // NOOP
             } else if (dots == 2) {
-                if (written_len < 2 or last_segment_length != 2 or @bitCast(u16, buf[written_len - 2 ..][0..2].*) != std.mem.readIntNative(u16, "..")) {
+                if (written_len < 2 or last_segment_length != 2 or (@bitCast(u16, buf[written_len - 2 ..][0..2].*) != comptime std.mem.readIntNative(u16, ".."))) {
                     if (written_len > 2) {
                         if (lastIndexOfSeparator(buf[0..written_len])) |last_slash_index| {
                             written_len = last_slash_index;
                             last_segment_length = @intCast(i32, written_len - 1 - (lastIndexOfSeparator(buf[0..written_len]) orelse 0));
+                            if (comptime allow_above_root) depth +|= 1;
                         } else {
                             written_len = 0;
+                            if (comptime allow_above_root) depth -|= 1;
                         }
+
                         last_slash = @intCast(i32, i);
                         dots = 0;
+
                         continue;
                     } else if (written_len != 0) {
                         written_len = 0;
                         last_segment_length = 0;
                         last_slash = @intCast(i32, i);
                         dots = 0;
+
                         continue;
                     }
 
                     if (allow_above_root) {
                         if (written_len > 0) {
-                            buf[written_len] = separator;
-                            written_len += 1;
+                            buf[written_len .. written_len + 3][0..3].* = [_]u8{ '.', '.', separator };
+                            written_len += 3;
+                        } else {
+                            buf[written_len .. written_len + 2][0..2].* = [_]u8{
+                                '.',
+                                '.',
+                            };
+                            written_len += 2;
                         }
-
-                        buf[written_len .. written_len + 2][0..2].* = "..".*;
-                        written_len += 2;
-
+                        depth = 0;
                         last_segment_length = 2;
                     }
+                } else if ((@bitCast(u16, buf[written_len - 2 ..][0..2].*) == comptime std.mem.readIntNative(u16, "..")) and allow_above_root) {
+                    if (comptime allow_above_root) depth -|= 1;
                 }
             } else {
                 if (written_len > 0) {
                     buf[written_len] = separator;
                     written_len += 1;
+                }
+
+                // above, we counted how many consecutive .. there are
+                // once we get an exact number, we flush it
+                if (comptime allow_above_root) {
+                    while (depth < 0) : (depth += 1) {
+                        buf[written_len..][0..3].* = [_]u8{
+                            '.',
+                            '.',
+                            separator,
+                        };
+                        written_len += 3;
+                    }
                 }
 
                 const slice = str[@intCast(usize, last_slash + 1)..i];
@@ -590,7 +615,7 @@ pub fn normalizeStringBuf(str: []const u8, buf: []u8, comptime allow_above_root:
 
         .windows => {
             // @compileError("Not implemented");
-            return normalizeStringLooseBuf(
+            return normalizeStringWindows(
                 str,
                 buf,
                 allow_above_root,
@@ -835,6 +860,23 @@ pub fn normalizeStringLooseBuf(
     );
 }
 
+pub fn normalizeStringWindows(
+    str: []const u8,
+    buf: []u8,
+    comptime allow_above_root: bool,
+    comptime preserve_trailing_slash: bool,
+) []u8 {
+    return normalizeStringGeneric(
+        str,
+        buf,
+        allow_above_root,
+        std.fs.path.sep_windows,
+        isSepWin32,
+        lastIndexOfSeparatorWindows,
+        preserve_trailing_slash,
+    );
+}
+
 pub fn normalizeStringNode(
     str: []const u8,
     buf: []u8,
@@ -1036,6 +1078,71 @@ test "joinAbsStringLoose" {
         joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", "..", "././././bar././././", ".", "../file.js" }, .loose),
         @src(),
     );
+}
+
+test "joinStringBuf" {
+    var t = tester.Tester.t(default_allocator);
+    defer t.report(@src());
+
+    const fixtures = .{
+        .{ &[_][]const u8{ ".", "x/b", "..", "/b/c.js" }, "x/b/c.js" },
+        .{ &[_][]const u8{}, "." },
+        .{ &[_][]const u8{ "/.", "x/b", "..", "/b/c.js" }, "/x/b/c.js" },
+        .{ &[_][]const u8{ "/foo", "../../../bar" }, "/bar" },
+        .{ &[_][]const u8{ "foo", "../../../bar" }, "../../bar" },
+        .{ &[_][]const u8{ "foo/", "../../../bar" }, "../../bar" },
+        .{ &[_][]const u8{ "foo/x", "../../../bar" }, "../bar" },
+        .{ &[_][]const u8{ "foo/x", "./bar" }, "foo/x/bar" },
+        .{ &[_][]const u8{ "foo/x/", "./bar" }, "foo/x/bar" },
+        .{ &[_][]const u8{ "foo/x/", ".", "bar" }, "foo/x/bar" },
+        .{ &[_][]const u8{"./"}, "./" },
+        .{ &[_][]const u8{ ".", "./" }, "./" },
+        .{ &[_][]const u8{ ".", ".", "." }, "." },
+        .{ &[_][]const u8{ ".", "./", "." }, "." },
+        .{ &[_][]const u8{ ".", "/./", "." }, "." },
+        .{ &[_][]const u8{ ".", "/////./", "." }, "." },
+        .{ &[_][]const u8{"."}, "." },
+        .{ &[_][]const u8{ "", "." }, "." },
+        .{ &[_][]const u8{ "", "foo" }, "foo" },
+        .{ &[_][]const u8{ "foo", "/bar" }, "foo/bar" },
+        .{ &[_][]const u8{ "", "/foo" }, "/foo" },
+        .{ &[_][]const u8{ "", "", "/foo" }, "/foo" },
+        .{ &[_][]const u8{ "", "", "foo" }, "foo" },
+        .{ &[_][]const u8{ "foo", "" }, "foo" },
+        .{ &[_][]const u8{ "foo/", "" }, "foo/" },
+        .{ &[_][]const u8{ "foo", "", "/bar" }, "foo/bar" },
+        .{ &[_][]const u8{ "./", "..", "/foo" }, "../foo" },
+        .{ &[_][]const u8{ "./", "..", "..", "/foo" }, "../../foo" },
+        .{ &[_][]const u8{ ".", "..", "..", "/foo" }, "../../foo" },
+        .{ &[_][]const u8{ "", "..", "..", "/foo" }, "../../foo" },
+
+        .{ &[_][]const u8{"/"}, "/" },
+        .{ &[_][]const u8{ "/", "." }, "/" },
+        .{ &[_][]const u8{ "/", ".." }, "/" },
+        .{ &[_][]const u8{ "/", "..", ".." }, "/" },
+        .{ &[_][]const u8{""}, "." },
+        .{ &[_][]const u8{ "", "" }, "." },
+        .{ &[_][]const u8{" /foo"}, " /foo" },
+        .{ &[_][]const u8{ " ", "foo" }, " /foo" },
+        .{ &[_][]const u8{ " ", "." }, " " },
+        .{ &[_][]const u8{ " ", "/" }, " /" },
+        .{ &[_][]const u8{ " ", "" }, " " },
+        .{ &[_][]const u8{ "/", "foo" }, "/foo" },
+        .{ &[_][]const u8{ "/", "/foo" }, "/foo" },
+        .{ &[_][]const u8{ "/", "//foo" }, "/foo" },
+        .{ &[_][]const u8{ "/", "", "/foo" }, "/foo" },
+        .{ &[_][]const u8{ "", "/", "foo" }, "/foo" },
+        .{ &[_][]const u8{ "", "/", "/foo" }, "/foo" },
+
+        .{ &[_][]const u8{ "", "..", "..", "..", "/foo" }, "../../../foo" },
+        .{ &[_][]const u8{ "", "..", "..", "bar", "/foo" }, "../../bar/foo" },
+        .{ &[_][]const u8{ "", "..", "..", "bar", "/foo", "../" }, "../../bar/" },
+    };
+    inline for (fixtures) |fixture| {
+        const expected = fixture[1];
+        var buf = try default_allocator.alloc(u8, 2048);
+        _ = t.expect(expected, joinStringBuf(buf, fixture[0], .posix), @src());
+    }
 }
 
 test "normalizeStringPosix" {

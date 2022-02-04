@@ -2136,17 +2136,17 @@ pub const Path = struct {
             return JSC.ZigString.init(out).withEncoding().toValueGC(globalThis);
         }
     }
+    fn isAbsoluteString(path: JSC.ZigString, windows: bool) bool {
+        if (!windows) return path.len > 0 and path.slice()[0] == '/';
+
+        return isZigStringAbsoluteWindows(path);
+    }
     pub fn isAbsolute(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
         if (args_len == 0) return JSC.JSValue.jsBoolean(false);
         var zig_str: JSC.ZigString = args_ptr[0].getZigString(globalThis);
         if (zig_str.isEmpty()) return JSC.JSValue.jsBoolean(false);
-
-        if (!isWindows) {
-            return JSC.JSValue.jsBoolean(zig_str.slice()[0] == '/');
-        }
-
-        return JSC.JSValue.jsBoolean(isZigStringAbsoluteWindows(zig_str));
+        return JSC.JSValue.jsBoolean(isAbsoluteString(zig_str, isWindows));
     }
     fn isZigStringAbsoluteWindows(zig_str: JSC.ZigString) bool {
         if (zig_str.is16Bit()) {
@@ -2298,28 +2298,31 @@ pub const Path = struct {
 
     pub fn resolve(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
-        if (args_len < 2) return normalize(globalThis, isWindows, args_ptr, args_len);
 
         var stack_fallback_allocator = std.heap.stackFallback(
             (32 * @sizeOf(string)),
             heap_allocator,
         );
         var allocator = stack_fallback_allocator.get();
-        var out_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-        // TODO:
-        _ = isWindows;
+        var out_buf: [std.fs.MAX_PATH_BYTES * 2]u8 = undefined;
+
         var parts = allocator.alloc(string, args_len) catch unreachable;
         defer allocator.free(parts);
-        var i: u16 = 0;
+
         var arena = std.heap.ArenaAllocator.init(heap_allocator);
         var arena_allocator = arena.allocator();
         defer arena.deinit();
 
+        var i: u16 = 0;
         while (i < args_len) : (i += 1) {
-            parts[i] = args_ptr[0].toSlice(globalThis, arena_allocator).slice();
+            parts[i] = args_ptr[i].toSlice(globalThis, arena_allocator).slice();
         }
 
-        var out = JSC.ZigString.init(PathHandler.joinAbsStringBuf(Fs.FileSystem.instance.top_level_dir, &out_buf, parts, .posix));
+        var out = if (!isWindows)
+            JSC.ZigString.init(PathHandler.joinAbsStringBuf(Fs.FileSystem.instance.top_level_dir, &out_buf, parts, .posix))
+        else
+            JSC.ZigString.init(PathHandler.joinAbsStringBuf(Fs.FileSystem.instance.top_level_dir, &out_buf, parts, .windows));
+
         if (arena.state.buffer_list.first != null) out.setOutputEncoding();
         return out.toValueGC(globalThis);
     }

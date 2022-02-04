@@ -1,13 +1,17 @@
 import {
-__HMRClient as Bun
-} from "http://localhost:8080/bun:runtime";
+__FastRefreshRuntime as FastRefresh
+} from "http://localhost:8080/bun:wrap";
 import {
 __require as require
-} from "http://localhost:8080/bun:runtime";
+} from "http://localhost:8080/bun:wrap";
 import {
-__HMRModule as HMR
-} from "http://localhost:8080/bun:runtime";
-import * as JSX from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
+__HMRClient as Bun
+} from "http://localhost:8080/bun:wrap";
+import {
+__FastRefreshModule as FastHMR
+} from "http://localhost:8080/bun:wrap";
+import * as $2f488e5b from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
+var JSX = require($2f488e5b);
 import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
 var JSXClassic = require($bbcd215f);
 var jsx = require(JSX).jsxDEV, jsxEl = require(JSXClassic).createElement;
@@ -15,7 +19,7 @@ var jsx = require(JSX).jsxDEV, jsxEl = require(JSXClassic).createElement;
 var { default: React} = require($bbcd215f);
 Bun.activate(true);
 
-var hmr = new HMR(2717584935, "spread_with_key.tsx"), exports = hmr.exports;
+var hmr = new FastHMR(2717584935, "spread_with_key.tsx", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   function SpreadWithTheKey({
     className

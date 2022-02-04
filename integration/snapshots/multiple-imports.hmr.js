@@ -1,23 +1,26 @@
 import {
-__HMRClient as Bun
-} from "http://localhost:3000/bun:wrap";
+__FastRefreshRuntime as FastRefresh
+} from "http://localhost:8080/bun:wrap";
 import {
 __require as require
-} from "http://localhost:3000/bun:wrap";
+} from "http://localhost:8080/bun:wrap";
 import {
-__HMRModule as HMR
-} from "http://localhost:3000/bun:wrap";
-import * as $2f488e5b from "http://localhost:3000/node_modules/react/jsx-dev-runtime.js";
+__HMRClient as Bun
+} from "http://localhost:8080/bun:wrap";
+import {
+__FastRefreshModule as FastHMR
+} from "http://localhost:8080/bun:wrap";
+import * as $2f488e5b from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
 var JSX = require($2f488e5b);
-import * as $bbcd215f from "http://localhost:3000/node_modules/react/index.js";
+import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
 var JSXClassic = require($bbcd215f);
 var jsx = require(JSX).jsxDEV, JSXFrag = require(JSXClassic).Fragment;
 
 var { default: React} = require($bbcd215f);
 var { default: React2} = require($bbcd215f);
-Bun.activate(true);
+Bun.activate(false);
 
-var hmr = new HMR(2165509932, "multiple-imports.js"), exports = hmr.exports;
+var hmr = new FastHMR(2165509932, "multiple-imports.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   const bacon = React;
   const bacon2 = jsx(JSXFrag, {

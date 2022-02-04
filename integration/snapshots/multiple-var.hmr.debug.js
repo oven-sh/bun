@@ -1,7 +1,4 @@
 import {
-__require as require
-} from "http://localhost:8080/bun:wrap";
-import {
 __HMRClient as Bun
 } from "http://localhost:8080/bun:wrap";
 import {
@@ -10,15 +7,21 @@ __FastRefreshModule as FastHMR
 import {
 __FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
-import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
-Bun.activate(false);
+Bun.activate(true);
 
-var hmr = new FastHMR(3012834585, "bundled-entry-point.js", FastRefresh), exports = hmr.exports;
+var hmr = new FastHMR(2883558553, "multiple-var.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
-  var hello = null ?? "world";
+  var foo = true;
+  globalThis.TRUE_BUT_WE_CANT_TREESHAKE_IT = true;
+  if (globalThis.TRUE_BUT_WE_CANT_TREESHAKE_IT)
+    ({
+      foo
+    } = {foo: false });
   function test() {
+    console.assert(foo === false, "foo should be false");
     return testDone(import.meta.url);
   }
+  var foo;
   hmr.exportAll({
     test: () => test
   });

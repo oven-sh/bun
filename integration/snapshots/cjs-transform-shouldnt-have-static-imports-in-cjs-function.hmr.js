@@ -1,17 +1,20 @@
 import {
-__HMRModule as HMR
-} from "http://localhost:3000/bun:wrap";
-import {
 __HMRClient as Bun
-} from "http://localhost:3000/bun:wrap";
-import _login from "http://localhost:3000/_login.js";
-import _auth from "http://localhost:3000/_auth.js";
-import * as _loginReally from "http://localhost:3000/_login.js";
-import * as _loginReally2 from "http://localhost:3000/_login.js";
-import * as _authReally from "http://localhost:3000/_auth.js";
-Bun.activate(true);
+} from "http://localhost:8080/bun:wrap";
+import {
+__FastRefreshModule as FastHMR
+} from "http://localhost:8080/bun:wrap";
+import {
+__FastRefreshRuntime as FastRefresh
+} from "http://localhost:8080/bun:wrap";
+import _login from "http://localhost:8080/_login.js";
+import _auth from "http://localhost:8080/_auth.js";
+import * as _loginReally from "http://localhost:8080/_login.js";
+import * as _loginReally2 from "http://localhost:8080/_login.js";
+import * as _authReally from "http://localhost:8080/_auth.js";
+Bun.activate(false);
 
-var hmr = new HMR(3878252498, "cjs-transform-shouldnt-have-static-imports-in-cjs-function.js"), exports = hmr.exports;
+var hmr = new FastHMR(3878252498, "cjs-transform-shouldnt-have-static-imports-in-cjs-function.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   function test() {
     return testDone(import.meta.url);

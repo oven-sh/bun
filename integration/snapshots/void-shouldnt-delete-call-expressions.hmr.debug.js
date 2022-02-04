@@ -1,12 +1,15 @@
 import {
-__HMRModule as HMR
+__HMRClient as Bun
 } from "http://localhost:8080/bun:wrap";
 import {
-__HMRClient as Bun
+__FastRefreshModule as FastHMR
+} from "http://localhost:8080/bun:wrap";
+import {
+__FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
 Bun.activate(true);
 
-var hmr = new HMR(635901064, "void-shouldnt-delete-call-expressions.js"), exports = hmr.exports;
+var hmr = new FastHMR(635901064, "void-shouldnt-delete-call-expressions.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   var was_called = false;
   function thisShouldBeCalled() {

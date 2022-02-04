@@ -1,12 +1,15 @@
 import {
 __require as require
-} from "http://localhost:8080/bun:runtime";
-import {
-__HMRModule as HMR
-} from "http://localhost:8080/bun:runtime";
+} from "http://localhost:8080/bun:wrap";
 import {
 __HMRClient as Bun
-} from "http://localhost:8080/bun:runtime";
+} from "http://localhost:8080/bun:wrap";
+import {
+__FastRefreshModule as FastHMR
+} from "http://localhost:8080/bun:wrap";
+import {
+__FastRefreshRuntime as FastRefresh
+} from "http://localhost:8080/bun:wrap";
 import * as $4068f25b from "http://localhost:8080/package-json-exports/node_modules/inexact/browser/index.js";
 var InexactRoot = require($4068f25b);
 import * as $d2a171d2 from "http://localhost:8080/package-json-exports/node_modules/inexact/browser/dir/file.js";
@@ -17,7 +20,7 @@ import * as $fce83cd7 from "http://localhost:8080/package-json-exports/node_modu
 var JSFileExtensionOnly = require($fce83cd7);
 Bun.activate(true);
 
-var hmr = new HMR(1953708113, "package-json-exports/index.js"), exports = hmr.exports;
+var hmr = new FastHMR(1953708113, "package-json-exports/index.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   async function test() {
     console.assert(InexactRoot.target === "browser");

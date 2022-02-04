@@ -1,12 +1,15 @@
 import {
-__HMRModule as HMR
-} from "http://localhost:8080/bun:runtime";
-import {
 __HMRClient as Bun
-} from "http://localhost:8080/bun:runtime";
+} from "http://localhost:8080/bun:wrap";
+import {
+__FastRefreshModule as FastHMR
+} from "http://localhost:8080/bun:wrap";
+import {
+__FastRefreshRuntime as FastRefresh
+} from "http://localhost:8080/bun:wrap";
 Bun.activate(true);
 
-var hmr = new HMR(726376257, "code-simplification-neql-define.js"), exports = hmr.exports;
+var hmr = new FastHMR(726376257, "code-simplification-neql-define.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   var testFailed = false;
   const invariant = () => {

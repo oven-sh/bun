@@ -1,11 +1,14 @@
 import {
-__HMRClient as Bun
+__FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
 import {
 __require as require
 } from "http://localhost:8080/bun:wrap";
 import {
-__HMRModule as HMR
+__HMRClient as Bun
+} from "http://localhost:8080/bun:wrap";
+import {
+__FastRefreshModule as FastHMR
 } from "http://localhost:8080/bun:wrap";
 import * as $72625799 from "http://localhost:8080/node_modules/@emotion/react/jsx-dev-runtime/dist/emotion-react-jsx-dev-runtime.browser.esm.js";
 var JSX = require($72625799);
@@ -15,7 +18,7 @@ import * as $5b3cea55 from "http://localhost:8080/node_modules/react-dom/index.j
 var ReactDOM = require($5b3cea55);
 Bun.activate(true);
 
-var hmr = new HMR(2497996991, "custom-emotion-jsx/file.jsx"), exports = hmr.exports;
+var hmr = new FastHMR(2497996991, "custom-emotion-jsx/file.jsx", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   var Foo = () => jsx("div", {
     css: {content: '"it worked!"' }

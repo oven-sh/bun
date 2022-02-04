@@ -1,9 +1,9 @@
 import {
 __HMRModule as HMR
-} from "http://localhost:8080/bun:runtime";
+} from "http://localhost:8080/bun:wrap";
 import {
 __HMRClient as Bun
-} from "http://localhost:8080/bun:runtime";
+} from "http://localhost:8080/bun:wrap";
 Bun.activate(true);
 
 var hmr = new HMR(650094581, "type-only-imports.ts"), exports = hmr.exports;

@@ -1,12 +1,15 @@
 import {
-__HMRModule as HMR
-} from "http://localhost:3000/bun:wrap";
-import {
 __HMRClient as Bun
-} from "http://localhost:3000/bun:wrap";
-Bun.activate(true);
+} from "http://localhost:8080/bun:wrap";
+import {
+__FastRefreshModule as FastHMR
+} from "http://localhost:8080/bun:wrap";
+import {
+__FastRefreshRuntime as FastRefresh
+} from "http://localhost:8080/bun:wrap";
+Bun.activate(false);
 
-var hmr = new HMR(3608848620, "optional-chain-with-function.js"), exports = hmr.exports;
+var hmr = new FastHMR(3608848620, "optional-chain-with-function.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   function test() {
     try {

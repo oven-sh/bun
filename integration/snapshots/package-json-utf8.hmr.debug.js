@@ -1,14 +1,19 @@
 import {
-__HMRModule as HMR
-} from "http://localhost:8080/bun:wrap";
-import {
 __HMRClient as Bun
 } from "http://localhost:8080/bun:wrap";
+import {
+__FastRefreshModule as FastHMR
+} from "http://localhost:8080/bun:wrap";
+import {
+__FastRefreshRuntime as FastRefresh
+} from "http://localhost:8080/bun:wrap";
+import pkg from "http://localhost:8080/utf8-package-json.json";
 Bun.activate(true);
 
-var hmr = new HMR(421762902, "ts-fallback-rewrite-works.ts"), exports = hmr.exports;
+var hmr = new FastHMR(4111115104, "package-json-utf8.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   function test() {
+    console.assert(!!pkg.author);
     return testDone(import.meta.url);
   }
   hmr.exportAll({

@@ -1986,25 +1986,26 @@ pub const Path = struct {
 
         var arguments: []JSC.JSValue = args_ptr[0..args_len];
         var path = arguments[0].toSlice(globalThis, allocator);
+
         defer path.deinit();
         var extname_ = if (args_len > 1) arguments[1].toSlice(globalThis, allocator) else JSC.ZigString.Slice.empty;
         defer extname_.deinit();
 
         var base_slice = path.slice();
-        if (extname_.len > 0) {
-            if (strings.endsWith(base_slice, extname_.slice())) {
-                base_slice = base_slice[0 .. base_slice.len - extname_.len];
-            }
-        }
-        var out: []const u8 = undefined;
+        var out: []const u8 = base_slice;
 
         if (!isWindows) {
             out = std.fs.path.basenamePosix(base_slice);
         } else {
             out = std.fs.path.basenameWindows(base_slice);
         }
+        const ext = extname_.slice();
 
-        return JSC.ZigString.init(out).toValueGC(globalThis);
+        if ((ext.len != out.len or out.len == base_slice.len) and strings.endsWith(out, ext)) {
+            out = out[0 .. out.len - ext.len];
+        }
+
+        return JSC.ZigString.init(out).withEncoding().toValueGC(globalThis);
     }
     pub fn dirname(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
@@ -2218,9 +2219,9 @@ pub const Path = struct {
         var str = str_slice.slice();
 
         const out = if (!isWindows)
-            PathHandler.normalizeBuf(str, &buf, .posix)
+            PathHandler.normalizeStringNode(str, &buf, .posix)
         else
-            PathHandler.normalizeBuf(str, &buf, .windows);
+            PathHandler.normalizeStringNode(str, &buf, .windows);
 
         var out_str = JSC.ZigString.init(out);
         if (str_slice.allocated) out_str.setOutputEncoding();

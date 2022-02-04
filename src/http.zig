@@ -3125,6 +3125,7 @@ pub const Server = struct {
             // We use a secondary loop so that we avoid the extra branch in a hot code path
             Analytics.Features.fast_refresh = server.bundler.options.jsx.supports_fast_refresh;
             server.detectTSConfig();
+            server.detectFastRefresh();
             try server.initWatcher();
             did_init = true;
             Analytics.enqueue(Analytics.EventName.http_start);
@@ -3489,8 +3490,6 @@ pub const Server = struct {
             std.os.exit(0);
             return;
         }
-
-        server.detectFastRefresh();
 
         server.bundler.options.macro_remap = debug.macros orelse .{};
 

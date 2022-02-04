@@ -1,6 +1,7 @@
 var foo = true;
 
-if (true) {
+globalThis.TRUE_BUT_WE_CANT_TREESHAKE_IT = true;
+if (globalThis.TRUE_BUT_WE_CANT_TREESHAKE_IT) {
   var { foo } = { foo: false };
 }
 

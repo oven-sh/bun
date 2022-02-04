@@ -336,9 +336,16 @@ pub const TestCommand = struct {
                 var vm = this.vm;
                 var files = this.files;
                 var allocator = this.allocator;
-                for (files) |file_name| {
-                    TestCommand.run(reporter, vm, file_name.slice(), allocator) catch {};
+                std.debug.assert(files.len > 0);
+
+                if (files.len > 1) {
+                    for (files[0 .. files.len - 1]) |file_name| {
+                        TestCommand.run(reporter, vm, file_name.slice(), allocator) catch {};
+                        Global.mimalloc_cleanup(false);
+                    }
                 }
+
+                TestCommand.run(reporter, vm, files[files.len - 1].slice(), allocator) catch {};
             }
         };
         var ctx = Context{ .reporter = reporter_, .vm = vm_, .files = files_, .allocator = allocator_ };
@@ -370,6 +377,7 @@ pub const TestCommand = struct {
 
         var file_start = reporter.jest.files.len;
         var resolution = try vm.bundler.resolveEntryPoint(file_name);
+        vm.clearEntryPoint();
 
         var promise = try vm.loadEntryPoint(resolution.path_pair.primary.text);
 
@@ -393,5 +401,7 @@ pub const TestCommand = struct {
         }
 
         reporter.updateDots();
+
+        vm.has_loaded = true;
     }
 };

@@ -4280,6 +4280,7 @@ pub const Macro = struct {
         remap: MacroRemap,
 
         pub fn getRemap(this: MacroContext, path: string) ?MacroRemapEntry {
+            if (this.remap.entries.len == 0) return null;
             return this.remap.get(path);
         }
 

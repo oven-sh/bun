@@ -122,6 +122,10 @@ pub fn schedule(self: *ThreadPool, batch: Batch) void {
         self.run_queue.push(list);
     }
 
+    forceSpawn(self);
+}
+
+pub fn forceSpawn(self: *ThreadPool) void {
     // Try to notify a thread
     const is_waking = false;
     return self.notify(is_waking);

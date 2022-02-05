@@ -16,6 +16,7 @@ const connection_closed = -2;
 const pending = -1;
 const OK = 0;
 const ObjectPool = @import("../pool.zig").ObjectPool;
+const Environment = @import("../env.zig");
 
 const Packet = struct {
     completion: Completion,
@@ -152,6 +153,7 @@ pub fn doSocketWrite(this: *AsyncBIO, completion: *Completion, result_: AsyncIO.
         return;
     }
 
+    if (this.socket_fd == 0) return;
     this.scheduleSocketWrite(completion.operation.slice()[remain..]);
 }
 
@@ -257,6 +259,11 @@ pub const Bio = struct {
         var this = cast(this_bio);
         const len = @intCast(u32, len_);
 
+        if (this.socket_fd == 0) {
+            if (comptime Environment.allow_assert) std.debug.assert(false); // socket_fd should never be 0
+            return -1;
+        }
+
         if (this.socket_send_error != null) {
             if (extremely_verbose) {
                 Output.prettyErrorln("write: {s}", .{@errorName(this.socket_send_error.?)});
@@ -329,9 +336,15 @@ pub const Bio = struct {
             // overreading, but issuing one is more efficient. SSL sockets are not
             // reused after shutdown for non-SSL traffic, so overreading is fine.
             assert(bio_read_offset == 0);
+
+            if (this.socket_fd == 0) {
+                if (comptime Environment.allow_assert) std.debug.assert(false); // socket_fd should never be 0
+                return -1;
+            }
+
             if (this.pending_reads == 0) {
-                this.scheduleSocketRead(len__);
                 this.pending_reads += 1;
+                this.scheduleSocketRead(len__);
             }
 
             boring.BIO_set_retry_read(this_bio);
@@ -351,6 +364,11 @@ pub const Bio = struct {
         var bytes = this.recv_buffer.?.data[bio_read_offset..socket_recv_len_];
 
         if (len__ > @truncate(u32, bytes.len)) {
+            if (this.socket_fd == 0) {
+                if (comptime Environment.allow_assert) std.debug.assert(false); // socket_fd should never be 0
+                return -1;
+            }
+
             if (this.pending_reads == 0) {
                 // if this is true, we will never have enough space
                 if (socket_recv_len_ + len__ >= buffer_pool_len and len_ < buffer_pool_len) {

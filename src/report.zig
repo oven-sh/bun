@@ -28,7 +28,7 @@ pub const CrashReportWriter = struct {
     pub fn printFrame(_: ?*anyopaque, frame: CrashReporter.StackFrame) void {
         const function_name = if (frame.function_name.len > 0) frame.function_name else "[function ?]";
         const filename = if (frame.filename.len > 0) frame.function_name else "[file ?]";
-        crash_report_writer.print("[{d}] - <b>{s}<r> {s}:{d}\n", .{ frame.pc, function_name, filename, frame.line_number });
+        crash_report_writer.print("[0x{X}] - <b>{s}<r> {s}:{d}\n", .{ frame.pc, function_name, filename, frame.line_number });
     }
 
     pub fn dump() void {

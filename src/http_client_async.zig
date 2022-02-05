@@ -67,7 +67,7 @@ else
 
 pub const OPEN_SOCKET_FLAGS = SOCK.CLOEXEC;
 
-pub const extremely_verbose = Environment.isDebug;
+pub const extremely_verbose = false;
 
 fn writeRequest(
     comptime Writer: type,
@@ -110,6 +110,7 @@ disable_shutdown: bool = true,
 timeout: usize = 0,
 progress_node: ?*std.Progress.Node = null,
 socket: AsyncSocket.SSL = undefined,
+socket_loaded: bool = false,
 gzip_elapsed: u64 = 0,
 stage: Stage = Stage.pending,
 
@@ -237,10 +238,11 @@ pub const HTTPChannelContext = struct {
     http: AsyncHTTP = undefined,
     channel: *HTTPChannel,
 
-    pub fn callback(http: *AsyncHTTP, sender: *AsyncHTTP.HTTPSender) void {
+    pub fn callback(
+        http: *AsyncHTTP,
+    ) void {
         var this: *HTTPChannelContext = @fieldParentPtr(HTTPChannelContext, "http", http);
         this.channel.writeItem(http) catch unreachable;
-        sender.onFinish();
     }
 };
 
@@ -256,6 +258,8 @@ pub const AsyncHTTP = struct {
     method: Method = Method.GET,
     max_retry_count: u32 = 0,
     url: URL,
+
+    task: ThreadPool.Task = ThreadPool.Task{ .callback = HTTPSender.callback },
 
     /// Timeout in nanoseconds
     timeout: usize = 0,
@@ -277,7 +281,7 @@ pub const AsyncHTTP = struct {
     callback: ?CompletionCallback = null,
     callback_ctx: ?*anyopaque = null,
 
-    pub const CompletionCallback = fn (this: *AsyncHTTP, sender: *HTTPSender) void;
+    pub const CompletionCallback = fn (this: *AsyncHTTP) void;
     pub var active_requests_count = std.atomic.Atomic(u32).init(0);
     pub var max_simultaneous_requests: u16 = 32;
 
@@ -315,17 +319,15 @@ pub const AsyncHTTP = struct {
         return this;
     }
 
-    pub fn schedule(this: *AsyncHTTP, allocator: std.mem.Allocator, batch: *ThreadPool.Batch) void {
+    pub fn schedule(this: *AsyncHTTP, _: std.mem.Allocator, batch: *ThreadPool.Batch) void {
         std.debug.assert(NetworkThread.global_loaded.load(.Monotonic) == 1);
-        var sender = HTTPSender.get(this, allocator);
         this.state.store(.scheduled, .Monotonic);
-        batch.push(ThreadPool.Batch.from(&sender.task));
+        batch.push(ThreadPool.Batch.from(&this.task));
     }
 
-    fn sendSyncCallback(this: *AsyncHTTP, sender: *HTTPSender) void {
+    fn sendSyncCallback(this: *AsyncHTTP) void {
         var single_http_channel = @ptrCast(*SingleHTTPChannel, @alignCast(@alignOf(*SingleHTTPChannel), this.callback_ctx.?));
         single_http_channel.channel.writeItem(this) catch unreachable;
-        sender.release();
     }
 
     pub fn sendSync(this: *AsyncHTTP, comptime _: bool) anyerror!picohttp.Response {
@@ -356,59 +358,30 @@ pub const AsyncHTTP = struct {
         unreachable;
     }
 
-    var http_sender_head: std.atomic.Atomic(?*HTTPSender) = std.atomic.Atomic(?*HTTPSender).init(null);
-
     pub const HTTPSender = struct {
-        task: ThreadPool.Task = .{ .callback = callback },
         frame: @Frame(AsyncHTTP.do) = undefined,
-        http: *AsyncHTTP = undefined,
+        finisher: ThreadPool.Task = .{ .callback = onFinish },
 
-        next: ?*HTTPSender = null,
-
-        pub fn get(http: *AsyncHTTP, allocator: std.mem.Allocator) *HTTPSender {
-            @fence(.Acquire);
-
-            var head_ = http_sender_head.load(.Monotonic);
-
-            if (head_ == null) {
-                var new_head = allocator.create(HTTPSender) catch unreachable;
-                new_head.* = HTTPSender{};
-                new_head.next = null;
-                new_head.task = .{ .callback = callback };
-                new_head.http = http;
-                return new_head;
-            }
-
-            http_sender_head.store(head_.?.next, .Monotonic);
-
-            head_.?.* = HTTPSender{};
-            head_.?.next = null;
-            head_.?.task = .{ .callback = callback };
-            head_.?.http = http;
-
-            return head_.?;
-        }
-
-        pub fn release(this: *HTTPSender) void {
-            @fence(.Acquire);
-            this.task = .{ .callback = callback };
-            this.http = undefined;
-            this.next = http_sender_head.swap(this, .Monotonic);
-        }
+        pub const Pool = ObjectPool(HTTPSender, null, false, 8);
 
         pub fn callback(task: *ThreadPool.Task) void {
-            var this = @fieldParentPtr(HTTPSender, "task", task);
-            this.frame = async AsyncHTTP.do(this);
+            var this = @fieldParentPtr(AsyncHTTP, "task", task);
+            var sender = HTTPSender.Pool.get(default_allocator);
+            sender.data = .{
+                .frame = undefined,
+                .finisher = .{ .callback = onFinish },
+            };
+            sender.data.frame = async do(&sender.data, this);
         }
 
-        pub fn onFinish(this: *HTTPSender) void {
-            this.release();
+        pub fn onFinish(task: *ThreadPool.Task) void {
+            var this = @fieldParentPtr(HTTPSender, "finisher", task);
+            @fieldParentPtr(HTTPSender.Pool.Node, "data", this).release();
         }
     };
 
-    pub fn do(sender: *HTTPSender) void {
+    pub fn do(sender: *HTTPSender, this: *AsyncHTTP) void {
         outer: {
-            var this = sender.http;
             this.err = null;
             this.state.store(.sending, .Monotonic);
             var timer = std.time.Timer.start() catch @panic("Timer failure");
@@ -418,10 +391,10 @@ pub const AsyncHTTP = struct {
                 this.state.store(.fail, .Monotonic);
                 this.err = err;
 
-                if (sender.http.max_retry_count > sender.http.retries_count) {
-                    sender.http.retries_count += 1;
-                    sender.http.response_buffer.reset();
-                    NetworkThread.global.pool.schedule(ThreadPool.Batch.from(&sender.task));
+                if (this.max_retry_count > this.retries_count) {
+                    this.retries_count += 1;
+                    this.response_buffer.reset();
+                    NetworkThread.global.pool.schedule(ThreadPool.Batch.from(&this.task));
                     return;
                 }
                 break :outer;
@@ -432,9 +405,10 @@ pub const AsyncHTTP = struct {
             this.gzip_elapsed = this.client.gzip_elapsed;
         }
 
-        if (sender.http.callback) |callback| {
-            callback(sender.http, sender);
+        if (this.callback) |callback| {
+            callback(this);
         }
+        NetworkThread.global.pool.schedule(.{ .head = &sender.finisher, .tail = &sender.finisher, .len = 1 });
     }
 };
 
@@ -545,6 +519,7 @@ pub fn connect(
     const port = this.url.getPortAuto();
 
     try connector.connect(this.url.hostname, port);
+    std.debug.assert(this.socket.socket.socket > 0);
     var client = std.x.net.tcp.Client{ .socket = std.x.os.Socket.from(this.socket.socket.socket) };
     // client.setQuickACK(true) catch {};
 
@@ -560,11 +535,20 @@ pub fn sendAsync(this: *HTTPClient, body: []const u8, body_out_str: *MutableStri
 }
 
 pub fn send(this: *HTTPClient, body: []const u8, body_out_str: *MutableString) !picohttp.Response {
-    defer if (@enumToInt(this.stage) > @enumToInt(Stage.pending)) this.socket.deinit();
+    defer {
+        if (this.socket_loaded) {
+            this.socket_loaded = false;
+            this.socket.deinit();
+        }
+    }
 
     // this prevents stack overflow
     redirect: while (this.remaining_redirect_count >= -1) {
-        if (@enumToInt(this.stage) > @enumToInt(Stage.pending)) this.socket.deinit();
+        if (this.socket_loaded) {
+            this.socket_loaded = false;
+            this.socket.deinit();
+        }
+
         _ = AsyncHTTP.active_requests_count.fetchAdd(1, .Monotonic);
         defer {
             _ = AsyncHTTP.active_requests_count.fetchSub(1, .Monotonic);
@@ -607,11 +591,13 @@ pub fn sendHTTP(this: *HTTPClient, body: []const u8, body_out_str: *MutableStrin
     this.socket = AsyncSocket.SSL{
         .socket = try AsyncSocket.init(&AsyncIO.global, 0, default_allocator),
     };
+    this.socket_loaded = true;
     this.stage = Stage.connect;
     var socket = &this.socket.socket;
     try this.connect(*AsyncSocket, socket);
     this.stage = Stage.request;
     defer this.socket.close();
+
     var request = buildRequest(this, body.len);
     if (this.verbose) {
         Output.prettyErrorln("{s}", .{request});
@@ -1039,6 +1025,8 @@ pub fn processResponse(this: *HTTPClient, comptime report_progress: bool, compti
 
 pub fn sendHTTPS(this: *HTTPClient, body_str: []const u8, body_out_str: *MutableString) !picohttp.Response {
     this.socket = try AsyncSocket.SSL.init(default_allocator, &AsyncIO.global);
+    this.socket_loaded = true;
+
     var socket = &this.socket;
     this.stage = Stage.connect;
     try this.connect(*AsyncSocket.SSL, socket);

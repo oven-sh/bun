@@ -179,9 +179,8 @@ const NetworkTask = struct {
         binlink: void,
     },
 
-    pub fn notify(http: *AsyncHTTP, sender: *AsyncHTTP.HTTPSender) void {
+    pub fn notify(http: *AsyncHTTP) void {
         PackageManager.instance.network_channel.writeItem(@fieldParentPtr(NetworkTask, "http", http)) catch {};
-        sender.onFinish();
     }
 
     const default_headers_buf: string = "Acceptapplication/vnd.npm.install-v1+json";
@@ -3884,7 +3883,7 @@ pub const PackageManager = struct {
 
     pub fn isFolderInCache(this: *PackageManager, folder_path: stringZ) bool {
         // TODO: is this slow?
-        var dir = this.getCacheDirectory().openDirZ(folder_path, .{ .iterate = true }) catch return false;
+        var dir = this.getCacheDirectory().openDirZ(folder_path, .{ .iterate = false }) catch return false;
         dir.close();
         return true;
     }
@@ -4356,11 +4355,6 @@ pub const PackageManager = struct {
                                             _ = this.network_dedupe_map.remove(task_id);
                                             continue :retry_from_manifests_ptr;
                                         }
-
-                                        // We want to make sure the temporary directory & cache directory are loaded on the main thread
-                                        // so that we don't run into weird threading issues
-                                        // the call to getCacheDirectory() above handles the cache dir
-                                        _ = this.getTemporaryDirectory();
                                     }
                                 }
 
@@ -5299,7 +5293,7 @@ pub const PackageManager = struct {
         comptime params: []const ParamType,
     ) !*PackageManager {
         // assume that spawning a thread will take a lil so we do that asap
-        try NetworkThread.init();
+        try NetworkThread.warmup();
 
         var cli = try CommandLineArguments.parse(ctx.allocator, params);
 
@@ -6092,6 +6086,7 @@ pub const PackageManager = struct {
                                     std.mem.copy(u8, &node_modules_buf, entry.name);
                                     node_modules_buf[entry.name.len] = 0;
                                     var buf: [:0]u8 = node_modules_buf[0..entry.name.len :0];
+
                                     var file = node_modules_bin.openFileZ(buf, .{ .read = true }) catch {
                                         node_modules_bin.deleteFileZ(buf) catch {};
                                         continue :iterator;
@@ -6793,6 +6788,9 @@ pub const PackageManager = struct {
                             var deps = &manager.lockfile.buffers.dependencies;
                             var res = &manager.lockfile.buffers.resolutions;
 
+                            _ = manager.getCacheDirectory();
+                            _ = manager.getTemporaryDirectory();
+
                             while (std.mem.indexOfScalar(PackageID, remaining, invalid_package_id)) |next_i_| {
                                 remaining = remaining[next_i_ + 1 ..];
 
@@ -6834,6 +6832,11 @@ pub const PackageManager = struct {
             root = try manager.lockfile.appendPackage(root);
 
             manager.root_dependency_list = root.dependencies;
+
+            if (root.dependencies.len > 0) {
+                _ = manager.getCacheDirectory();
+                _ = manager.getTemporaryDirectory();
+            }
             manager.enqueueDependencyList(
                 root.dependencies,
                 true,
@@ -6846,6 +6849,11 @@ pub const PackageManager = struct {
         _ = manager.scheduleNetworkTasks();
 
         if (manager.pending_tasks > 0) {
+            if (root.dependencies.len > 0) {
+                _ = manager.getCacheDirectory();
+                _ = manager.getTemporaryDirectory();
+            }
+
             if (comptime log_level.showProgress()) {
                 manager.downloads_node = try manager.progress.start(ProgressStrings.download(), 0);
                 manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;

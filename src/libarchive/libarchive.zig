@@ -407,7 +407,8 @@ pub const Archive = struct {
 
             switch (r) {
                 Status.eof => break :loop,
-                Status.failed, Status.fatal, Status.retry => return error.Fail,
+                Status.retry => continue :loop,
+                Status.failed, Status.fatal => return error.Fail,
                 else => {
                     // do not use the utf8 name there
                     // it will require us to pull in libiconv
@@ -481,7 +482,8 @@ pub const Archive = struct {
 
             switch (r) {
                 Status.eof => break :loop,
-                Status.failed, Status.fatal, Status.retry => return error.Fail,
+                Status.retry => continue :loop,
+                Status.failed, Status.fatal => return error.Fail,
                 else => {
                     var pathname: [:0]const u8 = std.mem.sliceTo(lib.archive_entry_pathname(entry).?, 0);
                     var tokenizer = std.mem.tokenize(u8, std.mem.span(pathname), std.fs.path.sep_str);
@@ -544,7 +546,25 @@ pub const Archive = struct {
                             }
                         }
 
-                        _ = lib.archive_read_data_into_fd(archive, file.handle);
+                        var retries_remaining: u8 = 5;
+                        possibly_retry: while (retries_remaining != 0) : (retries_remaining -= 1) {
+                            switch (lib.archive_read_data_into_fd(archive, file.handle)) {
+                                lib.ARCHIVE_EOF => break :loop,
+                                lib.ARCHIVE_OK => break :possibly_retry,
+                                lib.ARCHIVE_RETRY => {
+                                    if (comptime log) {
+                                        Output.prettyErrorln("[libarchive] Error extracting {s}, retry {d} / {d}", .{ std.mem.span(pathname_), retries_remaining, 5 });
+                                    }
+                                },
+                                else => {
+                                    if (comptime log) {
+                                        const archive_error = std.mem.span(lib.archive_error_string(archive));
+                                        Output.prettyErrorln("[libarchive] Error extracting {s}: {s}", .{ std.mem.span(pathname_), archive_error });
+                                    }
+                                    return error.Fail;
+                                },
+                            }
+                        }
                     }
                 },
             }

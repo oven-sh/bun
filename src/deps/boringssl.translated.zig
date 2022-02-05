@@ -18702,6 +18702,10 @@ pub const SSL = opaque {
         HandshakeHintsReady,
     };
 
+    pub fn shutdown(this: *SSL) void {
+        _ = SSL_shutdown(this);
+    }
+
     pub inline fn deinit(this: *SSL) void {
         _ = SSL_free(this);
     }

@@ -639,11 +639,10 @@ pub const Fetch = struct {
             return node;
         }
 
-        pub fn callback(http_: *HTTPClient.AsyncHTTP, sender: *HTTPClient.AsyncHTTP.HTTPSender) void {
+        pub fn callback(http_: *HTTPClient.AsyncHTTP) void {
             var task: *FetchTasklet = @fieldParentPtr(FetchTasklet, "http", http_);
             @atomicStore(Status, &task.status, Status.done, .Monotonic);
             task.javascript_vm.eventLoop().enqueueTaskConcurrent(Task.init(task));
-            sender.release();
         }
     };
 

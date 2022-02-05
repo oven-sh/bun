@@ -457,6 +457,16 @@ pub const PackageManifest = struct {
             }
         }
 
+        fn writeFile(this: *const PackageManifest, tmp_path: [:0]const u8, tmpdir: std.fs.Dir) !void {
+            var tmpfile = try tmpdir.createFileZ(tmp_path, .{
+                .truncate = true,
+            });
+            defer tmpfile.close();
+            var writer = tmpfile.writer();
+            try Serializer.write(this, @TypeOf(writer), writer);
+            std.os.fdatasync(tmpfile.handle) catch {};
+        }
+
         pub fn save(this: *const PackageManifest, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
             const file_id = std.hash.Wyhash.hash(0, this.name());
             var dest_path_buf: [512 + 64]u8 = undefined;
@@ -466,16 +476,7 @@ pub const PackageManifest = struct {
             try dest_path_stream_writer.print("{x}.npm-{x}", .{ file_id, @maximum(std.time.milliTimestamp(), 0) });
             try dest_path_stream_writer.writeByte(0);
             var tmp_path: [:0]u8 = dest_path_buf[0 .. dest_path_stream.pos - 1 :0];
-            {
-                var tmpfile = try tmpdir.createFileZ(tmp_path, .{
-                    .truncate = true,
-                });
-                var writer = tmpfile.writer();
-                try Serializer.write(this, @TypeOf(writer), writer);
-                std.os.fdatasync(tmpfile.handle) catch {};
-                tmpfile.close();
-            }
-
+            try writeFile(this, tmp_path, tmpdir);
             var out_path = std.fmt.bufPrintZ(&out_path_buf, "{x}.npm", .{file_id}) catch unreachable;
             try std.os.renameatZ(tmpdir.fd, tmp_path, cache_dir.fd, out_path);
         }

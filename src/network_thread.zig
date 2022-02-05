@@ -47,21 +47,26 @@ const CachedAddressList = struct {
 
 pub const AddressListCache = std.HashMap(u64, CachedAddressList, IdentityContext(u64), 80);
 pub var address_list_cached: AddressListCache = undefined;
-pub fn getAddressList(allocator: std.mem.Allocator, name: []const u8, port: u16) !*CachedAddressList {
-    const hash = CachedAddressList.hash(name, port);
-    const now = @intCast(u64, @maximum(0, std.time.milliTimestamp()));
-    if (address_list_cached.getPtr(hash)) |cached| {
-        if (cached.expire_after > now) {
-            return cached;
-        }
+pub fn getAddressList(allocator: std.mem.Allocator, name: []const u8, port: u16) !*std.net.AddressList {
+    // const hash = CachedAddressList.hash(name, port);
+    // const now = @intCast(u64, @maximum(0, std.time.milliTimestamp()));
+    // if (address_list_cached.getPtr(hash)) |cached| {
+    //     if (cached.expire_after > now) {
+    //         return cached;
+    //     }
 
-        cached.address_list.deinit();
-    }
+    //     cached.address_list.deinit();
+    // }
 
-    const address_list = try std.net.getAddressList(allocator, name, port);
-    var entry = try address_list_cached.getOrPut(hash);
-    entry.value_ptr.* = CachedAddressList.init(hash, address_list, now);
-    return entry.value_ptr;
+    return try std.net.getAddressList(allocator, name, port);
+}
+
+pub var has_warmed = false;
+pub fn warmup() !void {
+    if (has_warmed) return;
+    has_warmed = true;
+    try init();
+    global.pool.forceSpawn();
 }
 
 pub fn init() !void {

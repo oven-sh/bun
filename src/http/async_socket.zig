@@ -38,7 +38,7 @@ read_completion: AsyncIO.Completion = undefined,
 connect_completion: AsyncIO.Completion = undefined,
 close_completion: AsyncIO.Completion = undefined,
 
-const ConnectError = AsyncIO.ConnectError || std.os.SocketError || std.os.SetSockOptError || error{UnknownHostName};
+const ConnectError = AsyncIO.ConnectError || std.os.SocketError || std.os.SetSockOptError || error{ UnknownHostName, FailedToOpenSocket };
 
 pub fn init(io: *AsyncIO, socket: std.os.socket_t, allocator: std.mem.Allocator) !AsyncSocket {
     var head = AsyncMessage.get(allocator);
@@ -55,13 +55,18 @@ fn on_connect(this: *AsyncSocket, _: *Completion, err: ConnectError!void) void {
 }
 
 fn connectToAddress(this: *AsyncSocket, address: std.net.Address) ConnectError!void {
-    const sockfd = AsyncIO.openSocket(address.any.family, OPEN_SOCKET_FLAGS | std.os.SOCK.STREAM, std.os.IPPROTO.TCP) catch |err| {
-        if (extremely_verbose) {
-            Output.prettyErrorln("openSocket error: {s}", .{@errorName(err)});
-        }
+    const sockfd = if (this.socket > 0)
+        this.socket
+    else
+        AsyncIO.openSocket(address.any.family, OPEN_SOCKET_FLAGS | std.os.SOCK.STREAM, std.os.IPPROTO.TCP) catch |err| {
+            if (extremely_verbose) {
+                Output.prettyErrorln("openSocket error: {s}", .{@errorName(err)});
+            }
+            this.socket = 0;
 
-        return error.ConnectionRefused;
-    };
+            return error.FailedToOpenSocket;
+        };
+    this.socket = sockfd;
 
     this.io.connect(*AsyncSocket, this, on_connect, &this.connect_completion, sockfd, address);
     suspend {
@@ -71,9 +76,6 @@ fn connectToAddress(this: *AsyncSocket, address: std.net.Address) ConnectError!v
     if (this.err) |e| {
         return @errSetCast(ConnectError, e);
     }
-
-    this.socket = sockfd;
-    return;
 }
 
 fn on_close(this: *AsyncSocket, _: *Completion, _: AsyncIO.CloseError!void) void {
@@ -82,58 +84,39 @@ fn on_close(this: *AsyncSocket, _: *Completion, _: AsyncIO.CloseError!void) void
 
 pub fn close(this: *AsyncSocket) void {
     if (this.socket == 0) return;
-    this.io.close(*AsyncSocket, this, on_close, &this.close_completion, this.socket);
+    const to_close = this.socket;
+    this.socket = 0;
+    this.io.close(*AsyncSocket, this, on_close, &this.close_completion, to_close);
     suspend {
         this.close_frame = @frame().*;
     }
-    this.socket = 0;
 }
 
 pub fn connect(this: *AsyncSocket, name: []const u8, port: u16) ConnectError!void {
-    this.socket = 0;
+    this.close();
+
     outer: while (true) {
         // on macOS, getaddrinfo() is very slow
         // If you send ~200 network requests, about 1.5s is spent on getaddrinfo()
         // So, we cache this.
-        var address_list = NetworkThread.getAddressList(getAllocator(), name, port) catch |err| {
+        var list = NetworkThread.getAddressList(getAllocator(), name, port) catch |err| {
             return @errSetCast(ConnectError, err);
         };
 
-        const list = address_list.address_list;
         if (list.addrs.len == 0) return error.ConnectionRefused;
 
-        try_cached_index: {
-            if (address_list.index) |i| {
-                const address = list.addrs[i];
-                if (address_list.invalidated) continue :outer;
-
-                this.connectToAddress(address) catch |err| {
-                    if (err == error.ConnectionRefused) {
-                        address_list.index = null;
-                        break :try_cached_index;
-                    }
-
-                    address_list.invalidate();
-                    continue :outer;
-                };
-            }
-        }
-
-        for (list.addrs) |address, i| {
-            if (address_list.invalidated) continue :outer;
+        for (list.addrs) |address| {
             this.connectToAddress(address) catch |err| {
+                this.close();
+
                 if (err == error.ConnectionRefused) continue;
-                address_list.invalidate();
                 if (err == error.AddressNotAvailable or err == error.UnknownHostName) continue :outer;
-                return err;
             };
-            address_list.index = @truncate(u32, i);
             return;
         }
 
-        if (address_list.invalidated) continue :outer;
+        this.close();
 
-        address_list.invalidate();
         return error.ConnectionRefused;
     }
 }
@@ -201,6 +184,7 @@ pub fn deinit(this: *AsyncSocket) void {
     this.sent = 0;
     this.read_context = &[_]u8{};
     this.read_offset = 0;
+    this.socket = 0;
 }
 
 pub fn send(this: *AsyncSocket) SendError!usize {
@@ -423,6 +407,16 @@ pub const SSL = struct {
     }
 
     pub fn close(this: *SSL) void {
+        if (this.ssl_loaded) {
+            this.ssl.shutdown();
+            this.ssl.deinit();
+            this.ssl_loaded = false;
+        }
+
+        if (this.ssl_bio_loaded) {
+            this.ssl_bio.socket_fd = 0;
+        }
+
         this.socket.close();
     }
 
@@ -796,7 +790,7 @@ pub const SSL = struct {
         this.socket.deinit();
 
         if (this.ssl_loaded) {
-            _ = boring.SSL_shutdown(this.ssl);
+            this.ssl.shutdown();
             this.ssl.deinit();
             this.ssl_loaded = false;
         }
@@ -805,13 +799,18 @@ pub const SSL = struct {
             this.ssl_bio_loaded = false;
             if (this.ssl_bio.recv_buffer) |recv| {
                 recv.release();
-                this.ssl_bio.recv_buffer = null;
             }
+            this.ssl_bio.recv_buffer = null;
 
             if (this.ssl_bio.send_buffer) |recv| {
                 recv.release();
-                this.ssl_bio.send_buffer = null;
             }
+            this.ssl_bio.send_buffer = null;
+
+            if (this.ssl_bio.bio) |bio| {
+                bio.deinit();
+            }
+            this.ssl_bio.bio = null;
 
             this.ssl_bio.pending_reads = 0;
             this.ssl_bio.pending_sends = 0;
@@ -824,6 +823,8 @@ pub const SSL = struct {
 
             this.ssl_bio.socket_fd = 0;
             this.ssl_bio.onReady = null;
+        } else {
+            this.ssl_bio = undefined;
         }
 
         this.handshake_complete = false;

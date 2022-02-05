@@ -250,7 +250,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
 
     // We return a resolved absolute absolute file path to the cache dir.
     // To get that directory, we open the directory again.
-    var final_dir = cache_dir.openDirZ(folder_name, .{ .iterate = true }) catch |err| {
+    var final_dir = cache_dir.openDirZ(folder_name, .{ .iterate = false }) catch |err| {
         Output.prettyErrorln(
             "<r><red>Error {s}<r> failed to verify cache dir for {s}",
             .{

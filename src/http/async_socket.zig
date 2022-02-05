@@ -5,7 +5,7 @@ const AsyncMessage = @import("./async_message.zig");
 const AsyncBIO = @import("./async_bio.zig");
 const Completion = AsyncIO.Completion;
 const AsyncSocket = @This();
-
+const KeepAlive = @import("../http_client_async.zig").KeepAlive;
 const Output = @import("../global.zig").Output;
 const NetworkThread = @import("../network_thread.zig");
 const Environment = @import("../global.zig").Environment;
@@ -29,8 +29,10 @@ queued: usize = 0,
 sent: usize = 0,
 send_frame: @Frame(AsyncSocket.send) = undefined,
 read_frame: @Frame(AsyncSocket.read) = undefined,
-connect_frame: @Frame(AsyncSocket.connectToAddress) = undefined,
-close_frame: @Frame(AsyncSocket.close) = undefined,
+connect_frame: Yield(AsyncSocket.connectToAddress) = Yield(AsyncSocket.connectToAddress){},
+close_frame: Yield(AsyncSocket.close) = Yield(AsyncSocket.close){},
+
+was_keepalive: bool = false,
 
 read_context: []u8 = undefined,
 read_offset: u64 = 0,
@@ -51,7 +53,7 @@ fn on_connect(this: *AsyncSocket, _: *Completion, err: ConnectError!void) void {
         this.err = resolved_err;
     };
 
-    resume this.connect_frame;
+    this.connect_frame.maybeResume();
 }
 
 fn connectToAddress(this: *AsyncSocket, address: std.net.Address) ConnectError!void {
@@ -70,7 +72,7 @@ fn connectToAddress(this: *AsyncSocket, address: std.net.Address) ConnectError!v
 
     this.io.connect(*AsyncSocket, this, on_connect, &this.connect_completion, sockfd, address);
     suspend {
-        this.connect_frame = @frame().*;
+        this.connect_frame.set(@frame());
     }
 
     if (this.err) |e| {
@@ -79,7 +81,7 @@ fn connectToAddress(this: *AsyncSocket, address: std.net.Address) ConnectError!v
 }
 
 fn on_close(this: *AsyncSocket, _: *Completion, _: AsyncIO.CloseError!void) void {
-    resume this.close_frame;
+    this.close_frame.maybeResume();
 }
 
 pub fn close(this: *AsyncSocket) void {
@@ -88,12 +90,35 @@ pub fn close(this: *AsyncSocket) void {
     this.socket = 0;
     this.io.close(*AsyncSocket, this, on_close, &this.close_completion, to_close);
     suspend {
-        this.close_frame = @frame().*;
+        this.close_frame.set(@frame());
     }
 }
-
 pub fn connect(this: *AsyncSocket, name: []const u8, port: u16) ConnectError!void {
-    this.close();
+    if (!this.was_keepalive and !KeepAlive.disabled) {
+        if (KeepAlive.instance.find(name, port)) |socket| {
+            var err_code: i32 = undefined;
+            var size: u32 = @sizeOf(u32);
+            const rc = std.os.system.getsockopt(socket, std.os.SOL.SOCKET, std.os.SO.ERROR, @ptrCast([*]u8, &err_code), &size);
+            switch (std.os.errno(rc)) {
+                .SUCCESS => {
+                    this.socket = socket;
+                    this.was_keepalive = true;
+                    return;
+                },
+                .BADF, .FAULT, .INVAL => {},
+                else => {
+                    std.os.closeSocket(socket);
+                },
+            }
+        }
+    }
+
+    this.was_keepalive = false;
+    return try this.doConnect(name, port);
+}
+
+fn doConnect(this: *AsyncSocket, name: []const u8, port: u16) ConnectError!void {
+    this.was_keepalive = false;
 
     outer: while (true) {
         // on macOS, getaddrinfo() is very slow
@@ -372,9 +397,9 @@ pub const SSL = struct {
         boring.SSL_set_bio(ssl, this.ssl_bio.bio.?, this.ssl_bio.bio.?);
 
         // boring.SSL_set_early_data_enabled(ssl, 1);
-        _ = boring.SSL_clear_options(ssl, boring.SSL_OP_NO_COMPRESSION | boring.SSL_OP_LEGACY_SERVER_CONNECT);
-        _ = boring.SSL_set_options(ssl, boring.SSL_OP_NO_COMPRESSION | boring.SSL_OP_LEGACY_SERVER_CONNECT);
-        const mode = boring.SSL_MODE_CBC_RECORD_SPLITTING | boring.SSL_MODE_ENABLE_FALSE_START;
+        _ = boring.SSL_clear_options(ssl, boring.SSL_OP_LEGACY_SERVER_CONNECT);
+        _ = boring.SSL_set_options(ssl, boring.SSL_OP_LEGACY_SERVER_CONNECT);
+        const mode = boring.SSL_MODE_CBC_RECORD_SPLITTING | boring.SSL_MODE_ENABLE_FALSE_START | boring.SSL_MODE_RELEASE_BUFFERS;
 
         _ = boring.SSL_set_mode(ssl, mode);
         _ = boring.SSL_clear_mode(ssl, mode);
@@ -790,6 +815,10 @@ pub const SSL = struct {
         this.socket.deinit();
 
         if (this.ssl_loaded) {
+            this.connect_frame.wait = false;
+            this.read_frame.wait = false;
+            this.send_frame.wait = false;
+
             this.ssl.shutdown();
             this.ssl.deinit();
             this.ssl_loaded = false;
@@ -817,6 +846,7 @@ pub const SSL = struct {
             this.ssl_bio.socket_recv_len = 0;
             this.ssl_bio.socket_send_len = 0;
             this.ssl_bio.bio_write_offset = 0;
+            this.ssl_bio.recv_eof = false;
             this.ssl_bio.bio_read_offset = 0;
             this.ssl_bio.socket_send_error = null;
             this.ssl_bio.socket_recv_error = null;
@@ -824,7 +854,7 @@ pub const SSL = struct {
             this.ssl_bio.socket_fd = 0;
             this.ssl_bio.onReady = null;
         } else {
-            this.ssl_bio = undefined;
+            this.ssl_bio = AsyncBIO{ .allocator = getAllocator() };
         }
 
         this.handshake_complete = false;

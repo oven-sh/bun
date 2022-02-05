@@ -41,6 +41,7 @@ bio_write_offset: u32 = 0,
 bio_read_offset: u32 = 0,
 socket_send_error: ?anyerror = null,
 socket_recv_error: ?anyerror = null,
+recv_eof: bool = false,
 
 onReady: ?Callback = null,
 
@@ -121,6 +122,7 @@ pub fn doSocketRead(this: *AsyncBIO, completion: *Completion, result_: AsyncIO.R
         Output.prettyErrorln("onRead: {d}", .{socket_recv_len});
         Output.flush();
     }
+    this.recv_eof = this.recv_eof or socket_recv_len == 0;
 
     // if (socket_recv_len == 0) {
 
@@ -145,6 +147,7 @@ pub fn doSocketWrite(this: *AsyncBIO, completion: *Completion, result_: AsyncIO.
         },
     );
     this.socket_send_len += socket_send_len;
+    this.recv_eof = this.recv_eof or socket_send_len == 0;
 
     const remain = ctx.data.min - @minimum(ctx.data.min, socket_send_len);
 
@@ -264,6 +267,11 @@ pub const Bio = struct {
             return -1;
         }
 
+        if (this.recv_eof) {
+            this.recv_eof = false;
+            return 0;
+        }
+
         if (this.socket_send_error != null) {
             if (extremely_verbose) {
                 Output.prettyErrorln("write: {s}", .{@errorName(this.socket_send_error.?)});
@@ -329,6 +337,11 @@ pub const Bio = struct {
             return -1;
         }
 
+        if (this.recv_buffer == null and socket_recv_len > 0) {
+            socket_recv_len = 0;
+            bio_read_offset = 0;
+        }
+
         if (socket_recv_len == 0) {
             // Instantiate the read buffer and read from the socket. Although only |len|
             // bytes were requested, intentionally read to the full buffer size. The SSL
@@ -343,6 +356,11 @@ pub const Bio = struct {
             }
 
             if (this.pending_reads == 0) {
+                if (this.recv_eof) {
+                    this.recv_eof = false;
+                    return 0;
+                }
+
                 this.pending_reads += 1;
                 this.scheduleSocketRead(len__);
             }
@@ -392,7 +410,7 @@ pub const Bio = struct {
         @memcpy(ptr, bytes.ptr, len);
         bio_read_offset += len;
 
-        if (bio_read_offset == socket_recv_len_ and this.pending_reads == 0) {
+        if (bio_read_offset == socket_recv_len_ and this.pending_reads == 0 and this.pending_sends == 0) {
             // The read buffer is empty.
             // we can reset the pointer back to the beginning of the buffer
             // if there is more data to read, we will ask for another

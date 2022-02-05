@@ -269,8 +269,14 @@ fn _wait(self: *ThreadPool, _is_waking: bool, comptime sleep_on_idle: bool) erro
                 const end_count = HTTP.AsyncHTTP.active_requests_count.loadUnchecked();
 
                 if (end_count > 0) {
-                    while (HTTP.AsyncHTTP.active_requests_count.loadUnchecked() > HTTP.AsyncHTTP.max_simultaneous_requests) {
-                        io.run_for_ns(std.time.ns_per_ms) catch {};
+                    if (comptime sleep_on_idle) {
+                        idle_network_ticks = 0;
+                    }
+
+                    var remaining_ticks: i32 = 5;
+
+                    while (remaining_ticks > 0 and HTTP.AsyncHTTP.active_requests_count.loadUnchecked() > HTTP.AsyncHTTP.max_simultaneous_requests) : (remaining_ticks -= 1) {
+                        io.run_for_ns(std.time.ns_per_ms * 2) catch {};
                         io.tick() catch {};
                     }
                 }

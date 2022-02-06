@@ -96,14 +96,6 @@ pub const Bunfig = struct {
                             this.bunfig.port = 3000;
                         }
                     }
-
-                    if (expr.get("port")) |port| {
-                        try this.expect(port, .e_number);
-                        this.bunfig.port = port.data.e_number.toU16();
-                        if (this.bunfig.port.? == 0) {
-                            this.bunfig.port = 3000;
-                        }
-                    }
                 }
             }
 

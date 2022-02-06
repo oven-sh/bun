@@ -433,7 +433,7 @@ pub fn eqlCaseInsensitiveASCII(a: string, comptime b: anytype, comptime check_le
     return true;
 }
 
-pub fn eqlLong(a_: string, b: string, comptime check_len: bool) bool {
+pub fn eqlLongWithType(comptime Type: type, a_: Type, b: Type, comptime check_len: bool) bool {
     if (comptime check_len) {
         if (a_.len == 0) {
             return b.len == 0;
@@ -481,6 +481,10 @@ pub fn eqlLong(a_: string, b: string, comptime check_len: bool) bool {
     if (((len & 1) != 0) and a[b_ptr] != b[b_ptr]) return false;
 
     return true;
+}
+
+pub fn eqlLong(a_: string, b: string, comptime check_len: bool) bool {
+    return eqlLongWithType(string, a_, b, check_len);
 }
 
 pub inline fn append(allocator: std.mem.Allocator, self: string, other: string) !string {

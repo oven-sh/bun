@@ -233,12 +233,23 @@ pub const Arguments = struct {
         opts.absolute_working_dir = cwd;
 
         if (comptime Command.Tag.loads_config.get(cmd)) {
-            if (args.option("--config")) |config_path__| {
+            load_config: {
                 var config_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-                var config_path_ = config_path__;
-                if (config_path_.len == 0) {
-                    config_path_ = "bunfig.toml";
+
+                var config_path_: []const u8 = "";
+                if (args.option("--config")) |config_path__| {
+                    config_path_ = config_path__;
                 }
+                var auto_loaded: bool = false;
+                if (config_path_.len == 0 and (args.option("--config") != null or Command.Tag.always_loads_config.get(cmd))) {
+                    config_path_ = "bunfig.toml";
+                    auto_loaded = true;
+                }
+
+                if (config_path_.len == 0) {
+                    break :load_config;
+                }
+
                 var config_path: [:0]u8 = undefined;
                 if (config_path_[0] == '/') {
                     @memcpy(&config_buf, config_path_.ptr, config_path_.len);
@@ -257,6 +268,7 @@ pub const Arguments = struct {
                 }
 
                 var config_file = std.fs.openFileAbsoluteZ(config_path, .{ .read = true }) catch |err| {
+                    if (auto_loaded) break :load_config;
                     Output.prettyErrorln("<r><red>error<r>: {s} opening config \"{s}\"", .{
                         @errorName(err),
                         std.mem.span(config_path),
@@ -265,6 +277,7 @@ pub const Arguments = struct {
                     std.os.exit(1);
                 };
                 var contents = config_file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
+                    if (auto_loaded) break :load_config;
                     Output.prettyErrorln("<r><red>error<r>: {s} reading config \"{s}\"", .{
                         @errorName(err),
                         std.mem.span(config_path),
@@ -1126,6 +1139,15 @@ pub const Command = struct {
         });
 
         pub const loads_config = cares_about_bun_file;
+        pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
+            .BuildCommand = true,
+            .BunCommand = true,
+            .DevCommand = true,
+            .TestCommand = true,
+            .InstallCommand = true,
+            .AddCommand = true,
+            .RemoveCommand = true,
+        });
 
         pub const uses_global_options: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(true, .{
             .CreateCommand = false,

@@ -22,12 +22,16 @@ inline fn nqlAtIndex(comptime string_count: comptime_int, index: usize, input: [
 const IsSeparatorFunc = fn (char: u8) bool;
 const LastSeparatorFunction = fn (slice: []const u8) ?usize;
 
-inline fn isDotDot(slice: []const u8) bool {
-    return @bitCast(u16, slice[0..2].*) == comptime std.mem.readIntNative(u16, "..");
+inline fn @"is .."(slice: []const u8) bool {
+    return slice.len >= 2 and @bitCast(u16, slice[0..2].*) == comptime std.mem.readIntNative(u16, "..");
 }
 
 inline fn isDotSlash(slice: []const u8) bool {
     return @bitCast(u16, slice[0..2].*) == comptime std.mem.readIntNative(u16, "./");
+}
+
+inline fn @"is ../"(slice: []const u8) bool {
+    return slice.len >= 3 and strings.eqlComptimeIgnoreLen(slice[0..3], "../");
 }
 
 // TODO: is it faster to determine longest_common_separator in the while loop
@@ -368,7 +372,7 @@ pub fn normalizeStringGeneric(path: []const u8, buf: []u8, comptime allow_above_
             continue;
         }
 
-        if ((r + 2 == n or (n > r + 2 and isSeparator(path[r + 2]))) and isDotDot(path[r..][0..2])) {
+        if (@"is ../"(path[r..]) or @"is .."(path[r..])) {
             r += 2;
             // .. element: remove to last separator
             if (buf_i > dotdot) {
@@ -724,59 +728,44 @@ inline fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: typ
     }
 
     var out: usize = 0;
+    var cwd = _cwd;
+
     {
         var part_i: u16 = 0;
         var part_len: u16 = @truncate(u16, parts.len);
-        var cwd = _cwd;
-        while (part_i < part_len) : (part_i += 1) {
+
+        while (part_i < part_len) {
             if (_platform.isAbsolute(parts[part_i])) {
                 cwd = parts[part_i];
-                if (part_i == part_len - 1) break;
                 parts = parts[part_i + 1 ..];
+
                 part_len = @truncate(u16, parts.len);
                 part_i = 0;
+                continue;
             }
+            part_i += 1;
         }
-        // Trim multiple trailing separators to just one
-        while (cwd.len > 1 and @bitCast(u16, cwd[cwd.len - 2 ..][0..2].*) == @bitCast(u16, [2]u8{
-            _platform.separator(),
-            _platform.separator(),
-        })) {
-            cwd = cwd[0 .. cwd.len - 1];
+    }
+
+    std.mem.copy(u8, &temp_buf, cwd);
+    out = cwd.len;
+
+    for (parts) |_part| {
+        if (_part.len == 0) {
+            continue;
         }
 
-        std.mem.copy(u8, &temp_buf, cwd);
-        out = cwd.len;
+        var part = _part;
 
         if (out > 0 and temp_buf[out - 1] != _platform.separator()) {
             temp_buf[out] = _platform.separator();
             out += 1;
         }
 
-        for (parts) |_part| {
-            if (_part.len == 0) {
-                continue;
-            }
-
-            var part = _part;
-
-            // Trim multiple trailing separators to just one
-            while (part.len > 1 and @bitCast(u16, part[part.len - 2 ..][0..2].*) == @bitCast(u16, [2]u8{
-                _platform.separator(),
-                _platform.separator(),
-            })) {
-                part = part[0 .. part.len - 1];
-            }
-
-            if (out > 0 and temp_buf[out - 1] != _platform.separator()) {
-                temp_buf[out] = _platform.separator();
-                out += 1;
-            }
-
-            std.mem.copy(u8, temp_buf[out..], part);
-            out += part.len;
-        }
+        std.mem.copy(u8, temp_buf[out..], part);
+        out += part.len;
     }
+
     const leading_separator: []const u8 =
         if (_platform.leadingSeparatorIndex(temp_buf[0..out])) |i|
         temp_buf[0 .. i + 1]
@@ -1010,6 +999,15 @@ test "joinAbsStringLoose" {
     defer t.report(@src());
     const string = []const u8;
     const cwd = "/Users/jarredsumner/Code/app";
+
+    _ = t.expect(
+        "/bar/foo",
+        joinAbsString(cwd, &[_]string{
+            "/bar/foo",
+            "/bar/foo",
+        }, .loose),
+        @src(),
+    );
 
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/bar/file.js",

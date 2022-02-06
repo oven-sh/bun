@@ -218,9 +218,10 @@ pub const TOML = struct {
                 // child table array
                 .t_open_bracket_double => {
                     try p.lexer.next();
+
                     var key = try p.parseKey(key_allocator);
 
-                    try p.lexer.expect(.t_close_bracket);
+                    try p.lexer.expect(.t_close_bracket_double);
                     if (!p.lexer.has_newline_before) {
                         try p.lexer.expectedString("line break");
                     }
@@ -274,9 +275,12 @@ pub const TOML = struct {
     pub fn parseValue(p: *TOML) anyerror!Expr {
         const loc = p.lexer.loc();
 
+        p.lexer.allow_double_bracket = true;
+
         switch (p.lexer.token) {
             .t_false => {
                 try p.lexer.next();
+
                 return p.e(E.Boolean{
                     .value = false,
                 }, loc);
@@ -339,7 +343,6 @@ pub const TOML = struct {
                             is_single_line = false;
                         }
                     }
-
                     try p.parseAssignment(obj, key_allocator);
                     p.lexer.allow_double_bracket = false;
                     stack.fixed_buffer_allocator.reset();

@@ -122,6 +122,7 @@ const Scanner = struct {
     pub fn scan(this: *Scanner, path_literal: string) void {
         var parts = &[_]string{ this.fs.top_level_dir, path_literal };
         const path = this.fs.absBuf(parts, &this.scan_dir_buf);
+
         var root = this.readDirWithName(path, null) catch |err| {
             if (err == error.NotDir) {
                 if (this.isTestFile(path)) {
@@ -274,9 +275,10 @@ pub const TestCommand = struct {
         scanner.dirs_to_scan.deinit();
 
         const test_files = scanner.results.toOwnedSlice();
-
-        // vm.bundler.fs.fs.readDirectory(_dir: string, _handle: ?std.fs.Dir)
-        runAllTests(reporter, vm, test_files, ctx.allocator);
+        if (test_files.len > 0) {
+            // vm.bundler.fs.fs.readDirectory(_dir: string, _handle: ?std.fs.Dir)
+            runAllTests(reporter, vm, test_files, ctx.allocator);
+        }
 
         Output.pretty("\n", .{});
         Output.flush();
@@ -385,12 +387,13 @@ pub const TestCommand = struct {
             vm.tick();
         }
 
-        var result = promise.result(vm.global.vm());
-        if (result.isError() or
-            result.isAggregateError(vm.global) or
-            result.isException(vm.global.vm()))
-        {
-            vm.defaultErrorHandler(result, null);
+        switch (promise.status(vm.global.vm())) {
+            .Rejected => {
+                var result = promise.result(vm.global.vm());
+                vm.defaultErrorHandler(result, null);
+                return;
+            },
+            else => {},
         }
 
         reporter.updateDots();

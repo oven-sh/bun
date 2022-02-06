@@ -613,21 +613,25 @@ pub const TestScope = struct {
     ) Result {
         var vm = VirtualMachine.vm;
 
-        var promise = JSC.JSPromise.resolvedPromise(
+        var promise = JSC.JSInternalPromise.resolvedPromise(
             vm.global,
             js.JSObjectCallAsFunctionReturnValue(vm.global.ref(), this.callback, null, 0, null),
         );
-        js.JSValueUnprotect(vm.global.ref(), this.callback);
+        defer js.JSValueUnprotect(vm.global.ref(), this.callback);
         this.callback = null;
 
         while (promise.status(vm.global.vm()) == JSC.JSPromise.Status.Pending) {
             vm.tick();
         }
-        var result = promise.result(vm.global.vm());
-
-        if (result.isException(vm.global.vm()) or result.isError() or result.isAggregateError(vm.global)) {
-            vm.defaultErrorHandler(result, null);
-            return .{ .fail = this.counter.actual };
+        switch (promise.status(vm.global.vm())) {
+            .Rejected => {
+                vm.defaultErrorHandler(promise.result(vm.global.vm()), null);
+                return .{ .fail = this.counter.actual };
+            },
+            else => {
+                // don't care about the result
+                _ = promise.result(vm.global.vm());
+            },
         }
 
         if (this.counter.expected > 0 and this.counter.expected < this.counter.actual) {
@@ -737,9 +741,18 @@ pub const DescribeScope = struct {
 
         {
             var result = js.JSObjectCallAsFunctionReturnValue(ctx, callback, thisObject, 0, null);
-            if (result.isException(ctx.ptr().vm())) {
-                exception.* = result.asObjectRef();
-                return null;
+            var vm = JSC.VirtualMachine.vm;
+            const promise = JSInternalPromise.resolvedPromise(ctx.ptr(), result);
+            while (promise.status(ctx.ptr().vm()) == JSPromise.Status.Pending) {
+                vm.tick();
+            }
+
+            switch (promise.status(ctx.ptr().vm())) {
+                JSPromise.Status.Fulfilled => {},
+                else => {
+                    exception.* = promise.result(ctx.ptr().vm()).asObjectRef();
+                    return null;
+                },
             }
         }
         this.runTests(ctx);

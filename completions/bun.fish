@@ -75,7 +75,11 @@ complete -c bun \
 complete -c bun \
 	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files -s 'u' -l 'origin' -r -d 'Server URL. Rewrites import paths'
 complete -c bun \
--n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files  -s 'p' -l 'port' -r -d 'Port number to start server from' 
+	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files  -s 'p' -l 'port' -r -d 'Port number to start server from' 
+
+complete -c bun \
+	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts);" -s 'c' -l 'config' -r -d 'Load bun configuration from a bunfig.toml file' 
+
 complete -c bun \
 	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files  -s 'd' -l 'define' -r -d 'Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\"' 
 complete -c bun \

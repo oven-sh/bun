@@ -51,7 +51,8 @@ _bun() {
                 '--verbose[Excessively verbose logging]' \
                 '--cwd[Set a specific cwd]:cwd' \
                 '--backend[Platform-specific optimizations for installing dependencies]:backend:("clonefile" "copyfile" "hardlink" "clonefile_each_dir")' \
-                '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' &&
+                '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
+                '--config[Path to bunfig.toml file]:config' &&
                 ret=0
 
             case $state in
@@ -72,7 +73,8 @@ _bun() {
                 '--cwd[Change directory]:cwd' \
                 '--help[Show command help]' \
                 '-h[Show command help]' \
-                '--use[Use a framework, e.g. "next"]:use' &&
+                '--use[Use a framework, e.g. "next"]:use' \
+                '--config[Path to bunfig.toml file]:config' &&
                 ret=0
 
             case $state in
@@ -168,7 +170,8 @@ _bun() {
                 '--jsx-factory[Changes the function called when compiling JSX elements using the classic JSX runtime]:jsx-factory' \
                 '--jsx-fragment[Changes the function called when compiling JSX fragments]:jsx-fragment' \
                 '--jsx-import-source[Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: "react"]:jsx-import-source' \
-                '--port[Port number]:port' &&
+                '--port[Port number]:port' \
+                '--config[Path to bunfig.toml file]:config' &&
                 ret=0
 
             ;;
@@ -388,7 +391,8 @@ _bun() {
                 '--verbose[Excessively verbose logging]' \
                 '--cwd[Set a specific cwd]:cwd' \
                 '--backend[Platform-specific optimizations for installing dependencies]:backend:("clonefile" "copyfile" "hardlink" "clonefile_each_dir")' \
-                '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' &&
+                '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
+                '--config[Path to bunfig.toml file]:config' &&
                 ret=0
 
             ;;
@@ -418,7 +422,8 @@ _bun() {
                 '--silent[Don'"'"'t output anything]' \
                 '--verbose[Excessively verbose logging]' \
                 '--backend[Platform-specific optimizations for installing dependencies]:backend:("clonefile" "copyfile" "hardlink" "clonefile_each_dir")' \
-                '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' &&
+                '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
+                '--config[Path to bunfig.toml file]:config' &&
                 ret=0
 
             case $state in
@@ -439,7 +444,8 @@ _bun() {
                 '--cwd[Change directory]:cwd' \
                 '--help[Show command help]' \
                 '-h[Show command help]' \
-                '--silent[Don'"'"'t echo the command]' &&
+                '--silent[Don'"'"'t echo the command]' \
+                '--config[Path to bunfig.toml file]:config' &&
                 ret=0
 
             case $state in

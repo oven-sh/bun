@@ -93,9 +93,9 @@ bun remove react
 bun add preact
 ```
 
-<details> <summary>For Linux users, `bun install` needs Linux Kernel 5.6 or higher to work well</summary>
+<details> <summary><strong>For Linux users</strong>: <code>bun install</code> needs Linux Kernel 5.6 or higher to work well</summary>
 
-The minimum is 5.1. If you're on Linux kernel 5.1 - 5.5, `bun install` should still work, but HTTP requests will be slow due to lack of support for io_uring's `connect()` operation.
+The minimum Linux Kernel version is 5.1. If you're on Linux kernel 5.1 - 5.5, `bun install` should still work, but HTTP requests will be slow due to lack of support for io_uring's `connect()` operation.
 
 If you're using Ubuntu 20.04, here's how to install a [newer kernel](https://wiki.ubuntu.com/Kernel/LTSEnablementStack):
 
@@ -103,6 +103,7 @@ If you're using Ubuntu 20.04, here's how to install a [newer kernel](https://wik
 # If this returns a version >= 5.6, you don't need to do anything
 uname -r
 
+# Install the official Ubuntu hardware enablement kernel
 sudo apt install --install-recommends linux-generic-hwe-20.04
 ```
 

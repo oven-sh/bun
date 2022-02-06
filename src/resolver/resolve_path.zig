@@ -368,7 +368,7 @@ pub fn normalizeStringGeneric(path: []const u8, buf: []u8, comptime allow_above_
             continue;
         }
 
-        if (r + 2 == n or (n > r + 2 and isSeparator(path[r + 2])) and isDotDot(path[r..][0..2])) {
+        if ((r + 2 == n or (n > r + 2 and isSeparator(path[r + 2]))) and isDotDot(path[r..][0..2])) {
             r += 2;
             // .. element: remove to last separator
             if (buf_i > dotdot) {

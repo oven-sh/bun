@@ -22,6 +22,14 @@ inline fn nqlAtIndex(comptime string_count: comptime_int, index: usize, input: [
 const IsSeparatorFunc = fn (char: u8) bool;
 const LastSeparatorFunction = fn (slice: []const u8) ?usize;
 
+inline fn isDotDot(slice: []const u8) bool {
+    return @bitCast(u16, slice[0..2].*) == comptime std.mem.readIntNative(u16, "..");
+}
+
+inline fn isDotSlash(slice: []const u8) bool {
+    return @bitCast(u16, slice[0..2].*) == comptime std.mem.readIntNative(u16, "./");
+}
+
 // TODO: is it faster to determine longest_common_separator in the while loop
 // or as an extra step at the end?
 // only boether to check if this function appears in benchmarking
@@ -343,9 +351,6 @@ pub fn normalizeStringGeneric(path: []const u8, buf: []u8, comptime allow_above_
     var r: usize = 0;
     var dotdot: usize = 0;
     var buf_i: usize = 0;
-    const rooted = isSeparator(path[0]);
-
-    r = @as(usize, @boolToInt(rooted));
 
     const n = path.len;
 
@@ -353,14 +358,17 @@ pub fn normalizeStringGeneric(path: []const u8, buf: []u8, comptime allow_above_
         // empty path element
         // or
         // . element
-        if (isSeparator(path[r]) or
-            (path[r] == '.' and (r + 1 == n or isSeparator(path[r + 1]))))
-        {
+        if (isSeparator(path[r])) {
             r += 1;
             continue;
         }
 
-        if (r + 2 == n or (n > r + 2 and isSeparator(path[r + 2])) and @bitCast(u16, path[r..][0..2].*) == comptime std.mem.readIntNative(u16, "..")) {
+        if (path[r] == '.' and (r + 1 == n or isSeparator(path[r + 1]))) {
+            r += 1;
+            continue;
+        }
+
+        if (r + 2 == n or (n > r + 2 and isSeparator(path[r + 2])) and isDotDot(path[r..][0..2])) {
             r += 2;
             // .. element: remove to last separator
             if (buf_i > dotdot) {
@@ -415,7 +423,7 @@ pub const Platform = enum {
 
     pub fn isAbsolute(comptime platform: Platform, path: []const u8) bool {
         return switch (comptime platform) {
-            .auto => platform.resolve().isAbsolute(path),
+            .auto => (comptime platform.resolve()).isAbsolute(path),
             .loose, .posix => path.len > 0 and path[0] == '/',
             .windows => std.fs.path.isAbsoluteWindows(path),
         };
@@ -660,8 +668,8 @@ pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [
 
     var written: usize = 0;
     const platform = comptime _platform.resolve();
-
-    parser_join_input_buffer[0] = 0;
+    var temp_buf: [4096]u8 = undefined;
+    temp_buf[0] = 0;
 
     for (_parts) |part| {
         if (part.len == 0) {
@@ -669,13 +677,13 @@ pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [
         }
 
         if (written > 0) {
-            parser_join_input_buffer[written] = platform.separator();
+            temp_buf[written] = platform.separator();
             written += 1;
         }
 
         std.mem.copy(
             u8,
-            parser_join_input_buffer[written..],
+            temp_buf[written..],
             part,
         );
         written += part.len;
@@ -686,7 +694,7 @@ pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [
         return buf[0..1];
     }
 
-    return normalizeStringNode(parser_join_input_buffer[0..written], buf, platform);
+    return normalizeStringNode(temp_buf[0..written], buf, platform);
 }
 
 pub fn joinAbsStringBuf(_cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) []const u8 {
@@ -699,6 +707,7 @@ pub fn joinAbsStringBufZ(_cwd: []const u8, buf: []u8, _parts: anytype, comptime 
 
 inline fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) ReturnType {
     var parts: []const []const u8 = _parts;
+    var temp_buf: [std.fs.MAX_PATH_BYTES * 2]u8 = undefined;
     if (parts.len == 0) {
         if (comptime is_sentinel) {
             unreachable;
@@ -714,73 +723,75 @@ inline fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: typ
         return "/";
     }
 
-    var cwd = _cwd;
     var out: usize = 0;
-    // When parts[0] is absolute, we treat that as, effectively, the cwd
-
-    // Windows leading separators can be a lot of things...
-    // So we need to do this instead of just checking the first char.
-    var leading_separator: []const u8 = "";
-
-    var start_part: i32 = -1;
-    for (parts) |part, i| {
-        if (part.len > 0) {
-            if (_platform.leadingSeparatorIndex(parts[i])) |leading_separator_i| {
-                leading_separator = parts[i][0 .. leading_separator_i + 1];
-                start_part = @intCast(i32, i);
+    {
+        var part_i: u16 = 0;
+        var part_len: u16 = @truncate(u16, parts.len);
+        var cwd = _cwd;
+        while (part_i < part_len) : (part_i += 1) {
+            if (_platform.isAbsolute(parts[part_i])) {
+                cwd = parts[part_i];
+                if (part_i == part_len - 1) break;
+                parts = parts[part_i + 1 ..];
+                part_len = @truncate(u16, parts.len);
+                part_i = 0;
             }
         }
-    }
-    var start: []const u8 = "";
-
-    // Handle joining absolute strings
-    // Any string which starts with a leading separator is considered absolute
-    if (start_part > -1) {
-        const start_part_i = @intCast(usize, start_part);
-        start = parts[start_part_i];
-        if (parts.len > start_part_i + 1) {
-            parts = parts[start_part_i + 1 ..];
-        } else {
-            parts = &([_][]const u8{});
-        }
-    } else {
-        leading_separator = cwd[0 .. 1 + (_platform.leadingSeparatorIndex(_cwd) orelse unreachable)]; // cwd must be absolute
-        start = _cwd;
-    }
-
-    out = start.len;
-    std.debug.assert(out < buf.len);
-    std.mem.copy(u8, buf[0..out], start);
-
-    for (parts) |part| {
-        // Do not normalize here
-        // It will break stuff!
-        var normalized_part = part;
-        if (normalized_part.len == 0) {
-            continue;
-        }
-        switch (_platform.resolve()) {
-            .windows => {
-                buf[out] = std.fs.path.sep_windows;
-            },
-            else => {
-                buf[out] = std.fs.path.sep_posix;
-            },
+        // Trim multiple trailing separators to just one
+        while (cwd.len > 1 and @bitCast(u16, cwd[cwd.len - 2 ..][0..2].*) == @bitCast(u16, [2]u8{
+            _platform.separator(),
+            _platform.separator(),
+        })) {
+            cwd = cwd[0 .. cwd.len - 1];
         }
 
-        out += 1;
+        std.mem.copy(u8, &temp_buf, cwd);
+        out = cwd.len;
 
-        const offset = out;
-        out += normalized_part.len;
-        std.debug.assert(out <= buf.len);
-        std.mem.copy(u8, buf[offset..out], normalized_part);
+        if (out > 0 and temp_buf[out - 1] != _platform.separator()) {
+            temp_buf[out] = _platform.separator();
+            out += 1;
+        }
+
+        for (parts) |_part| {
+            if (_part.len == 0) {
+                continue;
+            }
+
+            var part = _part;
+
+            // Trim multiple trailing separators to just one
+            while (part.len > 1 and @bitCast(u16, part[part.len - 2 ..][0..2].*) == @bitCast(u16, [2]u8{
+                _platform.separator(),
+                _platform.separator(),
+            })) {
+                part = part[0 .. part.len - 1];
+            }
+
+            if (out > 0 and temp_buf[out - 1] != _platform.separator()) {
+                temp_buf[out] = _platform.separator();
+                out += 1;
+            }
+
+            std.mem.copy(u8, temp_buf[out..], part);
+            out += part.len;
+        }
     }
+    const leading_separator: []const u8 =
+        if (_platform.leadingSeparatorIndex(temp_buf[0..out])) |i|
+        temp_buf[0 .. i + 1]
+    else
+        "/";
 
-    // One last normalization, to remove any ../ added
-    const result = normalizeStringBuf(buf[0..out], parser_buffer[leading_separator.len..parser_buffer.len], false, _platform, false);
+    const result = normalizeStringBuf(
+        temp_buf[leading_separator.len..out],
+        buf[leading_separator.len..],
+        false,
+        _platform,
+        true,
+    );
+
     std.mem.copy(u8, buf[0..leading_separator.len], leading_separator);
-
-    std.mem.copy(u8, buf[leading_separator.len .. result.len + leading_separator.len], result);
 
     if (comptime is_sentinel) {
         buf.ptr[result.len + leading_separator.len + 1] = 0;
@@ -926,6 +937,27 @@ test "joinAbsStringPosix" {
     defer t.report(@src());
     const string = []const u8;
     const cwd = "/Users/jarredsumner/Code/app/";
+
+    _ = t.expect(
+        "/project/.pnpm/lodash@4.17.21/node_modules/lodash/eq",
+        try default_allocator.dupe(u8, joinAbsString(cwd, &[_]string{
+            "/project/.pnpm/lodash@4.17.21/node_modules/lodash/",
+            "./eq",
+        }, .posix)),
+        @src(),
+    );
+
+    _ = t.expect(
+        "/foo/lodash/eq.js",
+        joinAbsString(cwd, &[_]string{ "/foo/lodash/", "./eq.js" }, .posix),
+        @src(),
+    );
+
+    _ = t.expect(
+        "/foo/lodash/eq.js",
+        joinAbsString(cwd, &[_]string{ "/foo/lodash", "./eq.js" }, .posix),
+        @src(),
+    );
 
     _ = t.expect(
         "/Users/jarredsumner/Code/app/foo/bar/file.js",

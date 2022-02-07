@@ -257,7 +257,6 @@ bun is a project with incredibly large scope, and it’s early days.
 
 | Feature                                                                                                                | In              |
 | ---------------------------------------------------------------------------------------------------------------------- | --------------- |
-| ~Symlinks~                                                                                                             | Resolver        |
 | [Finish Fast Refresh](https://github.com/Jarred-Sumner/bun/issues/18)                                                  | JSX Transpiler  |
 | Source Maps                                                                                                            | JavaScript      |
 | Source Maps                                                                                                            | CSS             |

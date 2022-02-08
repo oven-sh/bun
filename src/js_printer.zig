@@ -2551,7 +2551,7 @@ pub fn NewPrinter(
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
 
-                    if (!is_inside_bundle) {
+                    if (!is_inside_bundle and !rewrite_esm_to_cjs) {
                         p.print("export default");
                     }
 
@@ -2560,7 +2560,7 @@ pub fn NewPrinter(
                     switch (s.value) {
                         .expr => |expr| {
                             // this is still necessary for JSON
-                            if (is_inside_bundle) {
+                            if (is_inside_bundle or rewrite_esm_to_cjs) {
                                 p.printModuleExportSymbol();
                                 p.print(" = ");
                             }
@@ -2576,7 +2576,7 @@ pub fn NewPrinter(
                             switch (s2.data) {
                                 .s_function => |func| {
                                     p.printSpaceBeforeIdentifier();
-                                    if (is_inside_bundle) {
+                                    if (is_inside_bundle or rewrite_esm_to_cjs) {
                                         if (func.func.name == null) {
                                             p.printModuleExportSymbol();
                                             p.print(" = ");
@@ -2601,22 +2601,24 @@ pub fn NewPrinter(
 
                                     p.printFunc(func.func);
 
-                                    if (is_inside_bundle) {
+                                    if (is_inside_bundle or rewrite_esm_to_cjs) {
                                         p.printSemicolonAfterStatement();
+                                    }
 
+                                    if (is_inside_bundle) {
                                         if (func.func.name) |name| {
                                             p.printIndent();
                                             p.printBundledExport("default", p.renamer.nameForSymbol(name.ref.?));
                                             p.printSemicolonAfterStatement();
                                         }
-                                    } else {
+                                    } else if (!rewrite_esm_to_cjs) {
                                         p.printNewline();
                                     }
                                 },
                                 .s_class => |class| {
                                     p.printSpaceBeforeIdentifier();
 
-                                    if (is_inside_bundle) {
+                                    if (is_inside_bundle or rewrite_esm_to_cjs) {
                                         if (class.class.class_name == null) {
                                             p.printModuleExportSymbol();
                                             p.print(" = ");
@@ -2632,15 +2634,17 @@ pub fn NewPrinter(
 
                                     p.printClass(class.class);
 
-                                    if (is_inside_bundle) {
+                                    if (is_inside_bundle or rewrite_esm_to_cjs) {
                                         p.printSemicolonAfterStatement();
+                                    }
 
+                                    if (is_inside_bundle) {
                                         if (class.class.class_name) |name| {
                                             p.printIndent();
                                             p.printBundledExport("default", p.renamer.nameForSymbol(name.ref.?));
                                             p.printSemicolonAfterStatement();
                                         }
-                                    } else {
+                                    } else if (!rewrite_esm_to_cjs) {
                                         p.printNewline();
                                     }
                                 },

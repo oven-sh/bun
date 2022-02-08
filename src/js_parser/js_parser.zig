@@ -2085,27 +2085,12 @@ pub const Parser = struct {
         if (!self.options.ts and self.options.features.is_macro_runtime) return try self._parse(JSParserMacro);
 
         if (self.options.ts and self.options.jsx.parse) {
-            if (self.options.features.react_fast_refresh) {
-                return try self._parse(TSXParserFastRefresh);
-            }
             return try self._parse(TSXParser);
         } else if (self.options.ts) {
-            if (self.options.features.react_fast_refresh) {
-                return try self._parse(TypeScriptParserFastRefresh);
-            }
-
             return try self._parse(TypeScriptParser);
         } else if (self.options.jsx.parse) {
-            if (self.options.features.react_fast_refresh) {
-                return try self._parse(JSXParserFastRefresh);
-            }
-
             return try self._parse(JSXParser);
         } else {
-            if (self.options.features.react_fast_refresh) {
-                return try self._parse(JavaScriptParserFastRefresh);
-            }
-
             return try self._parse(JavaScriptParser);
         }
     }
@@ -2914,7 +2899,6 @@ pub fn NewParser(
     const is_typescript_enabled = js_parser_features.typescript;
     const is_jsx_enabled = js_parser_jsx != .none;
     const only_scan_imports_and_do_not_visit = js_parser_features.scan_only;
-    const is_react_fast_refresh_enabled = js_parser_features.react_fast_refresh;
 
     // P is for Parser!
     // public only because of Binding.ToExpr
@@ -3707,7 +3691,7 @@ pub fn NewParser(
             if (p.options.features.hot_module_reloading) {
                 generated_symbols_count += 3;
 
-                if (is_react_fast_refresh_enabled) {
+                if (p.options.features.react_fast_refresh) {
                     generated_symbols_count += 1;
                 }
             }
@@ -3742,7 +3726,7 @@ pub fn NewParser(
 
             if (p.options.features.hot_module_reloading) {
                 p.hmr_module = try p.declareGeneratedSymbol(.other, "hmr");
-                if (is_react_fast_refresh_enabled) {
+                if (p.options.features.react_fast_refresh) {
                     if (p.options.jsx.use_embedded_refresh_runtime) {
                         p.runtime_imports.__FastRefreshRuntime = try p.declareGeneratedSymbol(.other, "__FastRefreshRuntime");
                         p.recordUsage(p.runtime_imports.__FastRefreshRuntime.?.ref);
@@ -14947,7 +14931,7 @@ pub fn NewParser(
 
                 var args_list: []Expr = if (Environment.isDebug) &Prefill.HotModuleReloading.DebugEnabledArgs else &Prefill.HotModuleReloading.DebugDisabled;
 
-                const new_call_args_count: usize = comptime if (is_react_fast_refresh_enabled) 3 else 2;
+                const new_call_args_count: usize = if (p.options.features.react_fast_refresh) 3 else 2;
                 var call_args = try allocator.alloc(Expr, new_call_args_count + 1);
                 var new_call_args = call_args[0..new_call_args_count];
                 var hmr_module_ident = p.e(E.Identifier{ .ref = p.hmr_module.ref }, logger.Loc.Empty);
@@ -14955,7 +14939,7 @@ pub fn NewParser(
                 new_call_args[0] = p.e(E.Number{ .value = @intToFloat(f64, p.options.filepath_hash_for_hmr) }, logger.Loc.Empty);
                 // This helps us provide better error messages
                 new_call_args[1] = p.e(E.String{ .utf8 = p.source.path.pretty }, logger.Loc.Empty);
-                if (is_react_fast_refresh_enabled) {
+                if (p.options.features.react_fast_refresh) {
                     new_call_args[2] = p.e(E.Identifier{ .ref = p.jsx_refresh_runtime.ref }, logger.Loc.Empty);
                 }
 
@@ -14981,10 +14965,12 @@ pub fn NewParser(
                 var first_decl = decls[0..2];
                 // We cannot rely on import.meta.url because if we import it within a blob: url, it will be nonsensical
                 // var __hmrModule = new HMRModule(123123124, "/index.js"), __exports = __hmrModule.exports;
-                const hmr_import_ref = (if (comptime is_react_fast_refresh_enabled)
+                const hmr_import_module_ = if (p.options.features.react_fast_refresh)
                     p.runtime_imports.__FastRefreshModule.?
                 else
-                    p.runtime_imports.__HMRModule.?).ref;
+                    p.runtime_imports.__HMRModule.?;
+
+                const hmr_import_ref = hmr_import_module_.ref;
 
                 first_decl[0] = G.Decl{
                     .binding = p.b(B.Identifier{ .ref = p.hmr_module.ref }, logger.Loc.Empty),

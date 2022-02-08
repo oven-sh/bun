@@ -1211,6 +1211,76 @@ pub const E = struct {
                 .{ "key", .key },
             });
         };
+
+        pub const Tag = enum {
+            a,
+            blockquote,
+            br,
+            caption,
+            code,
+            div,
+            em,
+            h1,
+            h2,
+            h3,
+            h4,
+            h5,
+            h6,
+            hr,
+            img,
+            li,
+            ol,
+            p,
+            pre,
+            span,
+            strong,
+            table,
+            tbody,
+            td,
+            tfoot,
+            th,
+            thead,
+            tr,
+            ul,
+            main,
+
+            pub const MapType = std.enums.EnumArray(Tag, E.String);
+            pub const map: MapType = brk: {
+                var map_ = MapType.initFill(E.String{ .utf8 = "" });
+                map_.set(.a, E.String{ .utf8 = "a" });
+                map_.set(.blockquote, E.String{ .utf8 = "blockquote" });
+                map_.set(.br, E.String{ .utf8 = "br" });
+                map_.set(.caption, E.String{ .utf8 = "caption" });
+                map_.set(.code, E.String{ .utf8 = "code" });
+                map_.set(.div, E.String{ .utf8 = "div" });
+                map_.set(.em, E.String{ .utf8 = "em" });
+                map_.set(.h1, E.String{ .utf8 = "h1" });
+                map_.set(.h2, E.String{ .utf8 = "h2" });
+                map_.set(.h3, E.String{ .utf8 = "h3" });
+                map_.set(.h4, E.String{ .utf8 = "h4" });
+                map_.set(.h5, E.String{ .utf8 = "h5" });
+                map_.set(.h6, E.String{ .utf8 = "h6" });
+                map_.set(.hr, E.String{ .utf8 = "hr" });
+                map_.set(.img, E.String{ .utf8 = "img" });
+                map_.set(.li, E.String{ .utf8 = "li" });
+                map_.set(.ol, E.String{ .utf8 = "ol" });
+                map_.set(.p, E.String{ .utf8 = "p" });
+                map_.set(.pre, E.String{ .utf8 = "pre" });
+                map_.set(.span, E.String{ .utf8 = "span" });
+                map_.set(.strong, E.String{ .utf8 = "strong" });
+                map_.set(.table, E.String{ .utf8 = "table" });
+                map_.set(.tbody, E.String{ .utf8 = "tbody" });
+                map_.set(.td, E.String{ .utf8 = "td" });
+                map_.set(.tfoot, E.String{ .utf8 = "tfoot" });
+                map_.set(.th, E.String{ .utf8 = "th" });
+                map_.set(.thead, E.String{ .utf8 = "thead" });
+                map_.set(.tr, E.String{ .utf8 = "tr" });
+                map_.set(.ul, E.String{ .utf8 = "ul" });
+                map_.set(.main, E.String{ .utf8 = "main" });
+
+                break :brk map_;
+            };
+        };
     };
 
     pub const Missing = struct {

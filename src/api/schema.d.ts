@@ -21,6 +21,7 @@ export enum Loader {
   file = 6,
   json = 7,
   toml = 8,
+  mdx = 9,
 }
 export const LoaderKeys = {
   1: "jsx",
@@ -39,6 +40,8 @@ export const LoaderKeys = {
   json: "json",
   8: "toml",
   toml: "toml",
+  9: "mdx",
+  mdx: "mdx",
 };
 export enum FrameworkEntryPointType {
   client = 1,

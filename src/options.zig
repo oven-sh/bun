@@ -630,6 +630,7 @@ pub const Loader = enum(u4) {
     file,
     json,
     toml,
+    mdx,
     pub const Map = std.EnumArray(Loader, string);
     pub const stdin_name: Map = brk: {
         var map = Map.initFill("");
@@ -641,6 +642,7 @@ pub const Loader = enum(u4) {
         map.set(Loader.file, "input");
         map.set(Loader.json, "input.json");
         map.set(Loader.toml, "input.toml");
+        map.set(Loader.toml, "input.mdx");
         break :brk map;
     };
 
@@ -682,6 +684,7 @@ pub const Loader = enum(u4) {
             LoaderMatcher.case("file") => Loader.file,
             LoaderMatcher.case("json") => Loader.json,
             LoaderMatcher.case("toml") => Loader.toml,
+            LoaderMatcher.case("md"), LoaderMatcher.case("mdx") => Loader.mdx,
             else => null,
         };
     }
@@ -702,6 +705,7 @@ pub const Loader = enum(u4) {
             .css => .css,
             .json => .json,
             .toml => .toml,
+            .mdx => .mdx,
             else => .file,
         };
     }
@@ -751,6 +755,7 @@ pub const defaultLoaders = std.ComptimeStringMap(Loader, .{
     .{ ".cts", Loader.ts },
 
     .{ ".toml", Loader.toml },
+    .{ ".mdx", Loader.mdx },
 });
 
 // https://webpack.js.org/guides/package-exports/#reference-syntax
@@ -1048,7 +1053,7 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
         ".ts",   ".tsx",
         ".mts",  ".cts",
 
-        ".toml",
+        ".toml", ".mdx",
     };
 
     inline for (default_loader_ext) |ext| {

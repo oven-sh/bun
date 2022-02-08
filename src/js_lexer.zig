@@ -205,7 +205,7 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
 
         /// Look ahead at the next n codepoints without advancing the iterator.
         /// If fewer than n codepoints are available, then return the remainder of the string.
-        fn peek(it: *LexerType, n: usize) string {
+        pub fn peek(it: *LexerType, n: usize) string {
             const original_i = it.current;
             defer it.current = original_i;
 
@@ -1747,10 +1747,10 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
             return lex;
         }
 
-        pub fn init(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) !LexerType {
-            try tables.initJSXEntityMap();
+        pub fn initNoAutoStep(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) LexerType {
+            tables.initJSXEntityMap();
             var empty_string_literal: JavascriptString = &emptyJavaScriptString;
-            var lex = LexerType{
+            return LexerType{
                 .log = log,
                 .source = source,
                 .string_literal = empty_string_literal,
@@ -1759,6 +1759,10 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
                 .allocator = allocator,
                 .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
             };
+        }
+
+        pub fn init(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) !LexerType {
+            var lex = initNoAutoStep(log, source, allocator);
             lex.step();
             try lex.next();
 

@@ -569,7 +569,7 @@ pub var jsxEntity: JSXEntityMap = undefined;
 var has_loaded_jsx_map = false;
 
 // There's probably a way to move this to comptime
-pub fn initJSXEntityMap() !void {
+pub fn initJSXEntityMap() void {
     if (has_loaded_jsx_map) {
         return;
     }

@@ -1954,7 +1954,6 @@ pub const ScanPassResult = struct {
 
 pub const Parser = struct {
     options: Options,
-    lexer: js_lexer.Lexer,
     log: *logger.Log,
     source: *const logger.Source,
     define: *Define,
@@ -2010,7 +2009,7 @@ pub const Parser = struct {
     fn _scanImports(self: *Parser, comptime ParserType: type, scan_pass: *ScanPassResult) !void {
         var p: ParserType = undefined;
 
-        try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
+        try ParserType.init(self.allocator, self.log, self.source, self.define, try js_lexer.Lexer.init(self.log, self.source.*, self.allocator), self.options, &p);
         p.import_records = &scan_pass.import_records;
         p.named_imports = &scan_pass.named_imports;
 
@@ -2081,53 +2080,17 @@ pub const Parser = struct {
         if (!self.options.ts and self.options.features.is_macro_runtime) return try self._parse(JSParserMacro);
 
         if (self.options.ts and self.options.jsx.parse) {
-            if (self.options.features.react_fast_refresh) {
-                return try self._parse(TSXParserFastRefresh);
-            }
             return try self._parse(TSXParser);
         } else if (self.options.ts) {
-            if (self.options.features.react_fast_refresh) {
-                return try self._parse(TypeScriptParserFastRefresh);
-            }
-
             return try self._parse(TypeScriptParser);
         } else if (self.options.jsx.parse) {
-            if (self.options.features.react_fast_refresh) {
-                return try self._parse(JSXParserFastRefresh);
-            }
-
             return try self._parse(JSXParser);
         } else {
-            if (self.options.features.react_fast_refresh) {
-                return try self._parse(JavaScriptParserFastRefresh);
-            }
-
             return try self._parse(JavaScriptParser);
         }
     }
 
-    fn _parse(self: *Parser, comptime ParserType: type) !js_ast.Result {
-        var p: ParserType = undefined;
-        try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
-        defer p.lexer.deinit();
-        var result: js_ast.Result = undefined;
-
-        // Consume a leading hashbang comment
-        var hashbang: string = "";
-        if (p.lexer.token == .t_hashbang) {
-            hashbang = p.lexer.identifier;
-            try p.lexer.next();
-        }
-
-        // Parse the file in the first pass, but do not bind symbols
-        var opts = ParseStatementOptions{ .is_module_scope = true };
-
-        // Parsing seems to take around 2x as much time as visiting.
-        // Which makes sense.
-        // June 4: "Parsing took: 18028000"
-        // June 4: "Rest of this took: 8003000"
-        const stmts = try p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts);
-
+    pub fn runVisitPassAndFinish(comptime ParserType: type, p: *ParserType, stmts: []Stmt) !js_ast.Result {
         try p.prepareForVisitPass();
 
         // ESM is always strict mode. I don't think we need this.
@@ -2187,7 +2150,7 @@ pub const Parser = struct {
         }
 
         // Auto-import JSX
-        if (ParserType.jsx_transform_type == .react) {
+        if (ParserType.jsx_transform_type == .react or ParserType.jsx_transform_type == .mdx) {
             const jsx_filename_symbol = p.symbols.items[p.jsx_filename.ref.inner_index];
 
             {
@@ -2683,19 +2646,38 @@ pub const Parser = struct {
 
         // Pop the module scope to apply the "ContainsDirectEval" rules
         // p.popScope();
+        return js_ast.Result{ .ast = try p.toAST(parts_slice, exports_kind, wrapper_expr), .ok = true };
+    }
 
-        result.ast = try p.toAST(parts_slice, exports_kind, wrapper_expr);
-        result.ok = true;
+    fn _parse(self: *Parser, comptime ParserType: type) !js_ast.Result {
+        var p: ParserType = undefined;
+        try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
+        defer p.lexer.deinit();
 
+        // Consume a leading hashbang comment
+        var hashbang: string = "";
+        if (p.lexer.token == .t_hashbang) {
+            hashbang = p.lexer.identifier;
+            try p.lexer.next();
+        }
+
+        // Parse the file in the first pass, but do not bind symbols
+        var opts = ParseStatementOptions{ .is_module_scope = true };
+
+        // Parsing seems to take around 2x as much time as visiting.
+        // Which makes sense.
+        // June 4: "Parsing took: 18028000"
+        // June 4: "Rest of this took: 8003000"
+        const stmts = try p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts);
+
+        const result = self.runVisitPassAndFinish(ParserType, &p, stmts);
         return result;
     }
 
     pub fn init(_options: Options, log: *logger.Log, source: *const logger.Source, define: *Define, allocator: std.mem.Allocator) !Parser {
-        const lexer = try js_lexer.Lexer.init(log, source.*, allocator);
         return Parser{
             .options = _options,
             .allocator = allocator,
-            .lexer = lexer,
             .define = define,
             .source = source,
             .log = log,
@@ -2728,7 +2710,7 @@ const ParseClassOptions = struct {
     is_type_script_declare: bool = false,
 };
 
-const ParseStatementOptions = struct {
+pub const ParseStatementOptions = struct {
     ts_decorators: ?DeferredTsDecorators = null,
     lexical_decl: LexicalDecl = .forbid,
     is_module_scope: bool = false,
@@ -2827,6 +2809,7 @@ const JSXTransformType = enum {
     none,
     react,
     macro,
+    mdx,
 };
 
 const ParserFeatures = struct {
@@ -2910,7 +2893,6 @@ pub fn NewParser(
     const is_typescript_enabled = js_parser_features.typescript;
     const is_jsx_enabled = js_parser_jsx != .none;
     const only_scan_imports_and_do_not_visit = js_parser_features.scan_only;
-    const is_react_fast_refresh_enabled = js_parser_features.react_fast_refresh;
 
     // P is for Parser!
     // public only because of Binding.ToExpr
@@ -3703,7 +3685,7 @@ pub fn NewParser(
             if (p.options.features.hot_module_reloading) {
                 generated_symbols_count += 3;
 
-                if (is_react_fast_refresh_enabled) {
+                if (p.options.features.react_fast_refresh) {
                     generated_symbols_count += 1;
                 }
             }
@@ -3738,7 +3720,7 @@ pub fn NewParser(
 
             if (p.options.features.hot_module_reloading) {
                 p.hmr_module = try p.declareGeneratedSymbol(.other, "hmr");
-                if (is_react_fast_refresh_enabled) {
+                if (p.options.features.react_fast_refresh) {
                     if (p.options.jsx.use_embedded_refresh_runtime) {
                         p.runtime_imports.__FastRefreshRuntime = try p.declareGeneratedSymbol(.other, "__FastRefreshRuntime");
                         p.recordUsage(p.runtime_imports.__FastRefreshRuntime.?.ref);
@@ -3760,7 +3742,7 @@ pub fn NewParser(
             }
 
             switch (comptime jsx_transform_type) {
-                .react => {
+                .mdx, .react => {
                     if (p.options.jsx.development) {
                         p.jsx_filename = p.declareGeneratedSymbol(.other, "jsxFilename") catch unreachable;
                     }
@@ -5044,7 +5026,7 @@ pub fn NewParser(
             }
         }
 
-        fn createDefaultName(p: *P, loc: logger.Loc) !js_ast.LocRef {
+        pub fn createDefaultName(p: *P, loc: logger.Loc) !js_ast.LocRef {
             var identifier = try std.fmt.allocPrint(p.allocator, "{s}_default", .{try p.source.path.name.nonUniqueNameString(p.allocator)});
 
             const name = js_ast.LocRef{ .loc = loc, .ref = try p.newSymbol(Symbol.Kind.other, identifier) };
@@ -5185,11 +5167,12 @@ pub fn NewParser(
 
         // pub fn maybeRewriteExportSymbol(p: *P, )
 
-        fn parseStmt(p: *P, opts: *ParseStatementOptions) anyerror!Stmt {
+        pub fn parseStmt(p: *P, opts: *ParseStatementOptions) anyerror!Stmt {
             var loc = p.lexer.loc();
 
             switch (p.lexer.token) {
                 .t_semicolon => {
+                    try p.lexer.next();
                     try p.lexer.next();
                     return Stmt.empty();
                 },
@@ -7510,7 +7493,7 @@ pub fn NewParser(
         // TODO:
         pub fn checkForNonBMPCodePoint(_: *P, _: logger.Loc, _: string) void {}
 
-        fn parseStmtsUpTo(p: *P, eend: js_lexer.T, _opts: *ParseStatementOptions) ![]Stmt {
+        pub fn parseStmtsUpTo(p: *P, eend: js_lexer.T, _opts: *ParseStatementOptions) ![]Stmt {
             var opts = _opts.*;
             var stmts = StmtList.init(p.allocator);
 
@@ -11112,7 +11095,7 @@ pub fn NewParser(
                             var writer = WriterType.initWriter(p, &BunJSX.bun_jsx_identifier);
                             return writer.writeFunctionCall(e_.*);
                         },
-                        .react => {
+                        .mdx, .react => {
                             const tag: Expr = tagger: {
                                 if (e_.tag) |_tag| {
                                     break :tagger p.visitExpr(_tag);
@@ -14872,7 +14855,7 @@ pub fn NewParser(
 
                 var args_list: []Expr = if (Environment.isDebug) &Prefill.HotModuleReloading.DebugEnabledArgs else &Prefill.HotModuleReloading.DebugDisabled;
 
-                const new_call_args_count: usize = comptime if (is_react_fast_refresh_enabled) 3 else 2;
+                const new_call_args_count: usize = comptime if (p.options.features.react_fast_refresh) 3 else 2;
                 var call_args = try allocator.alloc(Expr, new_call_args_count + 1);
                 var new_call_args = call_args[0..new_call_args_count];
                 var hmr_module_ident = p.e(E.Identifier{ .ref = p.hmr_module.ref }, logger.Loc.Empty);
@@ -14880,7 +14863,7 @@ pub fn NewParser(
                 new_call_args[0] = p.e(E.Number{ .value = @intToFloat(f64, p.options.filepath_hash_for_hmr) }, logger.Loc.Empty);
                 // This helps us provide better error messages
                 new_call_args[1] = p.e(E.String{ .utf8 = p.source.path.pretty }, logger.Loc.Empty);
-                if (is_react_fast_refresh_enabled) {
+                if (p.options.features.react_fast_refresh) {
                     new_call_args[2] = p.e(E.Identifier{ .ref = p.jsx_refresh_runtime.ref }, logger.Loc.Empty);
                 }
 
@@ -14906,7 +14889,7 @@ pub fn NewParser(
                 var first_decl = decls[0..2];
                 // We cannot rely on import.meta.url because if we import it within a blob: url, it will be nonsensical
                 // var __hmrModule = new HMRModule(123123124, "/index.js"), __exports = __hmrModule.exports;
-                const hmr_import_ref = (if (comptime is_react_fast_refresh_enabled)
+                const hmr_import_ref = (if (p.options.features.react_fast_refresh)
                     p.runtime_imports.__FastRefreshModule.?
                 else
                     p.runtime_imports.__HMRModule.?).ref;
@@ -15347,6 +15330,7 @@ pub fn NewParser(
 const JavaScriptParser = NewParser(.{});
 const JSXParser = NewParser(.{ .jsx = .react });
 const TSXParser = NewParser(.{ .jsx = .react, .typescript = true });
+const MDXParser = NewParser(.{ .jsx = .mdx });
 const TypeScriptParser = NewParser(.{ .typescript = true });
 
 const JSParserMacro = NewParser(.{
@@ -15356,11 +15340,6 @@ const TSParserMacro = NewParser(.{
     .jsx = .macro,
     .typescript = true,
 });
-
-const JavaScriptParserFastRefresh = NewParser(.{ .react_fast_refresh = true });
-const JSXParserFastRefresh = NewParser(.{ .jsx = .react, .react_fast_refresh = true });
-const TSXParserFastRefresh = NewParser(.{ .jsx = .react, .typescript = true, .react_fast_refresh = true });
-const TypeScriptParserFastRefresh = NewParser(.{ .typescript = true, .react_fast_refresh = true });
 
 const JavaScriptImportScanner = NewParser(.{ .scan_only = true });
 const JSXImportScanner = NewParser(.{ .jsx = .react, .scan_only = true });

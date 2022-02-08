@@ -16,6 +16,18 @@ describe("Bun.Transpiler", () => {
 
   const code = `import { useParams } from "remix";
   import type { LoaderFunction, ActionFunction } from "remix";
+  import { type xx } from 'mod';
+  import { type xx as yy } from 'mod';
+  import { type 'xx' as yy } from 'mod';
+  import { type as } from 'mod';
+  import { type as as } from 'mod';
+  import { type as as as } from 'mod';
+  import { type xx } from 'mod';
+  import { type xx as yy } from 'mod';
+  import { type if as yy } from 'mod';
+  import { type 'xx' as yy } from 'mod';
+  import React, { type ReactNode } from 'react';
+
   
   export const loader: LoaderFunction = async ({
     params
@@ -40,6 +52,8 @@ describe("Bun.Transpiler", () => {
     it("reports import paths, excluding types", () => {
       const imports = transpiler.scanImports(code);
       expect(imports.filter(({ path }) => path === "remix")).toHaveLength(1);
+      expect(imports.filter(({ path }) => path === "mod")).toHaveLength(0);
+      expect(imports.filter(({ path }) => path === "react")).toHaveLength(1);
     });
   });
 
@@ -123,12 +137,20 @@ describe("Bun.Transpiler", () => {
     });
 
     it("removes types", () => {
+      expect(code.includes("mod")).toBe(true);
+      expect(code.includes("xx")).toBe(true);
       expect(code.includes("ActionFunction")).toBe(true);
       expect(code.includes("LoaderFunction")).toBe(true);
+      expect(code.includes("ReactNode")).toBe(true);
+      expect(code.includes("React")).toBe(true);
       const out = transpiler.transformSync(code);
 
       expect(out.includes("ActionFunction")).toBe(false);
       expect(out.includes("LoaderFunction")).toBe(false);
+      expect(out.includes("mod")).toBe(false);
+      expect(out.includes("xx")).toBe(false);
+      expect(out.includes("ReactNode")).toBe(false);
+      expect(out.includes("React")).toBe(true);
       const { exports } = transpiler.scan(out);
 
       expect(exports[0]).toBe("action");

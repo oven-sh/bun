@@ -6878,28 +6878,98 @@ pub fn NewParser(
                 var original_name = alias;
                 try p.lexer.next();
 
-                if (p.lexer.isContextualKeyword("as")) {
-                    try p.lexer.next();
-                    original_name = p.lexer.identifier;
-                    name = LocRef{ .loc = alias_loc, .ref = try p.storeNameInRef(original_name) };
-                    try p.lexer.expect(.t_identifier);
-                } else if (!isIdentifier) {
-                    // An import where the name is a keyword must have an alias
-                    try p.lexer.expectedString("\"as\"");
-                }
+                // "import { type xx } from 'mod'"
+                // "import { type xx as yy } from 'mod'"
+                // "import { type 'xx' as yy } from 'mod'"
+                // "import { type as } from 'mod'"
+                // "import { type as as } from 'mod'"
+                // "import { type as as as } from 'mod'"
+                if (is_typescript_enabled and
+                    strings.eqlComptime(alias, "type") and
+                    p.lexer.token != .t_comma and
+                    p.lexer.token != .t_close_brace)
+                {
+                    if (p.lexer.isContextualKeyword("as")) {
+                        try p.lexer.next();
+                        if (p.lexer.isContextualKeyword("as")) {
+                            original_name = p.lexer.identifier;
+                            name = LocRef{ .loc = p.lexer.loc(), .ref = try p.storeNameInRef(original_name) };
+                            try p.lexer.next();
 
-                // Reject forbidden names
-                if (isEvalOrArguments(original_name)) {
-                    const r = js_lexer.rangeOfIdentifier(p.source, name.loc);
-                    try p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot use \"{s}\" as an identifier here", .{original_name});
-                }
+                            if (p.lexer.token == .t_identifier) {
+                                // "import { type as as as } from 'mod'"
+                                // "import { type as as foo } from 'mod'"
+                                try p.lexer.next();
+                            } else {
+                                // "import { type as as } from 'mod'"
+                                try items.append(.{
+                                    .alias = alias,
+                                    .alias_loc = alias_loc,
+                                    .name = name,
+                                    .original_name = original_name,
+                                });
+                            }
+                        } else if (p.lexer.token == .t_identifier) {
+                            // "import { type as xxx } from 'mod'"
+                            original_name = p.lexer.identifier;
+                            name = LocRef{ .loc = p.lexer.loc(), .ref = try p.storeNameInRef(original_name) };
+                            try p.lexer.expect(.t_identifier);
 
-                try items.append(js_ast.ClauseItem{
-                    .alias = alias,
-                    .alias_loc = alias_loc,
-                    .name = name,
-                    .original_name = original_name,
-                });
+                            if (isEvalOrArguments(original_name)) {
+                                const r = p.source.rangeOfString(name.loc);
+                                try p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot use {s} as an identifier here", .{original_name});
+                            }
+
+                            try items.append(.{
+                                .alias = alias,
+                                .alias_loc = alias_loc,
+                                .name = name,
+                                .original_name = original_name,
+                            });
+                        }
+                    } else {
+                        const is_identifier = p.lexer.token == .t_identifier;
+
+                        // "import { type xx } from 'mod'"
+                        // "import { type xx as yy } from 'mod'"
+                        // "import { type if as yy } from 'mod'"
+                        // "import { type 'xx' as yy } from 'mod'"
+                        _ = try p.parseClauseAlias("import");
+                        try p.lexer.next();
+
+                        if (p.lexer.isContextualKeyword("as")) {
+                            try p.lexer.next();
+
+                            try p.lexer.expect(.t_identifier);
+                        } else if (!is_identifier) {
+                            // An import where the name is a keyword must have an alias
+                            try p.lexer.expectedString("\"as\"");
+                        }
+                    }
+                } else {
+                    if (p.lexer.isContextualKeyword("as")) {
+                        try p.lexer.next();
+                        original_name = p.lexer.identifier;
+                        name = LocRef{ .loc = alias_loc, .ref = try p.storeNameInRef(original_name) };
+                        try p.lexer.expect(.t_identifier);
+                    } else if (!isIdentifier) {
+                        // An import where the name is a keyword must have an alias
+                        try p.lexer.expectedString("\"as\"");
+                    }
+
+                    // Reject forbidden names
+                    if (isEvalOrArguments(original_name)) {
+                        const r = js_lexer.rangeOfIdentifier(p.source, name.loc);
+                        try p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot use \"{s}\" as an identifier here", .{original_name});
+                    }
+
+                    try items.append(js_ast.ClauseItem{
+                        .alias = alias,
+                        .alias_loc = alias_loc,
+                        .name = name,
+                        .original_name = original_name,
+                    });
+                }
 
                 if (p.lexer.token != .t_comma) {
                     break;

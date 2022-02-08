@@ -1397,7 +1397,7 @@ if (typeof window !== "undefined") {
               i++ // let i = HMRModule.dependencies.graph_used - 1; // i > this.module_index; // i--
             ) {
               const mod = HMRModule.dependencies.modules[i];
-              if (!mod && i === end) break;
+              if (!mod) continue; // this array is holey sometimes
               let handled = false;
 
               if (!mod.exports.__hmrDisable) {

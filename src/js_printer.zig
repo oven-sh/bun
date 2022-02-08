@@ -2548,11 +2548,6 @@ pub fn NewPrinter(
                     p.printNewline();
                 },
                 .s_export_default => |s| {
-                    // Give an extra newline for export default for readability
-                    if (!prev_stmt_tag.isExportLike()) {
-                        p.printNewline();
-                    }
-
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
 

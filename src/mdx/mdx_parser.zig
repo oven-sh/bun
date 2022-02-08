@@ -54,7 +54,6 @@ pub const MDX = struct {
     log: *logger.Log,
     allocator: std.mem.Allocator,
     stmts: std.ArrayListUnmanaged(js_ast.Stmt) = .{},
-    before_stmts: std.ArrayListUnmanaged(js_ast.Stmt) = .{},
 
     pub inline fn source(p: *const MDX) *const logger.Source {
         return &p.lexer.source;
@@ -69,12 +68,12 @@ pub const MDX = struct {
         }
     }
 
-    pub fn s(_: *MDX, t: anytype, loc: logger.Loc) Expr {
+    pub fn s(_: *MDX, t: anytype, loc: logger.Loc) Stmt {
         const Type = @TypeOf(t);
         if (@typeInfo(Type) == .Pointer) {
             return Stmt.init(std.meta.Child(Type), t.*, loc);
         } else {
-            return Stmt.init(Type, t, loc);
+            return Stmt.alloc(Type, t, loc);
         }
     }
 
@@ -85,7 +84,7 @@ pub const MDX = struct {
         source_: *const logger.Source,
         define: *Define,
         allocator: std.mem.Allocator,
-    ) !MDX {
+    ) !void {
         try JSParser.init(
             allocator,
             log,
@@ -95,9 +94,10 @@ pub const MDX = struct {
             _options,
             &this.parser,
         );
-        this.lexer = Lexer.init(&this.parser.lexer);
+        this.lexer = try Lexer.init(&this.parser.lexer);
         this.allocator = allocator;
         this.log = log;
+        this.stmts = .{};
     }
 
     pub fn parse(this: *MDX) !js_ast.Result {
@@ -120,15 +120,17 @@ pub const MDX = struct {
     pub fn parseExpr(this: *MDX, exprs: *std.ArrayListUnmanaged(Expr)) anyerror!void {
         switch (this.lexer.token) {
             T.t_js_block_open => {
+                this.lexer.js.token = .t_open_brace;
+                try this.lexer.js.next();
+
                 const expr = try this.parser.parseExpr(.lowest);
-                try this.lexer.js.expect(.t_close_brace);
-                this.lexer.js.token = .t_js_block_close;
+                this.lexer.token = .t_js_block_close;
                 try exprs.append(this.allocator, expr);
                 try this.lexer.next();
                 return;
             },
             T.t_text => {
-                try exprs.append(this.e(this.lexer.toEString(), this.lexer.loc()));
+                try exprs.append(this.allocator, this.e(this.lexer.toEString(), this.lexer.loc()));
                 try this.lexer.next();
                 return;
             },
@@ -155,6 +157,7 @@ pub const MDX = struct {
 
                     if (this.lexer.js.has_newline_before or this.lexer.token == T.t_end_of_file or this.lexer.token == T.t_empty_line) {
                         try exprs.append(
+                            this.allocator,
                             this.e(
                                 E.String{
                                     .utf8 = "*",
@@ -191,6 +194,7 @@ pub const MDX = struct {
 
                     if (this.lexer.js.has_newline_before or this.lexer.token == T.t_end_of_file or this.lexer.token == T.t_empty_line) {
                         try exprs.append(
+                            this.allocator,
                             this.e(
                                 E.String{
                                     .utf8 = "**",
@@ -223,6 +227,7 @@ pub const MDX = struct {
                     T.t_hash_4 => E.JSXElement.Tag.h4,
                     T.t_hash_5 => E.JSXElement.Tag.h5,
                     T.t_hash_6 => E.JSXElement.Tag.h6,
+                    else => unreachable,
                 };
                 var children = std.ArrayListUnmanaged(Expr){};
 
@@ -243,61 +248,130 @@ pub const MDX = struct {
                 }
 
                 const tag = this.e(E.JSXElement.Tag.map.get(tag_type), loc);
-                try exprs.append(this.e(E.JSXElement{
+                try exprs.append(this.allocator, this.e(E.JSXElement{
                     .tag = tag,
                     .children = ExprNodeList.fromList(children),
                 }, loc));
             },
             T.t_less_than => @panic("Not implemented yet"),
-            T.t_js_block_open => {
-                var opts = ParseStatementOptions{};
-                this.stmts.appendSlice(try this.parser.parseStmtsUpTo(.t_close_brace, &opts));
-                this.lexer.token = T.t_js_block_close;
-                try this.lexer.next();
-            },
             T.t_export, T.t_import => {
                 var opts = ParseStatementOptions{ .is_module_scope = true };
-                this.stmts.append(this.allocator, try this.parser.parseStmt(&opts));
+                try this.stmts.append(this.allocator, try this.parser.parseStmt(&opts));
             },
             T.t_end_of_file => {},
-            else => try this.parseExpr(exprs),
+            else => {
+                const loc = this.lexer.loc();
+                try this.lexer.next();
+                const tag_type = E.JSXElement.Tag.p;
+                var children = std.ArrayListUnmanaged(Expr){};
+
+                while (!(this.lexer.js.has_newline_before or switch (this.lexer.token) {
+                    T.t_end_of_file, T.t_empty_line => true,
+                    else => false,
+                })) {
+                    try this.parseExpr(&children);
+                }
+
+                const tag = this.e(E.JSXElement.Tag.map.get(tag_type), loc);
+
+                try exprs.append(this.allocator, this.e(E.JSXElement{
+                    .tag = tag,
+                    .children = ExprNodeList.fromList(children),
+                }, loc));
+            },
         }
     }
-
-    fn _parse(this: *MDX) !void {
+    fn flushEmptyLines(this: *MDX, count: usize, exprs: *std.ArrayListUnmanaged(Expr)) !void {
+        if (count == 0) return;
+        try exprs.ensureUnusedCapacity(this.allocator, count);
+        var i: usize = exprs.items.len;
+        exprs.items.len += count;
+        while (i < exprs.items.len) : (i += 1) {
+            exprs.items[i] = this.e(E.JSXElement{
+                .tag = this.e(E.JSXElement.Tag.map.get(E.JSXElement.Tag.p), this.lexer.loc()),
+            }, this.lexer.loc());
+        }
+    }
+    fn _parse(this: *MDX) anyerror!void {
         var root_children = std.ArrayListUnmanaged(Expr){};
         var first_loc = logger.Loc.Empty;
+        var empty_line_count: usize = 0;
+        var had_newline = true;
         while (true) {
-            switch (this.lexer.token) {
-                T.t_js_block_open => {
-                    const stmts = try this.parser.parseStmtsUpTo(.t_close_brace, null);
-                    this.stmts.appendSlice(this.allocator, stmts);
-                    this.lexer.token = T.t_js_block_close;
-                    try this.lexer.next();
-                    continue;
-                },
-                T.t_export, T.t_import => this.parseBlock(undefined),
-                T.t_end_of_file => break,
-                else => {
-                    try this.parseBlock(&root_children);
-                    if (root_children.items.len > 0 and first_loc.start != -1) {
-                        first_loc = root_children.items[0].loc;
-                    }
-                },
+            module_scope: {
+                switch (this.lexer.token) {
+                    T.t_js_block_open => {
+                        if (!this.lexer.js.has_newline_before and !had_newline) break :module_scope;
+                        try this.flushEmptyLines(empty_line_count, &root_children);
+                        empty_line_count = 0;
+                        var opts = ParseStatementOptions{ .is_module_scope = true };
+                        try this.lexer.js.next();
+                        const stmts = try this.parser.parseStmtsUpTo(.t_close_brace, &opts);
+                        try this.stmts.appendSlice(this.allocator, stmts);
+                        this.lexer.token = T.t_js_block_close;
+                        try this.lexer.next();
+                        continue;
+                    },
+                    T.t_export, T.t_import => {
+                        try this.flushEmptyLines(empty_line_count, &root_children);
+                        empty_line_count = 0;
+                        try this.parseBlock(undefined);
+                        continue;
+                    },
+                    T.t_end_of_file => break,
+                    T.t_empty_line => {
+                        empty_line_count += 1;
+                        had_newline = true;
+                        try this.lexer.next();
+                        continue;
+                    },
+                    else => {},
+                }
+                had_newline = false;
+            }
+
+            try this.flushEmptyLines(empty_line_count, &root_children);
+            empty_line_count = 0;
+            try this.parseBlock(&root_children);
+            if (root_children.items.len > 0 and first_loc.start != -1) {
+                first_loc = root_children.items[0].loc;
             }
         }
 
+        first_loc.start = @maximum(first_loc.start, 0);
+        const args_loc = first_loc;
+        first_loc.start += 1;
+        const body_loc = first_loc;
+
+        // We need to simulate a function that was parsed
+        _ = try this.parser.pushScopeForParsePass(.function_args, args_loc);
+
+        _ = try this.parser.pushScopeForParsePass(.function_body, body_loc);
+
         const root = this.e(E.JSXElement{
-            .tag = this.e(E.JSXElement.Tag.map.get(E.JSXElement.Tag.main), this.lexer.loc()),
+            .tag = this.e(E.JSXElement.Tag.map.get(E.JSXElement.Tag.main), body_loc),
             .children = ExprNodeList.fromList(root_children),
-        }, first_loc);
+        }, body_loc);
+
+        var root_stmts = try this.allocator.alloc(Stmt, 1);
+        root_stmts[0] = this.s(S.Return{ .value = root }, body_loc);
 
         try this.stmts.append(
             this.allocator,
+
             this.s(S.ExportDefault{
-                .default_name = try this.parser.createDefaultName(first_loc),
-                .value = .{ .expr = root },
-            }),
+                .default_name = try this.parser.createDefaultName(args_loc),
+                .value = .{
+                    .expr = this.e(E.Arrow{
+                        .body = G.FnBody{
+                            .stmts = root_stmts,
+                            .loc = body_loc,
+                        },
+                        .args = &[_]G.Arg{},
+                        .prefer_expr = true,
+                    }, args_loc),
+                },
+            }, args_loc),
         );
     }
 };

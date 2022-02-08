@@ -63,6 +63,8 @@ pub const T = enum {
 
     t_ampersand,
     t_string,
+
+    t_bar,
 };
 
 const tokenToString: std.enums.EnumArray(T, string) = brk: {
@@ -215,7 +217,7 @@ pub const Lexer = struct {
     }
 
     pub fn nextInsideLink(lexer: *Lexer, comptime allow_space: bool) !bool {
-        var js = &lexer.js;
+        var js = lexer.js;
         js.has_newline_before = js.end == 0;
         while (true) {
             switch (js.code_point) {
@@ -264,11 +266,11 @@ pub const Lexer = struct {
     }
 
     pub fn next(lexer: *Lexer) !void {
-        var js = &lexer.js;
+        var js = lexer.js;
         js.has_newline_before = js.end == 0;
         lexer.indent = 0;
 
-        while (true) {
+        outer: while (true) {
             js.start = js.end;
             js.token = .t_end_of_file;
 
@@ -276,6 +278,7 @@ pub const Lexer = struct {
                 -1 => {
                     lexer.token = T.t_end_of_file;
                     lexer.indent = 0;
+                    return;
                 },
 
                 ' ', '\t', 0x000C => {
@@ -306,6 +309,25 @@ pub const Lexer = struct {
                     lexer.token = T.t_less_than;
                     lexer.js.token = .t_less_than;
                     lexer.step();
+                    if (lexer.codePoint() == '!') {
+                        lexer.step();
+                        while (lexer.token != .t_end_of_file) {
+                            while (lexer.codePoint() != '-') {
+                                lexer.step();
+                            }
+                            if (lexer.codePoint() == '-') {
+                                lexer.step();
+                                if (lexer.codePoint() == '-') {
+                                    lexer.step();
+                                    if (lexer.codePoint() == '>') {
+                                        lexer.step();
+                                        lexer.js.start = lexer.js.current;
+                                        continue :outer;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     return;
                 },
                 '>' => {
@@ -315,7 +337,7 @@ pub const Lexer = struct {
                     if (lexer.codePoint() == '>') {
                         lexer.step();
                         lexer.token = T.t_greater_than_greater_than;
-                        js.token = T.t_greater_than_greater_than;
+                        js.token = .t_greater_than_greater_than;
                     }
                     return;
                 },
@@ -335,7 +357,7 @@ pub const Lexer = struct {
                             lexer.step();
                             lexer.consumeIndent();
 
-                            if (!js.has_newline_before and lexer.codePoint() == "*") {
+                            if (!js.has_newline_before and lexer.codePoint() == '*') {
                                 if (lexer.peek(1)[0] == '*') {
                                     lexer.token = T.t_star_2;
                                     lexer.step();
@@ -351,22 +373,22 @@ pub const Lexer = struct {
                 },
                 '_' => {
                     lexer.step();
-                    lexer.token = T.t_star;
+                    lexer.token = T.t_underscore;
                     lexer.consumeIndent();
 
                     if (lexer.codePoint() == '_') {
-                        lexer.token = T.t_star_2;
+                        lexer.token = T.t_underscore_2;
                         lexer.step();
                         lexer.consumeIndent();
 
                         if (lexer.codePoint() == '_') {
-                            lexer.token = T.t_star_3;
+                            lexer.token = T.t_underscore_3;
                             lexer.step();
                             lexer.consumeIndent();
 
-                            if (!js.has_newline_before and lexer.codePoint() == "_") {
+                            if (!js.has_newline_before and lexer.codePoint() == '_') {
                                 if (lexer.peek(1)[0] == '_') {
-                                    lexer.token = T.t_star_2;
+                                    lexer.token = T.t_underscore_2;
                                     lexer.step();
                                     lexer.step();
                                     js.string_literal_slice = "";
@@ -422,7 +444,7 @@ pub const Lexer = struct {
 
                     if (lexer.js.has_newline_before) {
                         lexer.token = T.t_equals;
-                        js.token = T.t_equals;
+                        js.token = .t_equals;
                         return;
                     }
                 },
@@ -452,6 +474,7 @@ pub const Lexer = struct {
                     lexer.step();
                 },
                 '\\' => {
+                    js.string_literal_is_ascii = true;
                     lexer.token = T.t_text;
                     lexer.step();
                     lexer.step();
@@ -467,7 +490,7 @@ pub const Lexer = struct {
                             ';' => {
                                 const label = lexer.raw();
                                 lexer.step();
-                                js.string_literal = try js.fixWhitespaceAndDecodeJSXEntities(lexer, label);
+                                js.string_literal = try js.fixWhitespaceAndDecodeJSXEntities(label);
                                 js.string_literal_is_ascii = false;
                                 lexer.token = T.t_string;
                                 return;
@@ -535,6 +558,7 @@ pub const Lexer = struct {
                             },
                             -1, '\r', '\n', 0x2028, 0x2029, '&', '~', '{', '<', '*', '_', '!', '[', '`' => {
                                 js.string_literal_slice = lexer.raw();
+                                js.string_literal_is_ascii = true;
                                 return;
                             },
                             else => {},

@@ -2147,6 +2147,7 @@ pub const Parser = struct {
                 p.options.features.react_fast_refresh = false;
                 p.runtime_imports.__HMRModule = null;
                 p.runtime_imports.__FastRefreshModule = null;
+                p.runtime_imports.__FastRefreshRuntime = null;
                 p.runtime_imports.__HMRClient = null;
             }
         } else {

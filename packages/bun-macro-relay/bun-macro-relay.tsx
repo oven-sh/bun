@@ -1,4 +1,5 @@
 import { parse, print } from "graphql/index.js";
+import { resolve } from "path";
 
 //
 // 1. Parse the GraphQL tag.
@@ -21,17 +22,7 @@ if (BUN_MACRO_RELAY_ARTIFACT_DIRECTORY) {
   artifactDirectory = BUN_MACRO_RELAY_ARTIFACT_DIRECTORY;
 }
 
-// TODO: platform-independent path cleaning
-if (!artifactDirectory.startsWith("/")) {
-  while (artifactDirectory.endsWith("/")) {
-    artifactDirectory = artifactDirectory.substring(
-      0,
-      artifactDirectory.length - 1
-    );
-  }
-
-  artifactDirectory = Bun.cwd + artifactDirectory;
-}
+artifactDirectory = resolve(artifactDirectory);
 
 export function graphql(node) {
   let query;

@@ -655,6 +655,10 @@ pub const ImportScanner = struct {
                                         .e_identifier => {
                                             continue;
                                         },
+                                        .e_import_identifier => |import_ident| {
+                                            st.default_name.ref = import_ident.ref;
+                                            continue;
+                                        },
                                         .e_function => |func| {
                                             if (func.func.name) |name_ref| {
                                                 if (name_ref.ref != null) {
@@ -5327,7 +5331,6 @@ pub fn NewParser(
                                     } else {
                                         defaultName = try p.createDefaultName(defaultLoc);
                                     }
-                                    // this is probably a panic
                                     var value = js_ast.StmtOrExpr{ .stmt = stmt };
                                     return p.s(S.ExportDefault{ .default_name = defaultName, .value = value }, loc);
                                 }
@@ -5337,7 +5340,6 @@ pub fn NewParser(
                                 const prefix_expr = try p.parseAsyncPrefixExpr(async_range, Level.comma);
                                 var expr = try p.parseSuffix(prefix_expr, Level.comma, null, Expr.EFlags.none);
                                 try p.lexer.expectOrInsertSemicolon();
-                                // this is probably a panic
                                 var value = js_ast.StmtOrExpr{ .expr = expr };
                                 return p.s(S.ExportDefault{ .default_name = defaultName, .value = value }, loc);
                             }
@@ -5438,6 +5440,9 @@ pub fn NewParser(
                                         } else {}
                                     },
                                     .e_identifier => |ident| {
+                                        break :default_name_getter LocRef{ .loc = defaultLoc, .ref = ident.ref };
+                                    },
+                                    .e_import_identifier => |ident| {
                                         break :default_name_getter LocRef{ .loc = defaultLoc, .ref = ident.ref };
                                     },
                                     .e_class => |class| {

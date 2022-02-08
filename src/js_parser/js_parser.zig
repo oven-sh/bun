@@ -313,7 +313,7 @@ pub const ImportScanner = struct {
 
     kept_import_equals: bool = false,
     removed_import_equals: bool = false,
-    pub fn scan(comptime P: type, p: P, stmts: []Stmt) !ImportScanner {
+    pub fn scan(comptime P: type, p: P, stmts: []Stmt, will_transform_to_common_js: bool) !ImportScanner {
         var scanner = ImportScanner{};
         var stmts_end: usize = 0;
         const allocator = p.allocator;
@@ -746,6 +746,25 @@ pub const ImportScanner = struct {
                                 },
                             }
                         }
+                    } else if (will_transform_to_common_js) {
+                        const expr: js_ast.Expr = switch (st.value) {
+                            .expr => |exp| exp,
+                            .stmt => |s2| brk2: {
+                                switch (s2.data) {
+                                    .s_function => |func| {
+                                        break :brk2 p.e(E.Function{ .func = func.func }, s2.loc);
+                                    },
+                                    .s_class => |class| {
+                                        break :brk2 p.e(class.class, s2.loc);
+                                    },
+                                    else => unreachable,
+                                }
+                            },
+                        };
+                        var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
+                        export_default_args[0] = p.@"module.exports"(expr.loc);
+                        export_default_args[1] = expr;
+                        stmt = p.s(S.SExpr{ .value = p.callRuntime(expr.loc, "__exportDefault", export_default_args) }, expr.loc);
                     }
                 },
                 .s_export_clause => |st| {
@@ -2137,6 +2156,12 @@ pub const Parser = struct {
             exports_kind = .cjs;
             if (p.options.transform_require_to_import) {
                 var args = p.allocator.alloc(Expr, 2) catch unreachable;
+
+                if (p.runtime_imports.__exportDefault == null and p.has_export_default) {
+                    p.runtime_imports.__exportDefault = try p.declareGeneratedSymbol(.other, "__exportDefault");
+                    p.resolveGeneratedSymbol(&p.runtime_imports.__exportDefault.?);
+                }
+
                 wrapper_expr = p.callRuntime(logger.Loc.Empty, "__cJS2eSM", args);
                 p.resolveGeneratedSymbol(&p.runtime_imports.__cJS2eSM.?);
 
@@ -2942,6 +2967,9 @@ pub fn NewParser(
         promise_ref: ?Ref = null,
         scopes_in_order_visitor_index: usize = 0,
         has_classic_runtime_warned: bool = false,
+
+        /// Used for transforming export default -> module.exports
+        has_export_default: bool = false,
 
         hmr_module: GeneratedSymbol = GeneratedSymbol{ .primary = Ref.None, .backup = Ref.None, .ref = Ref.None },
 
@@ -5342,6 +5370,7 @@ pub fn NewParser(
                                 var expr = try p.parseSuffix(prefix_expr, Level.comma, null, Expr.EFlags.none);
                                 try p.lexer.expectOrInsertSemicolon();
                                 var value = js_ast.StmtOrExpr{ .expr = expr };
+                                p.has_export_default = true;
                                 return p.s(S.ExportDefault{ .default_name = defaultName, .value = value }, loc);
                             }
 
@@ -5375,7 +5404,7 @@ pub fn NewParser(
 
                                     break :default_name_getter createDefaultName(p, defaultLoc) catch unreachable;
                                 };
-
+                                p.has_export_default = true;
                                 return p.s(
                                     S.ExportDefault{ .default_name = default_name, .value = js_ast.StmtOrExpr{ .stmt = stmt } },
                                     loc,
@@ -5419,7 +5448,7 @@ pub fn NewParser(
 
                                             break :default_name_getter createDefaultName(p, defaultLoc) catch unreachable;
                                         };
-
+                                        p.has_export_default = true;
                                         return p.s(S.ExportDefault{ .default_name = default_name, .value = js_ast.StmtOrExpr{ .stmt = stmt } }, loc);
                                     },
                                     else => {
@@ -5459,6 +5488,7 @@ pub fn NewParser(
                                 break :default_name_getter createDefaultName(p, defaultLoc) catch unreachable;
                             };
 
+                            p.has_export_default = true;
                             return p.s(
                                 S.ExportDefault{
                                     .default_name = default_name,
@@ -14695,7 +14725,7 @@ pub fn NewParser(
                     p.import_records_for_current_part.shrinkRetainingCapacity(0);
                     p.declared_symbols.shrinkRetainingCapacity(0);
 
-                    var result = try ImportScanner.scan(*P, p, part.stmts);
+                    var result = try ImportScanner.scan(*P, p, part.stmts, commonjs_wrapper_expr != null);
                     kept_import_equals = kept_import_equals or result.kept_import_equals;
                     removed_import_equals = removed_import_equals or result.removed_import_equals;
                     part.import_record_indices = part.import_record_indices;

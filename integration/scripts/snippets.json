@@ -27,5 +27,6 @@
   "/number-literal-bug.js",
   "/caught-require.js",
   "/package-json-utf8.js",
-  "/multiple-var.js"
+  "/multiple-var.js",
+  "/export-default-module-hot.js"
 ]

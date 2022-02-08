@@ -26,7 +26,7 @@ describe("Bun.Transpiler", () => {
   import { type xx as yy } from 'mod';
   import { type if as yy } from 'mod';
   import { type 'xx' as yy } from 'mod';
-  import React, { type ReactNode } from 'react';
+  import React, { type ReactNode, Component } from 'react';
 
   
   export const loader: LoaderFunction = async ({
@@ -143,6 +143,7 @@ describe("Bun.Transpiler", () => {
       expect(code.includes("LoaderFunction")).toBe(true);
       expect(code.includes("ReactNode")).toBe(true);
       expect(code.includes("React")).toBe(true);
+      expect(code.includes("Component")).toBe(true);
       const out = transpiler.transformSync(code);
 
       expect(out.includes("ActionFunction")).toBe(false);
@@ -151,6 +152,7 @@ describe("Bun.Transpiler", () => {
       expect(out.includes("xx")).toBe(false);
       expect(out.includes("ReactNode")).toBe(false);
       expect(out.includes("React")).toBe(true);
+      expect(out.includes("Component")).toBe(true);
       const { exports } = transpiler.scan(out);
 
       expect(exports[0]).toBe("action");

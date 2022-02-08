@@ -14963,10 +14963,12 @@ pub fn NewParser(
                 var first_decl = decls[0..2];
                 // We cannot rely on import.meta.url because if we import it within a blob: url, it will be nonsensical
                 // var __hmrModule = new HMRModule(123123124, "/index.js"), __exports = __hmrModule.exports;
-                const hmr_import_ref = (if (p.options.features.react_fast_refresh)
+                const hmr_import_module_ = if (p.options.features.react_fast_refresh)
                     p.runtime_imports.__FastRefreshModule.?
                 else
-                    p.runtime_imports.__HMRModule.?).ref;
+                    p.runtime_imports.__HMRModule.?;
+
+                const hmr_import_ref = hmr_import_module_.ref;
 
                 first_decl[0] = G.Decl{
                     .binding = p.b(B.Identifier{ .ref = p.hmr_module.ref }, logger.Loc.Empty),

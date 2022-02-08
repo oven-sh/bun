@@ -2651,7 +2651,7 @@ pub const Parser = struct {
 
     fn _parse(self: *Parser, comptime ParserType: type) !js_ast.Result {
         var p: ParserType = undefined;
-        try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
+        try ParserType.init(self.allocator, self.log, self.source, self.define, try js_lexer.Lexer.init(self.log, self.source.*, self.allocator), self.options, &p);
         defer p.lexer.deinit();
 
         // Consume a leading hashbang comment
@@ -2670,7 +2670,7 @@ pub const Parser = struct {
         // June 4: "Rest of this took: 8003000"
         const stmts = try p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts);
 
-        const result = self.runVisitPassAndFinish(ParserType, &p, stmts);
+        const result = try runVisitPassAndFinish(ParserType, &p, stmts);
         return result;
     }
 
@@ -3950,7 +3950,7 @@ pub fn NewParser(
             try p.scopes_for_current_part.append(p.allocator, order.scope);
         }
 
-        fn pushScopeForParsePass(p: *P, comptime kind: js_ast.Scope.Kind, loc: logger.Loc) !usize {
+        pub fn pushScopeForParsePass(p: *P, comptime kind: js_ast.Scope.Kind, loc: logger.Loc) !usize {
             var parent: *Scope = p.current_scope;
             const allocator = p.allocator;
             var scope = try allocator.create(Scope);
@@ -5172,7 +5172,6 @@ pub fn NewParser(
 
             switch (p.lexer.token) {
                 .t_semicolon => {
-                    try p.lexer.next();
                     try p.lexer.next();
                     return Stmt.empty();
                 },
@@ -14855,7 +14854,7 @@ pub fn NewParser(
 
                 var args_list: []Expr = if (Environment.isDebug) &Prefill.HotModuleReloading.DebugEnabledArgs else &Prefill.HotModuleReloading.DebugDisabled;
 
-                const new_call_args_count: usize = comptime if (p.options.features.react_fast_refresh) 3 else 2;
+                const new_call_args_count: usize = if (p.options.features.react_fast_refresh) 3 else 2;
                 var call_args = try allocator.alloc(Expr, new_call_args_count + 1);
                 var new_call_args = call_args[0..new_call_args_count];
                 var hmr_module_ident = p.e(E.Identifier{ .ref = p.hmr_module.ref }, logger.Loc.Empty);
@@ -15330,7 +15329,7 @@ pub fn NewParser(
 const JavaScriptParser = NewParser(.{});
 const JSXParser = NewParser(.{ .jsx = .react });
 const TSXParser = NewParser(.{ .jsx = .react, .typescript = true });
-const MDXParser = NewParser(.{ .jsx = .mdx });
+pub const MDXParser = NewParser(.{ .jsx = .mdx });
 const TypeScriptParser = NewParser(.{ .typescript = true });
 
 const JSParserMacro = NewParser(.{

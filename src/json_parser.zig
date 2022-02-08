@@ -42,7 +42,7 @@ const Op = js_ast.Op;
 const Scope = js_ast.Scope;
 const locModuleScope = logger.Loc.Empty;
 
-const LEXER_DEBUGGER_WORKAROUND = false;
+const LEXER_DEBUGGER_WORKAROUND = Environment.isDebug;
 
 const HashMapPool = struct {
     const HashMap = std.HashMap(u64, void, IdentityContext, 80);
@@ -464,7 +464,7 @@ pub const PackageJSONVersionChecker = struct {
 
         if (p.lexer.token == closer) {
             if (comptime !opts.allow_trailing_commas) {
-                p.log.addRangeError(p.source(), comma_range, "JSON does not support trailing commas") catch unreachable;
+                p.log.addRangeError(p.source, comma_range, "JSON does not support trailing commas") catch unreachable;
             }
             return false;
         }

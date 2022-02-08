@@ -905,6 +905,8 @@ if (typeof window !== "undefined") {
 
         case API.Loader.js:
         case API.Loader.jsx:
+        case API.Loader.mdx:
+        case API.Loader.toml:
         case API.Loader.tsx:
         case API.Loader.ts:
         case API.Loader.json: {
@@ -970,6 +972,8 @@ if (typeof window !== "undefined") {
         // Else, it will fall back to live reloading.
         case API.Loader.js:
         case API.Loader.jsx:
+        case API.Loader.mdx:
+        case API.Loader.toml:
         case API.Loader.json:
         case API.Loader.ts:
         case API.Loader.tsx: {
@@ -1393,6 +1397,7 @@ if (typeof window !== "undefined") {
               i++ // let i = HMRModule.dependencies.graph_used - 1; // i > this.module_index; // i--
             ) {
               const mod = HMRModule.dependencies.modules[i];
+              if (!mod && i === end) break;
               let handled = false;
 
               if (!mod.exports.__hmrDisable) {

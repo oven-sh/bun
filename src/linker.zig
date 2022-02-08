@@ -218,7 +218,7 @@ pub const Linker = struct {
         }
         // Step 1. Resolve imports & requires
         switch (result.loader) {
-            .jsx, .js, .ts, .tsx => {
+            .jsx, .js, .ts, .tsx, .mdx => {
                 var record_i: u32 = 0;
                 const record_count = @truncate(u32, import_records.len);
 

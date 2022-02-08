@@ -3,13 +3,11 @@ framework = "next"
 origin = "http://localhost:5000"
 inline.array = [1234, 4, 5, 6]
 
-
 [macros]
 react-relay = { "graphql" = "node_modules/bun-macro-relay/bun-macro-relay.tsx" }
 
 [bundle.packages]
 "@emotion/react" = true
-
 
 [dev]
 foo = 123

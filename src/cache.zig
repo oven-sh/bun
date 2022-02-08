@@ -200,7 +200,7 @@ pub const JavaScript = struct {
 
         const result = parser.parse() catch |err| {
             if (temp_log.errors == 0) {
-                log.addRangeError(source, parser.lexer.range(), @errorName(err)) catch unreachable;
+                log.addError(source, logger.Loc{ .start = 0 }, @errorName(err)) catch unreachable;
             }
 
             temp_log.appendToMaybeRecycled(log, source) catch {};

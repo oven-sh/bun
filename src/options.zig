@@ -711,7 +711,7 @@ pub const Loader = enum(u4) {
     }
 
     pub fn isJSX(loader: Loader) bool {
-        return loader == .jsx or loader == .tsx;
+        return loader == .jsx or loader == .tsx or loader == .mdx;
     }
     pub fn isTypeScript(loader: Loader) bool {
         return loader == .tsx or loader == .ts;
@@ -1032,6 +1032,7 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
             .tsx => Loader.tsx,
             .json => Loader.json,
             .toml => Loader.toml,
+            .mdx => Loader.mdx,
             else => unreachable,
         };
 

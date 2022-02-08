@@ -1632,7 +1632,7 @@ pub const VirtualMachine = struct {
         const loader = vm.bundler.options.loaders.get(path.name.ext) orelse .file;
 
         switch (loader) {
-            .js, .jsx, .ts, .tsx, .json, .toml => {
+            .js, .jsx, .ts, .tsx, .json, .toml, .mdx => {
                 vm.transpiled_count += 1;
                 vm.bundler.resetStore();
                 const hash = http.Watcher.getHash(path.text);

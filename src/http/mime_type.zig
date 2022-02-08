@@ -54,7 +54,7 @@ fn init(comptime str: string, t: Category) MimeType {
 // TODO: improve this
 pub fn byLoader(loader: Loader, ext: string) MimeType {
     switch (loader) {
-        .tsx, .ts, .js, .jsx, .json => {
+        .tsx, .ts, .js, .jsx, .json, .mdx => {
             return javascript;
         },
         .css => {
@@ -83,7 +83,7 @@ pub fn byExtension(ext: string) MimeType {
                 Four.case("gif") => MimeType.init("image/gif", .image),
                 Four.case("png") => MimeType.init("image/png", .image),
                 Four.case("bmp") => MimeType.init("image/bmp", .image),
-                Four.case("jsx"), Four.case("mjs") => MimeType.javascript,
+                Four.case("jsx"), Four.case("mjs"), Four.case("mdx") => MimeType.javascript,
                 Four.case("wav") => MimeType.init("audio/wave", .audio),
                 Four.case("aac") => MimeType.init("audio/aic", .audio),
                 Four.case("mp4") => MimeType.init("video/mp4", .video),

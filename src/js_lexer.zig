@@ -52,7 +52,6 @@ pub const JSONOptions = struct {
 
     json_warn_duplicate_keys: bool = true,
 };
-
 pub fn NewLexer(comptime json_options: JSONOptions) type {
     return struct {
         const LexerType = @This();
@@ -744,8 +743,8 @@ pub fn NewLexer(comptime json_options: JSONOptions) type {
 
             return code_point;
         }
-
-        inline fn step(lexer: *LexerType) void {
+        // public for usage by MDXLexer
+        pub inline fn step(lexer: *LexerType) void {
             lexer.code_point = lexer.nextCodepoint();
 
             // Track the approximate number of newlines in the file so we can preallocate

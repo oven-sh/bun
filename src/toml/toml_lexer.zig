@@ -163,7 +163,7 @@ pub const Lexer = struct {
         return code_point;
     }
 
-    inline fn step(lexer: *Lexer) void {
+    pub inline fn step(lexer: *Lexer) void {
         lexer.code_point = lexer.nextCodepoint();
 
         lexer.line_number += @as(u32, @boolToInt(lexer.code_point == '\n'));

@@ -892,7 +892,7 @@ pub const RequestContext = struct {
             }
 
             switch (loader) {
-                .toml, .json, .ts, .tsx, .js, .jsx => {
+                .toml, .json, .ts, .tsx, .js, .jsx, .mdx => {
                     // Since we already have:
                     // - The file descriptor
                     // - The path
@@ -2230,7 +2230,7 @@ pub const RequestContext = struct {
                 if (written.empty) {
                     switch (loader) {
                         .css => try ctx.sendNoContent(),
-                        .toml, .js, .jsx, .ts, .tsx, .json => {
+                        .toml, .js, .jsx, .ts, .tsx, .json, .mdx => {
                             const buf = "export default {};";
                             const strong_etag = comptime std.hash.Wyhash.hash(0, buf);
                             const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, .upper, .{});
@@ -3125,7 +3125,7 @@ pub const Server = struct {
             // We use a secondary loop so that we avoid the extra branch in a hot code path
             Analytics.Features.fast_refresh = server.bundler.options.jsx.supports_fast_refresh;
             server.detectTSConfig();
-            server.detectFastRefresh();
+
             try server.initWatcher();
             did_init = true;
             Analytics.enqueue(Analytics.EventName.http_start);
@@ -3477,6 +3477,8 @@ pub const Server = struct {
         server.bundler.* = try Bundler.init(allocator, &server.log, options, null, null);
         server.bundler.configureLinker();
         try server.bundler.configureRouter(true);
+
+        server.detectFastRefresh();
 
         if (debug.dump_environment_variables) {
             server.bundler.dumpEnvironmentVariables();

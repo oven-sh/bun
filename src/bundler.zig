@@ -54,6 +54,7 @@ const Report = @import("./report.zig");
 const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
 const TOML = @import("./toml/toml_parser.zig").TOML;
+const MDX = @import("./mdx/mdx_parser.zig").MDX;
 
 const EntryPoints = @import("./bundler/entry_points.zig");
 pub usingnamespace EntryPoints;
@@ -2439,7 +2440,7 @@ pub const Bundler = struct {
         }
 
         switch (loader) {
-            .jsx, .tsx, .js, .ts, .json, .toml => {
+            .jsx, .tsx, .js, .ts, .json, .toml, .mdx => {
                 var result = bundler.parse(
                     ParseOptions{
                         .allocator = bundler.allocator,
@@ -2769,6 +2770,55 @@ pub const Bundler = struct {
                     .input_fd = input_fd,
                 };
             },
+            .mdx => {
+                var jsx = this_parse.jsx;
+                jsx.parse = loader.isJSX();
+                var opts = js_parser.Parser.Options.init(jsx, loader);
+                opts.enable_bundling = false;
+                opts.transform_require_to_import = true;
+                opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
+
+                // HMR is enabled when devserver is running
+                // unless you've explicitly disabled it
+                // or you're running in SSR
+                // or the file is a node_module
+                opts.features.hot_module_reloading = bundler.options.hot_module_reloading and
+                    bundler.options.platform.isNotBun() and
+                    (!opts.can_import_from_bundle or
+                    (opts.can_import_from_bundle and !path.isNodeModule()));
+                opts.features.react_fast_refresh = opts.features.hot_module_reloading and
+                    jsx.parse and
+                    bundler.options.jsx.supports_fast_refresh;
+                opts.filepath_hash_for_hmr = file_hash orelse 0;
+                opts.warn_about_unbundled_modules = bundler.options.platform.isNotBun();
+
+                if (bundler.macro_context == null) {
+                    bundler.macro_context = js_ast.Macro.MacroContext.init(bundler);
+                }
+
+                // we'll just always enable top-level await
+                // this is incorrect for Node.js files which are CommonJS modules
+                opts.features.top_level_await = true;
+
+                opts.macro_context = &bundler.macro_context.?;
+
+                opts.features.is_macro_runtime = bundler.options.platform == .bun_macro;
+                var mdx: MDX = undefined;
+                mdx.setup(opts, bundler.log, &source, bundler.options.define, allocator) catch return null;
+
+                if (mdx.parse()) |result| {
+                    if (result.ok) {
+                        return ParseResult{
+                            .ast = result.ast,
+                            .source = source,
+                            .loader = loader,
+                            .input_fd = input_fd,
+                        };
+                    }
+                } else |_| {}
+
+                return null;
+            },
             .json => {
                 var expr = json_parser.ParseJSON(&source, bundler.log, allocator) catch return null;
                 var stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
@@ -2787,6 +2837,7 @@ pub const Bundler = struct {
                     .input_fd = input_fd,
                 };
             },
+
             .toml => {
                 var expr = TOML.parse(&source, bundler.log, allocator) catch return null;
                 var stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
@@ -2889,7 +2940,13 @@ pub const Bundler = struct {
         const mime_type_ext = bundler.options.out_extensions.get(path.name.ext) orelse path.name.ext;
 
         switch (loader) {
-            .js, .jsx, .ts, .tsx, .css => {
+            .js,
+            .jsx,
+            .ts,
+            .tsx,
+            .css,
+            .mdx,
+            => {
                 return ServeResult{
                     .file = options.OutputFile.initPending(loader, resolved),
                     .mime_type = MimeType.byLoader(

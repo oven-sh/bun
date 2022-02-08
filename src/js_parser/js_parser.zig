@@ -5206,6 +5206,7 @@ pub fn NewParser(
             switch (p.lexer.token) {
                 .t_semicolon => {
                     try p.lexer.next();
+                    try p.lexer.next();
                     return Stmt.empty();
                 },
 

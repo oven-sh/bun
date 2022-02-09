@@ -12,18 +12,14 @@ npm install -D bun-macro-relay
 
 ## Usage
 
-With one tweak to your project's `package.json`, `react-relay` works automatically with bun.
+With three lines in your project's `bunfig.toml`, `react-relay` works automatically with bun.
 
-Add this to your `package.json`:
+Add this to your `bunfig.toml`:
 
-```json
-  "bun": {
-    "macros": {
-      "react-relay": {
-        "graphql": "bun-macro-relay/bun-macro-relay.tsx"
-      }
-    }
-  },
+```toml
+[macros]
+react-relay = {graphql = "bun-macro-relay"}
+relay-runtime = {graphql = "bun-macro-relay"}
 ```
 
 This tells bun to automatically pretend every import statement to `react-relay` with a `graphql` import came from `macro:bun-macro-relay/bun-macro-relay.tsx`.

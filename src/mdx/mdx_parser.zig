@@ -71,7 +71,16 @@ pub const Block = struct {
     /// OL:     Start item number.
     ///
     line_count: u32 = 0,
+    line_offset: u32 = 0,
     detail: Block.Detail = Block.Detail{ .none = .{} },
+
+    pub inline fn lines(this: Block, lines_: BabyList(Line)) []Line {
+        return lines_.ptr[this.line_offset .. this.line_offset + this.line_count];
+    }
+
+    pub inline fn verbatimLines(this: Block, lines_: BabyList(Line.Verbatim)) []Line.Verbatim {
+        return lines_.ptr[this.line_offset .. this.line_offset + this.line_count];
+    }
 
     pub const Data = u32;
 
@@ -159,9 +168,7 @@ pub const Block = struct {
         task_mark_off: u32 = 0,
     };
 
-    pub const Header = struct {
-        level: u3 = 0,
-    };
+    pub const Header = u4;
 
     pub const Code = struct {
         info: Attribute = .{},
@@ -322,6 +329,7 @@ pub const Substring = struct {
     tag: Text,
 
     pub const List = std.MultiArrayList(Substring);
+    pub const ListPool = ObjectPool(List);
 };
 
 pub const Mark = struct {
@@ -454,9 +462,13 @@ pub const MDParser = struct {
     doc_ends_with_newline: bool = false,
     size: u32 = 0,
 
+    lines: BabyList(Line) = .{},
+    verbatim_lines: BabyList(Line.Verbatim) = .{},
+
     containers: BabyList(Container) = .{},
     blocks: BabyList(Block) = .{},
     current_block: ?*Block = null,
+    current_block_index: u32 = 0,
 
     code_fence_length: u32 = 0,
     code_indent_offset: u32 = std.math.maxInt(u32),
@@ -564,9 +576,26 @@ pub const MDParser = struct {
         return parser;
     }
 
-    fn startNewBlock(this: *MDParser, line: *Line.Analysis) !void {
-        _ = this;
-        _ = line;
+    fn startNewBlock(this: *MDParser, line: *const Line.Analysis) !void {
+        try this.blocks.push(
+            this.allocator,
+            Block{
+                .tag = switch (line.tag) {
+                    .hr => Block.Tag.hr,
+                    .atx_header, .setext_header => Block.Tag.h,
+                    .fenced_code, .indented_code => Block.Tag.code,
+                    .text => Block.Tag.p,
+                    .html => Block.Tag.html,
+                    else => unreachable,
+                },
+                .data = line.data,
+                .line_count = 0,
+                .line_offset = switch (line.tag) {
+                    .indented_code, .html, .fenced_code => this.verbatim_lines.len,
+                    else => this.lines.len,
+                },
+            },
+        );
     }
 
     inline fn charAt(this: *const MDParser, index: u32) u8 {
@@ -1137,7 +1166,7 @@ pub const MDParser = struct {
             },
             // MD_LINE_TABLEUNDERLINE changes meaning of the current block.
             .table_underline => {
-                var current_block = &this.current_block.?;
+                var current_block = this.current_block.?;
                 std.debug.assert(current_block.line_count == 1);
                 current_block.tag = .table;
                 current_block.data = line.data;
@@ -1162,8 +1191,77 @@ pub const MDParser = struct {
             },
         }
     }
+    fn consumeLinkReferenceDefinitions(this: *MDParser) !void {
+        _ = this;
+    }
+    fn addLineIntoCurrentBlock(this: *MDParser, analysis: *const Line.Analysis) !void {
+        var current_block = this.current_block.?;
+
+        switch (current_block.tag) {
+            .code, .html => {
+                if (current_block.line_count > 0)
+                    std.debug.assert(
+                        this.verbatim_lines.len == current_block.line_count + current_block.line_offset,
+                    );
+                if (current_block.line_count == 0) {
+                    current_block.line_offset = this.verbatim_lines.len;
+                }
+
+                try this.verbatim_lines.push(this.allocator, Line.Verbatim{
+                    .indent = analysis.indent,
+                    .line = .{
+                        .beg = analysis.beg,
+                        .end = analysis.end,
+                    },
+                });
+            },
+            else => {
+                if (current_block.line_count > 0)
+                    std.debug.assert(
+                        this.lines.len == current_block.line_count + current_block.line_offset,
+                    );
+                if (current_block.line_count == 0) {
+                    current_block.line_offset = this.lines.len;
+                }
+                this.lines.push(this.allocator, .{ .beg = analysis.beg, .end = analysis.end });
+            },
+        }
+
+        current_block.line_count += 1;
+    }
     fn endCurrentBlock(this: *MDParser) !void {
         _ = this;
+
+        var block = this.current_block orelse return;
+        // Check whether there is a reference definition. (We do this here instead
+        // of in md_analyze_line() because reference definition can take multiple
+        // lines.) */
+        if ((block.tag == .p or block.tag == .h) and block.flags.contains(.setext_header)) {
+            var lines = block.lines(this.lines);
+            if (lines[0].beg == '[') {
+                try this.consumeLinkReferenceDefinitions();
+                block = this.current_block orelse return;
+            }
+        }
+
+        if (block.tag == .h and block.flags.contains(.setext_header)) {
+            var n_lines = block.line_count;
+            if (n_lines > 1) {
+                // get rid of the underline
+                if (this.lines.len == block.line_count + block.line_offset) {
+                    this.lines.len -= 1;
+                }
+                block.line_count -= 1;
+            } else {
+                // Only the underline has left after eating the ref. defs.
+                // Keep the line as beginning of a new ordinary paragraph. */
+                block.tag = .p;
+            }
+        }
+
+        // Mark we are not building any block anymore.
+        this.current_block = null;
+        this.current_block_index -|= 1;
     }
     fn buildRefDefHashTable(this: *MDParser) !void {
         _ = this;
@@ -1217,7 +1315,7 @@ pub const MDParser = struct {
                     is_ordered_list = true;
                 },
                 '-', '+', '*' => {
-                    //  Remember offset in ctx->block_bytes so we can revisit the
+                    //  Remember offset in ctx.block_bytes so we can revisit the
                     // block if we detect it is a loose list.
                     try this.endCurrentBlock();
                     c.block_index = this.blocks.len;
@@ -1250,8 +1348,160 @@ pub const MDParser = struct {
     fn pushContainer(this: *MDParser, container: Container) !void {
         try this.containers.push(this.allocator, container);
     }
+
+    const LeafBlockDetail = union {
+        none: void,
+        h: Block.Header,
+        code: Block.Code,
+        table: Block.Table,
+    };
+
+    fn processLeafBlockWithType(this: *MDParser, comptime tag: Block.Tag, block: *Block) anyerror!void {
+        const BlockDetailType = comptime switch (tag) {
+            Block.Tag.h => Block.Header,
+            Block.Tag.code => Block.Code,
+            Block.Tag.table => Block.Table,
+            else => void,
+        };
+
+        const is_in_tight_list = if (this.containers.len == 0)
+            false
+        else
+            !this.containers.ptr[this.containers.len - 1].is_loose;
+
+        const detail: BlockDetailType = switch (comptime tag) {
+            Block.Tag.h => @truncate(Block.Header, block.data),
+            Block.Tag.code => try this.setupFencedCodeDetail(block),
+            Block.Tag.table => .{
+                .col_count = block.data,
+                .head_row_count = 1,
+                .body_row_count = block.line_count -| 2,
+            },
+            else => void{},
+        };
+
+        if (!is_in_tight_list or comptime tag != .p) {
+            try this.mdx.onEnterBlock(block.tag, BlockDetailType, detail);
+        }
+
+        defer {
+            if (comptime tag == Block.Tag.code) {}
+        }
+    }
+    fn processLeafBlock(this: *MDParser, block: *Block) anyerror!void {
+        return switch (block.tag) {
+            .doc => try this.processLeafBlockWithType(Block.Tag.doc, block),
+            .quote => try this.processLeafBlockWithType(Block.Tag.quote, block),
+            .ul => try this.processLeafBlockWithType(Block.Tag.ul, block),
+            .ol => try this.processLeafBlockWithType(Block.Tag.ol, block),
+            .li => try this.processLeafBlockWithType(Block.Tag.li, block),
+            .hr => try this.processLeafBlockWithType(Block.Tag.hr, block),
+            .h => try this.processLeafBlockWithType(Block.Tag.h, block),
+            .code => try this.processLeafBlockWithType(Block.Tag.code, block),
+            .html => try this.processLeafBlockWithType(Block.Tag.html, block),
+            .p => try this.processLeafBlockWithType(Block.Tag.p, block),
+            .table => try this.processLeafBlockWithType(Block.Tag.table, block),
+            .thead => try this.processLeafBlockWithType(Block.Tag.thead, block),
+            .tbody => try this.processLeafBlockWithType(Block.Tag.tbody, block),
+            .tr => try this.processLeafBlockWithType(Block.Tag.tr, block),
+            .th => try this.processLeafBlockWithType(Block.Tag.th, block),
+            .td => try this.processLeafBlockWithType(Block.Tag.td, block),
+        };
+    }
+    fn pushContainerBytes(this: *MDParser, block_type: Block.Tag, start: u32, data: u32, flag: Block.Flags) !void {
+        try this.endCurrentBlock();
+        var block = Block{
+            .tag = block_type,
+            .line_count = start,
+            .data = data,
+        };
+        block.flags.insert(flag);
+        var prev_block: ?Block = null;
+        if (this.current_block) |curr| {
+            prev_block = curr.*;
+        }
+
+        try this.blocks.push(this.allocator, block);
+        if (prev_block != null) {
+            this.current_block = this.blocks.ptr[this.current_block_index];
+        }
+    }
     fn processAllBlocks(this: *MDParser) !void {
         _ = this;
+
+        // ctx->containers now is not needed for detection of lists and list items
+        // so we reuse it for tracking what lists are loose or tight. We rely
+        // on the fact the vector is large enough to hold the deepest nesting
+        // level of lists.
+        this.containers.len = 0;
+        var blocks = this.blocks.slice();
+        for (blocks) |*block| {
+            const detail: Block.Detail =
+                switch (block.tag) {
+                .ul => Block.Detail{
+                    .ul = .{
+                        .is_tight = !block.flags.contains(.loose_list),
+                        .mark = @truncate(u8, block.data),
+                    },
+                },
+                .ol => Block.Detail{
+                    .ol = .{
+                        .start = block.line_count,
+                        .is_tight = !block.flags.contains(.loose_list),
+                        .mark_delimiter = @truncate(u8, block.data),
+                    },
+                },
+                .li => Block.Detail{
+                    .li = .{
+                        .is_task = block.data != 0,
+                        .task_mark = @truncate(u8, block.data),
+                        .task_mark_offset = @intCast(u32, block.line_count),
+                    },
+                },
+                else => Block.Detail{ .none = .{} },
+            };
+
+            if (block.flags.contains(.container)) {
+                if (block.flags.contains(.container_closer)) {
+                    switch (block.tag) {
+                        .li => try this.mdx.onLeaveBlock(block.tag, Block.LI, detail.li),
+                        .ul => try this.mdx.onLeaveBlock(block.tag, Block.UL, detail.ul),
+                        .ol => try this.mdx.onLeaveBlock(block.tag, Block.OL, detail.ol),
+                        else => try this.mdx.onLeaveBlock(block.tag, void, void{}),
+                    }
+                    this.containers.len -|= switch (block.tag) {
+                        .ul, .ol, .blockquote => 1,
+                        else => 0,
+                    };
+                }
+
+                if (block.flags.contains(.container_opener)) {
+                    switch (block.tag) {
+                        .li => try this.mdx.onEnterBlock(block.tag, Block.LI, detail.li),
+                        .ul => try this.mdx.onEnterBlock(block.tag, Block.UL, detail.ul),
+                        .ol => try this.mdx.onEnterBlock(block.tag, Block.OL, detail.ol),
+                        else => try this.mdx.onEnterBlock(block.tag, void, void{}),
+                    }
+
+                    switch (block.tag) {
+                        .ul, .ol => {
+                            this.containers.ptr[this.containers.len].is_loose = block.flags.contains(.loose_list);
+                            this.containers.len += 1;
+                        },
+                        .blockquote => {
+                            //  This causes that any text in a block quote, even if
+                            // nested inside a tight list item, is wrapped with
+                            // <p>...</p>. */
+                            this.containers.ptr[this.containers.len].is_loose = true;
+                            this.containers.len += 1;
+                        },
+                        else => {},
+                    }
+                }
+            } else {
+                try this.processLeafBlock(block);
+            }
+        }
     }
     fn isContainerCompatible(pivot: *const Container, container: *const Container) bool {
         // Block quote has no "items" like lists.
@@ -1265,7 +1515,76 @@ pub const MDParser = struct {
         return true;
     }
 
-    pub fn isTableUnderline(this: *MDParser, beg: u32, end: *u32, column_column: *u32) bool {
+    fn isHRLine(this: *MDParser, beg: u32, end: *u32, hr_killer: *u32) bool {
+        var off = beg + 1;
+        var n: u32 = 1;
+
+        while (off < this.size and (this.charAt(off) == this.charAt(beg) or this.charAt(off) == ' ' or this.charAt(off) == '\t')) {
+            if (this.charAt(off) == this.charAt(beg))
+                n += 1;
+            off += 1;
+        }
+
+        if (n < 3) {
+            hr_killer.* = off;
+            return false;
+        }
+
+        // Nothing else can be present on the line. */
+        if (off < this.size and !this.isNewline(off)) {
+            hr_killer.* = off;
+            return false;
+        }
+
+        end.* = off;
+        return true;
+    }
+
+    fn isSetextUnderline(this: *MDParser, beg: u32, end: *u32, level: *u4) bool {
+        var off = beg + 1;
+        while (off < this.size and this.charAt(off) == this.charAt(beg))
+            off += 1;
+
+        // Optionally, space(s) can follow. */
+        while (off < this.size and this.charAt(off) == ' ')
+            off += 1;
+
+        // But nothing more is allowed on the line.
+        if (off < this.size and !this.isNewline(off))
+            return false;
+        level.* = if (this.charAt(beg) == '=') 1 else 2;
+        end.* = off;
+        return true;
+    }
+
+    fn isATXHeaderLine(this: *MDParser, beg: u32, p_beg: *u32, end: *u32, level: *u4) bool {
+        var n: i32 = undefined;
+        var off: u32 = beg + 1;
+
+        while (off < this.size and this.charAt(off) == '#' and off - beg < 7) {
+            off += 1;
+        }
+        n = off - beg;
+
+        if (n > 6)
+            return false;
+        level.* = @intCast(u4, n);
+
+        if (!(this.flags.contains(.permissive_atxheaders)) and off < this.size and
+            this.charAt(off) != ' ' and this.charAt(off) != '\t' and !this.isNewline(off))
+            return false;
+
+        while (off < this.size and this.charAt(off) == ' ') {
+            off += 1;
+        }
+
+        p_beg.* = off;
+        end.* = off;
+
+        return true;
+    }
+
+    fn isTableUnderline(this: *MDParser, beg: u32, end: *u32, column_column: *u32) bool {
         _ = this;
         _ = end;
         _ = column_column;
@@ -1277,14 +1596,50 @@ pub const MDParser = struct {
         if (off < this.size and this.charAt(off) == '|') {
             found_pipe = true;
             off += 1;
-            while (off < this.size and this.charAt(off) == ' ') {
+            while (off < this.size and isWhitespace(this.charAt(off))) {
                 off += 1;
             }
         }
 
         while (true) {
             var delimited = false;
+
+            // Cell underline ("-----", ":----", "----:" or ":----:")if(off < this.size  and  this.charAt(off) == _T(':'))
+            off += 1;
+            if (off >= this.size or this.charAt(off) != '-')
+                return false;
+            while (off < this.size and this.charAt(off) == '-')
+                off += 1;
+            if (off < this.size and this.charAt(off) == ':')
+                off += 1;
+
+            col_count += 1;
+
+            // Pipe delimiter (optional at the end of line). */
+            while (off < this.size and isWhitespace(this.charAt(off)))
+                off += 1;
+            if (off < this.size and this.charAt(off) == '|') {
+                delimited = true;
+                found_pipe = true;
+                off += 1;
+                while (off < this.size and isWhitespace(this.charAt(off)))
+                    off += 1;
+            }
+
+            // Success, if we reach end of line.
+            if (off >= this.size or this.isNewline(off))
+                break;
+
+            if (!delimited)
+                return false;
         }
+
+        if (!found_pipe)
+            return false;
+
+        column_column.* = col_count;
+        end.* = off;
+        return true;
     }
 
     fn isOpeningCodeFence(this: *MDParser, beg: u8, end: *u32) bool {

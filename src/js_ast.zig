@@ -268,6 +268,13 @@ pub fn BabyList(comptime Type: type) type {
             this.update(list_);
         }
 
+        pub fn fetchPush(this: *ListType, allocator: std.mem.Allocator, value: Type) OOM!*Type {
+            var list_ = this.list();
+            try list_.append(allocator, value);
+            this.update(list_);
+            return this.ptr[list_.items.len - 1];
+        }
+
         pub inline fn slice(this: ListType) []Type {
             @setRuntimeSafety(false);
             return this.ptr[0..this.len];

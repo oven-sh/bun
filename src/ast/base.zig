@@ -70,6 +70,16 @@ pub const Ref = packed struct {
         return @intCast(Int, int);
     }
 
+    pub inline fn slice(this: Ref, text: []const u8) []const u8 {
+        return if (!this.isNull()) text[this.source_index .. this.source_index + this.inner_index] else "";
+    }
+
+    pub fn from(text: []const u8, section: []const u8) Ref {
+        const start = Ref.toInt(@ptrToInt(section.ptr) - @ptrToInt(text.ptr));
+        const end = Ref.toInt(section.len);
+        return Ref{ .source_index = start, .inner_index = end, .is_source_contents_slice = true };
+    }
+
     pub fn hash(key: Ref) u32 {
         return @truncate(u32, key.hash64());
     }

@@ -2681,7 +2681,7 @@ pub const Parser = struct {
 
     fn _parse(self: *Parser, comptime ParserType: type) !js_ast.Result {
         var p: ParserType = undefined;
-        try ParserType.init(self.allocator, self.log, self.source, self.define, try js_lexer.Lexer.init(self.log, self.source.*, self.allocator), self.options, &p);
+        try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
         defer p.lexer.deinit();
 
         // Consume a leading hashbang comment
@@ -2700,7 +2700,7 @@ pub const Parser = struct {
         // June 4: "Rest of this took: 8003000"
         const stmts = try p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts);
 
-        const result = try runVisitPassAndFinish(ParserType, &p, stmts);
+        const result = self.runVisitPassAndFinish(ParserType, &p, stmts);
         return result;
     }
 
@@ -3983,7 +3983,7 @@ pub fn NewParser(
             try p.scopes_for_current_part.append(p.allocator, order.scope);
         }
 
-        pub fn pushScopeForParsePass(p: *P, comptime kind: js_ast.Scope.Kind, loc: logger.Loc) !usize {
+        fn pushScopeForParsePass(p: *P, comptime kind: js_ast.Scope.Kind, loc: logger.Loc) !usize {
             var parent: *Scope = p.current_scope;
             const allocator = p.allocator;
             var scope = try allocator.create(Scope);
@@ -10518,6 +10518,7 @@ pub fn NewParser(
                             .utf8 = name,
                         }, loc) },
                         .range = tag_range,
+                        .name = name,
                     };
                 }
 
@@ -15437,7 +15438,7 @@ pub fn NewParser(
 const JavaScriptParser = NewParser(.{});
 const JSXParser = NewParser(.{ .jsx = .react });
 const TSXParser = NewParser(.{ .jsx = .react, .typescript = true });
-pub const MDXParser = NewParser(.{ .jsx = .mdx });
+const MDXParser = NewParser(.{ .jsx = .mdx });
 const TypeScriptParser = NewParser(.{ .typescript = true });
 
 const JSParserMacro = NewParser(.{

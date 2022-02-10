@@ -662,14 +662,26 @@ pub const FileSystem = struct {
             mtime: i128 = 0,
             mode: std.fs.File.Mode = 0,
 
-            threadlocal var hash_bytes: [32]u8 = undefined;
             threadlocal var hash_name_buf: [1024]u8 = undefined;
 
             pub fn hashName(
                 this: *const ModKey,
                 basename: string,
             ) !string {
+                return try std.fmt.bufPrint(
+                    &hash_name_buf,
+                    "{s}-{x}",
+                    .{
+                        basename,
+                        this.hash(),
+                    },
+                );
+            }
 
+            pub fn hash(
+                this: *const ModKey,
+            ) u64 {
+                var hash_bytes: [32]u8 = undefined;
                 // We shouldn't just read the contents of the ModKey into memory
                 // The hash should be deterministic across computers and operating systems.
                 // inode is non-deterministic across volumes within the same compuiter
@@ -679,15 +691,10 @@ pub const FileSystem = struct {
                 std.mem.writeIntNative(@TypeOf(this.size), hash_bytes_remain[0..@sizeOf(@TypeOf(this.size))], this.size);
                 hash_bytes_remain = hash_bytes_remain[@sizeOf(@TypeOf(this.size))..];
                 std.mem.writeIntNative(@TypeOf(this.mtime), hash_bytes_remain[0..@sizeOf(@TypeOf(this.mtime))], this.mtime);
-
-                return try std.fmt.bufPrint(
-                    &hash_name_buf,
-                    "{s}-{x}",
-                    .{
-                        basename,
-                        @truncate(u32, std.hash.Wyhash.hash(1, &hash_bytes)),
-                    },
-                );
+                hash_bytes_remain = hash_bytes_remain[@sizeOf(@TypeOf(this.mtime))..];
+                std.debug.assert(hash_bytes_remain.len == 8);
+                hash_bytes_remain[0..8].* = @bitCast([8]u8, @as(u64, 0));
+                return std.hash.Wyhash.hash(0, &hash_bytes);
             }
 
             pub fn generate(_: *RealFS, _: string, file: std.fs.File) anyerror!ModKey {

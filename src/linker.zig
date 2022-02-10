@@ -92,6 +92,20 @@ pub const Linker = struct {
         };
     }
 
+    pub fn getModKey(
+        this: *ThisLinker,
+        file_path: Fs.Path,
+        fd: ?FileDescriptorType,
+    ) !Fs.FileSystem.RealFS.ModKey {
+        var file: std.fs.File = if (fd) |_fd| std.fs.File{ .handle = _fd } else try std.fs.openFileAbsolute(file_path.text, .{ .read = true });
+        Fs.FileSystem.setMaxFd(file.handle);
+        const modkey = try Fs.FileSystem.RealFS.ModKey.generate(&this.fs.fs, file_path.text, file);
+
+        if (fd == null)
+            file.close();
+        return modkey;
+    }
+
     pub fn getHashedFilename(
         this: *ThisLinker,
         file_path: Fs.Path,
@@ -104,18 +118,13 @@ pub const Linker = struct {
                 return hashed_result.value_ptr.*;
             }
         }
-        var file: std.fs.File = if (fd) |_fd| std.fs.File{ .handle = _fd } else try std.fs.openFileAbsolute(file_path.text, .{ .read = true });
-        Fs.FileSystem.setMaxFd(file.handle);
-        var modkey = try Fs.FileSystem.RealFS.ModKey.generate(&this.fs.fs, file_path.text, file);
-        const hash_name = try modkey.hashName(file_path.name.base);
+
+        const modkey = try this.getModKey(file_path, fd);
+        const hash_name = modkey.hashName(file_path.text);
 
         if (Bundler.isCacheEnabled) {
             var hashed = std.hash.Wyhash.hash(0, file_path.text);
             try this.hashed_filenames.put(hashed, try this.allocator.dupe(u8, hash_name));
-        }
-
-        if (this.fs.fs.needToCloseFiles() and fd == null) {
-            file.close();
         }
 
         return hash_name;
@@ -651,6 +660,21 @@ pub const Linker = struct {
 
                     if (use_hashed_name) {
                         var basepath = Fs.Path.init(source_path);
+
+                        if (linker.options.serve) {
+                            var hash_buf: [64]u8 = undefined;
+                            const modkey = try linker.getModKey(basepath, null);
+
+                            return Fs.Path.init(try origin.joinAlloc(
+                                linker.allocator,
+                                std.fmt.bufPrint(&hash_buf, "hash:{x}/", .{modkey.hash()}) catch unreachable,
+                                dirname,
+                                basename,
+                                absolute_pathname.ext,
+                                source_path,
+                            ));
+                        }
+
                         basename = try linker.getHashedFilename(basepath, null);
                     }
 
@@ -690,7 +714,7 @@ pub const Linker = struct {
         import_record.path = try linker.generateImportPath(
             source_dir,
             if (path.is_symlink and import_path_format == .absolute_url and linker.options.platform.isNotBun()) path.pretty else path.text,
-            Bundler.isCacheEnabled and loader == .file,
+            loader == .file,
             path.namespace,
             origin,
             import_path_format,

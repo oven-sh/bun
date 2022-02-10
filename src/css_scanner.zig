@@ -1057,7 +1057,7 @@ pub fn NewWriter(
                         import_record.ImportKind.url,
                         writer.buildCtx.origin,
                         import_path_format,
-                        true,
+                        false,
                     );
                     try writer.writeURL(url_str, url);
                 },
@@ -1135,6 +1135,7 @@ pub fn NewBundler(
     comptime Watcher: type,
     comptime FSType: type,
     comptime hot_module_reloading: bool,
+    comptime import_path_format: options.BundleOptions.ImportPathFormat,
 ) type {
     return struct {
         const CSSBundler = @This();
@@ -1184,7 +1185,7 @@ pub fn NewBundler(
                 .allocator = allocator,
                 .watcher = watcher,
             };
-            const CSSWriter = NewWriter(*CSSBundler, Linker, .absolute_url, *CSSBundler);
+            const CSSWriter = NewWriter(*CSSBundler, Linker, import_path_format, *CSSBundler);
 
             var css = CSSWriter.init(
                 undefined,

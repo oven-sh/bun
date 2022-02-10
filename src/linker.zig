@@ -141,48 +141,29 @@ pub const Linker = struct {
         comptime resolve_only: bool,
     ) !string {
         const dir = path.name.dirWithTrailingSlash();
+        if (strings.hasPrefix(url, "/")) {
+            if (comptime import_path_format == .absolute_url) {
+                return try origin.joinAlloc(this.allocator, "", url, "", "", url);
+            }
 
-        switch (kind) {
-            .at => {
-                var resolve_result = try this.resolver.resolve(dir, url, .at);
-                if (resolve_only or resolve_result.is_external) {
-                    return resolve_result.path_pair.primary.text;
-                }
-
-                var import_record = ImportRecord{ .range = range, .path = resolve_result.path_pair.primary, .kind = kind };
-
-                const loader = this.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
-
-                this.processImportRecord(loader, dir, &resolve_result, &import_record, origin, import_path_format) catch unreachable;
-                return import_record.path.text;
-            },
-            .at_conditional => {
-                var resolve_result = try this.resolver.resolve(dir, url, .at_conditional);
-                if (resolve_only or resolve_result.is_external) {
-                    return resolve_result.path_pair.primary.text;
-                }
-
-                var import_record = ImportRecord{ .range = range, .path = resolve_result.path_pair.primary, .kind = kind };
-                const loader = this.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
-
-                this.processImportRecord(loader, dir, &resolve_result, &import_record, origin, import_path_format) catch unreachable;
-                return import_record.path.text;
-            },
-            .url => {
-                var resolve_result = try this.resolver.resolve(dir, url, .url);
-                if (resolve_only or resolve_result.is_external) {
-                    return resolve_result.path_pair.primary.text;
-                }
-
-                var import_record = ImportRecord{ .range = range, .path = resolve_result.path_pair.primary, .kind = kind };
-                const loader = this.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
-
-                this.processImportRecord(loader, dir, &resolve_result, &import_record, origin, import_path_format) catch unreachable;
-                return import_record.path.text;
-            },
-            else => unreachable,
+            return url;
         }
-        unreachable;
+
+        var resolve_result = try this.resolver.resolve(dir, url, kind);
+
+        if (resolve_result.is_external) {
+            return url;
+        }
+
+        if (resolve_only) {
+            return resolve_result.path_pair.primary.text;
+        }
+
+        var import_record = ImportRecord{ .range = range, .path = resolve_result.path_pair.primary, .kind = kind };
+        const loader = this.options.loaders.get(resolve_result.path_pair.primary.name.ext) orelse .file;
+
+        this.processImportRecord(loader, dir, &resolve_result, &import_record, origin, import_path_format) catch unreachable;
+        return import_record.path.text;
     }
 
     pub inline fn nodeModuleBundleImportPath(this: *const ThisLinker, origin: URL) string {

@@ -2280,6 +2280,7 @@ pub const Bundler = struct {
                     WatcherType,
                     @TypeOf(bundler.fs),
                     true,
+                    import_path_format,
                 );
 
                 const CSSBundler = Css.NewBundler(
@@ -2289,6 +2290,7 @@ pub const Bundler = struct {
                     WatcherType,
                     @TypeOf(bundler.fs),
                     false,
+                    import_path_format,
                 );
 
                 return BuildResolveResultPair{

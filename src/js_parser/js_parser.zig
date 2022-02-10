@@ -32,7 +32,7 @@ pub const BindingNodeIndex = js_ast.BindingNodeIndex;
 const Decl = G.Decl;
 const Property = G.Property;
 const Arg = G.Arg;
-
+const Allocator = std.mem.Allocator;
 pub const StmtNodeIndex = js_ast.StmtNodeIndex;
 pub const ExprNodeIndex = js_ast.ExprNodeIndex;
 pub const ExprNodeList = js_ast.ExprNodeList;
@@ -1099,6 +1099,25 @@ pub const SideEffects = enum(u2) {
         return expr;
     }
 
+    fn findIdentifiers(binding: Binding, decls: *std.ArrayList(G.Decl)) void {
+        switch (binding.data) {
+            .b_identifier => {
+                decls.append(.{ .binding = binding }) catch unreachable;
+            },
+            .b_array => |array| {
+                for (array.items) |item| {
+                    findIdentifiers(item.binding, decls);
+                }
+            },
+            .b_object => |obj| {
+                for (obj.properties) |item| {
+                    findIdentifiers(item.value, decls);
+                }
+            },
+            else => {},
+        }
+    }
+
     // If this is in a dead branch, then we want to trim as much dead code as we
     // can. Everything can be trimmed except for hoisted declarations ("var" and
     // "function"), which affect the parent scope. For example:
@@ -1110,25 +1129,38 @@ pub const SideEffects = enum(u2) {
     //
     // We can't trim the entire branch as dead or calling foo() will incorrectly
     // assign to a global variable instead.
-
-    // The main goal here is to trim conditionals
-    pub fn shouldKeepStmtInDeadControlFlow(stmt: Stmt) bool {
+    pub fn shouldKeepStmtInDeadControlFlow(stmt: Stmt, allocator: Allocator) bool {
         switch (stmt.data) {
-            .s_empty, .s_expr, .s_throw, .s_return, .s_break, .s_continue, .s_class, .s_debugger => {
-                // Omit these statements entirely
-                return false;
-            },
+            // Omit these statements entirely
+            .s_empty, .s_expr, .s_throw, .s_return, .s_break, .s_continue, .s_class, .s_debugger => return false,
 
             .s_local => |local| {
                 if (local.kind != .k_var) {
                     // Omit these statements entirely
                     return false;
                 }
+
+                // Omit everything except the identifiers
+
+                // common case: single var foo = blah, don't need to allocate
+                if (local.decls.len == 1 and local.decls[0].binding.data == .b_identifier) {
+                    const prev = local.decls[0];
+                    stmt.data.s_local.decls[0] = G.Decl{ .binding = prev.binding };
+                    return true;
+                }
+
+                var decls = std.ArrayList(G.Decl).initCapacity(allocator, local.decls.len) catch unreachable;
+                for (local.decls) |decl| {
+                    findIdentifiers(decl.binding, &decls);
+                }
+
+                local.decls = decls.toOwnedSlice();
+                return true;
             },
 
             .s_block => |block| {
                 for (block.stmts) |child| {
-                    if (shouldKeepStmtInDeadControlFlow(child)) {
+                    if (shouldKeepStmtInDeadControlFlow(child, allocator)) {
                         return true;
                     }
                 }
@@ -1137,47 +1169,45 @@ pub const SideEffects = enum(u2) {
             },
 
             .s_if => |_if_| {
-                if (shouldKeepStmtInDeadControlFlow(_if_.yes)) {
+                if (shouldKeepStmtInDeadControlFlow(_if_.yes, allocator)) {
                     return true;
                 }
 
                 const no = _if_.no orelse return false;
 
-                return shouldKeepStmtInDeadControlFlow(no);
+                return shouldKeepStmtInDeadControlFlow(no, allocator);
             },
 
             .s_while => {
-                return shouldKeepStmtInDeadControlFlow(stmt.data.s_while.body);
+                return shouldKeepStmtInDeadControlFlow(stmt.data.s_while.body, allocator);
             },
 
             .s_do_while => {
-                return shouldKeepStmtInDeadControlFlow(stmt.data.s_do_while.body);
+                return shouldKeepStmtInDeadControlFlow(stmt.data.s_do_while.body, allocator);
             },
 
             .s_for => |__for__| {
                 if (__for__.init) |init_| {
-                    if (shouldKeepStmtInDeadControlFlow(init_)) {
+                    if (shouldKeepStmtInDeadControlFlow(init_, allocator)) {
                         return true;
                     }
                 }
 
-                return shouldKeepStmtInDeadControlFlow(__for__.body);
+                return shouldKeepStmtInDeadControlFlow(__for__.body, allocator);
             },
 
             .s_for_in => |__for__| {
-                return shouldKeepStmtInDeadControlFlow(__for__.init) or shouldKeepStmtInDeadControlFlow(__for__.body);
+                return shouldKeepStmtInDeadControlFlow(__for__.init, allocator) or shouldKeepStmtInDeadControlFlow(__for__.body, allocator);
             },
 
             .s_for_of => |__for__| {
-                return shouldKeepStmtInDeadControlFlow(__for__.init) or shouldKeepStmtInDeadControlFlow(__for__.body);
+                return shouldKeepStmtInDeadControlFlow(__for__.init, allocator) or shouldKeepStmtInDeadControlFlow(__for__.body, allocator);
             },
 
             .s_label => |label| {
-                return shouldKeepStmtInDeadControlFlow(label.stmt);
+                return shouldKeepStmtInDeadControlFlow(label.stmt, allocator);
             },
-            else => {
-                return true;
-            },
+            else => return true,
         }
     }
 
@@ -1747,7 +1777,7 @@ const StmtList = ListManaged(Stmt);
 // Rather than allocating a new hash table each time, we can just reuse the previous allocation
 
 const StringVoidMap = struct {
-    allocator: std.mem.Allocator,
+    allocator: Allocator,
     map: std.StringHashMapUnmanaged(void) = std.StringHashMapUnmanaged(void){},
 
     /// Returns true if the map already contained the given key.
@@ -1760,7 +1790,7 @@ const StringVoidMap = struct {
         return this.map.contains(key);
     }
 
-    fn init(allocator: std.mem.Allocator) anyerror!StringVoidMap {
+    fn init(allocator: Allocator) anyerror!StringVoidMap {
         return StringVoidMap{ .allocator = allocator };
     }
 
@@ -1769,7 +1799,7 @@ const StringVoidMap = struct {
         this.map.clearRetainingCapacity();
     }
 
-    pub inline fn get(allocator: std.mem.Allocator) *Node {
+    pub inline fn get(allocator: Allocator) *Node {
         return Pool.get(allocator);
     }
 
@@ -1956,7 +1986,7 @@ pub const ScanPassResult = struct {
     import_records_to_keep: ListManaged(u32),
     approximate_newline_count: usize = 0,
 
-    pub fn init(allocator: std.mem.Allocator) ScanPassResult {
+    pub fn init(allocator: Allocator) ScanPassResult {
         return .{
             .import_records = ListManaged(ImportRecord).init(allocator),
             .named_imports = js_ast.Ast.NamedImports.init(allocator),
@@ -1980,7 +2010,7 @@ pub const Parser = struct {
     log: *logger.Log,
     source: *const logger.Source,
     define: *Define,
-    allocator: std.mem.Allocator,
+    allocator: Allocator,
 
     pub const Options = struct {
         jsx: options.JSX.Pragma,
@@ -2704,7 +2734,7 @@ pub const Parser = struct {
         return result;
     }
 
-    pub fn init(_options: Options, log: *logger.Log, source: *const logger.Source, define: *Define, allocator: std.mem.Allocator) !Parser {
+    pub fn init(_options: Options, log: *logger.Log, source: *const logger.Source, define: *Define, allocator: Allocator) !Parser {
         const lexer = try js_lexer.Lexer.init(log, source.*, allocator);
         return Parser{
             .options = _options,
@@ -2908,7 +2938,7 @@ pub const MacroState = struct {
     prepend_stmts: *ListManaged(Stmt) = undefined,
     imports: std.AutoArrayHashMap(i32, Ref),
 
-    pub fn init(allocator: std.mem.Allocator) MacroState {
+    pub fn init(allocator: Allocator) MacroState {
         return MacroState{
             .refs = MacroRefs.init(allocator),
             .prepend_stmts = undefined,
@@ -2936,7 +2966,7 @@ pub fn NewParser(
         const P = @This();
         pub const jsx_transform_type: JSXTransformType = js_parser_jsx;
         macro: MacroState = undefined,
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         options: Parser.Options,
         log: *logger.Log,
         define: *Define,
@@ -12733,7 +12763,7 @@ pub fn NewParser(
                 p.jsx_runtime.ref);
         }
 
-        fn maybeRelocateVarsToTopLevel(p: *P, decls: []G.Decl, mode: RelocateVars.Mode) RelocateVars {
+        fn maybeRelocateVarsToTopLevel(p: *P, decls: []const G.Decl, mode: RelocateVars.Mode) RelocateVars {
             // Only do this when the scope is not already top-level and when we're not inside a function.
             if (p.current_scope == p.module_scope) {
                 return .{ .ok = false };
@@ -13293,7 +13323,7 @@ pub fn NewParser(
 
                     if (effects.ok) {
                         if (effects.value) {
-                            if (data.no == null or !SideEffects.shouldKeepStmtInDeadControlFlow(data.no.?)) {
+                            if (data.no == null or !SideEffects.shouldKeepStmtInDeadControlFlow(data.no.?, p.allocator)) {
                                 if (effects.side_effects == .could_have_side_effects) {
                                     // Keep the condition if it could have side effects (but is still known to be truthy)
                                     if (SideEffects.simpifyUnusedExpr(p, data.test_)) |test_| {
@@ -13307,7 +13337,7 @@ pub fn NewParser(
                             }
                         } else {
                             // The test is falsy
-                            if (!SideEffects.shouldKeepStmtInDeadControlFlow(data.yes)) {
+                            if (!SideEffects.shouldKeepStmtInDeadControlFlow(data.yes, p.allocator)) {
                                 if (effects.side_effects == .could_have_side_effects) {
                                     // Keep the condition if it could have side effects (but is still known to be truthy)
                                     if (SideEffects.simpifyUnusedExpr(p, data.test_)) |test_| {
@@ -13358,21 +13388,12 @@ pub fn NewParser(
                         data.value = p.visitExpr(data.value);
                         data.body = p.visitLoopBody(data.body);
 
-                        // TODO: do we need to this?
-                        // // Check for a variable initializer
-                        // if local, ok := s.Init.Data.(*js_ast.SLocal); ok && local.Kind == js_ast.LocalVar && len(local.Decls) == 1 {
-                        // 	decl := &local.Decls[0]
-                        // 	if id, ok := decl.Binding.Data.(*js_ast.BIdentifier); ok && decl.Value != nil {
-                        // 		p.markStrictModeFeature(forInVarInit, p.source.RangeOfOperatorBefore(decl.Value.Loc, "="), "")
-
-                        // 		// Lower for-in variable initializers in case the output is used in strict mode
-                        // 		stmts = append(stmts, js_ast.Stmt{Loc: stmt.Loc, Data: &js_ast.SExpr{Value: js_ast.Assign(
-                        // 			js_ast.Expr{Loc: decl.Binding.Loc, Data: &js_ast.EIdentifier{Ref: id.Ref}},
-                        // 			*decl.Value,
-                        // 		)}})
-                        // 		decl.Value = nil
-                        // 	}
-                        // }
+                        if (data.init.data == .s_local and data.init.data.s_local.kind == .k_var) {
+                            const relocate = p.maybeRelocateVarsToTopLevel(data.init.data.s_local.decls, RelocateVars.Mode.for_in_or_for_of);
+                            if (relocate.stmt) |relocated_stmt| {
+                                data.init = relocated_stmt;
+                            }
+                        }
                     }
                 },
                 .s_for_of => |data| {
@@ -13382,15 +13403,12 @@ pub fn NewParser(
                     data.value = p.visitExpr(data.value);
                     data.body = p.visitLoopBody(data.body);
 
-                    // TODO: do we need to do this?
-                    //         	// Potentially relocate "var" declarations to the top level
-                    // if init, ok := s.Init.Data.(*js_ast.SLocal); ok && init.Kind == js_ast.LocalVar {
-                    // 	if replacement, ok := p.maybeRelocateVarsToTopLevel(init.Decls, relocateVarsForInOrForOf); ok {
-                    // 		s.Init = replacement
-                    // 	}
-                    // }
-
-                    // p.lowerObjectRestInForLoopInit(s.Init, &s.Body)
+                    if (data.init.data == .s_local and data.init.data.s_local.kind == .k_var) {
+                        const relocate = p.maybeRelocateVarsToTopLevel(data.init.data.s_local.decls, RelocateVars.Mode.for_in_or_for_of);
+                        if (relocate.stmt) |relocated_stmt| {
+                            data.init = relocated_stmt;
+                        }
+                    }
                 },
                 .s_try => |data| {
                     p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
@@ -13754,7 +13772,6 @@ pub fn NewParser(
 
             // Make sure to only emit a variable once for a given namespace, since there
             // can be multiple namespace blocks for the same namespace
-
             if (symbol.kind == .ts_namespace or symbol.kind == .ts_enum and !p.emitted_namespace_vars.contains(name_ref)) {
                 p.emitted_namespace_vars.put(allocator, name_ref, .{}) catch unreachable;
 
@@ -14427,7 +14444,7 @@ pub fn NewParser(
             if (p.is_control_flow_dead) {
                 var end: usize = 0;
                 for (visited.items) |item| {
-                    if (!SideEffects.shouldKeepStmtInDeadControlFlow(item)) {
+                    if (!SideEffects.shouldKeepStmtInDeadControlFlow(item, p.allocator)) {
                         continue;
                     }
 
@@ -15349,7 +15366,7 @@ pub fn NewParser(
         }
 
         pub fn init(
-            allocator: std.mem.Allocator,
+            allocator: Allocator,
             log: *logger.Log,
             source: *const logger.Source,
             define: *Define,

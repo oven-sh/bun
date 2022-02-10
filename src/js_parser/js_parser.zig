@@ -1120,11 +1120,10 @@ pub const SideEffects = enum(u2) {
             },
 
             .s_local => |local| {
-                return local.kind != .k_var;
-                // if (local.kind != .k_var) {
-                //     // Omit these statements entirely
-                //     return false;
-                // }
+                if (local.kind != .k_var) {
+                    // Omit these statements entirely
+                    return false;
+                }
             },
 
             .s_block => |block| {

@@ -34,7 +34,8 @@ const DotEnv = @import("./env_loader.zig");
 const mimalloc = @import("./allocators/mimalloc.zig");
 const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 const Analytics = @import("./analytics/analytics_thread.zig");
-
+const Arena = @import("./mimalloc_arena.zig").Arena;
+const ArenaType = Arena;
 pub fn constStrToU8(s: string) []u8 {
     return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
 }
@@ -83,7 +84,7 @@ pub const RequestContext = struct {
     url: URLPath,
     conn: *tcp.Connection,
     allocator: std.mem.Allocator,
-    arena: *std.heap.ArenaAllocator,
+    arena: *ArenaType,
     log: logger.Log,
     bundler: *Bundler,
     keep_alive: bool = true,
@@ -670,7 +671,7 @@ pub const RequestContext = struct {
 
     pub fn init(
         req: Request,
-        arena: *std.heap.ArenaAllocator,
+        arena: *ArenaType,
         conn: *tcp.Connection,
         bundler_: *Bundler,
         watcher_: *Watcher,
@@ -1001,6 +1002,7 @@ pub const RequestContext = struct {
                         Watcher,
                         @TypeOf(this.bundler.fs),
                         true,
+                        .absolute_url,
                     );
 
                     const CSSBundler = Css.NewBundler(
@@ -1010,6 +1012,7 @@ pub const RequestContext = struct {
                         Watcher,
                         @TypeOf(this.bundler.fs),
                         false,
+                        .absolute_url,
                     );
 
                     this.printer.ctx.reset();
@@ -1129,7 +1132,7 @@ pub const RequestContext = struct {
             }
 
             pub fn handleJSErrorFmt(this: *HandlerThread, comptime step: Api.FallbackStep, err: anyerror, comptime fmt: string, args: anytype) !void {
-                var arena = std.heap.ArenaAllocator.init(default_allocator);
+                var arena = ArenaType.init() catch unreachable;
                 var allocator = arena.allocator();
                 defer arena.deinit();
 
@@ -1167,7 +1170,7 @@ pub const RequestContext = struct {
             }
 
             pub fn handleRuntimeJSError(this: *HandlerThread, js_value: JavaScript.JSValue, comptime step: Api.FallbackStep, comptime fmt: string, args: anytype) !void {
-                var arena = std.heap.ArenaAllocator.init(default_allocator);
+                var arena = ArenaType.init() catch unreachable;
                 var allocator = arena.allocator();
                 defer arena.deinit();
                 defer this.log.msgs.clearRetainingCapacity();
@@ -1213,7 +1216,7 @@ pub const RequestContext = struct {
             }
 
             pub fn handleFetchEventError(this: *HandlerThread, err: anyerror, js_value: JavaScript.JSValue, ctx: *RequestContext) !void {
-                var arena = std.heap.ArenaAllocator.init(default_allocator);
+                var arena = ArenaType.init() catch unreachable;
                 var allocator = arena.allocator();
                 defer arena.deinit();
 
@@ -1440,7 +1443,7 @@ pub const RequestContext = struct {
             }
 
             while (true) {
-                __arena = std.heap.ArenaAllocator.init(vm.allocator);
+                __arena = std.heap.ArenaAllocator.init(default_allocator);
                 JavaScript.VirtualMachine.vm.arena = &__arena;
                 JavaScript.VirtualMachine.vm.has_loaded = true;
                 JavaScript.VirtualMachine.vm.tick();
@@ -1834,7 +1837,7 @@ pub const RequestContext = struct {
                                     break :brk full_build.id;
                                 };
 
-                                var arena = std.heap.ArenaAllocator.init(default_allocator);
+                                var arena = ArenaType.init() catch unreachable;
                                 defer arena.deinit();
 
                                 var head = Websocket.WebsocketHeader{
@@ -3193,8 +3196,8 @@ pub const Server = struct {
             return;
         };
 
-        var request_arena = server.allocator.create(std.heap.ArenaAllocator) catch unreachable;
-        request_arena.* = std.heap.ArenaAllocator.init(server.allocator);
+        var request_arena = server.allocator.create(Arena) catch unreachable;
+        request_arena.* = Arena.init() catch unreachable;
 
         req_ctx_ = RequestContext.init(
             req,

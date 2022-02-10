@@ -21,33 +21,33 @@ cd $dir
 $BUN_BIN --port 8087 &
 sleep 0.005
 
-if [ "$(curl --fail http://localhost:8087/)" != "$index_content" ]; then
-    echo "ERR: Expected '$index_content', got '$(curl --fail http://localhost:8087/)'"
+if [ "$(curl --fail -sS http://localhost:8087/)" != "$index_content" ]; then
+    echo "ERR: Expected '$index_content', got '$(curl --fail -sS http://localhost:8087/)'"
     exit 1
 fi
 
-if [ "$(curl --fail http://localhost:8087/index)" != "$index_content" ]; then
-    echo "ERR: Expected '$index_content', got '$(curl --fail http://localhost:8087/index)'"
+if [ "$(curl --fail -sS http://localhost:8087/index)" != "$index_content" ]; then
+    echo "ERR: Expected '$index_content', got '$(curl --fail -sS http://localhost:8087/index)'"
     exit 1
 fi
 
-if [ "$(curl --fail http://localhost:8087/index.html)" != "$index_content" ]; then
-    echo "ERR: Expected '$index_content', got '$(curl --fail http://localhost:8087/index.html)'"
+if [ "$(curl --fail -sS http://localhost:8087/index.html)" != "$index_content" ]; then
+    echo "ERR: Expected '$index_content', got '$(curl --fail -sS http://localhost:8087/index.html)'"
     exit 1
 fi
 
-if [ "$(curl --fail http://localhost:8087/foo/foo)" != "$index_content" ]; then
-    echo "ERR: Expected '$index_content', got '$(curl --fail http://localhost:8087/index.html)'"
+if [ "$(curl --fail -sS http://localhost:8087/foo/foo)" != "$index_content" ]; then
+    echo "ERR: Expected '$index_content', got '$(curl --fail -sS http://localhost:8087/index.html)'"
     exit 1
 fi
 
-if [ "$(curl --fail http://localhost:8087/bacon)" != "$bacon_content" ]; then
-    echo "ERR: Expected '$index_content', got '$(curl --fail http://localhost:8087/bacon)'"
+if [ "$(curl --fail -sS http://localhost:8087/bacon)" != "$bacon_content" ]; then
+    echo "ERR: Expected '$index_content', got '$(curl --fail -sS http://localhost:8087/bacon)'"
     exit 1
 fi
 
-if [ "$(curl --fail http://localhost:8087/bacon.html)" != "$bacon_content" ]; then
-    echo "ERR: Expected '$index_content', got '$(curl --fail http://localhost:8087/bacon.html)'"
+if [ "$(curl --fail -sS http://localhost:8087/bacon.html)" != "$bacon_content" ]; then
+    echo "ERR: Expected '$index_content', got '$(curl --fail -sS http://localhost:8087/bacon.html)'"
     exit 1
 fi
 

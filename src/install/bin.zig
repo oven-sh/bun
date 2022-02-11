@@ -147,6 +147,14 @@ pub const Bin = extern struct {
             return name_[(std.mem.indexOfScalar(u8, name_, '/') orelse return name) + 1 ..];
         }
 
+        // Sometimes, packages set "bin" to a file not marked as executable in the tarball
+        // They want it to be executable though
+        // so we make it executable
+        fn setPermissions(this: *const Linker, target: [:0]const u8) void {
+            // we use fchmodat to avoid any issues with current working directory
+            _ = C.fchmodat(this.root_node_modules_folder, target, umask | 0o777, 0);
+        }
+
         // It is important that we use symlinkat(2) with relative paths instead of symlink()
         // That way, if you move your node_modules folder around, the symlinks in .bin still work
         // If we used absolute paths for the symlinks, you'd end up with broken symlinks
@@ -196,14 +204,17 @@ pub const Bin = extern struct {
                     from_remain[0] = 0;
                     var dest_path: [:0]u8 = from_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&from_buf) :0];
 
-                    _ = C.chmod(target_path, umask & 0o777);
                     std.os.symlinkatZ(target_path, this.root_node_modules_folder, dest_path) catch |err| {
                         // Silently ignore PathAlreadyExists
                         // Most likely, the symlink was already created by another package
-                        if (err == error.PathAlreadyExists) return;
+                        if (err == error.PathAlreadyExists) {
+                            this.setPermissions(dest_path);
+                            return;
+                        }
 
                         this.err = err;
                     };
+                    this.setPermissions(dest_path);
                 },
                 .named_file => {
                     var target = this.bin.value.named_file[1].slice(this.string_buf);
@@ -223,14 +234,17 @@ pub const Bin = extern struct {
                     from_remain[0] = 0;
                     var dest_path: [:0]u8 = from_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&from_buf) :0];
 
-                    _ = C.chmod(target_path, umask & 0o777);
                     std.os.symlinkatZ(target_path, this.root_node_modules_folder, dest_path) catch |err| {
                         // Silently ignore PathAlreadyExists
                         // Most likely, the symlink was already created by another package
-                        if (err == error.PathAlreadyExists) return;
+                        if (err == error.PathAlreadyExists) {
+                            this.setPermissions(dest_path);
+                            return;
+                        }
 
                         this.err = err;
                     };
+                    this.setPermissions(dest_path);
                 },
                 .dir => {
                     var target = this.bin.value.dir.slice(this.string_buf);
@@ -270,19 +284,24 @@ pub const Bin = extern struct {
                                 from_buf_remain[0] = 0;
                                 var from_path: [:0]u8 = from_buf[0 .. @ptrToInt(from_buf_remain.ptr) - @ptrToInt(&from_buf) :0];
                                 var to_path = std.fmt.bufPrintZ(&path_buf, ".bin/{s}", .{entry.name}) catch unreachable;
-                                _ = C.chmod(from_path, umask & 0o777);
+
                                 std.os.symlinkatZ(
                                     from_path,
                                     this.root_node_modules_folder,
                                     to_path,
                                 ) catch |err| {
+
                                     // Silently ignore PathAlreadyExists
                                     // Most likely, the symlink was already created by another package
-                                    if (err == error.PathAlreadyExists) return;
+                                    if (err == error.PathAlreadyExists) {
+                                        this.setPermissions(to_path);
+                                        return;
+                                    }
 
                                     this.err = err;
                                     return;
                                 };
+                                this.setPermissions(to_path);
                             },
                             else => {},
                         }

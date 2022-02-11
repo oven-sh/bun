@@ -140,6 +140,13 @@ pub const Bin = extern struct {
             NotImplementedYet,
         } || std.os.SymLinkError || std.os.OpenError || std.os.RealPathError;
 
+        fn unscopedPackageName(name: []const u8) []const u8 {
+            if (name[0] != '@') return name;
+            var name_ = name;
+            name_ = name[1..];
+            return name_[(std.mem.indexOfScalar(u8, name_, '/') orelse return name) + 1 ..];
+        }
+
         // It is important that we use symlinkat(2) with relative paths instead of symlink()
         // That way, if you move your node_modules folder around, the symlinks in .bin still work
         // If we used absolute paths for the symlinks, you'd end up with broken symlinks
@@ -170,6 +177,7 @@ pub const Bin = extern struct {
                 },
                 .file => {
                     var target = this.bin.value.file.slice(this.string_buf);
+
                     if (strings.hasPrefix(target, "./")) {
                         target = target[2..];
                     }
@@ -180,8 +188,11 @@ pub const Bin = extern struct {
                     remain = remain[1..];
 
                     var target_path: [:0]u8 = path_buf[0..target_len :0];
-                    std.mem.copy(u8, from_remain, name);
-                    from_remain = from_remain[name.len..];
+                    // we need to use the unscoped package name here
+                    // this is why @babel/parser would fail to link
+                    const unscoped_name = unscopedPackageName(name);
+                    std.mem.copy(u8, from_remain, unscoped_name);
+                    from_remain = from_remain[unscoped_name.len..];
                     from_remain[0] = 0;
                     var dest_path: [:0]u8 = from_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&from_buf) :0];
 

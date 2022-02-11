@@ -295,11 +295,11 @@ pub const Bin = extern struct {
                                     // Most likely, the symlink was already created by another package
                                     if (err == error.PathAlreadyExists) {
                                         this.setPermissions(to_path);
-                                        return;
+                                        continue;
                                     }
 
                                     this.err = err;
-                                    return;
+                                    continue;
                                 };
                                 this.setPermissions(to_path);
                             },

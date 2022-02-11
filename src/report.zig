@@ -270,6 +270,7 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
     }
 
     crash_report_writer.file = null;
+    if (comptime Environment.isDebug) {
         if (@errorReturnTrace()) |stack| {
             std.debug.dumpStackTrace(stack.*);
         }

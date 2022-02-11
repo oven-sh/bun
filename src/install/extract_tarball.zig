@@ -146,7 +146,7 @@ threadlocal var abs_buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
 fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
     var tmpdir = this.temp_dir;
-    var tmpname_buf: [64]u8 = undefined;
+    var tmpname_buf: [256]u8 = undefined;
     const name = this.name.slice();
 
     var basename = this.name.slice();
@@ -156,7 +156,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
         }
     }
 
-    var tmpname = try FileSystem.instance.tmpname(basename, &tmpname_buf, tgz_bytes.len);
+    var tmpname = try FileSystem.instance.tmpname(basename[0..@minimum(basename.len, 32)], &tmpname_buf, tgz_bytes.len);
     {
         var extract_destination = tmpdir.makeOpenPath(std.mem.span(tmpname), .{ .iterate = true }) catch |err| {
             Output.panic("err: {s} when create temporary directory named {s} (while extracting {s})", .{ @errorName(err), tmpname, name });

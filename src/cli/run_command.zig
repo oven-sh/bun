@@ -264,7 +264,8 @@ pub const RunCommand = struct {
         if (result.Exited > 0) {
             Output.prettyErrorln("<r><red>Script error<r> <b>\"{s}\"<r> exited with {d} status<r>", .{ name, result.Exited });
             Output.flush();
-            std.os.exit(@truncate(u8, result.Signal));
+
+            std.os.exit(result.Exited);
         }
 
         return true;

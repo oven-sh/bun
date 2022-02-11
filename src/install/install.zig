@@ -3172,6 +3172,10 @@ const PackageInstall = struct {
         hardlink,
 
         // Slowest if single-threaded
+        // Note that copyfile does technically support recursion
+        // But I suspect it is slower in practice than manually doing it because:
+        // - it adds syscalls
+        // - it runs in userspace
         copyfile,
 
         const BackendSupport = std.EnumArray(Method, bool);

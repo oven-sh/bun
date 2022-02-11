@@ -2936,6 +2936,7 @@ const Task = struct {
     threadpool_task: ThreadPool.Task = ThreadPool.Task{ .callback = callback },
     log: logger.Log,
     id: u64,
+    err: ?anyerror = null,
 
     /// An ID that lets us register a callback without keeping the same pointer around
     pub const Id = struct {
@@ -2976,7 +2977,13 @@ const Task = struct {
                     &this.log,
                     this.request.package_manifest.name.slice(),
                     this.request.package_manifest.network.callback.package_manifest.loaded_manifest,
-                ) catch {
+                ) catch |err| {
+                    if (comptime Environment.isDebug) {
+                        if (@errorReturnTrace()) |trace| {
+                            std.debug.dumpStackTrace(trace.*);
+                        }
+                    }
+                    this.err = err;
                     this.status = Status.fail;
                     PackageManager.instance.resolve_tasks.writeItem(this.*) catch unreachable;
                     return;
@@ -3005,7 +3012,14 @@ const Task = struct {
             .extract => {
                 const result = this.request.extract.tarball.run(
                     this.request.extract.network.response_buffer.toOwnedSliceLeaky(),
-                ) catch {
+                ) catch |err| {
+                    if (comptime Environment.isDebug) {
+                        if (@errorReturnTrace()) |trace| {
+                            std.debug.dumpStackTrace(trace.*);
+                        }
+                    }
+
+                    this.err = err;
                     this.status = Status.fail;
                     this.data = .{ .extract = "" };
                     PackageManager.instance.resolve_tasks.writeItem(this.*) catch unreachable;
@@ -4680,8 +4694,10 @@ pub const PackageManager = struct {
                 .package_manifest => {
                     if (task.status == .fail) {
                         if (comptime log_level != .silent) {
-                            const fmt = "\n<r><red>rerror<r>: Failed to parse package manifest for <b>{s}<r>";
-                            const args = .{task.request.package_manifest.name.slice()};
+                            const fmt = "\n<r><red>rerror<r>: {s} parsing package manifest for <b>{s}<r>";
+                            const error_name: string = if (task.err != null) std.mem.span(@errorName(task.err.?)) else @as(string, "Failed");
+
+                            const args = .{ error_name, task.request.package_manifest.name.slice() };
                             if (comptime log_level.showProgress()) {
                                 Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
                             } else {
@@ -4726,8 +4742,10 @@ pub const PackageManager = struct {
                 .extract => {
                     if (task.status == .fail) {
                         if (comptime log_level != .silent) {
-                            const fmt = "<r><red>rerror<r>: Failed to extract tarball for <b>{s}<r>";
+                            const fmt = "<r><red>error<r>: {s} extracting tarball for <b>{s}<r>";
+                            const error_name: string = if (task.err != null) std.mem.span(@errorName(task.err.?)) else @as(string, "Failed");
                             const args = .{
+                                error_name,
                                 task.request.extract.tarball.name.slice(),
                             };
                             if (comptime log_level.showProgress()) {

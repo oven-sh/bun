@@ -305,7 +305,7 @@ pub const RunCommand = struct {
         if (result.Exited > 0) {
             Output.prettyErrorln("<r><red>error<r> <b>\"{s}\"<r> exited with {d} status<r>", .{ std.fs.path.basename(executable), result.Exited });
             Output.flush();
-            std.os.exit(@truncate(u8, result.Signal));
+            std.os.exit(result.Exited);
         }
 
         return true;

@@ -4349,6 +4349,15 @@ pub const BufferWriter = struct {
         ctx.approximate_newline_count = 0;
     }
 
+    pub fn writtenWithoutTrailingZero(ctx: *const BufferWriter) []u8 {
+        var written = ctx.written;
+        while (written.len > 0 and written[written.len - 1] == 0) {
+            written = written[0 .. written.len - 1];
+        }
+
+        return written;
+    }
+
     pub fn done(
         ctx: *BufferWriter,
     ) anyerror!void {
@@ -4604,19 +4613,16 @@ pub fn printCommonJSThreaded(
         if (comptime Environment.isMac or Environment.isLinux) {
             // Don't bother preallocate the file if it's less than 1 KB. Preallocating is potentially two syscalls
             if (printer.writer.written > 1024) {
-                if (comptime Environment.isMac) {
-                    try C.preallocate_file(
-                        getter.handle,
-                        @intCast(std.os.off_t, 0),
-                        @intCast(std.os.off_t, printer.writer.written),
-                    );
-                }
-
-                if (comptime Environment.isLinux) {
-                    _ = std.os.system.fallocate(getter.handle, 0, @intCast(i64, result.off), printer.writer.written);
-                }
+                // on mac, it's relative to current position in file handle
+                // on linux, it's absolute
+                try C.preallocate_file(
+                    getter.handle,
+                    @intCast(std.os.off_t, if (comptime Environment.isMac) 0 else result.off),
+                    @intCast(std.os.off_t, printer.writer.written),
+                );
             }
         }
+
         try printer.writer.done();
         @fence(.SeqCst);
         result.end_off = @truncate(u32, try getPos(getter));

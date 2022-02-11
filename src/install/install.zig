@@ -6032,7 +6032,7 @@ pub const PackageManager = struct {
         try buffer_writer.buffer.list.ensureTotalCapacity(ctx.allocator, current_package_json_buf.len + 1);
         var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
 
-        var written = JSPrinter.printJSON(@TypeOf(package_json_writer), package_json_writer, current_package_json, &package_json_source) catch |err| {
+        var written = JSPrinter.printJSON(@TypeOf(&package_json_writer), &package_json_writer, current_package_json, &package_json_source) catch |err| {
             Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
             Global.crash();
         };
@@ -6047,29 +6047,33 @@ pub const PackageManager = struct {
         // The Smarter™ approach is you resolve ahead of time and write to disk once!
         // But, turns out that's slower in any case where more than one package has to be resolved (most of the time!)
         // Concurrent network requests are faster than doing one and then waiting until the next batch
-        var new_package_json_source = package_json_writer.ctx.buffer.toOwnedSliceLeaky().ptr[0 .. written + 1];
+        var new_package_json_source = try ctx.allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero());
+
+        // Do not free the old package.json AST nodes
+        _ = JSAst.Expr.Data.Store.toOwnedSlice();
 
         try installWithManager(ctx, manager, new_package_json_source, log_level);
 
         if (op == .update or op == .add) {
             const source = logger.Source.initPathString("package.json", new_package_json_source);
+
             // Now, we _re_ parse our in-memory edited package.json
             // so we can commit the version we changed from the lockfile
             current_package_json = json_parser.ParseJSON(&source, ctx.log, manager.allocator) catch |err| {
                 Output.prettyErrorln("<red>error<r><d>:<r> package.json failed to parse due to error {s}", .{@errorName(err)});
                 Output.flush();
-                std.os.exit(1);
+                Global.exit(1);
                 return;
             };
 
             try PackageJSONEditor.edit(ctx.allocator, updates, &current_package_json, dependency_list);
             var buffer_writer_two = try JSPrinter.BufferWriter.init(ctx.allocator);
-            try buffer_writer_two.buffer.list.ensureTotalCapacity(ctx.allocator, current_package_json_buf.len + 1);
+            try buffer_writer_two.buffer.list.ensureTotalCapacity(ctx.allocator, new_package_json_source.len + 1);
             var package_json_writer_two = JSPrinter.BufferPrinter.init(buffer_writer_two);
 
             written = JSPrinter.printJSON(
-                @TypeOf(package_json_writer_two),
-                package_json_writer_two,
+                @TypeOf(&package_json_writer_two),
+                &package_json_writer_two,
                 current_package_json,
                 &source,
             ) catch |err| {
@@ -6077,14 +6081,14 @@ pub const PackageManager = struct {
                 Global.crash();
             };
 
-            new_package_json_source = package_json_writer_two.ctx.buffer.toOwnedSliceLeaky().ptr[0 .. written + 1];
+            new_package_json_source = try ctx.allocator.dupe(u8, package_json_writer_two.ctx.writtenWithoutTrailingZero());
         }
 
         if (!manager.options.dry_run) {
             // Now that we've run the install step
             // We can save our in-memory package.json to disk
             try manager.root_package_json_file.pwriteAll(new_package_json_source, 0);
-            std.os.ftruncate(manager.root_package_json_file.handle, written + 1) catch {};
+            std.os.ftruncate(manager.root_package_json_file.handle, new_package_json_source.len) catch {};
             manager.root_package_json_file.close();
 
             if (op == .remove) {
@@ -6771,7 +6775,7 @@ pub const PackageManager = struct {
                     had_any_diffs = had_any_diffs or sum > 0;
 
                     // If you changed packages, we will copy over the new package from the new lockfile
-                    const new_dependencies = new_root.dependencies.get(lockfile.buffers.dependencies.items);
+                    const new_dependencies = maybe_root.dependencies.get(lockfile.buffers.dependencies.items);
 
                     if (had_any_diffs) {
                         var builder_ = manager.lockfile.stringBuilder();
@@ -6821,24 +6825,21 @@ pub const PackageManager = struct {
                         if (manager.summary.add > 0 or manager.summary.update > 0) {
                             var remaining = mapping;
                             var dependency_i: PackageID = off;
-
-                            var deps = &manager.lockfile.buffers.dependencies;
-                            var res = &manager.lockfile.buffers.resolutions;
+                            const changes = @truncate(PackageID, mapping.len);
 
                             _ = manager.getCacheDirectory();
                             _ = manager.getTemporaryDirectory();
-
-                            while (std.mem.indexOfScalar(PackageID, remaining, invalid_package_id)) |next_i_| {
-                                remaining = remaining[next_i_ + 1 ..];
-
-                                dependency_i += @intCast(PackageID, next_i_);
-
-                                try manager.enqueueDependencyWithMain(
-                                    dependency_i,
-                                    deps.items[dependency_i],
-                                    res.items[dependency_i],
-                                    true,
-                                );
+                            var counter_i: PackageID = 0;
+                            while (counter_i < changes) : (counter_i += 1) {
+                                if (remaining[counter_i] == invalid_package_id) {
+                                    dependency_i = counter_i + off;
+                                    try manager.enqueueDependencyWithMain(
+                                        dependency_i,
+                                        manager.lockfile.buffers.dependencies.items[dependency_i],
+                                        manager.lockfile.buffers.resolutions.items[dependency_i],
+                                        true,
+                                    );
+                                }
                             }
                         }
                     }

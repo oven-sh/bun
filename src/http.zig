@@ -3040,7 +3040,7 @@ pub const Server = struct {
                         else => {
                             Output.prettyErrorln("<r><red>{s} while trying to start listening on port {d}.\n\n", .{ @errorName(err), port });
                             Output.flush();
-                            std.os.exit(1);
+                            Global.exit(1);
                         },
                     }
                 };
@@ -3060,7 +3060,7 @@ pub const Server = struct {
                     },
                 );
                 Output.flush();
-                std.os.exit(1);
+                Global.exit(1);
             }
         }
 
@@ -3505,7 +3505,7 @@ pub const Server = struct {
 
         if (debug.dump_limits) {
             Fs.FileSystem.printLimits();
-            std.os.exit(0);
+            Global.exit(0);
             return;
         }
 

@@ -270,6 +270,10 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
     }
 
     crash_report_writer.file = null;
+        if (@errorReturnTrace()) |stack| {
+            std.debug.dumpStackTrace(stack.*);
+        }
+    }
 
     std.c._exit(128 + @truncate(u8, @intCast(u8, @maximum(signal, 0))));
 }
@@ -278,7 +282,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
     @setCold(true);
 
     if (@atomicRmw(bool, &globalError_ranOnce, .Xchg, true, .Monotonic)) {
-        std.os.exit(1);
+        Global.exit(1);
     }
 
     switch (err) {
@@ -288,7 +292,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                 .{},
             );
             Output.flush();
-            std.os.exit(1);
+            Global.exit(1);
         },
         error.OutOfMemory => {
             Output.prettyError(
@@ -297,7 +301,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
             );
             printMetadata();
             Output.flush();
-            std.os.exit(1);
+            Global.exit(1);
         },
         error.CurrentWorkingDirectoryUnlinked => {
             Output.prettyError(
@@ -305,7 +309,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                 .{},
             );
             Output.flush();
-            std.os.exit(1);
+            Global.exit(1);
         },
         error.BundleFailed => {
             Output.prettyError(
@@ -313,7 +317,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                 .{},
             );
             Output.flush();
-            std.os.exit(1);
+            Global.exit(1);
         },
         error.SystemFdQuotaExceeded => {
             const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
@@ -372,7 +376,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
             }
 
             Output.flush();
-            std.os.exit(1);
+            Global.exit(1);
         },
         error.ProcessFdQuotaExceeded => {
             const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
@@ -435,7 +439,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
             }
 
             Output.flush();
-            std.os.exit(1);
+            Global.exit(1);
         },
         // The usage of `unreachable` in Zig's std.os may cause the file descriptor problem to show up as other errors
         error.NotOpenForReading, error.Unexpected => {
@@ -489,7 +493,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                 }
 
                 Output.flush();
-                std.os.exit(1);
+                Global.exit(1);
             }
         },
         error.FileNotFound => {
@@ -510,7 +514,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                 std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig()) catch break :print_stacktrace;
             }
 
-            std.os.exit(1);
+            Global.exit(1);
         },
         error.MissingPackageJSON => {
             Output.prettyError(
@@ -518,10 +522,10 @@ pub noinline fn globalError(err: anyerror) noreturn {
                 .{},
             );
             Output.flush();
-            std.os.exit(1);
+            Global.exit(1);
         },
         error.MissingValue => {
-            std.os.exit(1);
+            Global.exit(1);
         },
         else => {},
     }
@@ -535,5 +539,5 @@ pub noinline fn globalError(err: anyerror) noreturn {
         std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig()) catch break :print_stacktrace;
     }
 
-    std.os.exit(1);
+    Global.exit(1);
 }

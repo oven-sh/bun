@@ -2,7 +2,7 @@ const Command = @import("../cli.zig").Command;
 const PackageManager = @import("../install/install.zig").PackageManager;
 const std = @import("std");
 const strings = @import("strings");
-
+const Global = @import("../global.zig").Global;
 pub const PackageManagerCommand = struct {
     pub fn printHelp(_: std.mem.Allocator) void {}
     pub fn exec(ctx: Command.Context) !void {
@@ -16,7 +16,7 @@ pub const PackageManagerCommand = struct {
 
         if (args.len == 0) {
             printHelp(ctx.allocator);
-            std.os.exit(0);
+            Global.exit(0);
         }
 
         first = std.mem.span(args[0]);

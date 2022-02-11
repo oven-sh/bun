@@ -258,10 +258,11 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
 
                     try p.lexer.unexpected();
                     if (comptime Environment.isDebug) {
-                        std.io.getStdErr().writeAll("\nThis range: \n") catch {};
-                        std.io.getStdErr().writeAll(
-                            p.lexer.source.contents[p.lexer.range().loc.toUsize()..p.lexer.range().end().toUsize()],
-                        ) catch {};
+                        std.io.getStdErr().writer().print("\nThis range: {d} - {d} \n{s}", .{
+                            p.lexer.range().loc.start,
+                            p.lexer.range().end(),
+                            p.lexer.range().in(p.lexer.source.contents),
+                        }) catch {};
 
                         @breakpoint();
                     }

@@ -318,7 +318,7 @@ pub const TestCommand = struct {
         Output.flush();
 
         if (reporter.summary.fail > 0) {
-            std.os.exit(1);
+            Global.exit(1);
         }
     }
 

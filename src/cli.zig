@@ -76,7 +76,7 @@ pub const Cli = struct {
                 error.MissingEntryPoint => {
                     Output.prettyErrorln("<r><red>MissingEntryPoint<r> what do you want to bundle?\n\n<d>Example:\n\n<r>  <b><cyan>bun bun --use next<r>\n\n  <b><cyan>bun bun ./src/index.ts ./src/file2.ts<r>\n", .{});
                     Output.flush();
-                    std.os.exit(1);
+                    Global.exit(1);
                 },
                 else => {
                     // Always dump the logs
@@ -202,7 +202,7 @@ pub const Arguments = struct {
         @setCold(true);
         Output.writer().writeAll(Global.package_json_version ++ "\n") catch {};
         Output.flush();
-        std.os.exit(0);
+        Global.exit(0);
     }
 
     pub fn parse(allocator: std.mem.Allocator, ctx: *Command.Context, comptime cmd: Command.Tag) !Api.TransformOptions {
@@ -274,7 +274,7 @@ pub const Arguments = struct {
                         std.mem.span(config_path),
                     });
                     Output.flush();
-                    std.os.exit(1);
+                    Global.exit(1);
                 };
                 var contents = config_file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
                     if (auto_loaded) break :load_config;
@@ -283,7 +283,7 @@ pub const Arguments = struct {
                         std.mem.span(config_path),
                     });
                     Output.flush();
-                    std.os.exit(1);
+                    Global.exit(1);
                 };
 
                 js_ast.Stmt.Data.Store.create(allocator);
@@ -362,7 +362,7 @@ pub const Arguments = struct {
             Output.flush();
             HelpCommand.printWithReason(.explicit);
             Output.flush();
-            std.os.exit(0);
+            Global.exit(0);
         }
 
         ctx.debug.dump_environment_variables = args.flag("--dump-environment-variables");
@@ -1085,7 +1085,7 @@ pub const Command = struct {
                                     @errorName(err),
                                 });
                                 Output.flush();
-                                std.os.exit(1);
+                                Global.exit(1);
                             };
                         }
                     }

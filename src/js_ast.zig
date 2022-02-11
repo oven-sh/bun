@@ -39,6 +39,10 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
     return struct {
         const Allocator = std.mem.Allocator;
         const Self = @This();
+        pub const WithBase = struct {
+            head: Block = Block{},
+            store: Self,
+        };
 
         const Block = struct {
             used: SizeType = 0,
@@ -52,7 +56,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
                 if (comptime Environment.allow_assert) std.debug.assert(block.used < count);
                 const index = block.used;
                 block.items[index][0..value.len].* = value.*;
-                block.used +%= 1;
+                block.used +|= 1;
                 return &block.items[index];
             }
         };
@@ -90,10 +94,28 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
             }
         };
 
-        block: Block = Block{ .used = 0 },
         overflow: Overflow = Overflow{},
 
         pub threadlocal var _self: *Self = undefined;
+
+        pub fn reclaim() []*Block {
+            if (_self.overflow.used == 0) return &[_]*Block{};
+
+            var used = _self.overflow.allocator.dupe(*Block, _self.overflow.slice()) catch unreachable;
+            var new_head = _self.overflow.allocator.create(Block) catch unreachable;
+            new_head.* = Block{};
+
+            var to_move = _self.overflow.ptrs[0.._self.overflow.allocated][_self.overflow.used..];
+            if (to_move.len > 0) {
+                to_move = to_move[1..];
+            }
+
+            std.mem.copyBackwards(*Block, _self.overflow.ptrs[1..], to_move);
+            _self.overflow.ptrs[0] = new_head;
+            _self.overflow.allocated = 1 + @truncate(Overflow.UsedSize, to_move.len);
+            reset();
+            return used;
+        }
 
         pub fn reset() void {
             for (_self.overflow.slice()) |b| {
@@ -103,12 +125,10 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
         }
 
         pub fn init(allocator: std.mem.Allocator) *Self {
-            var instance = allocator.create(Self) catch unreachable;
-            instance.* = Self{
-                .overflow = Overflow{ .allocator = allocator },
-                .block = Block{},
-            };
-            instance.overflow.ptrs[0] = &instance.block;
+            var base = allocator.create(WithBase) catch unreachable;
+            base.* = WithBase{ .store = .{ .overflow = Overflow{ .allocator = allocator } } };
+            var instance = &base.store;
+            instance.overflow.ptrs[0] = &base.head;
             instance.overflow.allocated = 1;
 
             _self = instance;
@@ -127,9 +147,12 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
                     default_allocator.free(ptrs);
                     i += 2;
                 }
+                _self.overflow.allocated = 1;
             }
-
-            default_allocator.destroy(_self);
+            var base_store = @fieldParentPtr(WithBase, "store", _self);
+            if (_self.overflow.ptrs[0] == &base_store.head) {
+                default_allocator.destroy(_self);
+            }
             _self = undefined;
         }
 
@@ -2048,6 +2071,11 @@ pub const Stmt = struct {
             pub fn append(comptime ValueType: type, value: anytype) *ValueType {
                 return All.append(ValueType, value);
             }
+
+            pub fn toOwnedSlice() []*Store.All.Block {
+                if (!has_inited or Store.All._self.overflow.used == 0 or disable_reset) return &[_]*Store.All.Block{};
+                return Store.All.reclaim();
+            }
         };
     };
 
@@ -3272,28 +3300,29 @@ pub const Expr = struct {
         e_dot: *E.Dot,
         e_index: *E.Index,
         e_arrow: *E.Arrow,
-        e_identifier: E.Identifier,
-        e_import_identifier: E.ImportIdentifier,
+
         e_private_identifier: *E.PrivateIdentifier,
         e_jsx_element: *E.JSXElement,
-
         e_object: *E.Object,
         e_spread: *E.Spread,
-
         e_template_part: *E.TemplatePart,
         e_template: *E.Template,
         e_reg_exp: *E.RegExp,
         e_await: *E.Await,
         e_yield: *E.Yield,
         e_if: *E.If,
-        e_require: E.Require,
-        e_require_or_require_resolve: E.RequireOrRequireResolve,
         e_import: *E.Import,
+
+        e_identifier: E.Identifier,
+        e_import_identifier: E.ImportIdentifier,
 
         e_boolean: E.Boolean,
         e_number: E.Number,
         e_big_int: *E.BigInt,
         e_string: *E.String,
+
+        e_require: E.Require,
+        e_require_or_require_resolve: E.RequireOrRequireResolve,
 
         e_missing: E.Missing,
         e_this: E.This,
@@ -3388,6 +3417,11 @@ pub const Expr = struct {
                     return All.append(ValueType, value);
                 }
             }
+
+            pub fn toOwnedSlice() []*Store.All.Block {
+                if (!has_inited or Store.All._self.overflow.used == 0 or disable_reset) return &[_]*Store.All.Block{};
+                return Store.All.reclaim();
+            }
         };
 
         pub inline fn isStringValue(self: Data) bool {
@@ -3395,6 +3429,10 @@ pub const Expr = struct {
         }
     };
 };
+
+test "Byte size of Expr" {
+    try std.io.getStdErr().writeAll(comptime std.fmt.comptimePrint("\n\nByte Size {d}\n\n", .{@sizeOf(Expr.Data)}));
+}
 
 pub const EnumValue = struct {
     loc: logger.Loc,

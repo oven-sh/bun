@@ -265,7 +265,7 @@ pub const RunCommand = struct {
             Output.prettyErrorln("<r><red>Script error<r> <b>\"{s}\"<r> exited with {d} status<r>", .{ name, result.Exited });
             Output.flush();
 
-            std.os.exit(result.Exited);
+            Global.exit(result.Exited);
         }
 
         return true;
@@ -305,7 +305,7 @@ pub const RunCommand = struct {
         if (result.Exited > 0) {
             Output.prettyErrorln("<r><red>error<r> <b>\"{s}\"<r> exited with {d} status<r>", .{ std.fs.path.basename(executable), result.Exited });
             Output.flush();
-            std.os.exit(result.Exited);
+            Global.exit(result.Exited);
         }
 
         return true;
@@ -615,7 +615,7 @@ pub const RunCommand = struct {
                             const shebang_size = file.pread(&shebang_buf, 0) catch |err| {
                                 Output.prettyErrorln("<r><red>error<r>: Failed to read file <b>{s}<r> due to error <b>{s}<r>", .{ file_path, @errorName(err) });
                                 Output.flush();
-                                std.os.exit(1);
+                                Global.exit(1);
                             };
 
                             var shebang: string = shebang_buf[0..shebang_size];
@@ -639,7 +639,7 @@ pub const RunCommand = struct {
                                     @errorName(err),
                                 });
                                 Output.flush();
-                                std.os.exit(1);
+                                Global.exit(1);
                             };
 
                             return true;
@@ -877,7 +877,7 @@ pub const RunCommand = struct {
             if (comptime log_errors) {
                 Output.prettyError("<r>No \"scripts\" in package.json found.", .{});
                 Output.flush();
-                std.os.exit(0);
+                Global.exit(0);
             }
 
             return false;
@@ -924,7 +924,7 @@ pub const RunCommand = struct {
         if (comptime log_errors) {
             Output.prettyError("<r><red>error:<r> Missing script: <b>{s}<r>\n", .{script_name_to_search});
             Output.flush();
-            std.os.exit(0);
+            Global.exit(0);
         }
 
         return false;

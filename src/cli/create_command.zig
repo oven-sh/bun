@@ -222,7 +222,7 @@ const CreateOptions = struct {
             Output.prettyln("        NPM_CLIENT<r>               Absolute path to the npm client executable", .{});
             Output.flush();
 
-            std.os.exit(0);
+            Global.exit(0);
         }
 
         var opts = CreateOptions{ .positionals = args.positionals() };
@@ -416,7 +416,7 @@ pub const CreateCommand = struct {
                                 const examples = try Example.fetchAllLocalAndRemote(ctx, null, &env_loader, filesystem);
                                 Example.print(examples.items, dirname);
                                 Output.flush();
-                                std.os.exit(1);
+                                Global.exit(1);
                             },
                             else => {
                                 node.end();
@@ -530,7 +530,7 @@ pub const CreateCommand = struct {
 
                         Output.prettyErrorln("<r>\n<d>To download {s} anyway, use --force<r>", .{template});
                         Output.flush();
-                        std.os.exit(1);
+                        Global.exit(1);
                     }
                 }
 
@@ -569,7 +569,7 @@ pub const CreateCommand = struct {
 
                     Output.prettyErrorln("<r><red>{s}<r>: opening dir {s}", .{ @errorName(err), template });
                     Output.flush();
-                    std.os.exit(1);
+                    Global.exit(1);
                 };
 
                 std.fs.deleteTreeAbsolute(destination) catch {};
@@ -580,7 +580,7 @@ pub const CreateCommand = struct {
 
                     Output.prettyErrorln("<r><red>{s}<r>: creating dir {s}", .{ @errorName(err), destination });
                     Output.flush();
-                    std.os.exit(1);
+                    Global.exit(1);
                 };
 
                 const Walker = @import("../walker_skippable.zig");
@@ -608,7 +608,7 @@ pub const CreateCommand = struct {
 
                                     Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
                                     Output.flush();
-                                    std.os.exit(1);
+                                    Global.exit(1);
                                 };
                             };
                             defer outfile.close();
@@ -629,7 +629,7 @@ pub const CreateCommand = struct {
 
                                     Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
                                     Output.flush();
-                                    std.os.exit(1);
+                                    Global.exit(1);
                                 };
                             };
                         }
@@ -1938,11 +1938,11 @@ pub const Example = struct {
                     try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
                 }
                 Output.flush();
-                std.os.exit(1);
+                Global.exit(1);
             } else {
                 Output.prettyErrorln("Error parsing package: <r><red>{s}<r>", .{@errorName(err)});
                 Output.flush();
-                std.os.exit(1);
+                Global.exit(1);
             }
         };
 
@@ -1956,7 +1956,7 @@ pub const Example = struct {
                 try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
             }
             Output.flush();
-            std.os.exit(1);
+            Global.exit(1);
         }
 
         const tarball_url: string = brk: {
@@ -1975,7 +1975,7 @@ pub const Example = struct {
 
             Output.prettyErrorln("package.json is missing tarball url. This is an internal error!", .{});
             Output.flush();
-            std.os.exit(1);
+            Global.exit(1);
         };
 
         progress.name = "Downloading tarball";
@@ -2000,7 +2000,7 @@ pub const Example = struct {
             refresher.refresh();
             Output.prettyErrorln("Error fetching tarball: <r><red>{d}<r>", .{response.status_code});
             Output.flush();
-            std.os.exit(1);
+            Global.exit(1);
         }
 
         refresher.refresh();
@@ -2027,12 +2027,12 @@ pub const Example = struct {
                 error.WouldBlock => {
                     Output.prettyErrorln("Request timed out while trying to fetch examples list. Please try again", .{});
                     Output.flush();
-                    std.os.exit(1);
+                    Global.exit(1);
                 },
                 else => {
                     Output.prettyErrorln("<r><red>{s}<r> while trying to fetch examples list. Please try again", .{@errorName(err)});
                     Output.flush();
-                    std.os.exit(1);
+                    Global.exit(1);
                 },
             }
         };
@@ -2040,7 +2040,7 @@ pub const Example = struct {
         if (response.status_code != 200) {
             Output.prettyErrorln("<r><red>{d}<r> fetching examples :( {s}", .{ response.status_code, mutable.list.items });
             Output.flush();
-            std.os.exit(1);
+            Global.exit(1);
         }
 
         initializeStore();
@@ -2052,12 +2052,12 @@ pub const Example = struct {
                 } else {
                     try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
                 }
-                std.os.exit(1);
+                Global.exit(1);
                 Output.flush();
             } else {
                 Output.prettyErrorln("Error parsing examples: <r><red>{s}<r>", .{@errorName(err)});
                 Output.flush();
-                std.os.exit(1);
+                Global.exit(1);
             }
         };
 
@@ -2068,7 +2068,7 @@ pub const Example = struct {
                 try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
             }
             Output.flush();
-            std.os.exit(1);
+            Global.exit(1);
         }
 
         if (examples_object.asProperty("examples")) |q| {
@@ -2093,7 +2093,7 @@ pub const Example = struct {
 
         Output.prettyErrorln("Corrupt examples data: expected object but received {s}", .{@tagName(examples_object.data)});
         Output.flush();
-        std.os.exit(1);
+        Global.exit(1);
     }
 };
 
@@ -2154,7 +2154,7 @@ const GitHandler = struct {
         thread = std.Thread.spawn(.{}, spawnThread, .{ destination, PATH, verbose }) catch |err| {
             Output.prettyErrorln("<r><red>{s}<r>", .{@errorName(err)});
             Output.flush();
-            std.os.exit(1);
+            Global.exit(1);
         };
     }
 

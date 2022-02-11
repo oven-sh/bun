@@ -66,7 +66,7 @@ pub const Run = struct {
             }
             Output.prettyErrorln("\n", .{});
             Output.flush();
-            std.os.exit(1);
+            Global.exit(1);
         };
         run.vm.bundler.configureDefines() catch {
             if (Output.enable_ansi_colors_stderr) {
@@ -76,7 +76,7 @@ pub const Run = struct {
             }
             Output.prettyErrorln("\n", .{});
             Output.flush();
-            std.os.exit(1);
+            Global.exit(1);
         };
 
         var callback = OpaqueWrap(Run, Run.start);
@@ -93,7 +93,7 @@ pub const Run = struct {
 
         if (promise.status(this.vm.global.vm()) == .Rejected) {
             this.vm.defaultErrorHandler(promise.result(this.vm.global.vm()), null);
-            std.os.exit(1);
+            Global.exit(1);
         }
 
         _ = promise.result(this.vm.global.vm());
@@ -109,6 +109,6 @@ pub const Run = struct {
 
         Output.flush();
 
-        std.os.exit(0);
+        Global.exit(0);
     }
 };

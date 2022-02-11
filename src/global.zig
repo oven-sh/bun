@@ -559,6 +559,11 @@ pub const Global = struct {
         }
     }
 
+    pub fn exit(code: u8) noreturn {
+        Output.flush();
+        std.os.exit(code);
+    }
+
     pub const AllocatorConfiguration = struct {
         verbose: bool = false,
         long_running: bool = false,
@@ -614,7 +619,7 @@ pub const Global = struct {
         } else {
             Output.prettyErrorln(fmt, args);
             Output.flush();
-            std.os.exit(1);
+            Global.exit(1);
         }
     }
 
@@ -627,7 +632,7 @@ pub const Global = struct {
     pub fn crash() noreturn {
         @setCold(true);
         Output.flush();
-        std.os.exit(1);
+        Global.exit(1);
     }
 };
 

@@ -147,7 +147,7 @@ pub const BunCommand = struct {
 
         if (ctx.debug.dump_limits) {
             fs.FileSystem.printLimits();
-            std.os.exit(0);
+            Global.exit(0);
             return;
         }
 

@@ -443,7 +443,7 @@ pub const Resolver = struct {
                         error.ModuleNotFound => {
                             Output.prettyErrorln("<r><red>ResolveError<r> can't find framework: <b>\"{s}\"<r>.\n\nMaybe it's not installed? Try running this:\n\n   <b>npm install -D {s}<r>\n   <b>bun bun --use {s}<r>", .{ package, package, package });
                             Output.flush();
-                            std.os.exit(1);
+                            Global.exit(1);
                         },
                         else => {
                             return err;
@@ -463,7 +463,7 @@ pub const Resolver = struct {
                                 error.ModuleNotFound => {
                                     Output.prettyErrorln("<r><red>ResolveError<r> can't find framework: <b>\"{s}\"<r>.\n\nMaybe it's not installed? Try running this:\n\n   <b>npm install -D {s}\n   <b>bun bun --use {s}<r>", .{ package, prefixed_name, package });
                                     Output.flush();
-                                    std.os.exit(1);
+                                    Global.exit(1);
                                 },
                                 else => {
                                     return err;
@@ -484,7 +484,7 @@ pub const Resolver = struct {
                     Output.prettyError("<r><red>ResolveError<r> can't find local framework: <b>\"{s}\"<r>.", .{package});
 
                     Output.flush();
-                    std.os.exit(1);
+                    Global.exit(1);
                 },
                 else => {
                     return err;

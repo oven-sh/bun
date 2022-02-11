@@ -340,6 +340,8 @@ pub const BufferReadStream = struct {
     // }
 };
 
+const Kind = std.fs.File.Kind;
+
 pub const Archive = struct {
     // impl: *lib.archive = undefined,
     // buf: []const u8 = undefined,
@@ -495,76 +497,116 @@ pub const Archive = struct {
 
                     var pathname_ = tokenizer.rest();
                     pathname = @intToPtr([*]const u8, @ptrToInt(pathname_.ptr))[0..pathname_.len :0];
+                    if (pathname.len == 0) continue;
 
-                    const size = @intCast(usize, @maximum(lib.archive_entry_size(entry), 0));
-                    if (size > 0) {
-                        const slice = std.mem.span(pathname);
+                    const kind = C.kindFromMode(lib.archive_entry_filetype(entry));
 
-                        if (comptime log) {
-                            Output.prettyln(" {s}", .{pathname});
-                        }
+                    const slice = std.mem.span(pathname);
 
-                        const file = dir.createFileZ(pathname, .{ .truncate = true }) catch |err| brk: {
-                            switch (err) {
-                                error.FileNotFound => {
-                                    try dir.makePath(std.fs.path.dirname(slice) orelse return err);
-                                    break :brk try dir.createFileZ(pathname, .{ .truncate = true });
-                                },
-                                else => {
-                                    return err;
-                                },
-                            }
-                        };
-                        defer if (comptime close_handles) file.close();
-                        count += 1;
+                    if (comptime log) {
+                        Output.prettyln(" {s}", .{pathname});
+                    }
 
-                        _ = C.fchmod(file.handle, lib.archive_entry_perm(entry));
+                    count += 1;
 
-                        if (ctx) |ctx_| {
-                            const hash: u64 = if (ctx_.pluckers.len > 0)
-                                std.hash.Wyhash.hash(0, slice)
-                            else
-                                @as(u64, 0);
+                    switch (kind) {
+                        Kind.Directory => {
+                            const perm = lib.archive_entry_perm(entry);
+                            std.os.mkdiratZ(dir.fd, pathname, perm) catch |err| {
+                                if (err == error.PathAlreadyExists or err == error.NotDir) break;
+                                try dir.makePath(std.fs.path.dirname(slice) orelse return err);
+                                try std.os.mkdiratZ(dir.fd, pathname, perm);
+                            };
+                        },
+                        Kind.SymLink => {
+                            const link_target = lib.archive_entry_symlink(entry).?;
 
-                            if (comptime FilePathAppender != void) {
-                                var result = ctx.?.all_files.getOrPutAdapted(hash, Context.U64Context{}) catch unreachable;
-                                if (!result.found_existing) {
-                                    result.value_ptr.* = (try appender.appendMutable(@TypeOf(slice), slice)).ptr;
+                            std.os.symlinkatZ(link_target, dir.fd, pathname) catch |err| brk: {
+                                switch (err) {
+                                    error.FileNotFound => {
+                                        try dir.makePath(std.fs.path.dirname(slice) orelse return err);
+                                        break :brk try std.os.symlinkatZ(link_target, dir.fd, pathname);
+                                    },
+                                    else => {
+                                        return err;
+                                    },
+                                }
+                            };
+                        },
+                        Kind.File => {
+                            const file = dir.createFileZ(pathname, .{ .truncate = true, .mode = lib.archive_entry_perm(entry) }) catch |err| brk: {
+                                switch (err) {
+                                    error.FileNotFound => {
+                                        try dir.makePath(std.fs.path.dirname(slice) orelse return err);
+                                        break :brk try dir.createFileZ(pathname, .{ .truncate = true });
+                                    },
+                                    else => {
+                                        return err;
+                                    },
+                                }
+                            };
+                            defer if (comptime close_handles) file.close();
+
+                            const entry_size = @maximum(lib.archive_entry_size(entry), 0);
+                            const size = @intCast(usize, entry_size);
+                            if (size > 0) {
+                                if (ctx) |ctx_| {
+                                    const hash: u64 = if (ctx_.pluckers.len > 0)
+                                        std.hash.Wyhash.hash(0, slice)
+                                    else
+                                        @as(u64, 0);
+
+                                    if (comptime FilePathAppender != void) {
+                                        var result = ctx.?.all_files.getOrPutAdapted(hash, Context.U64Context{}) catch unreachable;
+                                        if (!result.found_existing) {
+                                            result.value_ptr.* = (try appender.appendMutable(@TypeOf(slice), slice)).ptr;
+                                        }
+                                    }
+
+                                    for (ctx_.pluckers) |*plucker_| {
+                                        if (plucker_.filename_hash == hash) {
+                                            try plucker_.contents.inflate(size);
+                                            plucker_.contents.list.expandToCapacity();
+                                            var read = lib.archive_read_data(archive, plucker_.contents.list.items.ptr, size);
+                                            try plucker_.contents.inflate(@intCast(usize, read));
+                                            plucker_.found = read > 0;
+                                            plucker_.fd = file.handle;
+                                            continue :loop;
+                                        }
+                                    }
+                                }
+                                // archive_read_data_into_fd reads in chunks of 1 MB
+                                // #define	MAX_WRITE	(1024 * 1024)
+                                if (size > 4096) {
+                                    C.preallocate_file(
+                                        file.handle,
+                                        0,
+                                        entry_size,
+                                    ) catch {};
+                                }
+
+                                var retries_remaining: u8 = 5;
+                                possibly_retry: while (retries_remaining != 0) : (retries_remaining -= 1) {
+                                    switch (lib.archive_read_data_into_fd(archive, file.handle)) {
+                                        lib.ARCHIVE_EOF => break :loop,
+                                        lib.ARCHIVE_OK => break :possibly_retry,
+                                        lib.ARCHIVE_RETRY => {
+                                            if (comptime log) {
+                                                Output.prettyErrorln("[libarchive] Error extracting {s}, retry {d} / {d}", .{ std.mem.span(pathname_), retries_remaining, 5 });
+                                            }
+                                        },
+                                        else => {
+                                            if (comptime log) {
+                                                const archive_error = std.mem.span(lib.archive_error_string(archive));
+                                                Output.prettyErrorln("[libarchive] Error extracting {s}: {s}", .{ std.mem.span(pathname_), archive_error });
+                                            }
+                                            return error.Fail;
+                                        },
+                                    }
                                 }
                             }
-
-                            for (ctx_.pluckers) |*plucker_| {
-                                if (plucker_.filename_hash == hash) {
-                                    try plucker_.contents.inflate(size);
-                                    plucker_.contents.list.expandToCapacity();
-                                    var read = lib.archive_read_data(archive, plucker_.contents.list.items.ptr, size);
-                                    try plucker_.contents.inflate(@intCast(usize, read));
-                                    plucker_.found = read > 0;
-                                    plucker_.fd = file.handle;
-                                    continue :loop;
-                                }
-                            }
-                        }
-
-                        var retries_remaining: u8 = 5;
-                        possibly_retry: while (retries_remaining != 0) : (retries_remaining -= 1) {
-                            switch (lib.archive_read_data_into_fd(archive, file.handle)) {
-                                lib.ARCHIVE_EOF => break :loop,
-                                lib.ARCHIVE_OK => break :possibly_retry,
-                                lib.ARCHIVE_RETRY => {
-                                    if (comptime log) {
-                                        Output.prettyErrorln("[libarchive] Error extracting {s}, retry {d} / {d}", .{ std.mem.span(pathname_), retries_remaining, 5 });
-                                    }
-                                },
-                                else => {
-                                    if (comptime log) {
-                                        const archive_error = std.mem.span(lib.archive_error_string(archive));
-                                        Output.prettyErrorln("[libarchive] Error extracting {s}: {s}", .{ std.mem.span(pathname_), archive_error });
-                                    }
-                                    return error.Fail;
-                                },
-                            }
-                        }
+                        },
+                        else => {},
                     }
                 },
             }

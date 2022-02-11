@@ -158,3 +158,16 @@ pub fn moveFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, dest
     _ = fchmod(out_handle, stat_.mode);
     _ = fchown(out_handle, stat_.uid, stat_.gid);
 }
+
+pub fn kindFromMode(mode: os.mode_t) std.fs.File.Kind {
+    return switch (mode & os.S.IFMT) {
+        os.S.IFBLK => std.fs.File.Kind.BlockDevice,
+        os.S.IFCHR => std.fs.File.Kind.CharacterDevice,
+        os.S.IFDIR => std.fs.File.Kind.Directory,
+        os.S.IFIFO => std.fs.File.Kind.NamedPipe,
+        os.S.IFLNK => std.fs.File.Kind.SymLink,
+        os.S.IFREG => std.fs.File.Kind.File,
+        os.S.IFSOCK => std.fs.File.Kind.UnixDomainSocket,
+        else => .Unknown,
+    };
+}

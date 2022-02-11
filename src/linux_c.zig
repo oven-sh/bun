@@ -276,3 +276,7 @@ pub const SystemErrno = enum(u8) {
         break :brk map;
     };
 };
+
+pub fn preallocate_file(fd: std.os.fd_t, offset: std.os.off_t, len: std.os.off_t) anyerror!void {
+    _ = std.os.linux.fallocate(fd, 0, @intCast(i64, offset), len);
+}

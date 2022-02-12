@@ -777,7 +777,7 @@ export interface Cache {
 }
 
 export interface Lockfile {
-  print: "yarn";
+  print?: "yarn";
   path: string;
   savePath: string;
   save: bool;

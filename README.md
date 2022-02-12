@@ -53,7 +53,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
 - [Troubleshooting](#troubleshooting)
 - [Reference](#reference)
   - [`bun install`](#bun-install)
-    - [`Configuring bun install`](#bun-install)
+    - [`Configuring bun install`](#configuring-bun-install-with-bunfigtoml)
   - [`bun run`](#bun-run)
   - [`bun create`](#bun-run)
   - [`bun bun`](#bun-bun)
@@ -643,9 +643,9 @@ To fix this issue:
 
 `bun install` is a fast package manager & npm client.
 
-`bun install` can be configured via `bunfig.toml` and environment variables.
+bun install can be configured via `bunfig.toml`, environment variables, and CLI flags.
 
-#### Configuring `bun install` with `bunfig.toml`
+#### Configuring bun install with `bunfig.toml`
 
 `bunfig.toml` is searched for in the following paths on `bun install`, `bun remove`, and `bun add`:
 
@@ -673,13 +673,14 @@ mybigcompany2 = { token = "123456" }
 mybigcompany3 = { token = "$npm_config_token" }
 
 # Setting username and password pass it along as a Basic Auth header by taking base64("username:password")
-mybigcompany4 = { username = "myusername", password = "$npm_config_password" }
-
-# You can set a token for a registry URL:
-mybigcompany5 = "https://:$NPM_CONFIG_TOKEN@registry.yarnpkg.com/"
+mybigcompany4 = { username = "myusername", password = "$npm_config_password", url = "https://registry.yarnpkg.com/" }
 
 # You can set username and password for a registry URL:
-mybigcompany6 = "https://username:password@registry.yarnpkg.com/"
+# This prduces the same result as the above
+mybigcompany5 = "https://username:password@registry.yarnpkg.com/"
+
+# You can set a token for a registry URL:
+mybigcompany6 = "https://:$NPM_CONFIG_TOKEN@registry.yarnpkg.com/"
 
 
 [install]
@@ -687,7 +688,7 @@ mybigcompany6 = "https://username:password@registry.yarnpkg.com/"
 # can be a URL string or an object
 registry = "https://registry.yarnpkg.com/"
 # as an object
-registry = { url = "https://registry.yarnpkg.com/", token = "123456" }
+#registry = { url = "https://registry.yarnpkg.com/", token = "123456" }
 
 # Install for production? This is the equivalent to the "--production" CLI argument
 production = false
@@ -735,6 +736,7 @@ path = "bun.lockb"
 
 # Path to save bun.lockb to
 savePath = "bun.lockb"
+
 ```
 
 #### Configuring with environment variables

@@ -293,6 +293,12 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (bun.get("globalBinDir")) |dir| {
+                        if (dir.asString()) |value| {
+                            install.global_bin_dir = value;
+                        }
+                    }
+
                     if (bun.get("logLevel")) |expr| {
                         try this.loadLogLevel(expr);
                     }

@@ -53,6 +53,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
 - [Troubleshooting](#troubleshooting)
 - [Reference](#reference)
   - [`bun install`](#bun-install)
+    - [`Configuring bun install`](#bun-install)
   - [`bun run`](#bun-run)
   - [`bun create`](#bun-run)
   - [`bun bun`](#bun-bun)
@@ -642,7 +643,103 @@ To fix this issue:
 
 `bun install` is a fast package manager & npm client.
 
-Environment variables
+`bun install` can be configured via `bunfig.toml` and environment variables.
+
+#### Configuring `bun install` with `bunfig.toml`
+
+`bunfig.toml` is searched for in the following paths on `bun install`, `bun remove`, and `bun add`:
+
+1. `$XDG_CONFIG_HOME/.bunfig.toml` or `$HOME/.bunfig.toml`
+2. `./bunfig.toml`
+
+<sup>If both are found, the results are merged together.</sup>
+
+Configuring with `bunfig.toml` is optional. bun tries to be zero configuration in general, but that's not always possible.
+
+```toml
+# Here's how to use scoped packages with bun install
+[install.scopes]
+# The key is the scope name
+# The value can be a URL string or an object
+# It can be a string or an object
+# The registry object's url is optional
+# If omitted, the default registry is used
+"@mybigcompany" = { token = "123456", url = "https://registry.mybigcompany.com" }
+
+# The "@" is optional
+mybigcompany2 = { token = "123456" }
+
+# Environment variables can be referenced as a string that starts with $ and it will be replaced
+mybigcompany3 = { token = "$npm_config_token" }
+
+# Setting username and password pass it along as a Basic Auth header by taking base64("username:password")
+mybigcompany4 = { username = "myusername", password = "$npm_config_password" }
+
+# You can set a token for a registry URL:
+mybigcompany5 = "https://:$NPM_CONFIG_TOKEN@registry.yarnpkg.com/"
+
+# You can set username and password for a registry URL:
+mybigcompany6 = "https://username:password@registry.yarnpkg.com/"
+
+
+[install]
+# Default registry
+# can be a URL string or an object
+registry = "https://registry.yarnpkg.com/"
+# as an object
+registry = { url = "https://registry.yarnpkg.com/", token = "123456" }
+
+# Install for production? This is the equivalent to the "--production" CLI argument
+production = false
+
+# Don't actually install
+dryRun = true
+
+# Install optionalDependencies (default: true)
+optional = true
+
+# Install local devDependencies (default: true)
+dev = true
+
+# Install peerDependencies (default: false)
+peer = false
+
+# When using `bun install -g`, install packages here
+globalDir = "~/.bun/install/global"
+
+# When using `bun install -g`, link package bins here
+globalBinDir = "~/.bun/bin"
+
+# cache-related configuration
+[install.cache]
+# The directory to use for the cache
+dir = "~/.bun/install/cache"
+
+# Don't load from the global cache.
+# Note: bun may still write to node_modules/.cache
+disable = false
+
+# Always resolve the latest versions from the registry
+disableManifest = false
+
+
+# Lockfile-related configuration
+[install.lockfile]
+
+# Print a yarn v1 lockfile
+# Note: it does not load the lockfile, it just converts bun.lockb into a yarn.lock
+print = "yarn"
+
+# Path to read bun.lockb from
+path = "bun.lockb"
+
+# Path to save bun.lockb to
+savePath = "bun.lockb"
+```
+
+#### Configuring with environment variables
+
+Environment variables have higher priority than `bunfig.toml`.
 
 | Name                             | Description                                                   |
 | -------------------------------- | ------------------------------------------------------------- |

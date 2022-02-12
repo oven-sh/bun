@@ -657,14 +657,11 @@ bun install can be configured via `bunfig.toml`, environment variables, and CLI 
 Configuring with `bunfig.toml` is optional. bun tries to be zero configuration in general, but that's not always possible.
 
 ```toml
-# Here's how to use scoped packages with bun install
+# Using scoped packages with bun install
 [install.scopes]
 # The key is the scope name
 # The value can be a URL string or an object
-# It can be a string or an object
-# The registry object's url is optional
-# If omitted, the default registry is used
-"@mybigcompany" = { token = "123456", url = "https://registry.mybigcompany.com" }
+"@mybigcompany" = { token = "123456", url = "https://registry.mybigcompany.com" # If omitted, the default registry is used }
 
 # The "@" is optional
 mybigcompany2 = { token = "123456" }
@@ -672,7 +669,7 @@ mybigcompany2 = { token = "123456" }
 # Environment variables can be referenced as a string that starts with $ and it will be replaced
 mybigcompany3 = { token = "$npm_config_token" }
 
-# Setting username and password pass it along as a Basic Auth header by taking base64("username:password")
+# Setting username and password turns it into a Basic Auth header by taking base64("username:password")
 mybigcompany4 = { username = "myusername", password = "$npm_config_password", url = "https://registry.yarnpkg.com/" }
 
 # You can set username and password for a registry URL:

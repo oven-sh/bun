@@ -222,7 +222,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
             Output.flush();
         }
     }
-    var folder_name = PackageManager.cachedNPMPackageFolderNamePrint(&abs_buf2, name, this.resolution.value.npm);
+    var folder_name = PackageManager.instance.cachedNPMPackageFolderNamePrint(&abs_buf2, name, this.resolution.value.npm);
     if (folder_name.len == 0 or (folder_name.len == 1 and folder_name[0] == '/')) @panic("Tried to delete root and stopped it");
     var cache_dir = this.cache_dir;
     cache_dir.deleteTree(folder_name) catch {};

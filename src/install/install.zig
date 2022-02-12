@@ -188,10 +188,10 @@ const NetworkTask = struct {
         this: *NetworkTask,
         name: string,
         allocator: std.mem.Allocator,
-        registry_url: URL,
+        scope: *const Npm.Registry.Scope,
         loaded_manifest: ?Npm.PackageManifest,
     ) !void {
-        this.url_buf = try std.fmt.allocPrint(allocator, "{s}://{s}/{s}", .{ registry_url.displayProtocol(), registry_url.hostname, name });
+        this.url_buf = try std.fmt.allocPrint(allocator, "{s}://{s}/{s}/{s}", .{ scope.url.displayProtocol(), scope.url.displayHostname(), strings.trim(scope.url.path, "/"), name });
         var last_modified: string = "";
         var etag: string = "";
         if (loaded_manifest) |manifest| {
@@ -200,6 +200,14 @@ const NetworkTask = struct {
         }
 
         var header_builder = HeaderBuilder{};
+
+        if (scope.token.len > 0) {
+            header_builder.count("Authorization", "");
+            header_builder.content.cap += "Bearer ".len + scope.token.len;
+        } else if (scope.auth.len > 0) {
+            header_builder.count("Authorization", "");
+            header_builder.content.cap += "Basic ".len + scope.auth.len;
+        }
 
         if (etag.len != 0) {
             header_builder.count("If-None-Match", etag);
@@ -213,6 +221,12 @@ const NetworkTask = struct {
                 header_builder.content.count(last_modified);
             }
             try header_builder.allocate(allocator);
+
+            if (scope.token.len > 0) {
+                header_builder.appendFmt("Authorization", "Bearer {s}", .{scope.token});
+            } else if (scope.auth.len > 0) {
+                header_builder.appendFmt("Authorization", "Basic {s}", .{scope.auth});
+            }
 
             if (etag.len != 0) {
                 header_builder.append("If-None-Match", etag);
@@ -280,9 +294,10 @@ const NetworkTask = struct {
         this: *NetworkTask,
         allocator: std.mem.Allocator,
         tarball: ExtractTarball,
+        scope: *const Npm.Registry.Scope,
     ) !void {
         this.url_buf = try ExtractTarball.buildURL(
-            tarball.registry,
+            scope.url.href,
             tarball.name,
             tarball.resolution.value.npm,
             PackageManager.instance.lockfile.buffers.string_bytes.items,
@@ -292,12 +307,34 @@ const NetworkTask = struct {
         this.response_buffer = try MutableString.init(allocator, 0);
         this.allocator = allocator;
 
+        var header_builder = HeaderBuilder{};
+
+        if (scope.token.len > 0) {
+            header_builder.count("Authorization", "");
+            header_builder.content.cap += "Bearer ".len + scope.token.len;
+        } else if (scope.auth.len > 0) {
+            header_builder.count("Authorization", "");
+            header_builder.content.cap += "Basic ".len + scope.auth.len;
+        }
+
+        var header_entries = header_builder.entries;
+        var header_buf: string = "";
+        if (header_builder.header_count > 0) {
+            try header_builder.allocate(allocator);
+
+            if (scope.token.len > 0) {
+                header_builder.appendFmt("Authorization", "Bearer {s}", .{scope.token});
+            } else if (scope.auth.len > 0) {
+                header_builder.appendFmt("Authorization", "Basic {s}", .{scope.auth});
+            }
+        }
+
         this.http = try AsyncHTTP.init(
             allocator,
             .GET,
             URL.parse(this.url_buf),
-            .{},
-            "",
+            header_entries,
+            header_buf,
             &this.response_buffer,
             &this.request_buffer,
             0,
@@ -1138,6 +1175,7 @@ pub const Lockfile = struct {
                 allocator,
                 &log,
                 env_loader,
+                null,
                 null,
             );
 
@@ -2246,7 +2284,7 @@ pub const Lockfile = struct {
                         return .done;
                     }
 
-                    const folder_path = PackageManager.cachedNPMPackageFolderName(this.name.slice(lockfile.buffers.string_bytes.items), this.resolution.value.npm);
+                    const folder_path = manager.cachedNPMPackageFolderName(this.name.slice(lockfile.buffers.string_bytes.items), this.resolution.value.npm);
                     if (manager.isFolderInCache(folder_path)) {
                         this.meta.preinstall_state = .done;
                         return this.meta.preinstall_state;
@@ -3147,7 +3185,7 @@ const PackageInstall = struct {
                     this.package_install = PackageInstall{
                         .cache_dir = ctx.cache_dir,
                         .progress = ctx.progress,
-                        .cache_dir_subpath = PackageManager.cachedNPMPackageFolderNamePrint(&cache_dir_subpath_buf, name, resolution.value.npm),
+                        .cache_dir_subpath = PackageManager.instance.cachedNPMPackageFolderNamePrint(&cache_dir_subpath_buf, name, resolution.value.npm),
                         .destination_dir = this.destination_dir,
                         .destination_dir_subpath = destination_dir_subpath,
                         .destination_dir_subpath_buf = &destination_dir_subpath_buf,
@@ -3704,8 +3742,6 @@ pub const PackageManager = struct {
     root_package_json_file: std.fs.File,
     root_dependency_list: Lockfile.DependencySlice = .{},
 
-    registry: Npm.Registry = Npm.Registry{},
-
     thread_pool: ThreadPool,
 
     manifests: PackageManifestMap = PackageManifestMap{},
@@ -3737,6 +3773,15 @@ pub const PackageManager = struct {
         IdentityContext(u32),
         80,
     );
+
+    pub fn scopeForPackageName(this: *const PackageManager, name: string) *const Npm.Registry.Scope {
+        if (name.len == 0 or name[0] != '@') return &this.options.scope;
+        return this.options.registries.getPtr(
+            Npm.Registry.Scope.hash(
+                Npm.Registry.Scope.getName(name),
+            ),
+        ) orelse &this.options.scope;
+    }
 
     pub fn setNodeName(
         this: *PackageManager,
@@ -3883,12 +3928,40 @@ pub const PackageManager = struct {
     }
 
     // TODO: normalize to alphanumeric
-    pub fn cachedNPMPackageFolderName(name: string, version: Semver.Version) stringZ {
-        return cachedNPMPackageFolderNamePrint(&cached_package_folder_name_buf, name, version);
+    pub fn cachedNPMPackageFolderNamePrint(this: *const PackageManager, buf: []u8, name: string, version: Semver.Version) stringZ {
+        const scope = this.scopeForPackageName(name);
+
+        const basename = cachedNPMPackageFolderPrintBasename(buf, name, version);
+
+        if (scope.name.len == 0 and !this.options.did_override_default_scope) {
+            return basename;
+        }
+
+        const spanned = std.mem.span(basename);
+        var available = buf[spanned.len..];
+        var end: []u8 = undefined;
+        if (scope.url.hostname.len > 32 or available.len < 64) {
+            const visible_hostname = scope.url.hostname[0..@minimum(scope.url.hostname.len, 12)];
+            end = std.fmt.bufPrint(available, "@@{s}__{x}", .{ visible_hostname, String.Builder.stringHash(scope.url.href) }) catch unreachable;
+        } else {
+            end = std.fmt.bufPrint(available, "@@{s}", .{scope.url.hostname}) catch unreachable;
+        }
+
+        buf[spanned.len + end.len] = 0;
+        var result: [:0]u8 = buf[0 .. spanned.len + end.len :0];
+        return result;
+    }
+
+    pub fn cachedNPMPackageFolderBasename(name: string, version: Semver.Version) stringZ {
+        return cachedNPMPackageFolderPrintBasename(&cached_package_folder_name_buf, name, version);
+    }
+
+    pub fn cachedNPMPackageFolderName(this: *const PackageManager, name: string, version: Semver.Version) stringZ {
+        return this.cachedNPMPackageFolderNamePrint(&cached_package_folder_name_buf, name, version);
     }
 
     // TODO: normalize to alphanumeric
-    pub fn cachedNPMPackageFolderNamePrint(buf: []u8, name: string, version: Semver.Version) stringZ {
+    pub fn cachedNPMPackageFolderPrintBasename(buf: []u8, name: string, version: Semver.Version) stringZ {
         if (!version.tag.hasPre() and !version.tag.hasBuild()) {
             return std.fmt.bufPrintZ(buf, "{s}@{d}.{d}.{d}", .{ name, version.major, version.minor, version.patch }) catch unreachable;
         } else if (version.tag.hasPre() and version.tag.hasBuild()) {
@@ -4028,6 +4101,8 @@ pub const PackageManager = struct {
             .allocator = this.allocator,
         };
 
+        const scope = this.scopeForPackageName(this.lockfile.str(package.name));
+
         try network_task.forTarball(
             this.allocator,
             ExtractTarball{
@@ -4044,11 +4119,12 @@ pub const PackageManager = struct {
                 .resolution = package.resolution,
                 .cache_dir = this.getCacheDirectory(),
                 .temp_dir = this.getTemporaryDirectory(),
-                .registry = this.registry.url.href,
+                .registry = scope.url.href,
                 .package_id = package.meta.id,
                 .extracted_file_count = package.meta.file_count,
                 .integrity = package.meta.integrity,
             },
+            scope,
         );
 
         return network_task;
@@ -4098,7 +4174,7 @@ pub const PackageManager = struct {
                 .task_id = task_id,
                 .allocator = this.allocator,
             };
-            try network_task.forManifest(name, this.allocator, this.registry.url, loaded_manifest);
+            try network_task.forManifest(name, this.allocator, this.scopeForPackageName(name), loaded_manifest);
             this.enqueueNetworkTask(network_task);
         }
 
@@ -4403,7 +4479,12 @@ pub const PackageManager = struct {
                                     .task_id = task_id,
                                     .allocator = this.allocator,
                                 };
-                                try network_task.forManifest(this.lockfile.str(name), this.allocator, this.registry.url, loaded_manifest);
+                                try network_task.forManifest(
+                                    this.lockfile.str(name),
+                                    this.allocator,
+                                    this.scopeForPackageName(this.lockfile.str(name)),
+                                    loaded_manifest,
+                                );
                                 this.enqueueNetworkTask(network_task);
                             }
 
@@ -4829,6 +4910,7 @@ pub const PackageManager = struct {
 
         lockfile_path: stringZ = Lockfile.default_filename,
         save_lockfile_path: stringZ = Lockfile.default_filename,
+        did_override_default_scope: bool = false,
         scope: Npm.Registry.Scope = .{
             .name = "",
             .token = "",
@@ -4906,7 +4988,91 @@ pub const PackageManager = struct {
             log: *logger.Log,
             env_loader: *DotEnv.Loader,
             cli_: ?CommandLineArguments,
+            bun_install_: ?*Api.BunInstall,
         ) !void {
+            this.save_lockfile_path = this.lockfile_path;
+
+            defer {
+                this.did_override_default_scope = !strings.eqlComptime(this.scope.url.href, "https://registry.npmjs.org/");
+            }
+            if (bun_install_) |bun_install| {
+                if (bun_install.default_registry) |*registry| {
+                    if (registry.url.len == 0) {
+                        registry.url = "https://registry.npmjs.org/";
+                    }
+
+                    this.scope = try Npm.Registry.Scope.fromAPI("", registry.*, allocator, env_loader);
+                }
+
+                if (bun_install.scoped) |scoped| {
+                    for (scoped.scopes) |name, i| {
+                        try this.registries.put(allocator, Npm.Registry.Scope.hash(name), try Npm.Registry.Scope.fromAPI(name, scoped.registries[i], allocator, env_loader));
+                    }
+                }
+
+                if (bun_install.disable_cache orelse false) {
+                    this.enable.cache = false;
+                }
+
+                if (bun_install.disable_manifest_cache orelse false) {
+                    this.enable.manifest_cache = false;
+                }
+
+                if (bun_install.force orelse false) {
+                    this.enable.manifest_cache_control = false;
+                    this.enable.force_install = true;
+                }
+
+                if (bun_install.native_bin_links.len > 0) {
+                    var buf = try allocator.alloc(u64, bun_install.native_bin_links.len);
+                    for (bun_install.native_bin_links) |name, i| {
+                        buf[i] = String.Builder.stringHash(name);
+                    }
+                    this.native_bin_link_allowlist = buf;
+                }
+
+                if (bun_install.production) |production| {
+                    if (production) {
+                        this.local_package_features.dev_dependencies = false;
+                        this.enable.fail_early = true;
+                        this.enable.frozen_lockfile = true;
+                    }
+                }
+
+                if (bun_install.save_yarn_lockfile orelse false) {
+                    this.do.save_yarn_lock = true;
+                }
+
+                if (bun_install.save_lockfile) |save_lockfile| {
+                    this.do.save_lockfile = save_lockfile;
+                }
+
+                if (bun_install.save_dev) |save| {
+                    this.local_package_features.dev_dependencies = save;
+                }
+
+                if (bun_install.save_peer) |save| {
+                    this.remote_package_features.peer_dependencies = save;
+                }
+
+                if (bun_install.save_optional) |save| {
+                    this.remote_package_features.optional_dependencies = save;
+                    this.local_package_features.optional_dependencies = save;
+                }
+
+                if (bun_install.lockfile_path) |save| {
+                    if (save.len > 0) {
+                        this.lockfile_path = try allocator.dupeZ(u8, save);
+                        this.save_lockfile_path = this.lockfile_path;
+                    }
+                }
+
+                if (bun_install.save_lockfile_path) |save| {
+                    if (save.len > 0) {
+                        this.save_lockfile_path = try allocator.dupeZ(u8, save);
+                    }
+                }
+            }
 
             // technically, npm_config is case in-sensitive
             // load_registry:
@@ -4925,7 +5091,11 @@ pub const PackageManager = struct {
                                 (strings.startsWith(registry_, "https://") or
                                 strings.startsWith(registry_, "http://")))
                             {
-                                this.scope.url = URL.parse(registry_);
+                                const prev_scope = this.scope;
+                                var api_registry = std.mem.zeroes(Api.NpmRegistry);
+                                api_registry.url = registry_;
+                                api_registry.token = prev_scope.token;
+                                this.scope = try Npm.Registry.Scope.fromAPI("", api_registry, allocator, env_loader);
                                 did_set = true;
                                 // stage1 bug: break inside inline is broken
                                 // break :load_registry;
@@ -4973,14 +5143,8 @@ pub const PackageManager = struct {
                 }
             }
 
-            this.save_lockfile_path = this.lockfile_path;
-
             if (env_loader.map.get("BUN_CONFIG_LOCKFILE_SAVE_PATH")) |save_lockfile_path| {
                 this.save_lockfile_path = try allocator.dupeZ(u8, save_lockfile_path);
-            }
-
-            if (env_loader.map.get("BUN_CONFIG_NO_CLONEFILE") != null) {
-                PackageInstall.supported_method = .copyfile;
             }
 
             if (env_loader.map.get("BUN_CONFIG_YARN_LOCKFILE") != null) {
@@ -5039,9 +5203,17 @@ pub const PackageManager = struct {
                 }
             }
 
-            this.do.save_lockfile = strings.eqlComptime((env_loader.map.get("BUN_CONFIG_SKIP_SAVE_LOCKFILE") orelse "0"), "0");
-            this.do.load_lockfile = strings.eqlComptime((env_loader.map.get("BUN_CONFIG_SKIP_LOAD_LOCKFILE") orelse "0"), "0");
-            this.do.install_packages = strings.eqlComptime((env_loader.map.get("BUN_CONFIG_SKIP_INSTALL_PACKAGES") orelse "0"), "0");
+            if (env_loader.map.get("BUN_CONFIG_SKIP_SAVE_LOCKFILE")) |check_bool| {
+                this.do.save_lockfile = strings.eqlComptime(check_bool, "0");
+            }
+
+            if (env_loader.map.get("BUN_CONFIG_SKIP_LOAD_LOCKFILE")) |check_bool| {
+                this.do.load_lockfile = strings.eqlComptime(check_bool, "0");
+            }
+
+            if (env_loader.map.get("BUN_CONFIG_SKIP_INSTALL_PACKAGES")) |check_bool| {
+                this.do.install_packages = strings.eqlComptime(check_bool, "0");
+            }
 
             if (cli_) |cli| {
                 if (cli.no_save) {
@@ -5101,6 +5273,7 @@ pub const PackageManager = struct {
                 if (cli.production) {
                     this.local_package_features.dev_dependencies = false;
                     this.enable.fail_early = true;
+                    this.enable.frozen_lockfile = true;
                 }
 
                 if (cli.force) {
@@ -5125,6 +5298,7 @@ pub const PackageManager = struct {
             manifest_cache_control: bool = true,
             cache: bool = true,
             fail_early: bool = false,
+            frozen_lockfile: bool = false,
 
             /// Disabled because it doesn't actually reduce the number of packages we end up installing
             /// Probably need to be a little smarter
@@ -5459,11 +5633,8 @@ pub const PackageManager = struct {
             ctx.log,
             env_loader,
             cli,
+            ctx.install,
         );
-        manager.registry.url = manager.options.scope.url;
-        manager.registry.scopes = manager.options.registries;
-        manager.registry.token = manager.options.scope.token;
-        manager.registry.auth = manager.options.scope.auth;
 
         manager.timestamp = @truncate(u32, @intCast(u64, @maximum(std.time.timestamp(), 0)));
         return manager;
@@ -5483,8 +5654,6 @@ pub const PackageManager = struct {
 
     const ParamType = clap.Param(clap.Help);
     pub const install_params_ = [_]ParamType{
-        clap.parseParam("--registry <STR>                  Change default registry (default: $BUN_CONFIG_REGISTRY || $npm_config_registry)") catch unreachable,
-        clap.parseParam("--token <STR>                     Authentication token used for npm registry requests (default: $npm_config_token)") catch unreachable,
         clap.parseParam("-y, --yarn                        Write a yarn.lock file (yarn v1)") catch unreachable,
         clap.parseParam("-p, --production                  Don't install devDependencies") catch unreachable,
         clap.parseParam("--no-save                         Don't save a lockfile") catch unreachable,
@@ -5618,10 +5787,6 @@ pub const PackageManager = struct {
             //     }
             // }
 
-            if (args.option("--token")) |token| {
-                cli.token = token;
-            }
-
             if (args.option("--lockfile")) |lockfile| {
                 cli.lockfile = lockfile;
             }
@@ -5642,10 +5807,6 @@ pub const PackageManager = struct {
                     final_path = buf[0..cwd_.len :0];
                 }
                 try std.os.chdirZ(final_path);
-            }
-
-            if (args.option("--registry")) |registry_| {
-                cli.registry = registry_;
             }
 
             const specified_backend: ?PackageInstall.Method = brk: {
@@ -6248,7 +6409,7 @@ pub const PackageManager = struct {
                     var installer = PackageInstall{
                         .cache_dir = this.manager.getCacheDirectory(),
                         .progress = this.progress,
-                        .cache_dir_subpath = PackageManager.cachedNPMPackageFolderName(name, resolution.value.npm),
+                        .cache_dir_subpath = this.manager.cachedNPMPackageFolderName(name, resolution.value.npm),
                         .destination_dir = this.node_modules_folder,
                         .destination_dir_subpath = destination_dir_subpath,
                         .destination_dir_subpath_buf = &this.destination_dir_subpath_buf,

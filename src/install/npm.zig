@@ -28,6 +28,8 @@ const Dependency = @import("./dependency.zig");
 
 const VersionSlice = @import("./install.zig").VersionSlice;
 const ObjectPool = @import("../pool.zig").ObjectPool;
+const Api = @import("../api/schema.zig").Api;
+const DotEnv = @import("../env_loader.zig");
 
 const Npm = @This();
 
@@ -52,6 +54,87 @@ pub const Registry = struct {
         //  :_auth
         url: URL,
         token: string = "",
+
+        pub fn hash(name: string) u64 {
+            return String.Builder.stringHash(name);
+        }
+
+        pub fn getName(name: string) string {
+            if (name.len == 0 or name[0] != '@') return name;
+
+            if (strings.indexOfChar(name, '/')) |i| {
+                return name[1..i];
+            }
+
+            return name[1..];
+        }
+
+        pub fn fromAPI(name: string, registry_: Api.NpmRegistry, allocator: std.mem.Allocator, env: *DotEnv.Loader) !Scope {
+            var registry = registry_;
+            var url = URL.parse(registry.url);
+            var auth: string = "";
+
+            if (registry.token.len == 0) {
+                outer: {
+                    if (registry.username.len == 0 and registry.password.len == 0) {
+                        var pathname = url.pathname;
+                        defer {
+                            url.pathname = pathname;
+                            url.path = pathname;
+                        }
+
+                        while (std.mem.lastIndexOfScalar(u8, pathname, ':')) |colon| {
+                            const segment = pathname[colon..];
+                            pathname = pathname[0..colon];
+                            if (pathname.len > 1 and pathname[pathname.len - 1] == '/') {
+                                pathname = pathname[0 .. pathname.len - 1];
+                            }
+
+                            const eql_i = std.mem.indexOfScalar(u8, segment, '=') orelse continue;
+                            var value = segment[eql_i + 1 ..];
+
+                            if (strings.eqlComptime(segment, "_authToken")) {
+                                registry.token = value;
+                                break :outer;
+                            }
+
+                            if (strings.eqlComptime(segment, "_auth")) {
+                                auth = value;
+                                break :outer;
+                            }
+
+                            if (strings.eqlComptime(segment, "username")) {
+                                registry.username = value;
+                                continue;
+                            }
+
+                            if (strings.eqlComptime(segment, "_password")) {
+                                registry.password = value;
+                                continue;
+                            }
+                        }
+                    }
+
+                    registry.username = env.getAuto(registry.username);
+                    registry.password = env.getAuto(registry.password);
+
+                    if (registry.username.len > 0 and registry.password.len > 0) {
+                        var output_buf = try allocator.alloc(u8, registry.username.len + registry.password.len + 1 + std.base64.standard.Encoder.calcSize(registry.username.len + registry.password.len + 1));
+                        var input_buf = output_buf[0 .. registry.username.len + registry.password.len + 1];
+                        @memcpy(input_buf.ptr, registry.username.ptr, registry.username.len);
+                        input_buf[registry.username.len] = ':';
+                        @memcpy(input_buf[registry.username.len + 1 ..].ptr, registry.password.ptr, registry.password.len);
+                        output_buf = output_buf[input_buf.len..];
+                        auth = std.base64.standard.Encoder.encode(output_buf, input_buf);
+                        break :outer;
+                    }
+                }
+            }
+
+            registry.token = env.getAuto(registry.token);
+
+            return Scope{ .name = name, .url = url, .token = registry.token, .auth = auth };
+        }
     };
 
     pub const Map = std.HashMapUnmanaged(u64, Scope, IdentityContext(u64), 80);

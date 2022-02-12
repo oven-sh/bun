@@ -39,5 +39,8 @@ pub fn fmt(this: *StringBuilder, comptime str: string, args: anytype) string {
     var buf = this.ptr.?[this.len..this.cap];
     const out = std.fmt.bufPrint(buf, str, args) catch unreachable;
     this.len += out.len;
+
+    assert(this.len <= this.cap);
+
     return out;
 }

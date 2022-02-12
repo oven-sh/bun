@@ -659,11 +659,12 @@ Configuring with `bunfig.toml` is optional. bun tries to be zero configuration i
 ```toml
 # Using scoped packages with bun install
 [install.scopes]
-# The key is the scope name
-# The value can be a URL string or an object
-"@mybigcompany" = { token = "123456", url = "https://registry.mybigcompany.com" # If omitted, the default registry is used }
 
-# The "@" is optional
+# Scope name      The value can be a URL string or an object
+"@mybigcompany" = { token = "123456", url = "https://registry.mybigcompany.com" }
+# URL is optional and fallsback to the default registry
+
+# The "@" in the scope is optional
 mybigcompany2 = { token = "123456" }
 
 # Environment variables can be referenced as a string that starts with $ and it will be replaced
@@ -678,7 +679,6 @@ mybigcompany5 = "https://username:password@registry.yarnpkg.com/"
 
 # You can set a token for a registry URL:
 mybigcompany6 = "https://:$NPM_CONFIG_TOKEN@registry.yarnpkg.com/"
-
 
 [install]
 # Default registry
@@ -734,6 +734,52 @@ path = "bun.lockb"
 # Path to save bun.lockb to
 savePath = "bun.lockb"
 
+```
+
+If it's easier to read as TypeScript types:
+
+```ts
+export interface Root {
+  install: Install;
+}
+
+export interface Install {
+  scopes: Scopes;
+  registry: Registry;
+  production: boolean;
+  dryRun: boolean;
+  optional: boolean;
+  dev: boolean;
+  peer: boolean;
+  globalDir: string;
+  globalBinDir: string;
+  cache: Cache;
+  lockfile: Lockfile;
+  logLevel: "verbose" | "error" | "warn";
+}
+
+type Registry =
+  | string
+  | {
+      url?: string;
+      token?: string;
+      username?: string;
+      password?: string;
+    };
+
+type Scopes = Record<string, Registry>;
+
+export interface Cache {
+  dir: string;
+  disable: boolean;
+  disableManifest: boolean;
+}
+
+export interface Lockfile {
+  print: string;
+  path: string;
+  savePath: string;
+}
 ```
 
 #### Configuring with environment variables

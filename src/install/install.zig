@@ -400,7 +400,7 @@ pub const Lockfile = struct {
 
     // Serialized data
     /// The version of the lockfile format, intended to prevent data corruption for format changes.
-    format: FormatVersion = .v0,
+    format: FormatVersion = .v1,
 
     /// 
     packages: Lockfile.Package.List = Lockfile.Package.List{},
@@ -1074,6 +1074,8 @@ pub const Lockfile = struct {
         options: PackageManager.Options,
         successfully_installed: ?Bitset = null,
 
+        updates: []const PackageManager.UpdateRequest = &[_]PackageManager.UpdateRequest{},
+
         pub const Format = enum { yarn };
 
         var lockfile_path_buf1: [std.fs.MAX_PATH_BYTES]u8 = undefined;
@@ -1202,20 +1204,41 @@ pub const Lockfile = struct {
 
                 var slice = this.lockfile.packages.slice();
                 const names: []const String = slice.items(.name);
+                const names_hashes: []const PackageNameHash = slice.items(.name_hash);
+                const bins: []const Bin = slice.items(.bin);
                 const resolved: []const Resolution = slice.items(.resolution);
                 if (names.len == 0) return;
                 const resolutions_list = slice.items(.resolutions);
                 const resolutions_buffer = this.lockfile.buffers.resolutions.items;
                 const string_buf = this.lockfile.buffers.string_bytes.items;
+                var id_map = try default_allocator.alloc(PackageID, this.updates.len);
+                std.mem.set(PackageID, id_map, std.math.maxInt(PackageID));
+                defer if (id_map.len > 0) default_allocator.free(id_map);
 
                 visited.set(0);
                 const end = @truncate(PackageID, names.len);
 
                 if (this.successfully_installed) |installed| {
-                    for (resolutions_list[0].get(resolutions_buffer)) |package_id| {
-                        if (package_id > end or !installed.isSet(package_id)) continue;
+                    outer: for (resolutions_list[0].get(resolutions_buffer)) |package_id| {
+                        if (package_id > end) continue;
+                        const is_new = installed.isSet(package_id);
 
                         const package_name = names[package_id].slice(string_buf);
+
+                        if (this.updates.len > 0) {
+                            const name_hash = names_hashes[package_id];
+                            for (this.updates) |update, update_id| {
+                                if (update.name.len == package_name.len and name_hash == update.name_hash) {
+                                    if (id_map[update_id] == std.math.maxInt(PackageID)) {
+                                        id_map[update_id] = @truncate(PackageID, package_id);
+                                    }
+
+                                    continue :outer;
+                                }
+                            }
+                        }
+
+                        if (!is_new) continue;
 
                         const fmt = comptime brk: {
                             if (enable_ansi_colors) {
@@ -1234,8 +1257,21 @@ pub const Lockfile = struct {
                         );
                     }
                 } else {
-                    for (names) |name, package_id| {
+                    outer: for (names) |name, package_id| {
                         const package_name = name.slice(string_buf);
+
+                        if (this.updates.len > 0) {
+                            const name_hash = names_hashes[package_id];
+                            for (this.updates) |update, update_id| {
+                                if (update.name.len == package_name.len and name_hash == update.name_hash) {
+                                    if (id_map[update_id] == std.math.maxInt(PackageID)) {
+                                        id_map[update_id] = @truncate(PackageID, package_id);
+                                    }
+
+                                    continue :outer;
+                                }
+                            }
+                        }
 
                         try writer.print(
                             comptime Output.prettyFmt(" <r><b>{s}<r><d>@<b>{}<r>\n", enable_ansi_colors),
@@ -1245,6 +1281,71 @@ pub const Lockfile = struct {
                             },
                         );
                     }
+                }
+
+                if (this.updates.len > 0) {
+                    try writer.writeAll("\n");
+                }
+
+                for (this.updates) |_, update_id| {
+                    const package_id = id_map[update_id];
+                    if (package_id == std.math.maxInt(PackageID)) continue;
+                    const name = names[package_id];
+                    const bin = bins[package_id];
+
+                    const package_name = name.slice(string_buf);
+
+                    switch (bin.tag) {
+                        .none, .map, .dir => {
+                            const fmt = comptime brk: {
+                                if (enable_ansi_colors) {
+                                    break :brk Output.prettyFmt("<r> <green>installed<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
+                                } else {
+                                    break :brk Output.prettyFmt("<r> installed {s}<r><d>@{}<r>\n", enable_ansi_colors);
+                                }
+                            };
+
+                            try writer.print(
+                                comptime Output.prettyFmt(fmt, enable_ansi_colors),
+                                .{
+                                    package_name,
+                                    resolved[package_id].fmt(string_buf),
+                                },
+                            );
+                        },
+                        .file, .named_file => {
+                            var iterator = Bin.NamesIterator{ .bin = bin, .package_name = name, .string_buffer = string_buf };
+
+                            const fmt = comptime brk: {
+                                if (enable_ansi_colors) {
+                                    break :brk Output.prettyFmt("<r> <green>installed<r> {s}<r><d>@{}<r> with binaries:\n", enable_ansi_colors);
+                                } else {
+                                    break :brk Output.prettyFmt("<r> installed {s}<r><d>@{}<r> with binaries:\n", enable_ansi_colors);
+                                }
+                            };
+
+                            try writer.print(
+                                comptime Output.prettyFmt(fmt, enable_ansi_colors),
+                                .{
+                                    package_name,
+                                    resolved[package_id].fmt(string_buf),
+                                },
+                            );
+
+                            while (iterator.next() catch null) |bin_name| {
+                                try writer.print(
+                                    comptime Output.prettyFmt("<r>  <d>- <r><b>{s}<r>\n", enable_ansi_colors),
+                                    .{
+                                        bin_name,
+                                    },
+                                );
+                            }
+                        },
+                    }
+                }
+
+                if (this.updates.len > 0) {
+                    try writer.writeAll("\n");
                 }
             }
         };
@@ -1430,7 +1531,7 @@ pub const Lockfile = struct {
     };
 
     pub fn verifyData(this: *Lockfile) !void {
-        std.debug.assert(this.format == .v0);
+        std.debug.assert(this.format == Lockfile.FormatVersion.current);
         {
             var i: usize = 0;
             while (i < this.packages.len) : (i += 1) {
@@ -1552,7 +1653,7 @@ pub const Lockfile = struct {
 
     pub fn initEmpty(this: *Lockfile, allocator: std.mem.Allocator) !void {
         this.* = Lockfile{
-            .format = .v0,
+            .format = Lockfile.FormatVersion.current,
             .packages = Lockfile.Package.List{},
             .buffers = Buffers{},
             .package_index = PackageIndex.Map.initContext(allocator, .{}),
@@ -1865,7 +1966,9 @@ pub const Lockfile = struct {
 
     pub const FormatVersion = enum(u32) {
         v0,
+        v1,
         _,
+        pub const current = FormatVersion.v1;
     };
 
     pub const DependencySlice = ExternalSlice(Dependency);
@@ -2927,6 +3030,7 @@ pub const Lockfile = struct {
             try writer.writeAll(alignment_bytes_to_repeat_buffer);
 
             _ = try std.os.pwrite(stream.handle, std.mem.asBytes(&end), pos);
+            try std.os.ftruncate(stream.handle, try stream.getPos());
         }
         pub fn load(
             lockfile: *Lockfile,
@@ -2943,10 +3047,10 @@ pub const Lockfile = struct {
             }
 
             var format = try reader.readIntLittle(u32);
-            if (format != @enumToInt(Lockfile.FormatVersion.v0)) {
-                return error.InvalidLockfileVersion;
+            if (format != @enumToInt(Lockfile.FormatVersion.current)) {
+                return error.@"Outdated lockfile version";
             }
-            lockfile.format = .v0;
+            lockfile.format = Lockfile.FormatVersion.current;
             lockfile.allocator = allocator;
             const total_buffer_size = try reader.readIntLittle(u64);
             if (total_buffer_size > stream.buffer.len) {
@@ -4909,6 +5013,7 @@ pub const PackageManager = struct {
         log_level: LogLevel = LogLevel.default,
         global: bool = false,
 
+        global_bin_dir: std.fs.Dir = std.fs.Dir{ .fd = std.math.maxInt(std.os.fd_t) },
         /// destination directory to link bins into
         // must be a variable due to global installs and bunx
         bin_path: stringZ = "node_modules/.bin",
@@ -4942,6 +5047,17 @@ pub const PackageManager = struct {
         //      2. Has a platform and/or os specified, which evaluates to not disabled
         native_bin_link_allowlist: []const PackageNameHash = &default_native_bin_link_allowlist,
         max_retry_count: u16 = 5,
+
+        pub fn isBinPathInPATH(this: *const Options) bool {
+            // must be absolute
+            if (this.bin_path[0] != std.fs.path.sep) return false;
+            var tokenizer = std.mem.split(std.os.getenvZ("PATH") orelse "", ":");
+            const spanned = std.mem.span(this.bin_path);
+            while (tokenizer.next()) |token| {
+                if (strings.eql(token, spanned)) return true;
+            }
+            return false;
+        }
 
         const default_native_bin_link_allowlist = [_]PackageNameHash{
             String.Builder.stringHash("esbuild"),
@@ -5009,12 +5125,47 @@ pub const PackageManager = struct {
 
             if (std.os.getenvZ("XDG_CACHE_HOME") orelse std.os.getenvZ("HOME")) |home_dir| {
                 var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-                var parts = [_]string{ "./bun", "install", "global" };
+                var parts = [_]string{ ".bun", "install", "global" };
                 var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
                 return try std.fs.cwd().makeOpenPath(path, .{ .iterate = true });
             }
 
             return error.@"No global directory found";
+        }
+
+        pub fn openGlobalBinDir(opts_: ?*const Api.BunInstall) !std.fs.Dir {
+            if (std.os.getenvZ("BUN_INSTALL_BIN")) |home_dir| {
+                return try std.fs.cwd().makeOpenPath(home_dir, .{ .iterate = true });
+            }
+
+            if (opts_) |opts| {
+                if (opts.global_bin_dir) |home_dir| {
+                    if (home_dir.len > 0) {
+                        return try std.fs.cwd().makeOpenPath(home_dir, .{ .iterate = true });
+                    }
+                }
+            }
+
+            if (std.os.getenvZ("BUN_INSTALL")) |home_dir| {
+                var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                var parts = [_]string{
+                    "bin",
+                };
+                var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
+                return try std.fs.cwd().makeOpenPath(path, .{ .iterate = true });
+            }
+
+            if (std.os.getenvZ("XDG_CACHE_HOME") orelse std.os.getenvZ("HOME")) |home_dir| {
+                var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                var parts = [_]string{
+                    ".bun",
+                    "bin",
+                };
+                var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
+                return try std.fs.cwd().makeOpenPath(path, .{ .iterate = true });
+            }
+
+            return error.@"Missing global bin directory: try setting $BUN_INSTALL";
         }
 
         pub fn load(
@@ -5532,7 +5683,7 @@ pub const PackageManager = struct {
         }
     };
 
-    fn init(
+    pub fn init(
         ctx: Command.Context,
         package_json_file_: ?std.fs.File,
         comptime params: []const ParamType,
@@ -5605,7 +5756,9 @@ pub const PackageManager = struct {
         std.mem.copy(u8, package_json_cwd_buf[fs.top_level_dir.len..], "package.json");
 
         var entries_option = try fs.fs.readDirectory(fs.top_level_dir, null);
-        var options = Options{};
+        var options = Options{
+            .global = cli.global,
+        };
 
         var env_loader: *DotEnv.Loader = brk: {
             var map = try ctx.allocator.create(DotEnv.Map);
@@ -5737,7 +5890,7 @@ pub const PackageManager = struct {
         clap.parseParam("<POS> ...                         \"name\" of packages to remove from package.json") catch unreachable,
     };
 
-    const CommandLineArguments = struct {
+    pub const CommandLineArguments = struct {
         registry: string = "",
         cache_dir: string = "",
         lockfile: string = "",
@@ -5890,6 +6043,7 @@ pub const PackageManager = struct {
 
     const UpdateRequest = struct {
         name: string = "",
+        name_hash: PackageNameHash = 0,
         resolved_version_buf: string = "",
         version: Dependency.Version = Dependency.Version{},
         version_buf: []const u8 = "",
@@ -5975,7 +6129,7 @@ pub const PackageManager = struct {
                     const sliced = SlicedString.init(request.version_buf, request.version_buf);
                     request.version = Dependency.parse(allocator, request.version_buf, &sliced, log) orelse Dependency.Version{};
                 }
-
+                request.name_hash = String.Builder.stringHash(request.name);
                 update_requests.append(request) catch break;
             }
 
@@ -6067,10 +6221,23 @@ pub const PackageManager = struct {
                         \\  bun add {s}
                         \\  bun add {s}
                         \\  bun add {s}
-                        \\
-                        \\<d>Shorthand: <b>bun a<r>
+                        \\  bun add -g git-peek
                         \\
                     , .{ examples_to_print[0], examples_to_print[1], examples_to_print[2] });
+
+                    if (manager.options.global) {
+                        Output.prettyErrorln(
+                            \\
+                            \\<d>Shorthand: <b>bun a -g<r>
+                            \\
+                        , .{});
+                    } else {
+                        Output.prettyErrorln(
+                            \\
+                            \\<d>Shorthand: <b>bun a<r>
+                            \\
+                        , .{});
+                    }
                     Output.flush();
                     Global.exit(0);
                 },
@@ -6093,13 +6260,25 @@ pub const PackageManager = struct {
                         \\  bun remove {s} {s}
                         \\  bun remove {s}
                         \\
-                        \\<d>Shorthand: <b>bun rm<r>
-                        \\
                     , .{
                         examples_to_print[0],
                         examples_to_print[1],
                         examples_to_print[2],
                     });
+                    if (manager.options.global) {
+                        Output.prettyErrorln(
+                            \\
+                            \\<d>Shorthand: <b>bun rm -g<r>
+                            \\
+                        , .{});
+                    } else {
+                        Output.prettyErrorln(
+                            \\
+                            \\<d>Shorthand: <b>bun rm<r>
+                            \\
+                        , .{});
+                    }
+
                     Output.flush();
 
                     Global.exit(0);
@@ -6331,20 +6510,19 @@ pub const PackageManager = struct {
                     iterator: while (iter.next() catch null) |entry| {
                         switch (entry.kind) {
                             std.fs.Dir.Entry.Kind.SymLink => {
-                                if (std.fs.path.extension(entry.name).len == 0) {
-                                    // any symlinks which we are unable to open are assumed to be dangling
-                                    // note that using access won't work here, because access doesn't resolve symlinks
-                                    std.mem.copy(u8, &node_modules_buf, entry.name);
-                                    node_modules_buf[entry.name.len] = 0;
-                                    var buf: [:0]u8 = node_modules_buf[0..entry.name.len :0];
 
-                                    var file = node_modules_bin.openFileZ(buf, .{ .read = true }) catch {
-                                        node_modules_bin.deleteFileZ(buf) catch {};
-                                        continue :iterator;
-                                    };
+                                // any symlinks which we are unable to open are assumed to be dangling
+                                // note that using access won't work here, because access doesn't resolve symlinks
+                                std.mem.copy(u8, &node_modules_buf, entry.name);
+                                node_modules_buf[entry.name.len] = 0;
+                                var buf: [:0]u8 = node_modules_buf[0..entry.name.len :0];
 
-                                    file.close();
-                                }
+                                var file = node_modules_bin.openFileZ(buf, .{ .read = true }) catch {
+                                    node_modules_bin.deleteFileZ(buf) catch {};
+                                    continue :iterator;
+                                };
+
+                                file.close();
                             },
                             else => {},
                         }
@@ -6401,6 +6579,7 @@ pub const PackageManager = struct {
         resolutions: []Resolution,
         node: *Progress.Node,
         has_created_bin: bool = false,
+        global_bin_dir: std.fs.Dir,
         destination_dir_subpath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
         install_count: usize = 0,
         successfully_installed: Bitset,
@@ -6487,8 +6666,10 @@ pub const PackageManager = struct {
                                 const bin = this.bins[package_id];
                                 if (bin.tag != .none) {
                                     if (!this.has_created_bin) {
-                                        this.node_modules_folder.makeDirZ(".bin") catch {};
                                         Bin.Linker.umask = C.umask(0);
+                                        if (!this.options.global)
+                                            this.node_modules_folder.makeDirZ(".bin") catch {};
+
                                         this.has_created_bin = true;
                                     }
 
@@ -6507,15 +6688,15 @@ pub const PackageManager = struct {
                                             var bin_linker = Bin.Linker{
                                                 .bin = bin,
                                                 .package_installed_node_modules = this.node_modules_folder.fd,
-                                                .global_bin_dir = this.manager.options.bin_path,
+                                                .global_bin_path = this.options.bin_path,
+                                                .global_bin_dir = this.options.global_bin_dir,
                                                 // .destination_dir_subpath = destination_dir_subpath,
                                                 .root_node_modules_folder = this.root_node_modules_folder.fd,
                                                 .package_name = strings.StringOrTinyString.init(name),
                                                 .string_buf = buf,
                                             };
 
-                                            bin_linker.link();
-
+                                            bin_linker.link(this.manager.options.global);
                                             if (comptime log_level != .silent) {
                                                 if (bin_linker.err) |err| {
                                                     const fmt = "\n<r><red>error:<r> linking <b>{s}<r>: {s}\n";
@@ -6727,6 +6908,7 @@ pub const PackageManager = struct {
                 .skip_verify = skip_verify,
                 .skip_delete = skip_delete,
                 .summary = &summary,
+                .global_bin_dir = this.options.global_bin_dir,
                 .force_install = force_install,
                 .install_count = lockfile.buffers.hoisted_packages.items.len,
                 .successfully_installed = try Bitset.initEmpty(lockfile.packages.len, this.allocator),
@@ -6818,7 +7000,9 @@ pub const PackageManager = struct {
                     const name: string = installer.names[resolved_id].slice(lockfile.buffers.string_bytes.items);
 
                     if (!installer.has_created_bin) {
-                        node_modules_folder.makeDirZ(".bin") catch {};
+                        if (!this.options.global) {
+                            node_modules_folder.makeDirZ(".bin") catch {};
+                        }
                         Bin.Linker.umask = C.umask(0);
                         installer.has_created_bin = true;
                     }
@@ -6827,12 +7011,14 @@ pub const PackageManager = struct {
                         .bin = original_bin,
                         .package_installed_node_modules = folder.fd,
                         .root_node_modules_folder = node_modules_folder.fd,
-                        .global_bin_dir = installer.manager.options.bin_path,
+                        .global_bin_path = this.options.bin_path,
+                        .global_bin_dir = this.options.global_bin_dir,
+
                         .package_name = strings.StringOrTinyString.init(name),
                         .string_buf = lockfile.buffers.string_bytes.items,
                     };
 
-                    bin_linker.link();
+                    bin_linker.link(this.options.global);
 
                     if (comptime log_level != .silent) {
                         if (bin_linker.err) |err| {
@@ -6872,6 +7058,15 @@ pub const PackageManager = struct {
         }
 
         return summary;
+    }
+
+    pub fn setupGlobalDir(manager: *PackageManager, ctx: *const Command.Context) !void {
+        manager.options.global_bin_dir = try Options.openGlobalBinDir(ctx.install);
+        var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var result = try std.os.getFdPath(manager.options.global_bin_dir.fd, &out_buffer);
+        out_buffer[result.len] = 0;
+        var result_: [:0]u8 = out_buffer[0..result.len :0];
+        manager.options.bin_path = std.meta.assumeSentinel(try FileSystem.instance.dirname_store.append([:0]u8, result_), 0);
     }
 
     fn installWithManager(
@@ -6925,9 +7120,9 @@ pub const PackageManager = struct {
                     }
 
                     if (manager.options.enable.fail_early) {
-                        Output.prettyError("<b>Failed to load lockfile<r>\n", .{});
+                        Output.prettyError("<b><red>failed to load lockfile<r>\n", .{});
                     } else {
-                        Output.prettyError("<b>Ignoring lockfile<r>\n", .{});
+                        Output.prettyError("<b><red>ignoring lockfile<r>\n", .{});
                     }
 
                     if (ctx.log.errors > 0) {
@@ -6991,7 +7186,7 @@ pub const PackageManager = struct {
 
                     if (manager.options.enable.frozen_lockfile and had_any_diffs) {
                         if (log_level != .silent) {
-                            Output.prettyErrorln("<r><red>error<r>: Lockfile had changes, but lockfile is frozen", .{});
+                            Output.prettyErrorln("<r><red>error<r>: lockfile had changes, but lockfile is frozen", .{});
                         }
 
                         Global.exit(1);
@@ -7077,7 +7272,7 @@ pub const PackageManager = struct {
 
             if (manager.options.enable.frozen_lockfile) {
                 if (log_level != .silent) {
-                    Output.prettyErrorln("<r><red>error<r>: Lockfile had changes, but lockfile is frozen", .{});
+                    Output.prettyErrorln("<r><red>error<r>: lockfile had changes, but lockfile is frozen", .{});
                 }
 
                 Global.exit(1);
@@ -7170,6 +7365,10 @@ pub const PackageManager = struct {
             manager.lockfile.verifyResolutions(manager.options.local_package_features, manager.options.remote_package_features, log_level);
         }
 
+        if (manager.options.global) {
+            try manager.setupGlobalDir(&ctx);
+        }
+
         if (manager.options.do.save_lockfile) {
             save: {
                 if (manager.lockfile.isEmpty()) {
@@ -7185,7 +7384,10 @@ pub const PackageManager = struct {
                             break :save;
                         };
                     }
-                    if (log_level != .silent) Output.prettyErrorln("No packages! Deleted empty lockfile", .{});
+                    if (!manager.options.global) {
+                        if (log_level != .silent) Output.prettyErrorln("No packages! Deleted empty lockfile", .{});
+                    }
+
                     break :save;
                 }
 
@@ -7241,6 +7443,7 @@ pub const PackageManager = struct {
             var printer = Lockfile.Printer{
                 .lockfile = manager.lockfile,
                 .options = manager.options,
+                .updates = manager.package_json_updates,
                 .successfully_installed = install_summary.successfully_installed,
             };
             if (Output.enable_ansi_colors) {
@@ -7248,15 +7451,19 @@ pub const PackageManager = struct {
             } else {
                 try Lockfile.Printer.Tree.print(&printer, Output.WriterType, Output.writer(), false);
             }
-
+            var printed_timestamp = false;
             if (install_summary.success > 0) {
-                Output.pretty("\n <green>{d}<r> packages<r> installed ", .{install_summary.success});
+                // it's confusing when it shows 3 packages and says it installed 1
+                Output.pretty("\n <green>{d}<r> packages<r> installed ", .{@maximum(
+                    install_summary.success,
+                    @truncate(
+                        u32,
+                        manager.package_json_updates.len,
+                    ),
+                )});
                 Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
+                printed_timestamp = true;
                 Output.pretty("<r>\n", .{});
-
-                if (manager.summary.update > 0) {
-                    Output.pretty("  Updated: <cyan>{d}<r>\n", .{manager.summary.update});
-                }
 
                 if (manager.summary.remove > 0) {
                     Output.pretty("  Removed: <cyan>{d}<r>\n", .{manager.summary.remove});
@@ -7270,8 +7477,9 @@ pub const PackageManager = struct {
 
                 Output.pretty("\n <r><b>{d}<r> packages removed ", .{manager.summary.remove});
                 Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
+                printed_timestamp = true;
                 Output.pretty("<r>\n", .{});
-            } else if (install_summary.skipped > 0 and install_summary.fail == 0) {
+            } else if (install_summary.skipped > 0 and install_summary.fail == 0 and manager.package_json_updates.len == 0) {
                 Output.pretty("\n", .{});
 
                 const count = @truncate(PackageID, manager.lockfile.packages.len);
@@ -7281,20 +7489,26 @@ pub const PackageManager = struct {
                         count,
                     });
                     Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
+                    printed_timestamp = true;
                     Output.pretty("<r>\n", .{});
                 } else {
-                    Output.pretty("<r> Done! Checked <green>{d} packages<r> <d>(no changes)<r> ", .{
+                    Output.pretty("<r> <green>Done<r>! Checked {d} packages<r> <d>(no changes)<r> ", .{
                         install_summary.skipped,
                     });
                     Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
+                    printed_timestamp = true;
                     Output.pretty("<r>\n", .{});
                 }
-            } else if (manager.summary.update > 0) {
-                Output.prettyln("  Updated: <cyan>{d}<r>\n", .{manager.summary.update});
             }
 
             if (install_summary.fail > 0) {
-                Output.prettyln("<r> Failed to install <red><b>{d}<r> packages", .{install_summary.fail});
+                Output.prettyln("<r> Failed to install <red><b>{d}<r> packages\n", .{install_summary.fail});
+            }
+
+            if (!printed_timestamp) {
+                Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
+                Output.prettyln("<d> done<r>", .{});
+                printed_timestamp = true;
             }
         }
         Output.flush();

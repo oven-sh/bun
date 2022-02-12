@@ -511,7 +511,7 @@ pub const Archive = struct {
 
                     switch (kind) {
                         Kind.Directory => {
-                            const perm = lib.archive_entry_perm(entry);
+                            const perm = @intCast(u32, lib.archive_entry_perm(entry));
                             std.os.mkdiratZ(dir.fd, pathname, perm) catch |err| {
                                 if (err == error.PathAlreadyExists or err == error.NotDir) break;
                                 try dir.makePath(std.fs.path.dirname(slice) orelse return err);
@@ -534,7 +534,7 @@ pub const Archive = struct {
                             };
                         },
                         Kind.File => {
-                            const file = dir.createFileZ(pathname, .{ .truncate = true, .mode = lib.archive_entry_perm(entry) }) catch |err| brk: {
+                            const file = dir.createFileZ(pathname, .{ .truncate = true, .mode = @intCast(std.os.mode_t, lib.archive_entry_perm(entry)) }) catch |err| brk: {
                                 switch (err) {
                                     error.FileNotFound => {
                                         try dir.makePath(std.fs.path.dirname(slice) orelse return err);

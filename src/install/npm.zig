@@ -442,13 +442,14 @@ pub const PackageManifest = struct {
     // We store this in a separate buffer so that we can dedupe contiguous identical versions without an extra pass
     external_strings_for_versions: []const ExternalString = &[_]ExternalString{},
     package_versions: []const PackageVersion = &[_]PackageVersion{},
+    extern_strings_bin_entries: []const ExternalString = &[_]ExternalString{},
 
     pub inline fn name(this: *const PackageManifest) string {
         return this.pkg.name.slice(this.string_buf);
     }
 
     pub const Serializer = struct {
-        pub const version = "bun-npm-manifest-cache-v0.0.1\n";
+        pub const version = "bun-npm-manifest-cache-v0.0.2\n";
         const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
 
         pub const sizes = blk: {
@@ -547,7 +548,6 @@ pub const PackageManifest = struct {
             defer tmpfile.close();
             var writer = tmpfile.writer();
             try Serializer.write(this, @TypeOf(writer), writer);
-            std.os.fdatasync(tmpfile.handle) catch {};
         }
 
         pub fn save(this: *const PackageManifest, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
@@ -825,6 +825,7 @@ pub const PackageManifest = struct {
         var pre_versions_len: usize = 0;
         var dependency_sum: usize = 0;
         var extern_string_count: usize = 0;
+        var extern_string_count_bin: usize = 0;
         get_versions: {
             if (json.asProperty("versions")) |versions_q| {
                 if (versions_q.expr.data != .e_object) break :get_versions;
@@ -847,9 +848,19 @@ pub const PackageManifest = struct {
                         if (prop.value.?.asProperty("bin")) |bin| {
                             switch (bin.expr.data) {
                                 .e_object => |obj| {
-                                    if (obj.properties.len > 0) {
-                                        string_builder.count(obj.properties.ptr[0].key.?.asString(allocator) orelse break :bin);
-                                        string_builder.count(obj.properties.ptr[0].value.?.asString(allocator) orelse break :bin);
+                                    switch (obj.properties.len) {
+                                        0 => {
+                                            break :bin;
+                                        },
+                                        1 => {},
+                                        else => {
+                                            extern_string_count_bin += obj.properties.len * 2;
+                                        },
+                                    }
+
+                                    for (obj.properties.slice()) |bin_prop| {
+                                        string_builder.count(bin_prop.key.?.asString(allocator) orelse break :bin);
+                                        string_builder.count(bin_prop.value.?.asString(allocator) orelse break :bin);
                                     }
                                 },
                                 .e_string => {
@@ -920,6 +931,8 @@ pub const PackageManifest = struct {
         var all_semver_versions = try allocator.allocAdvanced(Semver.Version, null, release_versions_len + pre_versions_len + dist_tags_count, .exact);
         var all_extern_strings = try allocator.allocAdvanced(ExternalString, null, extern_string_count, .exact);
         var version_extern_strings = try allocator.allocAdvanced(ExternalString, null, dependency_sum, .exact);
+        var extern_strings_bin_entries = try allocator.allocAdvanced(ExternalString, null, extern_string_count_bin, .exact);
+        var all_extern_strings_bin_entries = extern_strings_bin_entries;
 
         if (versioned_packages.len > 0) {
             var versioned_packages_bytes = std.mem.sliceAsBytes(versioned_packages);
@@ -982,6 +995,7 @@ pub const PackageManifest = struct {
                 // so names go last because we are better able to dedupe at the end
                 var dependency_values = version_extern_strings;
                 var dependency_names = all_dependency_names_and_values;
+                var prev_extern_bin_group = extern_strings_bin_entries;
 
                 var version_string__: String = String{};
                 for (versions) |prop| {
@@ -1050,30 +1064,59 @@ pub const PackageManifest = struct {
                     }
 
                     bin: {
+                        // bins are extremely repetitive
+                        // We try to avoid storing copies the string
                         if (prop.value.?.asProperty("bin")) |bin| {
                             switch (bin.expr.data) {
                                 .e_object => |obj| {
-                                    if (obj.properties.slice().len > 0) {
-                                        const bin_name = obj.properties.ptr[0].key.?.asString(allocator) orelse break :bin;
-                                        const value = obj.properties.ptr[0].value.?.asString(allocator) orelse break :bin;
-                                        // For now, we're only supporting the first bin
-                                        // We'll fix that later
-                                        package_version.bin = Bin{
-                                            .tag = Bin.Tag.named_file,
-                                            .value = .{
-                                                .named_file = .{
-                                                    string_builder.append(String, bin_name),
-                                                    string_builder.append(String, value),
-                                                },
-                                            },
-                                        };
-                                        break :bin;
+                                    switch (obj.properties.len) {
+                                        0 => break :bin,
+                                        1 => {
+                                            const bin_name = obj.properties.ptr[0].key.?.asString(allocator) orelse break :bin;
+                                            const value = obj.properties.ptr[0].value.?.asString(allocator) orelse break :bin;
 
-                                        // for (arr.items) |item| {
-                                        //     if (item.asString(allocator)) |bin_str_| {
-                                        //         package_version.bin =
-                                        //     }
-                                        // }
+                                            package_version.bin = Bin{
+                                                .tag = Bin.Tag.named_file,
+                                                .value = .{
+                                                    .named_file = .{
+                                                        string_builder.append(String, bin_name),
+                                                        string_builder.append(String, value),
+                                                    },
+                                                },
+                                            };
+                                        },
+                                        else => {
+                                            var group_slice = extern_strings_bin_entries[0 .. obj.properties.len * 2];
+
+                                            var is_identical = prev_extern_bin_group.len == group_slice.len;
+                                            var group_i: u32 = 0;
+
+                                            for (obj.properties.slice()) |bin_prop| {
+                                                group_slice[group_i] = string_builder.append(ExternalString, bin_prop.key.?.asString(allocator) orelse break :bin);
+                                                if (is_identical) {
+                                                    is_identical = group_slice[group_i].hash == prev_extern_bin_group[group_i].hash;
+                                                }
+                                                group_i += 1;
+
+                                                group_slice[group_i] = string_builder.append(ExternalString, bin_prop.value.?.asString(allocator) orelse break :bin);
+                                                if (is_identical) {
+                                                    is_identical = group_slice[group_i].hash == prev_extern_bin_group[group_i].hash;
+                                                }
+                                                group_i += 1;
+                                            }
+
+                                            if (is_identical) {
+                                                group_slice = prev_extern_bin_group;
+                                            } else {
+                                                prev_extern_bin_group = group_slice;
+                                                extern_strings_bin_entries = extern_strings_bin_entries[group_slice.len..];
+                                            }
+
+                                            package_version.bin = Bin{
+                                                .tag = Bin.Tag.map,
+                                                .value = .{ .map = ExternalStringList.init(all_extern_strings_bin_entries, group_slice) },
+                                            };
+                                        },
                                     }
                                 },
                                 .e_string => |str| {
@@ -1399,6 +1442,7 @@ pub const PackageManifest = struct {
         result.external_strings = all_extern_strings;
         result.external_strings_for_versions = version_extern_strings;
         result.package_versions = versioned_packages;
+        result.extern_strings_bin_entries = all_extern_strings_bin_entries[0 .. all_extern_strings_bin_entries.len - extern_strings_bin_entries.len];
         result.pkg.public_max_age = public_max_age;
 
         if (string_builder.ptr) |ptr| {

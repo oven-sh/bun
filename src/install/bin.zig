@@ -20,7 +20,7 @@ pub const Bin = extern struct {
     tag: Tag = Tag.none,
     value: Value = Value{ .none = .{} },
 
-    pub fn count(this: Bin, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
+    pub fn count(this: Bin, buf: []const u8, extern_strings: []const ExternalString, comptime StringBuilder: type, builder: StringBuilder) u32 {
         switch (this.tag) {
             .file => builder.count(this.value.file.slice(buf)),
             .named_file => {
@@ -28,12 +28,19 @@ pub const Bin = extern struct {
                 builder.count(this.value.named_file[1].slice(buf));
             },
             .dir => builder.count(this.value.dir.slice(buf)),
-            .map => @panic("Bin.map not implemented yet!!. That means \"bin\" as multiple specific files won't work just yet"),
+            .map => {
+                for (this.value.map.get(extern_strings)) |extern_string| {
+                    builder.count(extern_string.slice(buf));
+                }
+                return this.value.map.len;
+            },
             else => {},
         }
+
+        return 0;
     }
 
-    pub fn clone(this: Bin, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) Bin {
+    pub fn clone(this: Bin, buf: []const u8, prev_external_strings: []const ExternalString, all_extern_strings: []ExternalString, extern_strings_slice: []ExternalString, comptime StringBuilder: type, builder: StringBuilder) Bin {
         return switch (this.tag) {
             .none => Bin{ .tag = .none, .value = .{ .none = .{} } },
             .file => Bin{
@@ -53,7 +60,16 @@ pub const Bin = extern struct {
                 .tag = .dir,
                 .value = .{ .dir = builder.append(String, this.value.dir.slice(buf)) },
             },
-            .map => @panic("Bin.map not implemented yet!!. That means \"bin\" as multiple specific files won't work just yet"),
+            .map => {
+                for (this.value.map.get(prev_external_strings)) |extern_string, i| {
+                    extern_strings_slice[i] = builder.append(ExternalString, extern_string.slice(buf));
+                }
+
+                return .{
+                    .tag = .map,
+                    .value = .{ .map = ExternalStringList.init(extern_strings_slice, all_extern_strings) },
+                };
+            },
         };
     }
 
@@ -115,11 +131,12 @@ pub const Bin = extern struct {
         /// }
         ///```
         dir = 3,
-        // "bin" is a map
+        // "bin" is a map of more than one
         ///```
         /// "bin": {
         ///     "babel": "./cli.js",
         ///     "babel-cli": "./cli.js",
+        ///     "webpack-dev-server": "./cli.js",
         /// }
         ///```
         map = 4,
@@ -134,6 +151,7 @@ pub const Bin = extern struct {
         package_installed_node_modules: std.fs.Dir = std.fs.Dir{ .fd = std.math.maxInt(std.os.fd_t) },
         buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
         string_buffer: []const u8,
+        extern_string_buf: []const ExternalString,
 
         fn nextInDir(this: *NamesIterator) !?[]const u8 {
             if (this.done) return null;
@@ -183,7 +201,23 @@ pub const Bin = extern struct {
                     if (strings.hasPrefix(base, "./")) return base[2..];
                     return base;
                 },
+
                 .dir => return try this.nextInDir(),
+                .map => {
+                    if (this.i >= this.bin.value.map.len) return null;
+                    const index = this.i;
+                    this.i += 2;
+                    this.done = this.i >= this.bin.value.map.len;
+                    const base = std.fs.path.basename(
+                        this.bin.value.map.get(
+                            this.extern_string_buf,
+                        )[index].slice(
+                            this.string_buffer,
+                        ),
+                    );
+                    if (strings.hasPrefix(base, "./")) return base[2..];
+                    return base;
+                },
                 else => return null,
             }
         }
@@ -202,6 +236,7 @@ pub const Bin = extern struct {
         global_bin_path: stringZ = "",
 
         string_buf: []const u8,
+        extern_string_buf: []const ExternalString,
 
         err: ?anyerror = null,
 
@@ -337,6 +372,47 @@ pub const Bin = extern struct {
                     };
                     this.setPermissions(dest_path);
                 },
+                .map => {
+                    var extern_string_i: u32 = this.bin.value.map.off;
+                    const end = this.bin.value.map.len + extern_string_i;
+                    const _from_remain = from_remain;
+                    const _remain = remain;
+                    while (extern_string_i < end) : (extern_string_i += 2) {
+                        from_remain = _from_remain;
+                        remain = _remain;
+                        const name_in_terminal = this.extern_string_buf[extern_string_i];
+                        const name_in_filesystem = this.extern_string_buf[extern_string_i + 1];
+
+                        var target = name_in_filesystem.slice(this.string_buf);
+                        if (strings.hasPrefix(target, "./")) {
+                            target = target[2..];
+                        }
+                        std.mem.copy(u8, remain, target);
+                        remain = remain[target.len..];
+                        remain[0] = 0;
+                        const target_len = @ptrToInt(remain.ptr) - @ptrToInt(&dest_buf);
+                        remain = remain[1..];
+
+                        var target_path: [:0]u8 = dest_buf[0..target_len :0];
+                        var name_to_use = name_in_terminal.slice(this.string_buf);
+                        std.mem.copy(u8, from_remain, name_to_use);
+                        from_remain = from_remain[name_to_use.len..];
+                        from_remain[0] = 0;
+                        var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
+
+                        std.os.symlinkatZ(target_path, this.root_node_modules_folder, dest_path) catch |err| {
+                            // Silently ignore PathAlreadyExists
+                            // Most likely, the symlink was already created by another package
+                            if (err == error.PathAlreadyExists) {
+                                this.setPermissions(dest_path);
+                                continue;
+                            }
+
+                            this.err = err;
+                        };
+                        this.setPermissions(dest_path);
+                    }
+                },
                 .dir => {
                     var target = this.bin.value.dir.slice(this.string_buf);
                     var parts = [_][]const u8{ name, target };
@@ -400,9 +476,6 @@ pub const Bin = extern struct {
                             else => {},
                         }
                     }
-                },
-                .map => {
-                    this.err = error.NotImplementedYet;
                 },
             }
         }

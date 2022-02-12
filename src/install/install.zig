@@ -1300,7 +1300,7 @@ pub const Lockfile = struct {
                     const package_name = name.slice(string_buf);
 
                     switch (bin.tag) {
-                        .none, .map, .dir => {
+                        .none, .dir => {
                             const fmt = comptime brk: {
                                 if (enable_ansi_colors) {
                                     break :brk Output.prettyFmt("<r> <green>installed<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
@@ -1317,8 +1317,13 @@ pub const Lockfile = struct {
                                 },
                             );
                         },
-                        .file, .named_file => {
-                            var iterator = Bin.NamesIterator{ .bin = bin, .package_name = name, .string_buffer = string_buf };
+                        .map, .file, .named_file => {
+                            var iterator = Bin.NamesIterator{
+                                .bin = bin,
+                                .package_name = name,
+                                .string_buffer = string_buf,
+                                .extern_string_buf = this.lockfile.buffers.extern_strings.items,
+                            };
 
                             const fmt = comptime brk: {
                                 if (enable_ansi_colors) {
@@ -1981,7 +1986,7 @@ pub const Lockfile = struct {
     pub const PackageIDList = std.ArrayListUnmanaged(PackageID);
     pub const DependencyList = std.ArrayListUnmanaged(Dependency);
     pub const StringBuffer = std.ArrayListUnmanaged(u8);
-    pub const SmallExternalStringBuffer = std.ArrayListUnmanaged(String);
+    pub const ExternalStringBuffer = std.ArrayListUnmanaged(ExternalString);
 
     pub const Package = extern struct {
         const DependencyGroup = struct {
@@ -2022,13 +2027,14 @@ pub const Lockfile = struct {
         ) !PackageID {
             const this = this_.*;
             const old_string_buf = old.buffers.string_bytes.items;
+            const old_extern_string_buf = old.buffers.extern_strings.items;
             var builder_ = new.stringBuilder();
             var builder = &builder_;
 
             builder.count(this.name.slice(old_string_buf));
             this.resolution.count(old_string_buf, *Lockfile.StringBuilder, builder);
             this.meta.count(old_string_buf, *Lockfile.StringBuilder, builder);
-            this.bin.count(old_string_buf, *Lockfile.StringBuilder, builder);
+            const new_extern_string_count = this.bin.count(old_string_buf, old_extern_string_buf, *Lockfile.StringBuilder, builder);
 
             const old_dependencies: []const Dependency = this.dependencies.get(old.buffers.dependencies.items);
             const old_resolutions: []const PackageID = this.resolutions.get(old.buffers.resolutions.items);
@@ -2042,6 +2048,7 @@ pub const Lockfile = struct {
             // should be unnecessary, but Just In Case
             try new.buffers.dependencies.ensureUnusedCapacity(new.allocator, old_dependencies.len);
             try new.buffers.resolutions.ensureUnusedCapacity(new.allocator, old_dependencies.len);
+            try new.buffers.extern_strings.ensureUnusedCapacity(new.allocator, new_extern_string_count);
 
             const prev_len = @truncate(u32, new.buffers.dependencies.items.len);
             const end = prev_len + @truncate(u32, old_dependencies.len);
@@ -2049,6 +2056,9 @@ pub const Lockfile = struct {
 
             new.buffers.dependencies.items = new.buffers.dependencies.items.ptr[0..end];
             new.buffers.resolutions.items = new.buffers.resolutions.items.ptr[0..end];
+
+            new.buffers.extern_strings.items.len += new_extern_string_count;
+            var new_extern_strings = new.buffers.extern_strings.items[new.buffers.extern_strings.items.len - new_extern_string_count ..];
 
             var dependencies: []Dependency = new.buffers.dependencies.items[prev_len..end];
             var resolutions: []PackageID = new.buffers.resolutions.items[prev_len..end];
@@ -2061,7 +2071,7 @@ pub const Lockfile = struct {
                         this.name.slice(old_string_buf),
                         this.name_hash,
                     ),
-                    .bin = this.bin.clone(old_string_buf, *Lockfile.StringBuilder, builder),
+                    .bin = this.bin.clone(old_string_buf, old_extern_string_buf, new.buffers.extern_strings.items, new_extern_strings, *Lockfile.StringBuilder, builder),
                     .name_hash = this.name_hash,
                     .meta = this.meta.clone(
                         old_string_buf,
@@ -2163,6 +2173,7 @@ pub const Lockfile = struct {
             var string_builder = lockfile.stringBuilder();
 
             var total_dependencies_count: u32 = 0;
+            var bin_extern_strings_count: u32 = 0;
 
             // --- Counting
             {
@@ -2183,16 +2194,19 @@ pub const Lockfile = struct {
                     }
                 }
 
-                package_version.bin.count(string_buf, @TypeOf(&string_builder), &string_builder);
+                bin_extern_strings_count = package_version.bin.count(string_buf, manifest.extern_strings_bin_entries, @TypeOf(&string_builder), &string_builder);
             }
 
             try string_builder.allocate();
             defer string_builder.clamp();
-
+            var extern_strings_list = &lockfile.buffers.extern_strings;
             var dependencies_list = &lockfile.buffers.dependencies;
             var resolutions_list = &lockfile.buffers.resolutions;
             try dependencies_list.ensureUnusedCapacity(lockfile.allocator, total_dependencies_count);
             try resolutions_list.ensureUnusedCapacity(lockfile.allocator, total_dependencies_count);
+            try extern_strings_list.ensureUnusedCapacity(lockfile.allocator, bin_extern_strings_count);
+            extern_strings_list.items.len += bin_extern_strings_count;
+            var extern_strings_slice = extern_strings_list.items[extern_strings_list.items.len - bin_extern_strings_count ..];
 
             // -- Cloning
             {
@@ -2283,7 +2297,7 @@ pub const Lockfile = struct {
                     }
                 }
 
-                package.bin = package_version.bin.clone(string_buf, @TypeOf(&string_builder), &string_builder);
+                package.bin = package_version.bin.clone(string_buf, manifest.extern_strings_bin_entries, extern_strings_list.items, extern_strings_slice, @TypeOf(&string_builder), &string_builder);
 
                 package.meta.arch = package_version.cpu;
                 package.meta.os = package_version.os;
@@ -2824,7 +2838,7 @@ pub const Lockfile = struct {
         hoisted_packages: PackageIDList = PackageIDList{},
         resolutions: PackageIDList = PackageIDList{},
         dependencies: DependencyList = DependencyList{},
-        extern_strings: SmallExternalStringBuffer = SmallExternalStringBuffer{},
+        extern_strings: ExternalStringBuffer = ExternalStringBuffer{},
         // node_modules_folders: NodeModulesFolderList = NodeModulesFolderList{},
         // node_modules_package_ids: PackageIDList = PackageIDList{},
         string_bytes: StringBuffer = StringBuffer{},
@@ -6718,6 +6732,7 @@ pub const PackageManager = struct {
             var destination_dir_subpath: [:0]u8 = this.destination_dir_subpath_buf[0..name.len :0];
             var resolution_buf: [512]u8 = undefined;
             const buf = this.lockfile.buffers.string_bytes.items;
+            const extern_string_buf = this.lockfile.buffers.extern_strings.items;
             var resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(buf)}) catch unreachable;
             switch (resolution.tag) {
                 .npm => {
@@ -6775,10 +6790,12 @@ pub const PackageManager = struct {
                                                 .package_installed_node_modules = this.node_modules_folder.fd,
                                                 .global_bin_path = this.options.bin_path,
                                                 .global_bin_dir = this.options.global_bin_dir,
+
                                                 // .destination_dir_subpath = destination_dir_subpath,
                                                 .root_node_modules_folder = this.root_node_modules_folder.fd,
                                                 .package_name = strings.StringOrTinyString.init(name),
                                                 .string_buf = buf,
+                                                .extern_string_buf = extern_string_buf,
                                             };
 
                                             bin_linker.link(this.manager.options.global);
@@ -7105,6 +7122,7 @@ pub const PackageManager = struct {
 
                         .package_name = strings.StringOrTinyString.init(name),
                         .string_buf = lockfile.buffers.string_bytes.items,
+                        .extern_string_buf = lockfile.buffers.extern_strings.items,
                     };
 
                     bin_linker.link(this.options.global);

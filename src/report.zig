@@ -320,7 +320,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
             Output.flush();
             Global.exit(1);
         },
-        error.InstallFailed => {
+        error.InvalidArgument, error.InstallFailed => {
             Global.exit(1);
         },
         error.SystemFdQuotaExceeded => {

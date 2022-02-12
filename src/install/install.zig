@@ -6297,10 +6297,9 @@ pub const PackageManager = struct {
                         \\
                         \\<r><b>Examples:<r>
                         \\
+                        \\  bun add -g {s}
                         \\  bun add {s}
                         \\  bun add {s}
-                        \\  bun add {s}
-                        \\  bun add -g git-peek
                         \\
                     , .{ examples_to_print[0], examples_to_print[1], examples_to_print[2] });
 

@@ -294,6 +294,10 @@ pub const URL = struct {
             url.pathname = "/";
         }
 
+        while (url.pathname.len > 1 and @bitCast(u16, url.pathname[0..2].*) == comptime std.mem.readIntNative(u16, "//")) {
+            url.pathname = url.pathname[1..];
+        }
+
         url.origin = std.mem.trim(u8, url.origin, "/ ?#");
         return url;
     }

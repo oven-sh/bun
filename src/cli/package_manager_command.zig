@@ -33,7 +33,11 @@ pub const PackageManagerCommand = struct {
 
         if (strings.eqlComptime(first, "bin")) {
             var output_path = Path.joinAbs(Fs.FileSystem.instance.top_level_dir, .auto, std.mem.span(pm.options.bin_path));
-            Output.prettyln("{s}\n", .{output_path});
+            Output.prettyln("{s}", .{output_path});
+            if (Output.stdout_descriptor_type == .terminal) {
+                Output.prettyln("\n", .{});
+            }
+
             if (pm.options.global) {
                 warner: {
                     if (Output.enable_ansi_colors_stderr) {

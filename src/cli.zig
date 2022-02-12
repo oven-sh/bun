@@ -812,7 +812,7 @@ pub const Command = struct {
             RootCommandMatcher.case("pm") => .PackageManagerCommand,
 
             RootCommandMatcher.case("add"), RootCommandMatcher.case("update"), RootCommandMatcher.case("a") => .AddCommand,
-            RootCommandMatcher.case("remove"), RootCommandMatcher.case("rm") => .RemoveCommand,
+            RootCommandMatcher.case("r"), RootCommandMatcher.case("remove"), RootCommandMatcher.case("rm") => .RemoveCommand,
 
             RootCommandMatcher.case("b"), RootCommandMatcher.case("build") => .BuildCommand,
             RootCommandMatcher.case("run") => .RunCommand,

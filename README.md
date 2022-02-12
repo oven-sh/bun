@@ -780,7 +780,7 @@ export interface Lockfile {
   print?: "yarn";
   path: string;
   savePath: string;
-  save: bool;
+  save: boolean;
 }
 ```
 

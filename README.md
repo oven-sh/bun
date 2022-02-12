@@ -672,9 +672,7 @@ mybigcompany3 = { token = "$npm_config_token" }
 
 # Setting username and password turns it into a Basic Auth header by taking base64("username:password")
 mybigcompany4 = { username = "myusername", password = "$npm_config_password", url = "https://registry.yarnpkg.com/" }
-
-# You can set username and password for a registry URL:
-# This prduces the same result as the above
+# You can set username and password in the registry URL. This is the same as above.
 mybigcompany5 = "https://username:password@registry.yarnpkg.com/"
 
 # You can set a token for a registry URL:

@@ -633,6 +633,7 @@ export interface BunInstall {
   disable_cache?: boolean;
   disable_manifest_cache?: boolean;
   global_dir?: string;
+  global_bin_dir?: string;
 }
 
 export declare function encodeStackFrame(

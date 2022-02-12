@@ -2906,6 +2906,10 @@ function decodeBunInstall(bb) {
         result["global_dir"] = bb.readString();
         break;
 
+      case 18:
+        result["global_bin_dir"] = bb.readString();
+        break;
+
       default:
         throw new Error("Attempted to parse invalid message");
     }
@@ -3018,6 +3022,12 @@ function encodeBunInstall(message, bb) {
   var value = message["global_dir"];
   if (value != null) {
     bb.writeByte(17);
+    bb.writeString(value);
+  }
+
+  var value = message["global_bin_dir"];
+  if (value != null) {
+    bb.writeByte(18);
     bb.writeString(value);
   }
   bb.writeByte(0);

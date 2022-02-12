@@ -641,7 +641,7 @@ To fix this issue:
 
 ### `bun install`
 
-`bun install` is a fast package manager & npm client.
+bun install is a fast package manager & npm client.
 
 bun install can be configured via `bunfig.toml`, environment variables, and CLI flags.
 

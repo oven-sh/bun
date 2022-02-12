@@ -795,7 +795,16 @@ pub const Command = struct {
             RootCommandMatcher.case("completions") => .InstallCompletionsCommand,
             RootCommandMatcher.case("getcompletes") => .GetCompletionsCommand,
 
-            RootCommandMatcher.case("i"), RootCommandMatcher.case("install") => .InstallCommand,
+            RootCommandMatcher.case("i"), RootCommandMatcher.case("install") => brk: {
+                for (args_iter.buf) |arg| {
+                    const span = std.mem.span(arg);
+                    if (span.len > 0 and (strings.eqlComptime(span, "-g") or strings.eqlComptime(span, "--global"))) {
+                        break :brk Command.Tag.AddCommand;
+                    }
+                }
+
+                break :brk Command.Tag.InstallCommand;
+            },
             RootCommandMatcher.case("c"), RootCommandMatcher.case("create") => .CreateCommand,
 
             RootCommandMatcher.case(TestCommand.name) => .TestCommand,
@@ -836,6 +845,7 @@ pub const Command = struct {
 
     pub fn start(allocator: std.mem.Allocator, log: *logger.Log) !void {
         const tag = which();
+
         switch (tag) {
             .DiscordCommand => return try DiscordCommand.exec(allocator),
             .HelpCommand => return try HelpCommand.exec(allocator),

@@ -21,7 +21,7 @@ const linker = @import("../linker.zig");
 const panicky = @import("../panic_handler.zig");
 const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
-const resolve_path = @import("../resolver/resolve_path.zig");
+const Path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../javascript/jsc/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
 const bundler = @import("../bundler.zig");
@@ -1090,7 +1090,7 @@ pub const Lockfile = struct {
             if (!std.fs.path.isAbsolute(lockfile_path_)) {
                 var cwd = try std.os.getcwd(&lockfile_path_buf1);
                 var parts = [_]string{lockfile_path_};
-                var lockfile_path__ = resolve_path.joinAbsStringBuf(cwd, &lockfile_path_buf2, &parts, .auto);
+                var lockfile_path__ = Path.joinAbsStringBuf(cwd, &lockfile_path_buf2, &parts, .auto);
                 lockfile_path_buf2[lockfile_path__.len] = 0;
                 lockfile_path = lockfile_path_buf2[0..lockfile_path__.len :0];
             } else {
@@ -3874,7 +3874,7 @@ pub const PackageManager = struct {
                     };
                     continue :brk;
                 }
-                Output.prettyErrorln("<r><red>error<r>: {s} accessing temporary directory. Please set <b>$BUN_TMPDIR<r> or <b>$BUN_INSTALL_DIR<r>", .{
+                Output.prettyErrorln("<r><red>error<r>: {s} accessing temporary directory. Please set <b>$BUN_TMPDIR<r> or <b>$BUN_INSTALL<r>", .{
                     @errorName(err2),
                 });
                 Output.flush();
@@ -3892,7 +3892,7 @@ pub const PackageManager = struct {
                     continue :brk;
                 }
 
-                Output.prettyErrorln("<r><red>error<r>: {s} accessing temporary directory. Please set <b>$BUN_TMPDIR<r> or <b>$BUN_INSTALL_DIR<r>", .{
+                Output.prettyErrorln("<r><red>error<r>: {s} accessing temporary directory. Please set <b>$BUN_TMPDIR<r> or <b>$BUN_INSTALL<r>", .{
                     @errorName(err),
                 });
                 Output.flush();
@@ -4907,6 +4907,11 @@ pub const PackageManager = struct {
 
     pub const Options = struct {
         log_level: LogLevel = LogLevel.default,
+        global: bool = false,
+
+        /// destination directory to link bins into
+        // must be a variable due to global installs and bunx
+        bin_path: stringZ = "node_modules/.bin",
 
         lockfile_path: stringZ = Lockfile.default_filename,
         save_lockfile_path: stringZ = Lockfile.default_filename,
@@ -4981,6 +4986,36 @@ pub const PackageManager = struct {
             development: bool = false,
             optional: bool = false,
         };
+
+        pub fn openGlobalDir(opts_: ?*Api.BunInstall) !std.fs.Dir {
+            if (std.os.getenvZ("BUN_INSTALL_GLOBAL_DIR")) |home_dir| {
+                return try std.fs.cwd().makeOpenPath(home_dir, .{ .iterate = true });
+            }
+
+            if (opts_) |opts| {
+                if (opts.global_dir) |home_dir| {
+                    if (home_dir.len > 0) {
+                        return try std.fs.cwd().makeOpenPath(home_dir, .{ .iterate = true });
+                    }
+                }
+            }
+
+            if (std.os.getenvZ("BUN_INSTALL")) |home_dir| {
+                var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                var parts = [_]string{ "install", "global" };
+                var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
+                return try std.fs.cwd().makeOpenPath(path, .{ .iterate = true });
+            }
+
+            if (std.os.getenvZ("XDG_CACHE_HOME") orelse std.os.getenvZ("HOME")) |home_dir| {
+                var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                var parts = [_]string{ "./bun", "install", "global" };
+                var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
+                return try std.fs.cwd().makeOpenPath(path, .{ .iterate = true });
+            }
+
+            return error.@"No global directory found";
+        }
 
         pub fn load(
             this: *Options,
@@ -5502,10 +5537,22 @@ pub const PackageManager = struct {
         package_json_file_: ?std.fs.File,
         comptime params: []const ParamType,
     ) !*PackageManager {
+        var cli = try CommandLineArguments.parse(ctx.allocator, params);
+        return try initWithCLI(ctx, package_json_file_, cli);
+    }
+
+    fn initWithCLI(
+        ctx: Command.Context,
+        package_json_file_: ?std.fs.File,
+        cli: CommandLineArguments,
+    ) !*PackageManager {
         // assume that spawning a thread will take a lil so we do that asap
         try NetworkThread.warmup();
 
-        var cli = try CommandLineArguments.parse(ctx.allocator, params);
+        if (cli.global) {
+            var global_dir = try Options.openGlobalDir(ctx.install);
+            try global_dir.setAsCwd();
+        }
 
         var fs = try Fs.FileSystem.init1(ctx.allocator, null);
         var original_cwd = std.mem.trimRight(u8, fs.top_level_dir, "/");
@@ -5521,6 +5568,7 @@ pub const PackageManager = struct {
         if (package_json_file_) |file| {
             package_json_file = file;
         } else {
+
             // can't use orelse due to a stage1 bug
             package_json_file = std.fs.cwd().openFileZ("package.json", .{ .read = true, .write = true }) catch brk: {
                 var this_cwd = original_cwd;
@@ -5664,6 +5712,7 @@ pub const PackageManager = struct {
         clap.parseParam("--no-cache                        Ignore manifest cache entirely") catch unreachable,
         clap.parseParam("--silent                          Don't log anything") catch unreachable,
         clap.parseParam("--verbose                         Excessively verbose logging") catch unreachable,
+        clap.parseParam("-g, --global                      Install globally") catch unreachable,
         clap.parseParam("--cwd <STR>                       Set a specific cwd") catch unreachable,
         clap.parseParam("--backend <STR>                   Platform-specific optimizations for installing dependencies. For macOS, \"clonefile\" (default), \"copyfile\"") catch unreachable,
         clap.parseParam("--link-native-bins <STR>...       Link \"bin\" from a matching platform-specific \"optionalDependencies\" instead. Default: esbuild, turbo") catch unreachable,
@@ -5693,6 +5742,7 @@ pub const PackageManager = struct {
         cache_dir: string = "",
         lockfile: string = "",
         token: string = "",
+        global: bool = false,
 
         backend: ?PackageInstall.Method = null,
 
@@ -5760,6 +5810,7 @@ pub const PackageManager = struct {
             cli.production = args.flag("--production");
             cli.no_save = args.flag("--no-save");
             cli.dry_run = args.flag("--dry-run");
+            cli.global = args.flag("--global");
             cli.force = args.flag("--force");
             // cli.no_dedupe = args.flag("--no-dedupe");
             cli.no_cache = args.flag("--no-cache");
@@ -5798,7 +5849,7 @@ pub const PackageManager = struct {
                 if (cwd_.len > 0 and cwd_[0] == '.') {
                     var cwd = try std.os.getcwd(&buf);
                     var parts = [_]string{cwd_};
-                    var path_ = resolve_path.joinAbsStringBuf(cwd, &buf2, &parts, .auto);
+                    var path_ = Path.joinAbsStringBuf(cwd, &buf2, &parts, .auto);
                     buf2[path_.len] = 0;
                     final_path = buf2[0..path_.len :0];
                 } else {
@@ -6272,7 +6323,7 @@ pub const PackageManager = struct {
 
                 // This is where we clean dangling symlinks
                 // This could be slow if there are a lot of symlinks
-                if (cwd.openDirZ("node_modules/.bin", .{
+                if (cwd.openDirZ(manager.options.bin_path, .{
                     .iterate = true,
                 })) |node_modules_bin_| {
                     var node_modules_bin: std.fs.Dir = node_modules_bin_;
@@ -6456,6 +6507,8 @@ pub const PackageManager = struct {
                                             var bin_linker = Bin.Linker{
                                                 .bin = bin,
                                                 .package_installed_node_modules = this.node_modules_folder.fd,
+                                                .global_bin_dir = this.manager.options.bin_path,
+                                                // .destination_dir_subpath = destination_dir_subpath,
                                                 .root_node_modules_folder = this.root_node_modules_folder.fd,
                                                 .package_name = strings.StringOrTinyString.init(name),
                                                 .string_buf = buf,
@@ -6500,7 +6553,7 @@ pub const PackageManager = struct {
 
                                     if (this.manager.generateNetworkTaskForTarball(task_id, this.lockfile.packages.get(package_id)) catch unreachable) |task| {
                                         task.schedule(&this.manager.network_tarball_batch);
-                                        if (this.manager.network_tarball_batch.len > 6) {
+                                        if (this.manager.network_tarball_batch.len > 0) {
                                             _ = this.manager.scheduleNetworkTasks();
                                         }
                                     }
@@ -6774,6 +6827,7 @@ pub const PackageManager = struct {
                         .bin = original_bin,
                         .package_installed_node_modules = folder.fd,
                         .root_node_modules_folder = node_modules_folder.fd,
+                        .global_bin_dir = installer.manager.options.bin_path,
                         .package_name = strings.StringOrTinyString.init(name),
                         .string_buf = lockfile.buffers.string_bytes.items,
                     };
@@ -6935,6 +6989,14 @@ pub const PackageManager = struct {
                     const sum = manager.summary.add + manager.summary.remove + manager.summary.update;
                     had_any_diffs = had_any_diffs or sum > 0;
 
+                    if (manager.options.enable.frozen_lockfile and had_any_diffs) {
+                        if (log_level != .silent) {
+                            Output.prettyErrorln("<r><red>error<r>: Lockfile had changes, but lockfile is frozen", .{});
+                        }
+
+                        Global.exit(1);
+                    }
+
                     // If you changed packages, we will copy over the new package from the new lockfile
                     const new_dependencies = maybe_root.dependencies.get(lockfile.buffers.dependencies.items);
 
@@ -7012,6 +7074,14 @@ pub const PackageManager = struct {
         if (needs_new_lockfile) {
             root = Lockfile.Package{};
             try manager.lockfile.initEmpty(ctx.allocator);
+
+            if (manager.options.enable.frozen_lockfile) {
+                if (log_level != .silent) {
+                    Output.prettyErrorln("<r><red>error<r>: Lockfile had changes, but lockfile is frozen", .{});
+                }
+
+                Global.exit(1);
+            }
 
             try Lockfile.Package.parseMain(
                 manager.lockfile,

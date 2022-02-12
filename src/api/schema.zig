@@ -2719,6 +2719,9 @@ pub const Api = struct {
         /// disable_manifest_cache
         disable_manifest_cache: ?bool = null,
 
+        /// global_dir
+        global_dir: ?[]const u8 = null,
+
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);
 
@@ -2775,6 +2778,9 @@ pub const Api = struct {
                     },
                     16 => {
                         this.disable_manifest_cache = try reader.readValue(bool);
+                    },
+                    17 => {
+                        this.global_dir = try reader.readValue([]const u8);
                     },
                     else => {
                         return error.InvalidMessage;
@@ -2848,6 +2854,10 @@ pub const Api = struct {
             if (this.disable_manifest_cache) |disable_manifest_cache| {
                 try writer.writeFieldID(16);
                 try writer.writeInt(@as(u8, @boolToInt(disable_manifest_cache)));
+            }
+            if (this.global_dir) |global_dir| {
+                try writer.writeFieldID(17);
+                try writer.writeValue(@TypeOf(global_dir), global_dir);
             }
             try writer.endMessage();
         }

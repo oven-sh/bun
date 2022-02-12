@@ -2902,6 +2902,10 @@ function decodeBunInstall(bb) {
         result["disable_manifest_cache"] = !!bb.readByte();
         break;
 
+      case 17:
+        result["global_dir"] = bb.readString();
+        break;
+
       default:
         throw new Error("Attempted to parse invalid message");
     }
@@ -3009,6 +3013,12 @@ function encodeBunInstall(message, bb) {
   if (value != null) {
     bb.writeByte(16);
     bb.writeByte(value);
+  }
+
+  var value = message["global_dir"];
+  if (value != null) {
+    bb.writeByte(17);
+    bb.writeString(value);
   }
   bb.writeByte(0);
 }

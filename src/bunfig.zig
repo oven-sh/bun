@@ -237,7 +237,7 @@ pub const Bunfig = struct {
                     }
 
                     if (bun.get("lockfile")) |lockfile_expr| {
-                        if (lockfile_expr.get("outputFormat")) |lockfile| {
+                        if (lockfile_expr.get("print")) |lockfile| {
                             try this.expect(lockfile, .e_string);
                             if (lockfile.asString(this.allocator)) |value| {
                                 if (!(strings.eqlComptime(value, "bun"))) {
@@ -287,6 +287,12 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (bun.get("globalDir")) |dir| {
+                        if (dir.asString()) |value| {
+                            install.global_dir = value;
+                        }
+                    }
+
                     if (bun.get("logLevel")) |expr| {
                         try this.loadLogLevel(expr);
                     }
@@ -320,7 +326,7 @@ pub const Bunfig = struct {
                                     }
                                 }
 
-                                if (cache.get("directory")) |directory| {
+                                if (cache.get("dir")) |directory| {
                                     if (directory.asString(allocator)) |value| {
                                         install.cache_directory = value;
                                     }

@@ -7,6 +7,9 @@ const strings = @import("strings");
 const Environment = @import("../env.zig");
 const Path = @import("../resolver/resolve_path.zig");
 const C = @import("../c.zig");
+const Fs = @import("../fs.zig");
+const stringZ = @import("../global.zig").stringZ;
+
 /// Normalized `bin` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
 /// Can be a:
 /// - file path (relative to the package root)
@@ -130,6 +133,8 @@ pub const Bin = extern struct {
         /// Used for generating relative paths
         package_name: strings.StringOrTinyString,
 
+        global_bin_dir: stringZ = "",
+
         string_buf: []const u8,
 
         err: ?anyerror = null,
@@ -159,14 +164,14 @@ pub const Bin = extern struct {
         // That way, if you move your node_modules folder around, the symlinks in .bin still work
         // If we used absolute paths for the symlinks, you'd end up with broken symlinks
         pub fn link(this: *Linker) void {
-            var from_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-            var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            var target_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            var dest_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
-            from_buf[0..".bin/".len].* = ".bin/".*;
-            var from_remain: []u8 = from_buf[".bin/".len..];
-            path_buf[0.."../".len].* = "../".*;
+            target_buf[0..".bin/".len].* = ".bin/".*;
+            var from_remain: []u8 = target_buf[".bin/".len..];
+            dest_buf[0.."../".len].* = "../".*;
 
-            var remain: []u8 = path_buf["../".len..];
+            var remain: []u8 = dest_buf["../".len..];
             const name = this.package_name.slice();
             std.mem.copy(u8, remain, name);
             remain = remain[name.len..];
@@ -192,17 +197,17 @@ pub const Bin = extern struct {
                     std.mem.copy(u8, remain, target);
                     remain = remain[target.len..];
                     remain[0] = 0;
-                    const target_len = @ptrToInt(remain.ptr) - @ptrToInt(&path_buf);
+                    const target_len = @ptrToInt(remain.ptr) - @ptrToInt(&dest_buf);
                     remain = remain[1..];
 
-                    var target_path: [:0]u8 = path_buf[0..target_len :0];
+                    var target_path: [:0]u8 = dest_buf[0..target_len :0];
                     // we need to use the unscoped package name here
                     // this is why @babel/parser would fail to link
                     const unscoped_name = unscopedPackageName(name);
                     std.mem.copy(u8, from_remain, unscoped_name);
                     from_remain = from_remain[unscoped_name.len..];
                     from_remain[0] = 0;
-                    var dest_path: [:0]u8 = from_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&from_buf) :0];
+                    var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
 
                     std.os.symlinkatZ(target_path, this.root_node_modules_folder, dest_path) catch |err| {
                         // Silently ignore PathAlreadyExists
@@ -224,15 +229,15 @@ pub const Bin = extern struct {
                     std.mem.copy(u8, remain, target);
                     remain = remain[target.len..];
                     remain[0] = 0;
-                    const target_len = @ptrToInt(remain.ptr) - @ptrToInt(&path_buf);
+                    const target_len = @ptrToInt(remain.ptr) - @ptrToInt(&dest_buf);
                     remain = remain[1..];
 
-                    var target_path: [:0]u8 = path_buf[0..target_len :0];
+                    var target_path: [:0]u8 = dest_buf[0..target_len :0];
                     var name_to_use = this.bin.value.named_file[0].slice(this.string_buf);
                     std.mem.copy(u8, from_remain, name_to_use);
                     from_remain = from_remain[name_to_use.len..];
                     from_remain[0] = 0;
-                    var dest_path: [:0]u8 = from_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&from_buf) :0];
+                    var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
 
                     std.os.symlinkatZ(target_path, this.root_node_modules_folder, dest_path) catch |err| {
                         // Silently ignore PathAlreadyExists
@@ -257,9 +262,9 @@ pub const Bin = extern struct {
                     remain[0] = 0;
                     var dir = std.fs.Dir{ .fd = this.package_installed_node_modules };
 
-                    var joined = Path.joinStringBuf(&from_buf, &parts, .auto);
-                    from_buf[joined.len] = 0;
-                    var joined_: [:0]u8 = from_buf[0..joined.len :0];
+                    var joined = Path.joinStringBuf(&target_buf, &parts, .auto);
+                    target_buf[joined.len] = 0;
+                    var joined_: [:0]u8 = target_buf[0..joined.len :0];
                     var child_dir = dir.openDirZ(joined_, .{ .iterate = true }) catch |err| {
                         this.err = err;
                         return;
@@ -268,22 +273,22 @@ pub const Bin = extern struct {
 
                     var iter = child_dir.iterate();
 
-                    var basedir_path = std.os.getFdPath(child_dir.fd, &from_buf) catch |err| {
+                    var basedir_path = std.os.getFdPath(child_dir.fd, &target_buf) catch |err| {
                         this.err = err;
                         return;
                     };
-                    from_buf[basedir_path.len] = std.fs.path.sep;
-                    var from_buf_remain = from_buf[basedir_path.len + 1 ..];
+                    target_buf[basedir_path.len] = std.fs.path.sep;
+                    var target_buf_remain = target_buf[basedir_path.len + 1 ..];
 
                     while (iter.next() catch null) |entry_| {
                         const entry: std.fs.Dir.Entry = entry_;
                         switch (entry.kind) {
                             std.fs.Dir.Entry.Kind.SymLink, std.fs.Dir.Entry.Kind.File => {
-                                std.mem.copy(u8, from_buf_remain, entry.name);
-                                from_buf_remain = from_buf_remain[entry.name.len..];
-                                from_buf_remain[0] = 0;
-                                var from_path: [:0]u8 = from_buf[0 .. @ptrToInt(from_buf_remain.ptr) - @ptrToInt(&from_buf) :0];
-                                var to_path = std.fmt.bufPrintZ(&path_buf, ".bin/{s}", .{entry.name}) catch unreachable;
+                                std.mem.copy(u8, target_buf_remain, entry.name);
+                                target_buf_remain = target_buf_remain[entry.name.len..];
+                                target_buf_remain[0] = 0;
+                                var from_path: [:0]u8 = target_buf[0 .. @ptrToInt(target_buf_remain.ptr) - @ptrToInt(&target_buf) :0];
+                                var to_path = std.fmt.bufPrintZ(&dest_buf, ".bin/{s}", .{entry.name}) catch unreachable;
 
                                 std.os.symlinkatZ(
                                     from_path,
@@ -312,5 +317,131 @@ pub const Bin = extern struct {
                 },
             }
         }
+
+        // fn linkGlobalSymlink(this: *Linker, realpath: string, filename_in_terminal: string) void {}
+
+        // pub fn linkGlobal(this: *Linker) void {
+        //     var target_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        //     const name = this.package_name.slice();
+
+        //     if (comptime Environment.isWindows) {
+        //         @compileError("Bin.Linker.link() needs to be updated to generate .cmd files on Windows");
+        //     }
+
+        //     switch (this.bin.tag) {
+        //         .none => {
+        //             if (comptime Environment.isDebug) {
+        //                 unreachable;
+        //             }
+        //         },
+        //         .file => {
+        //             var target = this.bin.value.file.slice(this.string_buf);
+
+        //             if (strings.hasPrefix(target, "./")) {
+        //                 target = target[2..];
+        //             }
+        //             @memcpy(&target_buf, target.ptr, target.len);
+
+        //             // we need to use the unscoped package name here
+        //             // this is why @babel/parser would fail to link
+        //             const unscoped_name = unscopedPackageName(name);
+
+        //         },
+        //         .named_file => {
+        //             var target = this.bin.value.named_file[1].slice(this.string_buf);
+        //             if (strings.hasPrefix(target, "./")) {
+        //                 target = target[2..];
+        //             }
+        //             std.mem.copy(u8, remain, target);
+        //             remain = remain[target.len..];
+        //             remain[0] = 0;
+        //             const target_len = @ptrToInt(remain.ptr) - @ptrToInt(&dest_buf);
+        //             remain = remain[1..];
+
+        //             var target_path: [:0]u8 = dest_buf[0..target_len :0];
+        //             var name_to_use = this.bin.value.named_file[0].slice(this.string_buf);
+        //             std.mem.copy(u8, from_remain, name_to_use);
+        //             from_remain = from_remain[name_to_use.len..];
+        //             from_remain[0] = 0;
+        //             var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
+
+        //             std.os.symlinkatZ(target_path, this.root_node_modules_folder, dest_path) catch |err| {
+        //                 // Silently ignore PathAlreadyExists
+        //                 // Most likely, the symlink was already created by another package
+        //                 if (err == error.PathAlreadyExists) {
+        //                     this.setPermissions(dest_path);
+        //                     return;
+        //                 }
+
+        //                 this.err = err;
+        //             };
+        //             this.setPermissions(dest_path);
+        //         },
+        //         .dir => {
+        //             var target = this.bin.value.dir.slice(this.string_buf);
+        //             var parts = [_][]const u8{ name, target };
+        //             if (strings.hasPrefix(target, "./")) {
+        //                 target = target[2..];
+        //             }
+        //             std.mem.copy(u8, remain, target);
+        //             remain = remain[target.len..];
+        //             remain[0] = 0;
+        //             var dir = std.fs.Dir{ .fd = this.package_installed_node_modules };
+
+        //             var joined = Path.joinStringBuf(&target_buf, &parts, .auto);
+        //             target_buf[joined.len] = 0;
+        //             var joined_: [:0]u8 = target_buf[0..joined.len :0];
+        //             var child_dir = dir.openDirZ(joined_, .{ .iterate = true }) catch |err| {
+        //                 this.err = err;
+        //                 return;
+        //             };
+        //             defer child_dir.close();
+
+        //             var iter = child_dir.iterate();
+
+        //             var basedir_path = std.os.getFdPath(child_dir.fd, &target_buf) catch |err| {
+        //                 this.err = err;
+        //                 return;
+        //             };
+        //             target_buf[basedir_path.len] = std.fs.path.sep;
+        //             var target_buf_remain = target_buf[basedir_path.len + 1 ..];
+
+        //             while (iter.next() catch null) |entry_| {
+        //                 const entry: std.fs.Dir.Entry = entry_;
+        //                 switch (entry.kind) {
+        //                     std.fs.Dir.Entry.Kind.SymLink, std.fs.Dir.Entry.Kind.File => {
+        //                         std.mem.copy(u8, target_buf_remain, entry.name);
+        //                         target_buf_remain = target_buf_remain[entry.name.len..];
+        //                         target_buf_remain[0] = 0;
+        //                         var from_path: [:0]u8 = target_buf[0 .. @ptrToInt(target_buf_remain.ptr) - @ptrToInt(&target_buf) :0];
+        //                         var to_path = std.fmt.bufPrintZ(&dest_buf, ".bin/{s}", .{entry.name}) catch unreachable;
+
+        //                         std.os.symlinkatZ(
+        //                             from_path,
+        //                             this.root_node_modules_folder,
+        //                             to_path,
+        //                         ) catch |err| {
+
+        //                             // Silently ignore PathAlreadyExists
+        //                             // Most likely, the symlink was already created by another package
+        //                             if (err == error.PathAlreadyExists) {
+        //                                 this.setPermissions(to_path);
+        //                                 continue;
+        //                             }
+
+        //                             this.err = err;
+        //                             continue;
+        //                         };
+        //                         this.setPermissions(to_path);
+        //                     },
+        //                     else => {},
+        //                 }
+        //             }
+        //         },
+        //         .map => {
+        //             this.err = error.NotImplementedYet;
+        //         },
+        //     }
+        // }
     };
 };

@@ -1228,6 +1228,7 @@ pub const Lockfile = struct {
                         if (this.updates.len > 0) {
                             const name_hash = names_hashes[package_id];
                             for (this.updates) |update, update_id| {
+                                if (update.failed) return;
                                 if (update.name.len == package_name.len and name_hash == update.name_hash) {
                                     if (id_map[update_id] == std.math.maxInt(PackageID)) {
                                         id_map[update_id] = @truncate(PackageID, package_id);
@@ -1263,6 +1264,8 @@ pub const Lockfile = struct {
                         if (this.updates.len > 0) {
                             const name_hash = names_hashes[package_id];
                             for (this.updates) |update, update_id| {
+                                if (update.failed) return;
+
                                 if (update.name.len == package_name.len and name_hash == update.name_hash) {
                                     if (id_map[update_id] == std.math.maxInt(PackageID)) {
                                         id_map[update_id] = @truncate(PackageID, package_id);
@@ -1571,7 +1574,7 @@ pub const Lockfile = struct {
                         remote_features)) continue;
                     if (log_level != .silent)
                         Output.prettyErrorln(
-                            "<r><red>ERROR<r><d>:<r> <b>{s}<r><d>@<b>{}<r><d> failed to resolve\n",
+                            "<r><red>error<r><d>:<r> <b>{s}<r><d>@<b>{}<r><d> failed to resolve<r>\n",
                             .{
                                 failed_dep.name.slice(string_buf),
                                 failed_dep.version.literal.fmt(string_buf),
@@ -2440,7 +2443,8 @@ pub const Lockfile = struct {
                     log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
                 }
 
-                Output.panic("<r><red>{s}<r> parsing package.json for <b>\"{s}\"<r>", .{ @errorName(err), source.path.prettyDir() });
+                Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), source.path.prettyDir() });
+                Global.exit(1);
             };
 
             var string_builder = lockfile.stringBuilder();
@@ -4475,7 +4479,7 @@ pub const PackageManager = struct {
                                             null,
                                             logger.Loc.Empty,
                                             this.allocator,
-                                            "Package \"{s}\" with tag \"{s}\" not found, but package exists",
+                                            "package \"{s}\" with tag \"{s}\" not found, but package exists",
                                             .{
                                                 this.lockfile.str(name),
                                                 this.lockfile.str(version.value.dist_tag),
@@ -4731,7 +4735,7 @@ pub const PackageManager = struct {
         var has_updated_this_run = false;
         while (manager.network_channel.tryReadItem() catch null) |task_| {
             var task: *NetworkTask = task_;
-            manager.pending_tasks -= 1;
+            manager.pending_tasks -|= 1;
 
             switch (task.callback) {
                 .package_manifest => |manifest_req| {
@@ -4762,20 +4766,78 @@ pub const PackageManager = struct {
                     };
 
                     if (response.status_code > 399) {
-                        if (comptime log_level != .silent) {
-                            const fmt = "\n<r><red><b>GET<r><red> {s}<d> - {d}<r>\n";
-                            const args = .{
-                                task.http.client.url.href,
-                                response.status_code,
-                            };
+                        switch (response.status_code) {
+                            404 => {
+                                if (comptime log_level != .silent) {
+                                    const fmt = "\n<r><red>error<r>: package <b><red>\"{s}\"<r> not found <d>404<r>\n";
+                                    const args = .{
+                                        name.slice(),
+                                    };
 
-                            if (comptime log_level.showProgress()) {
-                                Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                            } else {
-                                Output.prettyErrorln(fmt, args);
-                                Output.flush();
+                                    if (comptime log_level.showProgress()) {
+                                        Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
+                                    } else {
+                                        Output.prettyErrorln(fmt, args);
+                                        Output.flush();
+                                    }
+                                }
+                            },
+                            401 => {
+                                if (comptime log_level != .silent) {
+                                    const fmt = "\n<r><red>error<r>: unauthorized while loading <b><red>\"{s}\"<r><d> 401<r>\n";
+                                    const args = .{
+                                        name.slice(),
+                                    };
+
+                                    if (comptime log_level.showProgress()) {
+                                        Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
+                                    } else {
+                                        Output.prettyErrorln(fmt, args);
+                                        Output.flush();
+                                    }
+                                }
+                            },
+                            403 => {
+                                if (comptime log_level != .silent) {
+                                    const fmt = "\n<r><red>error<r>: forbidden while loading <b><red>\"{s}\"<r><d> 403<r>\n";
+                                    const args = .{
+                                        name.slice(),
+                                    };
+
+                                    if (comptime log_level.showProgress()) {
+                                        Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
+                                    } else {
+                                        Output.prettyErrorln(fmt, args);
+                                        Output.flush();
+                                    }
+                                }
+                            },
+                            else => {
+                                if (comptime log_level != .silent) {
+                                    const fmt = "\n<r><red><b>GET<r><red> {s}<d> - {d}<r>\n";
+                                    const args = .{
+                                        task.http.client.url.href,
+                                        response.status_code,
+                                    };
+
+                                    if (comptime log_level.showProgress()) {
+                                        Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
+                                    } else {
+                                        Output.prettyErrorln(fmt, args);
+                                        Output.flush();
+                                    }
+                                }
+                            },
+                        }
+                        for (manager.package_json_updates) |*update| {
+                            if (strings.eql(update.name, name.slice())) {
+                                update.failed = true;
+                                manager.options.do.save_lockfile = false;
+                                manager.options.do.save_yarn_lock = false;
+                                manager.options.do.install_packages = false;
                             }
                         }
+
                         continue;
                     }
 
@@ -6048,6 +6110,7 @@ pub const PackageManager = struct {
         version: Dependency.Version = Dependency.Version{},
         version_buf: []const u8 = "",
         missing_version: bool = false,
+        failed: bool = false,
         // This must be cloned to handle when the AST store resets
         e_string: ?*JSAst.E.String = null,
 
@@ -6446,6 +6509,13 @@ pub const PackageManager = struct {
         try installWithManager(ctx, manager, new_package_json_source, log_level);
 
         if (op == .update or op == .add) {
+            for (manager.package_json_updates) |update| {
+                if (update.failed) {
+                    Global.exit(1);
+                    return;
+                }
+            }
+
             const source = logger.Source.initPathString("package.json", new_package_json_source);
 
             // Now, we _re_ parse our in-memory edited package.json
@@ -6953,6 +7023,7 @@ pub const PackageManager = struct {
                             PackageInstaller.installEnqueuedPackages,
                             log_level,
                         );
+                        if (!installer.options.do.install_packages) return error.InstallFailed;
                     }
                 }
 
@@ -6966,9 +7037,10 @@ pub const PackageManager = struct {
                     PackageInstaller.installEnqueuedPackages,
                     log_level,
                 );
+                if (!installer.options.do.install_packages) return error.InstallFailed;
             }
 
-            while (this.pending_tasks > 0) {
+            while (this.pending_tasks > 0 and installer.options.do.install_packages) {
                 try this.runTasks(
                     *PackageInstaller,
                     &installer,
@@ -6976,6 +7048,8 @@ pub const PackageManager = struct {
                     log_level,
                 );
             }
+
+            if (!installer.options.do.install_packages) return error.InstallFailed;
 
             summary.successfully_installed = installer.successfully_installed;
             outer: for (installer.platform_binlinks.items) |deferred| {
@@ -7361,6 +7435,12 @@ pub const PackageManager = struct {
         }
 
         if (manager.lockfile.packages.len > 0) {
+            for (manager.package_json_updates) |update| {
+                // prevent redundant errors
+                if (update.failed) {
+                    return error.InstallFailed;
+                }
+            }
             manager.root_dependency_list = manager.lockfile.packages.items(.dependencies)[0];
             manager.lockfile.verifyResolutions(manager.options.local_package_features, manager.options.remote_package_features, log_level);
         }

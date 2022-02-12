@@ -320,6 +320,9 @@ pub noinline fn globalError(err: anyerror) noreturn {
             Output.flush();
             Global.exit(1);
         },
+        error.InstallFailed => {
+            Global.exit(1);
+        },
         error.SystemFdQuotaExceeded => {
             const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
             if (comptime Environment.isMac) {

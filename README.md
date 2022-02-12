@@ -732,6 +732,9 @@ path = "bun.lockb"
 # Path to save bun.lockb to
 savePath = "bun.lockb"
 
+# Save the lockfile to disk
+save = true
+
 ```
 
 If it's easier to read as TypeScript types:
@@ -777,6 +780,7 @@ export interface Lockfile {
   print: "yarn";
   path: string;
   savePath: string;
+  save: bool;
 }
 ```
 

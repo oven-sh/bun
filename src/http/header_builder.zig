@@ -36,6 +36,24 @@ pub fn append(this: *HeaderBuilder, name: string, value: string) void {
     this.entries.appendAssumeCapacity(Headers.Kv{ .name = name_ptr, .value = value_ptr });
 }
 
+pub fn appendFmt(this: *HeaderBuilder, name: string, comptime fmt: string, args: anytype) void {
+    const name_ptr = Api.StringPointer{
+        .offset = @truncate(u32, this.content.len),
+        .length = @truncate(u32, name.len),
+    };
+
+    _ = this.content.append(name);
+
+    const value = this.content.fmt(fmt, args);
+
+    const value_ptr = Api.StringPointer{
+        .offset = @truncate(u32, this.content.len),
+        .length = @truncate(u32, value.len),
+    };
+
+    this.entries.appendAssumeCapacity(Headers.Kv{ .name = name_ptr, .value = value_ptr });
+}
+
 pub fn apply(this: *HeaderBuilder, client: *HTTPClient) void {
     client.header_entries = this.entries;
     client.header_buf = this.content.ptr.?[0..this.content.len];

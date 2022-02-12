@@ -205,6 +205,97 @@ pub const Arguments = struct {
         Global.exit(0);
     }
 
+    fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
+        var config_file = std.fs.openFileAbsoluteZ(config_path, .{ .read = true }) catch |err| {
+            if (auto_loaded) return;
+            Output.prettyErrorln("<r><red>error<r>: {s} opening config \"{s}\"", .{
+                @errorName(err),
+                std.mem.span(config_path),
+            });
+            Output.flush();
+            Global.exit(1);
+        };
+        defer config_file.close();
+        var contents = config_file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
+            if (auto_loaded) return;
+            Output.prettyErrorln("<r><red>error<r>: {s} reading config \"{s}\"", .{
+                @errorName(err),
+                std.mem.span(config_path),
+            });
+            Output.flush();
+            Global.exit(1);
+        };
+
+        js_ast.Stmt.Data.Store.create(allocator);
+        js_ast.Expr.Data.Store.create(allocator);
+        defer {
+            js_ast.Stmt.Data.Store.reset();
+            js_ast.Expr.Data.Store.reset();
+        }
+        var original_level = ctx.log.level;
+        defer {
+            ctx.log.level = original_level;
+        }
+        ctx.log.level = logger.Log.Level.warn;
+        try Bunfig.parse(allocator, logger.Source.initPathString(std.mem.span(config_path), contents), ctx, cmd);
+    }
+
+    fn getHomeConfigPath(cwd: string, buf: *[std.fs.MAX_PATH_BYTES]u8) ?[:0]const u8 {
+        if (std.os.getenvZ("XDG_CONFIG_HOME")) |data_dir| {
+            var paths = [_]string{ data_dir, ".bunfig.toml" };
+            return resolve_path.joinAbsStringBufZ(cwd, buf, &paths, .auto);
+        }
+
+        if (std.os.getenvZ("HOME")) |data_dir| {
+            var paths = [_]string{ data_dir, ".bunfig.toml" };
+            return resolve_path.joinAbsStringBufZ(cwd, buf, &paths, .auto);
+        }
+
+        return null;
+    }
+
+    pub fn loadConfig(allocator: std.mem.Allocator, args: clap.Args(clap.Help, &params), ctx: *Command.Context, comptime cmd: Command.Tag) !void {
+        var config_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        if (comptime cmd.readGlobalConfig()) {
+            if (getHomeConfigPath(ctx.args.absolute_working_dir, &config_buf)) |path| {
+                try loadConfigPath(allocator, true, path, ctx, comptime cmd);
+            }
+        }
+
+        var config_path_: []const u8 = "";
+        if (args.option("--config")) |config_path__| {
+            config_path_ = config_path__;
+        }
+        var auto_loaded: bool = false;
+        if (config_path_.len == 0 and (args.option("--config") != null or Command.Tag.always_loads_config.get(cmd))) {
+            config_path_ = "bunfig.toml";
+            auto_loaded = true;
+        }
+
+        if (config_path_.len == 0) {
+            return;
+        }
+
+        var config_path: [:0]u8 = undefined;
+        if (config_path_[0] == '/') {
+            @memcpy(&config_buf, config_path_.ptr, config_path_.len);
+            config_buf[config_path_.len] = 0;
+            config_path = config_buf[0..config_path_.len :0];
+        } else {
+            var parts = [_]string{ ctx.args.absolute_working_dir.?, config_path_ };
+            config_path_ = resolve_path.joinAbsStringBuf(
+                ctx.args.absolute_working_dir.?,
+                &config_buf,
+                &parts,
+                .auto,
+            );
+            config_buf[config_path_.len] = 0;
+            config_path = config_buf[0..config_path_.len :0];
+        }
+
+        try loadConfigPath(allocator, auto_loaded, config_path, ctx, comptime cmd);
+    }
+
     pub fn parse(allocator: std.mem.Allocator, ctx: *Command.Context, comptime cmd: Command.Tag) !Api.TransformOptions {
         var diag = clap.Diagnostic{};
 
@@ -229,78 +320,13 @@ pub const Arguments = struct {
             cwd = try std.process.getCwdAlloc(allocator);
         }
 
-        var opts: Api.TransformOptions = ctx.args;
-        opts.absolute_working_dir = cwd;
+        ctx.args.absolute_working_dir = cwd;
 
         if (comptime Command.Tag.loads_config.get(cmd)) {
-            load_config: {
-                var config_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-
-                var config_path_: []const u8 = "";
-                if (args.option("--config")) |config_path__| {
-                    config_path_ = config_path__;
-                }
-                var auto_loaded: bool = false;
-                if (config_path_.len == 0 and (args.option("--config") != null or Command.Tag.always_loads_config.get(cmd))) {
-                    config_path_ = "bunfig.toml";
-                    auto_loaded = true;
-                }
-
-                if (config_path_.len == 0) {
-                    break :load_config;
-                }
-
-                var config_path: [:0]u8 = undefined;
-                if (config_path_[0] == '/') {
-                    @memcpy(&config_buf, config_path_.ptr, config_path_.len);
-                    config_buf[config_path_.len] = 0;
-                    config_path = config_buf[0..config_path_.len :0];
-                } else {
-                    var parts = [_]string{ cwd, config_path_ };
-                    config_path_ = resolve_path.joinAbsStringBuf(
-                        cwd,
-                        &config_buf,
-                        &parts,
-                        .auto,
-                    );
-                    config_buf[config_path_.len] = 0;
-                    config_path = config_buf[0..config_path_.len :0];
-                }
-
-                var config_file = std.fs.openFileAbsoluteZ(config_path, .{ .read = true }) catch |err| {
-                    if (auto_loaded) break :load_config;
-                    Output.prettyErrorln("<r><red>error<r>: {s} opening config \"{s}\"", .{
-                        @errorName(err),
-                        std.mem.span(config_path),
-                    });
-                    Output.flush();
-                    Global.exit(1);
-                };
-                var contents = config_file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
-                    if (auto_loaded) break :load_config;
-                    Output.prettyErrorln("<r><red>error<r>: {s} reading config \"{s}\"", .{
-                        @errorName(err),
-                        std.mem.span(config_path),
-                    });
-                    Output.flush();
-                    Global.exit(1);
-                };
-
-                js_ast.Stmt.Data.Store.create(allocator);
-                js_ast.Expr.Data.Store.create(allocator);
-                defer {
-                    js_ast.Stmt.Data.Store.reset();
-                    js_ast.Expr.Data.Store.reset();
-                }
-                var original_level = ctx.log.level;
-                defer {
-                    ctx.log.level = original_level;
-                }
-                ctx.log.level = logger.Log.Level.warn;
-                try Bunfig.parse(allocator, logger.Source.initPathString(std.mem.span(config_path), contents), ctx, cmd);
-                opts = ctx.args;
-            }
+            try loadConfig(allocator, args, ctx, cmd);
         }
+
+        var opts: Api.TransformOptions = ctx.args;
 
         var defines_tuple = try DefineColonList.resolve(allocator, args.options("--define"));
 
@@ -699,6 +725,7 @@ pub const Command = struct {
         log: *logger.Log,
         allocator: std.mem.Allocator,
         positionals: []const string = &[_]string{},
+        install: ?*Api.BunInstall = null,
 
         debug: DebugOptions = DebugOptions{},
 
@@ -1125,6 +1152,20 @@ pub const Command = struct {
         UpgradeCommand,
         PackageManagerCommand,
         TestCommand,
+
+        pub fn readGlobalConfig(this: Tag) bool {
+            return switch (this) {
+                .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand => true,
+                else => false,
+            };
+        }
+
+        pub fn isNPMRelated(this: Tag) bool {
+            return switch (this) {
+                .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand => true,
+                else => false,
+            };
+        }
 
         pub const cares_about_bun_file: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
             .AutoCommand = true,

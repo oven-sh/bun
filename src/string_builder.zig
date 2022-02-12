@@ -30,3 +30,14 @@ pub fn append(this: *StringBuilder, slice: string) string {
     assert(this.len <= this.cap);
     return result;
 }
+
+const std = @import("std");
+pub fn fmt(this: *StringBuilder, comptime str: string, args: anytype) string {
+    assert(this.len <= this.cap); // didn't count everything
+    assert(this.ptr != null); // must call allocate first
+
+    var buf = this.ptr.?[this.len..this.cap];
+    const out = std.fmt.bufPrint(buf, str, args) catch unreachable;
+    this.len += out.len;
+    return out;
+}

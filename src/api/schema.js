@@ -2748,6 +2748,271 @@ function encodeWebsocketMessageResolveID(message, bb) {
   }
 }
 
+function decodeNPMRegistry(bb) {
+  var result = {};
+
+  result["url"] = bb.readString();
+  result["username"] = bb.readString();
+  result["password"] = bb.readString();
+  result["token"] = bb.readString();
+  return result;
+}
+
+function encodeNPMRegistry(message, bb) {
+  var value = message["url"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error('Missing required field "url"');
+  }
+
+  var value = message["username"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error('Missing required field "username"');
+  }
+
+  var value = message["password"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error('Missing required field "password"');
+  }
+
+  var value = message["token"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error('Missing required field "token"');
+  }
+}
+
+function decodeNPMRegistryMap(bb) {
+  var result = {};
+
+  var length = bb.readVarUint();
+  var values = (result["scopes"] = Array(length));
+  for (var i = 0; i < length; i++) values[i] = bb.readString();
+  var length = bb.readVarUint();
+  var values = (result["registries"] = Array(length));
+  for (var i = 0; i < length; i++) values[i] = decodeNPMRegistry(bb);
+  return result;
+}
+
+function encodeNPMRegistryMap(message, bb) {
+  var value = message["scopes"];
+  if (value != null) {
+    var values = value,
+      n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      bb.writeString(value);
+    }
+  } else {
+    throw new Error('Missing required field "scopes"');
+  }
+
+  var value = message["registries"];
+  if (value != null) {
+    var values = value,
+      n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      encodeNPMRegistry(value, bb);
+    }
+  } else {
+    throw new Error('Missing required field "registries"');
+  }
+}
+
+function decodeBunInstall(bb) {
+  var result = {};
+
+  while (true) {
+    switch (bb.readByte()) {
+      case 0:
+        return result;
+
+      case 1:
+        result["default_registry"] = decodeNPMRegistry(bb);
+        break;
+
+      case 2:
+        result["scoped"] = decodeNPMRegistryMap(bb);
+        break;
+
+      case 3:
+        result["lockfile_path"] = bb.readString();
+        break;
+
+      case 4:
+        result["save_lockfile_path"] = bb.readString();
+        break;
+
+      case 5:
+        result["cache_directory"] = bb.readString();
+        break;
+
+      case 6:
+        result["dry_run"] = !!bb.readByte();
+        break;
+
+      case 7:
+        result["force"] = !!bb.readByte();
+        break;
+
+      case 8:
+        result["save_dev"] = !!bb.readByte();
+        break;
+
+      case 9:
+        result["save_optional"] = !!bb.readByte();
+        break;
+
+      case 10:
+        result["save_peer"] = !!bb.readByte();
+        break;
+
+      case 11:
+        result["save_lockfile"] = !!bb.readByte();
+        break;
+
+      case 12:
+        result["production"] = !!bb.readByte();
+        break;
+
+      case 13:
+        result["save_yarn_lockfile"] = !!bb.readByte();
+        break;
+
+      case 14:
+        var length = bb.readVarUint();
+        var values = (result["native_bin_links"] = Array(length));
+        for (var i = 0; i < length; i++) values[i] = bb.readString();
+        break;
+
+      case 15:
+        result["disable_cache"] = !!bb.readByte();
+        break;
+
+      case 16:
+        result["disable_manifest_cache"] = !!bb.readByte();
+        break;
+
+      default:
+        throw new Error("Attempted to parse invalid message");
+    }
+  }
+}
+
+function encodeBunInstall(message, bb) {
+  var value = message["default_registry"];
+  if (value != null) {
+    bb.writeByte(1);
+    encodeNPMRegistry(value, bb);
+  }
+
+  var value = message["scoped"];
+  if (value != null) {
+    bb.writeByte(2);
+    encodeNPMRegistryMap(value, bb);
+  }
+
+  var value = message["lockfile_path"];
+  if (value != null) {
+    bb.writeByte(3);
+    bb.writeString(value);
+  }
+
+  var value = message["save_lockfile_path"];
+  if (value != null) {
+    bb.writeByte(4);
+    bb.writeString(value);
+  }
+
+  var value = message["cache_directory"];
+  if (value != null) {
+    bb.writeByte(5);
+    bb.writeString(value);
+  }
+
+  var value = message["dry_run"];
+  if (value != null) {
+    bb.writeByte(6);
+    bb.writeByte(value);
+  }
+
+  var value = message["force"];
+  if (value != null) {
+    bb.writeByte(7);
+    bb.writeByte(value);
+  }
+
+  var value = message["save_dev"];
+  if (value != null) {
+    bb.writeByte(8);
+    bb.writeByte(value);
+  }
+
+  var value = message["save_optional"];
+  if (value != null) {
+    bb.writeByte(9);
+    bb.writeByte(value);
+  }
+
+  var value = message["save_peer"];
+  if (value != null) {
+    bb.writeByte(10);
+    bb.writeByte(value);
+  }
+
+  var value = message["save_lockfile"];
+  if (value != null) {
+    bb.writeByte(11);
+    bb.writeByte(value);
+  }
+
+  var value = message["production"];
+  if (value != null) {
+    bb.writeByte(12);
+    bb.writeByte(value);
+  }
+
+  var value = message["save_yarn_lockfile"];
+  if (value != null) {
+    bb.writeByte(13);
+    bb.writeByte(value);
+  }
+
+  var value = message["native_bin_links"];
+  if (value != null) {
+    bb.writeByte(14);
+    var values = value,
+      n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      bb.writeString(value);
+    }
+  }
+
+  var value = message["disable_cache"];
+  if (value != null) {
+    bb.writeByte(15);
+    bb.writeByte(value);
+  }
+
+  var value = message["disable_manifest_cache"];
+  if (value != null) {
+    bb.writeByte(16);
+    bb.writeByte(value);
+  }
+  bb.writeByte(0);
+}
+
 export { Loader };
 export { LoaderKeys };
 export { FrameworkEntryPointType };
@@ -2874,3 +3139,9 @@ export { decodeWebsocketCommandBuildWithFilePath };
 export { encodeWebsocketCommandBuildWithFilePath };
 export { decodeWebsocketMessageResolveID };
 export { encodeWebsocketMessageResolveID };
+export { decodeNPMRegistry };
+export { encodeNPMRegistry };
+export { decodeNPMRegistryMap };
+export { encodeNPMRegistryMap };
+export { decodeBunInstall };
+export { encodeBunInstall };

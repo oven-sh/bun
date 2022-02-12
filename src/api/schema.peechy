@@ -344,7 +344,6 @@ message TransformOptions {
 
   uint16 port = 25;
   MessageLevel logLevel = 26;
-
 }
 
 struct FileHandle {
@@ -516,4 +515,36 @@ struct WebsocketCommandBuildWithFilePath {
 
 struct WebsocketMessageResolveID {
   uint32 id;
+}
+
+struct NPMRegistry {
+  string url;
+  string username;
+  string password;
+  string token;
+}
+
+struct NPMRegistryMap {
+  string[] scopes;
+  NPMRegistry[] registries;
+}
+
+message BunInstall {
+  NPMRegistry default_registry = 1;
+  NPMRegistryMap scoped = 2;
+  string lockfile_path = 3;
+  string save_lockfile_path = 4;
+  string cache_directory = 5;
+  bool dry_run = 6;
+  bool force = 7;
+  bool save_dev = 8;
+  bool save_optional = 9;
+  bool save_peer = 10;
+  bool save_lockfile = 11;
+  bool production = 12;
+  bool save_yarn_lockfile = 13;
+  string[] native_bin_links = 14;
+
+  bool disable_cache = 15;
+  bool disable_manifest_cache = 16;
 }

@@ -396,6 +396,21 @@ pub const Loader = struct {
 
     const empty_string_value: string = "\"\"";
 
+    pub fn get(this: *const Loader, key: string) ?string {
+        var _key = key;
+        if (_key.len > 0 and _key[0] == '$') {
+            _key = key[1..];
+        }
+
+        if (_key.len == 0) return null;
+
+        return this.map.get(_key);
+    }
+
+    pub fn getAuto(this: *const Loader, key: string) string {
+        return this.get(key) orelse key;
+    }
+
     /// Load values from the environment into Define. 
     /// 
     /// If there is a framework, values from the framework are inserted with a

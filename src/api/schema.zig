@@ -2617,4 +2617,239 @@ pub const Api = struct {
             try writer.writeInt(this.id);
         }
     };
+
+    pub const NpmRegistry = struct {
+        /// url
+        url: []const u8,
+
+        /// username
+        username: []const u8,
+
+        /// password
+        password: []const u8,
+
+        /// token
+        token: []const u8,
+
+        pub fn decode(reader: anytype) anyerror!NpmRegistry {
+            var this = std.mem.zeroes(NpmRegistry);
+
+            this.url = try reader.readValue([]const u8);
+            this.username = try reader.readValue([]const u8);
+            this.password = try reader.readValue([]const u8);
+            this.token = try reader.readValue([]const u8);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeValue(@TypeOf(this.url), this.url);
+            try writer.writeValue(@TypeOf(this.username), this.username);
+            try writer.writeValue(@TypeOf(this.password), this.password);
+            try writer.writeValue(@TypeOf(this.token), this.token);
+        }
+    };
+
+    pub const NpmRegistryMap = struct {
+        /// scopes
+        scopes: []const []const u8,
+
+        /// registries
+        registries: []const NpmRegistry,
+
+        pub fn decode(reader: anytype) anyerror!NpmRegistryMap {
+            var this = std.mem.zeroes(NpmRegistryMap);
+
+            this.scopes = try reader.readArray([]const u8);
+            this.registries = try reader.readArray(NpmRegistry);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeArray([]const u8, this.scopes);
+            try writer.writeArray(NpmRegistry, this.registries);
+        }
+    };
+
+    pub const BunInstall = struct {
+        /// default_registry
+        default_registry: ?NpmRegistry = null,
+
+        /// scoped
+        scoped: ?NpmRegistryMap = null,
+
+        /// lockfile_path
+        lockfile_path: ?[]const u8 = null,
+
+        /// save_lockfile_path
+        save_lockfile_path: ?[]const u8 = null,
+
+        /// cache_directory
+        cache_directory: ?[]const u8 = null,
+
+        /// dry_run
+        dry_run: ?bool = null,
+
+        /// force
+        force: ?bool = null,
+
+        /// save_dev
+        save_dev: ?bool = null,
+
+        /// save_optional
+        save_optional: ?bool = null,
+
+        /// save_peer
+        save_peer: ?bool = null,
+
+        /// save_lockfile
+        save_lockfile: ?bool = null,
+
+        /// production
+        production: ?bool = null,
+
+        /// save_yarn_lockfile
+        save_yarn_lockfile: ?bool = null,
+
+        /// native_bin_links
+        native_bin_links: []const []const u8,
+
+        /// disable_cache
+        disable_cache: ?bool = null,
+
+        /// disable_manifest_cache
+        disable_manifest_cache: ?bool = null,
+
+        pub fn decode(reader: anytype) anyerror!BunInstall {
+            var this = std.mem.zeroes(BunInstall);
+
+            while (true) {
+                switch (try reader.readByte()) {
+                    0 => {
+                        return this;
+                    },
+
+                    1 => {
+                        this.default_registry = try reader.readValue(NpmRegistry);
+                    },
+                    2 => {
+                        this.scoped = try reader.readValue(NpmRegistryMap);
+                    },
+                    3 => {
+                        this.lockfile_path = try reader.readValue([]const u8);
+                    },
+                    4 => {
+                        this.save_lockfile_path = try reader.readValue([]const u8);
+                    },
+                    5 => {
+                        this.cache_directory = try reader.readValue([]const u8);
+                    },
+                    6 => {
+                        this.dry_run = try reader.readValue(bool);
+                    },
+                    7 => {
+                        this.force = try reader.readValue(bool);
+                    },
+                    8 => {
+                        this.save_dev = try reader.readValue(bool);
+                    },
+                    9 => {
+                        this.save_optional = try reader.readValue(bool);
+                    },
+                    10 => {
+                        this.save_peer = try reader.readValue(bool);
+                    },
+                    11 => {
+                        this.save_lockfile = try reader.readValue(bool);
+                    },
+                    12 => {
+                        this.production = try reader.readValue(bool);
+                    },
+                    13 => {
+                        this.save_yarn_lockfile = try reader.readValue(bool);
+                    },
+                    14 => {
+                        this.native_bin_links = try reader.readArray([]const u8);
+                    },
+                    15 => {
+                        this.disable_cache = try reader.readValue(bool);
+                    },
+                    16 => {
+                        this.disable_manifest_cache = try reader.readValue(bool);
+                    },
+                    else => {
+                        return error.InvalidMessage;
+                    },
+                }
+            }
+            unreachable;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            if (this.default_registry) |default_registry| {
+                try writer.writeFieldID(1);
+                try writer.writeValue(@TypeOf(default_registry), default_registry);
+            }
+            if (this.scoped) |scoped| {
+                try writer.writeFieldID(2);
+                try writer.writeValue(@TypeOf(scoped), scoped);
+            }
+            if (this.lockfile_path) |lockfile_path| {
+                try writer.writeFieldID(3);
+                try writer.writeValue(@TypeOf(lockfile_path), lockfile_path);
+            }
+            if (this.save_lockfile_path) |save_lockfile_path| {
+                try writer.writeFieldID(4);
+                try writer.writeValue(@TypeOf(save_lockfile_path), save_lockfile_path);
+            }
+            if (this.cache_directory) |cache_directory| {
+                try writer.writeFieldID(5);
+                try writer.writeValue(@TypeOf(cache_directory), cache_directory);
+            }
+            if (this.dry_run) |dry_run| {
+                try writer.writeFieldID(6);
+                try writer.writeInt(@as(u8, @boolToInt(dry_run)));
+            }
+            if (this.force) |force| {
+                try writer.writeFieldID(7);
+                try writer.writeInt(@as(u8, @boolToInt(force)));
+            }
+            if (this.save_dev) |save_dev| {
+                try writer.writeFieldID(8);
+                try writer.writeInt(@as(u8, @boolToInt(save_dev)));
+            }
+            if (this.save_optional) |save_optional| {
+                try writer.writeFieldID(9);
+                try writer.writeInt(@as(u8, @boolToInt(save_optional)));
+            }
+            if (this.save_peer) |save_peer| {
+                try writer.writeFieldID(10);
+                try writer.writeInt(@as(u8, @boolToInt(save_peer)));
+            }
+            if (this.save_lockfile) |save_lockfile| {
+                try writer.writeFieldID(11);
+                try writer.writeInt(@as(u8, @boolToInt(save_lockfile)));
+            }
+            if (this.production) |production| {
+                try writer.writeFieldID(12);
+                try writer.writeInt(@as(u8, @boolToInt(production)));
+            }
+            if (this.save_yarn_lockfile) |save_yarn_lockfile| {
+                try writer.writeFieldID(13);
+                try writer.writeInt(@as(u8, @boolToInt(save_yarn_lockfile)));
+            }
+            if (this.native_bin_links) |native_bin_links| {
+                try writer.writeFieldID(14);
+                try writer.writeArray([]const u8, native_bin_links);
+            }
+            if (this.disable_cache) |disable_cache| {
+                try writer.writeFieldID(15);
+                try writer.writeInt(@as(u8, @boolToInt(disable_cache)));
+            }
+            if (this.disable_manifest_cache) |disable_manifest_cache| {
+                try writer.writeFieldID(16);
+                try writer.writeInt(@as(u8, @boolToInt(disable_manifest_cache)));
+            }
+            try writer.endMessage();
+        }
+    };
 };

@@ -12,7 +12,6 @@ const URL = @import("./query_string_map.zig").URL;
 const C = _global.C;
 const options = @import("./options.zig");
 const logger = @import("./logger.zig");
-const cache = @import("./cache.zig");
 const js_ast = @import("./js_ast.zig");
 const js_lexer = @import("./js_lexer.zig");
 const Defines = @import("./defines.zig");
@@ -45,12 +44,78 @@ pub const Bunfig = struct {
             return error.@"Invalid Bunfig";
         }
 
+        fn parseRegistry(this: *Parser, expr: js_ast.Expr) !Api.NpmRegistry {
+            var registry = std.mem.zeroes(Api.NpmRegistry);
+
+            switch (expr.data) {
+                .e_string => |str| {
+                    const url = URL.parse(str.utf8);
+                    // Token
+                    if (url.username.len == 0 and url.password.len > 0) {
+                        registry.token = url.password;
+                        registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{s}/{s}", .{ url.displayProtocol(), url.displayHostname(), std.mem.trimLeft(u8, url.pathname, "/") });
+                    } else if (url.username.len > 0 and url.password.len > 0) {
+                        registry.username = url.username;
+                        registry.password = url.password;
+                        registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{s}/{s}", .{ url.displayProtocol(), url.displayHostname(), std.mem.trimLeft(u8, url.pathname, "/") });
+                    } else {
+                        registry.url = url.href;
+                    }
+                },
+                .e_object => |obj| {
+                    if (obj.get("url")) |url| {
+                        try this.expect(url, .e_string);
+                        registry.url = url.data.e_string.utf8;
+                    }
+
+                    if (obj.get("username")) |username| {
+                        try this.expect(username, .e_string);
+                        registry.username = username.data.e_string.utf8;
+                    }
+
+                    if (obj.get("password")) |password| {
+                        try this.expect(password, .e_string);
+                        registry.password = password.data.e_string.utf8;
+                    }
+
+                    if (obj.get("token")) |token| {
+                        try this.expect(token, .e_string);
+                        registry.token = token.data.e_string.utf8;
+                    }
+                },
+                else => {
+                    try this.addError(expr.loc, "Expected registry to be a URL string or an object");
+                },
+            }
+
+            return registry;
+        }
+
+        fn loadLogLevel(this: *Parser, expr: js_ast.Expr) !void {
+            try this.expect(expr, .e_string);
+            const Matcher = strings.ExactSizeMatcher(8);
+
+            this.bunfig.log_level = switch (Matcher.match(expr.asString(this.allocator).?)) {
+                Matcher.case("debug") => Api.MessageLevel.debug,
+                Matcher.case("error") => Api.MessageLevel.err,
+                Matcher.case("warn") => Api.MessageLevel.warn,
+                else => {
+                    try this.addError(expr.loc, "Invalid log level, must be one of debug, error, or warn");
+                    unreachable;
+                },
+            };
+        }
+
         pub fn parse(this: *Parser, comptime cmd: Command.Tag) !void {
             const json = this.json;
             var allocator = this.allocator;
 
             if (json.data != .e_object) {
                 try this.addError(json.loc, "bunfig expects an object { } at the root");
+            }
+
+            if (json.get("logLevel")) |expr| {
+                try this.loadLogLevel(expr);
             }
 
             if (json.get("define")) |expr| {
@@ -89,11 +154,178 @@ pub const Bunfig = struct {
                         this.ctx.debug.fallback_only = disable.asBool() orelse false;
                     }
 
+                    if (expr.get("logLevel")) |expr2| {
+                        try this.loadLogLevel(expr2);
+                    }
+
                     if (expr.get("port")) |port| {
                         try this.expect(port, .e_number);
                         this.bunfig.port = port.data.e_number.toU16();
                         if (this.bunfig.port.? == 0) {
                             this.bunfig.port = 3000;
+                        }
+                    }
+                }
+            }
+
+            if (comptime cmd.isNPMRelated()) {
+                if (json.get("install")) |bun| {
+                    var install: *Api.BunInstall = this.ctx.install orelse brk: {
+                        var install_ = try this.allocator.create(Api.BunInstall);
+                        install_.* = std.mem.zeroes(Api.BunInstall);
+                        this.ctx.install = install_;
+                        break :brk install_;
+                    };
+
+                    if (bun.get("registry")) |registry| {
+                        install.default_registry = try this.parseRegistry(registry);
+                    }
+
+                    if (bun.get("scopes")) |scopes| {
+                        var registry_map = install.scoped orelse std.mem.zeroes(Api.NpmRegistryMap);
+                        try this.expect(scopes, .e_object);
+                        const count = scopes.data.e_object.properties.len + registry_map.registries.len;
+                        var registries = std.ArrayListUnmanaged(Api.NpmRegistry){
+                            .items = try this.allocator.alloc(Api.NpmRegistry, count),
+                            .capacity = count,
+                        };
+                        registries.appendSliceAssumeCapacity(registry_map.registries);
+
+                        var names = std.ArrayListUnmanaged(string){
+                            .items = try this.allocator.alloc(string, count),
+                            .capacity = count,
+                        };
+
+                        names.appendSliceAssumeCapacity(registry_map.names);
+
+                        for (scopes.data.e_object.properties.slice()) |prop| {
+                            const name_ = prop.key.?.data.e_string.string(this.allocator) orelse continue;
+                            const value = prop.value orelse continue;
+                            if (name_.len == 0) continue;
+                            const name = if (name_[0] == '@') name_[1..] else name_;
+                            var index = names.items.len;
+                            for (names.items) |comparator, i| {
+                                if (strings.eql(name, comparator)) {
+                                    index = i;
+                                    break;
+                                }
+                            }
+
+                            if (index == names.items.len) {
+                                names.items.len += 1;
+                                registries.items.len += 1;
+                            }
+                            names.items[index] = name;
+                            registries.items[index] = try this.parseRegistry(value);
+                        }
+
+                        registry_map.registries = registries.items;
+                        registry_map.names = names.items;
+                        install.scoped = registry_map;
+                    }
+
+                    if (bun.get("dryRun")) |dry_run| {
+                        if (dry_run.asBool()) |value| {
+                            install.dry_run = value;
+                        }
+                    }
+
+                    if (bun.get("production")) |production| {
+                        if (production.asBool()) |value| {
+                            install.production = value;
+                        }
+                    }
+
+                    if (bun.get("lockfile")) |lockfile_expr| {
+                        if (lockfile_expr.get("outputFormat")) |lockfile| {
+                            try this.expect(lockfile, .e_string);
+                            if (lockfile.asString(this.allocator)) |value| {
+                                if (!(strings.eqlComptime(value, "bun"))) {
+                                    if (!strings.eqlComptime(value, "yarn")) {
+                                        try this.addError(lockfile.loc, "Invalid lockfile format, only 'yarn' output is implemented");
+                                    }
+
+                                    install.save_yarn_lockfile = true;
+                                }
+                            }
+                        }
+
+                        if (lockfile_expr.get("save")) |lockfile| {
+                            if (lockfile.asString()) |value| {
+                                install.save_lockfile = value;
+                            }
+                        }
+
+                        if (lockfile_expr.get("path")) |lockfile| {
+                            if (lockfile.asString()) |value| {
+                                install.lockfile_path = value;
+                            }
+                        }
+
+                        if (lockfile_expr.get("savePath")) |lockfile| {
+                            if (lockfile.asString()) |value| {
+                                install.save_lockfile_path = value;
+                            }
+                        }
+                    }
+
+                    if (bun.get("optional")) |optional| {
+                        if (optional.asBool()) |value| {
+                            install.save_optional = value;
+                        }
+                    }
+
+                    if (bun.get("peer")) |optional| {
+                        if (optional.asBool()) |value| {
+                            install.save_peer = value;
+                        }
+                    }
+
+                    if (bun.get("dev")) |optional| {
+                        if (optional.asBool()) |value| {
+                            install.save_dev = value;
+                        }
+                    }
+
+                    if (bun.get("logLevel")) |expr| {
+                        try this.loadLogLevel(expr);
+                    }
+
+                    if (bun.get("cache")) |cache| {
+                        load: {
+                            if (cache.asBool()) |value| {
+                                if (!value) {
+                                    install.disable_cache = true;
+                                    install.disable_manifest_cache = true;
+                                }
+
+                                break :load;
+                            }
+
+                            if (cache.asString(allocator)) |value| {
+                                install.cache_directory = value;
+                                break :load;
+                            }
+
+                            if (cache.data == .e_object) {
+                                if (cache.get("disable")) |disable| {
+                                    if (disable.asBool()) |value| {
+                                        install.disable_cache = value;
+                                    }
+                                }
+
+                                if (cache.get("disableManifest")) |disable| {
+                                    if (disable.asBool()) |value| {
+                                        install.disable_manifest_cache = value;
+                                    }
+                                }
+
+                                if (cache.get("directory")) |directory| {
+                                    if (directory.asString(allocator)) |value| {
+                                        install.cache_directory = value;
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -108,6 +340,10 @@ pub const Bunfig = struct {
                 }
 
                 if (comptime cmd == .BunCommand) {
+                    if (bun.get("logLevel")) |expr2| {
+                        try this.loadLogLevel(expr2);
+                    }
+
                     if (bun.get("entryPoints")) |entryPoints| {
                         try this.expect(entryPoints, .e_array);
                         const items = entryPoints.data.e_array.items.slice();
@@ -221,21 +457,6 @@ pub const Bunfig = struct {
                 this.bunfig.loaders = Api.LoaderMap{
                     .extensions = loader_names,
                     .loaders = loader_values,
-                };
-            }
-
-            if (json.get("logLevel")) |expr| {
-                try this.expect(expr, .e_string);
-                const Matcher = strings.ExactSizeMatcher(8);
-
-                this.bunfig.log_level = switch (Matcher.match(expr.asString(allocator).?)) {
-                    Matcher.case("debug") => Api.MessageLevel.debug,
-                    Matcher.case("error") => Api.MessageLevel.err,
-                    Matcher.case("warn") => Api.MessageLevel.warn,
-                    else => {
-                        try this.addError(expr.loc, "Invalid log level, must be one of debug, error, or warn");
-                        unreachable;
-                    },
                 };
             }
 

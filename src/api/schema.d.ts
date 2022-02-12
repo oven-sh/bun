@@ -603,6 +603,37 @@ export interface WebsocketMessageResolveID {
   id: uint32;
 }
 
+export interface NPMRegistry {
+  url: string;
+  username: string;
+  password: string;
+  token: string;
+}
+
+export interface NPMRegistryMap {
+  scopes: string[];
+  registries: NPMRegistry[];
+}
+
+export interface BunInstall {
+  default_registry?: NPMRegistry;
+  scoped?: NPMRegistryMap;
+  lockfile_path?: string;
+  save_lockfile_path?: string;
+  cache_directory?: string;
+  dry_run?: boolean;
+  force?: boolean;
+  save_dev?: boolean;
+  save_optional?: boolean;
+  save_peer?: boolean;
+  save_lockfile?: boolean;
+  production?: boolean;
+  save_yarn_lockfile?: boolean;
+  native_bin_links?: string[];
+  disable_cache?: boolean;
+  disable_manifest_cache?: boolean;
+}
+
 export declare function encodeStackFrame(
   message: StackFrame,
   bb: ByteBuffer
@@ -869,3 +900,20 @@ export declare function encodeWebsocketMessageResolveID(
 export declare function decodeWebsocketMessageResolveID(
   buffer: ByteBuffer
 ): WebsocketMessageResolveID;
+export declare function encodeNPMRegistry(
+  message: NPMRegistry,
+  bb: ByteBuffer
+): void;
+export declare function decodeNPMRegistry(buffer: ByteBuffer): NPMRegistry;
+export declare function encodeNPMRegistryMap(
+  message: NPMRegistryMap,
+  bb: ByteBuffer
+): void;
+export declare function decodeNPMRegistryMap(
+  buffer: ByteBuffer
+): NPMRegistryMap;
+export declare function encodeBunInstall(
+  message: BunInstall,
+  bb: ByteBuffer
+): void;
+export declare function decodeBunInstall(buffer: ByteBuffer): BunInstall;

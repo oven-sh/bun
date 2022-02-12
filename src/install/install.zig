@@ -4769,7 +4769,7 @@ pub const PackageManager = struct {
                         switch (response.status_code) {
                             404 => {
                                 if (comptime log_level != .silent) {
-                                    const fmt = "\n<r><red>error<r>: package <b><red>\"{s}\"<r> not found <d>404<r>\n";
+                                    const fmt = "\n<r><red>error<r>: package <b>\"{s}\"<r> not found <d>404<r>\n";
                                     const args = .{
                                         name.slice(),
                                     };
@@ -4784,7 +4784,7 @@ pub const PackageManager = struct {
                             },
                             401 => {
                                 if (comptime log_level != .silent) {
-                                    const fmt = "\n<r><red>error<r>: unauthorized while loading <b><red>\"{s}\"<r><d> 401<r>\n";
+                                    const fmt = "\n<r><red>error<r>: unauthorized while loading <b>\"{s}\"<r><d> 401<r>\n";
                                     const args = .{
                                         name.slice(),
                                     };
@@ -4799,7 +4799,7 @@ pub const PackageManager = struct {
                             },
                             403 => {
                                 if (comptime log_level != .silent) {
-                                    const fmt = "\n<r><red>error<r>: forbidden while loading <b><red>\"{s}\"<r><d> 403<r>\n";
+                                    const fmt = "\n<r><red>error<r>: forbidden while loading <b>\"{s}\"<r><d> 403<r>\n";
                                     const args = .{
                                         name.slice(),
                                     };

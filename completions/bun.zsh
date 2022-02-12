@@ -36,6 +36,8 @@ _bun() {
                 '--token[Authentication token used for npm registry requests (default: \$npm_config_token)]:token' \
                 '-y[Write a yarn.lock file (yarn v1)]' \
                 '--yarn[Write a yarn.lock file (yarn v1)]' \
+                '-g[Add a package globally]' \
+                '--global[Add a package globally]' \
                 '--production[Don'"'"'t install devDependencies]' \
                 '--optional[Add dependency to optionalDependencies]' \
                 '--development[Add dependency to devDependencies]' \
@@ -214,6 +216,8 @@ _bun() {
                         '-V[Show version and exit]' \
                         '--cwd[Change directory]:cwd' \
                         '--help[Show command help]' \
+                        '-g[Add a package globally]' \
+                        '--global[Add a package globally]' \
                         '-h[Show command help]' \
                         '--all[]' &&
                         ret=0
@@ -229,6 +233,8 @@ _bun() {
                         '--version[Show version and exit]' \
                         '-V[Show version and exit]' \
                         '--cwd[Change directory]:cwd' \
+                        '-g[Remove a package globally]' \
+                        '--global[Remove a package globally]' \
                         '--help[Show command help]' \
                         '-h[Show command help]' \
                         '--all[]' &&
@@ -387,6 +393,8 @@ _bun() {
                 '--silent[Don'"'"'t output anything]' \
                 '--verbose[Excessively verbose logging]' \
                 '--cwd[Set a specific cwd]:cwd' \
+                '-g[Add a package globally]' \
+                '--global[Add a package globally]' \
                 '--backend[Platform-specific optimizations for installing dependencies]:backend:("clonefile" "copyfile" "hardlink" "clonefile_each_dir")' \
                 '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' &&
                 ret=0
@@ -411,6 +419,8 @@ _bun() {
                 '-p[Don'"'"'t install devDependencies]' \
                 '--no-save[]' \
                 '--dry-run[Don'"'"'t install anything]' \
+                '-g[Remove a package globally]' \
+                '--global[Remove a package globally]' \
                 '--force[Always request the latest versions from the registry & reinstall all dependenices]' \
                 '--lockfile[Store & load a lockfile at a specific filepath]:lockfile' \
                 '--cache-dir[Store & load cached data from a specific directory path]:cache-dir' \

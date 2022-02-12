@@ -24,6 +24,7 @@ const Api = @import("../api/schema.zig").Api;
 const Path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../javascript/jsc/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
+const BunArguments = @import("../cli.zig").Arguments;
 const bundler = @import("../bundler.zig");
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const DotEnv = @import("../env_loader.zig");
@@ -4769,9 +4770,11 @@ pub const PackageManager = struct {
                         switch (response.status_code) {
                             404 => {
                                 if (comptime log_level != .silent) {
-                                    const fmt = "\n<r><red>error<r>: package <b>\"{s}\"<r> not found <d>404<r>\n";
+                                    const fmt = "\n<r><red>error<r>: package <b>\"{s}\"<r> not found <d>{s}{s} 404<r>\n";
                                     const args = .{
                                         name.slice(),
+                                        task.http.url.displayHostname(),
+                                        task.http.url.pathname,
                                     };
 
                                     if (comptime log_level.showProgress()) {
@@ -4784,9 +4787,11 @@ pub const PackageManager = struct {
                             },
                             401 => {
                                 if (comptime log_level != .silent) {
-                                    const fmt = "\n<r><red>error<r>: unauthorized while loading <b>\"{s}\"<r><d> 401<r>\n";
+                                    const fmt = "\n<r><red>error<r>: unauthorized <b>\"{s}\"<r> <d>{s}{s} 401<r>\n";
                                     const args = .{
                                         name.slice(),
+                                        task.http.url.displayHostname(),
+                                        task.http.url.pathname,
                                     };
 
                                     if (comptime log_level.showProgress()) {
@@ -5750,8 +5755,10 @@ pub const PackageManager = struct {
         package_json_file_: ?std.fs.File,
         comptime params: []const ParamType,
     ) !*PackageManager {
-        var cli = try CommandLineArguments.parse(ctx.allocator, params);
-        return try initWithCLI(ctx, package_json_file_, cli);
+        var _ctx = ctx;
+        var cli = try CommandLineArguments.parse(ctx.allocator, params, &_ctx);
+
+        return try initWithCLI(_ctx, package_json_file_, cli);
     }
 
     fn initWithCLI(
@@ -5917,6 +5924,7 @@ pub const PackageManager = struct {
 
     const ParamType = clap.Param(clap.Help);
     pub const install_params_ = [_]ParamType{
+        clap.parseParam("-c, --config <STR>?               Load config (bunfig.toml)") catch unreachable,
         clap.parseParam("-y, --yarn                        Write a yarn.lock file (yarn v1)") catch unreachable,
         clap.parseParam("-p, --production                  Don't install devDependencies") catch unreachable,
         clap.parseParam("--no-save                         Don't save a lockfile") catch unreachable,
@@ -5958,6 +5966,7 @@ pub const PackageManager = struct {
         lockfile: string = "",
         token: string = "",
         global: bool = false,
+        config: ?string = null,
 
         backend: ?PackageInstall.Method = null,
 
@@ -5998,6 +6007,7 @@ pub const PackageManager = struct {
         pub fn parse(
             allocator: std.mem.Allocator,
             comptime params: []const ParamType,
+            ctx: *Command.Context,
         ) !CommandLineArguments {
             var diag = clap.Diagnostic{};
 
@@ -6031,6 +6041,12 @@ pub const PackageManager = struct {
             cli.no_cache = args.flag("--no-cache");
             cli.silent = args.flag("--silent");
             cli.verbose = args.flag("--verbose");
+
+            if (args.option("--config")) |opt| {
+                cli.config = opt;
+            }
+
+            try BunArguments.loadConfig(allocator, cli.config, ctx, .InstallCommand);
 
             cli.link_native_bins = args.options("--link-native-bins");
 

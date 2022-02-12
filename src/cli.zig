@@ -240,34 +240,29 @@ pub const Arguments = struct {
         try Bunfig.parse(allocator, logger.Source.initPathString(std.mem.span(config_path), contents), ctx, cmd);
     }
 
-    fn getHomeConfigPath(cwd: string, buf: *[std.fs.MAX_PATH_BYTES]u8) ?[:0]const u8 {
-        if (std.os.getenvZ("XDG_CONFIG_HOME")) |data_dir| {
-            var paths = [_]string{ data_dir, ".bunfig.toml" };
-            return resolve_path.joinAbsStringBufZ(cwd, buf, &paths, .auto);
-        }
-
-        if (std.os.getenvZ("HOME")) |data_dir| {
-            var paths = [_]string{ data_dir, ".bunfig.toml" };
-            return resolve_path.joinAbsStringBufZ(cwd, buf, &paths, .auto);
+    fn getHomeConfigPath(buf: *[std.fs.MAX_PATH_BYTES]u8) ?[:0]const u8 {
+        if (std.os.getenvZ("XDG_CONFIG_HOME") orelse std.os.getenvZ("HOME")) |data_dir| {
+            var paths = [_]string{".bunfig.toml"};
+            var outbuf = resolve_path.joinAbsStringBuf(data_dir, buf, &paths, .auto);
+            buf[outbuf.len] = 0;
+            return std.meta.assumeSentinel(outbuf, 0);
         }
 
         return null;
     }
 
-    pub fn loadConfig(allocator: std.mem.Allocator, args: clap.Args(clap.Help, &params), ctx: *Command.Context, comptime cmd: Command.Tag) !void {
+    pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
         var config_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         if (comptime cmd.readGlobalConfig()) {
-            if (getHomeConfigPath(ctx.args.absolute_working_dir, &config_buf)) |path| {
+            if (getHomeConfigPath(&config_buf)) |path| {
                 try loadConfigPath(allocator, true, path, ctx, comptime cmd);
             }
         }
 
-        var config_path_: []const u8 = "";
-        if (args.option("--config")) |config_path__| {
-            config_path_ = config_path__;
-        }
+        var config_path_: []const u8 = user_config_path_ orelse "";
+
         var auto_loaded: bool = false;
-        if (config_path_.len == 0 and (args.option("--config") != null or Command.Tag.always_loads_config.get(cmd))) {
+        if (config_path_.len == 0 and (user_config_path_ != null or Command.Tag.always_loads_config.get(cmd))) {
             config_path_ = "bunfig.toml";
             auto_loaded = true;
         }
@@ -282,6 +277,11 @@ pub const Arguments = struct {
             config_buf[config_path_.len] = 0;
             config_path = config_buf[0..config_path_.len :0];
         } else {
+            if (ctx.args.absolute_working_dir == null) {
+                var secondbuf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                var cwd = std.os.getcwd(&secondbuf) catch return;
+                ctx.args.absolute_working_dir = try allocator.dupe(u8, cwd);
+            }
             var parts = [_]string{ ctx.args.absolute_working_dir.?, config_path_ };
             config_path_ = resolve_path.joinAbsStringBuf(
                 ctx.args.absolute_working_dir.?,
@@ -294,6 +294,10 @@ pub const Arguments = struct {
         }
 
         try loadConfigPath(allocator, auto_loaded, config_path, ctx, comptime cmd);
+    }
+
+    pub fn loadConfigWithCmdArgs(allocator: std.mem.Allocator, args: clap.Args(clap.Help, &params), ctx: *Command.Context, comptime cmd: Command.Tag) !void {
+        return try loadConfig(allocator, args.option("--config"), ctx, comptime cmd);
     }
 
     pub fn parse(allocator: std.mem.Allocator, ctx: *Command.Context, comptime cmd: Command.Tag) !Api.TransformOptions {
@@ -323,7 +327,7 @@ pub const Arguments = struct {
         ctx.args.absolute_working_dir = cwd;
 
         if (comptime Command.Tag.loads_config.get(cmd)) {
-            try loadConfig(allocator, args, ctx, cmd);
+            try loadConfigWithCmdArgs(allocator, args, ctx, cmd);
         }
 
         var opts: Api.TransformOptions = ctx.args;
@@ -1198,6 +1202,7 @@ pub const Command = struct {
             .InstallCommand = true,
             .AddCommand = true,
             .RemoveCommand = true,
+            .PackageManagerCommand = true,
         });
 
         pub const uses_global_options: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(true, .{

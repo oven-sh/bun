@@ -196,10 +196,10 @@ pub const Bunfig = struct {
                             .capacity = count,
                         };
 
-                        names.appendSliceAssumeCapacity(registry_map.names);
+                        names.appendSliceAssumeCapacity(registry_map.scopes);
 
                         for (scopes.data.e_object.properties.slice()) |prop| {
-                            const name_ = prop.key.?.data.e_string.string(this.allocator) orelse continue;
+                            const name_ = prop.key.?.asString(this.allocator) orelse continue;
                             const value = prop.value orelse continue;
                             if (name_.len == 0) continue;
                             const name = if (name_[0] == '@') name_[1..] else name_;
@@ -220,7 +220,7 @@ pub const Bunfig = struct {
                         }
 
                         registry_map.registries = registries.items;
-                        registry_map.names = names.items;
+                        registry_map.scopes = names.items;
                         install.scoped = registry_map;
                     }
 
@@ -251,19 +251,19 @@ pub const Bunfig = struct {
                         }
 
                         if (lockfile_expr.get("save")) |lockfile| {
-                            if (lockfile.asString()) |value| {
+                            if (lockfile.asBool()) |value| {
                                 install.save_lockfile = value;
                             }
                         }
 
                         if (lockfile_expr.get("path")) |lockfile| {
-                            if (lockfile.asString()) |value| {
+                            if (lockfile.asString(allocator)) |value| {
                                 install.lockfile_path = value;
                             }
                         }
 
                         if (lockfile_expr.get("savePath")) |lockfile| {
-                            if (lockfile.asString()) |value| {
+                            if (lockfile.asString(allocator)) |value| {
                                 install.save_lockfile_path = value;
                             }
                         }
@@ -288,13 +288,13 @@ pub const Bunfig = struct {
                     }
 
                     if (bun.get("globalDir")) |dir| {
-                        if (dir.asString()) |value| {
+                        if (dir.asString(allocator)) |value| {
                             install.global_dir = value;
                         }
                     }
 
                     if (bun.get("globalBinDir")) |dir| {
-                        if (dir.asString()) |value| {
+                        if (dir.asString(allocator)) |value| {
                             install.global_bin_dir = value;
                         }
                     }

@@ -390,7 +390,7 @@ pub const Features = struct {
     };
 };
 
-pub const PreinstallState = enum(u8) {
+pub const PreinstallState = enum(u2) {
     unknown = 0,
     done = 1,
     extract = 2,
@@ -2308,8 +2308,6 @@ pub const Lockfile = struct {
                             }
                         }
 
-                        package.meta.npm_dependency_count += @as(u32, @boolToInt(dependency.version.tag.isNPM()));
-
                         dependencies[0] = dependency;
                         dependencies = dependencies[1..];
                         i += 1;
@@ -2320,8 +2318,6 @@ pub const Lockfile = struct {
 
                 package.meta.arch = package_version.cpu;
                 package.meta.os = package_version.os;
-                package.meta.unpacked_size = package_version.unpacked_size;
-                package.meta.file_count = package_version.file_count;
 
                 package.meta.integrity = package_version.integrity;
 
@@ -2413,29 +2409,6 @@ pub const Lockfile = struct {
                 return summary;
             }
         };
-
-        pub fn determinePreinstallState(this: *Lockfile.Package, lockfile: *Lockfile, manager: *PackageManager) PreinstallState {
-            switch (this.meta.preinstall_state) {
-                .unknown => {
-                    // Do not automatically start downloading packages which are disabled
-                    // i.e. don't download all of esbuild's versions or SWCs
-                    if (this.isDisabled()) {
-                        this.meta.preinstall_state = .done;
-                        return .done;
-                    }
-
-                    const folder_path = manager.cachedNPMPackageFolderName(this.name.slice(lockfile.buffers.string_bytes.items), this.resolution.value.npm);
-                    if (manager.isFolderInCache(folder_path)) {
-                        this.meta.preinstall_state = .done;
-                        return this.meta.preinstall_state;
-                    }
-
-                    this.meta.preinstall_state = .extract;
-                    return this.meta.preinstall_state;
-                },
-                else => return this.meta.preinstall_state,
-            }
-        }
 
         pub fn hash(name: string, version: Semver.Version) u64 {
             var hasher = std.hash.Wyhash.init(0);
@@ -2655,7 +2628,6 @@ pub const Lockfile = struct {
                             }
 
                             dependencies[0] = this_dep;
-                            package.meta.npm_dependency_count += @as(u32, @boolToInt(dependency_version.tag.isNPM()));
                             dependencies = dependencies[1..];
                             i += 1;
                         }
@@ -2685,18 +2657,13 @@ pub const Lockfile = struct {
         pub const List = std.MultiArrayList(Lockfile.Package);
 
         pub const Meta = extern struct {
-            preinstall_state: PreinstallState = PreinstallState.unknown,
-
             origin: Origin = Origin.npm,
             arch: Npm.Architecture = Npm.Architecture.all,
             os: Npm.OperatingSystem = Npm.OperatingSystem.all,
 
-            file_count: u32 = 0,
-            npm_dependency_count: u32 = 0,
             id: PackageID = invalid_package_id,
 
             man_dir: String = String{},
-            unpacked_size: u64 = 0,
             integrity: Integrity = Integrity{},
 
             /// Does the `cpu` arch and `os` match the requirements listed in the package?
@@ -2709,14 +2676,10 @@ pub const Lockfile = struct {
                 builder.count(this.man_dir.slice(buf));
             }
 
-            pub fn clone(this: *const Meta, buf: []const u8, comptime StringBuilderType: type, builder: StringBuilderType) Meta {
+            pub fn clone(this: *const Meta, id: PackageID, buf: []const u8, comptime StringBuilderType: type, builder: StringBuilderType) Meta {
                 var new = this.*;
-                new.id = invalid_package_id;
+                new.id = id;
                 new.man_dir = builder.append(String, this.man_dir.slice(buf));
-                // zero out this field
-                // it should really not exist in this data type at all, but not sure where to put it
-                // we waste 1 byte per package doing this!
-                new.preinstall_state = .unknown;
 
                 return new;
             }
@@ -3906,6 +3869,7 @@ pub const PackageManager = struct {
     lockfile: *Lockfile = undefined,
 
     options: Options = Options{},
+    preinstall_state: std.ArrayListUnmanaged(PreinstallState) = std.ArrayListUnmanaged(PreinstallState){},
 
     const PreallocatedNetworkTasks = std.BoundedArray(NetworkTask, 1024);
     const NetworkTaskQueue = std.HashMapUnmanaged(u64, void, IdentityContext(u64), 80);
@@ -3918,6 +3882,51 @@ pub const PackageManager = struct {
         IdentityContext(u32),
         80,
     );
+
+    fn ensurePreinstallStateListCapacity(this: *PackageManager, count: usize) !void {
+        if (this.preinstall_state.items.len >= count) {
+            return;
+        }
+
+        const offset = this.preinstall_state.items.len;
+        try this.preinstall_state.ensureTotalCapacity(this.allocator, count);
+        this.preinstall_state.expandToCapacity();
+        std.mem.set(PreinstallState, this.preinstall_state.items[offset..], PreinstallState.unknown);
+    }
+
+    pub fn setPreinstallState(this: *PackageManager, package_id: PackageID, lockfile: *Lockfile, value: PreinstallState) void {
+        this.ensurePreinstallStateListCapacity(lockfile.packages.len) catch return;
+        this.preinstall_state.items[package_id] = value;
+    }
+    pub fn getPreinstallState(this: *PackageManager, package_id: PackageID, _: *Lockfile) PreinstallState {
+        if (package_id >= this.preinstall_state.items.len) {
+            return PreinstallState.unknown;
+        }
+        return this.preinstall_state.items[package_id];
+    }
+    pub fn determinePreinstallState(manager: *PackageManager, this: Package, lockfile: *Lockfile) PreinstallState {
+        switch (manager.getPreinstallState(this.meta.id, lockfile)) {
+            .unknown => {
+
+                // Do not automatically start downloading packages which are disabled
+                // i.e. don't download all of esbuild's versions or SWCs
+                if (this.isDisabled()) {
+                    manager.setPreinstallState(this.meta.id, lockfile, .done);
+                    return .done;
+                }
+
+                const folder_path = manager.cachedNPMPackageFolderName(this.name.slice(lockfile.buffers.string_bytes.items), this.resolution.value.npm);
+                if (manager.isFolderInCache(folder_path)) {
+                    manager.setPreinstallState(this.meta.id, lockfile, .done);
+                    return .done;
+                }
+
+                manager.setPreinstallState(this.meta.id, lockfile, .extract);
+                return .extract;
+            },
+            else => |val| return val,
+        }
+    }
 
     pub fn scopeForPackageName(this: *const PackageManager, name: string) *const Npm.Registry.Scope {
         if (name.len == 0 or name[0] != '@') return &this.options.scope;
@@ -4190,18 +4199,19 @@ pub const PackageManager = struct {
             Features.npm,
         );
 
+        // appendPackage sets the PackageID on the package
+        package = try this.lockfile.appendPackage(package);
+
         if (!behavior.isEnabled(if (this.root_dependency_list.contains(dependency_id))
             this.options.local_package_features
         else
             this.options.remote_package_features))
         {
-            package.meta.preinstall_state = .done;
+            this.setPreinstallState(package.meta.id, this.lockfile, .done);
         }
 
-        const preinstall = package.determinePreinstallState(this.lockfile, this);
+        const preinstall = this.determinePreinstallState(package, this.lockfile);
 
-        // appendPackage sets the PackageID on the package
-        package = try this.lockfile.appendPackage(package);
         this.lockfile.buffers.resolutions.items[dependency_id] = package.meta.id;
         if (comptime Environment.isDebug or Environment.isTest) std.debug.assert(package.meta.id != invalid_package_id);
 
@@ -4266,7 +4276,6 @@ pub const PackageManager = struct {
                 .temp_dir = this.getTemporaryDirectory(),
                 .registry = scope.url.href,
                 .package_id = package.meta.id,
-                .extracted_file_count = package.meta.file_count,
                 .integrity = package.meta.integrity,
             },
             scope,
@@ -4566,9 +4575,8 @@ pub const PackageManager = struct {
                             }
 
                             if (result.network_task) |network_task| {
-                                var meta: *Lockfile.Package.Meta = &this.lockfile.packages.items(.meta)[result.package.meta.id];
-                                if (meta.preinstall_state == .extract) {
-                                    meta.preinstall_state = .extracting;
+                                if (this.getPreinstallState(result.package.meta.id, this.lockfile) == .extract) {
+                                    this.setPreinstallState(result.package.meta.id, this.lockfile, .extracting);
                                     this.enqueueNetworkTask(network_task);
                                 }
                             }
@@ -5068,7 +5076,7 @@ pub const PackageManager = struct {
                     }
                     const package_id = task.request.extract.tarball.package_id;
                     manager.extracted_count += 1;
-                    manager.lockfile.packages.items(.meta)[package_id].preinstall_state = .done;
+                    manager.setPreinstallState(package_id, manager.lockfile, .done);
 
                     if (comptime ExtractCompletionContext != void) {
                         callback_fn(extract_ctx, package_id, comptime log_level);

@@ -444,19 +444,21 @@ pub const Bin = extern struct {
                     };
                     target_buf[basedir_path.len] = std.fs.path.sep;
                     var target_buf_remain = target_buf[basedir_path.len + 1 ..];
+                    var prev_target_buf_remain = target_buf_remain;
 
                     while (iter.next() catch null) |entry_| {
                         const entry: std.fs.Dir.Entry = entry_;
                         switch (entry.kind) {
                             std.fs.Dir.Entry.Kind.SymLink, std.fs.Dir.Entry.Kind.File => {
+                                target_buf_remain = prev_target_buf_remain;
                                 std.mem.copy(u8, target_buf_remain, entry.name);
                                 target_buf_remain = target_buf_remain[entry.name.len..];
                                 target_buf_remain[0] = 0;
                                 var from_path: [:0]u8 = target_buf[0 .. @ptrToInt(target_buf_remain.ptr) - @ptrToInt(&target_buf) :0];
                                 var to_path = if (!link_global)
-                                    std.fmt.bufPrintZ(&dest_buf, ".bin/{s}", .{entry.name}) catch unreachable
+                                    std.fmt.bufPrintZ(&dest_buf, ".bin/{s}", .{entry.name}) catch continue
                                 else
-                                    std.fmt.bufPrintZ(&dest_buf, "{s}", .{entry.name}) catch unreachable;
+                                    std.fmt.bufPrintZ(&dest_buf, "{s}", .{entry.name}) catch continue;
 
                                 std.os.symlinkatZ(
                                     from_path,

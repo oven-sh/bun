@@ -1070,7 +1070,7 @@ pub const PackageManifest = struct {
                             switch (bin.expr.data) {
                                 .e_object => |obj| {
                                     switch (obj.properties.len) {
-                                        0 => break :bin,
+                                        0 => {},
                                         1 => {
                                             const bin_name = obj.properties.ptr[0].key.?.asString(allocator) orelse break :bin;
                                             const value = obj.properties.ptr[0].value.?.asString(allocator) orelse break :bin;
@@ -1118,6 +1118,8 @@ pub const PackageManifest = struct {
                                             };
                                         },
                                     }
+
+                                    break :bin;
                                 },
                                 .e_string => |str| {
                                     if (str.utf8.len > 0) {
@@ -1135,6 +1137,13 @@ pub const PackageManifest = struct {
                         }
 
                         if (prop.value.?.asProperty("directories")) |dirs| {
+                            // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#directoriesbin
+                            // Because of the way the bin directive works,
+                            // specifying both a bin path and setting
+                            // directories.bin is an error. If you want to
+                            // specify individual files, use bin, and for all
+                            // the files in an existing bin directory, use
+                            // directories.bin.
                             if (dirs.expr.asProperty("bin")) |bin_prop| {
                                 if (bin_prop.expr.asString(allocator)) |str_| {
                                     if (str_.len > 0) {

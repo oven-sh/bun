@@ -69,35 +69,68 @@ pub const String = extern struct {
             SlicedString.init(buf, this.slice(buf));
     }
 
+    // https://en.wikipedia.org/wiki/Intel_5-level_paging
+    // https://developer.arm.com/documentation/101811/0101/Address-spaces-in-AArch64#:~:text=0%2DA%2C%20the%20maximum%20size,2%2DA.
+    // X64 seems to need some of the pointer bits
+    const max_addressable_space = u63;
+
+    comptime {
+        if (@sizeOf(usize) != 8) {
+            @compileError("This code needs to be updated for non-64-bit architectures");
+        }
+    }
+
     pub fn init(
         buf: string,
         in: string,
     ) String {
-        switch (in.len) {
-            0 => return String{},
-            1...max_inline_len => {
-                var bytes: [max_inline_len]u8 = [max_inline_len]u8{ 0, 0, 0, 0, 0, 0, 0, 0 };
-                comptime var i: usize = 0;
+        return switch (in.len) {
+            0 => String{},
+            1 => String{ .bytes = .{ in[0], 0, 0, 0, 0, 0, 0, 0 } },
+            2 => String{ .bytes = .{ in[0], in[1], 0, 0, 0, 0, 0, 0 } },
+            3 => String{ .bytes = .{ in[0], in[1], in[2], 0, 0, 0, 0, 0 } },
+            4 => String{ .bytes = .{ in[0], in[1], in[2], in[3], 0, 0, 0, 0 } },
+            5 => String{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], 0, 0, 0 } },
+            6 => String{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], 0, 0 } },
+            7 => String{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], in[6], 0 } },
+            max_inline_len =>
+            // If they use the final bit, then it's a big string.
+            // This should only happen for non-ascii strings that are exactly 8 bytes.
+            // so that's an edge-case
+            if ((in[max_inline_len - 1]) >= 128)
+                @bitCast(String, (@as(
+                    u64,
+                    0,
+                ) | @as(
+                    u64,
+                    @truncate(
+                        max_addressable_space,
+                        @bitCast(
+                            u64,
+                            Pointer.init(buf, in),
+                        ),
+                    ),
+                )) | 1 << 63)
+            else
+                String{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], in[6], in[7] } },
 
-                inline while (i < bytes.len) : (i += 1) {
-                    if (i < in.len) bytes[i] = in[i];
-                }
-
-                // If they use the final bit, then it's a big string.
-                // This should only happen for non-ascii strings that are exactly 8 bytes.
-                // so that's an edge-case
-                if ((bytes[max_inline_len - 1]) >= 128) {
-                    const ptr_ = Pointer.init(buf, in);
-                    return @bitCast(String, @as(u64, @truncate(u63, @bitCast(u64, ptr_))) | 1 << 63);
-                }
-
-                return String{ .bytes = bytes };
-            },
-            else => {
-                const ptr_ = Pointer.init(buf, in);
-                return @bitCast(String, @as(u64, @truncate(u63, @bitCast(u64, ptr_))) | 1 << 63);
-            },
-        }
+            else => @bitCast(
+                String,
+                (@as(
+                    u64,
+                    0,
+                ) | @as(
+                    u64,
+                    @truncate(
+                        max_addressable_space,
+                        @bitCast(
+                            u64,
+                            Pointer.init(buf, in),
+                        ),
+                    ),
+                )) | 1 << 63,
+            ),
+        };
     }
 
     pub fn eql(this: String, that: String, this_buf: []const u8, that_buf: []const u8) bool {

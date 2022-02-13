@@ -441,12 +441,16 @@ pub const Lockfile = struct {
 
     pub fn loadFromDisk(this: *Lockfile, allocator: std.mem.Allocator, log: *logger.Log, filename: stringZ) LoadFromDiskResult {
         std.debug.assert(FileSystem.instance_loaded);
-        var file = std.fs.cwd().openFileZ(filename, .{ .read = true }) catch |err| {
-            return switch (err) {
-                error.AccessDenied, error.BadPathName, error.FileNotFound => LoadFromDiskResult{ .not_found = .{} },
-                else => LoadFromDiskResult{ .err = .{ .step = .open_file, .value = err } },
+        var file = std.io.getStdIn();
+
+        if (filename.len > 0)
+            file = std.fs.cwd().openFileZ(filename, .{ .read = true }) catch |err| {
+                return switch (err) {
+                    error.FileNotFound, error.AccessDenied, error.BadPathName => LoadFromDiskResult{ .not_found = .{} },
+                    else => LoadFromDiskResult{ .err = .{ .step = .open_file, .value = err } },
+                };
             };
-        };
+
         defer file.close();
         var buf = file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
             return LoadFromDiskResult{ .err = .{ .step = .read_file, .value = err } };
@@ -1088,7 +1092,7 @@ pub const Lockfile = struct {
             lockfile_path_: string,
             format: Format,
         ) !void {
-            var lockfile_path: stringZ = undefined;
+            var lockfile_path: stringZ = "";
 
             if (!std.fs.path.isAbsolute(lockfile_path_)) {
                 var cwd = try std.os.getcwd(&lockfile_path_buf1);
@@ -1102,7 +1106,8 @@ pub const Lockfile = struct {
                 lockfile_path = lockfile_path_buf1[0..lockfile_path_.len :0];
             }
 
-            std.os.chdir(std.fs.path.dirname(lockfile_path) orelse "/") catch {};
+            if (lockfile_path.len > 0 and lockfile_path[0] == std.fs.path.sep)
+                std.os.chdir(std.fs.path.dirname(lockfile_path) orelse "/") catch {};
 
             _ = try FileSystem.init1(allocator, null);
 
@@ -3733,11 +3738,14 @@ const PackageInstall = struct {
         };
     }
 
+    pub fn uninstall(this: *PackageInstall) !void {
+        try this.destination_dir.deleteTree(std.mem.span(this.destination_dir_subpath));
+    }
     pub fn install(this: *PackageInstall, skip_delete: bool) Result {
 
         // If this fails, we don't care.
         // we'll catch it the next error
-        if (!skip_delete) this.destination_dir.deleteTree(std.mem.span(this.destination_dir_subpath)) catch {};
+        if (!skip_delete) this.uninstall() catch {};
 
         switch (supported_method) {
             .clonefile => {
@@ -6799,8 +6807,8 @@ pub const PackageManager = struct {
                                             };
 
                                             bin_linker.link(this.manager.options.global);
-                                            if (comptime log_level != .silent) {
-                                                if (bin_linker.err) |err| {
+                                            if (bin_linker.err) |err| {
+                                                if (comptime log_level != .silent) {
                                                     const fmt = "\n<r><red>error:<r> linking <b>{s}<r>: {s}\n";
                                                     const args = .{ name, @errorName(err) };
 
@@ -6813,6 +6821,11 @@ pub const PackageManager = struct {
                                                     } else {
                                                         Output.prettyErrorln(fmt, args);
                                                     }
+                                                }
+
+                                                if (this.manager.options.enable.fail_early) {
+                                                    installer.uninstall() catch {};
+                                                    Global.exit(1);
                                                 }
                                             }
                                         }
@@ -7127,8 +7140,8 @@ pub const PackageManager = struct {
 
                     bin_linker.link(this.options.global);
 
-                    if (comptime log_level != .silent) {
-                        if (bin_linker.err) |err| {
+                    if (bin_linker.err) |err| {
+                        if (comptime log_level != .silent) {
                             const fmt = "\n<r><red>error:<r> linking <b>{s}<r>: {s}\n";
                             const args = .{ name, @errorName(err) };
 
@@ -7141,6 +7154,10 @@ pub const PackageManager = struct {
                             } else {
                                 Output.prettyErrorln(fmt, args);
                             }
+                        }
+
+                        if (this.options.enable.fail_early) {
+                            Global.exit(1);
                         }
                     }
 
@@ -7559,11 +7576,13 @@ pub const PackageManager = struct {
                 .updates = manager.package_json_updates,
                 .successfully_installed = install_summary.successfully_installed,
             };
+
             if (Output.enable_ansi_colors) {
                 try Lockfile.Printer.Tree.print(&printer, Output.WriterType, Output.writer(), true);
             } else {
                 try Lockfile.Printer.Tree.print(&printer, Output.WriterType, Output.writer(), false);
             }
+
             var printed_timestamp = false;
             if (install_summary.success > 0) {
                 // it's confusing when it shows 3 packages and says it installed 1

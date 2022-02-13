@@ -455,6 +455,11 @@ pub const Lockfile = struct {
         var buf = file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
             return LoadFromDiskResult{ .err = .{ .step = .read_file, .value = err } };
         };
+
+        return this.loadFromBytes(buf, allocator, log);
+    }
+
+    pub fn loadFromBytes(this: *Lockfile, buf: []u8, allocator: std.mem.Allocator, log: *logger.Log) LoadFromDiskResult {
         var stream = Stream{ .buffer = buf, .pos = 0 };
 
         Lockfile.Serializer.load(this, &stream, allocator, log) catch |err| {
@@ -1456,10 +1461,17 @@ pub const Lockfile = struct {
 
                         const dependency_versions = requested_versions.get(i).?;
                         const always_needs_quote = name[0] == '@';
-
-                        for (dependency_versions) |dependency_version, j| {
-                            if (j > 0) {
+                        var prev_dependency_version: ?Dependency.Version = null;
+                        var needs_comma = false;
+                        for (dependency_versions) |dependency_version| {
+                            if (needs_comma) {
+                                if (prev_dependency_version) |prev| {
+                                    if (prev.eql(dependency_version, string_buf, string_buf)) {
+                                        continue;
+                                    }
+                                }
                                 try writer.writeAll(", ");
+                                needs_comma = false;
                             }
                             const version_name = dependency_version.literal.slice(string_buf);
                             const needs_quote = always_needs_quote or std.mem.indexOfAny(u8, version_name, " |\t-/!") != null;
@@ -1475,6 +1487,8 @@ pub const Lockfile = struct {
                             if (needs_quote) {
                                 try writer.writeByte('"');
                             }
+                            prev_dependency_version = dependency_version;
+                            needs_comma = true;
                         }
 
                         try writer.writeAll(":\n");

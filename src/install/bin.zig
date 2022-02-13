@@ -67,7 +67,7 @@ pub const Bin = extern struct {
 
                 return .{
                     .tag = .map,
-                    .value = .{ .map = ExternalStringList.init(extern_strings_slice, all_extern_strings) },
+                    .value = .{ .map = ExternalStringList.init(all_extern_strings, extern_strings_slice) },
                 };
             },
         };
@@ -157,10 +157,11 @@ pub const Bin = extern struct {
             if (this.done) return null;
             if (this.dir_iterator == null) {
                 var target = this.bin.value.dir.slice(this.string_buffer);
-                var parts = [_][]const u8{ this.package_name.slice(this.string_buffer), target };
                 if (strings.hasPrefix(target, "./")) {
                     target = target[2..];
                 }
+                var parts = [_][]const u8{ this.package_name.slice(this.string_buffer), target };
+
                 var dir = this.package_installed_node_modules;
 
                 var joined = Path.joinStringBuf(&this.buf, &parts, .auto);
@@ -415,18 +416,20 @@ pub const Bin = extern struct {
                 },
                 .dir => {
                     var target = this.bin.value.dir.slice(this.string_buf);
-                    var parts = [_][]const u8{ name, target };
                     if (strings.hasPrefix(target, "./")) {
                         target = target[2..];
                     }
+
+                    var parts = [_][]const u8{ name, target };
+
                     std.mem.copy(u8, remain, target);
                     remain = remain[target.len..];
-                    remain[0] = 0;
+
                     var dir = std.fs.Dir{ .fd = this.package_installed_node_modules };
 
                     var joined = Path.joinStringBuf(&target_buf, &parts, .auto);
-                    target_buf[joined.len] = 0;
-                    var joined_: [:0]u8 = target_buf[0..joined.len :0];
+                    @intToPtr([*]u8, @ptrToInt(joined.ptr))[joined.len] = 0;
+                    var joined_: [:0]const u8 = joined.ptr[0..joined.len :0];
                     var child_dir = dir.openDirZ(joined_, .{ .iterate = true }) catch |err| {
                         this.err = err;
                         return;

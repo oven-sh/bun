@@ -664,6 +664,11 @@ pub fn joinAbsStringZ(_cwd: []const u8, parts: anytype, comptime _platform: Plat
     );
 }
 
+threadlocal var join_buf: [4096]u8 = undefined;
+pub fn join(_parts: anytype, comptime _platform: Platform) []const u8 {
+    return joinStringBuf(&join_buf, _parts, _platform);
+}
+
 pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) []const u8 {
     if (FeatureFlags.use_std_path_join) {
         var alloc = std.heap.FixedBufferAllocator.init(buf);

@@ -1959,6 +1959,7 @@ const DeferredErrors = struct {
 const ImportClause = struct {
     items: []js_ast.ClauseItem = &([_]js_ast.ClauseItem{}),
     is_single_line: bool = false,
+    had_type_only_imports: bool = false,
 };
 
 const ModuleType = enum { esm };
@@ -6111,6 +6112,15 @@ pub fn NewParser(
                                 return error.SyntaxError;
                             }
                             var importClause = try p.parseImportClause();
+                            if (comptime is_typescript_enabled) {
+                                if (importClause.had_type_only_imports and importClause.items.len == 0) {
+                                    try p.lexer.expectContextualKeyword("from");
+                                    _ = try p.parsePath();
+                                    try p.lexer.expectOrInsertSemicolon();
+                                    return p.s(S.TypeScript{}, loc);
+                                }
+                            }
+
                             stmt = S.Import{
                                 .namespace_ref = Ref.None,
                                 .import_record_index = std.math.maxInt(u32),
@@ -6127,25 +6137,35 @@ pub fn NewParser(
                                 return error.SyntaxError;
                             }
 
-                            const default_name = p.lexer.identifier;
+                            var default_name = p.lexer.identifier;
                             stmt = S.Import{ .namespace_ref = Ref.None, .import_record_index = std.math.maxInt(u32), .default_name = LocRef{
                                 .loc = p.lexer.loc(),
                                 .ref = try p.storeNameInRef(default_name),
                             } };
                             try p.lexer.next();
 
-                            if (is_typescript_enabled) {
+                            if (comptime is_typescript_enabled) {
                                 // Skip over type-only imports
                                 if (strings.eqlComptime(default_name, "type")) {
                                     switch (p.lexer.token) {
                                         .t_identifier => {
                                             if (!strings.eqlComptime(p.lexer.identifier, "from")) {
-                                                // "import type foo from 'bar';"
+                                                default_name = p.lexer.identifier;
+                                                stmt.default_name.?.loc = p.lexer.loc();
                                                 try p.lexer.next();
-                                                try p.lexer.expectContextualKeyword("from");
-                                                _ = try p.parsePath();
-                                                try p.lexer.expectOrInsertSemicolon();
-                                                return p.s(S.TypeScript{}, loc);
+
+                                                if (p.lexer.token == .t_equals) {
+                                                    // "import type foo = require('bar');"
+                                                    // "import type foo = bar.baz;"
+                                                    opts.is_typescript_declare = true;
+                                                    return try p.parseTypeScriptImportEqualsStmt(loc, opts, stmt.default_name.?.loc, default_name);
+                                                } else {
+                                                    // "import type foo from 'bar';"
+                                                    try p.lexer.expectContextualKeyword("from");
+                                                    _ = try p.parsePath();
+                                                    try p.lexer.expectOrInsertSemicolon();
+                                                    return p.s(S.TypeScript{}, loc);
+                                                }
                                             }
                                         },
                                         .t_asterisk => {
@@ -6935,6 +6955,11 @@ pub fn NewParser(
             var items = ListManaged(js_ast.ClauseItem).init(p.allocator);
             try p.lexer.expect(.t_open_brace);
             var is_single_line = !p.lexer.has_newline_before;
+            // this variable should not exist if we're not in a typescript file
+            var had_type_only_imports = if (comptime is_typescript_enabled)
+                false
+            else
+                void{};
 
             while (p.lexer.token != .t_close_brace) {
                 // The alias may be a keyword;
@@ -6945,17 +6970,20 @@ pub fn NewParser(
                 var original_name = alias;
                 try p.lexer.next();
 
+                const probably_type_only_import = if (comptime is_typescript_enabled)
+                    strings.eqlComptime(alias, "type") and
+                        p.lexer.token != .t_comma and
+                        p.lexer.token != .t_close_brace
+                else
+                    false;
+
                 // "import { type xx } from 'mod'"
                 // "import { type xx as yy } from 'mod'"
                 // "import { type 'xx' as yy } from 'mod'"
                 // "import { type as } from 'mod'"
                 // "import { type as as } from 'mod'"
                 // "import { type as as as } from 'mod'"
-                if (is_typescript_enabled and
-                    strings.eqlComptime(alias, "type") and
-                    p.lexer.token != .t_comma and
-                    p.lexer.token != .t_close_brace)
-                {
+                if (probably_type_only_import) {
                     if (p.lexer.isContextualKeyword("as")) {
                         try p.lexer.next();
                         if (p.lexer.isContextualKeyword("as")) {
@@ -6964,11 +6992,14 @@ pub fn NewParser(
                             try p.lexer.next();
 
                             if (p.lexer.token == .t_identifier) {
+
                                 // "import { type as as as } from 'mod'"
                                 // "import { type as as foo } from 'mod'"
+                                had_type_only_imports = true;
                                 try p.lexer.next();
                             } else {
                                 // "import { type as as } from 'mod'"
+
                                 try items.append(.{
                                     .alias = alias,
                                     .alias_loc = alias_loc,
@@ -6977,6 +7008,8 @@ pub fn NewParser(
                                 });
                             }
                         } else if (p.lexer.token == .t_identifier) {
+                            had_type_only_imports = true;
+
                             // "import { type as xxx } from 'mod'"
                             original_name = p.lexer.identifier;
                             name = LocRef{ .loc = p.lexer.loc(), .ref = try p.storeNameInRef(original_name) };
@@ -7012,6 +7045,7 @@ pub fn NewParser(
                             // An import where the name is a keyword must have an alias
                             try p.lexer.expectedString("\"as\"");
                         }
+                        had_type_only_imports = true;
                     }
                 } else {
                     if (p.lexer.isContextualKeyword("as")) {
@@ -7058,7 +7092,14 @@ pub fn NewParser(
             }
 
             try p.lexer.expect(.t_close_brace);
-            return ImportClause{ .items = items.items, .is_single_line = is_single_line };
+            return ImportClause{
+                .items = items.items,
+                .is_single_line = is_single_line,
+                .had_type_only_imports = if (comptime is_typescript_enabled)
+                    had_type_only_imports
+                else
+                    false,
+            };
         }
 
         fn forbidInitializers(p: *P, decls: []G.Decl, comptime loop_type: string, is_var: bool) !void {

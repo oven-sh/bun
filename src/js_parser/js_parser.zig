@@ -1051,18 +1051,100 @@ pub const SideEffects = enum(u1) {
                     },
 
                     .bin_logical_and, .bin_logical_or, .bin_nullish_coalescing => {
+                        bin.right = simpifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty();
                         // Preserve short-circuit behavior: the left expression is only unused if
                         // the right expression can be completely removed. Otherwise, the left
                         // expression is important for the branch.
-                        if (simpifyUnusedExpr(p, bin.right)) |right| {
-                            bin.right = right;
-                        } else {
+
+                        if (bin.right.isEmpty())
                             return simpifyUnusedExpr(p, bin.left);
-                        }
                     },
 
                     else => {},
                 }
+            },
+
+            .e_object => {
+                // Arrays with "..." spread expressions can't be unwrapped because the
+                // "..." triggers code evaluation via iterators. In that case, just trim
+                // the other items instead and leave the array expression there.
+
+                var properties_slice = expr.data.e_object.properties.slice();
+                var end: usize = 0;
+                var any_computed = false;
+                for (properties_slice) |spread| {
+                    end = 0;
+                    any_computed = any_computed or spread.flags.is_computed;
+                    if (spread.kind == .spread) {
+                        // Spread properties must always be evaluated
+                        for (properties_slice) |prop_| {
+                            var prop = prop_;
+                            if (prop_.kind != .spread) {
+                                if (prop.value != null) {
+                                    if (simpifyUnusedExpr(p, prop.value.?)) |value| {
+                                        prop.value = value;
+                                    } else if (!prop.flags.is_computed) {
+                                        continue;
+                                    } else {
+                                        prop.value = p.e(E.Number{ .value = 0.0 }, prop.value.?.loc);
+                                    }
+                                }
+                            }
+
+                            properties_slice[end] = prop_;
+                            end += 1;
+                        }
+
+                        properties_slice = properties_slice[0..end];
+                        expr.data.e_object.properties = G.Property.List.init(properties_slice);
+                        return expr;
+                    }
+                }
+
+                if (any_computed) {
+                    // Otherwise, the object can be completely removed. We only need to keep any
+                    // object properties with side effects. Apply this simplification recursively.
+                    // for (properties_slice) |prop| {
+                    //     if (prop.flags.is_computed) {
+                    //         // Make sure "ToString" is still evaluated on the key
+
+                    //     }
+                    // }
+
+                    // keep this for now because we need better test coverage to do this correctly
+                    return expr;
+                }
+
+                return null;
+            },
+            .e_array => {
+                var items = expr.data.e_array.items.slice();
+
+                for (items) |item| {
+                    if (item.data == .e_spread) {
+                        var end: usize = 0;
+                        for (items) |item__| {
+                            var item_ = item__;
+                            if (item_.data != .e_missing) {
+                                items[end] = item_;
+                                end += 1;
+                            }
+
+                            expr.data.e_array.items = ExprNodeList.init(items[0..end]);
+                            return expr;
+                        }
+                    }
+                }
+
+                // Otherwise, the array can be completely removed. We only need to keep any
+                // array items with side effects. Apply this simplification recursively.
+                return Expr.joinAllWithCommaCallback(
+                    items,
+                    @TypeOf(p),
+                    p,
+                    simpifyUnusedExpr,
+                    p.allocator,
+                );
             },
 
             .e_new => |call| {
@@ -2909,6 +2991,7 @@ pub fn NewParser(
         promise_ref: ?Ref = null,
         scopes_in_order_visitor_index: usize = 0,
         has_classic_runtime_warned: bool = false,
+        has_called_macro: bool = false,
 
         /// Used for transforming export default -> module.exports
         has_export_default: bool = false,
@@ -11417,6 +11500,7 @@ pub fn NewParser(
                                 const ref = e_.tag.?.data.e_import_identifier.ref;
                                 if (p.macro.refs.get(ref)) |import_record_id| {
                                     const name = p.symbols.items[ref.inner_index].original_name;
+                                    p.has_called_macro = true;
                                     const record = &p.import_records.items[import_record_id];
                                     // We must visit it to convert inline_identifiers and record usage
                                     const macro_result = (p.options.macro_context.call(
@@ -11429,7 +11513,10 @@ pub fn NewParser(
                                         &.{},
                                         name,
                                         MacroVisitor,
-                                        MacroVisitor{ .p = p, .loc = expr.loc },
+                                        MacroVisitor{
+                                            .p = p,
+                                            .loc = expr.loc,
+                                        },
                                     ) catch return expr);
 
                                     if (macro_result.data != .e_template) {
@@ -11694,7 +11781,7 @@ pub fn NewParser(
                                     // "(null ?? this.fn)" => "this.fn"
                                     // "(null ?? this.fn)()" => "(0, this.fn)()"
                                     if (is_call_target and e_.right.hasValueForThisInCall()) {
-                                        return Expr.joinWithComma(Expr{ .data = Prefill.Data.Zero, .loc = e_.left.loc }, e_.right, p.allocator);
+                                        return Expr.joinWithComma(Expr{ .data = .{ .e_number = .{ .value = 0.0 } }, .loc = e_.left.loc }, e_.right, p.allocator);
                                     }
 
                                     return e_.right;
@@ -11993,10 +12080,9 @@ pub fn NewParser(
                                         return p.e(E.Boolean{ .value = !side_effects.value }, expr.loc);
                                     }
 
-                                    // maybe won't do this idk
-                                    // if (Expr.maybeSimplifyNot(&e_.value, p.allocator)) |exp| {
-                                    //     return exp;
-                                    // }
+                                    if (e_.value.maybeSimplifyNot(p.allocator)) |exp| {
+                                        return exp;
+                                    }
                                 },
                                 .un_void => {
                                     if (p.exprCanBeRemovedIfUnused(&e_.value)) {
@@ -12087,6 +12173,16 @@ pub fn NewParser(
                             is_call_target,
                         )) |_expr| {
                             return _expr;
+                        }
+
+                        if (comptime FeatureFlags.is_macro_enabled and jsx_transform_type != .macro) {
+                            if (p.has_called_macro) {
+                                if (e_.target.data == .e_object and e_.target.data.e_object.was_originally_macro) {
+                                    if (e_.target.get(e_.name)) |obj| {
+                                        return obj;
+                                    }
+                                }
+                            }
                         }
                     }
                 },
@@ -12342,6 +12438,8 @@ pub fn NewParser(
                             const name = p.symbols.items[ref.inner_index].original_name;
                             const record = &p.import_records.items[import_record_id];
                             const copied = Expr{ .loc = expr.loc, .data = .{ .e_call = e_ } };
+                            const start_error_count = p.log.msgs.items.len;
+                            p.has_called_macro = true;
                             const macro_result =
                                 p.options.macro_context.call(
                                 record.path.text,
@@ -12356,7 +12454,9 @@ pub fn NewParser(
                                 MacroVisitor{ .p = p, .loc = expr.loc },
                             ) catch |err| {
                                 if (err == error.MacroFailed) {
-                                    p.log.addError(p.source, expr.loc, "macro threw exception") catch unreachable;
+                                    if (p.log.msgs.items.len == start_error_count) {
+                                        p.log.addError(p.source, expr.loc, "macro threw exception") catch unreachable;
+                                    }
                                 } else {
                                     p.log.addErrorFmt(p.source, expr.loc, p.allocator, "{s} error in macro", .{@errorName(err)}) catch unreachable;
                                 }
@@ -12862,6 +12962,24 @@ pub fn NewParser(
             return .{ .stmt = p.s(S.SExpr{ .value = value }, value.loc), .ok = true };
         }
 
+        // fn maybeInlineMacroObject(p: *P, decl: *G.Decl, macro: Expr) void {
+        //     if (decl.value == null) return;
+        //     switch (decl.binding.data) {
+        //         .b_identifier => |ident| {
+        //             if (macro.get(p.loadNameFromRef(ident.ref))) |val| {
+        //                 decl
+        //             }
+        //         }
+        //     }
+        // }
+        //  if (comptime FeatureFlags.is_macro_enabled and jsx_transform_type != .macro) {
+        //                         if (p.has_called_macro and data.decls[i].value != null and
+        //                             data.decls[i].value.?.data == .e_object and data.decls[i].value.?.data.e_object.was_originally_macro)
+        //                         {
+        //                             p.maybeInlineMacroObject(&data.decls[i], data.decls[i].value.?);
+        //                         }
+        //                     }
+
         // EDot nodes represent a property access. This function may return an
         // expression to replace the property access with. It assumes that the
         // target of the EDot expression has already been visited.
@@ -13231,6 +13349,74 @@ pub fn NewParser(
                                         p.symbols.items[id.ref.inner_index].original_name,
                                         was_anonymous_named_expr,
                                     );
+                                },
+                                .b_object => |bound_object| {
+                                    if (comptime FeatureFlags.is_macro_enabled and jsx_transform_type != .macro) {
+                                        if (p.has_called_macro and data.decls[i].value != null and
+                                            data.decls[i].value.?.data == .e_object and
+                                            data.decls[i].value.?.data.e_object.was_originally_macro)
+                                        {
+                                            bail: {
+                                                var object = data.decls[i].value.?.data.e_object;
+                                                for (bound_object.properties) |property| {
+                                                    if (property.flags.is_spread) break :bail;
+                                                }
+                                                var output_properties = object.properties.slice();
+                                                var end: u32 = 0;
+                                                for (bound_object.properties) |property| {
+                                                    if (property.key.asString(p.allocator)) |name| {
+                                                        if (object.asProperty(name)) |query| {
+                                                            output_properties[end] = output_properties[query.i];
+                                                            end += 1;
+                                                        }
+                                                    }
+                                                }
+
+                                                object.properties.len = end;
+                                            }
+                                        }
+                                    }
+                                },
+                                .b_array => |bound_array| {
+                                    if (comptime FeatureFlags.is_macro_enabled and jsx_transform_type != .macro) {
+                                        if (p.has_called_macro and data.decls[i].value != null and
+                                            data.decls[i].value.?.data == .e_array and
+                                            data.decls[i].value.?.data.e_array.was_originally_macro)
+                                        {
+                                            bail: {
+                                                var array = data.decls[i].value.?.data.e_array;
+                                                if (bound_array.has_spread) break :bail;
+                                                array.items.len = @minimum(array.items.len, @truncate(u32, bound_array.items.len));
+                                                var slice = array.items.slice();
+                                                outer: for (bound_array.items[0..array.items.len]) |item, item_i| {
+                                                    const child_expr = slice[item_i];
+                                                    switch (item.binding.data) {
+                                                        .b_object => |bound_object| {
+                                                            if (child_expr.data != .e_object) continue :outer;
+
+                                                            for (bound_object.properties) |property| {
+                                                                if (property.flags.is_spread) continue :outer;
+                                                            }
+                                                            var object = child_expr.data.e_object;
+                                                            var output_properties = object.properties.slice();
+                                                            var end: u32 = 0;
+                                                            for (bound_object.properties) |property| {
+                                                                if (property.key.asString(p.allocator)) |name| {
+                                                                    if (object.asProperty(name)) |query| {
+                                                                        output_properties[end] = output_properties[query.i];
+                                                                        end += 1;
+                                                                    }
+                                                                }
+                                                            }
+
+                                                            object.properties.len = end;
+                                                        },
+                                                        else => {},
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 },
                                 else => {},
                             }

@@ -943,10 +943,33 @@ pub const ZigConsoleClient = struct {
     }
 
     pub const Formatter = struct {
-        remaining_values: []JSValue,
+        remaining_values: []JSValue = &[_]JSValue{},
         map: Visited.Map = undefined,
         map_node: ?*Visited.Pool.Node = null,
         hide_native: bool = false,
+
+        pub const ZigFormatter = struct {
+            formatter: *Formatter,
+            global: *JSGlobalObject,
+            value: JSValue,
+
+            pub const WriteError = error{UhOh};
+            pub fn format(self: ZigFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                self.formatter.remaining_values = &[_]JSValue{self.value};
+                defer {
+                    self.formatter.remaining_values = &[_]JSValue{};
+                }
+
+                self.formatter.format(
+                    Tag.get(self.value, self.global),
+                    @TypeOf(writer),
+                    writer,
+                    self.value,
+                    self.global,
+                    false,
+                );
+            }
+        };
 
         // For detecting circular references
         pub const Visited = struct {

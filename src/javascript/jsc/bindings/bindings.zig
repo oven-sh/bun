@@ -152,6 +152,15 @@ pub const ZigString = extern struct {
         return ZigString{ .ptr = slice_.ptr, .len = slice_.len };
     }
 
+    pub fn toBase64DataURL(this: ZigString, allocator: std.mem.Allocator) ![]const u8 {
+        const slice_ = this.slice();
+        const size = std.base64.standard.Encoder.calcSize(slice_.len);
+        var buf = try allocator.alloc(u8, size + "data:;base64,".len);
+        var encoded = std.base64.url_safe.Encoder.encode(buf["data:;base64,".len..], slice_);
+        buf[0.."data:;base64,".len].* = "data:;base64,".*;
+        return buf[0 .. "data:;base64,".len + encoded.len];
+    }
+
     pub fn detectEncoding(this: *ZigString) void {
         for (this.slice()) |char| {
             if (char > 127) {
@@ -1926,6 +1935,24 @@ pub const JSValue = enum(i64) {
         return cppFn("asString", .{
             this,
         });
+    }
+
+    pub fn toFmt(
+        this: JSValue,
+        global: *JSGlobalObject,
+        formatter: *Exports.ZigConsoleClient.Formatter,
+    ) Exports.ZigConsoleClient.Formatter.ZigFormatter {
+        formatter.remaining_values = &[_]JSValue{};
+        if (formatter.map_node) |node| {
+            node.release();
+            formatter.map_node = null;
+        }
+
+        return Exports.ZigConsoleClient.Formatter.ZigFormatter{
+            .formatter = formatter,
+            .value = this,
+            .global = global,
+        };
     }
 
     pub fn asObject(this: JSValue) JSObject {

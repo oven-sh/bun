@@ -208,6 +208,31 @@ test "eqlComptimeCheckLen" {
     }
 }
 
+test "eqlComptimeUTF16" {
+    try std.testing.expectEqual(eqlComptimeUTF16(std.unicode.utf8ToUtf16LeStringLiteral("bun-darwin-aarch64.zip"), "bun-darwin-aarch64.zip"), true);
+    const sizes = [_]u16{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 23, 22, 24 };
+    inline for (sizes) |size| {
+        var buf: [size]u16 = undefined;
+        std.mem.set(u16, &buf, @as(u8, 'a'));
+        var buf_copy: [size]u16 = undefined;
+        std.mem.set(u16, &buf_copy, @as(u8, 'a'));
+
+        var bad: [size]u16 = undefined;
+        std.mem.set(u16, &bad, @as(u16, 'b'));
+        try std.testing.expectEqual(std.mem.eql(u16, &buf, &buf_copy), eqlComptimeUTF16(&buf, comptime &brk: {
+            var buf_copy_: [size]u8 = undefined;
+            std.mem.set(u8, &buf_copy_, @as(u8, 'a'));
+            break :brk buf_copy_;
+        }));
+
+        try std.testing.expectEqual(std.mem.eql(u16, &buf, &bad), eqlComptimeUTF16(&bad, comptime &brk: {
+            var buf_copy_: [size]u8 = undefined;
+            std.mem.set(u8, &buf_copy_, @as(u8, 'a'));
+            break :brk buf_copy_;
+        }));
+    }
+}
+
 test "copyLowercase" {
     {
         var in = "Hello, World!";
@@ -315,7 +340,7 @@ pub fn quotedAlloc(allocator: std.mem.Allocator, self: string) !string {
 
 pub fn eqlAnyComptime(self: string, comptime list: []const string) bool {
     inline for (list) |item| {
-        if (eqlComptimeCheckLen(self, item, true)) return true;
+        if (eqlComptimeCheckLenWithType(u8, self, item, true)) return true;
     }
 
     return false;
@@ -353,14 +378,18 @@ pub inline fn eqlInsensitive(self: string, other: anytype) bool {
 }
 
 pub fn eqlComptime(self: string, comptime alt: anytype) bool {
-    return eqlComptimeCheckLen(self, alt, true);
+    return eqlComptimeCheckLenWithType(u8, self, alt, true);
+}
+
+pub fn eqlComptimeUTF16(self: []const u16, comptime alt: []const u8) bool {
+    return eqlComptimeCheckLenWithType(u16, self, comptime std.unicode.utf8ToUtf16LeStringLiteral(alt), true);
 }
 
 pub fn eqlComptimeIgnoreLen(self: string, comptime alt: anytype) bool {
-    return eqlComptimeCheckLen(self, alt, false);
+    return eqlComptimeCheckLenWithType(u8, self, alt, false);
 }
 
-inline fn eqlComptimeCheckLen(a: string, comptime b: anytype, comptime check_len: bool) bool {
+inline fn eqlComptimeCheckLenWithType(comptime Type: type, a: []const Type, comptime b: anytype, comptime check_len: bool) bool {
     @setEvalBranchQuota(9999);
     if (comptime check_len) {
         if (comptime b.len == 0) {
@@ -375,11 +404,13 @@ inline fn eqlComptimeCheckLen(a: string, comptime b: anytype, comptime check_len
 
     const len = comptime b.len;
     comptime var dword_length = b.len >> 3;
+    const slice = comptime if (@typeInfo(@TypeOf(b)) != .Pointer) b else std.mem.span(b);
+    const divisor = comptime @sizeOf(Type);
+
     comptime var b_ptr: usize = 0;
 
     inline while (dword_length > 0) : (dword_length -= 1) {
-        const slice = comptime if (@typeInfo(@TypeOf(b)) != .Pointer) b else std.mem.span(b);
-        if (@bitCast(usize, a[b_ptr..][0..@sizeOf(usize)].*) != comptime @bitCast(usize, (slice[b_ptr..])[0..@sizeOf(usize)].*))
+        if (@bitCast(usize, a[b_ptr..][0 .. @sizeOf(usize) / divisor].*) != comptime @bitCast(usize, (slice[b_ptr..])[0 .. @sizeOf(usize) / divisor].*))
             return false;
         comptime b_ptr += @sizeOf(usize);
         if (comptime b_ptr == b.len) return true;
@@ -387,8 +418,7 @@ inline fn eqlComptimeCheckLen(a: string, comptime b: anytype, comptime check_len
 
     if (comptime @sizeOf(usize) == 8) {
         if (comptime (len & 4) != 0) {
-            const slice = comptime if (@typeInfo(@TypeOf(b)) != .Pointer) b else std.mem.span(b);
-            if (@bitCast(u32, a[b_ptr..][0..@sizeOf(u32)].*) != comptime @bitCast(u32, (slice[b_ptr..])[0..@sizeOf(u32)].*))
+            if (@bitCast(u32, a[b_ptr..][0 .. @sizeOf(u32) / divisor].*) != comptime @bitCast(u32, (slice[b_ptr..])[0 .. @sizeOf(u32) / divisor].*))
                 return false;
 
             comptime b_ptr += @sizeOf(u32);
@@ -398,8 +428,7 @@ inline fn eqlComptimeCheckLen(a: string, comptime b: anytype, comptime check_len
     }
 
     if (comptime (len & 2) != 0) {
-        const slice = comptime if (@typeInfo(@TypeOf(b)) != .Pointer) b else std.mem.span(b);
-        if (@bitCast(u16, a[b_ptr..][0..@sizeOf(u16)].*) != comptime @bitCast(u16, slice[b_ptr .. b_ptr + @sizeOf(u16)].*))
+        if (@bitCast(u16, a[b_ptr..][0 .. @sizeOf(u16) / divisor].*) != comptime @bitCast(u16, slice[b_ptr .. b_ptr + (@sizeOf(u16) / divisor)].*))
             return false;
 
         comptime b_ptr += @sizeOf(u16);

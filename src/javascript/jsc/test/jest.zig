@@ -552,6 +552,7 @@ pub const TestScope = struct {
     parent: *DescribeScope,
     callback: js.JSValueRef,
     id: TestRunner.Test.ID = 0,
+    promise: ?*JSInternalPromise = null,
 
     pub const Class = NewClass(void, .{ .name = "test" }, .{ .call = call }, .{});
 
@@ -612,27 +613,44 @@ pub const TestScope = struct {
         this: *TestScope,
     ) Result {
         var vm = VirtualMachine.vm;
+        defer {
+            js.JSValueUnprotect(vm.global.ref(), this.callback);
+            this.callback = null;
+        }
 
-        var promise = JSC.JSInternalPromise.resolvedPromise(
-            vm.global,
-            js.JSObjectCallAsFunctionReturnValue(vm.global.ref(), this.callback, null, 0, null),
-        );
-        defer js.JSValueUnprotect(vm.global.ref(), this.callback);
+        const initial_value = js.JSObjectCallAsFunctionReturnValue(vm.global.ref(), this.callback, null, 0, null);
+
+        if (initial_value.isException(vm.global.vm()) or initial_value.isError() or initial_value.isAggregateError(vm.global)) {
+            vm.defaultErrorHandler(initial_value, null);
+            return .{ .fail = this.counter.actual };
+        }
+
+        if (!initial_value.isUndefinedOrNull()) {
+            if (this.promise != null) {
+                return .{ .pending = .{} };
+            }
+
+            this.promise = JSC.JSInternalPromise.resolvedPromise(vm.global, initial_value);
+            defer {
+                this.promise = null;
+            }
+
+            while (this.promise.?.status(vm.global.vm()) == JSC.JSPromise.Status.Pending) {
+                vm.tick();
+            }
+            switch (this.promise.?.status(vm.global.vm())) {
+                .Rejected => {
+                    vm.defaultErrorHandler(this.promise.?.result(vm.global.vm()), null);
+                    return .{ .fail = this.counter.actual };
+                },
+                else => {
+                    // don't care about the result
+                    _ = this.promise.?.result(vm.global.vm());
+                },
+            }
+        }
+
         this.callback = null;
-
-        while (promise.status(vm.global.vm()) == JSC.JSPromise.Status.Pending) {
-            vm.tick();
-        }
-        switch (promise.status(vm.global.vm())) {
-            .Rejected => {
-                vm.defaultErrorHandler(promise.result(vm.global.vm()), null);
-                return .{ .fail = this.counter.actual };
-            },
-            else => {
-                // don't care about the result
-                _ = promise.result(vm.global.vm());
-            },
-        }
 
         if (this.counter.expected > 0 and this.counter.expected < this.counter.actual) {
             Output.prettyErrorln("Test fail: {d} / {d} expectations\n (make this better!)", .{
@@ -789,7 +807,7 @@ pub const DescribeScope = struct {
             switch (result) {
                 .pass => |count| Jest.runner.?.reportPass(test_id, count),
                 .fail => |count| Jest.runner.?.reportFailure(test_id, source.path.text, tests[i].label, count),
-                .pending => unreachable,
+                .pending => @panic("Unexpected pending test"),
             }
 
             i += 1;

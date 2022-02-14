@@ -15,9 +15,10 @@ const String = @import("../semver.zig").String;
 
 pub const FolderResolution = union(Tag) {
     package_id: PackageID,
+    new_package_id: PackageID,
     err: anyerror,
 
-    pub const Tag = enum { package_id, err };
+    pub const Tag = enum { package_id, err, new_package_id };
 
     pub const Map = std.HashMapUnmanaged(u64, FolderResolution, IdentityContext(u64), 80);
 
@@ -119,6 +120,6 @@ pub const FolderResolution = union(Tag) {
 
         package = manager.lockfile.appendPackage(package) catch unreachable;
         entry.value_ptr.* = .{ .package_id = package.meta.id };
-        return FolderResolution{ .package_id = package.meta.id };
+        return FolderResolution{ .new_package_id = package.meta.id };
     }
 };

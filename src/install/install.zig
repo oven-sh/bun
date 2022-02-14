@@ -47,14 +47,14 @@ const clap = @import("clap");
 const ExtractTarball = @import("./extract_tarball.zig");
 const Npm = @import("./npm.zig");
 const Bitset = @import("./bit_set.zig").DynamicBitSetUnmanaged;
+const z_allocator = @import("../memory_allocator.zig").z_allocator;
 
 threadlocal var initialized_store = false;
 
 // these bytes are skipped
 // so we just make it repeat bun bun bun bun bun bun bun bun bun
 // because why not
-const alignment_bytes_to_repeat = "bun";
-const alignment_bytes_to_repeat_buffer = "bunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbunbun";
+const alignment_bytes_to_repeat_buffer = [_]u8{0} ** 144;
 
 const JSAst = @import("../js_ast.zig");
 
@@ -371,14 +371,13 @@ pub const Features = struct {
         return @intToEnum(Behavior, out);
     }
 
-    // When it's a folder, we do not parse any of the dependencies
     pub const folder = Features{
-        .optional_dependencies = false,
-        .dev_dependencies = false,
+        .optional_dependencies = true,
+        .dev_dependencies = true,
         .scripts = false,
-        .peer_dependencies = false,
+        .peer_dependencies = true,
         .is_main = false,
-        .dependencies = false,
+        .dependencies = true,
     };
 
     pub const npm = Features{
@@ -476,15 +475,41 @@ pub const Lockfile = struct {
         summary: PackageInstall.Summary,
     };
 
-    pub const Tree = extern struct {
+    pub const Tree = struct {
         id: Id = invalid_id,
         package_id: PackageID = invalid_package_id,
         parent: Id = invalid_id,
         packages: Lockfile.PackageIDSlice = Lockfile.PackageIDSlice{},
 
+        pub const external_size = @sizeOf(Id) + @sizeOf(PackageID) + @sizeOf(Id) + @sizeOf(Lockfile.PackageIDSlice);
+        pub const External = [external_size]u8;
         pub const Slice = ExternalSlice(Tree);
         pub const List = std.ArrayListUnmanaged(Tree);
         pub const Id = u32;
+
+        pub fn toExternal(this: Tree) External {
+            var out = External{};
+            out[0..4].* = @bitCast(Id, this.id);
+            out[4..8].* = @bitCast(Id, this.package_id);
+            out[8..12].* = @bitCast(Id, this.parent);
+            out[12..16].* = @bitCast(u32, this.packages.off);
+            out[16..20].* = @bitCast(u32, this.packages.len);
+            if (out.len != 20) @compileError("Tree.External is not 20 bytes");
+            return out;
+        }
+
+        pub fn toTree(out: External) Tree {
+            return Tree{
+                .id = @bitCast(Id, out[0..4].*),
+                .package_id = @bitCast(Id, out[4..8].*),
+                .parent = @bitCast(Id, out[8..12].*),
+                .packages = .{
+                    .off = @bitCast(u32, out[12..16].*),
+                    .len = @bitCast(u32, out[16..20].*),
+                },
+            };
+        }
+
         const invalid_id: Id = std.math.maxInt(Id);
         const dependency_loop = invalid_id - 1;
         const hoisted = invalid_id - 2;
@@ -603,19 +628,30 @@ pub const Lockfile = struct {
 
             /// Flatten the multi-dimensional ArrayList of package IDs into a single easily serializable array
             pub fn clean(this: *Builder) ![]PackageID {
-                const end = @truncate(Id, this.list.len);
+                var end = @truncate(Id, this.list.len);
                 var i: Id = 0;
                 var total_packages_count: u32 = 0;
 
                 var trees = this.list.items(.tree);
                 var packages = this.list.items(.packages);
+                var real_end: Id = 0;
+                const max_package_id = @truncate(PackageID, this.resolutions.len);
 
                 // TODO: can we cull empty trees here?
                 while (i < end) : (i += 1) {
+                    const prev = total_packages_count;
                     total_packages_count += trees[i].packages.len;
+                    if (!(prev == total_packages_count and trees[i].package_id >= max_package_id)) {
+                        trees[real_end] = trees[i];
+                        packages[real_end] = packages[i];
+                        real_end += 1;
+                    }
                 }
+                this.list.len = real_end;
+                trees = trees[0..real_end];
+                packages = packages[0..real_end];
 
-                var package_ids = try this.allocator.alloc(PackageID, total_packages_count);
+                var package_ids = try z_allocator.alloc(PackageID, total_packages_count);
                 var next = PackageIDSlice{};
 
                 for (trees) |tree, id| {
@@ -2093,6 +2129,7 @@ pub const Lockfile = struct {
                     .bin = this.bin.clone(old_string_buf, old_extern_string_buf, new.buffers.extern_strings.items, new_extern_strings, *Lockfile.StringBuilder, builder),
                     .name_hash = this.name_hash,
                     .meta = this.meta.clone(
+                        id,
                         old_string_buf,
                         *Lockfile.StringBuilder,
                         builder,
@@ -2514,8 +2551,16 @@ pub const Lockfile = struct {
                 if (json.asProperty(group.prop)) |dependencies_q| {
                     if (dependencies_q.expr.data == .e_object) {
                         for (dependencies_q.expr.data.e_object.properties.slice()) |item| {
-                            string_builder.count(item.key.?.asString(allocator) orelse "");
-                            string_builder.count(item.value.?.asString(allocator) orelse "");
+                            const key = item.key.?.asString(allocator) orelse "";
+                            const value = item.value.?.asString(allocator) orelse "";
+
+                            string_builder.count(key);
+                            string_builder.count(value);
+
+                            // If it's a folder, pessimistically assume we will need a maximum path
+                            if (Dependency.Version.Tag.infer(value) == .folder) {
+                                string_builder.cap += std.fs.MAX_PATH_BYTES;
+                            }
                         }
                         total_dependencies_count += @truncate(u32, dependencies_q.expr.data.e_object.properties.len);
                     }
@@ -2578,12 +2623,31 @@ pub const Lockfile = struct {
                                 lockfile.buffers.string_bytes.items,
                             );
 
-                            const dependency_version = Dependency.parse(
+                            var dependency_version = Dependency.parse(
                                 allocator,
                                 sliced.slice,
                                 &sliced,
                                 log,
                             ) orelse Dependency.Version{};
+
+                            if (dependency_version.tag == .folder) {
+                                const folder_path = dependency_version.value.folder.slice(lockfile.buffers.string_bytes.items);
+                                dependency_version.value.folder = string_builder.append(
+                                    String,
+                                    Path.relative(
+                                        FileSystem.instance.top_level_dir,
+                                        Path.joinAbsString(
+                                            FileSystem.instance.top_level_dir,
+                                            &[_]string{
+                                                source.path.name.dir,
+                                                folder_path,
+                                            },
+                                            .posix,
+                                        ),
+                                    ),
+                                );
+                            }
+
                             const this_dep = Dependency{
                                 .behavior = group.behavior,
                                 .name = external_name.value,
@@ -2652,6 +2716,8 @@ pub const Lockfile = struct {
 
             lockfile.buffers.dependencies.items = lockfile.buffers.dependencies.items.ptr[0 .. lockfile.buffers.dependencies.items.len + total_dependencies_count];
             lockfile.buffers.resolutions.items = lockfile.buffers.resolutions.items.ptr[0..lockfile.buffers.dependencies.items.len];
+
+            string_builder.clamp();
         }
 
         pub const List = std.MultiArrayList(Lockfile.Package);
@@ -2908,10 +2974,18 @@ pub const Lockfile = struct {
             try writer.writeIntLittle(u64, 0xDEADBEEF);
             try writer.writeIntLittle(u64, 0xDEADBEEF);
 
+            const prefix = comptime std.fmt.comptimePrint(
+                "\n<{s}> {d} sizeof, {d} alignof\n",
+                .{
+                    @typeName(std.meta.Child(ArrayList)),
+                    @sizeOf(std.meta.Child(ArrayList)),
+                    @alignOf(std.meta.Child(ArrayList)),
+                },
+            );
+            try writer.writeAll(prefix);
+
             if (bytes.len > 0) {
-                if (std.meta.Child(ArrayList) != u8) {
-                    _ = try Aligner.write([*]std.meta.Child(ArrayList), Writer, writer, try stream.getPos());
-                }
+                _ = try Aligner.write(sizes.types[0], Writer, writer, try stream.getPos());
 
                 const real_start_pos = try stream.getPos();
                 try writer.writeAll(bytes);
@@ -2944,9 +3018,10 @@ pub const Lockfile = struct {
 
                     // It would be faster to buffer these instead of one big allocation
                     var to_clone = try std.ArrayListUnmanaged(Dependency.External).initCapacity(allocator, remaining.len);
+
                     defer to_clone.deinit(allocator);
                     for (remaining) |dep| {
-                        to_clone.appendAssumeCapacity(dep.toExternal());
+                        to_clone.appendAssumeCapacity(Dependency.toExternal(dep));
                     }
 
                     try writeArray(StreamType, stream, Writer, writer, []Dependency.External, to_clone.items);
@@ -2954,7 +3029,23 @@ pub const Lockfile = struct {
                     var list = @field(this, name);
                     const items = list.items;
                     const Type = @TypeOf(items);
-                    try writeArray(StreamType, stream, Writer, writer, Type, items);
+                    if (comptime Type == Tree) {
+                        // We duplicate it here so that alignment bytes are zeroed out
+                        var clone = try std.ArrayListUnmanaged(Tree.External).initCapacity(allocator, list.items.len);
+                        for (list.items) |item| {
+                            clone.appendAssumeCapacity(Tree.toExternal(item));
+                        }
+                        defer clone.deinit(allocator);
+
+                        try writeArray(StreamType, stream, Writer, writer, Tree.External, clone.items);
+                    } else {
+                        // We duplicate it here so that alignment bytes are zeroed out
+                        var clone = try std.ArrayListUnmanaged(std.meta.Child(Type)).initCapacity(allocator, list.items.len);
+                        clone.appendSliceAssumeCapacity(items);
+                        defer clone.deinit(allocator);
+
+                        try writeArray(StreamType, stream, Writer, writer, Type, clone.items);
+                    }
                 }
 
                 if (comptime Environment.isDebug) {
@@ -2981,6 +3072,15 @@ pub const Lockfile = struct {
                     if (PackageManager.instance.options.log_level.isVerbose()) {
                         Output.prettyErrorln("Loaded {d} {s}", .{ external_dependency_list_.items.len, name });
                     }
+                } else if (comptime Type == @TypeOf(this.trees)) {
+                    var tree_list = try readArray(stream, allocator, std.ArrayListUnmanaged(Tree.External));
+                    defer tree_list.deinit(allocator);
+                    this.trees = try Tree.List.initCapacity(allocator, tree_list.items.len);
+                    this.trees.items.len = tree_list.items.len;
+
+                    for (tree_list.items) |tree, j| {
+                        this.trees.items[j] = Tree.toTree(tree);
+                    }
                 } else {
                     @field(this, sizes.names[i]) = try readArray(stream, allocator, Type);
                     if (PackageManager.instance.options.log_level.isVerbose()) {
@@ -2997,7 +3097,7 @@ pub const Lockfile = struct {
             // Dependencies are serialized separately.
             // This is unfortunate. However, not using pointers for Semver Range's make the code a lot more complex.
             this.dependencies = try DependencyList.initCapacity(allocator, external_dependency_list.len);
-            const extern_context = Dependency.External.Context{
+            const extern_context = Dependency.Context{
                 .log = log,
                 .allocator = allocator,
                 .buffer = this.string_bytes.items,
@@ -3006,7 +3106,7 @@ pub const Lockfile = struct {
             this.dependencies.expandToCapacity();
             this.dependencies.items.len = external_dependency_list.len;
             for (external_dependency_list) |dep, i| {
-                this.dependencies.items[i] = dep.toDependency(extern_context);
+                this.dependencies.items[i] = Dependency.toDependency(dep, extern_context);
             }
 
             return this;
@@ -3018,6 +3118,10 @@ pub const Lockfile = struct {
         const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
 
         pub fn save(this: *Lockfile, comptime StreamType: type, stream: StreamType) !void {
+            var old_package_list = this.packages;
+            this.packages = try this.packages.clone(z_allocator);
+            old_package_list.deinit(this.allocator);
+
             var writer = stream.writer();
             try writer.writeAll(header_bytes);
             try writer.writeIntLittle(u32, @enumToInt(this.format));
@@ -3025,10 +3129,10 @@ pub const Lockfile = struct {
             try writer.writeIntLittle(u64, 0);
 
             try Lockfile.Package.Serializer.save(this.packages, StreamType, stream, @TypeOf(&writer), &writer);
-            try Lockfile.Buffers.save(this.buffers, this.allocator, StreamType, stream, @TypeOf(&writer), &writer);
+            try Lockfile.Buffers.save(this.buffers, z_allocator, StreamType, stream, @TypeOf(&writer), &writer);
             try writer.writeIntLittle(u64, 0);
             const end = try stream.getPos();
-            try writer.writeAll(alignment_bytes_to_repeat_buffer);
+            try writer.writeAll(&alignment_bytes_to_repeat_buffer);
 
             _ = try std.os.pwrite(stream.handle, std.mem.asBytes(&end), pos);
             try std.os.ftruncate(stream.handle, try stream.getPos());
@@ -3285,29 +3389,42 @@ const PackageInstall = struct {
             var resolution_buf: [512]u8 = undefined;
             var resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(ctx.string_buf)}) catch unreachable;
 
+            this.package_install = PackageInstall{
+                .cache_dir = undefined,
+                .cache_dir_subpath = undefined,
+                .progress = ctx.progress,
+
+                .destination_dir = this.destination_dir,
+                .destination_dir_subpath = destination_dir_subpath,
+                .destination_dir_subpath_buf = &destination_dir_subpath_buf,
+                .allocator = ctx.allocator,
+                .package_name = name,
+                .package_version = resolution_label,
+            };
+
             switch (resolution.tag) {
                 .npm => {
-                    this.package_install = PackageInstall{
-                        .cache_dir = ctx.cache_dir,
-                        .progress = ctx.progress,
-                        .cache_dir_subpath = PackageManager.instance.cachedNPMPackageFolderNamePrint(&cache_dir_subpath_buf, name, resolution.value.npm),
-                        .destination_dir = this.destination_dir,
-                        .destination_dir_subpath = destination_dir_subpath,
-                        .destination_dir_subpath_buf = &destination_dir_subpath_buf,
-                        .allocator = ctx.allocator,
-                        .package_name = name,
-                        .package_version = resolution_label,
-                    };
-
-                    const needs_install = ctx.skip_verify or !this.package_install.verify();
-
-                    if (needs_install) {
-                        this.result = this.package_install.install(ctx.skip_verify);
-                    } else {
-                        this.result = .{ .skip = .{} };
-                    }
+                    this.package_install.cache_dir_subpath = this.manager.cachedNPMPackageFolderName(name, resolution.value.npm);
+                    this.package_install.cache_dir = this.manager.getCacheDirectory();
                 },
-                else => {},
+                .folder => {
+                    var folder_buf = &cache_dir_subpath_buf;
+                    const folder = resolution.value.folder.slice(ctx.string_buf);
+                    std.mem.copy(u8, folder_buf, "../" ++ std.fs.path.sep_str);
+                    std.mem.copy(u8, folder_buf["../".len..], folder);
+                    folder_buf["../".len + folder.len] = 0;
+                    this.package_install.cache_dir_subpath = folder_buf[0 .. "../".len + folder.len :0];
+                    this.package_install.cache_dir = std.fs.cwd();
+                },
+                else => return,
+            }
+
+            const needs_install = ctx.skip_verify or !this.package_install.verify();
+
+            if (needs_install) {
+                this.result = this.package_install.install(ctx.skip_verify);
+            } else {
+                this.result = .{ .skip = .{} };
             }
 
             ctx.channel.writeItem(this) catch unreachable;
@@ -4386,7 +4503,12 @@ pub const PackageManager = struct {
                     .err => |err| return err,
                     .package_id => |package_id| {
                         this.lockfile.buffers.resolutions.items[dependency_id] = package_id;
-                        return ResolvedPackageResult{ .package = this.lockfile.packages.get(res.package_id) };
+                        return ResolvedPackageResult{ .package = this.lockfile.packages.get(package_id) };
+                    },
+
+                    .new_package_id => |package_id| {
+                        this.lockfile.buffers.resolutions.items[dependency_id] = package_id;
+                        return ResolvedPackageResult{ .package = this.lockfile.packages.get(package_id), .is_first_time = true };
                     },
                 }
             },
@@ -4500,7 +4622,11 @@ pub const PackageManager = struct {
         if (comptime !is_main) {
             // it might really be main
             if (!this.root_dependency_list.contains(id))
-                if (!dependency.behavior.isEnabled(Features.npm))
+                if (!dependency.behavior.isEnabled(switch (dependency.version.tag) {
+                    .folder => this.options.remote_package_features,
+                    .dist_tag, .npm => this.options.remote_package_features,
+                    else => Features{},
+                }))
                     return;
         }
 
@@ -6710,6 +6836,7 @@ pub const PackageManager = struct {
         has_created_bin: bool = false,
         global_bin_dir: std.fs.Dir,
         destination_dir_subpath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
+        folder_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
         install_count: usize = 0,
         successfully_installed: Bitset,
 
@@ -6764,167 +6891,139 @@ pub const PackageManager = struct {
             const buf = this.lockfile.buffers.string_bytes.items;
             const extern_string_buf = this.lockfile.buffers.extern_strings.items;
             var resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(buf)}) catch unreachable;
+            var installer = PackageInstall{
+                .progress = this.progress,
+                .cache_dir = undefined,
+                .cache_dir_subpath = undefined,
+                .destination_dir = this.node_modules_folder,
+                .destination_dir_subpath = destination_dir_subpath,
+                .destination_dir_subpath_buf = &this.destination_dir_subpath_buf,
+                .allocator = this.lockfile.allocator,
+                .package_name = name,
+                .package_version = resolution_label,
+            };
+
             switch (resolution.tag) {
                 .npm => {
-                    var installer = PackageInstall{
-                        .cache_dir = this.manager.getCacheDirectory(),
-                        .progress = this.progress,
-                        .cache_dir_subpath = this.manager.cachedNPMPackageFolderName(name, resolution.value.npm),
-                        .destination_dir = this.node_modules_folder,
-                        .destination_dir_subpath = destination_dir_subpath,
-                        .destination_dir_subpath_buf = &this.destination_dir_subpath_buf,
-                        .allocator = this.lockfile.allocator,
-                        .package_name = name,
-                        .package_version = resolution_label,
-                    };
-
-                    const needs_install = this.force_install or this.skip_verify or !installer.verify();
-                    this.summary.skipped += @as(u32, @boolToInt(!needs_install));
-
-                    if (needs_install) {
-                        const result = installer.install(this.skip_delete);
-                        switch (result) {
-                            .success => {
-                                const is_duplicate = this.successfully_installed.isSet(package_id);
-                                this.summary.success += @as(u32, @boolToInt(!is_duplicate));
-                                this.successfully_installed.set(package_id);
-
-                                if (comptime log_level.showProgress()) {
-                                    this.node.completeOne();
-                                }
-
-                                const bin = this.bins[package_id];
-                                if (bin.tag != .none) {
-                                    if (!this.has_created_bin) {
-                                        Bin.Linker.umask = C.umask(0);
-                                        if (!this.options.global)
-                                            this.node_modules_folder.makeDirZ(".bin") catch {};
-
-                                        this.has_created_bin = true;
-                                    }
-
-                                    const bin_task_id = Task.Id.forBinLink(package_id);
-                                    var task_queue = this.manager.task_queue.getOrPut(this.manager.allocator, bin_task_id) catch unreachable;
-                                    if (!task_queue.found_existing) {
-                                        run_bin_link: {
-                                            if (std.mem.indexOfScalar(PackageNameHash, this.options.native_bin_link_allowlist, String.Builder.stringHash(name)) != null) {
-                                                this.platform_binlinks.append(this.lockfile.allocator, .{
-                                                    .package_id = package_id,
-                                                    .node_modules_folder = this.node_modules_folder,
-                                                }) catch unreachable;
-                                                break :run_bin_link;
-                                            }
-
-                                            var bin_linker = Bin.Linker{
-                                                .bin = bin,
-                                                .package_installed_node_modules = this.node_modules_folder.fd,
-                                                .global_bin_path = this.options.bin_path,
-                                                .global_bin_dir = this.options.global_bin_dir,
-
-                                                // .destination_dir_subpath = destination_dir_subpath,
-                                                .root_node_modules_folder = this.root_node_modules_folder.fd,
-                                                .package_name = strings.StringOrTinyString.init(name),
-                                                .string_buf = buf,
-                                                .extern_string_buf = extern_string_buf,
-                                            };
-
-                                            bin_linker.link(this.manager.options.global);
-                                            if (bin_linker.err) |err| {
-                                                if (comptime log_level != .silent) {
-                                                    const fmt = "\n<r><red>error:<r> linking <b>{s}<r>: {s}\n";
-                                                    const args = .{ name, @errorName(err) };
-
-                                                    if (comptime log_level.showProgress()) {
-                                                        if (Output.enable_ansi_colors) {
-                                                            this.progress.log(comptime Output.prettyFmt(fmt, true), args);
-                                                        } else {
-                                                            this.progress.log(comptime Output.prettyFmt(fmt, false), args);
-                                                        }
-                                                    } else {
-                                                        Output.prettyErrorln(fmt, args);
-                                                    }
-                                                }
-
-                                                if (this.manager.options.enable.fail_early) {
-                                                    installer.uninstall() catch {};
-                                                    Global.exit(1);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            },
-                            .fail => |cause| {
-                                if (cause.isPackageMissingFromCache()) {
-                                    const task_id = Task.Id.forNPMPackage(Task.Tag.extract, name, resolution.value.npm);
-                                    var task_queue = this.manager.task_queue.getOrPut(this.manager.allocator, task_id) catch unreachable;
-                                    if (!task_queue.found_existing) {
-                                        task_queue.value_ptr.* = .{};
-                                    }
-
-                                    task_queue.value_ptr.append(
-                                        this.manager.allocator,
-                                        .{
-                                            .node_modules_folder = @intCast(u32, this.node_modules_folder.fd),
-                                        },
-                                    ) catch unreachable;
-
-                                    if (this.manager.generateNetworkTaskForTarball(task_id, this.lockfile.packages.get(package_id)) catch unreachable) |task| {
-                                        task.schedule(&this.manager.network_tarball_batch);
-                                        if (this.manager.network_tarball_batch.len > 0) {
-                                            _ = this.manager.scheduleNetworkTasks();
-                                        }
-                                    }
-                                } else {
-                                    Output.prettyErrorln(
-                                        "<r><red>error<r>: <b><red>{s}<r> installing <b>{s}<r>",
-                                        .{ @errorName(cause.err), this.names[package_id].slice(buf) },
-                                    );
-                                    this.summary.fail += 1;
-                                }
-                            },
-                            else => {},
-                        }
-                    }
+                    installer.cache_dir_subpath = this.manager.cachedNPMPackageFolderName(name, resolution.value.npm);
+                    installer.cache_dir = this.manager.getCacheDirectory();
                 },
-                // TODO: support folder links deeper than node_modules folder
-                // if node_modules/foo/package.json has a folder:, then this will not create a valid symlink
                 .folder => {
-                    var folder_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
                     const folder = resolution.value.folder.slice(buf);
-                    std.mem.copy(u8, &folder_buf, "../" ++ std.fs.path.sep_str);
-                    std.mem.copy(u8, folder_buf["../".len..], folder);
-                    folder_buf["../".len + folder.len] = 0;
-                    var folderZ: [:0]u8 = folder_buf[0 .. "../".len + folder.len :0];
+                    @memcpy(&this.folder_path_buf, folder.ptr, folder.len);
+                    this.folder_path_buf[folder.len] = 0;
+                    installer.cache_dir_subpath = std.meta.assumeSentinel(this.folder_path_buf[0..folder.len], 0);
+                    installer.cache_dir = std.fs.cwd();
+                },
+                else => return,
+            }
+            const needs_install = this.force_install or this.skip_verify or !installer.verify();
+            this.summary.skipped += @as(u32, @boolToInt(!needs_install));
 
-                    const needs_install = this.force_install or this.skip_verify or brk: {
-                        std.mem.copy(u8, this.destination_dir_subpath_buf[name.len..], std.fs.path.sep_str ++ "package.json");
-                        this.destination_dir_subpath_buf[name.len + "/package.json".len] = 0;
-                        var package_json_path = this.destination_dir_subpath_buf[0 .. name.len + "/package.json".len :0];
-                        defer this.destination_dir_subpath_buf[name.len] = 0;
-                        const file = this.node_modules_folder.openFileZ(package_json_path, .{ .read = true }) catch break :brk true;
-                        file.close();
+            if (needs_install) {
+                const result = installer.install(this.skip_delete);
+                switch (result) {
+                    .success => {
+                        const is_duplicate = this.successfully_installed.isSet(package_id);
+                        this.summary.success += @as(u32, @boolToInt(!is_duplicate));
+                        this.successfully_installed.set(package_id);
 
-                        break :brk false;
-                    };
-                    this.summary.skipped += @as(u32, @boolToInt(!needs_install));
+                        if (comptime log_level.showProgress()) {
+                            this.node.completeOne();
+                        }
 
-                    if (needs_install) {
-                        if (!this.skip_delete) this.node_modules_folder.deleteFileZ(destination_dir_subpath) catch {};
+                        const bin = this.bins[package_id];
+                        if (bin.tag != .none) {
+                            if (!this.has_created_bin) {
+                                Bin.Linker.umask = C.umask(0);
+                                if (!this.options.global)
+                                    this.node_modules_folder.makeDirZ(".bin") catch {};
 
-                        std.os.symlinkatZ(folderZ, this.node_modules_folder.fd, destination_dir_subpath) catch |err| {
+                                this.has_created_bin = true;
+                            }
+
+                            const bin_task_id = Task.Id.forBinLink(package_id);
+                            var task_queue = this.manager.task_queue.getOrPut(this.manager.allocator, bin_task_id) catch unreachable;
+                            if (!task_queue.found_existing) {
+                                run_bin_link: {
+                                    if (std.mem.indexOfScalar(PackageNameHash, this.options.native_bin_link_allowlist, String.Builder.stringHash(name)) != null) {
+                                        this.platform_binlinks.append(this.lockfile.allocator, .{
+                                            .package_id = package_id,
+                                            .node_modules_folder = this.node_modules_folder,
+                                        }) catch unreachable;
+                                        break :run_bin_link;
+                                    }
+
+                                    var bin_linker = Bin.Linker{
+                                        .bin = bin,
+                                        .package_installed_node_modules = this.node_modules_folder.fd,
+                                        .global_bin_path = this.options.bin_path,
+                                        .global_bin_dir = this.options.global_bin_dir,
+
+                                        // .destination_dir_subpath = destination_dir_subpath,
+                                        .root_node_modules_folder = this.root_node_modules_folder.fd,
+                                        .package_name = strings.StringOrTinyString.init(name),
+                                        .string_buf = buf,
+                                        .extern_string_buf = extern_string_buf,
+                                    };
+
+                                    bin_linker.link(this.manager.options.global);
+                                    if (bin_linker.err) |err| {
+                                        if (comptime log_level != .silent) {
+                                            const fmt = "\n<r><red>error:<r> linking <b>{s}<r>: {s}\n";
+                                            const args = .{ name, @errorName(err) };
+
+                                            if (comptime log_level.showProgress()) {
+                                                if (Output.enable_ansi_colors) {
+                                                    this.progress.log(comptime Output.prettyFmt(fmt, true), args);
+                                                } else {
+                                                    this.progress.log(comptime Output.prettyFmt(fmt, false), args);
+                                                }
+                                            } else {
+                                                Output.prettyErrorln(fmt, args);
+                                            }
+                                        }
+
+                                        if (this.manager.options.enable.fail_early) {
+                                            installer.uninstall() catch {};
+                                            Global.exit(1);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    .fail => |cause| {
+                        if (cause.isPackageMissingFromCache()) {
+                            const task_id = Task.Id.forNPMPackage(Task.Tag.extract, name, resolution.value.npm);
+                            var task_queue = this.manager.task_queue.getOrPut(this.manager.allocator, task_id) catch unreachable;
+                            if (!task_queue.found_existing) {
+                                task_queue.value_ptr.* = .{};
+                            }
+
+                            task_queue.value_ptr.append(
+                                this.manager.allocator,
+                                .{
+                                    .node_modules_folder = @intCast(u32, this.node_modules_folder.fd),
+                                },
+                            ) catch unreachable;
+
+                            if (this.manager.generateNetworkTaskForTarball(task_id, this.lockfile.packages.get(package_id)) catch unreachable) |task| {
+                                task.schedule(&this.manager.network_tarball_batch);
+                                if (this.manager.network_tarball_batch.len > 0) {
+                                    _ = this.manager.scheduleNetworkTasks();
+                                }
+                            }
+                        } else {
                             Output.prettyErrorln(
                                 "<r><red>error<r>: <b><red>{s}<r> installing <b>{s}<r>",
-                                .{ err, this.names[package_id].slice(buf) },
+                                .{ @errorName(cause.err), this.names[package_id].slice(buf) },
                             );
                             this.summary.fail += 1;
-                            return;
-                        };
-                        this.summary.success += 1;
-                        this.successfully_installed.set(package_id);
-                    }
-                },
-                else => {},
+                        }
+                    },
+                    else => {},
+                }
             }
         }
 

@@ -19,7 +19,6 @@ registry: string,
 cache_dir: std.fs.Dir,
 temp_dir: std.fs.Dir,
 package_id: PackageID,
-extracted_file_count: usize = 0,
 skip_verify: bool = false,
 
 integrity: Integrity = Integrity{},

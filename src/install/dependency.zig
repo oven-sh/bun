@@ -87,44 +87,48 @@ pub fn clone(this: Dependency, buf: []const u8, comptime StringBuilder: type, bu
     };
 }
 
-pub const External = extern struct {
-    name: String = String{},
-    name_hash: PackageNameHash = 0,
-    behavior: Behavior = Behavior.uninitialized,
-    version: Dependency.Version.External,
+pub const External = [size]u8;
 
-    pub const Context = struct {
-        allocator: std.mem.Allocator,
-        log: *logger.Log,
-        buffer: []const u8,
-    };
+const size = @sizeOf(Dependency.Version.External) +
+    @sizeOf(PackageNameHash) +
+    @sizeOf(Dependency.Behavior) +
+    @sizeOf(String);
 
-    pub fn toDependency(
-        this: Dependency.External,
-        ctx: Context,
-    ) Dependency {
-        return Dependency{
-            .name = this.name,
-            .name_hash = this.name_hash,
-            .behavior = this.behavior,
-            .version = this.version.toVersion(ctx),
-        };
-    }
+pub const Context = struct {
+    allocator: std.mem.Allocator,
+    log: *logger.Log,
+    buffer: []const u8,
 };
 
-pub fn toExternal(this: Dependency) External {
-    return External{
-        .name = this.name,
-        .name_hash = this.name_hash,
-        .behavior = this.behavior,
-        .version = this.version.toExternal(),
+pub fn toDependency(
+    this: External,
+    ctx: Context,
+) Dependency {
+    return Dependency{
+        .name = String{
+            .bytes = this[0..8].*,
+        },
+        .name_hash = @bitCast(u64, this[8..16].*),
+        .behavior = @intToEnum(Dependency.Behavior, this[16]),
+        .version = Dependency.Version.toVersion(this[17..this.len].*, ctx),
     };
+}
+
+pub fn toExternal(this: Dependency) External {
+    var bytes: External = undefined;
+    bytes[0..this.name.bytes.len].* = this.name.bytes;
+    bytes[8..16].* = @bitCast([8]u8, this.name_hash);
+    bytes[16] = @enumToInt(this.behavior);
+    bytes[17..bytes.len].* = this.version.toExternal();
+    return bytes;
 }
 
 pub const Version = struct {
     tag: Dependency.Version.Tag = Dependency.Version.Tag.uninitialized,
     literal: String = String{},
     value: Value = Value{ .uninitialized = void{} },
+
+    pub const zeroed = Version{};
 
     pub fn clone(
         this: Version,
@@ -144,30 +148,29 @@ pub const Version = struct {
         return strings.cmpStringsAsc(.{}, lhs.literal.slice(string_buf), rhs.literal.slice(string_buf));
     }
 
-    pub const External = extern struct {
-        tag: Dependency.Version.Tag,
-        literal: String,
+    pub const External = [9]u8;
 
-        pub fn toVersion(
-            this: Version.External,
-            ctx: Dependency.External.Context,
-        ) Dependency.Version {
-            const sliced = &this.literal.sliced(ctx.buffer);
-            return Dependency.parseWithTag(
-                ctx.allocator,
-                sliced.slice,
-                this.tag,
-                sliced,
-                ctx.log,
-            ) orelse Dependency.Version{};
-        }
-    };
+    pub fn toVersion(
+        bytes: Version.External,
+        ctx: Dependency.Context,
+    ) Dependency.Version {
+        const slice = String{ .bytes = bytes[1..9].* };
+        const tag = @intToEnum(Dependency.Version.Tag, bytes[0]);
+        const sliced = &slice.sliced(ctx.buffer);
+        return Dependency.parseWithTag(
+            ctx.allocator,
+            sliced.slice,
+            tag,
+            sliced,
+            ctx.log,
+        ) orelse Dependency.Version.zeroed;
+    }
 
     pub inline fn toExternal(this: Version) Version.External {
-        return Version.External{
-            .tag = this.tag,
-            .literal = this.literal,
-        };
+        var bytes: Version.External = undefined;
+        bytes[0] = @enumToInt(this.tag);
+        bytes[1..9].* = this.literal.bytes;
+        return bytes;
     }
 
     pub inline fn eql(
@@ -473,7 +476,12 @@ pub fn eqlResolved(a: Dependency, b: Dependency) bool {
     return @as(Dependency.Version.Tag, a.version) == @as(Dependency.Version.Tag, b.version) and a.resolution == b.resolution;
 }
 
-pub fn parse(allocator: std.mem.Allocator, dependency_: string, sliced: *const SlicedString, log: ?*logger.Log) ?Version {
+pub fn parse(
+    allocator: std.mem.Allocator,
+    dependency_: string,
+    sliced: *const SlicedString,
+    log: ?*logger.Log,
+) ?Version {
     var dependency = std.mem.trimLeft(u8, dependency_, " \t\n\r");
 
     if (dependency.len == 0) return null;

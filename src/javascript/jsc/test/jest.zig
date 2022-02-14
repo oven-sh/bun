@@ -353,11 +353,19 @@ pub const Expect = struct {
             return js.JSValueMakeUndefined(ctx);
         }
         this.scope.tests.items[this.test_id].counter.actual += 1;
-        if (!JSValue.fromRef(arguments[0]).isSameValue(JSValue.fromRef(this.value), ctx.ptr())) {
+        const left = JSValue.fromRef(arguments[0]);
+        const right = JSValue.fromRef(this.value);
+        if (!left.isSameValue(right, ctx.ptr())) {
+            var lhs_formatter: JSC.ZigConsoleClient.Formatter = JSC.ZigConsoleClient.Formatter{};
+            var rhs_formatter: JSC.ZigConsoleClient.Formatter = JSC.ZigConsoleClient.Formatter{};
+
             JSC.JSError(
                 getAllocator(ctx),
-                "fail",
-                .{},
+                "test failed\n\tExpected: {}\n\tReceived: {}",
+                .{
+                    left.toFmt(ctx.ptr(), &lhs_formatter),
+                    right.toFmt(ctx.ptr(), &rhs_formatter),
+                },
                 ctx,
                 exception,
             );

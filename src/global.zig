@@ -298,9 +298,10 @@ pub const Output = struct {
         return print(fmt, args);
     }
 
-    pub const debug = if (Environment.isDebug) _debug else _noop;
-
-    fn _noop(comptime _: string, _: anytype) void {}
+    pub inline fn debug(comptime fmt: string, args: anytype) void {
+        if (comptime Environment.isRelease) return;
+        return prettyErrorln("\n<d>DEBUG:<r> " ++ fmt, args);
+    }
 
     pub fn _debug(comptime fmt: string, args: anytype) void {
         std.debug.assert(source_set);

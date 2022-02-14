@@ -3096,7 +3096,7 @@ pub const Bundler = struct {
             );
         }
 
-        if (FeatureFlags.tracing) {
+        if (FeatureFlags.tracing and bundler.options.log.level == .info) {
             Output.prettyErrorln(
                 "<r><d>\n---Tracing---\nResolve time:      {d}\nParsing time:      {d}\n---Tracing--\n\n<r>",
                 .{

@@ -634,22 +634,20 @@ pub const Lockfile = struct {
 
                 var trees = this.list.items(.tree);
                 var packages = this.list.items(.packages);
-                var real_end: Id = 0;
-                const max_package_id = @truncate(PackageID, this.resolutions.len);
+                // var real_end: Id = 0;
 
                 // TODO: can we cull empty trees here?
                 while (i < end) : (i += 1) {
-                    const prev = total_packages_count;
                     total_packages_count += trees[i].packages.len;
-                    if (!(prev == total_packages_count and trees[i].package_id >= max_package_id)) {
-                        trees[real_end] = trees[i];
-                        packages[real_end] = packages[i];
-                        real_end += 1;
-                    }
+                    // if (!(prev == total_packages_count and trees[i].package_id >= max_package_id)) {
+                    //     trees[real_end] = trees[i];
+                    //     packages[real_end] = packages[i];
+                    //     real_end += 1;
+                    // }
                 }
-                this.list.len = real_end;
-                trees = trees[0..real_end];
-                packages = packages[0..real_end];
+                // this.list.len = real_end;
+                // trees = trees[0..real_end];
+                // packages = packages[0..real_end];
 
                 var package_ids = try z_allocator.alloc(PackageID, total_packages_count);
                 var next = PackageIDSlice{};

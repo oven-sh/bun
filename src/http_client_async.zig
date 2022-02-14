@@ -29,7 +29,7 @@ const AsyncBIO = @import("./http/async_bio.zig");
 const AsyncSocket = @import("./http/async_socket.zig");
 const ZlibPool = @import("./http/zlib.zig");
 const URLBufferPool = ObjectPool([4096]u8, null, false, 10);
-
+pub const MimeType = @import("./http/mime_type.zig");
 // This becomes Arena.allocator
 pub var default_allocator: std.mem.Allocator = undefined;
 pub var default_arena: Arena = undefined;

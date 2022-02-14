@@ -32,23 +32,90 @@ pub const Category = enum {
     video,
     javascript,
     wasm,
+
+    pub fn isTextLike(this: Category) bool {
+        return switch (this) {
+            .javascript, .html, .text, .css, .json => true,
+            else => false,
+        };
+    }
 };
 
-pub const other = MimeType.init("application/octet-stream", .other);
-pub const css = MimeType.init("text/css", .css);
-pub const javascript = MimeType.init("text/javascript;charset=utf-8", .javascript);
-pub const ico = MimeType.init("image/vnd.microsoft.icon", .image);
-pub const html = MimeType.init("text/html;charset=utf-8", .html);
+pub const other = MimeType.initComptime("application/octet-stream", .other);
+pub const css = MimeType.initComptime("text/css", .css);
+pub const javascript = MimeType.initComptime("text/javascript;charset=utf-8", .javascript);
+pub const ico = MimeType.initComptime("image/vnd.microsoft.icon", .image);
+pub const html = MimeType.initComptime("text/html;charset=utf-8", .html);
 // we transpile json to javascript so that it is importable without import assertions.
-pub const json = MimeType.init("application/json", .json);
+pub const json = MimeType.initComptime("application/json", .json);
 pub const transpiled_json = javascript;
-pub const text = MimeType.init("text/plain;charset=utf-8", .html);
+pub const text = MimeType.initComptime("text/plain;charset=utf-8", .html);
 
-fn init(comptime str: string, t: Category) MimeType {
+fn initComptime(comptime str: string, t: Category) MimeType {
     return MimeType{
         .value = str,
         .category = t,
     };
+}
+
+pub fn init(str_: string) MimeType {
+    var str = str_;
+    if (std.mem.indexOfScalar(u8, str, '/')) |slash| {
+        const category_ = str[0..slash];
+
+        if (category_.len == 0 or category_[0] == '*' or str.len <= slash + 1) {
+            return other;
+        }
+
+        str = str[slash + 1 ..];
+
+        if (std.mem.indexOfScalar(u8, str, ';')) |semicolon| {
+            str = str[0..semicolon];
+        }
+
+        switch (category_.len) {
+            "application".len => {
+                if (strings.eqlComptimeIgnoreLen(category_, "application")) {
+                    if (strings.eqlComptime(str, "json") or strings.eqlComptime(str, "geo+json")) {
+                        return json;
+                    }
+                }
+            },
+            "font".len => {
+                if (strings.eqlComptimeIgnoreLen(category_, "font")) {
+                    return MimeType{
+                        .value = str,
+                        .category = .font,
+                    };
+                }
+
+                if (strings.eqlComptimeIgnoreLen(category_, "text")) {
+                    if (strings.eqlComptime(str, "css")) {
+                        return css;
+                    }
+
+                    if (strings.eqlComptime(str, "html")) {
+                        return html;
+                    }
+
+                    if (strings.eqlComptime(str, "javascript")) {
+                        return javascript;
+                    }
+                }
+            },
+            "image".len => {
+                if (strings.eqlComptimeIgnoreLen(category_, "image")) {
+                    return MimeType{
+                        .value = str,
+                        .category = .image,
+                    };
+                }
+            },
+            else => {},
+        }
+    }
+
+    return MimeType{ .value = str, .category = .other };
 }
 
 // TODO: improve this
@@ -79,51 +146,51 @@ pub fn byExtension(ext: string) MimeType {
             const four = [4]u8{ ext[0], ext[1], ext[2], 0 };
             return switch (std.mem.readIntNative(u32, &four)) {
                 Four.case("css") => css,
-                Four.case("jpg") => MimeType.init("image/jpeg", .image),
-                Four.case("gif") => MimeType.init("image/gif", .image),
-                Four.case("png") => MimeType.init("image/png", .image),
-                Four.case("bmp") => MimeType.init("image/bmp", .image),
+                Four.case("jpg") => MimeType.initComptime("image/jpeg", .image),
+                Four.case("gif") => MimeType.initComptime("image/gif", .image),
+                Four.case("png") => MimeType.initComptime("image/png", .image),
+                Four.case("bmp") => MimeType.initComptime("image/bmp", .image),
                 Four.case("jsx"), Four.case("mjs") => MimeType.javascript,
-                Four.case("wav") => MimeType.init("audio/wave", .audio),
-                Four.case("aac") => MimeType.init("audio/aic", .audio),
-                Four.case("mp4") => MimeType.init("video/mp4", .video),
-                Four.case("htm") => MimeType.init("text/html;charset=utf-8", .html),
-                Four.case("xml") => MimeType.init("text/xml", .other),
-                Four.case("zip") => MimeType.init("application/zip", .other),
-                Four.case("txt") => MimeType.init("text/plain", .other),
-                Four.case("ttf") => MimeType.init("font/ttf", .font),
-                Four.case("otf") => MimeType.init("font/otf", .font),
+                Four.case("wav") => MimeType.initComptime("audio/wave", .audio),
+                Four.case("aac") => MimeType.initComptime("audio/aic", .audio),
+                Four.case("mp4") => MimeType.initComptime("video/mp4", .video),
+                Four.case("htm") => MimeType.initComptime("text/html;charset=utf-8", .html),
+                Four.case("xml") => MimeType.initComptime("text/xml", .other),
+                Four.case("zip") => MimeType.initComptime("application/zip", .other),
+                Four.case("txt") => MimeType.initComptime("text/plain", .other),
+                Four.case("ttf") => MimeType.initComptime("font/ttf", .font),
+                Four.case("otf") => MimeType.initComptime("font/otf", .font),
                 Four.case("ico") => ico,
-                Four.case("mp3") => MimeType.init("audio/mpeg", .video),
-                Four.case("svg") => MimeType.init("image/svg+xml", .image),
-                Four.case("csv") => MimeType.init("text/csv", .other),
-                Four.case("mid") => MimeType.init("audio/mid", .audio),
+                Four.case("mp3") => MimeType.initComptime("audio/mpeg", .video),
+                Four.case("svg") => MimeType.initComptime("image/svg+xml", .image),
+                Four.case("csv") => MimeType.initComptime("text/csv", .other),
+                Four.case("mid") => MimeType.initComptime("audio/mid", .audio),
                 else => MimeType.other,
             };
         },
         4 => {
             return switch (Four.match(ext)) {
                 Four.case("json") => MimeType.json,
-                Four.case("jpeg") => MimeType.init("image/jpeg", .image),
-                Four.case("aiff") => MimeType.init("image/png", .image),
-                Four.case("tiff") => MimeType.init("image/tiff", .image),
+                Four.case("jpeg") => MimeType.initComptime("image/jpeg", .image),
+                Four.case("aiff") => MimeType.initComptime("image/png", .image),
+                Four.case("tiff") => MimeType.initComptime("image/tiff", .image),
                 Four.case("html") => MimeType.html,
-                Four.case("wasm") => MimeType.init(
+                Four.case("wasm") => MimeType.initComptime(
                     "application/wasm",
                     .wasm,
                 ),
-                Four.case("woff") => MimeType.init("font/woff", .font),
-                Four.case("webm") => MimeType.init("video/webm", .video),
-                Four.case("webp") => MimeType.init("image/webp", .image),
-                Four.case("midi") => MimeType.init("audio/midi", .audio),
+                Four.case("woff") => MimeType.initComptime("font/woff", .font),
+                Four.case("webm") => MimeType.initComptime("video/webm", .video),
+                Four.case("webp") => MimeType.initComptime("image/webp", .image),
+                Four.case("midi") => MimeType.initComptime("audio/midi", .audio),
                 else => MimeType.other,
             };
         },
         5 => {
             const eight = [8]u8{ ext[0], ext[1], ext[2], ext[3], ext[4], 0, 0, 0 };
             return switch (std.mem.readIntNative(u64, &eight)) {
-                Eight.case("woff2") => MimeType.init("font/woff2", .font),
-                Eight.case("xhtml") => MimeType.init("application/xhtml+xml;charset=utf-8", .html),
+                Eight.case("woff2") => MimeType.initComptime("font/woff2", .font),
+                Eight.case("xhtml") => MimeType.initComptime("application/xhtml+xml;charset=utf-8", .html),
                 else => MimeType.other,
             };
         },

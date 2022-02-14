@@ -3742,6 +3742,8 @@ pub fn NewPrinter(
                         },
                     }
                 },
+                // for(;)
+                .s_empty => {},
                 else => {
                     Global.panic("Internal error: Unexpected stmt in for loop {s}", .{initSt});
                 },

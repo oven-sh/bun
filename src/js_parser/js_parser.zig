@@ -227,9 +227,10 @@ pub const TypeScript = struct {
         };
         pub fn forStr(str: string) ?StmtIdentifier {
             switch (str.len) {
-                "type".len => {
-                    return if (std.mem.readIntNative(u32, str[0..4]) == comptime std.mem.readIntNative(u32, "type")) .s_type else null;
-                },
+                "type".len => return if (strings.eqlComptimeIgnoreLen(str, "type"))
+                    .s_type
+                else
+                    null,
                 "interface".len => {
                     if (strings.eqlComptime(str, "interface")) {
                         return .s_interface;
@@ -260,9 +261,7 @@ pub const TypeScript = struct {
                         return null;
                     }
                 },
-                else => {
-                    return null;
-                },
+                else => return null,
             }
         }
         pub const IMap = std.ComptimeStringMap(Kind, .{
@@ -878,7 +877,7 @@ const StaticSymbolName = struct {
     };
 };
 
-pub const SideEffects = enum(u2) {
+pub const SideEffects = enum(u1) {
     could_have_side_effects,
     no_side_effects,
 
@@ -888,10 +887,12 @@ pub const SideEffects = enum(u2) {
         value: bool = false,
     };
 
-    // While mangling is not the goal
-    // The reason for doing this is to remove dead imports wherever possible
-    // We want to prioritize build & runtime performance
-    // Sometimes, at the cost of making the source a little harder to read.
+    pub fn canChangeStrictToLoose(lhs: Expr.Data, rhs: Expr.Data) bool {
+        const left = lhs.knownPrimitive();
+        const right = rhs.knownPrimitive();
+        return left == right and left != .unknown and left != .mixed;
+    }
+
     pub fn simplifyBoolean(p: anytype, expr: Expr) Expr {
         switch (expr.data) {
             .e_unary => |e| {
@@ -929,29 +930,8 @@ pub const SideEffects = enum(u2) {
         return expr;
     }
 
-    pub fn toNumber(data: Expr.Data) ?f64 {
-        switch (data) {
-            .e_null => {
-                return 0;
-            },
-            .e_undefined => {
-                return std.math.nan_f64;
-            },
-            .e_boolean => {
-                const e = data.e_boolean;
-
-                return if (e.value) 1.0 else 0.0;
-            },
-            .e_number => {
-                const e = data.e_number;
-
-                return e.value;
-            },
-            else => {},
-        }
-
-        return null;
-    }
+    pub const toNumber = Expr.Data.toNumber;
+    pub const typeof = Expr.Data.toTypeof;
 
     pub fn isPrimitiveToReorder(data: Expr.Data) bool {
         switch (data) {
@@ -1030,6 +1010,7 @@ pub const SideEffects = enum(u2) {
 
                         return simpifyUnusedExpr(p, un.value);
                     },
+
                     else => {},
                 }
             },
@@ -1089,7 +1070,7 @@ pub const SideEffects = enum(u2) {
                 // can be removed. The annotation causes us to ignore the target.
                 if (call.can_be_unwrapped_if_unused) {
                     if (call.args.len > 0) {
-                        return Expr.joinAllWithComma(call.args.slice(), p.allocator);
+                        return Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, simpifyUnusedExpr, p.allocator);
                     }
                 }
             },
@@ -1211,47 +1192,6 @@ pub const SideEffects = enum(u2) {
         }
     }
 
-    pub const Equality = struct { equal: bool = false, ok: bool = false };
-
-    // Returns "equal, ok". If "ok" is false, then nothing is known about the two
-    // values. If "ok" is true, the equality or inequality of the two values is
-    // stored in "equal".
-    pub fn eql(left: Expr.Data, right: Expr.Data, _: anytype) Equality {
-        var equality = Equality{};
-        switch (left) {
-            .e_null => {
-                equality.equal = @as(Expr.Tag, right) == Expr.Tag.e_null;
-                equality.ok = equality.equal;
-            },
-            .e_undefined => {
-                equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_undefined;
-                equality.equal = equality.ok;
-            },
-            .e_boolean => |l| {
-                equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_boolean;
-                equality.equal = equality.ok and l.value == right.e_boolean.value;
-            },
-            .e_number => |l| {
-                equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_number;
-                equality.equal = equality.ok and l.value == right.e_number.value;
-            },
-            .e_big_int => |l| {
-                equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_big_int;
-                equality.equal = equality.ok and strings.eql(l.value, right.e_big_int.value);
-            },
-            .e_string => |l| {
-                equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_string;
-                if (equality.ok) {
-                    const r = right.e_string;
-                    equality.equal = r.eql(E.String, l);
-                }
-            },
-            else => {},
-        }
-
-        return equality;
-    }
-
     // Returns true if this expression is known to result in a primitive value (i.e.
     // null, undefined, boolean, number, bigint, or string), even if the expression
     // cannot be removed due to side effects.
@@ -1350,37 +1290,7 @@ pub const SideEffects = enum(u2) {
         return false;
     }
 
-    // Returns true if the result of the "typeof" operator on this expression is
-    // statically determined and this expression has no side effects (i.e. can be
-    // removed without consequence).
-    pub fn toTypeof(data: Expr.Data) ?string {
-        switch (data) {
-            .e_null => {
-                return "object";
-            },
-            .e_undefined => {
-                return "undefined";
-            },
-            .e_boolean => {
-                return "boolean";
-            },
-            .e_number => {
-                return "number";
-            },
-            .e_big_int => {
-                return "bigint";
-            },
-            .e_string => {
-                return "string";
-            },
-            .e_function, .e_arrow => {
-                return "function";
-            },
-            else => {},
-        }
-
-        return null;
-    }
+    pub const toTypeOf = Expr.Data.typeof;
 
     pub fn toNullOrUndefined(exp: Expr.Data) Result {
         switch (exp) {
@@ -6185,6 +6095,7 @@ pub fn NewParser(
                                             try p.lexer.expectContextualKeyword("from");
                                             _ = try p.parsePath();
                                             try p.lexer.expectOrInsertSemicolon();
+                                            Output.debug("Imported type-only import", .{});
                                             return p.s(S.TypeScript{}, loc);
                                         },
                                         else => {},
@@ -6213,6 +6124,7 @@ pub fn NewParser(
                                     // "import defaultItem, {item1, item2} from 'path'"
                                     .t_open_brace => {
                                         const importClause = try p.parseImportClause();
+
                                         stmt.items = importClause.items;
                                         stmt.is_single_line = importClause.is_single_line;
                                     },
@@ -7713,10 +7625,10 @@ pub fn NewParser(
                                     if (!str.prefer_template) {
                                         isDirectivePrologue = true;
 
-                                        if (str.eql(string, "use strict")) {
+                                        if (str.eqlComptime("use strict")) {
                                             // Track "use strict" directives
                                             p.current_scope.strict_mode = .explicit_strict_mode;
-                                        } else if (str.eql(string, "use asm")) {
+                                        } else if (str.eqlComptime("use asm")) {
                                             stmt.data = Prefill.Data.SEmpty;
                                         }
                                     }
@@ -8658,7 +8570,7 @@ pub fn NewParser(
                 if (!is_computed) {
                     switch (key.data) {
                         .e_string => |str| {
-                            if (str.eql(string, "constructor") or (opts.is_static and str.eql(string, "prototype"))) {
+                            if (str.eqlComptime("constructor") or (opts.is_static and str.eqlComptime("prototype"))) {
                                 // TODO: fmt error message to include string value.
                                 p.log.addRangeError(p.source, key_range, "Invalid field name") catch unreachable;
                             }
@@ -8725,7 +8637,7 @@ pub fn NewParser(
                 if (opts.is_class and !is_computed) {
                     switch (key.data) {
                         .e_string => |str| {
-                            if (!opts.is_static and str.eql(string, "constructor")) {
+                            if (!opts.is_static and str.eqlComptime("constructor")) {
                                 if (kind == .get) {
                                     p.log.addRangeError(p.source, key_range, "Class constructor cannot be a getter") catch unreachable;
                                 } else if (kind == .set) {
@@ -8737,7 +8649,7 @@ pub fn NewParser(
                                 } else {
                                     is_constructor = true;
                                 }
-                            } else if (opts.is_static and str.eql(string, "prototype")) {
+                            } else if (opts.is_static and str.eqlComptime("prototype")) {
                                 p.log.addRangeError(p.source, key_range, "Invalid static method name \"prototype\"") catch unreachable;
                             }
                         },
@@ -8928,7 +8840,7 @@ pub fn NewParser(
                     if (opts.ts_decorators.len > 0) {
                         switch ((property.key orelse p.panic("Internal error: Expected property {s} to have a key.", .{property})).data) {
                             .e_string => |str| {
-                                if (str.eql(string, "constructor")) {
+                                if (str.eqlComptime("constructor")) {
                                     p.log.addError(p.source, first_decorator_loc, "TypeScript does not allow decorators on class constructors") catch unreachable;
                                 }
                             },
@@ -10843,23 +10755,15 @@ pub fn NewParser(
         }
 
         fn willNeedBindingPattern(p: *P) bool {
-            switch (p.lexer.token) {
-                .t_equals => {
-                    // "[a] = b;"
-                    return true;
-                },
-                .t_in => {
-                    // "for ([a] in b) {}"
-                    return !p.allow_in;
-                },
-                .t_identifier => {
-                    // "for ([a] of b) {}"
-                    return p.allow_in and p.lexer.isContextualKeyword("of");
-                },
-                else => {
-                    return false;
-                },
-            }
+            return switch (p.lexer.token) {
+                // "[a] = b;"
+                .t_equals => true,
+                // "for ([a] in b) {}"
+                .t_in => !p.allow_in,
+                // "for ([a] of b) {}"
+                .t_identifier => p.allow_in and p.lexer.isContextualKeyword("of"),
+                else => false,
+            };
         }
 
         fn parsePrefix(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
@@ -10991,7 +10895,9 @@ pub fn NewParser(
                             // Expressions marked with this are automatically generated and have
                             // no side effects by construction.
                             break;
-                        } else if (!p.exprCanBeRemovedIfUnused(&st.value)) {
+                        }
+
+                        if (!p.exprCanBeRemovedIfUnused(&st.value)) {
                             return false;
                         }
                     },
@@ -11009,6 +10915,12 @@ pub fn NewParser(
                         }
                     },
 
+                    .s_try => |try_| {
+                        if (!p.stmtsCanBeRemovedIfUnused(try_.body) or (try_.finally != null and !p.stmtsCanBeRemovedIfUnused(try_.finally.?.stmts))) {
+                            return false;
+                        }
+                    },
+
                     // Exports are tracked separately, so this isn't necessary
                     .s_export_clause, .s_export_from => {},
 
@@ -11016,8 +10928,15 @@ pub fn NewParser(
                         switch (st.value) {
                             .stmt => |s2| {
                                 switch (s2.data) {
+                                    .s_expr => |s_expr| {
+                                        if (!p.exprCanBeRemovedIfUnused(&s_expr.value)) {
+                                            return false;
+                                        }
+                                    },
+
                                     // These never have side effects
                                     .s_function => {},
+
                                     .s_class => {
                                         if (!p.classCanBeRemovedIfUnused(&s2.data.s_class.class)) {
                                             return false;
@@ -11722,7 +11641,7 @@ pub fn NewParser(
                             // notimpl();
                         },
                         .bin_loose_eq => {
-                            const equality = SideEffects.eql(e_.left.data, e_.right.data, p);
+                            const equality = e_.left.data.eql(e_.right.data);
                             if (equality.ok) {
                                 return p.e(
                                     E.Boolean{ .value = equality.equal },
@@ -11736,7 +11655,7 @@ pub fn NewParser(
 
                         },
                         .bin_strict_eq => {
-                            const equality = SideEffects.eql(e_.left.data, e_.right.data, p);
+                            const equality = e_.left.data.eql(e_.right.data);
                             if (equality.ok) {
                                 return p.e(E.Boolean{ .value = equality.equal }, expr.loc);
                             }
@@ -11746,7 +11665,7 @@ pub fn NewParser(
                             // TODO: warn about typeof string
                         },
                         .bin_loose_ne => {
-                            const equality = SideEffects.eql(e_.left.data, e_.right.data, p);
+                            const equality = e_.left.data.eql(e_.right.data);
                             if (equality.ok) {
                                 return p.e(E.Boolean{ .value = !equality.equal }, expr.loc);
                             }
@@ -11760,7 +11679,7 @@ pub fn NewParser(
                             }
                         },
                         .bin_strict_ne => {
-                            const equality = SideEffects.eql(e_.left.data, e_.right.data, p);
+                            const equality = e_.left.data.eql(e_.right.data);
                             if (equality.ok) {
                                 return p.e(E.Boolean{ .value = !equality.equal }, expr.loc);
                             }
@@ -12055,7 +11974,7 @@ pub fn NewParser(
                                 );
                             }
 
-                            if (SideEffects.toTypeof(e_.value.data)) |typeof| {
+                            if (SideEffects.typeof(e_.value.data)) |typeof| {
                                 return p.e(E.String{ .utf8 = typeof }, expr.loc);
                             }
                         },
@@ -12714,7 +12633,20 @@ pub fn NewParser(
                     return true;
                 },
                 .e_if => |ex| {
-                    return p.exprCanBeRemovedIfUnused(&ex.test_) and p.exprCanBeRemovedIfUnused(&ex.yes) and p.exprCanBeRemovedIfUnused(&ex.no);
+                    return p.exprCanBeRemovedIfUnused(&ex.test_) and
+                        (p.isSideEffectFreeUnboundIdentifierRef(
+                        ex.yes,
+                        ex.test_,
+                        true,
+                    ) or
+                        p.exprCanBeRemovedIfUnused(&ex.yes)) and
+                        (p.isSideEffectFreeUnboundIdentifierRef(
+                        ex.no,
+                        ex.test_,
+                        false,
+                    ) or p.exprCanBeRemovedIfUnused(
+                        &ex.no,
+                    ));
                 },
                 .e_array => |ex| {
                     for (ex.items.slice()) |*item| {
@@ -12770,7 +12702,27 @@ pub fn NewParser(
                 },
                 .e_unary => |ex| {
                     switch (ex.op) {
-                        .un_typeof, .un_void, .un_not => {
+                        // These operators must not have any type conversions that can execute code
+                        // such as "toString" or "valueOf". They must also never throw any exceptions.
+                        .un_void, .un_not => {
+                            return p.exprCanBeRemovedIfUnused(&ex.value);
+                        },
+
+                        // The "typeof" operator doesn't do any type conversions so it can be removed
+                        // if the result is unused and the operand has no side effects. However, it
+                        // has a special case where if the operand is an identifier expression such
+                        // as "typeof x" and "x" doesn't exist, no reference error is thrown so the
+                        // operation has no side effects.
+                        //
+                        // Note that there *is* actually a case where "typeof x" can throw an error:
+                        // when "x" is being referenced inside of its TDZ (temporal dead zone). TDZ
+                        // checks are not yet handled correctly by bun or esbuild, so this possibility is
+                        // currently ignored.
+                        .un_typeof => {
+                            if (ex.value.data == .e_identifier) {
+                                return true;
+                            }
+
                             return p.exprCanBeRemovedIfUnused(&ex.value);
                         },
 
@@ -12779,22 +12731,90 @@ pub fn NewParser(
                 },
                 .e_binary => |ex| {
                     switch (ex.op) {
+                        // These operators must not have any type conversions that can execute code
+                        // such as "toString" or "valueOf". They must also never throw any exceptions.
                         .bin_strict_eq,
                         .bin_strict_ne,
                         .bin_comma,
-                        .bin_logical_or,
-                        .bin_logical_and,
                         .bin_nullish_coalescing,
-                        => {
-                            return p.exprCanBeRemovedIfUnused(&ex.left) and p.exprCanBeRemovedIfUnused(&ex.right);
-                        },
+                        => return p.exprCanBeRemovedIfUnused(&ex.left) and p.exprCanBeRemovedIfUnused(&ex.right),
+
+                        // Special-case "||" to make sure "typeof x === 'undefined' || x" can be removed
+                        .bin_logical_or => return p.exprCanBeRemovedIfUnused(&ex.left) and
+                            (p.isSideEffectFreeUnboundIdentifierRef(ex.right, ex.left, false) or p.exprCanBeRemovedIfUnused(&ex.right)),
+
+                        // Special-case "&&" to make sure "typeof x !== 'undefined' && x" can be removed
+                        .bin_logical_and => return p.exprCanBeRemovedIfUnused(&ex.left) and
+                            (p.isSideEffectFreeUnboundIdentifierRef(ex.right, ex.left, true) or p.exprCanBeRemovedIfUnused(&ex.right)),
+
+                        // For "==" and "!=", pretend the operator was actually "===" or "!==". If
+                        // we know that we can convert it to "==" or "!=", then we can consider the
+                        // operator itself to have no side effects. This matters because our mangle
+                        // logic will convert "typeof x === 'object'" into "typeof x == 'object'"
+                        // and since "typeof x === 'object'" is considered to be side-effect free,
+                        // we must also consider "typeof x == 'object'" to be side-effect free.
+                        .bin_loose_eq, .bin_loose_ne => return SideEffects.canChangeStrictToLoose(
+                            ex.left.data,
+                            ex.right.data,
+                        ) and
+                            p.exprCanBeRemovedIfUnused(&ex.left) and p.exprCanBeRemovedIfUnused(&ex.right),
                         else => {},
                     }
+                },
+                .e_template => |templ| {
+                    if (templ.tag == null) {
+                        for (templ.parts) |part| {
+                            if (!p.exprCanBeRemovedIfUnused(&part.value) or part.value.knownPrimitive() == .unknown) {
+                                return false;
+                            }
+                        }
+                    }
+
+                    return true;
                 },
                 else => {},
             }
 
             return false;
+        }
+
+        fn isSideEffectFreeUnboundIdentifierRef(p: *P, value: Expr, guard_condition: Expr, is_yes_branch: bool) bool {
+            if (value.data != .e_identifier or
+                p.symbols.items[value.data.e_identifier.ref.inner_index].kind != .unbound or
+                guard_condition.data != .e_binary)
+                return false;
+
+            const binary = guard_condition.data.e_binary.*;
+
+            switch (binary.op) {
+                .bin_strict_eq, .bin_strict_ne, .bin_loose_eq, .bin_loose_ne => {
+                    // typeof x !== 'undefined'
+                    var typeof: Expr.Data = binary.left.data;
+                    var compare: Expr.Data = binary.right.data;
+                    // typeof 'undefined' !== x
+                    if (typeof == .e_string) {
+                        typeof = binary.right.data;
+                        compare = binary.left.data;
+                    }
+
+                    // this order because Expr.Data Tag is not a pointer
+                    // so it should be slightly faster to compare
+                    if (compare != .e_string or
+                        typeof != .e_unary)
+                        return false;
+                    const unary = typeof.e_unary.*;
+
+                    if (unary.op != .un_typeof or unary.value.data != .e_identifier)
+                        return false;
+
+                    const id = value.data.e_identifier.ref;
+                    const id2 = unary.value.data.e_identifier.ref;
+                    return ((compare.e_string.eqlComptime("undefined") == is_yes_branch) ==
+                        (binary.op == .bin_strict_ne or binary.op == .bin_loose_ne)) and
+                        id.eql(id2);
+                },
+                else => return false,
+            }
         }
 
         fn jsxStringsToMemberExpressionAutomatic(p: *P, loc: logger.Loc, is_static: bool) Expr {
@@ -13324,13 +13344,17 @@ pub fn NewParser(
                     data.test_ = p.visitExpr(data.test_);
                     data.body = p.visitLoopBody(data.body);
 
-                    // TODO: simplify boolean expression
+                    data.test_ = SideEffects.simplifyBoolean(p, data.test_);
+                    const result = SideEffects.toBoolean(data.test_.data);
+                    if (result.ok and result.side_effects == .no_side_effects) {
+                        data.test_ = p.e(E.Boolean{ .value = result.value }, data.test_.loc);
+                    }
                 },
                 .s_do_while => |data| {
                     data.body = p.visitLoopBody(data.body);
                     data.test_ = p.visitExpr(data.test_);
 
-                    // TODO: simplify boolean expression
+                    data.test_ = SideEffects.simplifyBoolean(p, data.test_);
                 },
                 .s_if => |data| {
                     data.test_ = SideEffects.simplifyBoolean(p, p.visitExpr(data.test_));
@@ -13406,9 +13430,12 @@ pub fn NewParser(
                         }
 
                         if (data.test_) |test_| {
-                            data.test_ = p.visitExpr(test_);
+                            data.test_ = SideEffects.simplifyBoolean(p, p.visitExpr(test_));
 
-                            // TODO: boolean with side effects
+                            const result = SideEffects.toBoolean(data.test_.?.data);
+                            if (result.ok and result.value and result.side_effects == .no_side_effects) {
+                                data.test_ = null;
+                            }
                         }
 
                         if (data.update) |update| {
@@ -13416,10 +13443,19 @@ pub fn NewParser(
                         }
 
                         data.body = p.visitLoopBody(data.body);
+
+                        // Potentially relocate "var" declarations to the top level. Note that this
+                        // must be done inside the scope of the for loop or they won't be relocated.
+                        if (data.init) |init_| {
+                            if (init_.data == .s_local and init_.data.s_local.kind == .k_var) {
+                                const relocate = p.maybeRelocateVarsToTopLevel(init_.data.s_local.decls, .normal);
+                                if (relocate.stmt) |relocated| {
+                                    data.init = relocated;
+                                }
+                            }
+                        }
                         p.popScope();
                     }
-                    // TODO: Potentially relocate "var" declarations to the top level
-
                 },
                 .s_for_in => |data| {
                     {
@@ -13520,7 +13556,6 @@ pub fn NewParser(
                         const enclosing_namespace_arg_ref = p.enclosing_namespace_arg_ref orelse unreachable;
                         stmts.ensureUnusedCapacity(3) catch unreachable;
                         stmts.appendAssumeCapacity(stmt.*);
-                        // i wonder if this will crash
                         stmts.appendAssumeCapacity(Expr.assignStmt(p.e(E.Dot{
                             .target = p.e(E.Identifier{ .ref = enclosing_namespace_arg_ref }, stmt.loc),
                             .name = p.loadNameFromRef(data.func.name.?.ref.?),

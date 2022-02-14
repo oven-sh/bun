@@ -1676,6 +1676,13 @@ pub const E = struct {
             }
         }
 
+        pub fn eqlComptime(s: *const String, comptime value: anytype) bool {
+            return if (s.isUTF8())
+                strings.eqlComptime(s.utf8, value)
+            else
+                strings.eqlComptimeUTF16(s.value, value);
+        }
+
         pub fn string(s: *const String, allocator: std.mem.Allocator) !_global.string {
             if (s.isUTF8()) {
                 return s.utf8;
@@ -2746,6 +2753,19 @@ pub const Expr = struct {
         // This should never make it to the printer
         inline_identifier,
 
+        pub fn typeof(tag: Tag) ?string {
+            return switch (tag) {
+                .e_null => "object",
+                .e_undefined => "undefined",
+                .e_boolean => "boolean",
+                .e_number => "number",
+                .e_big_int => "bigint",
+                .e_string => "string",
+                .e_function, .e_arrow => "function",
+                else => null,
+            };
+        }
+
         pub fn format(tag: Tag, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             try switch (tag) {
                 .e_string => writer.writeAll("string"),
@@ -3288,6 +3308,34 @@ pub const Expr = struct {
         };
     }
 
+    pub inline fn knownPrimitive(self: @This()) PrimitiveType {
+        return self.data.knownPrimitive();
+    }
+
+    pub const PrimitiveType = enum {
+        unknown,
+        mixed,
+        @"null",
+        @"undefined",
+        boolean,
+        number,
+        @"string",
+        bigint,
+
+        pub fn merge(left_known: PrimitiveType, right_known: PrimitiveType) PrimitiveType {
+            if (right_known == .unknown or left_known == .unknown)
+                return .unknown;
+
+            return if (left_known == right_known)
+                left_known
+            else
+                .mixed;
+        }
+
+        //  This can be used when the returned type is either one or the other
+
+    };
+
     pub const Data = union(Tag) {
         e_array: *E.Array,
         e_unary: *E.Unary,
@@ -3335,6 +3383,182 @@ pub const Expr = struct {
         // This type should not exist outside of MacroContext
         // If it ends up in JSParser or JSPrinter, it is a bug.
         inline_identifier: i32,
+
+        pub fn knownPrimitive(data: Expr.Data) PrimitiveType {
+            return switch (data) {
+                .e_big_int => .bigint,
+                .e_boolean => .boolean,
+                .e_null => .@"null",
+                .e_number => .number,
+                .e_string => .@"string",
+                .e_undefined => .@"undefined",
+                .e_template => if (data.e_template.tag == null) PrimitiveType.@"string" else PrimitiveType.unknown,
+                .e_if => mergeKnownPrimitive(data.e_if.yes.data, data.e_if.no.data),
+                .e_binary => |binary| brk: {
+                    switch (binary.op) {
+                        .bin_strict_eq,
+                        .bin_strict_ne,
+                        .bin_loose_eq,
+                        .bin_loose_ne,
+                        .bin_lt,
+                        .bin_gt,
+                        .bin_le,
+                        .bin_ge,
+                        .bin_instanceof,
+                        .bin_in,
+                        => break :brk PrimitiveType.boolean,
+                        .bin_logical_or, .bin_logical_and => break :brk binary.left.data.mergeKnownPrimitive(binary.right.data),
+
+                        .bin_nullish_coalescing => {
+                            const left = binary.left.data.knownPrimitive();
+                            const right = binary.right.data.knownPrimitive();
+                            if (left == .@"null" or right == .@"undefined")
+                                break :brk right;
+
+                            if (left != .unknown) {
+                                if (left != .mixed)
+                                    break :brk left; // Definitely not null or undefined
+
+                                if (right != .unknown)
+                                    break :brk PrimitiveType.mixed; // Definitely some kind of primitive
+                            }
+                        },
+
+                        .bin_add => {
+                            const left = binary.left.data.knownPrimitive();
+                            const right = binary.right.data.knownPrimitive();
+
+                            if (left == .@"string" or right == .@"string")
+                                break :brk PrimitiveType.@"string";
+
+                            if (left == .bigint or right == .bigint)
+                                break :brk PrimitiveType.bigint;
+
+                            if (switch (left) {
+                                .unknown, .mixed, .bigint => false,
+                                else => true,
+                            } and switch (right) {
+                                .unknown, .mixed, .bigint => false,
+                                else => true,
+                            })
+                                break :brk PrimitiveType.number;
+
+                            break :brk PrimitiveType.mixed; // Can be number or bigint or string (or an exception)
+                        },
+
+                        .bin_sub,
+                        .bin_sub_assign,
+                        .bin_mul,
+                        .bin_mul_assign,
+                        .bin_div,
+                        .bin_div_assign,
+                        .bin_rem,
+                        .bin_rem_assign,
+                        .bin_pow,
+                        .bin_pow_assign,
+                        .bin_bitwise_and,
+                        .bin_bitwise_and_assign,
+                        .bin_bitwise_or,
+                        .bin_bitwise_or_assign,
+                        .bin_bitwise_xor,
+                        .bin_bitwise_xor_assign,
+                        .bin_shl,
+                        .bin_shl_assign,
+                        .bin_shr,
+                        .bin_shr_assign,
+                        .bin_u_shr,
+                        .bin_u_shr_assign,
+                        => break :brk PrimitiveType.mixed, // Can be number or bigint (or an exception)
+
+                        .bin_assign,
+                        .bin_comma,
+                        => break :brk binary.right.data.knownPrimitive(),
+
+                        else => {},
+                    }
+
+                    break :brk PrimitiveType.unknown;
+                },
+
+                .e_unary => switch (data.e_unary.op) {
+                    .un_void => PrimitiveType.@"undefined",
+                    .un_typeof => PrimitiveType.@"string",
+                    .un_not, .un_delete => PrimitiveType.boolean,
+                    .un_pos => PrimitiveType.number, // Cannot be bigint because that throws an exception
+                    .un_neg, .un_cpl => switch (data.e_unary.value.data.knownPrimitive()) {
+                        .bigint => PrimitiveType.bigint,
+                        .unknown, .mixed => PrimitiveType.mixed,
+                        else => PrimitiveType.number, // Can be number or bigint
+                    },
+                    .un_pre_dec, .un_pre_inc, .un_post_dec, .un_post_inc => PrimitiveType.mixed, // Can be number or bigint
+
+                    else => PrimitiveType.unknown,
+                },
+                else => PrimitiveType.unknown,
+            };
+        }
+
+        pub fn mergeKnownPrimitive(lhs: Expr.Data, rhs: Expr.Data) PrimitiveType {
+            return lhs.knownPrimitive().merge(rhs.knownPrimitive());
+        }
+
+        /// Returns true if the result of the "typeof" operator on this expression is
+        /// statically determined and this expression has no side effects (i.e. can be
+        /// removed without consequence).
+        pub inline fn toTypeof(data: Expr.Data) ?string {
+            return @as(Expr.Tag, data).typeof();
+        }
+
+        pub fn toNumber(data: Expr.Data) ?f64 {
+            return switch (data) {
+                .e_null => 0,
+                .e_undefined => std.math.nan_f64,
+                .e_boolean => @as(f64, if (data.e_boolean.value) 1.0 else 0.0),
+                .e_number => data.e_number.value,
+                else => null,
+            };
+        }
+
+        pub const Equality = struct { equal: bool = false, ok: bool = false };
+
+        // Returns "equal, ok". If "ok" is false, then nothing is known about the two
+        // values. If "ok" is true, the equality or inequality of the two values is
+        // stored in "equal".
+        pub fn eql(left: Expr.Data, right: Expr.Data) Equality {
+            var equality = Equality{};
+            switch (left) {
+                .e_null => {
+                    equality.equal = @as(Expr.Tag, right) == Expr.Tag.e_null;
+                    equality.ok = equality.equal;
+                },
+                .e_undefined => {
+                    equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_undefined;
+                    equality.equal = equality.ok;
+                },
+                .e_boolean => |l| {
+                    equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_boolean;
+                    equality.equal = equality.ok and l.value == right.e_boolean.value;
+                },
+                .e_number => |l| {
+                    equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_number;
+                    equality.equal = equality.ok and l.value == right.e_number.value;
+                },
+                .e_big_int => |l| {
+                    equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_big_int;
+                    equality.equal = equality.ok and strings.eql(l.value, right.e_big_int.value);
+                },
+                .e_string => |l| {
+                    equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_string;
+                    if (equality.ok) {
+                        const r = right.e_string;
+                        equality.equal = r.eql(E.String, l);
+                    }
+                },
+                else => {},
+            }
+
+            return equality;
+        }
 
         pub fn toJS(this: Data, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
             return switch (this) {

@@ -178,7 +178,11 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                         is_single_line = false;
                     }
                     try p.lexer.expect(.t_close_bracket);
-                    return p.e(E.Array{ .items = ExprNodeList.fromList(exprs), .is_single_line = is_single_line }, loc);
+                    return p.e(E.Array{
+                        .items = ExprNodeList.fromList(exprs),
+                        .is_single_line = is_single_line,
+                        .was_originally_macro = comptime opts.was_originally_macro,
+                    }, loc);
                 },
                 .t_open_brace => {
                     try p.lexer.next();
@@ -247,6 +251,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                     return p.e(E.Object{
                         .properties = G.Property.List.fromList(properties),
                         .is_single_line = is_single_line,
+                        .was_originally_macro = comptime opts.was_originally_macro,
                     }, loc);
                 },
                 else => {
@@ -482,16 +487,50 @@ const DotEnvJSONParser = JSONLikeParser(js_lexer.JSONOptions{
     .allow_trailing_commas = true,
     .is_json = true,
 });
-var empty_string = E.String{ .utf8 = "" };
+
 const TSConfigParser = JSONLikeParser(js_lexer.JSONOptions{ .allow_comments = true, .is_json = true, .allow_trailing_commas = true });
+const JSONParserForMacro = JSONLikeParser(
+    js_lexer.JSONOptions{
+        .allow_comments = true,
+        .is_json = true,
+        .json_warn_duplicate_keys = false,
+        .allow_trailing_commas = true,
+        .was_originally_macro = true,
+    },
+);
+
 var empty_object = E.Object{};
 var empty_array = E.Array{};
+var empty_string = E.String{ .utf8 = "" };
 var empty_string_data = Expr.Data{ .e_string = &empty_string };
 var empty_object_data = Expr.Data{ .e_object = &empty_object };
 var empty_array_data = Expr.Data{ .e_array = &empty_array };
 
 pub fn ParseJSON(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
     var parser = try JSONParser.init(allocator, source.*, log);
+    switch (source.contents.len) {
+        // This is to be consisntent with how disabled JS files are handled
+        0 => {
+            return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+        },
+        // This is a fast pass I guess
+        2 => {
+            if (strings.eqlComptime(source.contents[0..1], "\"\"") or strings.eqlComptime(source.contents[0..1], "''")) {
+                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_string_data };
+            } else if (strings.eqlComptime(source.contents[0..1], "{}")) {
+                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+            } else if (strings.eqlComptime(source.contents[0..1], "[]")) {
+                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_array_data };
+            }
+        },
+        else => {},
+    }
+
+    return try parser.parseExpr(false);
+}
+
+pub fn ParseJSONForMacro(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
+    var parser = try JSONParserForMacro.init(allocator, source.*, log);
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {

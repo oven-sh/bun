@@ -2958,6 +2958,8 @@ pub fn NewParser(
         pub const parser_features = js_parser_features;
         const P = @This();
         pub const jsx_transform_type: JSXTransformType = js_parser_jsx;
+        const allow_macros = FeatureFlags.is_macro_enabled and jsx_transform_type != .macro;
+        const MacroCallCountType = if (allow_macros) u32 else u0;
         macro: MacroState = undefined,
         allocator: Allocator,
         options: Parser.Options,
@@ -2991,7 +2993,7 @@ pub fn NewParser(
         promise_ref: ?Ref = null,
         scopes_in_order_visitor_index: usize = 0,
         has_classic_runtime_warned: bool = false,
-        has_called_macro: bool = false,
+        macro_call_count: MacroCallCountType = 0,
 
         /// Used for transforming export default -> module.exports
         has_export_default: bool = false,
@@ -6178,7 +6180,6 @@ pub fn NewParser(
                                             try p.lexer.expectContextualKeyword("from");
                                             _ = try p.parsePath();
                                             try p.lexer.expectOrInsertSemicolon();
-                                            Output.debug("Imported type-only import", .{});
                                             return p.s(S.TypeScript{}, loc);
                                         },
                                         else => {},
@@ -6241,7 +6242,7 @@ pub fn NewParser(
                         }
                     }
 
-                    const macro_remap = if ((comptime FeatureFlags.is_macro_enabled and jsx_transform_type != .macro) and !is_macro)
+                    const macro_remap = if ((comptime allow_macros) and !is_macro)
                         p.options.macro_context.getRemap(path.text)
                     else
                         null;
@@ -11099,7 +11100,7 @@ pub fn NewParser(
             if (func.name) |name| {
                 if (name.ref) |name_ref| {
                     p.recordDeclaredSymbol(name_ref) catch unreachable;
-                    const symbol_name = p.symbols.items[name_ref.inner_index].original_name;
+                    const symbol_name = p.loadNameFromRef(name_ref);
                     if (isEvalOrArguments(symbol_name)) {
                         p.markStrictModeFeature(.eval_or_arguments, js_lexer.rangeOfIdentifier(p.source, name.loc), symbol_name) catch unreachable;
                     }
@@ -11495,12 +11496,12 @@ pub fn NewParser(
                     if (e_.tag) |tag| {
                         e_.tag = p.visitExpr(tag);
 
-                        if (comptime FeatureFlags.is_macro_enabled and jsx_transform_type != .macro) {
+                        if (comptime allow_macros) {
                             if (e_.tag.?.data == .e_import_identifier) {
                                 const ref = e_.tag.?.data.e_import_identifier.ref;
                                 if (p.macro.refs.get(ref)) |import_record_id| {
                                     const name = p.symbols.items[ref.inner_index].original_name;
-                                    p.has_called_macro = true;
+                                    p.macro_call_count += 1;
                                     const record = &p.import_records.items[import_record_id];
                                     // We must visit it to convert inline_identifiers and record usage
                                     const macro_result = (p.options.macro_context.call(
@@ -12175,8 +12176,8 @@ pub fn NewParser(
                             return _expr;
                         }
 
-                        if (comptime FeatureFlags.is_macro_enabled and jsx_transform_type != .macro) {
-                            if (p.has_called_macro) {
+                        if (comptime allow_macros) {
+                            if (p.macro_call_count > 0) {
                                 if (e_.target.data == .e_object and e_.target.data.e_object.was_originally_macro) {
                                     if (e_.target.get(e_.name)) |obj| {
                                         return obj;
@@ -12431,7 +12432,7 @@ pub fn NewParser(
                         }
                     }
 
-                    if (comptime FeatureFlags.is_macro_enabled and jsx_transform_type != .macro) {
+                    if (comptime allow_macros) {
                         if (is_macro_ref) {
                             const ref = e_.target.data.e_import_identifier.ref;
                             const import_record_id = p.macro.refs.get(ref).?;
@@ -12439,7 +12440,7 @@ pub fn NewParser(
                             const record = &p.import_records.items[import_record_id];
                             const copied = Expr{ .loc = expr.loc, .data = .{ .e_call = e_ } };
                             const start_error_count = p.log.msgs.items.len;
-                            p.has_called_macro = true;
+                            p.macro_call_count += 1;
                             const macro_result =
                                 p.options.macro_context.call(
                                 record.path.text,
@@ -12972,8 +12973,8 @@ pub fn NewParser(
         //         }
         //     }
         // }
-        //  if (comptime FeatureFlags.is_macro_enabled and jsx_transform_type != .macro) {
-        //                         if (p.has_called_macro and data.decls[i].value != null and
+        //  if (comptime allow_macros) {
+        //                         if (p.macro_call_count and data.decls[i].value != null and
         //                             data.decls[i].value.?.data == .e_object and data.decls[i].value.?.data.e_object.was_originally_macro)
         //                         {
         //                             p.maybeInlineMacroObject(&data.decls[i], data.decls[i].value.?);
@@ -13339,87 +13340,18 @@ pub fn NewParser(
                             var val = data.decls[i].value.?;
                             const was_anonymous_named_expr = p.isAnonymousNamedExpr(val);
 
+                            const prev_macro_call_count = p.macro_call_count;
+
                             data.decls[i].value = p.visitExpr(val);
 
-                            // Optionally preserve the name
-                            switch (data.decls[i].binding.data) {
-                                .b_identifier => |id| {
-                                    data.decls[i].value = p.maybeKeepExprSymbolName(
-                                        data.decls[i].value.?,
-                                        p.symbols.items[id.ref.inner_index].original_name,
-                                        was_anonymous_named_expr,
-                                    );
-                                },
-                                .b_object => |bound_object| {
-                                    if (comptime FeatureFlags.is_macro_enabled and jsx_transform_type != .macro) {
-                                        if (p.has_called_macro and data.decls[i].value != null and
-                                            data.decls[i].value.?.data == .e_object and
-                                            data.decls[i].value.?.data.e_object.was_originally_macro)
-                                        {
-                                            bail: {
-                                                var object = data.decls[i].value.?.data.e_object;
-                                                for (bound_object.properties) |property| {
-                                                    if (property.flags.is_spread) break :bail;
-                                                }
-                                                var output_properties = object.properties.slice();
-                                                var end: u32 = 0;
-                                                for (bound_object.properties) |property| {
-                                                    if (property.key.asString(p.allocator)) |name| {
-                                                        if (object.asProperty(name)) |query| {
-                                                            output_properties[end] = output_properties[query.i];
-                                                            end += 1;
-                                                        }
-                                                    }
-                                                }
-
-                                                object.properties.len = end;
-                                            }
-                                        }
-                                    }
-                                },
-                                .b_array => |bound_array| {
-                                    if (comptime FeatureFlags.is_macro_enabled and jsx_transform_type != .macro) {
-                                        if (p.has_called_macro and data.decls[i].value != null and
-                                            data.decls[i].value.?.data == .e_array and
-                                            data.decls[i].value.?.data.e_array.was_originally_macro)
-                                        {
-                                            bail: {
-                                                var array = data.decls[i].value.?.data.e_array;
-                                                if (bound_array.has_spread) break :bail;
-                                                array.items.len = @minimum(array.items.len, @truncate(u32, bound_array.items.len));
-                                                var slice = array.items.slice();
-                                                outer: for (bound_array.items[0..array.items.len]) |item, item_i| {
-                                                    const child_expr = slice[item_i];
-                                                    switch (item.binding.data) {
-                                                        .b_object => |bound_object| {
-                                                            if (child_expr.data != .e_object) continue :outer;
-
-                                                            for (bound_object.properties) |property| {
-                                                                if (property.flags.is_spread) continue :outer;
-                                                            }
-                                                            var object = child_expr.data.e_object;
-                                                            var output_properties = object.properties.slice();
-                                                            var end: u32 = 0;
-                                                            for (bound_object.properties) |property| {
-                                                                if (property.key.asString(p.allocator)) |name| {
-                                                                    if (object.asProperty(name)) |query| {
-                                                                        output_properties[end] = output_properties[query.i];
-                                                                        end += 1;
-                                                                    }
-                                                                }
-                                                            }
-
-                                                            object.properties.len = end;
-                                                        },
-                                                        else => {},
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                },
-                                else => {},
-                            }
+                            p.visitDecl(
+                                &data.decls[i],
+                                was_anonymous_named_expr,
+                                if (comptime allow_macros)
+                                    prev_macro_call_count != p.macro_call_count
+                                else
+                                    false,
+                            );
                         }
                     }
 
@@ -13952,6 +13884,78 @@ pub fn NewParser(
 
             // if we get this far, it stays
             try stmts.append(stmt.*);
+        }
+
+        fn visitBindingAndExprForMacro(p: *P, binding: Binding, expr: Expr) void {
+            switch (binding.data) {
+                .b_object => |bound_object| {
+                    if (expr.data == .e_object and
+                        expr.data.e_object.was_originally_macro)
+                    {
+                        var object = expr.data.e_object;
+                        for (bound_object.properties) |property| {
+                            if (property.flags.is_spread) return;
+                        }
+                        var output_properties = object.properties.slice();
+                        var end: u32 = 0;
+                        for (bound_object.properties) |property| {
+                            if (property.key.asString(p.allocator)) |name| {
+                                if (object.asProperty(name)) |query| {
+                                    switch (query.expr.data) {
+                                        .e_object, .e_array => p.visitBindingAndExprForMacro(property.value, query.expr),
+                                        else => {},
+                                    }
+                                    output_properties[end] = output_properties[query.i];
+                                    end += 1;
+                                }
+                            }
+                        }
+
+                        object.properties.len = end;
+                    }
+                },
+                .b_array => |bound_array| {
+                    if (expr.data == .e_array and
+                        expr.data.e_array.was_originally_macro and !bound_array.has_spread)
+                    {
+                        var array = expr.data.e_array;
+
+                        array.items.len = @minimum(array.items.len, @truncate(u32, bound_array.items.len));
+                        var slice = array.items.slice();
+                        for (bound_array.items[0..array.items.len]) |item, item_i| {
+                            const child_expr = slice[item_i];
+                            if (item.binding.data == .b_missing) {
+                                slice[item_i] = p.e(E.Missing{}, expr.loc);
+                                continue;
+                            }
+
+                            p.visitBindingAndExprForMacro(item.binding, child_expr);
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+
+        fn visitDecl(p: *P, decl: *Decl, was_anonymous_named_expr: bool, could_be_macro: bool) void {
+            // Optionally preserve the name
+            switch (decl.binding.data) {
+                .b_identifier => |id| {
+                    decl.value = p.maybeKeepExprSymbolName(
+                        decl.value.?,
+                        p.symbols.items[id.ref.inner_index].original_name,
+                        was_anonymous_named_expr,
+                    );
+                },
+                .b_object, .b_array => {
+                    if (comptime allow_macros) {
+                        if (could_be_macro and decl.value != null) {
+                            p.visitBindingAndExprForMacro(decl.binding, decl.value.?);
+                        }
+                    }
+                },
+                else => {},
+            }
         }
 
         pub fn markExportedDeclsInsideNamespace(p: *P, ns_ref: Ref, decls: []G.Decl) void {

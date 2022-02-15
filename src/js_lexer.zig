@@ -51,6 +51,9 @@ pub const JSONOptions = struct {
     ignore_trailing_escape_sequences: bool = false,
 
     json_warn_duplicate_keys: bool = true,
+
+    /// mark as originally for a macro to enable inlining
+    was_originally_macro: bool = false,
 };
 
 pub fn NewLexer(comptime json_options: JSONOptions) type {

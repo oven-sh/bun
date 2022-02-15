@@ -259,6 +259,21 @@ pub const Linker = struct {
                             continue;
                         }
 
+                        // TODO: this is technical debt
+                        if (linker.options.rewrite_jest_for_tests) {
+                            if (strings.eqlComptime(
+                                import_record.path.text,
+                                "@jest/globals",
+                            ) or strings.eqlComptime(
+                                import_record.path.text,
+                                "vitest",
+                            )) {
+                                import_record.path.namespace = "bun";
+                                import_record.path.text = "test";
+                                continue;
+                            }
+                        }
+
                         if (import_record.path.text.len > 4 and strings.eqlComptime(import_record.path.text[0.."bun:".len], "bun:")) {
                             import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                             import_record.path.namespace = "bun";

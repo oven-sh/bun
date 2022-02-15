@@ -1107,6 +1107,8 @@ pub const BundleOptions = struct {
     transform_options: Api.TransformOptions,
     polyfill_node_globals: bool = true,
 
+    rewrite_jest_for_tests: bool = false,
+
     macro_remap: MacroRemap = MacroRemap{},
 
     conditions: ESMConditions = undefined,

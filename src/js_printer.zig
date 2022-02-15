@@ -995,7 +995,7 @@ pub fn NewPrinter(
         pub fn isUnboundEvalIdentifier(p: *Printer, value: Expr) bool {
             switch (value.data) {
                 .e_identifier => |ident| {
-                    if (ident.ref.is_source_contents_slice) return false;
+                    if (ident.ref.isSourceContentsSlice()) return false;
 
                     const symbol = p.symbols.get(p.symbols.follow(ident.ref)) orelse return false;
                     return symbol.kind == .unbound and strings.eqlComptime(symbol.original_name, "eval");

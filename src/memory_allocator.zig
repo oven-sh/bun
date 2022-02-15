@@ -4,17 +4,24 @@ const std = @import("std");
 
 const mimalloc = @import("./allocators/mimalloc.zig");
 const FeatureFlags = @import("./feature_flags.zig");
-
+const Environment = @import("./env.zig");
 const c = struct {
     pub const malloc_size = mimalloc.mi_malloc_size;
     pub const malloc_usable_size = mimalloc.mi_malloc_usable_size;
     pub const malloc = struct {
         pub inline fn malloc_wrapped(size: usize) ?*anyopaque {
             if (comptime FeatureFlags.log_allocations) std.debug.print("Malloc: {d}\n", .{size});
+
             return mimalloc.mi_malloc(size);
         }
     }.malloc_wrapped;
-    pub const free = mimalloc.mi_free;
+    pub inline fn free(ptr: anytype) void {
+        if (comptime Environment.allow_assert) {
+            assert(mimalloc.mi_is_in_heap_region(ptr));
+        }
+
+        mimalloc.mi_free(ptr);
+    }
     pub const posix_memalign = struct {
         pub inline fn mi_posix_memalign(p: [*c]?*anyopaque, alignment: usize, size: usize) c_int {
             if (comptime FeatureFlags.log_allocations) std.debug.print("Posix_memalign: {d}\n", .{std.mem.alignForward(size, alignment)});

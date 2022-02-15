@@ -5055,6 +5055,207 @@ pub fn NewParser(
             try p.lexer.expect(.t_close_brace);
         }
 
+        fn processImportStatement(p: *P, stmt_: S.Import, path: ParsedPath, loc: logger.Loc, was_originally_bare_import: bool) anyerror!Stmt {
+            const is_macro = FeatureFlags.is_macro_enabled and js_ast.Macro.isMacroPath(path.text);
+            const macro_remap = if ((comptime allow_macros) and !is_macro)
+                p.options.macro_context.getRemap(path.text)
+            else
+                null;
+
+            var stmt = stmt_;
+
+            const is_any_macro = is_macro or macro_remap != null;
+
+            stmt.import_record_index = p.addImportRecord(.stmt, path.loc, path.text);
+            p.import_records.items[stmt.import_record_index].was_originally_bare_import = was_originally_bare_import;
+
+            var remap_count: u16 = 0;
+            if (stmt.star_name_loc) |star| {
+                const name = p.loadNameFromRef(stmt.namespace_ref);
+
+                stmt.namespace_ref = try p.declareSymbol(.import, star, name);
+
+                if (is_macro) {
+                    p.log.addErrorFmt(
+                        p.source,
+                        star,
+                        p.allocator,
+                        "Macro cannot be a * import, must be default or an {{item}}",
+                        .{},
+                    ) catch unreachable;
+                    return error.SyntaxError;
+                }
+
+                if (comptime ParsePassSymbolUsageType != void) {
+                    if (!is_any_macro) {
+                        p.parse_pass_symbol_uses.put(name, .{
+                            .ref = stmt.namespace_ref,
+                            .import_record_index = stmt.import_record_index,
+                        }) catch unreachable;
+                    }
+                }
+            } else {
+                var path_name = fs.PathName.init(strings.append(p.allocator, "import_", path.text) catch unreachable);
+                const name = try path_name.nonUniqueNameString(p.allocator);
+                stmt.namespace_ref = try p.newSymbol(.other, name);
+                var scope: *Scope = p.current_scope;
+                try scope.generated.append(p.allocator, stmt.namespace_ref);
+            }
+
+            var item_refs = ImportItemForNamespaceMap.init(p.allocator);
+            const count_excluding_namespace = @intCast(u16, stmt.items.len) +
+                @intCast(u16, @boolToInt(stmt.default_name != null));
+            const total_count = count_excluding_namespace +
+                @intCast(u16, @boolToInt(stmt.star_name_loc != null));
+
+            try item_refs.ensureUnusedCapacity(total_count);
+            // Even though we allocate ahead of time here
+            // we cannot use putAssumeCapacity because a symbol can have existing links
+            // those may write to this hash table, so this estimate may be innaccurate
+            try p.is_import_item.ensureUnusedCapacity(p.allocator, count_excluding_namespace);
+
+            // Link the default item to the namespace
+            if (stmt.default_name) |*name_loc| {
+                outer: {
+                    const name = p.loadNameFromRef(name_loc.ref.?);
+                    const ref = try p.declareSymbol(.import, name_loc.loc, name);
+                    name_loc.ref = ref;
+                    try p.is_import_item.put(p.allocator, ref, .{});
+
+                    if (comptime ParsePassSymbolUsageType != void) {
+                        if (!is_macro) {
+                            p.parse_pass_symbol_uses.put(name, .{
+                                .ref = ref,
+                                .import_record_index = stmt.import_record_index,
+                            }) catch unreachable;
+                        }
+                    }
+
+                    if (macro_remap) |remap| {
+                        if (remap.get("default")) |remapped_path| {
+                            const new_import_id = p.addImportRecord(.stmt, path.loc, remapped_path);
+                            try p.macro.refs.put(ref, new_import_id);
+                            stmt.default_name = null;
+                            p.import_records.items[new_import_id].path.namespace = js_ast.Macro.namespace;
+                            if (comptime only_scan_imports_and_do_not_visit) {
+                                p.import_records.items[new_import_id].is_internal = true;
+                                p.import_records.items[new_import_id].path.is_disabled = true;
+                            }
+                            remap_count += 1;
+                            break :outer;
+                        }
+                    }
+
+                    if (is_macro) {
+                        try p.macro.refs.put(ref, stmt.import_record_index);
+                        stmt.default_name = null;
+                        break :outer;
+                    }
+
+                    item_refs.putAssumeCapacity(name, name_loc.*);
+                }
+            }
+
+            if (stmt.items.len > 0) {
+                var i: usize = 0;
+                var list = std.ArrayListUnmanaged(js_ast.ClauseItem){ .items = stmt.items, .capacity = stmt.items.len };
+
+                // I do not like two passes here. This works around a bug
+                // where when the final import item of a remapped macro
+                // is _not_ a macro we end up removing the Symbol's
+                // namespace_alias...for some reason The specific issue
+                // might be a pointer aliasing bug, might be a zig bug,
+                // or might be undefined behavior but it's really
+                // difficult to determine it only happens in ReleaseFast
+                // mode – not in ReleaseSafe or Debug. so instead of
+                // fixing it, we do an extra pass over import items
+                // which have a macro remap that contain multiple items
+                // and we just move any macro imports to the end of the
+                // list This shouldn't have a meanigful impact on perf
+                // because the number of imports will typically be small
+                // like 2 it's an edgecase where it would be more than
+                // that nobody uses this feature currently anyway except
+                // for lattice
+                if (macro_remap) |remap| {
+                    if (list.items.len > 1) {
+                        const Sorter = struct {
+                            remap_content: js_ast.Macro.MacroRemapEntry,
+                            pub fn isLessThan(this: @This(), lhs: js_ast.ClauseItem, rhs: js_ast.ClauseItem) bool {
+                                const has_left = this.remap_content.contains(lhs.alias);
+                                const has_right = this.remap_content.contains(rhs.alias);
+
+                                // put the macro imports at the end of the list
+                                if (has_left != has_right) {
+                                    return has_right;
+                                }
+
+                                // we don't care if its asc or desc, just has to be something deterministic
+                                return strings.cmpStringsAsc(void{}, lhs.alias, rhs.alias);
+                            }
+                        };
+                        std.sort.insertionSort(js_ast.ClauseItem, list.items, Sorter{ .remap_content = remap }, Sorter.isLessThan);
+                    }
+                }
+                var end: u32 = 0;
+                while (i < list.items.len) : (i += 1) {
+                    var item: js_ast.ClauseItem = list.items[i];
+                    const name = p.loadNameFromRef(item.name.ref orelse unreachable);
+                    const ref = try p.declareSymbol(.import, item.name.loc, name);
+                    item.name.ref = ref;
+
+                    try p.is_import_item.put(p.allocator, ref, .{});
+                    p.checkForNonBMPCodePoint(item.alias_loc, item.alias);
+                    item_refs.putAssumeCapacity(item.alias, LocRef{ .loc = item.name.loc, .ref = ref });
+
+                    if (is_macro) {
+                        try p.macro.refs.put(ref, stmt.import_record_index);
+                        continue;
+                    } else if (macro_remap) |remap| {
+                        if (remap.get(item.alias)) |remapped_path| {
+                            const new_import_id = p.addImportRecord(.stmt, path.loc, remapped_path);
+                            p.import_records.items[new_import_id].path.namespace = js_ast.Macro.namespace;
+                            if (comptime only_scan_imports_and_do_not_visit) {
+                                p.import_records.items[new_import_id].is_internal = true;
+                                p.import_records.items[new_import_id].path.is_disabled = true;
+                            }
+                            try p.macro.refs.put(ref, new_import_id);
+                            remap_count += 1;
+                            continue;
+                        }
+                    } else {
+                        if (comptime ParsePassSymbolUsageType != void) {
+                            p.parse_pass_symbol_uses.put(name, .{
+                                .ref = ref,
+                                .import_record_index = stmt.import_record_index,
+                            }) catch unreachable;
+                        }
+
+                        list.items[end] = item;
+                        end += 1;
+                    }
+                }
+                stmt.items = list.items[0..end];
+            }
+
+            // If we remapped the entire import away
+            // i.e. import {graphql} "react-relay"
+
+            if (remap_count > 0 and remap_count == total_count) {
+                p.import_records.items[stmt.import_record_index].path.namespace = js_ast.Macro.namespace;
+
+                if (comptime only_scan_imports_and_do_not_visit) {
+                    p.import_records.items[stmt.import_record_index].path.is_disabled = true;
+                    p.import_records.items[stmt.import_record_index].is_internal = true;
+                }
+
+                return p.s(S.Empty{}, loc);
+            }
+
+            // Track the items for this namespace
+            try p.import_items_for_namespace.put(p.allocator, stmt.namespace_ref, item_refs);
+            return p.s(stmt, loc);
+        }
+
         // This is the type parameter declarations that go with other symbol
         // declarations (class, function, type, etc.)
         fn skipTypeScriptTypeParameters(p: *P) anyerror!void {
@@ -6228,213 +6429,9 @@ pub fn NewParser(
                     }
 
                     const path = try p.parsePath();
-                    stmt.import_record_index = p.addImportRecord(.stmt, path.loc, path.text);
-                    p.import_records.items[stmt.import_record_index].was_originally_bare_import = was_originally_bare_import;
                     try p.lexer.expectOrInsertSemicolon();
 
-                    const is_macro = FeatureFlags.is_macro_enabled and js_ast.Macro.isMacroPath(path.text);
-
-                    if (is_macro) {
-                        p.import_records.items[stmt.import_record_index].path.namespace = js_ast.Macro.namespace;
-                        if (comptime only_scan_imports_and_do_not_visit) {
-                            p.import_records.items[stmt.import_record_index].path.is_disabled = true;
-                            p.import_records.items[stmt.import_record_index].is_internal = true;
-                        }
-                    }
-
-                    const macro_remap = if ((comptime allow_macros) and !is_macro)
-                        p.options.macro_context.getRemap(path.text)
-                    else
-                        null;
-
-                    var remap_count: u16 = 0;
-                    if (stmt.star_name_loc) |star| {
-                        const name = p.loadNameFromRef(stmt.namespace_ref);
-
-                        stmt.namespace_ref = try p.declareSymbol(.import, star, name);
-                        if (comptime ParsePassSymbolUsageType != void) {
-                            if (!is_macro) {
-                                p.parse_pass_symbol_uses.put(name, .{
-                                    .ref = stmt.namespace_ref,
-                                    .import_record_index = stmt.import_record_index,
-                                }) catch unreachable;
-                            }
-                        }
-
-                        if (is_macro) {
-                            p.log.addErrorFmt(
-                                p.source,
-                                star,
-                                p.allocator,
-                                "Macro cannot be a * import, must be default or an {{item}}",
-                                .{},
-                            ) catch unreachable;
-                            return error.SyntaxError;
-                        }
-                    } else {
-                        var path_name = fs.PathName.init(strings.append(p.allocator, "import_", path.text) catch unreachable);
-                        const name = try path_name.nonUniqueNameString(p.allocator);
-                        stmt.namespace_ref = try p.newSymbol(.other, name);
-                        var scope: *Scope = p.current_scope;
-                        try scope.generated.append(p.allocator, stmt.namespace_ref);
-                    }
-
-                    var item_refs = ImportItemForNamespaceMap.init(p.allocator);
-                    const count_excluding_namespace = @intCast(u16, stmt.items.len) +
-                        @intCast(u16, @boolToInt(stmt.default_name != null));
-                    const total_count = count_excluding_namespace +
-                        @intCast(u16, @boolToInt(stmt.star_name_loc != null));
-
-                    try item_refs.ensureUnusedCapacity(total_count);
-                    // Even though we allocate ahead of time here
-                    // we cannot use putAssumeCapacity because a symbol can have existing links
-                    // those may write to this hash table, so this estimate may be innaccurate
-                    try p.is_import_item.ensureUnusedCapacity(p.allocator, count_excluding_namespace);
-
-                    // Link the default item to the namespace
-                    if (stmt.default_name) |*name_loc| {
-                        outer: {
-                            const name = p.loadNameFromRef(name_loc.ref.?);
-                            const ref = try p.declareSymbol(.import, name_loc.loc, name);
-                            try p.is_import_item.put(p.allocator, ref, .{});
-                            name_loc.ref = ref;
-
-                            if (comptime ParsePassSymbolUsageType != void) {
-                                if (!is_macro) {
-                                    p.parse_pass_symbol_uses.put(name, .{
-                                        .ref = ref,
-                                        .import_record_index = stmt.import_record_index,
-                                    }) catch unreachable;
-                                }
-                            }
-
-                            if (macro_remap) |remap| {
-                                if (remap.get("default")) |remapped_path| {
-                                    const new_import_id = p.addImportRecord(.stmt, path.loc, remapped_path);
-                                    try p.macro.refs.put(ref, new_import_id);
-                                    stmt.default_name = null;
-                                    p.import_records.items[new_import_id].path.namespace = js_ast.Macro.namespace;
-                                    if (comptime only_scan_imports_and_do_not_visit) {
-                                        p.import_records.items[new_import_id].is_internal = true;
-                                        p.import_records.items[new_import_id].path.is_disabled = true;
-                                    }
-                                    remap_count += 1;
-                                    break :outer;
-                                }
-                            }
-
-                            if (is_macro) {
-                                try p.macro.refs.put(ref, stmt.import_record_index);
-                                stmt.default_name = null;
-                                break :outer;
-                            }
-
-                            item_refs.putAssumeCapacity(name, name_loc.*);
-                        }
-                    }
-
-                    if (stmt.items.len > 0) {
-                        var i: usize = 0;
-                        var list = std.ArrayListUnmanaged(js_ast.ClauseItem){ .items = stmt.items, .capacity = stmt.items.len };
-
-                        // I do not like two passes here. This works around a bug
-                        // where when the final import item of a remapped macro
-                        // is _not_ a macro we end up removing the Symbol's
-                        // namespace_alias...for some reason The specific issue
-                        // might be a pointer aliasing bug, might be a zig bug,
-                        // or might be undefined behavior but it's really
-                        // difficult to determine it only happens in ReleaseFast
-                        // mode – not in ReleaseSafe or Debug. so instead of
-                        // fixing it, we do an extra pass over import items
-                        // which have a macro remap that contain multiple items
-                        // and we just move any macro imports to the end of the
-                        // list This shouldn't have a meanigful impact on perf
-                        // because the number of imports will typically be small
-                        // like 2 it's an edgecase where it would be more than
-                        // that nobody uses this feature currently anyway except
-                        // for lattice
-                        if (macro_remap) |remap| {
-                            if (list.items.len > 1) {
-                                const Sorter = struct {
-                                    remap_content: js_ast.Macro.MacroRemapEntry,
-                                    pub fn isLessThan(this: @This(), lhs: js_ast.ClauseItem, rhs: js_ast.ClauseItem) bool {
-                                        const has_left = this.remap_content.contains(lhs.alias);
-                                        const has_right = this.remap_content.contains(rhs.alias);
-
-                                        // put the macro imports at the end of the list
-                                        if (has_left != has_right) {
-                                            return has_right;
-                                        }
-
-                                        // we don't care if its asc or desc, just has to be something deterministic
-                                        return strings.cmpStringsAsc(void{}, lhs.alias, rhs.alias);
-                                    }
-                                };
-                                std.sort.insertionSort(js_ast.ClauseItem, list.items, Sorter{ .remap_content = remap }, Sorter.isLessThan);
-                            }
-                        }
-
-                        while (i < list.items.len) {
-                            var item: *js_ast.ClauseItem = &list.items[i];
-                            const name = p.loadNameFromRef(item.name.ref orelse unreachable);
-                            const ref = try p.declareSymbol(.import, item.name.loc, name);
-                            try p.is_import_item.put(p.allocator, ref, .{});
-                            item.name.ref = ref;
-
-                            if (is_macro) {
-                                try p.macro.refs.put(ref, stmt.import_record_index);
-                                _ = list.swapRemove(i);
-                                continue;
-                            }
-
-                            if (macro_remap) |remap| {
-                                if (remap.get(item.alias)) |remapped_path| {
-                                    const new_import_id = p.addImportRecord(.stmt, path.loc, remapped_path);
-                                    p.import_records.items[new_import_id].path.namespace = js_ast.Macro.namespace;
-                                    if (comptime only_scan_imports_and_do_not_visit) {
-                                        p.import_records.items[new_import_id].is_internal = true;
-                                        p.import_records.items[new_import_id].path.is_disabled = true;
-                                    }
-                                    try p.macro.refs.put(ref, new_import_id);
-                                    remap_count += 1;
-                                    _ = list.swapRemove(i);
-                                    continue;
-                                }
-                            }
-
-                            p.checkForNonBMPCodePoint(item.alias_loc, item.alias);
-
-                            item_refs.putAssumeCapacity(item.alias, LocRef{ .loc = item.name.loc, .ref = ref });
-
-                            if (comptime ParsePassSymbolUsageType != void) {
-                                p.parse_pass_symbol_uses.put(name, .{
-                                    .ref = ref,
-                                    .import_record_index = stmt.import_record_index,
-                                }) catch unreachable;
-                            }
-                            i += 1;
-                        }
-                        stmt.items = list.items;
-                    }
-
-                    // If we remapped the entire import away
-                    // i.e. import {graphql} "react-relay"
-
-                    if (remap_count > 0 and remap_count == total_count) {
-                        p.import_records.items[stmt.import_record_index].path.namespace = js_ast.Macro.namespace;
-
-                        if (comptime only_scan_imports_and_do_not_visit) {
-                            p.import_records.items[stmt.import_record_index].path.is_disabled = true;
-                            p.import_records.items[stmt.import_record_index].is_internal = true;
-                        }
-
-                        return p.s(S.Empty{}, loc);
-                    }
-
-                    // Track the items for this namespace
-                    try p.import_items_for_namespace.put(p.allocator, stmt.namespace_ref, item_refs);
-
-                    return p.s(stmt, loc);
+                    return try p.processImportStatement(stmt, path, loc, was_originally_bare_import);
                 },
                 .t_break => {
                     try p.lexer.next();
@@ -13159,6 +13156,7 @@ pub fn NewParser(
                             data.value.expr = p.visitExpr(expr);
 
                             // // Optionally preserve the name
+
                             data.value.expr = p.maybeKeepExprSymbolName(data.value.expr, js_ast.ClauseItem.default_alias, was_anonymous_named_expr);
 
                             // Discard type-only export default statements

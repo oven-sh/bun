@@ -5324,8 +5324,7 @@ pub const Macro = struct {
                     return Expr{ .loc = this.loc, .data = .{ .e_spread = value } };
                 },
                 .e_string => |value| {
-                    this.data.e_string.* = value.clone(JavaScript.VirtualMachine.vm.allocator) catch unreachable;
-                    return Expr{ .loc = this.loc, .data = .{ .e_string = this.data.e_string } };
+                    return Expr{ .loc = this.loc, .data = .{ .e_string = value } };
                 },
                 .e_template_part => |value| {
                     return Expr{ .loc = this.loc, .data = .{ .e_template_part = value } };

@@ -217,6 +217,9 @@ pub const ZigString = extern struct {
     }
 
     pub fn toSlice(this: ZigString, allocator: std.mem.Allocator) Slice {
+        if (this.len == 0)
+            return Slice{ .ptr = "", .len = 0, .allocator = allocator, .allocated = false };
+
         if (is16Bit(&this)) {
             var buffer = std.fmt.allocPrint(allocator, "{}", .{this}) catch unreachable;
             return Slice{

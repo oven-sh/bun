@@ -262,7 +262,7 @@ pub const TestCommand = struct {
         vm.argv = ctx.positionals;
 
         try vm.bundler.configureDefines();
-
+        vm.bundler.options.rewrite_jest_for_tests = true;
         var scanner = Scanner{
             .dirs_to_scan = Scanner.Fifo.init(ctx.allocator),
             .options = &vm.bundler.options,

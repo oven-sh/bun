@@ -137,8 +137,8 @@ pub const Options = struct {
     // us do binary search on to figure out what line a given AST node came from
     // line_offset_tables: []LineOffsetTable
 
-    pub fn unindent(self: *Options) void {
-        self.indent = @maximum(self.indent, 1) - 1;
+    pub inline fn unindent(self: *Options) void {
+        self.indent -|= 1;
     }
 };
 
@@ -1553,9 +1553,7 @@ pub fn NewPrinter(
                     p.print("{");
                     const props = e.properties.slice();
                     if (props.len > 0) {
-                        if (!e.is_single_line) {
-                            p.options.indent += 1;
-                        }
+                        p.options.indent += @as(usize, @boolToInt(!e.is_single_line));
 
                         for (props) |property, i| {
                             if (i != 0) {
@@ -2288,9 +2286,7 @@ pub fn NewPrinter(
                 .b_array => |b| {
                     p.print("[");
                     if (b.items.len > 0) {
-                        if (!b.is_single_line) {
-                            p.options.indent += 1;
-                        }
+                        p.options.indent += @as(usize, @boolToInt(!b.is_single_line));
 
                         for (b.items) |*item, i| {
                             if (i != 0) {
@@ -2337,9 +2333,8 @@ pub fn NewPrinter(
                 .b_object => |b| {
                     p.print("{");
                     if (b.properties.len > 0) {
-                        if (!b.is_single_line) {
-                            p.options.indent += 1;
-                        }
+                        p.options.indent +=
+                            @as(usize, @boolToInt(!b.is_single_line));
 
                         for (b.properties) |*property, i| {
                             if (i != 0) {

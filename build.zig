@@ -278,6 +278,10 @@ pub fn build(b: *std.build.Builder) !void {
         obj.setBuildMode(mode);
         obj.linkLibC();
         obj.linkLibCpp();
+        if (mode == std.builtin.Mode.Debug)
+            obj.emit_llvm_ir = .{
+                .emit_to = try std.fmt.allocPrint(b.allocator, "{s}/{s}.ll", .{ output_dir, bun_executable_name }),
+            };
 
         obj.strip = false;
         obj.bundle_compiler_rt = true;

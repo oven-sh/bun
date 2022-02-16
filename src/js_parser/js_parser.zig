@@ -8104,7 +8104,7 @@ pub fn NewParser(
         }
 
         pub fn storeNameInRef(p: *P, name: string) !Ref {
-            if (comptime ParsePassSymbolUsageType != void) {
+            if (comptime track_symbol_usage_during_parse_pass) {
                 if (p.parse_pass_symbol_uses.getPtr(name)) |res| {
                     res.used = true;
                 }

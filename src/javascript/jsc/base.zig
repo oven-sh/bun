@@ -872,8 +872,9 @@ pub fn NewClass(
         var property_name_refs_set: bool = false;
         const property_name_literals = property_names;
 
-        pub var ref: js.JSClassRef = null;
-        pub var loaded = false;
+        pub threadlocal var ref: js.JSClassRef = null;
+        pub threadlocal var loaded = false;
+        pub var defined: bool = false;
         pub var definition: js.JSClassDefinition = .{
             .version = 0,
             .attributes = js.JSClassAttributes.kJSClassAttributeNone,
@@ -926,9 +927,13 @@ pub fn NewClass(
         pub const Constructor = ConstructorWrapper.rfn;
 
         pub fn get() callconv(.C) [*c]js.JSClassRef {
+            if (!defined) {
+                definition = define();
+                defined = true;
+            }
+
             if (!loaded) {
                 loaded = true;
-                definition = define();
                 ref = js.JSClassCreate(&definition);
             }
 

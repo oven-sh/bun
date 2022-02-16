@@ -4456,10 +4456,6 @@ pub fn printAst(
 
     try printer.writer.done();
 
-    if (tree.symbol_pool) |symbol_pool| {
-        js_ast.SymbolPool.release(symbol_pool);
-    }
-
     return @intCast(usize, @maximum(printer.writer.written, 0));
 }
 
@@ -4542,10 +4538,6 @@ pub fn printCommonJS(
     printer.writer.print(@TypeOf("\n\n"), "\n\n");
 
     try printer.writer.done();
-
-    if (tree.symbol_pool) |symbol_pool| {
-        js_ast.SymbolPool.release(symbol_pool);
-    }
 
     return @intCast(usize, @maximum(printer.writer.written, 0));
 }
@@ -4632,8 +4624,6 @@ pub fn printCommonJSThreaded(
     }
 
     result.len = @intCast(usize, @maximum(printer.writer.written, 0));
-    if (tree.symbol_pool) |symbol_pool| {
-        js_ast.SymbolPool.release(symbol_pool);
-    }
+
     return result;
 }

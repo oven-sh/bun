@@ -25,8 +25,8 @@ pub const Renamer = struct {
     }
 
     pub fn nameForSymbol(renamer: *Renamer, ref: Ref) string {
-        if (ref.isSourceContentsSlice()) {
-            return renamer.source.contents[ref.sourceIndex() .. ref.sourceIndex() + ref.innerIndex()];
+        if (ref.is_source_contents_slice) {
+            return renamer.source.contents[ref.source_index .. ref.source_index + ref.inner_index];
         }
 
         const resolved = renamer.symbols.follow(ref);

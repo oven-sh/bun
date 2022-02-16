@@ -327,7 +327,7 @@ pub const AssignTarget = enum(u2) {
     }
 };
 
-pub const LocRef = struct { loc: logger.Loc, ref: ?Ref = null };
+pub const LocRef = struct { loc: logger.Loc, ref: ?Ref };
 
 pub const Flags = struct {
     pub const JSXElement = struct {
@@ -888,11 +888,11 @@ pub const Symbol = struct {
         symbols_for_source: [][]Symbol,
 
         pub fn get(self: *Map, ref: Ref) ?*Symbol {
-            if (Ref.isSourceIndexNull(ref.sourceIndex()) or ref.isSourceContentsSlice()) {
+            if (Ref.isSourceIndexNull(ref.source_index) or ref.is_source_contents_slice) {
                 return null;
             }
 
-            return &self.symbols_for_source[ref.sourceIndex()][ref.innerIndex()];
+            return &self.symbols_for_source[ref.source_index][ref.inner_index];
         }
 
         pub fn init(sourceCount: usize, allocator: std.mem.Allocator) !Map {
@@ -7907,7 +7907,7 @@ pub const Macro = struct {
 // test "Binding.init" {
 //     var binding = Binding.alloc(
 //         std.heap.page_allocator,
-//         B.Identifier{ .ref = Ref{ .source_index = 0, .innerIndex() = 10 } },
+//         B.Identifier{ .ref = Ref{ .source_index = 0, .inner_index = 10 } },
 //         logger.Loc{ .start = 1 },
 //     );
 //     std.testing.expect(binding.loc.start == 1);

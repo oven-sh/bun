@@ -1179,7 +1179,7 @@ const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            const buffer = StringOrBuffer.fromJS(ctx.ptr(), arguments.next() orelse {
+            const buffer = StringOrBuffer.fromJS(ctx.ptr(), arguments.arena.allocator(), arguments.next() orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "data is required",
@@ -1490,7 +1490,7 @@ const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            const data = StringOrBuffer.fromJS(ctx.ptr(), arguments.next() orelse {
+            const data = StringOrBuffer.fromJS(ctx.ptr(), arguments.arena.allocator(), arguments.next() orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "data is required",

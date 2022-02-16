@@ -146,19 +146,11 @@ pub const StringOrBuffer = union(Tag) {
         };
     }
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?StringOrBuffer {
+    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?StringOrBuffer {
         return switch (value.jsType()) {
             JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
-                var zig_str = JSC.ZigString.init("");
-                value.toZigString(&zig_str, global);
-                // if (zig_str.len == 0) {
-                //     JSC.throwInvalidArguments("Expected string to have length > 0", .{}, global.ref(), exception);
-                //     return null;
-                // }
-
-                return StringOrBuffer{
-                    .string = zig_str.slice(),
-                };
+                var zig_str = value.toSlice(global, allocator);
+                return StringOrBuffer{ .string = zig_str.slice() };
             },
             JSC.JSValue.JSType.ArrayBuffer => StringOrBuffer{
                 .buffer = Buffer.fromArrayBuffer(global.ref(), value, exception),

@@ -63,11 +63,22 @@ pub const TestRunner = struct {
     log: *logger.Log,
     files: File.List = .{},
     index: File.Map = File.Map{},
+    only: bool = false,
 
     timeout_seconds: f64 = 5.0,
 
     allocator: std.mem.Allocator,
     callback: *Callback = undefined,
+
+    pub fn setOnly(this: *TestRunner) void {
+        if (this.only) {
+            return;
+        }
+
+        this.only = true;
+        this.tests.shrinkRetainingCapacity(0);
+        this.callback.onUpdateCount(this.callback, 0, 0);
+    }
 
     pub const Callback = struct {
         pub const OnUpdateCount = fn (this: *Callback, delta: u32, total: u32) void;
@@ -562,26 +573,48 @@ pub const TestScope = struct {
     id: TestRunner.Test.ID = 0,
     promise: ?*JSInternalPromise = null,
 
-    pub const Class = NewClass(void, .{ .name = "test" }, .{ .call = call }, .{});
+    pub const Class = NewClass(void, .{ .name = "test" }, .{ .call = call, .only = only }, .{});
 
     pub const Counter = struct {
         expected: u32 = 0,
         actual: u32 = 0,
     };
 
-    pub fn call(
+    pub fn only(
         // the DescribeScope here is the top of the file, not the real one
         _: void,
         ctx: js.JSContextRef,
-        _: js.JSObjectRef,
+        this: js.JSObjectRef,
         _: js.JSObjectRef,
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSObjectRef {
+        return callMaybeOnly(this, ctx, arguments, exception, true);
+    }
+
+    pub fn call(
+        // the DescribeScope here is the top of the file, not the real one
+        _: void,
+        ctx: js.JSContextRef,
+        this: js.JSObjectRef,
+        _: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSObjectRef {
+        return callMaybeOnly(this, ctx, arguments, exception, false);
+    }
+
+    fn callMaybeOnly(
+        this: js.JSObjectRef,
+        ctx: js.JSContextRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+        is_only: bool,
+    ) js.JSObjectRef {
         var args = arguments[0..@minimum(arguments.len, 2)];
         var label: string = "";
         if (args.len == 0) {
-            return js.JSValueMakeUndefined(ctx);
+            return this;
         }
 
         if (js.JSValueIsString(ctx, args[0])) {
@@ -597,8 +630,15 @@ pub const TestScope = struct {
         var function = args[0];
         if (!js.JSValueIsObject(ctx, function) or !js.JSObjectIsFunction(ctx, function)) {
             JSError(getAllocator(ctx), "test() expects a function", .{}, ctx, exception);
-            return js.JSValueMakeUndefined(ctx);
+            return this;
         }
+
+        if (is_only) {
+            Jest.runner.?.setOnly();
+        }
+
+        if (!is_only and Jest.runner.?.only)
+            return this;
 
         js.JSValueProtect(ctx, function);
 
@@ -608,7 +648,7 @@ pub const TestScope = struct {
             .parent = DescribeScope.active,
         }) catch unreachable;
 
-        return js.JSValueMakeUndefined(ctx);
+        return this;
     }
 
     pub const Result = union(TestRunner.Test.Status) {

@@ -60,7 +60,6 @@ pub const StringHashMap = _hash_map.StringHashMap;
 pub const AutoHashMap = _hash_map.AutoHashMap;
 const StringHashMapUnamanged = _hash_map.StringHashMapUnamanged;
 const ObjectPool = @import("../pool.zig").ObjectPool;
-const SymbolPool = js_ast.SymbolPool;
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 // Dear reader,
 // There are some things you should know about this file to make it easier for humans to read

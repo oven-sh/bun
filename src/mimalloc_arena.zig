@@ -3,7 +3,7 @@ const builtin = @import("std").builtin;
 const std = @import("std");
 
 const mimalloc = @import("./allocators/mimalloc.zig");
-
+const Environment = @import("./env.zig");
 const Allocator = mem.Allocator;
 const assert = std.debug.assert;
 
@@ -74,7 +74,16 @@ pub const Arena = struct {
         if (len_align == 0) {
             return ptr[0..len];
         }
-        return ptr[0..mem.alignBackwardAnyAlign(mimalloc.mi_usable_size(ptr), len_align)];
+
+        // std.mem.Allocator asserts this, we do it here so we can see the metadata
+        if (comptime Environment.allow_assert) {
+            const size = mem.alignBackwardAnyAlign(mimalloc.mi_usable_size(ptr), len_align);
+
+            assert(size >= len);
+            return ptr[0..size];
+        } else {
+            return ptr[0..mem.alignBackwardAnyAlign(mimalloc.mi_usable_size(ptr), len_align)];
+        }
     }
 
     fn resize(

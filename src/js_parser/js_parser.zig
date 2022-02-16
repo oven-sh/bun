@@ -15595,8 +15595,6 @@ pub fn NewParser(
                 // }
             }
 
-            p.symbol_pool_node.data = p.symbols;
-
             return js_ast.Ast{
                 .runtime_imports = p.runtime_imports,
                 .parts = parts,
@@ -15624,7 +15622,6 @@ pub fn NewParser(
                     (p.symbols.items[p.runtime_imports.__require.?.ref.inner_index].use_count_estimate > 0)
                 else
                     false,
-                .symbol_pool = p.symbol_pool_node,
                 // .top_Level_await_keyword = p.top_level_await_keyword,
             };
         }
@@ -15682,9 +15679,7 @@ pub fn NewParser(
                 .lexer = lexer,
             };
 
-            this.symbol_pool_node = SymbolPool.get(_global.default_allocator);
-            this.symbols = this.symbol_pool_node.data;
-            this.symbols.clearRetainingCapacity();
+            this.symbols = std.ArrayList(Symbol).init(allocator);
 
             if (comptime !only_scan_imports_and_do_not_visit) {
                 this.import_records = @TypeOf(this.import_records).init(allocator);

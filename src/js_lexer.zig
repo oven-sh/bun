@@ -820,18 +820,18 @@ fn NewLexer_(
             i: usize = 0,
 
             pub fn append(fake: *FakeArrayList16, value: u16) !void {
-                std.debug.assert(fake.items.len < fake.i);
+                std.debug.assert(fake.items.len > fake.i);
                 fake.items[fake.i] = value;
                 fake.i += 1;
             }
 
             pub fn appendAssumeCapacity(fake: *FakeArrayList16, value: u16) void {
-                std.debug.assert(fake.items.len < fake.i);
+                std.debug.assert(fake.items.len > fake.i);
                 fake.items[fake.i] = value;
                 fake.i += 1;
             }
             pub fn ensureUnusedCapacity(fake: *FakeArrayList16, int: anytype) !void {
-                std.debug.assert(fake.items.len < fake.i + int);
+                std.debug.assert(fake.items.len > fake.i + int);
             }
         };
         threadlocal var large_escape_sequence_list: std.ArrayList(u16) = undefined;

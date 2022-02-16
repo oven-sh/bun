@@ -97,11 +97,22 @@ const CAllocator = struct {
         assert(len > 0);
         assert(std.math.isPowerOfTwo(alignment));
 
-        var ptr = alignedAlloc(len, alignment) orelse return error.OutOfMemory;
+        var ptr = alignedAlloc(
+            len,
+            alignment,
+        ) orelse return error.OutOfMemory;
         if (len_align == 0) {
             return ptr[0..len];
         }
-        return ptr[0..mem.alignBackwardAnyAlign(mimalloc.mi_usable_size(ptr), len_align)];
+
+        if (comptime Environment.allow_assert) {
+            const size = mem.alignBackwardAnyAlign(mimalloc.mi_usable_size(ptr), len_align);
+
+            assert(size >= len);
+            return ptr[0..size];
+        } else {
+            return ptr[0..mem.alignBackwardAnyAlign(mimalloc.mi_usable_size(ptr), len_align)];
+        }
     }
 
     fn resize(

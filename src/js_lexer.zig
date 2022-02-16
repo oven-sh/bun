@@ -56,7 +56,38 @@ pub const JSONOptions = struct {
     was_originally_macro: bool = false,
 };
 
-pub fn NewLexer(comptime json_options: JSONOptions) type {
+pub fn NewLexer(
+    comptime json_options: JSONOptions,
+) type {
+    return NewLexer_(
+        json_options.is_json,
+        json_options.allow_comments,
+        json_options.allow_trailing_commas,
+        json_options.ignore_leading_escape_sequences,
+        json_options.ignore_trailing_escape_sequences,
+        json_options.json_warn_duplicate_keys,
+        json_options.was_originally_macro,
+    );
+}
+
+fn NewLexer_(
+    comptime json_options_is_json: bool,
+    comptime json_options_allow_comments: bool,
+    comptime json_options_allow_trailing_commas: bool,
+    comptime json_options_ignore_leading_escape_sequences: bool,
+    comptime json_options_ignore_trailing_escape_sequences: bool,
+    comptime json_options_json_warn_duplicate_keys: bool,
+    comptime json_options_was_originally_macro: bool,
+) type {
+    const json_options = JSONOptions{
+        .is_json = json_options_is_json,
+        .allow_comments = json_options_allow_comments,
+        .allow_trailing_commas = json_options_allow_trailing_commas,
+        .ignore_leading_escape_sequences = json_options_ignore_leading_escape_sequences,
+        .ignore_trailing_escape_sequences = json_options_ignore_trailing_escape_sequences,
+        .json_warn_duplicate_keys = json_options_json_warn_duplicate_keys,
+        .was_originally_macro = json_options_was_originally_macro,
+    };
     return struct {
         const LexerType = @This();
         const is_json = json_options.is_json;

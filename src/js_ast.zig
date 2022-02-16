@@ -2323,8 +2323,8 @@ pub const Expr = struct {
     }
 
     pub fn joinAllWithCommaCallback(all: []Expr, comptime Context: type, ctx: Context, callback: (fn (ctx: anytype, expr: anytype) ?Expr), allocator: std.mem.Allocator) ?Expr {
-        std.debug.assert(all.len > 0);
         switch (all.len) {
+            0 => return null,
             1 => {
                 return callback(ctx, all[0]);
             },
@@ -4108,17 +4108,6 @@ pub const ArrayBinding = struct {
     default_value: ?ExprNodeIndex = null,
 };
 
-pub const SymbolPool = ObjectPool(
-    std.ArrayList(Symbol),
-    struct {
-        pub fn init(allocator: std.mem.Allocator) anyerror!std.ArrayList(Symbol) {
-            return std.ArrayList(Symbol).init(allocator);
-        }
-    }.init,
-    true,
-    4,
-);
-
 pub const Ast = struct {
     approximate_newline_count: usize = 0,
     has_lazy_export: bool = false,
@@ -4153,7 +4142,6 @@ pub const Ast = struct {
     url_for_css: ?string = null,
     parts: []Part,
     symbols: []Symbol = &([_]Symbol{}),
-    symbol_pool: ?*SymbolPool.Node = null,
     module_scope: ?Scope = null,
     // char_freq:    *CharFreq,
     exports_ref: ?Ref = null,

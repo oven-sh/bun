@@ -84,6 +84,17 @@ const JSXAutomaticName = "jsx_module";
 const exports_string_name: string = "exports";
 const MacroRefs = std.AutoArrayHashMap(Ref, u32);
 
+pub const AllocatedNamesPool = ObjectPool(
+    std.ArrayList(string),
+    struct {
+        pub fn init(allocator: std.mem.Allocator) anyerror!std.ArrayList(string) {
+            return std.ArrayList(string).init(allocator);
+        }
+    }.init,
+    true,
+    4,
+);
+
 // If we are currently in a hoisted child of the module scope, relocate these
 // declarations to the top level and return an equivalent assignment statement.
 // Make sure to check that the declaration kind is "var" before calling this.
@@ -2141,6 +2152,14 @@ pub const Parser = struct {
         try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
         defer p.lexer.deinit();
         var result: js_ast.Result = undefined;
+
+        defer {
+            if (p.allocated_names_pool) |pool| {
+                pool.data = p.allocated_names;
+                pool.release();
+                p.allocated_names_pool = null;
+            }
+        }
 
         // Consume a leading hashbang comment
         var hashbang: string = "";
@@ -8116,10 +8135,15 @@ pub fn NewParser(
                 return Ref{ .source_index = start, .inner_index = end, .is_source_contents_slice = true };
             } else if (p.allocated_names.capacity > 0) {
                 const inner_index = Ref.toInt(p.allocated_names.items.len);
-                try p.allocated_names.append(p.allocator, name);
+                try p.allocated_names.append(name);
                 return Ref{ .source_index = std.math.maxInt(Ref.Int), .inner_index = inner_index };
             } else {
-                p.allocated_names = try @TypeOf(p.allocated_names).initCapacity(p.allocator, 1);
+                if (p.allocated_names_pool == null) {
+                    p.allocated_names_pool = AllocatedNamesPool.get(_global.default_allocator);
+                    p.allocated_names = p.allocated_names_pool.?.data;
+                    p.allocated_names.clearRetainingCapacity();
+                    try p.allocated_names.ensureTotalCapacity(1);
+                }
                 p.allocated_names.appendAssumeCapacity(name);
                 return Ref{ .source_index = std.math.maxInt(Ref.Int), .inner_index = 0 };
             }

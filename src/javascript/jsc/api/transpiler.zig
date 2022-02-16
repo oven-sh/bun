@@ -175,11 +175,7 @@ pub const TransformTask = struct {
             this.err = error.ParseError;
             return;
         };
-        defer {
-            if (parse_result.ast.symbol_pool) |pool| {
-                pool.release();
-            }
-        }
+
         if (parse_result.empty) {
             this.output_code = ZigString.init("");
             return;
@@ -600,7 +596,7 @@ pub fn scan(
         return null;
     };
 
-    const code_holder = JSC.Node.StringOrBuffer.fromJS(ctx.ptr(), code_arg, exception) orelse {
+    const code_holder = JSC.Node.StringOrBuffer.fromJS(ctx.ptr(), args.arena.allocator(), code_arg, exception) orelse {
         if (exception.* == null) JSC.throwInvalidArguments("Expected a string or Uint8Array", .{}, ctx, exception);
         return null;
     };
@@ -618,12 +614,24 @@ pub fn scan(
 
     if (exception.* != null) return null;
 
+    var arena = Mimalloc.Arena.init() catch unreachable;
+    var prev_allocator = this.bundler.allocator;
+    this.bundler.setAllocator(arena.allocator());
+    var log = logger.Log.init(arena.backingAllocator());
+    defer log.deinit();
+    this.bundler.setLog(&log);
+    defer {
+        this.bundler.setLog(&this.transpiler_options.log);
+        this.bundler.setAllocator(prev_allocator);
+        arena.deinit();
+    }
+
     defer {
         JSAst.Stmt.Data.Store.reset();
         JSAst.Expr.Data.Store.reset();
     }
 
-    const parse_result = getParseResult(this, args.arena.allocator(), code, loader) orelse {
+    const parse_result = getParseResult(this, arena.allocator(), code, loader) orelse {
         if ((this.bundler.log.warnings + this.bundler.log.errors) > 0) {
             var out_exception = this.bundler.log.toJS(ctx.ptr(), getAllocator(ctx), "Parse error");
             exception.* = out_exception.asObjectRef();
@@ -633,11 +641,6 @@ pub fn scan(
         JSC.throwInvalidArguments("Failed to parse", .{}, ctx, exception);
         return null;
     };
-    defer {
-        if (parse_result.ast.symbol_pool) |symbols| {
-            symbols.release();
-        }
-    }
 
     if ((this.bundler.log.warnings + this.bundler.log.errors) > 0) {
         var out_exception = this.bundler.log.toJS(ctx.ptr(), getAllocator(ctx), "Parse error");
@@ -684,7 +687,7 @@ pub fn transform(
         return null;
     };
 
-    const code_holder = JSC.Node.StringOrBuffer.fromJS(ctx.ptr(), code_arg, exception) orelse {
+    const code_holder = JSC.Node.StringOrBuffer.fromJS(ctx.ptr(), this.arena.allocator(), code_arg, exception) orelse {
         if (exception.* == null) JSC.throwInvalidArguments("Expected a string or Uint8Array", .{}, ctx, exception);
         return null;
     };
@@ -725,7 +728,9 @@ pub fn transformSync(
         return null;
     };
 
-    const code_holder = JSC.Node.StringOrBuffer.fromJS(ctx.ptr(), code_arg, exception) orelse {
+    var arena = Mimalloc.Arena.init() catch unreachable;
+    defer arena.deinit();
+    const code_holder = JSC.Node.StringOrBuffer.fromJS(ctx.ptr(), arena.allocator(), code_arg, exception) orelse {
         if (exception.* == null) JSC.throwInvalidArguments("Expected a string or Uint8Array", .{}, ctx, exception);
         return null;
     };
@@ -733,15 +738,6 @@ pub fn transformSync(
     const code = code_holder.slice();
     JSC.C.JSValueProtect(ctx, arguments[0]);
     defer JSC.C.JSValueUnprotect(ctx, arguments[0]);
-    var arena = Mimalloc.Arena.init() catch unreachable;
-    this.bundler.setAllocator(arena.allocator());
-    var log = logger.Log.init(arena.backingAllocator());
-    this.bundler.setLog(&log);
-    defer {
-        this.bundler.setLog(&this.transpiler_options.log);
-        this.bundler.setAllocator(_global.default_allocator);
-        arena.deinit();
-    }
 
     args.eat();
     const loader: ?Loader = brk: {
@@ -755,12 +751,24 @@ pub fn transformSync(
 
     if (exception.* != null) return null;
 
+    JSAst.Stmt.Data.Store.reset();
+    JSAst.Expr.Data.Store.reset();
     defer {
         JSAst.Stmt.Data.Store.reset();
         JSAst.Expr.Data.Store.reset();
     }
 
-    const parse_result = getParseResult(this, arena.allocator(), code, loader) orelse {
+    var prev_bundler = this.bundler;
+    this.bundler.setAllocator(arena.allocator());
+    this.bundler.macro_context = null;
+    var log = logger.Log.init(arena.backingAllocator());
+    this.bundler.setLog(&log);
+
+    defer {
+        this.bundler = prev_bundler;
+    }
+
+    var parse_result = getParseResult(this, arena.allocator(), code, loader) orelse {
         if ((this.bundler.log.warnings + this.bundler.log.errors) > 0) {
             var out_exception = this.bundler.log.toJS(ctx.ptr(), getAllocator(ctx), "Parse error");
             exception.* = out_exception.asObjectRef();
@@ -770,11 +778,6 @@ pub fn transformSync(
         JSC.throwInvalidArguments("Failed to parse", .{}, ctx, exception);
         return null;
     };
-    defer {
-        if (parse_result.ast.symbol_pool) |symbols| {
-            symbols.release();
-        }
-    }
 
     if ((this.bundler.log.warnings + this.bundler.log.errors) > 0) {
         var out_exception = this.bundler.log.toJS(ctx.ptr(), getAllocator(ctx), "Parse error");
@@ -787,6 +790,7 @@ pub fn transformSync(
             JSC.throwInvalidArguments("Failed to create BufferWriter", .{}, ctx, exception);
             return null;
         };
+
         writer.buffer.growIfNeeded(code.len) catch unreachable;
         writer.buffer.list.expandToCapacity();
         break :brk writer;
@@ -800,6 +804,7 @@ pub fn transformSync(
     var printer = JSPrinter.BufferPrinter.init(buffer_writer);
     _ = this.bundler.print(parse_result, @TypeOf(&printer), &printer, .esm_ascii) catch |err| {
         JSC.JSError(_global.default_allocator, "Failed to print code: {s}", .{@errorName(err)}, ctx, exception);
+
         return null;
     };
 
@@ -877,7 +882,7 @@ pub fn scanImports(
         return null;
     };
 
-    const code_holder = JSC.Node.StringOrBuffer.fromJS(ctx.ptr(), code_arg, exception) orelse {
+    const code_holder = JSC.Node.StringOrBuffer.fromJS(ctx.ptr(), args.arena.allocator(), code_arg, exception) orelse {
         if (exception.* == null) JSC.throwInvalidArguments("Expected a string or Uint8Array", .{}, ctx, exception);
         return null;
     };
@@ -899,6 +904,18 @@ pub fn scanImports(
 
     if (exception.* != null) return null;
 
+    var arena = Mimalloc.Arena.init() catch unreachable;
+    var prev_allocator = this.bundler.allocator;
+    this.bundler.setAllocator(arena.allocator());
+    var log = logger.Log.init(arena.backingAllocator());
+    defer log.deinit();
+    this.bundler.setLog(&log);
+    defer {
+        this.bundler.setLog(&this.transpiler_options.log);
+        this.bundler.setAllocator(prev_allocator);
+        arena.deinit();
+    }
+
     const source = logger.Source.initPathString(loader.stdinName(), code);
     var bundler = &this.bundler;
     const jsx = if (this.transpiler_options.tsconfig != null)
@@ -911,8 +928,9 @@ pub fn scanImports(
         this.bundler.macro_context = JSAst.Macro.MacroContext.init(&this.bundler);
     }
     opts.macro_context = &this.bundler.macro_context.?;
-    var log = logger.Log.init(getAllocator(ctx));
-    defer log.deinit();
+
+    JSAst.Stmt.Data.Store.reset();
+    JSAst.Expr.Data.Store.reset();
 
     defer {
         JSAst.Stmt.Data.Store.reset();

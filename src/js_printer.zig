@@ -2158,12 +2158,7 @@ pub fn NewPrinter(
                         if (item.value) |val| {
                             switch (val.data) {
                                 .e_identifier => |e| {
-
-                                    // TODO: is needing to check item.flags.was_shorthand a bug?
-                                    // esbuild doesn't have to do that...
-                                    // maybe it's a symptom of some other underlying issue
-                                    // or maybe, it's because i'm not lowering the same way that esbuild does.
-                                    if (strings.eql(key.utf8, p.renamer.nameForSymbol(e.ref))) {
+                                    if (key.eql(string, p.renamer.nameForSymbol(e.ref))) {
                                         if (item.initializer) |initial| {
                                             p.printInitializer(initial);
                                         }
@@ -2171,7 +2166,6 @@ pub fn NewPrinter(
                                             return;
                                         }
                                     }
-                                    // if (strings) {}
                                 },
                                 .e_import_identifier => |e| {
                                     const ref = p.symbols.follow(e.ref);
@@ -2311,13 +2305,8 @@ pub fn NewPrinter(
                             p.maybePrintDefaultBindingValue(item);
 
                             // Make sure there's a comma after trailing missing items
-                            if (is_last) {
-                                switch (item.binding.data) {
-                                    .b_missing => {
-                                        p.print(",");
-                                    },
-                                    else => {},
-                                }
+                            if (is_last and item.binding.data == .b_missing) {
+                                p.print(",");
                             }
                         }
 
@@ -2325,6 +2314,8 @@ pub fn NewPrinter(
                             p.options.unindent();
                             p.printNewline();
                             p.printIndent();
+                        } else {
+                            p.printSpace();
                         }
                     }
 
@@ -2425,7 +2416,7 @@ pub fn NewPrinter(
                             p.options.unindent();
                             p.printNewline();
                             p.printIndent();
-                        } else if (b.properties.len > 0) {
+                        } else {
                             p.printSpace();
                         }
                     }

@@ -59,10 +59,6 @@ pub const DefineData = struct {
     // have any observable side effects.
     call_can_be_unwrapped_if_unused: bool = false,
 
-    // All the globals have the same behavior.
-    // So we can create just one struct for it.
-    pub const GlobalDefineData = DefineData{};
-
     pub fn isUndefined(self: *const DefineData) bool {
         return self.valueless;
     }
@@ -100,6 +96,7 @@ pub const DefineData = struct {
                         entry.key_ptr.*,
                         DefineData{
                             .value = js_ast.Expr.Data{ .e_undefined = js_ast.E.Undefined{} },
+
                             .original_name = entry.value_ptr.*,
                             .can_be_removed_if_unused = true,
                         },
@@ -272,7 +269,9 @@ pub const Define = struct {
         try define.identifiers.ensureTotalCapacity(641 + 2 + 1);
         try define.dots.ensureTotalCapacity(64);
 
-        var val = js_ast.Expr.Data{ .e_undefined = .{} };
+        var val = js_ast.Expr.Data{
+            .e_undefined = .{},
+        };
 
         var value_define = DefineData{ .value = val, .valueless = true };
         // Step 1. Load the globals into the hash tables
@@ -325,7 +324,10 @@ pub const Define = struct {
         );
 
         // Step 2. Swap in certain literal values because those can be constant folded
-        define.identifiers.putAssumeCapacity("undefined", value_define);
+        define.identifiers.putAssumeCapacity("undefined", .{
+            .value = val,
+            .valueless = false,
+        });
         define.identifiers.putAssumeCapacity("NaN", DefineData{
             .value = js_ast.Expr.Data{ .e_number = nan_val },
         });

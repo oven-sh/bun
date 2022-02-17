@@ -319,9 +319,9 @@ pub const ImportItemStatus = enum(u2) {
 };
 
 pub const AssignTarget = enum(u2) {
-    none,
-    replace, // "a = b"
-    update, // "a += b"
+    none = 0,
+    replace = 1, // "a = b"
+    update = 2, // "a += b"
     pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
         return try std.json.stringify(@tagName(self), opts, o);
     }
@@ -429,18 +429,27 @@ pub const Binding = struct {
                 return Expr.init(E.Array, E.Array{ .items = ExprNodeList.init(exprs), .is_single_line = b.is_single_line }, loc);
             },
             .b_object => |b| {
-                var properties = wrapper.allocator.alloc(G.Property, b.properties.len) catch unreachable;
+                var properties = wrapper
+                    .allocator
+                    .alloc(G.Property, b.properties.len) catch unreachable;
                 var i: usize = 0;
                 while (i < properties.len) : (i += 1) {
                     const item = b.properties[i];
                     properties[i] = G.Property{
                         .flags = item.flags,
-                        .kind = if (item.flags.is_spread) G.Property.Kind.spread else G.Property.Kind.normal,
+                        .key = item.key,
+                        .kind = if (item.flags.is_spread)
+                            G.Property.Kind.spread
+                        else
+                            G.Property.Kind.normal,
                         .value = toExpr(&item.value, wrapper),
                         .initializer = item.default_value,
                     };
                 }
-                return Expr.init(E.Object, E.Object{ .properties = G.Property.List.init(properties), .is_single_line = b.is_single_line }, loc);
+                return Expr.init(E.Object, E.Object{
+                    .properties = G.Property.List.init(properties),
+                    .is_single_line = b.is_single_line,
+                }, loc);
             },
             else => {
                 Global.panic("Interanl error", .{});
@@ -3885,52 +3894,91 @@ pub const Op = struct {
         un_post_dec,
         un_post_inc,
 
-        // Left-associative
+        /// Left-associative
         bin_add,
+        /// Left-associative
         bin_sub,
+        /// Left-associative
         bin_mul,
+        /// Left-associative
         bin_div,
+        /// Left-associative
         bin_rem,
+        /// Left-associative
         bin_pow,
+        /// Left-associative
         bin_lt,
+        /// Left-associative
         bin_le,
+        /// Left-associative
         bin_gt,
+        /// Left-associative
         bin_ge,
+        /// Left-associative
         bin_in,
+        /// Left-associative
         bin_instanceof,
+        /// Left-associative
         bin_shl,
+        /// Left-associative
         bin_shr,
+        /// Left-associative
         bin_u_shr,
+        /// Left-associative
         bin_loose_eq,
+        /// Left-associative
         bin_loose_ne,
+        /// Left-associative
         bin_strict_eq,
+        /// Left-associative
         bin_strict_ne,
+        /// Left-associative
         bin_nullish_coalescing,
+        /// Left-associative
         bin_logical_or,
+        /// Left-associative
         bin_logical_and,
+        /// Left-associative
         bin_bitwise_or,
+        /// Left-associative
         bin_bitwise_and,
+        /// Left-associative
         bin_bitwise_xor,
 
-        // Non-associative
+        /// Non-associative
         bin_comma,
 
-        // Right-associative
+        /// Right-associative
         bin_assign,
+        /// Right-associative
         bin_add_assign,
+        /// Right-associative
         bin_sub_assign,
+        /// Right-associative
         bin_mul_assign,
+        /// Right-associative
         bin_div_assign,
+        /// Right-associative
         bin_rem_assign,
+        /// Right-associative
         bin_pow_assign,
+        /// Right-associative
         bin_shl_assign,
+        /// Right-associative
         bin_shr_assign,
+        /// Right-associative
         bin_u_shr_assign,
+        /// Right-associative
         bin_bitwise_or_assign,
+        /// Right-associative
         bin_bitwise_and_assign,
+        /// Right-associative
         bin_bitwise_xor_assign,
+        /// Right-associative
         bin_nullish_coalescing_assign,
+        /// Right-associative 
         bin_logical_or_assign,
+        /// Right-associative
         bin_logical_and_assign,
 
         pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
@@ -3938,14 +3986,19 @@ pub const Op = struct {
         }
 
         pub fn unaryAssignTarget(code: Op.Code) AssignTarget {
-            if (@enumToInt(code) >= @enumToInt(Op.Code.un_pre_dec) and @enumToInt(code) <= @enumToInt(Op.Code.un_post_inc)) {
+            if (@enumToInt(code) >=
+                @enumToInt(Op.Code.un_pre_dec) and @enumToInt(code) <=
+                @enumToInt(Op.Code.un_post_inc))
+            {
                 return AssignTarget.update;
-            } else {
-                return AssignTarget.none;
             }
+
+            return AssignTarget.none;
         }
         pub fn isLeftAssociative(code: Op.Code) bool {
-            return @enumToInt(code) >= @enumToInt(Op.Code.bin_add) and @enumToInt(code) < @enumToInt(Op.Code.bin_comma) and code != .bin_pow;
+            return @enumToInt(code) >=
+                @enumToInt(Op.Code.bin_add) and
+                @enumToInt(code) < @enumToInt(Op.Code.bin_comma) and code != .bin_pow;
         }
         pub fn isRightAssociative(code: Op.Code) bool {
             return @enumToInt(code) >= @enumToInt(Op.Code.bin_assign) or code == .bin_pow;
@@ -3953,11 +4006,13 @@ pub const Op = struct {
         pub fn binaryAssignTarget(code: Op.Code) AssignTarget {
             if (code == .bin_assign) {
                 return AssignTarget.replace;
-            } else if (@enumToInt(code) > @enumToInt(Op.Code.bin_assign)) {
-                return .update;
-            } else {
-                return .none;
             }
+
+            if (@enumToInt(code) > @enumToInt(Op.Code.bin_assign)) {
+                return AssignTarget.update;
+            }
+
+            return AssignTarget.none;
         }
 
         pub fn isPrefix(code: Op.Code) bool {
@@ -3989,27 +4044,28 @@ pub const Op = struct {
         new,
         call,
         member,
-        pub fn lt(self: Level, b: Level) bool {
+
+        pub inline fn lt(self: Level, b: Level) bool {
             return @enumToInt(self) < @enumToInt(b);
         }
-        pub fn gt(self: Level, b: Level) bool {
+        pub inline fn gt(self: Level, b: Level) bool {
             return @enumToInt(self) > @enumToInt(b);
         }
-        pub fn gte(self: Level, b: Level) bool {
+        pub inline fn gte(self: Level, b: Level) bool {
             return @enumToInt(self) >= @enumToInt(b);
         }
-        pub fn lte(self: Level, b: Level) bool {
+        pub inline fn lte(self: Level, b: Level) bool {
             return @enumToInt(self) <= @enumToInt(b);
         }
-        pub fn eql(self: Level, b: Level) bool {
+        pub inline fn eql(self: Level, b: Level) bool {
             return @enumToInt(self) == @enumToInt(b);
         }
 
-        pub fn sub(self: Level, i: anytype) Level {
+        pub inline fn sub(self: Level, i: anytype) Level {
             return @intToEnum(Level, @enumToInt(self) - i);
         }
 
-        pub fn add(self: Level, i: anytype) Level {
+        pub inline fn add(self: Level, i: anytype) Level {
             return @intToEnum(Level, @enumToInt(self) + i);
         }
     };

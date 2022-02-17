@@ -5446,6 +5446,36 @@ pub fn NewParser(
 
         // pub fn maybeRewriteExportSymbol(p: *P, )
 
+        fn defaultNameForExpr(p: *P, expr: Expr, loc: logger.Loc) LocRef {
+            switch (expr.data) {
+                .e_function => |func_container| {
+                    if (func_container.func.name) |_name| {
+                        if (_name.ref) |ref| {
+                            return LocRef{ .loc = loc, .ref = ref };
+                        }
+                    }
+                },
+                .e_identifier => |ident| {
+                    return LocRef{ .loc = loc, .ref = ident.ref };
+                },
+                .e_import_identifier => |ident| {
+                    if (!allow_macros or (allow_macros and !p.macro.refs.contains(ident.ref))) {
+                        return LocRef{ .loc = loc, .ref = ident.ref };
+                    }
+                },
+                .e_class => |class| {
+                    if (class.class_name) |_name| {
+                        if (_name.ref) |ref| {
+                            return LocRef{ .loc = loc, .ref = ref };
+                        }
+                    }
+                },
+                else => {},
+            }
+
+            return createDefaultName(p, loc) catch unreachable;
+        }
+
         fn parseStmt(p: *P, opts: *ParseStatementOptions) anyerror!Stmt {
             var loc = p.lexer.loc();
 
@@ -5706,38 +5736,10 @@ pub fn NewParser(
                             try p.lexer.expectOrInsertSemicolon();
 
                             // Use the expression name if present, since it's a better name
-                            const default_name: js_ast.LocRef = default_name_getter: {
-                                switch (expr.data) {
-                                    .e_function => |func_container| {
-                                        if (func_container.func.name) |_name| {
-                                            if (_name.ref) |ref| {
-                                                break :default_name_getter LocRef{ .loc = defaultLoc, .ref = ref };
-                                            }
-                                        } else {}
-                                    },
-                                    .e_identifier => |ident| {
-                                        break :default_name_getter LocRef{ .loc = defaultLoc, .ref = ident.ref };
-                                    },
-                                    .e_import_identifier => |ident| {
-                                        break :default_name_getter LocRef{ .loc = defaultLoc, .ref = ident.ref };
-                                    },
-                                    .e_class => |class| {
-                                        if (class.class_name) |_name| {
-                                            if (_name.ref) |ref| {
-                                                break :default_name_getter LocRef{ .loc = defaultLoc, .ref = ref };
-                                            }
-                                        } else {}
-                                    },
-                                    else => {},
-                                }
-
-                                break :default_name_getter createDefaultName(p, defaultLoc) catch unreachable;
-                            };
-
                             p.has_export_default = true;
                             return p.s(
                                 S.ExportDefault{
-                                    .default_name = default_name,
+                                    .default_name = p.defaultNameForExpr(expr, defaultLoc),
                                     .value = js_ast.StmtOrExpr{
                                         .expr = expr,
                                     },
@@ -5781,7 +5783,7 @@ pub fn NewParser(
                                 // path.assertions
                             );
 
-                            if (comptime ParsePassSymbolUsageType != void) {
+                            if (comptime track_symbol_usage_during_parse_pass) {
                                 // In the scan pass, we need _some_ way of knowing *not* to mark as unused
                                 p.import_records.items[import_record_index].calls_run_time_re_export_fn = true;
                             }
@@ -5808,7 +5810,7 @@ pub fn NewParser(
                                 const namespace_ref = p.storeNameInRef(path_name.nonUniqueNameString(p.allocator) catch unreachable) catch unreachable;
                                 try p.lexer.expectOrInsertSemicolon();
 
-                                if (comptime ParsePassSymbolUsageType != void) {
+                                if (comptime track_symbol_usage_during_parse_pass) {
                                     // In the scan pass, we need _some_ way of knowing *not* to mark as unused
                                     p.import_records.items[import_record_index].calls_run_time_re_export_fn = true;
                                 }
@@ -7212,7 +7214,7 @@ pub fn NewParser(
                     var has_spread = false;
 
                     // "in" expressions are allowed
-                    var old_allow_in = p.allow_in;
+                    const old_allow_in = p.allow_in;
                     p.allow_in = true;
 
                     while (p.lexer.token != .t_close_bracket) {
@@ -7278,11 +7280,11 @@ pub fn NewParser(
                 .t_open_brace => {
                     // p.markSyntaxFeature(compat.Destructuring, p.lexer.Range())
                     try p.lexer.next();
-                    var is_single_line = false;
+                    var is_single_line = !p.lexer.has_newline_before;
                     var properties = ListManaged(js_ast.B.Property).init(p.allocator);
 
                     // "in" expressions are allowed
-                    var old_allow_in = p.allow_in;
+                    const old_allow_in = p.allow_in;
                     p.allow_in = true;
 
                     while (p.lexer.token != .t_close_brace) {
@@ -7334,13 +7336,15 @@ pub fn NewParser(
             switch (p.lexer.token) {
                 .t_dot_dot_dot => {
                     try p.lexer.next();
-                    const value = p.b(B.Identifier{
-                        .ref = p.storeNameInRef(p.lexer.identifier) catch unreachable,
-                    }, p.lexer.loc());
+                    const value = p.b(
+                        B.Identifier{
+                            .ref = p.storeNameInRef(p.lexer.identifier) catch unreachable,
+                        },
+                        p.lexer.loc(),
+                    );
                     try p.lexer.expect(.t_identifier);
                     return B.Property{
-                        // This "key" diverges from esbuild, but is due to Go always having a zero value.
-                        .key = Expr{ .data = Prefill.Data.EMissing, .loc = logger.Loc{} },
+                        .key = p.e(E.Missing{}, p.lexer.loc()),
 
                         .flags = Flags.Property{ .is_spread = true },
                         .value = value,
@@ -7373,19 +7377,16 @@ pub fn NewParser(
                     const name = p.lexer.identifier;
                     const loc = p.lexer.loc();
 
-                    const e_str = E.String{ .utf8 = name };
-
                     if (!p.lexer.isIdentifierOrKeyword()) {
                         try p.lexer.expect(.t_identifier);
                     }
 
                     try p.lexer.next();
 
-                    const ref = p.storeNameInRef(name) catch unreachable;
-
-                    key = p.e(e_str, loc);
+                    key = p.e(E.String{ .utf8 = name }, loc);
 
                     if (p.lexer.token != .t_colon and p.lexer.token != .t_open_paren) {
+                        const ref = p.storeNameInRef(name) catch unreachable;
                         const value = p.b(B.Identifier{ .ref = ref }, loc);
                         var default_value: ?Expr = null;
                         if (p.lexer.token == .t_equals) {
@@ -8143,6 +8144,7 @@ pub fn NewParser(
                     p.allocated_names.clearRetainingCapacity();
                     try p.allocated_names.ensureTotalCapacity(1);
                 }
+                // p.allocated_names
                 p.allocated_names.appendAssumeCapacity(name);
                 return Ref{ .source_index = std.math.maxInt(Ref.Int), .inner_index = 0 };
             }
@@ -8474,7 +8476,7 @@ pub fn NewParser(
         }
 
         pub fn parseProperty(p: *P, kind: Property.Kind, opts: *PropertyOpts, errors: ?*DeferredErrors) anyerror!?G.Property {
-            var key: Expr = Expr{ .loc = logger.Loc.Empty, .data = Prefill.Data.EMissing };
+            var key: Expr = Expr{ .loc = logger.Loc.Empty, .data = .{ .e_missing = E.Missing{} } };
             var key_range = p.lexer.range();
             var is_computed = false;
 
@@ -8607,14 +8609,14 @@ pub fn NewParser(
                     key = p.e(E.String{ .utf8 = name }, name_range.loc);
 
                     // Parse a shorthand property
-                    const isShorthandProperty = (!opts.is_class and
+                    const isShorthandProperty = !opts.is_class and
                         kind == .normal and
                         p.lexer.token != .t_colon and
                         p.lexer.token != .t_open_paren and
                         p.lexer.token != .t_less_than and
                         !opts.is_generator and
                         !opts.is_async and
-                        !js_lexer.Keywords.has(name));
+                        !js_lexer.Keywords.has(name);
 
                     if (isShorthandProperty) {
                         if ((p.fn_or_arrow_data_parse.allow_await != .allow_ident and
@@ -8638,7 +8640,8 @@ pub fn NewParser(
                             // ({foo: 1 = })
                             //          ^ is invalid
                             // but it's only invalid if we're missing an expression here.
-                            if (initializer == null) errors.?.invalid_expr_default_value = invalid_expr_default_value_range;
+                            if (initializer == null)
+                                errors.?.invalid_expr_default_value = invalid_expr_default_value_range;
                         }
 
                         return G.Property{
@@ -9072,10 +9075,7 @@ pub fn NewParser(
             return ExprNodeList.fromList(args);
         }
 
-        pub fn parseSuffix(p: *P, left: Expr, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
-            return _parseSuffix(p, left, level, errors orelse &DeferredErrors.None, flags);
-        }
-        pub fn _parseSuffix(p: *P, _left: Expr, level: Level, errors: *DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
+        pub fn parseSuffix(p: *P, _left: Expr, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
             var left = _left;
             var optional_chain: ?js_ast.OptionalChain = null;
             while (true) {
@@ -9341,11 +9341,11 @@ pub fn NewParser(
                         if (is_typescript_enabled and left.loc.start == p.latest_arrow_arg_loc.start and (p.lexer.token == .t_colon or
                             p.lexer.token == .t_close_paren or p.lexer.token == .t_comma))
                         {
-                            if (errors.is_disabled) {
+                            if (errors == null) {
                                 try p.lexer.unexpected();
                                 return error.SyntaxError;
                             }
-                            errors.invalid_expr_after_question = p.lexer.range();
+                            errors.?.invalid_expr_after_question = p.lexer.range();
                             return left;
                         }
 
@@ -9888,7 +9888,7 @@ pub fn NewParser(
             Global.panic("{s}", .{panic_buffer[0..panic_stream.pos]});
         }
 
-        pub fn _parsePrefix(p: *P, level: Level, errors: *DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
+        pub fn parsePrefix(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
             const loc = p.lexer.loc();
             const l = @enumToInt(level);
             // Output.print("Parse Prefix {s}:{s} @{s} ", .{ p.lexer.token, p.lexer.raw(), @tagName(level) });
@@ -10276,14 +10276,19 @@ pub fn NewParser(
                                 items.append(Expr{ .data = Prefill.Data.EMissing, .loc = p.lexer.loc() }) catch unreachable;
                             },
                             .t_dot_dot_dot => {
-                                // this might be wrong.
-                                errors.array_spread_feature = p.lexer.range();
+                                if (errors != null)
+                                    errors.?.array_spread_feature = p.lexer.range();
 
                                 const dots_loc = p.lexer.loc();
                                 try p.lexer.next();
                                 items.append(
                                     p.e(E.Spread{ .value = try p.parseExprOrBindings(.comma, &self_errors) }, dots_loc),
                                 ) catch unreachable;
+
+                                // Commas are not allowed here when destructuring
+                                if (p.lexer.token == .t_comma) {
+                                    comma_after_spread = p.lexer.loc();
+                                }
                             },
                             else => {
                                 items.append(
@@ -10317,12 +10322,12 @@ pub fn NewParser(
                     // Is this a binding pattern?
                     if (p.willNeedBindingPattern()) {
                         // noop
-                    } else if (errors.is_disabled) {
+                    } else if (errors == null) {
                         // Is this an expression?
                         p.logExprErrors(&self_errors);
                     } else {
                         // In this case, we can't distinguish between the two yet
-                        self_errors.mergeInto(errors);
+                        self_errors.mergeInto(errors.?);
                     }
                     return p.e(E.Array{
                         .items = ExprNodeList.fromList(items),
@@ -10335,7 +10340,7 @@ pub fn NewParser(
                     var is_single_line = !p.lexer.has_newline_before;
                     var properties = ListManaged(G.Property).init(p.allocator);
                     var self_errors = DeferredErrors{};
-                    var comma_after_spread = logger.Loc{};
+                    var comma_after_spread: logger.Loc = logger.Loc{};
 
                     // Allow "in" inside object literals
                     const old_allow_in = p.allow_in;
@@ -10354,6 +10359,9 @@ pub fn NewParser(
                             // This property may turn out to be a type in TypeScript, which should be ignored
                             var propertyOpts = PropertyOpts{};
                             if (try p.parseProperty(.normal, &propertyOpts, &self_errors)) |prop| {
+                                if (comptime Environment.allow_assert) {
+                                    std.debug.assert(prop.key != null or prop.value != null);
+                                }
                                 properties.append(prop) catch unreachable;
                             }
                         }
@@ -10380,16 +10388,22 @@ pub fn NewParser(
                     try p.lexer.expect(.t_close_brace);
                     p.allow_in = old_allow_in;
 
-                    if (p.willNeedBindingPattern()) {} else if (!errors.is_disabled) {
+                    if (p.willNeedBindingPattern()) {
+                        // Is this a binding pattern?
+                    } else if (errors == null) {
                         // Is this an expression?
                         p.logExprErrors(&self_errors);
                     } else {
                         // In this case, we can't distinguish between the two yet
-                        self_errors.mergeInto(errors);
+                        self_errors.mergeInto(errors.?);
                     }
+
                     return p.e(E.Object{
                         .properties = G.Property.List.fromList(properties),
-                        .comma_after_spread = comma_after_spread.toNullable(),
+                        .comma_after_spread = if (comma_after_spread.start > 0)
+                            comma_after_spread
+                        else
+                            null,
                         .is_single_line = is_single_line,
                     }, loc);
                 },
@@ -10865,13 +10879,9 @@ pub fn NewParser(
                 // "for ([a] in b) {}"
                 .t_in => !p.allow_in,
                 // "for ([a] of b) {}"
-                .t_identifier => p.allow_in and p.lexer.isContextualKeyword("of"),
+                .t_identifier => !p.allow_in and p.lexer.isContextualKeyword("of"),
                 else => false,
             };
-        }
-
-        fn parsePrefix(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
-            return try p._parsePrefix(level, errors orelse &DeferredErrors.None, flags);
         }
 
         fn appendPart(p: *P, parts: *ListManaged(js_ast.Part), stmts: []Stmt) !void {
@@ -11183,7 +11193,22 @@ pub fn NewParser(
             return null;
         }
 
+        fn isValidAssignmentTarget(p: *P, expr: Expr) bool {
+            return switch (expr.data) {
+                .e_identifier => |ident| !isEvalOrArguments(p.loadNameFromRef(ident.ref)),
+                .e_dot => |e| e.optional_chain == null,
+                .e_index => |e| e.optional_chain == null,
+                .e_array => |e| !e.is_parenthesized,
+                .e_object => |e| !e.is_parenthesized,
+                else => false,
+            };
+        }
+
         fn visitExprInOut(p: *P, expr: Expr, in: ExprIn) Expr {
+            if (in.assign_target != .none and !p.isValidAssignmentTarget(expr)) {
+                p.log.addError(p.source, expr.loc, "Invalid assignment target") catch unreachable;
+            }
+
             // Output.print("\nVisit: {s} - {d}\n", .{ @tagName(expr.data), expr.loc.start });
             switch (expr.data) {
                 .e_null, .e_super, .e_boolean, .e_big_int, .e_reg_exp, .e_new_target, .e_undefined => {},
@@ -12275,9 +12300,7 @@ pub fn NewParser(
                 },
                 .e_array => |e_| {
                     if (in.assign_target != .none) {
-                        if (e_.comma_after_spread) |spread| {
-                            p.log.addRangeError(p.source, logger.Range{ .loc = spread, .len = 1 }, "Unexpected \",\" after rest pattern") catch unreachable;
-                        }
+                        p.maybeCommaSpreadError(e_.comma_after_spread);
                     }
                     var items = e_.items.slice();
                     for (items) |*item| {
@@ -12318,13 +12341,18 @@ pub fn NewParser(
                     var has_proto = false;
                     var i: usize = 0;
                     while (i < e_.properties.len) : (i += 1) {
-                        var property = &e_.properties.ptr[i];
+                        var property = e_.properties.ptr[i];
 
                         if (property.kind != .spread) {
                             property.key = p.visitExpr(property.key orelse Global.panic("Expected property key", .{}));
                             const key = property.key.?;
                             // Forbid duplicate "__proto__" properties according to the specification
-                            if (!property.flags.is_computed and !property.flags.was_shorthand and !property.flags.is_method and in.assign_target == .none and key.data.isStringValue() and strings.eqlComptime(
+                            if (!property.flags.is_computed and
+                                !property.flags.was_shorthand and
+                                !property.flags.is_method and
+                                in.assign_target == .none and
+                                key.data.isStringValue() and
+                                strings.eqlComptime(
                                 // __proto__ is utf8, assume it lives in refs
                                 key.data.e_string.utf8,
                                 "__proto__",
@@ -12340,7 +12368,7 @@ pub fn NewParser(
                         }
 
                         // Extract the initializer for expressions like "({ a: b = c } = d)"
-                        if (in.assign_target != .none and property.initializer != null and property.value != null) {
+                        if (in.assign_target != .none and property.initializer == null and property.value != null) {
                             switch (property.value.?.data) {
                                 .e_binary => |bin| {
                                     if (bin.op == .bin_assign) {
@@ -12358,7 +12386,7 @@ pub fn NewParser(
 
                         if (property.initializer != null) {
                             const was_anonymous_named_expr = p.isAnonymousNamedExpr(property.initializer orelse unreachable);
-                            property.initializer = p.visitExprInOut(property.initializer.?, ExprIn{ .assign_target = in.assign_target });
+                            property.initializer = p.visitExpr(property.initializer.?);
 
                             if (property.value) |val| {
                                 if (@as(Expr.Tag, val.data) == .e_identifier) {
@@ -12370,6 +12398,8 @@ pub fn NewParser(
                                 }
                             }
                         }
+
+                        e_.properties.ptr[i] = property;
                     }
                 },
                 .e_import => |e_| {
@@ -14913,7 +14943,10 @@ pub fn NewParser(
                 // attempt to convert the expressions to bindings first before deciding
                 // whether this is an arrow function, and only pick an arrow function if
                 // there were no conversion errors.
-                if (p.lexer.token == .t_equals_greater_than or (invalidLog.items.len == 0 and p.trySkipTypeScriptArrowReturnTypeWithBacktracking()) or opts.force_arrow_fn) {
+                if (p.lexer.token == .t_equals_greater_than or (invalidLog.items.len == 0 and
+                    p.trySkipTypeScriptArrowReturnTypeWithBacktracking()) or
+                    opts.force_arrow_fn)
+                {
                     p.maybeCommaSpreadError(comma_after_spread);
                     p.logArrowArgErrors(&arrowArgErrors);
 
@@ -14921,7 +14954,10 @@ pub fn NewParser(
                     // conversion errors
                     if (invalidLog.items.len > 0) {
                         for (invalidLog.items) |_loc| {
-                            try p.log.addError(p.source, _loc, "Invalid binding pattern");
+                            _loc.addError(
+                                p.log,
+                                p.source,
+                            );
                         }
                     }
                     var arrow_data = FnOrArrowDataParse{

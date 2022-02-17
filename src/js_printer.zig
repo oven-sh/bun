@@ -460,6 +460,11 @@ pub fn NewPrinter(
                     p.printBlock(stmt.loc, block.stmts);
                     p.printNewline();
                 },
+                .s_empty => {
+                    p.printSpace();
+                    p.printBlock(stmt.loc, &.{});
+                    p.printNewline();
+                },
                 else => {
                     p.printNewline();
                     p.options.indent += 1;

@@ -1520,14 +1520,9 @@ pub fn NewPrinter(
                             }
                             p.printExpr(item, .comma, ExprFlag.None());
 
-                            if (i == items.len - 1) {
+                            if (i == items.len - 1 and item.data == .e_missing) {
                                 // Make sure there's a comma after trailing missing items
-                                switch (item.data) {
-                                    .e_missing => {
-                                        p.print(",");
-                                    },
-                                    else => {},
-                                }
+                                p.print(",");
                             }
                         }
 
@@ -1558,12 +1553,11 @@ pub fn NewPrinter(
                         for (props) |property, i| {
                             if (i != 0) {
                                 p.print(",");
-                                if (e.is_single_line) {
-                                    p.printSpace();
-                                }
                             }
 
-                            if (!e.is_single_line) {
+                            if (e.is_single_line) {
+                                p.printSpace();
+                            } else {
                                 p.printNewline();
                                 p.printIndent();
                             }
@@ -1574,7 +1568,7 @@ pub fn NewPrinter(
                             p.options.unindent();
                             p.printNewline();
                             p.printIndent();
-                        } else if (props.len > 0) {
+                        } else {
                             p.printSpace();
                         }
                     }
@@ -2314,8 +2308,6 @@ pub fn NewPrinter(
                             p.options.unindent();
                             p.printNewline();
                             p.printIndent();
-                        } else {
-                            p.printSpace();
                         }
                     }
 

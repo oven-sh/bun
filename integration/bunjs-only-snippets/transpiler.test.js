@@ -56,154 +56,160 @@ describe("Bun.Transpiler", () => {
     });
   });
 
+  const parsed = (code, trim = true, autoExport = false) => {
+    if (autoExport) {
+      code = "export default (" + code + ")";
+    }
+
+    var out = transpiler.transformSync(code, "js");
+    if (autoExport && out.startsWith("export default ")) {
+      out = out.substring("export default ".length);
+    }
+
+    if (trim) {
+      out = out.trim();
+
+      if (out.endsWith(";")) {
+        out = out.substring(0, out.length - 1);
+      }
+
+      return out.trim();
+    }
+
+    return out;
+  };
+
+  const expectPrinted = (code, out) => {
+    expect(parsed(code, true, true)).toBe(out);
+  };
+
+  const expectPrinted_ = (code, out) => {
+    expect(parsed(code, !out.endsWith(";\n"), false)).toBe(out);
+  };
+
+  const expectParseError = (code, message) => {
+    try {
+      parsed(code, false, false);
+    } catch (er) {
+      var err = er;
+      if (er instanceof AggregateError) {
+        err = err.errors[0];
+      }
+
+      expect(er.message).toBe(message);
+
+      return;
+    }
+
+    throw new Error("Expected parse error for code\n\t" + code);
+  };
+
   describe("parser", () => {
-    const parsed = (code, trim = true, autoExport = false) => {
-      if (autoExport) {
-        code = "export default (" + code + ")";
-      }
+    it("arrays", () => {
+      expectPrinted("[]", "[]");
+      expectPrinted("[,]", "[,]");
+      expectPrinted("[1]", "[1]");
+      expectPrinted("[1,]", "[1]");
+      expectPrinted("[,1]", "[, 1]");
+      expectPrinted("[1,2]", "[1, 2]");
+      expectPrinted("[,1,2]", "[, 1, 2]");
+      expectPrinted("[1,,2]", "[1, , 2]");
+      expectPrinted("[1,2,]", "[1, 2]");
+      expectPrinted("[1,2,,]", "[1, 2, ,]");
+    });
 
-      var out = transpiler.transformSync(code, "js");
-      if (autoExport && out.startsWith("export default ")) {
-        out = out.substring("export default ".length);
-      }
+    it("exponentiation", () => {
+      expectPrinted("(delete x) ** 0", "(delete x) ** 0");
+      expectPrinted("(delete x.prop) ** 0", "(delete x.prop) ** 0");
+      expectPrinted("(delete x[0]) ** 0", "(delete x[0]) ** 0");
 
-      if (trim) {
-        out = out.trim();
+      // remember: we are printing from export default
+      expectPrinted("(delete x?.prop) ** 0", "(delete (x?.prop)) ** 0");
 
-        if (out.endsWith(";")) {
-          out = out.substring(0, out.length - 1);
-        }
+      expectPrinted("(void x) ** 0", "(void x) ** 0");
+      expectPrinted("(typeof x) ** 0", "(typeof x) ** 0");
+      expectPrinted("(+x) ** 0", "(+x) ** 0");
+      expectPrinted("(-x) ** 0", "(-x) ** 0");
+      expectPrinted("(~x) ** 0", "(~x) ** 0");
+      expectPrinted("(!x) ** 0", "(!x) ** 0");
+      expectPrinted("(await x) ** 0", "(await x) ** 0");
+      expectPrinted("(await -x) ** 0", "(await -x) ** 0");
 
-        return out.trim();
-      }
+      expectPrinted("--x ** 2", "--x ** 2");
+      expectPrinted("++x ** 2", "++x ** 2");
+      expectPrinted("x-- ** 2", "x-- ** 2");
+      expectPrinted("x++ ** 2", "x++ ** 2");
 
-      return out;
-    };
+      expectPrinted("(-x) ** 2", "(-x) ** 2");
+      expectPrinted("(+x) ** 2", "(+x) ** 2");
+      expectPrinted("(~x) ** 2", "(~x) ** 2");
+      expectPrinted("(!x) ** 2", "(!x) ** 2");
+      expectPrinted("(-1) ** 2", "(-1) ** 2");
+      expectPrinted("(+1) ** 2", "1 ** 2");
+      expectPrinted("(~1) ** 2", "(~1) ** 2");
+      expectPrinted("(!1) ** 2", "false ** 2");
+      expectPrinted("(void x) ** 2", "(void x) ** 2");
+      expectPrinted("(delete x) ** 2", "(delete x) ** 2");
+      expectPrinted("(typeof x) ** 2", "(typeof x) ** 2");
+      expectPrinted("undefined ** 2", "undefined ** 2");
 
-    const expectPrinted = (code, out) => {
-      expect(parsed(code, true, true)).toBe(out);
-    };
+      expectParseError("-x ** 2", "Unexpected **");
+      expectParseError("+x ** 2", "Unexpected **");
+      expectParseError("~x ** 2", "Unexpected **");
+      expectParseError("!x ** 2", "Unexpected **");
+      expectParseError("void x ** 2", "Unexpected **");
+      expectParseError("delete x ** 2", "Unexpected **");
+      expectParseError("typeof x ** 2", "Unexpected **");
 
-    const expectPrinted_ = (code, out) => {
-      expect(parsed(code, !out.endsWith(";\n"), false)).toBe(out);
-    };
+      expectParseError("-x.y() ** 2", "Unexpected **");
+      expectParseError("+x.y() ** 2", "Unexpected **");
+      expectParseError("~x.y() ** 2", "Unexpected **");
+      expectParseError("!x.y() ** 2", "Unexpected **");
+      expectParseError("void x.y() ** 2", "Unexpected **");
+      expectParseError("delete x.y() ** 2", "Unexpected **");
+      expectParseError("typeof x.y() ** 2", "Unexpected **");
 
-    const expectParseError = (code, message) => {
-      try {
-        parsed(code, false, false);
-      } catch (er) {
-        expect(er.message).toBe(message);
-        return;
-      }
+      expectParseError("delete x ** 0", "Unexpected **");
+      expectParseError("delete x.prop ** 0", "Unexpected **");
+      expectParseError("delete x[0] ** 0", "Unexpected **");
+      expectParseError("delete x?.prop ** 0", "Unexpected **");
+      expectParseError("void x ** 0", "Unexpected **");
+      expectParseError("typeof x ** 0", "Unexpected **");
+      expectParseError("+x ** 0", "Unexpected **");
+      expectParseError("-x ** 0", "Unexpected **");
+      expectParseError("~x ** 0", "Unexpected **");
+      expectParseError("!x ** 0", "Unexpected **");
+      expectParseError("await x ** 0", "Unexpected **");
+      expectParseError("await -x ** 0", "Unexpected **");
+    });
 
-      throw new Error("Expected parse error for code\n\t" + code);
-    };
+    it("await", () => {
+      expectPrinted("await x", "await x");
+      expectPrinted("await +x", "await +x");
+      expectPrinted("await -x", "await -x");
+      expectPrinted("await ~x", "await ~x");
+      expectPrinted("await !x", "await !x");
+      expectPrinted("await --x", "await --x");
+      expectPrinted("await ++x", "await ++x");
+      expectPrinted("await x--", "await x--");
+      expectPrinted("await x++", "await x++");
+      expectPrinted("await void x", "await void x");
+      expectPrinted("await typeof x", "await typeof x");
+      expectPrinted("await (x * y)", "await (x * y)");
+      expectPrinted("await (x ** y)", "await (x ** y)");
 
-    // it("arrays", () => {
-    //   expectPrinted("[]", "[]");
-    //   expectPrinted("[,]", "[,]");
-    //   expectPrinted("[1]", "[1]");
-    //   expectPrinted("[1,]", "[1]");
-    //   expectPrinted("[,1]", "[, 1]");
-    //   expectPrinted("[1,2]", "[1, 2]");
-    //   expectPrinted("[,1,2]", "[, 1, 2]");
-    //   expectPrinted("[1,,2]", "[1, , 2]");
-    //   expectPrinted("[1,2,]", "[1, 2]");
-    //   expectPrinted("[1,2,,]", "[1, 2, ,]");
-    // });
+      expectPrinted_(
+        "async function f() { await delete x }",
+        "async function f() {\n  await delete x;\n}"
+      );
 
-    // it("exponentiation", () => {
-    //   expectPrinted("(delete x) ** 0", "(delete x) ** 0");
-    //   expectPrinted("(delete x.prop) ** 0", "(delete x.prop) ** 0");
-    //   expectPrinted("(delete x[0]) ** 0", "(delete x[0]) ** 0");
+      // expectParseError(
+      //   "await delete x",
+      //   "Delete of a bare identifier cannot be used in an ECMAScript module"
+      // );
+    });
 
-    //   // remember: we are printing from export default
-    //   expectPrinted("(delete x?.prop) ** 0", "(delete (x?.prop)) ** 0");
-
-    //   expectPrinted("(void x) ** 0", "(void x) ** 0");
-    //   expectPrinted("(typeof x) ** 0", "(typeof x) ** 0");
-    //   expectPrinted("(+x) ** 0", "(+x) ** 0");
-    //   expectPrinted("(-x) ** 0", "(-x) ** 0");
-    //   expectPrinted("(~x) ** 0", "(~x) ** 0");
-    //   expectPrinted("(!x) ** 0", "(!x) ** 0");
-    //   expectPrinted("(await x) ** 0", "(await x) ** 0");
-    //   expectPrinted("(await -x) ** 0", "(await -x) ** 0");
-
-    //   expectPrinted("--x ** 2", "--x ** 2");
-    //   expectPrinted("++x ** 2", "++x ** 2");
-    //   expectPrinted("x-- ** 2", "x-- ** 2");
-    //   expectPrinted("x++ ** 2", "x++ ** 2");
-
-    //   expectPrinted("(-x) ** 2", "(-x) ** 2");
-    //   expectPrinted("(+x) ** 2", "(+x) ** 2");
-    //   expectPrinted("(~x) ** 2", "(~x) ** 2");
-    //   expectPrinted("(!x) ** 2", "(!x) ** 2");
-    //   expectPrinted("(-1) ** 2", "(-1) ** 2");
-    //   expectPrinted("(+1) ** 2", "1 ** 2");
-    //   expectPrinted("(~1) ** 2", "(~1) ** 2");
-    //   expectPrinted("(!1) ** 2", "false ** 2");
-    //   expectPrinted("(void x) ** 2", "(void x) ** 2");
-    //   expectPrinted("(delete x) ** 2", "(delete x) ** 2");
-    //   expectPrinted("(typeof x) ** 2", "(typeof x) ** 2");
-    //   expectPrinted("undefined ** 2", "undefined ** 2");
-
-    //   expectParseError("-x ** 2", "Unexpected **");
-    //   expectParseError("+x ** 2", "Unexpected **");
-    //   expectParseError("~x ** 2", "Unexpected **");
-    //   expectParseError("!x ** 2", "Unexpected **");
-    //   expectParseError("void x ** 2", "Unexpected **");
-    //   expectParseError("delete x ** 2", "Unexpected **");
-    //   expectParseError("typeof x ** 2", "Unexpected **");
-
-    //   expectParseError("-x.y() ** 2", "Unexpected **");
-    //   expectParseError("+x.y() ** 2", "Unexpected **");
-    //   expectParseError("~x.y() ** 2", "Unexpected **");
-    //   expectParseError("!x.y() ** 2", "Unexpected **");
-    //   expectParseError("void x.y() ** 2", "Unexpected **");
-    //   expectParseError("delete x.y() ** 2", "Unexpected **");
-    //   expectParseError("typeof x.y() ** 2", "Unexpected **");
-
-    //   expectParseError("delete x ** 0", "Unexpected **");
-    //   expectParseError("delete x.prop ** 0", "Unexpected **");
-    //   expectParseError("delete x[0] ** 0", "Unexpected **");
-    //   expectParseError("delete x?.prop ** 0", "Unexpected **");
-    //   expectParseError("void x ** 0", "Unexpected **");
-    //   expectParseError("typeof x ** 0", "Unexpected **");
-    //   expectParseError("+x ** 0", "Unexpected **");
-    //   expectParseError("-x ** 0", "Unexpected **");
-    //   expectParseError("~x ** 0", "Unexpected **");
-    //   expectParseError("!x ** 0", "Unexpected **");
-    //   expectParseError("await x ** 0", "Unexpected **");
-    //   expectParseError("await -x ** 0", "Unexpected **");
-    // });
-
-    // it("await", () => {
-    //   expectPrinted("await x", "await x");
-    //   expectPrinted("await +x", "await +x");
-    //   expectPrinted("await -x", "await -x");
-    //   expectPrinted("await ~x", "await ~x");
-    //   expectPrinted("await !x", "await !x");
-    //   expectPrinted("await --x", "await --x");
-    //   expectPrinted("await ++x", "await ++x");
-    //   expectPrinted("await x--", "await x--");
-    //   expectPrinted("await x++", "await x++");
-    //   expectPrinted("await void x", "await void x");
-    //   expectPrinted("await typeof x", "await typeof x");
-    //   expectPrinted("await (x * y)", "await (x * y)");
-    //   expectPrinted("await (x ** y)", "await (x ** y)");
-
-    //   expectPrinted_(
-    //     "async function f() { await delete x }",
-    //     "async function f() {\n  await delete x;\n}"
-    //   );
-
-    //   // expectParseError(
-    //   //   "await delete x",
-    //   //   "Delete of a bare identifier cannot be used in an ECMAScript module"
-    //   // );
-    // });
-
-    it.only("decls", () => {
+    it("decls", () => {
       // expectParseError("var x = 0", "");
       // expectParseError("let x = 0", "");
       // expectParseError("const x = 0", "");
@@ -245,7 +251,6 @@ describe("Bun.Transpiler", () => {
       // Test destructuring patterns
       expectPrinted_("var [...x] = []", "var [...x] = []");
       expectPrinted_("var {...x} = {}", "var { ...x } = {}");
-      console.log("before");
 
       expectPrinted_(
         "export var foo = ([...x] = []) => {}",
@@ -270,18 +275,18 @@ describe("Bun.Transpiler", () => {
 
       expectPrinted_("[b, ...c] = d", "[b, ...c] = d");
       expectPrinted_("([b, ...c] = d)", "[b, ...c] = d");
-      expectPrinted_("({b, ...c} = d)", "({b, ...c } = d)");
-      expectPrinted_("({a = b} = c)", "({a = b } = c)");
-      expectPrinted_("({a: b = c} = d)", "({a: b = c } = d)");
-      expectPrinted_("({a: b.c} = d)", "({a: b.c } = d)");
+      expectPrinted_("({b, ...c} = d)", "({ b, ...c } = d)");
+      expectPrinted_("({a = b} = c)", "({ a = b } = c)");
+      expectPrinted_("({a: b = c} = d)", "({ a: b = c } = d)");
+      expectPrinted_("({a: b.c} = d)", "({ a: b.c } = d)");
       expectPrinted_("[a = {}] = b", "[a = {}] = b");
       expectPrinted_("[[...a, b].x] = c", "[[...a, b].x] = c");
-      expectPrinted_("[{...a, b}.x] = c", "[{...a, b }.x] = c");
-      expectPrinted_("({x: [...a, b].x} = c)", "({x: [...a, b].x } = c)");
-      expectPrinted_("({x: {...a, b}.x} = c)", "({x: {...a, b }.x } = c)");
+      expectPrinted_("[{...a, b}.x] = c", "[{ ...a, b }.x] = c");
+      expectPrinted_("({x: [...a, b].x} = c)", "({ x: [...a, b].x } = c)");
+      expectPrinted_("({x: {...a, b}.x} = c)", "({ x: { ...a, b }.x } = c)");
       expectPrinted_("[x = [...a, b]] = c", "[x = [...a, b]] = c");
-      expectPrinted_("[x = {...a, b}] = c", "[x = {...a, b }] = c");
-      expectPrinted_("({x = [...a, b]} = c)", "({x = [...a, b] } = c)");
+      expectPrinted_("[x = {...a, b}] = c", "[x = { ...a, b }] = c");
+      expectPrinted_("({x = [...a, b]} = c)", "({ x = [...a, b] } = c)");
       expectPrinted_("({x = {...a, b}} = c)", "({ x = { ...a, b } } = c)");
 
       expectPrinted_("(x = y)", "x = y");
@@ -294,80 +299,76 @@ describe("Bun.Transpiler", () => {
       expectParseError("({}) = {}", "Invalid assignment target");
       expectParseError("[([])] = [[]]", "Invalid assignment target");
       expectParseError("({x: ({})} = {x: {}})", "Invalid assignment target");
-      expectParseError("(([]) = []) => {}", "Invalid binding pattern");
-      expectParseError("(({}) = {}) => {}", "Invalid binding pattern");
+      expectParseError(
+        "(([]) = []) => {}",
+        "Unexpected parentheses in binding pattern"
+      );
+      expectParseError(
+        "(({}) = {}) => {}",
+        "Unexpected parentheses in binding pattern"
+      );
       expectParseError(
         "function f(([]) = []) {}",
-        'Expected identifier but found "("\n'
+        "Parse error"
+        // 'Expected identifier but found "("\n'
       );
       expectParseError(
         "function f(({}) = {}) {}",
-        'Expected identifier but found "("\n'
+        "Parse error"
+        // 'Expected identifier but found "("\n'
       );
 
-      expectPrinted_("for (x in y) ;", "for (x in y)\n  ;\n");
-      expectPrinted_("for ([] in y) ;", "for ([] in y)\n  ;\n");
-      expectPrinted_("for ({} in y) ;", "for ({} in y)\n  ;\n");
-      expectPrinted_("for ((x) in y) ;", "for (x in y)\n  ;\n");
-      expectParseError("for (([]) in y) ;", "Invalid assignment target\n");
-      expectParseError("for (({}) in y) ;", "Invalid assignment target\n");
+      expectPrinted_("for (x in y) ;", "for (x in y) {\n}");
+      expectPrinted_("for ([] in y) ;", "for ([] in y) {\n}");
+      expectPrinted_("for ({} in y) ;", "for ({} in y) {\n}");
+      expectPrinted_("for ((x) in y) ;", "for (x in y) {\n}");
+      expectParseError("for (([]) in y) ;", "Invalid assignment target");
+      expectParseError("for (({}) in y) ;", "Invalid assignment target");
 
-      expectPrinted_("for (x of y) ;", "for (x of y)\n  ;\n");
-      expectPrinted_("for ([] of y) ;", "for ([] of y)\n  ;\n");
-      expectPrinted_("for ({} of y) ;", "for ({} of y)\n  ;\n");
-      expectPrinted_("for ((x) of y) ;", "for (x of y)\n  ;\n");
-      expectParseError("for (([]) of y) ;", "Invalid assignment target\n");
-      expectParseError("for (({}) of y) ;", "Invalid assignment target\n");
+      expectPrinted_("for (x of y) ;", "for (x of y) {\n}");
+      expectPrinted_("for ([] of y) ;", "for ([] of y) {\n}");
+      expectPrinted_("for ({} of y) ;", "for ({} of y) {\n}");
+      expectPrinted_("for ((x) of y) ;", "for (x of y) {\n}");
+      expectParseError("for (([]) of y) ;", "Invalid assignment target");
+      expectParseError("for (({}) of y) ;", "Invalid assignment target");
 
-      expectParseError(
-        "[[...a, b]] = c",
-        'Unexpected "," after rest pattern\n'
-      );
-      expectParseError(
-        "[{...a, b}] = c",
-        'Unexpected "," after rest pattern\n'
-      );
+      expectParseError("[[...a, b]] = c", 'Unexpected "," after rest pattern');
+      expectParseError("[{...a, b}] = c", 'Unexpected "," after rest pattern');
       expectParseError(
         "({x: [...a, b]} = c)",
-        'Unexpected "," after rest pattern\n'
+        'Unexpected "," after rest pattern'
       );
       expectParseError(
         "({x: {...a, b}} = c)",
-        'Unexpected "," after rest pattern\n'
+        'Unexpected "," after rest pattern'
       );
-      expectParseError("[b, ...c,] = d", 'Unexpected "," after rest pattern\n');
-      expectParseError(
-        "([b, ...c,] = d)",
-        'Unexpected "," after rest pattern\n'
-      );
-      expectParseError(
-        "({b, ...c,} = d)",
-        'Unexpected "," after rest pattern\n'
-      );
-      expectParseError("({a = b})", 'Unexpected "="\n');
-      expectParseError("({x = {a = b}} = c)", 'Unexpected "="\n');
-      expectParseError("[a = {b = c}] = d", 'Unexpected "="\n');
+      expectParseError("[b, ...c,] = d", 'Unexpected "," after rest pattern');
+      expectParseError("([b, ...c,] = d)", 'Unexpected "," after rest pattern');
+      expectParseError("({b, ...c,} = d)", 'Unexpected "," after rest pattern');
+      expectParseError("({a = b})", 'Unexpected "="');
+      expectParseError("({x = {a = b}} = c)", 'Unexpected "="');
+      expectParseError("[a = {b = c}] = d", 'Unexpected "="');
 
       expectPrinted_(
         "for ([{a = {}}] in b) {}",
-        "for ([{ a = {} }] in b) {\n}\n"
+        "for ([{ a = {} }] in b) {\n}"
       );
       expectPrinted_(
         "for ([{a = {}}] of b) {}",
-        "for ([{ a = {} }] of b) {\n}\n"
+        "for ([{ a = {} }] of b) {\n}"
       );
-      expectPrinted_("for ({a = {}} in b) {}", "for ({ a = {} } in b) {\n}\n");
-      expectPrinted_("for ({a = {}} of b) {}", "for ({ a = {} } of b) {\n}\n");
+      expectPrinted_("for ({a = {}} in b) {}", "for ({ a = {} } in b) {\n}");
+      expectPrinted_("for ({a = {}} of b) {}", "for ({ a = {} } of b) {\n}");
 
-      expectParseError("({a = {}} in b)", 'Unexpected "="\n');
-      expectParseError("[{a = {}}]\nof()", 'Unexpected "="\n');
+      expectParseError("({a = {}} in b)", 'Unexpected "="');
+      expectParseError("[{a = {}}]\nof()", 'Unexpected "="');
       expectParseError(
         "for ([...a, b] in c) {}",
-        'Unexpected "," after rest pattern\n'
+        'Unexpected "," after rest pattern'
       );
       expectParseError(
         "for ([...a, b] of c) {}",
-        'Unexpected "," after rest pattern\n'
+        'Unexpected "," after rest pattern'
       );
     });
 
@@ -404,6 +405,138 @@ describe("Bun.Transpiler", () => {
   });
 
   describe("simplification", () => {
+    it("constant folding", () => {
+      expectPrinted("1 && 2", "2");
+      expectPrinted("1 || 2", "1");
+      expectPrinted("0 && 1", "0");
+      expectPrinted("0 || 1", "1");
+
+      expectPrinted("null ?? 1", "1");
+      expectPrinted("undefined ?? 1", "1");
+      expectPrinted("0 ?? 1", "0");
+      expectPrinted("false ?? 1", "false");
+      expectPrinted('"" ?? 1', '""');
+
+      expectPrinted("typeof undefined", '"undefined"');
+      expectPrinted("typeof null", '"object"');
+      expectPrinted("typeof false", '"boolean"');
+      expectPrinted("typeof true", '"boolean"');
+      expectPrinted("typeof 123", '"number"');
+      expectPrinted("typeof 123n", '"bigint"');
+      expectPrinted("typeof 'abc'", '"string"');
+      expectPrinted("typeof function() {}", '"function"');
+      expectPrinted("typeof (() => {})", '"function"');
+      expectPrinted("typeof {}", "typeof {}");
+      expectPrinted("typeof []", "typeof []");
+
+      expectPrinted("undefined === undefined", "true");
+      expectPrinted("undefined !== undefined", "false");
+      expectPrinted("undefined == undefined", "true");
+      expectPrinted("undefined != undefined", "false");
+
+      expectPrinted("null === null", "true");
+      expectPrinted("null !== null", "false");
+      expectPrinted("null == null", "true");
+      expectPrinted("null != null", "false");
+
+      expectPrinted("undefined === null", "undefined === null");
+      expectPrinted("undefined !== null", "undefined !== null");
+      expectPrinted("undefined == null", "undefined == null");
+      expectPrinted("undefined != null", "undefined != null");
+
+      expectPrinted("true === true", "true");
+      expectPrinted("true === false", "false");
+      expectPrinted("true !== true", "false");
+      expectPrinted("true !== false", "true");
+      expectPrinted("true == true", "true");
+      expectPrinted("true == false", "false");
+      expectPrinted("true != true", "false");
+      expectPrinted("true != false", "true");
+
+      expectPrinted("1 === 1", "true");
+      expectPrinted("1 === 2", "false");
+      expectPrinted("1 === '1'", '1 === "1"');
+      expectPrinted("1 == 1", "true");
+      expectPrinted("1 == 2", "false");
+      expectPrinted("1 == '1'", '1 == "1"');
+
+      expectPrinted("1 !== 1", "false");
+      expectPrinted("1 !== 2", "true");
+      expectPrinted("1 !== '1'", '1 !== "1"');
+      expectPrinted("1 != 1", "false");
+      expectPrinted("1 != 2", "true");
+      expectPrinted("1 != '1'", '1 != "1"');
+
+      expectPrinted("'a' === '\\x61'", "true");
+      expectPrinted("'a' === '\\x62'", "false");
+      expectPrinted("'a' === 'abc'", "false");
+      expectPrinted("'a' !== '\\x61'", "false");
+      expectPrinted("'a' !== '\\x62'", "true");
+      expectPrinted("'a' !== 'abc'", "true");
+      expectPrinted("'a' == '\\x61'", "true");
+      expectPrinted("'a' == '\\x62'", "false");
+      expectPrinted("'a' == 'abc'", "false");
+      expectPrinted("'a' != '\\x61'", "false");
+      expectPrinted("'a' != '\\x62'", "true");
+      expectPrinted("'a' != 'abc'", "true");
+
+      // TODO: string simplification
+      // expectPrinted("'a' + 'b'", '"ab"');
+      // expectPrinted("'a' + 'bc'", '"abc"');
+      // expectPrinted("'ab' + 'c'", '"abc"');
+      // expectPrinted("x + 'a' + 'b'", 'x + "ab"');
+      // expectPrinted("x + 'a' + 'bc'", 'x + "abc"');
+      // expectPrinted("x + 'ab' + 'c'", 'x + "abc"');
+      // expectPrinted("'a' + 1", '"a" + 1;');
+      // expectPrinted("x * 'a' + 'b'", 'x * "a" + "b"');
+
+      // TODO: string simplification
+      // expectPrinted("'string' + `template`", "`stringtemplate`");
+      // expectPrinted("'string' + `a${foo}b`", "`stringa${foo}b`");
+      // expectPrinted("'string' + tag`template`", '"string" + tag`template`;');
+      // expectPrinted("`template` + 'string'", "`templatestring`");
+      // expectPrinted("`a${foo}b` + 'string'", "`a${foo}bstring`");
+      // expectPrinted("tag`template` + 'string'", 'tag`template` + "string"');
+      // expectPrinted("`template` + `a${foo}b`", "`templatea${foo}b`");
+      // expectPrinted("`a${foo}b` + `template`", "`a${foo}btemplate`");
+      // expectPrinted("`a${foo}b` + `x${bar}y`", "`a${foo}bx${bar}y`");
+      // expectPrinted(
+      //   "`a${i}${j}bb` + `xxx${bar}yyyy`",
+      //   "`a${i}${j}bbxxx${bar}yyyy`"
+      // );
+      // expectPrinted(
+      //   "`a${foo}bb` + `xxx${i}${j}yyyy`",
+      //   "`a${foo}bbxxx${i}${j}yyyy`"
+      // );
+      // expectPrinted(
+      //   "`template` + tag`template2`",
+      //   "`template` + tag`template2`"
+      // );
+      // expectPrinted(
+      //   "tag`template` + `template2`",
+      //   "tag`template` + `template2`"
+      // );
+
+      expectPrinted("123", "123");
+      expectPrinted("123 .toString()", "123 .toString()");
+      expectPrinted("-123", "-123");
+      expectPrinted("(-123).toString()", "(-123).toString()");
+      expectPrinted("-0", "-0");
+      expectPrinted("(-0).toString()", "(-0).toString()");
+      expectPrinted("-0 === 0", "true");
+
+      expectPrinted("NaN", "NaN");
+      expectPrinted("NaN.toString()", "NaN.toString()");
+      expectPrinted("NaN === NaN", "false");
+
+      expectPrinted("Infinity", "Infinity");
+      expectPrinted("Infinity.toString()", "Infinity.toString()");
+      expectPrinted("(-Infinity).toString()", "(-Infinity).toString()");
+      expectPrinted("Infinity === Infinity", "true");
+      expectPrinted("Infinity === -Infinity", "false");
+
+      expectPrinted("123n === 1_2_3n", "true");
+    });
     describe("type coercions", () => {
       const dead = `
       if ("") {

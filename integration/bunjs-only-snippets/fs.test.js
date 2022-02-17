@@ -1,5 +1,11 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect } from "vitest";
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+
+const Buffer = globalThis.Buffer || Uint8Array;
+
+if (!import.meta.dir) {
+  import.meta.dir = ".";
+}
 
 describe("mkdirSync", () => {
   it("should create a directory", () => {
@@ -18,7 +24,7 @@ describe("readFileSync", () => {
     expect(text).toBe("File read successfully");
   });
 
-  it("returning Uint8Array works", () => {
+  it("returning Buffer works", () => {
     const text = readFileSync(import.meta.dir + "/readFileSync.txt");
     const encoded = [
       70, 105, 108, 101, 32, 114, 101, 97, 100, 32, 115, 117, 99, 99, 101, 115,
@@ -38,8 +44,8 @@ describe("writeFileSync", () => {
     expect(readFileSync(path, "utf8")).toBe("File written successfully");
   });
 
-  it("returning Uint8Array works", () => {
-    const buffer = new Uint8Array([
+  it("returning Buffer works", () => {
+    const buffer = new Buffer([
       70, 105, 108, 101, 32, 119, 114, 105, 116, 116, 101, 110, 32, 115, 117,
       99, 99, 101, 115, 115, 102, 117, 108, 108, 121,
     ]);
@@ -52,12 +58,12 @@ describe("writeFileSync", () => {
     }
   });
   it("returning ArrayBuffer works", () => {
-    const buffer = new Uint8Array([
+    const buffer = new Buffer([
       70, 105, 108, 101, 32, 119, 114, 105, 116, 116, 101, 110, 32, 115, 117,
       99, 99, 101, 115, 115, 102, 117, 108, 108, 121,
     ]);
     const path = `/tmp/${Date.now()}.blob2.writeFileSync.txt`;
-    writeFileSync(path, buffer.buffer);
+    writeFileSync(path, buffer);
     const out = readFileSync(path);
 
     for (let i = 0; i < buffer.length; i++) {

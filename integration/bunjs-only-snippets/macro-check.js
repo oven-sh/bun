@@ -1,7 +1,7 @@
-export function keepSecondArgument(args) {
-  return args.arguments[1];
+export function keepSecondArgument(bacon1234) {
+  return bacon1234.arguments[1];
 }
 
-export function bacon(args) {
-  return args.arguments[1];
+export function bacon(heloooo) {
+  return heloooo.arguments[1];
 }

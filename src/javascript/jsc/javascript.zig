@@ -610,14 +610,23 @@ pub const Bun = struct {
     pub fn getPublicPath(to: string, origin: URL, comptime Writer: type, writer: Writer) void {
         const relative_path = VirtualMachine.vm.bundler.fs.relativeTo(to);
         if (origin.isAbsolute()) {
-            origin.joinWrite(
-                Writer,
-                writer,
-                VirtualMachine.vm.bundler.options.routes.asset_prefix_path,
-                "",
-                relative_path,
-                "",
-            ) catch unreachable;
+            if (strings.hasPrefix(relative_path, "..") or strings.hasPrefix(relative_path, "./")) {
+                writer.writeAll(origin.origin) catch return;
+                writer.writeAll("/abs:") catch return;
+                if (std.fs.path.isAbsolute(to)) {
+                    writer.writeAll(to) catch return;
+                } else {
+                    writer.writeAll(VirtualMachine.vm.bundler.fs.abs(&[_]string{to})) catch return;
+                }
+            } else {
+                origin.joinWrite(
+                    Writer,
+                    writer,
+                    VirtualMachine.vm.bundler.options.routes.asset_prefix_path,
+                    "",
+                    relative_path,
+                    "",
+                ) catch return;
         } else {
             writer.writeAll(std.mem.trimLeft(u8, relative_path, "/")) catch unreachable;
         }

@@ -12,6 +12,7 @@ const MutableString = _global.MutableString;
 const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
 const StoredFileDescriptorType = _global.StoredFileDescriptorType;
+const Arena = @import("../../mimalloc_arena.zig").Arena;
 const C = _global.C;
 
 pub fn zigCast(comptime Destination: type, value: anytype) *Destination {
@@ -1318,8 +1319,9 @@ pub const VirtualMachine = struct {
     origin: URL = URL{},
     node_fs: ?*Node.NodeFS = null,
     has_loaded_node_modules: bool = false,
+    timer: Bun.Timer = Bun.Timer{},
 
-    arena: *std.heap.ArenaAllocator = undefined,
+    arena: *Arena = undefined,
     has_loaded: bool = false,
 
     transpiled_count: usize = 0,

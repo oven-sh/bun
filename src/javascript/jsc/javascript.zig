@@ -90,13 +90,94 @@ pub const GlobalClasses = [_]type{
     js_ast.Macro.JSNode.BunJSXCallbackFunction,
     Performance.Class,
 
+    Crypto.Class,
+    Crypto.Prototype,
+
     // The last item in this array becomes "process.env"
     Bun.EnvironmentVariables.Class,
 };
-
+const UUID = @import("./uuid.zig");
 const Blob = @import("../../blob.zig");
 pub const Buffer = MarkedArrayBuffer;
 const Lock = @import("../../lock.zig").Lock;
+
+pub const Crypto = struct {
+    pub const Class = NewClass(void, .{ .name = "crypto" }, .{
+        .getRandomValues = .{
+            .rfn = getRandomValues,
+        },
+        .randomUUID = .{
+            .rfn = randomUUID,
+        },
+    }, .{});
+    pub const Prototype = NewClass(
+        void,
+        .{ .name = "Crypto" },
+        .{
+            .call = .{
+                .rfn = call,
+            },
+        },
+        .{},
+    );
+
+    pub fn getRandomValues(
+        // this
+        _: void,
+        ctx: js.JSContextRef,
+        // function
+        _: js.JSObjectRef,
+        // thisObject
+        _: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSValueRef {
+        if (arguments.len == 0) {
+            JSError(getAllocator(ctx), "Expected typed array but received nothing", .{}, ctx, exception);
+            return JSValue.jsUndefined().asObjectRef();
+        }
+        var array_buffer = MarkedArrayBuffer.fromJS(ctx.ptr(), JSValue.fromRef(arguments[0]), exception) orelse {
+            JSError(getAllocator(ctx), "Expected typed array", .{}, ctx, exception);
+            return JSValue.jsUndefined().asObjectRef();
+        };
+        var slice = array_buffer.slice();
+        if (slice.len > 0)
+            std.crypto.random.bytes(slice);
+
+        return arguments[0];
+    }
+
+    pub fn call(
+        // this
+        _: void,
+        _: js.JSContextRef,
+        // function
+        _: js.JSObjectRef,
+        // thisObject
+        _: js.JSObjectRef,
+        _: []const js.JSValueRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        return JSValue.jsUndefined().asObjectRef();
+    }
+
+    pub fn randomUUID(
+        // this
+        _: void,
+        ctx: js.JSContextRef,
+        // function
+        _: js.JSObjectRef,
+        // thisObject
+        _: js.JSObjectRef,
+        _: []const js.JSValueRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        var uuid = UUID.init();
+        var out: [128]u8 = undefined;
+        var str = std.fmt.bufPrint(&out, "{s}", .{uuid}) catch unreachable;
+        return ZigString.init(str).toValueGC(ctx.ptr()).asObjectRef();
+    }
+};
 
 pub const Bun = struct {
     threadlocal var css_imports_list_strings: [512]ZigString = undefined;

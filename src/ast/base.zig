@@ -91,7 +91,7 @@ pub const Ref = packed struct {
     pub fn eql(ref: Ref, b: Ref) bool {
         return asU64(ref) == b.asU64();
     }
-    pub fn isNull(self: Ref) bool {
+    pub inline fn isNull(self: Ref) bool {
         return self.eql(Ref.None);
     }
 

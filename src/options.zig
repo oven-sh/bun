@@ -442,7 +442,7 @@ pub const Platform = enum {
 
     pub inline fn supportsBrowserField(this: Platform) bool {
         return switch (this) {
-            .bun, .bun_macro, .neutral, .browser => true,
+            .neutral, .browser => true,
             else => false,
         };
     }
@@ -1123,6 +1123,8 @@ pub const BundleOptions = struct {
 
     conditions: ESMConditions = undefined,
 
+    tree_shaking: bool = false,
+
     pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {
         switch (this.platform) {
             .neutral, .browser => {
@@ -1539,6 +1541,8 @@ pub const BundleOptions = struct {
 
             opts.serve = true;
         }
+
+        opts.tree_shaking = opts.serve or opts.platform.isBun() or opts.production or is_generating_bundle;
 
         if (opts.origin.isAbsolute()) {
             opts.import_path_format = ImportPathFormat.absolute_url;

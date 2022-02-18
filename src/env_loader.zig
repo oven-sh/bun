@@ -498,13 +498,38 @@ pub const Loader = struct {
                                 else
                                     &[_]u8{},
                             };
+                            var expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
+
+                            if (e_strings[0].eqlComptime("undefined")) {
+                                expr_data = .{ .e_undefined = .{} };
+                            }
+
+                            if (e_strings[0].eqlComptime("null")) {
+                                expr_data = .{ .e_null = .{} };
+                            }
+
+                            if (e_strings[0].eqlComptime("false")) {
+                                expr_data = .{ .e_boolean = .{ .value = false } };
+                            }
+
+                            if (e_strings[0].eqlComptime("true")) {
+                                expr_data = .{ .e_boolean = .{ .value = true } };
+                            }
+
+                            if (e_strings[0].eqlComptime("0")) {
+                                expr_data = .{ .e_number = .{ .value = 0.0 } };
+                            }
+
+                            if (e_strings[0].eqlComptime("1")) {
+                                expr_data = .{ .e_number = .{ .value = 1.0 } };
+                            }
 
                             _ = try to_string.getOrPutValue(
                                 key_str,
                                 .{
                                     .can_be_removed_if_unused = true,
                                     .call_can_be_unwrapped_if_unused = true,
-                                    .value = js_ast.Expr.Data{ .e_string = &e_strings[0] },
+                                    .value = expr_data,
                                 },
                             );
                             e_strings = e_strings[1..];
@@ -521,12 +546,38 @@ pub const Loader = struct {
                                         &[_]u8{},
                                 };
 
+                                var expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
+
+                                if (e_strings[0].eqlComptime("undefined")) {
+                                    expr_data = .{ .e_undefined = .{} };
+                                }
+
+                                if (e_strings[0].eqlComptime("null")) {
+                                    expr_data = .{ .e_null = .{} };
+                                }
+
+                                if (e_strings[0].eqlComptime("false")) {
+                                    expr_data = .{ .e_boolean = .{ .value = false } };
+                                }
+
+                                if (e_strings[0].eqlComptime("true")) {
+                                    expr_data = .{ .e_boolean = .{ .value = true } };
+                                }
+
+                                if (e_strings[0].eqlComptime("0")) {
+                                    expr_data = .{ .e_number = .{ .value = 0.0 } };
+                                }
+
+                                if (e_strings[0].eqlComptime("1")) {
+                                    expr_data = .{ .e_number = .{ .value = 1.0 } };
+                                }
+
                                 _ = try to_string.getOrPutValue(
                                     framework_defaults.keys[key_i],
                                     .{
                                         .can_be_removed_if_unused = true,
                                         .call_can_be_unwrapped_if_unused = true,
-                                        .value = js_ast.Expr.Data{ .e_string = &e_strings[0] },
+                                        .value = expr_data,
                                     },
                                 );
                                 e_strings = e_strings[1..];
@@ -545,12 +596,38 @@ pub const Loader = struct {
                                 &[_]u8{},
                         };
 
+                        var expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
+
+                        if (e_strings[0].eqlComptime("undefined")) {
+                            expr_data = .{ .e_undefined = .{} };
+                        }
+
+                        if (e_strings[0].eqlComptime("null")) {
+                            expr_data = .{ .e_null = .{} };
+                        }
+
+                        if (e_strings[0].eqlComptime("false")) {
+                            expr_data = .{ .e_boolean = .{ .value = false } };
+                        }
+
+                        if (e_strings[0].eqlComptime("true")) {
+                            expr_data = .{ .e_boolean = .{ .value = true } };
+                        }
+
+                        if (e_strings[0].eqlComptime("0")) {
+                            expr_data = .{ .e_number = .{ .value = 0.0 } };
+                        }
+
+                        if (e_strings[0].eqlComptime("1")) {
+                            expr_data = .{ .e_number = .{ .value = 1.0 } };
+                        }
+
                         _ = try to_string.getOrPutValue(
                             key,
                             .{
                                 .can_be_removed_if_unused = true,
                                 .call_can_be_unwrapped_if_unused = true,
-                                .value = js_ast.Expr.Data{ .e_string = &e_strings[0] },
+                                .value = expr_data,
                             },
                         );
                         e_strings = e_strings[1..];
@@ -573,6 +650,77 @@ pub const Loader = struct {
                     value[value.len - 2] == '\''))
                 {
                     value = value[1 .. value.len - 1];
+                }
+
+                if (strings.eqlComptime(value, "undefined")) {
+                    _ = try to_string.getOrPutValue(
+                        key,
+                        .{
+                            .can_be_removed_if_unused = true,
+                            .value = .{ .e_undefined = .{} },
+                        },
+                    );
+                    continue;
+                }
+
+                if (strings.eqlComptime(value, "null")) {
+                    _ = try to_string.getOrPutValue(
+                        key,
+                        .{
+                            .can_be_removed_if_unused = true,
+                            .call_can_be_unwrapped_if_unused = true,
+                            .value = .{ .e_null = .{} },
+                        },
+                    );
+                    continue;
+                }
+
+                if (strings.eqlComptime(value, "false")) {
+                    _ = try to_string.getOrPutValue(
+                        key,
+                        .{
+                            .can_be_removed_if_unused = true,
+                            .call_can_be_unwrapped_if_unused = true,
+                            .value = .{ .e_boolean = .{ .value = false } },
+                        },
+                    );
+                    continue;
+                }
+
+                if (strings.eqlComptime(value, "true")) {
+                    _ = try to_string.getOrPutValue(
+                        key,
+                        .{
+                            .can_be_removed_if_unused = true,
+                            .call_can_be_unwrapped_if_unused = true,
+                            .value = .{ .e_boolean = .{ .value = true } },
+                        },
+                    );
+                    continue;
+                }
+
+                if (strings.eqlComptime(value, "0")) {
+                    _ = try to_string.getOrPutValue(
+                        key,
+                        .{
+                            .can_be_removed_if_unused = true,
+                            .call_can_be_unwrapped_if_unused = true,
+                            .value = .{ .e_number = .{ .value = 0.0 } },
+                        },
+                    );
+                    continue;
+                }
+
+                if (strings.eqlComptime(value, "1")) {
+                    _ = try to_string.getOrPutValue(
+                        key,
+                        .{
+                            .can_be_removed_if_unused = true,
+                            .call_can_be_unwrapped_if_unused = true,
+                            .value = .{ .e_number = .{ .value = 1.0 } },
+                        },
+                    );
+                    continue;
                 }
 
                 _ = try to_json.getOrPutValue(key, value);

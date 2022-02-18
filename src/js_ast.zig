@@ -691,7 +691,7 @@ pub const Symbol = struct {
     namespace_alias: ?G.NamespaceAlias = null,
 
     // Used by the parser for single pass parsing.
-    link: ?Ref = null,
+    link: Ref = Ref.None,
 
     // An estimate of the number of uses of this symbol. This is used to detect
     // whether a symbol is used or not. For example, TypeScript imports that are
@@ -794,6 +794,10 @@ pub const Symbol = struct {
     //   Foo.#foo = Foo;
     //
     private_symbol_must_be_lowered: bool = false,
+
+    pub inline fn hasLink(this: *const Symbol) bool {
+        return !this.link.isNull();
+    }
 
     pub const Kind = enum {
 
@@ -904,6 +908,14 @@ pub const Symbol = struct {
             return &self.symbols_for_source[ref.source_index][ref.inner_index];
         }
 
+        pub fn getConst(self: *Map, ref: Ref) ?*const Symbol {
+            if (Ref.isSourceIndexNull(ref.source_index) or ref.is_source_contents_slice) {
+                return null;
+            }
+
+            return &self.symbols_for_source[ref.source_index][ref.inner_index];
+        }
+
         pub fn init(sourceCount: usize, allocator: std.mem.Allocator) !Map {
             var symbols_for_source: [][]Symbol = try allocator.alloc([]Symbol, sourceCount);
             return Map{ .symbols_for_source = symbols_for_source };
@@ -915,20 +927,31 @@ pub const Symbol = struct {
 
         pub fn getWithLink(symbols: *Map, ref: Ref) ?*Symbol {
             var symbol: *Symbol = symbols.get(ref) orelse return null;
-            if (symbol.link) |link| {
-                return symbols.get(link) orelse symbol;
+            if (symbol.hasLink()) {
+                return symbols.get(symbol.link) orelse symbol;
+            }
+            return symbol;
+        }
+
+        pub fn getWithLinkConst(symbols: *Map, ref: Ref) ?*const Symbol {
+            var symbol: *const Symbol = symbols.getConst(ref) orelse return null;
+            if (symbol.hasLink()) {
+                return symbols.getConst(symbol.link) orelse symbol;
             }
             return symbol;
         }
 
         pub fn follow(symbols: *Map, ref: Ref) Ref {
             if (symbols.get(ref)) |symbol| {
-                const link = symbol.link orelse return ref;
-                if (!link.eql(ref)) {
+                const link = symbol.link;
+                if (link.isNull())
+                    return ref;
+
+                if (link.eql(ref)) {
                     symbol.link = ref;
                 }
 
-                return symbol.link orelse unreachable;
+                return symbol.link;
             } else {
                 return ref;
             }
@@ -4305,7 +4328,7 @@ pub const Part = struct {
     declared_symbols: []DeclaredSymbol = &([_]DeclaredSymbol{}),
 
     // An estimate of the number of uses of all symbols used within this part.
-    symbol_uses: SymbolUseMap = undefined,
+    symbol_uses: SymbolUseMap = SymbolUseMap{},
 
     // The indices of the other parts in this file that are needed if this part
     // is needed.
@@ -4330,9 +4353,12 @@ pub const Part = struct {
     pub const Tag = enum {
         none,
         jsx_import,
+        runtime,
+        cjs_imports,
+        react_fast_refresh,
     };
 
-    pub const SymbolUseMap = std.HashMapUnmanaged(Ref, Symbol.Use, RefCtx, 80);
+    pub const SymbolUseMap = std.ArrayHashMapUnmanaged(Ref, Symbol.Use, RefHashCtx, false);
     pub fn jsonStringify(self: *const Part, options: std.json.StringifyOptions, writer: anytype) !void {
         return std.json.stringify(self.stmts, options, writer);
     }

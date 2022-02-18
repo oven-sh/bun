@@ -303,6 +303,19 @@ pub inline fn endsWithChar(self: string, char: u8) bool {
     return self.len == 0 or self[self.len - 1] == char;
 }
 
+pub fn withoutTrailingSlash(this: string) []const u8 {
+    var href = this;
+    while (href.len > 1 and href[href.len - 1] == '/') {
+        href = href[0 .. href.len - 1];
+    }
+
+    return href;
+}
+
+pub fn withoutLeadingSlash(this: string) []const u8 {
+    return std.mem.trimLeft(u8, this, "/");
+}
+
 pub fn endsWithAny(self: string, str: string) bool {
     const end = self[self.len - 1];
     for (str) |char| {

@@ -96,7 +96,6 @@ pub const DefineData = struct {
                         entry.key_ptr.*,
                         DefineData{
                             .value = js_ast.Expr.Data{ .e_undefined = js_ast.E.Undefined{} },
-
                             .original_name = entry.value_ptr.*,
                             .can_be_removed_if_unused = true,
                         },
@@ -277,13 +276,10 @@ pub const Define = struct {
         // Step 1. Load the globals into the hash tables
         for (GlobalDefinesKey) |global| {
             if (global.len == 1) {
-
-                // TODO: when https://github.com/ziglang/zig/pull/8596 is merged, switch to putAssumeCapacityNoClobber
                 define.identifiers.putAssumeCapacityNoClobber(global[0], value_define);
             } else {
                 const key = global[global.len - 1];
                 // TODO: move this to comptime
-                // TODO: when https://github.com/ziglang/zig/pull/8596 is merged, switch to putAssumeCapacityNoClobber
                 if (define.dots.getEntry(key)) |entry| {
                     var list = try std.ArrayList(DotDefine).initCapacity(allocator, entry.value_ptr.*.len + 1);
                     list.appendSliceAssumeCapacity(entry.value_ptr.*);
@@ -327,6 +323,7 @@ pub const Define = struct {
         define.identifiers.putAssumeCapacity("undefined", .{
             .value = val,
             .valueless = false,
+            .can_be_removed_if_unused = true,
         });
         define.identifiers.putAssumeCapacity("NaN", DefineData{
             .value = js_ast.Expr.Data{ .e_number = nan_val },

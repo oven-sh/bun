@@ -1006,6 +1006,16 @@ pub fn definesFromTransformOptions(
         _ = try user_defines.getOrPutValue(DefaultUserDefines.PlatformDefine.Key, value);
     }
 
+    if (platform.isBun()) {
+        if (!user_defines.contains("window")) {
+            _ = try environment_defines.getOrPutValue("window", .{
+                .valueless = true,
+                .original_name = "window",
+                .value = .{ .e_undefined = .{} },
+            });
+        }
+    }
+
     var resolved_defines = try defines.DefineData.from_input(user_defines, log, allocator);
 
     return try defines.Define.init(

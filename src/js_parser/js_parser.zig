@@ -7676,6 +7676,32 @@ pub fn NewParser(
                 try p.lexer.expect(.t_string_literal);
             }
 
+            // For now, we silently strip import assertions
+            if (!p.lexer.has_newline_before and p.lexer.isContextualKeyword("assert")) {
+                try p.lexer.next();
+                try p.lexer.expect(.t_open_brace);
+
+                while (p.lexer.token != .t_close_brace) {
+                    // Parse the key
+                    if (p.lexer.isIdentifierOrKeyword()) {} else if (p.lexer.token == .t_string_literal) {} else {
+                        try p.lexer.expect(.t_identifier);
+                    }
+
+                    try p.lexer.next();
+                    try p.lexer.expect(.t_colon);
+
+                    try p.lexer.expect(.t_string_literal);
+
+                    if (p.lexer.token != .t_comma) {
+                        break;
+                    }
+
+                    try p.lexer.next();
+                }
+
+                try p.lexer.expect(.t_close_brace);
+            }
+
             return path;
         }
 
@@ -10553,6 +10579,23 @@ pub fn NewParser(
             p.lexer.preserve_all_comments_before = false;
 
             const value = try p.parseExpr(.comma);
+
+            if (p.lexer.token == .t_comma) {
+                // "import('./foo.json', )"
+                try p.lexer.next();
+
+                if (p.lexer.token != .t_close_paren) {
+                    // for now, we silently strip import assertions
+                    // "import('./foo.json', { assert: { type: 'json' } })"
+                    _ = try p.parseExpr(.comma);
+
+                    if (p.lexer.token == .t_comma) {
+                        // "import('./foo.json', { assert: { type: 'json' } }, , )"
+                        try p.lexer.next();
+                    }
+                }
+            }
+
             try p.lexer.expect(.t_close_paren);
 
             p.allow_in = old_allow_in;

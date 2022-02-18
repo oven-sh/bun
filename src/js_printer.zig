@@ -2770,6 +2770,12 @@ pub fn NewPrinter(
                     p.print("export");
                     p.printSpace();
 
+                    if (s.items.len == 0) {
+                        p.print("{}");
+                        p.printSemicolonAfterStatement();
+                        return;
+                    }
+
                     // This transforms code like this:
                     // import {Foo, Bar} from 'bundled-module';
                     // export {Foo, Bar};

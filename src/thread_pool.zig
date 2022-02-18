@@ -8,11 +8,13 @@ const AsyncIO = @import("io");
 
 const assert = std.debug.assert;
 const Atomic = std.atomic.Atomic;
-pub const OnSpawnCallback = fn () void;
+pub const OnSpawnCallback = fn (ctx: ?*anyopaque) ?*anyopaque;
+
 io: ?*AsyncIO = null,
 sleep_on_idle_network_thread: bool = true,
 /// executed on the thread
 on_thread_spawn: ?OnSpawnCallback = null,
+threadpool_context: ?*anyopaque = null,
 stack_size: u32,
 max_threads: u32,
 sync: Atomic(u32) = Atomic(u32).init(@bitCast(u32, Sync{})),
@@ -386,14 +388,15 @@ fn join(self: *ThreadPool) void {
 
 const Output = @import("./global.zig").Output;
 
-const Thread = struct {
+pub const Thread = struct {
     next: ?*Thread = null,
     target: ?*Thread = null,
     join_event: Event = .{},
     run_queue: Node.Queue = .{},
     run_buffer: Node.Buffer = .{},
+    ctx: ?*anyopaque = null,
 
-    threadlocal var current: ?*Thread = null;
+    pub threadlocal var current: ?*Thread = null;
 
     /// Thread entry point which runs a worker for the ThreadPool
     fn run(thread_pool: *ThreadPool) void {
@@ -403,10 +406,11 @@ const Thread = struct {
         current = &self;
 
         if (thread_pool.on_thread_spawn) |spawn| {
-            spawn();
+            current.?.ctx = spawn(thread_pool.threadpool_context);
         }
 
         thread_pool.register(&self);
+
         defer thread_pool.unregister(&self);
 
         var is_waking = false;

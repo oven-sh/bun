@@ -1365,10 +1365,10 @@ pub const RequestContext = struct {
             js_ast.Stmt.Data.Store.create(std.heap.c_allocator);
             js_ast.Expr.Data.Store.create(std.heap.c_allocator);
 
-            var vm = JavaScript.VirtualMachine.init(
+            var vm: *JavaScript.VirtualMachine = JavaScript.VirtualMachine.init(
                 std.heap.c_allocator,
                 handler.args,
-                handler.existing_bundle,
+                null,
                 handler.log,
                 handler.env_loader,
             ) catch |err| {
@@ -1376,6 +1376,9 @@ pub const RequestContext = struct {
                 javascript_disabled = true;
                 return;
             };
+            vm.bundler.options.macro_remap = try handler.client_bundler.options.macro_remap.clone(std.heap.c_allocator);
+            vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
+
             vm.is_from_devserver = true;
             vm.bundler.log = handler.log;
             std.debug.assert(JavaScript.VirtualMachine.vm_loaded);
@@ -1431,7 +1434,8 @@ pub const RequestContext = struct {
             vm.global.vm().holdAPILock(handler, JavaScript.OpaqueWrap(HandlerThread, startJavaScript));
         }
 
-        var __arena: std.heap.ArenaAllocator = undefined;
+        var __arena: Arena = undefined;
+
         pub fn runLoop(vm: *JavaScript.VirtualMachine, thread: *HandlerThread) !void {
             var module_map = JavaScript.ZigGlobalObject.getModuleRegistryMap(vm.global);
 
@@ -1443,7 +1447,7 @@ pub const RequestContext = struct {
             }
 
             while (true) {
-                __arena = std.heap.ArenaAllocator.init(default_allocator);
+                __arena = try Arena.init();
                 JavaScript.VirtualMachine.vm.arena = &__arena;
                 JavaScript.VirtualMachine.vm.has_loaded = true;
                 JavaScript.VirtualMachine.vm.tick();
@@ -1458,7 +1462,6 @@ pub const RequestContext = struct {
                     Output.flush();
                     JavaScript.VirtualMachine.vm.arena.deinit();
                     JavaScript.VirtualMachine.vm.has_loaded = false;
-                    Global.mimalloc_cleanup(false);
                 }
 
                 var handler: *JavaScriptHandler = try channel.readItem();
@@ -1541,8 +1544,6 @@ pub const RequestContext = struct {
                 try server.bundler.clone(server.allocator, &handler_thread.client_bundler);
                 handler_thread.log = try server.allocator.create(logger.Log);
                 handler_thread.log.* = logger.Log.init(server.allocator);
-
-                try server.bundler.clone(server.allocator, &handler_thread.client_bundler);
 
                 try JavaScriptHandler.spawnThread(handler_thread);
             }

@@ -264,6 +264,64 @@ pub const NodeModuleBundle = struct {
         ) orelse return null) + package.modules_offset;
     }
 
+    pub fn findModuleIDInPackageIgnoringExtension(
+        this: *const NodeModuleBundle,
+        package: *const Api.JavascriptBundledPackage,
+        _query: string,
+    ) ?u32 {
+        const ModuleFinder = struct {
+            const Self = @This();
+            ctx: *const NodeModuleBundle,
+            pkg: *const Api.JavascriptBundledPackage,
+            query: string,
+
+            // Since the module doesn't necessarily exist, we use an integer overflow as the module name
+            pub fn moduleName(context: *const Self, module: *const Api.JavascriptBundledModule) string {
+                return if (module.path.offset == context.ctx.bundle.manifest_string.len) context.query else context.ctx.str(.{
+                    .offset = module.path.offset,
+                    .length = module.path.length - @as(u32, module.path_extname_length),
+                });
+            }
+
+            pub fn cmpAsc(context: Self, lhs: Api.JavascriptBundledModule, rhs: Api.JavascriptBundledModule) std.math.Order {
+                // Comapre the module name
+                const lhs_name = context.moduleName(&lhs);
+                const rhs_name = context.moduleName(&rhs);
+
+                const traversal_length = std.math.min(lhs_name.len, rhs_name.len);
+
+                for (lhs_name[0..traversal_length]) |char, i| {
+                    switch (std.math.order(char, rhs_name[i])) {
+                        .lt, .gt => |order| {
+                            return order;
+                        },
+                        .eq => {},
+                    }
+                }
+
+                return std.math.order(lhs_name.len, rhs_name.len);
+            }
+        };
+        var to_find = Api.JavascriptBundledModule{
+            .package_id = 0,
+            .code = .{},
+            .path = .{
+                .offset = @truncate(u32, this.bundle.manifest_string.len),
+            },
+        };
+
+        var finder = ModuleFinder{ .ctx = this, .pkg = package, .query = _query[0 .. _query.len - std.fs.path.extension(_query).len] };
+
+        const modules = modulesIn(&this.bundle, package);
+        return @intCast(u32, std.sort.binarySearch(
+            Api.JavascriptBundledModule,
+            to_find,
+            modules,
+            finder,
+            ModuleFinder.cmpAsc,
+        ) orelse return null) + package.modules_offset;
+    }
+
     pub fn init(container: Api.JavascriptBundleContainer, allocator: std.mem.Allocator) NodeModuleBundle {
         return NodeModuleBundle{
             .container = container,

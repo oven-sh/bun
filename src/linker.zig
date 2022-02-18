@@ -287,6 +287,40 @@ pub const Linker = struct {
                         }
                     }
 
+                    if (linker.options.node_modules_bundle) |node_modules_bundle| {
+                        if (Resolver.isPackagePath(import_record.path.text)) {
+                            const text = import_record.path.text;
+
+                            var package_name = text;
+                            if (text[0] == '@') {
+                                if (std.mem.indexOfScalar(u8, text, '/')) |i| {
+                                    if (std.mem.indexOfScalar(u8, text[i + 1 ..], '/')) |j| {
+                                        package_name = text[0 .. i + 1 + j];
+                                    }
+                                }
+                            } else {
+                                if (std.mem.indexOfScalar(u8, text, '/')) |i| {
+                                    package_name = text[0..i];
+                                }
+                            }
+                            if (package_name.len != text.len) {
+                                if (node_modules_bundle.getPackage(package_name)) |pkg| {
+                                    const import_path = text[@minimum(text.len, package_name.len + 1)..];
+                                    if (node_modules_bundle.findModuleIDInPackageIgnoringExtension(pkg, import_path)) |found_module| {
+                                        import_record.is_bundled = true;
+                                        node_module_bundle_import_path = node_module_bundle_import_path orelse
+                                            linker.nodeModuleBundleImportPath(origin);
+
+                                        import_record.path.text = node_module_bundle_import_path.?;
+                                        import_record.module_id = node_modules_bundle.bundle.modules[found_module].id;
+                                        needs_bundle = true;
+                                        continue :outer;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     var resolved_import_ = brk: {
                         switch (import_record.tag) {
                             else => {},
@@ -632,8 +666,8 @@ pub const Linker = struct {
                         // assumption: already starts with "node:"
                         "{s}/{s}",
                         .{
-                            origin,
-                            source_path,
+                            strings.withoutTrailingSlash(origin.href),
+                            strings.withoutLeadingSlash(source_path),
                         },
                     ));
                 } else {

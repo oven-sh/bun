@@ -1772,7 +1772,33 @@ const Map = _hash_map.AutoHashMapUnmanaged;
 
 const List = std.ArrayListUnmanaged;
 const ListManaged = std.ArrayList;
-const LocList = ListManaged(logger.Loc);
+const InvalidLoc = struct {
+    loc: logger.Loc,
+    kind: Tag = Tag.unknown,
+
+    pub const Tag = enum {
+        spread,
+        parenthese,
+        getter,
+        setter,
+        method,
+        unknown,
+    };
+
+    pub fn addError(loc: InvalidLoc, log: *logger.Log, source: *const logger.Source) void {
+        @setCold(true);
+        const text = switch (loc.kind) {
+            .spread => "Unexpected trailing comma after rest element",
+            .parenthese => "Unexpected parentheses in binding pattern",
+            .getter => "Unexpected getter in binding pattern",
+            .setter => "Unexpected setter in binding pattern",
+            .method => "Unexpected method in binding pattern",
+            .unknown => "Invalid binding pattern",
+        };
+        log.addError(source, loc.loc, text) catch unreachable;
+    }
+};
+const LocList = ListManaged(InvalidLoc);
 const StmtList = ListManaged(Stmt);
 
 // This hash table is used every time we parse function args
@@ -1937,24 +1963,15 @@ const DeferredErrors = struct {
     }
 
     pub fn mergeInto(self: *DeferredErrors, to: *DeferredErrors) void {
-        if (self.invalid_expr_default_value) |inv| {
-            to.invalid_expr_default_value = inv;
-        }
-
-        if (self.invalid_expr_after_question) |inv| {
-            to.invalid_expr_after_question = inv;
-        }
-
-        if (self.array_spread_feature) |inv| {
-            to.array_spread_feature = inv;
-        }
+        to.invalid_expr_default_value = self.invalid_expr_default_value orelse to.invalid_expr_default_value;
+        to.invalid_expr_after_question = self.invalid_expr_after_question orelse to.invalid_expr_after_question;
+        to.array_spread_feature = self.array_spread_feature orelse to.array_spread_feature;
     }
 
-    var None = DeferredErrors{
+    const None = DeferredErrors{
         .invalid_expr_default_value = null,
         .invalid_expr_after_question = null,
         .array_spread_feature = null,
-        .is_disabled = true,
     };
 };
 
@@ -4099,11 +4116,17 @@ pub fn NewParser(
                 },
                 .e_array => |ex| {
                     if (ex.comma_after_spread) |spread| {
-                        invalid_loc.append(spread) catch unreachable;
+                        invalid_loc.append(.{
+                            .loc = spread,
+                            .kind = .spread,
+                        }) catch unreachable;
                     }
 
                     if (ex.is_parenthesized) {
-                        invalid_loc.append(p.source.rangeOfOperatorBefore(expr.loc, "(").loc) catch unreachable;
+                        invalid_loc.append(.{
+                            .loc = p.source.rangeOfOperatorBefore(expr.loc, "(").loc,
+                            .kind = .parenthese,
+                        }) catch unreachable;
                     }
 
                     // p.markSyntaxFeature(Destructing)
@@ -4129,27 +4152,35 @@ pub fn NewParser(
 
                     return p.b(B.Array{
                         .items = items.items,
-                        .has_spread = ex.comma_after_spread != null,
+                        .has_spread = is_spread,
                         .is_single_line = ex.is_single_line,
                     }, expr.loc);
                 },
                 .e_object => |ex| {
                     if (ex.comma_after_spread) |sp| {
-                        invalid_loc.append(sp) catch unreachable;
+                        invalid_loc.append(.{ .loc = sp, .kind = .spread }) catch unreachable;
                     }
 
                     if (ex.is_parenthesized) {
-                        invalid_loc.append(p.source.rangeOfOperatorBefore(expr.loc, "(").loc) catch unreachable;
+                        invalid_loc.append(.{ .loc = p.source.rangeOfOperatorBefore(expr.loc, "(").loc, .kind = .parenthese }) catch unreachable;
                     }
                     // p.markSyntaxFeature(compat.Destructuring, p.source.RangeOfOperatorAfter(expr.Loc, "{"))
 
                     var properties = List(B.Property).initCapacity(p.allocator, ex.properties.len) catch unreachable;
-                    for (ex.properties.slice()) |item| {
+                    for (ex.properties.slice()) |*item| {
                         if (item.flags.is_method or item.kind == .get or item.kind == .set) {
-                            invalid_loc.append(item.key.?.loc) catch unreachable;
+                            invalid_loc.append(.{
+                                .loc = item.key.?.loc,
+                                .kind = if (item.flags.is_method)
+                                    InvalidLoc.Tag.method
+                                else if (item.kind == .get)
+                                    InvalidLoc.Tag.getter
+                                else
+                                    InvalidLoc.Tag.setter,
+                            }) catch unreachable;
                             continue;
                         }
-                        var value = &(item.value orelse unreachable);
+                        var value = &item.value.?;
                         const tup = p.convertExprToBindingAndInitializer(value, invalid_loc, false);
                         const initializer = tup.expr orelse item.initializer;
                         const is_spread = item.kind == .spread or item.flags.is_spread;
@@ -4158,7 +4189,7 @@ pub fn NewParser(
                                 .is_spread = is_spread,
                                 .is_computed = item.flags.is_computed,
                             },
-                            .key = (if (is_spread) item.value orelse item.key else item.key) orelse p.panic("Internal error: Expected {s} to have a key.", .{item}),
+                            .key = item.key orelse p.e(E.Missing{}, expr.loc),
                             .value = tup.binding orelse p.b(B.Missing{}, expr.loc),
                             .default_value = initializer,
                         });
@@ -4170,7 +4201,7 @@ pub fn NewParser(
                     }, expr.loc);
                 },
                 else => {
-                    invalid_loc.append(expr.loc) catch unreachable;
+                    invalid_loc.append(.{ .loc = expr.loc, .kind = .unknown }) catch unreachable;
                     return null;
                 },
             }

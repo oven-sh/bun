@@ -1843,11 +1843,15 @@ comptime {
     @export(ErrorCode.JSErrorObject, .{ .name = "Zig_ErrorCodeJSErrorObject" });
 }
 
+const Bun = @import("../javascript.zig").Bun;
+pub const BunTimer = Bun.Timer;
+
 comptime {
     if (!is_bindgen) {
         _ = Process.getTitle;
         _ = Process.setTitle;
         std.testing.refAllDecls(NodeReadableStream);
+        std.testing.refAllDecls(Bun.Timer);
         std.testing.refAllDecls(NodeWritableStream);
         std.testing.refAllDecls(NodePath);
     }

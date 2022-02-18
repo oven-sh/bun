@@ -329,12 +329,100 @@ static JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
   return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+static JSC_DECLARE_HOST_FUNCTION(functionSetTimeout);
+
+static JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
+                                (JSC::JSGlobalObject * globalObject, JSC::CallFrame *callFrame)) {
+  JSC::VM &vm = globalObject->vm();
+
+  if (callFrame->argumentCount() == 0) {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSC::throwTypeError(globalObject, scope, "setTimeout requires 1 argument (a function)"_s);
+    return JSC::JSValue::encode(JSC::JSValue{});
+  }
+
+  JSC::JSValue job = callFrame->argument(0);
+
+  if (!job.isObject() || !job.getObject()->isCallable(vm)) {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSC::throwTypeError(globalObject, scope, "setTimeout expects a function"_s);
+    return JSC::JSValue::encode(JSC::JSValue{});
+  }
+
+  if (callFrame->argumentCount() == 1) {
+    globalObject->queueMicrotask(JSC::createJSMicrotask(vm, job));
+    return JSC::JSValue::encode(JSC::jsNumber(Bun__Timer__getNextID()));
+  }
+
+  JSC::JSValue num = callFrame->argument(1);
+  return Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(num));
+}
+
+static JSC_DECLARE_HOST_FUNCTION(functionSetInterval);
+
+static JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
+                                (JSC::JSGlobalObject * globalObject, JSC::CallFrame *callFrame)) {
+  JSC::VM &vm = globalObject->vm();
+
+  if (callFrame->argumentCount() == 0) {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSC::throwTypeError(globalObject, scope, "setInterval requires 2 arguments (a function)"_s);
+    return JSC::JSValue::encode(JSC::JSValue{});
+  }
+
+  JSC::JSValue job = callFrame->argument(0);
+
+  if (!job.isObject() || !job.getObject()->isCallable(vm)) {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSC::throwTypeError(globalObject, scope, "setInterval expects a function"_s);
+    return JSC::JSValue::encode(JSC::JSValue{});
+  }
+
+  JSC::JSValue num = callFrame->argument(1);
+  return Bun__Timer__setInterval(globalObject, JSC::JSValue::encode(job),
+                                 JSC::JSValue::encode(num));
+}
+
+static JSC_DECLARE_HOST_FUNCTION(functionClearInterval);
+
+static JSC_DEFINE_HOST_FUNCTION(functionClearInterval,
+                                (JSC::JSGlobalObject * globalObject, JSC::CallFrame *callFrame)) {
+  JSC::VM &vm = globalObject->vm();
+
+  if (callFrame->argumentCount() == 0) {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSC::throwTypeError(globalObject, scope, "clearInterval requires 1 argument (a number)"_s);
+    return JSC::JSValue::encode(JSC::JSValue{});
+  }
+
+  JSC::JSValue num = callFrame->argument(0);
+
+  return Bun__Timer__clearInterval(globalObject, JSC::JSValue::encode(num));
+}
+
+static JSC_DECLARE_HOST_FUNCTION(functionClearTimeout);
+
+static JSC_DEFINE_HOST_FUNCTION(functionClearTimeout,
+                                (JSC::JSGlobalObject * globalObject, JSC::CallFrame *callFrame)) {
+  JSC::VM &vm = globalObject->vm();
+
+  if (callFrame->argumentCount() == 0) {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSC::throwTypeError(globalObject, scope, "clearTimeout requires 1 argument (a number)"_s);
+    return JSC::JSValue::encode(JSC::JSValue{});
+  }
+
+  JSC::JSValue num = callFrame->argument(0);
+
+  return Bun__Timer__clearTimeout(globalObject, JSC::JSValue::encode(num));
+}
+
 // This is not a publicly exposed API currently.
 // This is used by the bundler to make Response, Request, FetchEvent,
 // and any other objects available globally.
 void GlobalObject::installAPIGlobals(JSClassRef *globals, int count) {
   WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
-  extraStaticGlobals.reserveCapacity((size_t)count + 3);
+  extraStaticGlobals.reserveCapacity((size_t)count + 3 + 4);
 
   int i = 0;
   for (; i < count - 1; i++) {
@@ -374,6 +462,34 @@ void GlobalObject::installAPIGlobals(JSClassRef *globals, int count) {
     GlobalPropertyInfo{queueMicrotaskIdentifier,
                        JSC::JSFunction::create(vm(), JSC::jsCast<JSC::JSGlobalObject *>(this), 0,
                                                "queueMicrotask", functionQueueMicrotask),
+                       JSC::PropertyAttribute::DontDelete | 0});
+
+  JSC::Identifier setTimeoutIdentifier = JSC::Identifier::fromString(vm(), "setTimeout"_s);
+  extraStaticGlobals.uncheckedAppend(
+    GlobalPropertyInfo{setTimeoutIdentifier,
+                       JSC::JSFunction::create(vm(), JSC::jsCast<JSC::JSGlobalObject *>(this), 0,
+                                               "setTimeout", functionQueueMicrotask),
+                       JSC::PropertyAttribute::DontDelete | 0});
+
+  JSC::Identifier clearTimeoutIdentifier = JSC::Identifier::fromString(vm(), "clearTimeout"_s);
+  extraStaticGlobals.uncheckedAppend(
+    GlobalPropertyInfo{clearTimeoutIdentifier,
+                       JSC::JSFunction::create(vm(), JSC::jsCast<JSC::JSGlobalObject *>(this), 0,
+                                               "clearTimeout", functionQueueMicrotask),
+                       JSC::PropertyAttribute::DontDelete | 0});
+
+  JSC::Identifier setIntervalIdentifier = JSC::Identifier::fromString(vm(), "setInterval"_s);
+  extraStaticGlobals.uncheckedAppend(
+    GlobalPropertyInfo{setIntervalIdentifier,
+                       JSC::JSFunction::create(vm(), JSC::jsCast<JSC::JSGlobalObject *>(this), 0,
+                                               "setInterval", functionQueueMicrotask),
+                       JSC::PropertyAttribute::DontDelete | 0});
+
+  JSC::Identifier clearIntervalIdentifier = JSC::Identifier::fromString(vm(), "clearInterval"_s);
+  extraStaticGlobals.uncheckedAppend(
+    GlobalPropertyInfo{clearIntervalIdentifier,
+                       JSC::JSFunction::create(vm(), JSC::jsCast<JSC::JSGlobalObject *>(this), 0,
+                                               "clearInterval", functionQueueMicrotask),
                        JSC::PropertyAttribute::DontDelete | 0});
 
   auto clientData = Bun::clientData(vm());

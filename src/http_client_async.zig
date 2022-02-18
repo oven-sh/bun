@@ -34,7 +34,7 @@ pub const MimeType = @import("./http/mime_type.zig");
 pub var default_allocator: std.mem.Allocator = undefined;
 pub var default_arena: Arena = undefined;
 
-pub fn onThreadStart() void {
+pub fn onThreadStart(_: ?*anyopaque) ?*anyopaque {
     default_arena = Arena.init() catch unreachable;
     default_allocator = default_arena.allocator();
     NetworkThread.address_list_cached = NetworkThread.AddressListCache.init(default_allocator);
@@ -48,6 +48,7 @@ pub fn onThreadStart() void {
     NetworkThread.global.pool.io = &AsyncIO.global;
     Global.setThreadName("HTTP");
     AsyncBIO.initBoringSSL();
+    return null;
 }
 
 pub inline fn getAllocator() std.mem.Allocator {

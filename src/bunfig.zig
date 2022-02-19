@@ -403,10 +403,22 @@ pub const Bunfig = struct {
                 .AutoCommand, .DevCommand, .BuildCommand, .BunCommand => {
                     if (json.get("publicDir")) |public_dir| {
                         try this.expect(public_dir, .e_string);
-                        this.bunfig.router = Api.RouteConfig{ .extensions = &.{}, .dir = &.{}, .static_dir = try public_dir.data.e_string.string(allocator) };
+                        this.bunfig.router = Api.RouteConfig{
+                            .extensions = &.{},
+                            .dir = &.{},
+                            .static_dir = try public_dir.data.e_string.string(allocator),
+                        };
                     }
                 },
                 else => {},
+            }
+
+            if (json.get("debug")) |expr| {
+                if (expr.get("editor")) |editor| {
+                    if (editor.asString(allocator)) |value| {
+                        this.ctx.debug.editor = value;
+                    }
+                }
             }
 
             if (json.get("macros")) |expr| {

@@ -12,6 +12,7 @@ pub inline fn containsChar(self: string, char: u8) bool {
 pub inline fn contains(self: string, str: string) bool {
     return std.mem.indexOf(u8, self, str) != null;
 }
+pub const includes = contains;
 
 pub inline fn containsAny(in: anytype, target: string) bool {
     for (in) |str| if (contains(str, target)) return true;

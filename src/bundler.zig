@@ -1820,7 +1820,7 @@ pub const Bundler = struct {
                                         json_e_string = js_ast.E.String{ .utf8 = source.contents, .prefer_template = true };
                                         var json_string_expr = js_ast.Expr{ .data = .{ .e_string = &json_e_string }, .loc = logger.Loc{ .start = 0 } };
                                         json_call_args[0] = json_string_expr;
-                                        json_e_identifier = js_ast.E.Identifier{ .ref = Ref{ .source_index = 0, .inner_index = @intCast(Ref.Int, json_ast_symbols_list.len - 1) } };
+                                        json_e_identifier = js_ast.E.Identifier{ .ref = Ref.atIndex(json_ast_symbols_list.len - 1) };
 
                                         json_e_call = js_ast.E.Call{
                                             .target = js_ast.Expr{ .data = .{ .e_identifier = json_e_identifier }, .loc = logger.Loc{ .start = 0 } },
@@ -1835,7 +1835,10 @@ pub const Bundler = struct {
 
                                 var stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
                                     .value = js_ast.StmtOrExpr{ .expr = expr },
-                                    .default_name = js_ast.LocRef{ .loc = logger.Loc{}, .ref = Ref{} },
+                                    .default_name = js_ast.LocRef{
+                                        .loc = logger.Loc{},
+                                        .ref = Ref.None,
+                                    },
                                 }, logger.Loc{ .start = 0 });
                                 var stmts = worker.allocator.alloc(js_ast.Stmt, 1) catch unreachable;
                                 stmts[0] = stmt;
@@ -1844,12 +1847,12 @@ pub const Bundler = struct {
                                 ast = js_ast.Ast.initTest(parts);
 
                                 ast.runtime_imports = runtime.Runtime.Imports{};
-                                ast.runtime_imports.@"$$m" = .{ .ref = Ref{ .source_index = 0, .inner_index = 0 }, .primary = Ref.None, .backup = Ref.None };
-                                ast.runtime_imports.__export = .{ .ref = Ref{ .source_index = 0, .inner_index = 1 }, .primary = Ref.None, .backup = Ref.None };
+                                ast.runtime_imports.@"$$m" = .{ .ref = Ref.atIndex(0), .primary = Ref.None, .backup = Ref.None };
+                                ast.runtime_imports.__export = .{ .ref = Ref.atIndex(1), .primary = Ref.None, .backup = Ref.None };
                                 ast.symbols = json_ast_symbols_list;
-                                ast.module_ref = Ref{ .source_index = 0, .inner_index = 2 };
+                                ast.module_ref = Ref.atIndex(2);
                                 ast.exports_ref = ast.runtime_imports.__export.?.ref;
-                                ast.bundle_export_ref = Ref{ .source_index = 0, .inner_index = 3 };
+                                ast.bundle_export_ref = Ref.atIndex(3);
                             } else {
                                 var parts = &[_]js_ast.Part{};
                                 ast = js_ast.Ast.initTest(parts);
@@ -1928,7 +1931,7 @@ pub const Bundler = struct {
                             };
 
                             // if (!ast.uses_module_ref) {
-                            //     var symbol = &ast.symbols[ast.module_ref.?.inner_index];
+                            //     var symbol = &ast.symbols[ast.module_ref.?.innerIndex()];
                             //     symbol.original_name = "_$$";
                             // }
 
@@ -2809,7 +2812,10 @@ pub const Bundler = struct {
                 var expr = json_parser.ParseJSON(&source, bundler.log, allocator) catch return null;
                 var stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
                     .value = js_ast.StmtOrExpr{ .expr = expr },
-                    .default_name = js_ast.LocRef{ .loc = logger.Loc{}, .ref = Ref{} },
+                    .default_name = js_ast.LocRef{
+                        .loc = logger.Loc{},
+                        .ref = Ref.None,
+                    },
                 }, logger.Loc{ .start = 0 });
                 var stmts = allocator.alloc(js_ast.Stmt, 1) catch unreachable;
                 stmts[0] = stmt;
@@ -2827,7 +2833,10 @@ pub const Bundler = struct {
                 var expr = TOML.parse(&source, bundler.log, allocator) catch return null;
                 var stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
                     .value = js_ast.StmtOrExpr{ .expr = expr },
-                    .default_name = js_ast.LocRef{ .loc = logger.Loc{}, .ref = Ref{} },
+                    .default_name = js_ast.LocRef{
+                        .loc = logger.Loc{},
+                        .ref = Ref.None,
+                    },
                 }, logger.Loc{ .start = 0 });
                 var stmts = allocator.alloc(js_ast.Stmt, 1) catch unreachable;
                 stmts[0] = stmt;
@@ -3442,7 +3451,9 @@ pub const Transformer = struct {
                 var expr = try json_parser.ParseJSON(source, log, allocator);
                 var stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault{
                     .value = js_ast.StmtOrExpr{ .expr = expr },
-                    .default_name = js_ast.LocRef{ .loc = logger.Loc{}, .ref = Ref{} },
+                    .default_name = js_ast.LocRef{
+                        .loc = logger.Loc{},
+                    },
                 }, logger.Loc{ .start = 0 });
                 var stmts = try allocator.alloc(js_ast.Stmt, 1);
                 stmts[0] = stmt;
@@ -3476,7 +3487,7 @@ pub const Transformer = struct {
             source,
             false,
             js_printer.Options{
-                .to_module_ref = ast.module_ref orelse js_ast.Ref{ .inner_index = 0 },
+                .to_module_ref = ast.module_ref orelse js_ast.Ref.None,
                 .transform_imports = false,
                 .runtime_imports = ast.runtime_imports,
             },

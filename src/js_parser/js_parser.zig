@@ -415,10 +415,10 @@ pub const ImportScanner = struct {
 
                         if (st.default_name) |default_name| {
                             found_imports = true;
-                            const symbol = p.symbols.items[default_name.ref.?.inner_index];
+                            const symbol = p.symbols.items[default_name.ref.?.innerIndex()];
 
                             // TypeScript has a separate definition of unused
-                            if (is_typescript_enabled and p.ts_use_counts.items[default_name.ref.?.inner_index] != 0) {
+                            if (is_typescript_enabled and p.ts_use_counts.items[default_name.ref.?.innerIndex()] != 0) {
                                 is_unused_in_typescript = false;
                             }
 
@@ -431,10 +431,10 @@ pub const ImportScanner = struct {
                         // Remove the star import if it's unused
                         if (st.star_name_loc) |_| {
                             found_imports = true;
-                            const symbol = p.symbols.items[st.namespace_ref.inner_index];
+                            const symbol = p.symbols.items[st.namespace_ref.innerIndex()];
 
                             // TypeScript has a separate definition of unused
-                            if (is_typescript_enabled and p.ts_use_counts.items[st.namespace_ref.inner_index] != 0) {
+                            if (is_typescript_enabled and p.ts_use_counts.items[st.namespace_ref.innerIndex()] != 0) {
                                 is_unused_in_typescript = false;
                             }
 
@@ -465,10 +465,10 @@ pub const ImportScanner = struct {
                             while (i < st.items.len) : (i += 1) {
                                 const item = st.items[i];
                                 const ref = item.name.ref.?;
-                                const symbol: Symbol = p.symbols.items[ref.inner_index];
+                                const symbol: Symbol = p.symbols.items[ref.innerIndex()];
 
                                 // TypeScript has a separate definition of unused
-                                if (is_typescript_enabled and p.ts_use_counts.items[ref.inner_index] != 0) {
+                                if (is_typescript_enabled and p.ts_use_counts.items[ref.innerIndex()] != 0) {
                                     is_unused_in_typescript = false;
                                 }
 
@@ -516,7 +516,7 @@ pub const ImportScanner = struct {
                     }
 
                     const namespace_ref = st.namespace_ref;
-                    const convert_star_to_clause = !p.options.enable_bundling and !p.options.can_import_from_bundle and p.symbols.items[namespace_ref.inner_index].use_count_estimate == 0;
+                    const convert_star_to_clause = !p.options.enable_bundling and !p.options.can_import_from_bundle and p.symbols.items[namespace_ref.innerIndex()].use_count_estimate == 0;
 
                     if (convert_star_to_clause and !keep_unused_imports) {
                         st.star_name_loc = null;
@@ -548,7 +548,7 @@ pub const ImportScanner = struct {
                         });
 
                         // Make sure the printer prints this as a property access
-                        var symbol: Symbol = p.symbols.items[name_ref.inner_index];
+                        var symbol: *Symbol = &p.symbols.items[name_ref.innerIndex()];
 
                         symbol.namespace_alias = G.NamespaceAlias{
                             .namespace_ref = namespace_ref,
@@ -556,7 +556,6 @@ pub const ImportScanner = struct {
                             .import_record_index = st.import_record_index,
                             .was_originally_property_access = st.star_name_loc != null and existing_items.contains(symbol.original_name),
                         };
-                        p.symbols.items[name_ref.inner_index] = symbol;
                     }
 
                     try p.import_records_for_current_part.append(allocator, st.import_record_index);
@@ -566,21 +565,20 @@ pub const ImportScanner = struct {
                     }
 
                     if (record.was_originally_require) {
-                        var symbol = p.symbols.items[namespace_ref.inner_index];
+                        var symbol = &p.symbols.items[namespace_ref.innerIndex()];
                         symbol.namespace_alias = G.NamespaceAlias{
                             .namespace_ref = namespace_ref,
                             .alias = "",
                             .import_record_index = st.import_record_index,
                             .was_originally_property_access = false,
                         };
-                        p.symbols.items[namespace_ref.inner_index] = symbol;
                     }
                 },
 
                 .s_function => |st| {
                     if (st.func.flags.is_export) {
                         if (st.func.name) |name| {
-                            const original_name = p.symbols.items[name.ref.?.inner_index].original_name;
+                            const original_name = p.symbols.items[name.ref.?.innerIndex()].original_name;
                             try p.recordExport(name.loc, original_name, name.ref.?);
 
                             if (p.options.features.hot_module_reloading) {
@@ -594,7 +592,7 @@ pub const ImportScanner = struct {
                 .s_class => |st| {
                     if (st.is_export) {
                         if (st.class.class_name) |name| {
-                            try p.recordExport(name.loc, p.symbols.items[name.ref.?.inner_index].original_name, name.ref.?);
+                            try p.recordExport(name.loc, p.symbols.items[name.ref.?.innerIndex()].original_name, name.ref.?);
 
                             if (p.options.features.hot_module_reloading) {
                                 st.is_export = false;
@@ -632,7 +630,7 @@ pub const ImportScanner = struct {
                         if (value) |val| {
                             if (@as(Expr.Tag, val.data) == .e_identifier) {
                                 // Is this import statement unused?
-                                if (@as(Binding.Tag, decl.binding.data) == .b_identifier and p.symbols.items[decl.binding.data.b_identifier.ref.inner_index].use_count_estimate == 0) {
+                                if (@as(Binding.Tag, decl.binding.data) == .b_identifier and p.symbols.items[decl.binding.data.b_identifier.ref.innerIndex()].use_count_estimate == 0) {
                                     p.ignoreUsage(val.data.e_identifier.ref);
 
                                     scanner.removed_import_equals = true;
@@ -982,7 +980,7 @@ pub const SideEffects = enum(u1) {
                     return expr;
                 }
 
-                if (ident.can_be_removed_if_unused or p.symbols.items[ident.ref.inner_index].kind != .unbound) {
+                if (ident.can_be_removed_if_unused or p.symbols.items[ident.ref.innerIndex()].kind != .unbound) {
                     return null;
                 }
             },
@@ -2275,8 +2273,8 @@ pub const Parser = struct {
 
         // Analyze cross-part dependencies for tree shaking and code splitting
         var exports_kind = js_ast.ExportsKind.none;
-        const uses_exports_ref = p.symbols.items[p.exports_ref.inner_index].use_count_estimate > 0;
-        const uses_module_ref = p.symbols.items[p.module_ref.inner_index].use_count_estimate > 0;
+        const uses_exports_ref = p.symbols.items[p.exports_ref.innerIndex()].use_count_estimate > 0;
+        const uses_module_ref = p.symbols.items[p.module_ref.innerIndex()].use_count_estimate > 0;
 
         var wrapper_expr: ?Expr = null;
 
@@ -2311,13 +2309,13 @@ pub const Parser = struct {
 
         // Auto-import JSX
         if (ParserType.jsx_transform_type == .react) {
-            const jsx_filename_symbol = p.symbols.items[p.jsx_filename.ref.inner_index];
+            const jsx_filename_symbol = p.symbols.items[p.jsx_filename.ref.innerIndex()];
 
             {
-                const jsx_symbol = p.symbols.items[p.jsx_runtime.ref.inner_index];
-                const jsx_static_symbol = p.symbols.items[p.jsxs_runtime.ref.inner_index];
-                const jsx_fragment_symbol = p.symbols.items[p.jsx_fragment.ref.inner_index];
-                const jsx_factory_symbol = p.symbols.items[p.jsx_factory.ref.inner_index];
+                const jsx_symbol = p.symbols.items[p.jsx_runtime.ref.innerIndex()];
+                const jsx_static_symbol = p.symbols.items[p.jsxs_runtime.ref.innerIndex()];
+                const jsx_fragment_symbol = p.symbols.items[p.jsx_fragment.ref.innerIndex()];
+                const jsx_factory_symbol = p.symbols.items[p.jsx_factory.ref.innerIndex()];
 
                 // Currently, React (and most node_modules) ship a CJS version or a UMD version
                 // but we should assume that it'll pretty much always be CJS
@@ -2342,8 +2340,8 @@ pub const Parser = struct {
 
             p.resolveStaticJSXSymbols();
 
-            const jsx_classic_symbol = p.symbols.items[p.jsx_classic.ref.inner_index];
-            const jsx_automatic_symbol = p.symbols.items[p.jsx_automatic.ref.inner_index];
+            const jsx_classic_symbol = p.symbols.items[p.jsx_classic.ref.innerIndex()];
+            const jsx_automatic_symbol = p.symbols.items[p.jsx_automatic.ref.innerIndex()];
 
             // JSX auto-imports
             // The classic runtime is a different import than the main import
@@ -2355,10 +2353,10 @@ pub const Parser = struct {
                 // These must unfortunately be copied
                 // p.symbols may grow during this scope
                 // if it grows, the previous pointers are invalidated
-                const jsx_symbol = p.symbols.items[p.jsx_runtime.ref.inner_index];
-                const jsx_static_symbol = p.symbols.items[p.jsxs_runtime.ref.inner_index];
-                const jsx_fragment_symbol = p.symbols.items[p.jsx_fragment.ref.inner_index];
-                const jsx_factory_symbol = p.symbols.items[p.jsx_factory.ref.inner_index];
+                const jsx_symbol = p.symbols.items[p.jsx_runtime.ref.innerIndex()];
+                const jsx_static_symbol = p.symbols.items[p.jsxs_runtime.ref.innerIndex()];
+                const jsx_fragment_symbol = p.symbols.items[p.jsx_fragment.ref.innerIndex()];
+                const jsx_factory_symbol = p.symbols.items[p.jsx_factory.ref.innerIndex()];
 
                 const classic_namespace_ref = p.jsx_classic.ref;
                 const automatic_namespace_ref = p.jsx_automatic.ref;
@@ -2593,7 +2591,7 @@ pub const Parser = struct {
                     defer did_import_fast_refresh = true;
                     p.resolveGeneratedSymbol(&p.jsx_refresh_runtime);
                     if (!p.options.jsx.use_embedded_refresh_runtime) {
-                        const refresh_runtime_symbol: *const Symbol = &p.symbols.items[p.jsx_refresh_runtime.ref.inner_index];
+                        const refresh_runtime_symbol: *const Symbol = &p.symbols.items[p.jsx_refresh_runtime.ref.innerIndex()];
 
                         declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_refresh_runtime.ref, .is_top_level = true };
                         declared_symbols_i += 1;
@@ -2654,7 +2652,7 @@ pub const Parser = struct {
                     .import_record_index = import_record_id,
                 }, loc);
 
-                const refresh_runtime_symbol: *const Symbol = &p.symbols.items[p.jsx_refresh_runtime.ref.inner_index];
+                const refresh_runtime_symbol: *const Symbol = &p.symbols.items[p.jsx_refresh_runtime.ref.innerIndex()];
 
                 p.named_imports.put(
                     p.jsx_refresh_runtime.ref,
@@ -2689,7 +2687,7 @@ pub const Parser = struct {
         if (FeatureFlags.auto_import_buffer) {
             // If they use Buffer...just automatically import it.
             // ✨ magic ✨ (i don't like this)
-            // if (p.symbols.items[p.buffer_ref.inner_index].use_count_estimate > 0) {
+            // if (p.symbols.items[p.buffer_ref.innerIndex()].use_count_estimate > 0) {
             //     var named_import = p.named_imports.getOrPut(p.buffer_ref);
 
             //     // if Buffer is actually an import, let them use that one instead.
@@ -3348,7 +3346,7 @@ fn NewParser_(
 
             return p.e(E.Import{
                 .expr = arg,
-                .import_record_index = Ref.None.source_index,
+                .import_record_index = Ref.None.sourceIndex(),
             }, state.loc);
         }
 
@@ -3442,7 +3440,7 @@ fn NewParser_(
                             return true;
                     }
 
-                    const symbol: *const Symbol = &p.symbols.items[ident.ref.inner_index];
+                    const symbol: *const Symbol = &p.symbols.items[ident.ref.innerIndex()];
                     return symbol.use_count_estimate > 0;
                 },
                 .b_array => |array| {
@@ -3544,7 +3542,7 @@ fn NewParser_(
                                 .s_function => |func| {
                                     if (func.func.flags.is_export) break :can_remove_part false;
                                     if (func.func.name) |name| {
-                                        const symbol: *const Symbol = &p.symbols.items[name.ref.?.inner_index];
+                                        const symbol: *const Symbol = &p.symbols.items[name.ref.?.innerIndex()];
 
                                         if (name.ref.?.eql(default_export_ref) or
                                             symbol.use_count_estimate > 0 or
@@ -3565,7 +3563,7 @@ fn NewParser_(
                                 .s_class => |class| {
                                     if (class.is_export) break :can_remove_part false;
                                     if (class.class.class_name) |name| {
-                                        const symbol: *const Symbol = &p.symbols.items[name.ref.?.inner_index];
+                                        const symbol: *const Symbol = &p.symbols.items[name.ref.?.innerIndex()];
 
                                         if (name.ref.?.eql(default_export_ref) or
                                             symbol.use_count_estimate > 0 or
@@ -3589,11 +3587,11 @@ fn NewParser_(
                         var symbol_use_values = part.symbol_uses.values();
 
                         for (symbol_use_refs) |ref, i| {
-                            p.symbols.items[ref.inner_index].use_count_estimate -|= symbol_use_values[i].count_estimate;
+                            p.symbols.items[ref.innerIndex()].use_count_estimate -|= symbol_use_values[i].count_estimate;
                         }
 
                         for (part.declared_symbols) |declared| {
-                            p.symbols.items[declared.ref.inner_index].use_count_estimate = 0;
+                            p.symbols.items[declared.ref.innerIndex()].use_count_estimate = 0;
                             // }
                         }
 
@@ -3760,7 +3758,7 @@ fn NewParser_(
             // property on the target object of the "with" statement. We must not rename
             // it or we risk changing the behavior of the code.
             if (is_inside_with_scope) {
-                p.symbols.items[ref.inner_index].must_not_be_renamed = true;
+                p.symbols.items[ref.innerIndex()].must_not_be_renamed = true;
             }
 
             // Track how many times we've referenced this symbol
@@ -3777,7 +3775,7 @@ fn NewParser_(
             switch (binding.data) {
                 .b_missing => {},
                 .b_identifier => |ident| {
-                    p.recordExport(binding.loc, p.symbols.items[ident.ref.inner_index].original_name, ident.ref) catch unreachable;
+                    p.recordExport(binding.loc, p.symbols.items[ident.ref.innerIndex()].original_name, ident.ref) catch unreachable;
                 },
                 .b_array => |array| {
                     for (array.items) |prop| {
@@ -3828,8 +3826,8 @@ fn NewParser_(
             // during minification. These counts shouldn't include references inside dead
             // code regions since those will be culled.
             if (!p.is_control_flow_dead) {
-                std.debug.assert(p.symbols.items.len > ref.inner_index);
-                p.symbols.items[ref.inner_index].use_count_estimate += 1;
+                std.debug.assert(p.symbols.items.len > ref.innerIndex());
+                p.symbols.items[ref.innerIndex()].use_count_estimate += 1;
                 var result = p.symbol_uses.getOrPut(p.allocator, ref) catch unreachable;
                 if (!result.found_existing) {
                     result.value_ptr.* = Symbol.Use{ .count_estimate = 1 };
@@ -3842,7 +3840,7 @@ fn NewParser_(
             // symbol use counts for the whole file, including dead code regions. This is
             // tracked separately in a parser-only data structure.
             if (is_typescript_enabled) {
-                p.ts_use_counts.items[ref.inner_index] += 1;
+                p.ts_use_counts.items[ref.innerIndex()] += 1;
             }
         }
 
@@ -3876,11 +3874,11 @@ fn NewParser_(
         pub fn handleIdentifier(p: *P, loc: logger.Loc, ident: E.Identifier, _original_name: ?string, opts: IdentifierOpts) Expr {
             const ref = ident.ref;
 
-            if ((opts.assign_target != .none or opts.is_delete_target) and p.symbols.items[ref.inner_index].kind == .import) {
+            if ((opts.assign_target != .none or opts.is_delete_target) and p.symbols.items[ref.innerIndex()].kind == .import) {
                 // Create an error for assigning to an import namespace
                 const r = js_lexer.rangeOfIdentifier(p.source, loc);
                 p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot assign to import \"{s}\"", .{
-                    p.symbols.items[ref.inner_index].original_name,
+                    p.symbols.items[ref.innerIndex()].original_name,
                 }) catch unreachable;
             }
 
@@ -3895,7 +3893,7 @@ fn NewParser_(
             // Substitute a namespace export reference now if appropriate
             if (is_typescript_enabled) {
                 if (p.is_exported_inside_namespace.get(ref)) |ns_ref| {
-                    const name = p.symbols.items[ref.inner_index].original_name;
+                    const name = p.symbols.items[ref.innerIndex()].original_name;
 
                     // If this is a known enum value, inline the value of the enum
                     if (p.known_enum_values.get(ns_ref)) |enum_values| {
@@ -4126,17 +4124,17 @@ fn NewParser_(
         pub fn resolveGeneratedSymbol(p: *P, generated_symbol: *GeneratedSymbol) void {
             if (generated_symbol.ref.isNull()) return;
 
-            if (p.symbols.items[generated_symbol.primary.inner_index].use_count_estimate == 0 and
-                p.symbols.items[generated_symbol.primary.inner_index].link.isNull())
+            if (p.symbols.items[generated_symbol.primary.innerIndex()].use_count_estimate == 0 and
+                p.symbols.items[generated_symbol.primary.innerIndex()].link.isNull())
             {
-                p.symbols.items[generated_symbol.ref.inner_index].original_name = p.symbols.items[generated_symbol.primary.inner_index].original_name;
+                p.symbols.items[generated_symbol.ref.innerIndex()].original_name = p.symbols.items[generated_symbol.primary.innerIndex()].original_name;
                 return;
             }
 
-            if (p.symbols.items[generated_symbol.backup.inner_index].use_count_estimate == 0 and
-                p.symbols.items[generated_symbol.backup.inner_index].link.isNull())
+            if (p.symbols.items[generated_symbol.backup.innerIndex()].use_count_estimate == 0 and
+                p.symbols.items[generated_symbol.backup.innerIndex()].link.isNull())
             {
-                p.symbols.items[generated_symbol.ref.inner_index].original_name = p.symbols.items[generated_symbol.backup.inner_index].original_name;
+                p.symbols.items[generated_symbol.ref.innerIndex()].original_name = p.symbols.items[generated_symbol.backup.innerIndex()].original_name;
                 return;
             }
         }
@@ -4184,7 +4182,7 @@ fn NewParser_(
                 var iter = scope.members.iterator();
                 const allocator = p.allocator;
                 nextMember: while (iter.next()) |res| {
-                    var symbol = &p.symbols.items[res.value.ref.inner_index];
+                    var symbol = &p.symbols.items[res.value.ref.innerIndex()];
                     if (!symbol.isHoisted()) {
                         continue :nextMember;
                     }
@@ -4214,7 +4212,7 @@ fn NewParser_(
 
                         if (_scope.members.getEntryWithHash(symbol.original_name, hash)) |existing_member_entry| {
                             const existing_member = &existing_member_entry.value;
-                            const existing_symbol: *const Symbol = &p.symbols.items[existing_member.ref.inner_index];
+                            const existing_symbol: *const Symbol = &p.symbols.items[existing_member.ref.innerIndex()];
 
                             // We can hoist the symbol from the child scope into the symbol in
                             // this scope if:
@@ -4309,6 +4307,7 @@ fn NewParser_(
                 .kind = kind,
                 .label_ref = null,
                 .parent = parent,
+                .generated = .{},
             };
 
             try parent.children.append(allocator, scope);
@@ -4343,8 +4342,8 @@ fn NewParser_(
                 while (iter.next()) |entry| {
                     // 	// Don't copy down the optional function expression name. Re-declaring
                     // 	// the name of a function expression is allowed.
-                    const adjacent_symbols = p.symbols.items[entry.value.ref.inner_index];
-                    if (adjacent_symbols.kind != .hoisted_function) {
+                    const adjacent_kind = p.symbols.items[entry.value.ref.innerIndex()].kind;
+                    if (adjacent_kind != .hoisted_function) {
                         try scope.members.put(allocator, entry.key, entry.value);
                     }
                 }
@@ -4789,8 +4788,8 @@ fn NewParser_(
             // this if it wasn't already declared above because arguments are allowed to
             // be called "arguments", in which case the real "arguments" is inaccessible.
             if (!p.current_scope.members.contains("arguments")) {
-                func.arguments_ref = p.declareSymbol(.arguments, func.open_parens_loc, "arguments") catch unreachable;
-                p.symbols.items[func.arguments_ref.?.inner_index].must_not_be_renamed = true;
+                func.arguments_ref = p.declareSymbolMaybeGenerated(.arguments, func.open_parens_loc, "arguments", true) catch unreachable;
+                p.symbols.items[func.arguments_ref.?.innerIndex()].must_not_be_renamed = true;
             }
 
             try p.lexer.expect(.t_close_paren);
@@ -5392,7 +5391,6 @@ fn NewParser_(
             stmt.import_record_index = p.addImportRecord(.stmt, path.loc, path.text);
             p.import_records.items[stmt.import_record_index].was_originally_bare_import = was_originally_bare_import;
 
-            var remap_count: u16 = 0;
             if (stmt.star_name_loc) |star| {
                 const name = p.loadNameFromRef(stmt.namespace_ref);
 
@@ -5421,7 +5419,7 @@ fn NewParser_(
             // we cannot use putAssumeCapacity because a symbol can have existing links
             // those may write to this hash table, so this estimate may be innaccurate
             try p.is_import_item.ensureUnusedCapacity(p.allocator, count_excluding_namespace);
-
+            var remap_count: u32 = 0;
             // Link the default item to the namespace
             if (stmt.default_name) |*name_loc| {
                 outer: {
@@ -5460,10 +5458,16 @@ fn NewParser_(
                         break :outer;
                     }
 
+                    if (comptime ParsePassSymbolUsageType != void) {
+                        p.parse_pass_symbol_uses.put(name, .{
+                            .ref = ref,
+                            .import_record_index = stmt.import_record_index,
+                        }) catch unreachable;
+                    }
+
                     item_refs.putAssumeCapacity(name, name_loc.*);
                 }
             }
-
             var i: usize = 0;
             var end: usize = 0;
 
@@ -5581,10 +5585,7 @@ fn NewParser_(
                 try p.ts_use_counts.append(p.allocator, 0);
             }
 
-            return Ref{
-                .source_index = Ref.toInt(p.source.index),
-                .inner_index = inner_index,
-            };
+            return Ref.init(inner_index, Ref.toInt(p.source.index), false);
         }
 
         fn parseLabelName(p: *P) !?js_ast.LocRef {
@@ -7433,7 +7434,7 @@ fn NewParser_(
                     switch (decl.binding.data) {
                         .b_identifier => |ident| {
                             const r = js_lexer.rangeOfIdentifier(p.source, decl.binding.loc);
-                            try p.log.addRangeErrorFmt(p.source, r, p.allocator, "The constant \"{s}\" must be initialized", .{p.symbols.items[ident.ref.inner_index].original_name});
+                            try p.log.addRangeErrorFmt(p.source, r, p.allocator, "The constant \"{s}\" must be initialized", .{p.symbols.items[ident.ref.innerIndex()].original_name});
                             // return;/
                         },
                         else => {
@@ -8131,7 +8132,7 @@ fn NewParser_(
             // Both the "exports" argument and "var exports" are hoisted variables, so
             // they don't collide.
             if (member) |_member| {
-                if (p.symbols.items[_member.ref.inner_index].kind == .hoisted and kind == .hoisted and !p.has_es_module_syntax) {
+                if (p.symbols.items[_member.ref.innerIndex()].kind == .hoisted and kind == .hoisted and !p.has_es_module_syntax) {
                     return _member.ref;
                 }
             }
@@ -8183,7 +8184,7 @@ fn NewParser_(
             var entry = try scope.members.getOrPut(p.allocator, name);
             if (entry.found_existing) {
                 const existing = entry.entry.value;
-                var symbol: *Symbol = &p.symbols.items[@intCast(usize, existing.ref.inner_index)];
+                var symbol: *Symbol = &p.symbols.items[existing.ref.innerIndex()];
 
                 if (comptime !is_generated) {
                     switch (scope.canMergeSymbols(symbol.kind, kind, is_typescript_enabled)) {
@@ -8218,7 +8219,7 @@ fn NewParser_(
                         try p.is_import_item.put(p.allocator, ref, .{});
                     }
 
-                    p.symbols.items[ref.inner_index].link = existing.ref;
+                    p.symbols.items[ref.innerIndex()].link = existing.ref;
                 }
             }
 
@@ -8231,7 +8232,7 @@ fn NewParser_(
 
         fn validateFunctionName(p: *P, func: G.Fn, kind: FunctionKind) void {
             if (func.name) |name| {
-                const original_name = p.symbols.items[name.ref.?.inner_index].original_name;
+                const original_name = p.symbols.items[name.ref.?.innerIndex()].original_name;
 
                 if (func.flags.is_async and strings.eqlComptime(original_name, "await")) {
                     p.log.addRangeError(
@@ -8410,32 +8411,22 @@ fn NewParser_(
             if (@ptrToInt(p.source.contents.ptr) <= @ptrToInt(name.ptr) and (@ptrToInt(name.ptr) + name.len) <= (@ptrToInt(p.source.contents.ptr) + p.source.contents.len)) {
                 const start = Ref.toInt(@ptrToInt(name.ptr) - @ptrToInt(p.source.contents.ptr));
                 const end = Ref.toInt(name.len);
-                return Ref{ .source_index = start, .inner_index = end, .is_source_contents_slice = true };
-            } else if (p.allocated_names.capacity > 0) {
+                return Ref.initSourceEnd(.{ .source_index = start, .inner_index = end, .is_source_contents_slice = true });
+            } else {
                 const inner_index = Ref.toInt(p.allocated_names.items.len);
                 try p.allocated_names.append(p.allocator, name);
-                return Ref{ .source_index = std.math.maxInt(Ref.Int), .inner_index = inner_index };
-            } else {
-                // if (p.allocated_names_pool == null) {
-                //     p.allocated_names_pool = AllocatedNamesPool.get(_global.default_allocator);
-                //     p.allocated_names = p.allocated_names_pool.?.data;
-                //     p.allocated_names.clearRetainingCapacity();
-                //     try p.allocated_names.ensureTotalCapacity(1);
-                // }
-                p.allocated_names = .{};
-                try p.allocated_names.append(p.allocator, name);
-                return Ref{ .source_index = std.math.maxInt(Ref.Int), .inner_index = 0 };
+                return Ref.initSourceEnd(.{ .source_index = std.math.maxInt(Ref.Int), .inner_index = inner_index, .is_source_contents_slice = false });
             }
         }
 
         pub fn loadNameFromRef(p: *P, ref: Ref) string {
-            if (ref.is_source_contents_slice) {
-                return p.source.contents[ref.source_index .. ref.source_index + ref.inner_index];
-            } else if (ref.source_index == std.math.maxInt(Ref.Int)) {
-                assert(ref.inner_index < p.allocated_names.items.len);
-                return p.allocated_names.items[ref.inner_index];
+            if (ref.isSourceContentsSlice()) {
+                return p.source.contents[ref.sourceIndex() .. ref.sourceIndex() + ref.innerIndex()];
+            } else if (ref.sourceIndex() == std.math.maxInt(Ref.Int)) {
+                assert(ref.innerIndex() < p.allocated_names.items.len);
+                return p.allocated_names.items[ref.innerIndex()];
             } else {
-                return p.symbols.items[ref.inner_index].original_name;
+                return p.symbols.items[ref.innerIndex()].original_name;
             }
         }
 
@@ -8704,7 +8695,7 @@ fn NewParser_(
                     //     continue;
                     // }
 
-                    p.symbols.items[member.value.ref.inner_index].must_not_be_renamed = true;
+                    p.symbols.items[member.value.ref.innerIndex()].must_not_be_renamed = true;
                 }
             }
 
@@ -11198,7 +11189,7 @@ fn NewParser_(
                 for (p.relocated_top_level_vars.items) |*local| {
                     // Follow links because "var" declarations may be merged due to hoisting
                     while (local.ref != null) {
-                        const link = p.symbols.items[local.ref.?.inner_index].link;
+                        const link = p.symbols.items[local.ref.?.innerIndex()].link;
                         if (link.isNull()) {
                             break;
                         }
@@ -11222,7 +11213,7 @@ fn NewParser_(
                 // Follow links because "var" declarations may be merged due to hoisting
 
                 // while (true) {
-                //     const link = p.symbols.items[local.ref.inner_index].link;
+                //     const link = p.symbols.items[local.ref.innerIndex()].link;
                 // }
             }
 
@@ -11416,8 +11407,8 @@ fn NewParser_(
             }
 
             var func = _func;
-            const old_fn_or_arrow_data = std.mem.toBytes(p.fn_or_arrow_data_visit);
-            const old_fn_only_data = std.mem.toBytes(p.fn_only_data_visit);
+            const old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
+            const old_fn_only_data = p.fn_only_data_visit;
             p.fn_or_arrow_data_visit = FnOrArrowDataVisit{ .is_async = func.flags.is_async };
             p.fn_only_data_visit = FnOnlyDataVisit{ .is_this_nested = true, .arguments_ref = func.arguments_ref };
 
@@ -11452,8 +11443,8 @@ fn NewParser_(
             p.popScope();
             p.popScope();
 
-            p.fn_or_arrow_data_visit = std.mem.bytesToValue(@TypeOf(p.fn_or_arrow_data_visit), &old_fn_or_arrow_data);
-            p.fn_only_data_visit = std.mem.bytesToValue(@TypeOf(p.fn_only_data_visit), &old_fn_only_data);
+            p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
+            p.fn_only_data_visit = old_fn_only_data;
             return func;
         }
 
@@ -11563,10 +11554,10 @@ fn NewParser_(
                     e_.ref = result.ref;
 
                     // TODO: fix the underyling cause here
-                    // The problem seems to be that result.ref.inner_index is not always set.
+                    // The problem seems to be that result.ref.innerIndex() is not always set.
 
                     // Handle assigning to a constant
-                    // if (in.assign_target != .none and p.symbols.items[result.ref.inner_index].kind == .cconst) {
+                    // if (in.assign_target != .none and p.symbols.items[result.ref.innerIndex()].kind == .cconst) {
                     //     const r = js_lexer.rangeOfIdentifier(p.source, expr.loc);
                     //     p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot assign to {s} because it is a constant", .{name}) catch unreachable;
                     // }
@@ -11574,7 +11565,7 @@ fn NewParser_(
                     var original_name: ?string = null;
 
                     // Substitute user-specified defines for unbound symbols
-                    if (p.symbols.items[e_.ref.inner_index].kind == .unbound and !result.is_inside_with_scope and !is_delete_target) {
+                    if (p.symbols.items[e_.ref.innerIndex()].kind == .unbound and !result.is_inside_with_scope and !is_delete_target) {
                         if (p.define.identifiers.get(name)) |def| {
                             if (!def.isUndefined()) {
                                 const newvalue = p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &def);
@@ -11839,7 +11830,8 @@ fn NewParser_(
                             if (e_.tag.?.data == .e_import_identifier) {
                                 const ref = e_.tag.?.data.e_import_identifier.ref;
                                 if (p.macro.refs.get(ref)) |import_record_id| {
-                                    const name = p.symbols.items[ref.inner_index].original_name;
+                                    const name = p.symbols.items[ref.innerIndex()].original_name;
+                                    p.ignoreUsage(ref);
                                     p.macro_call_count += 1;
                                     const record = &p.import_records.items[import_record_id];
                                     // We must visit it to convert inline_identifiers and record usage
@@ -11900,7 +11892,7 @@ fn NewParser_(
                                 private.ref = result.ref;
 
                                 // Unlike regular identifiers, there are no unbound private identifiers
-                                const symbol: Symbol = p.symbols.items[result.ref.inner_index];
+                                const symbol: Symbol = p.symbols.items[result.ref.innerIndex()];
                                 if (!Symbol.isKindPrivate(symbol.kind)) {
                                     const r = logger.Range{ .loc = e_.left.loc, .len = @intCast(i32, name.len) };
                                     p.log.addRangeErrorFmt(p.source, r, p.allocator, "Private name \"{s}\" must be declared in an enclosing class", .{name}) catch unreachable;
@@ -12266,7 +12258,7 @@ fn NewParser_(
 
                             // Optionally preserve the name
                             if (@as(Expr.Tag, e_.left.data) == .e_identifier) {
-                                e_.right = p.maybeKeepExprSymbolName(e_.right, p.symbols.items[e_.left.data.e_identifier.ref.inner_index].original_name, was_anonymous_named_expr);
+                                e_.right = p.maybeKeepExprSymbolName(e_.right, p.symbols.items[e_.left.data.e_identifier.ref.innerIndex()].original_name, was_anonymous_named_expr);
                             }
                         },
                         .bin_add_assign => {
@@ -12371,14 +12363,14 @@ fn NewParser_(
                     // though this is a run-time error, we make it a compile-time error when
                     // bundling because scope hoisting means these will no longer be run-time
                     // errors.
-                    if ((in.assign_target != .none or is_delete_target) and @as(Expr.Tag, e_.target.data) == .e_identifier and p.symbols.items[e_.target.data.e_identifier.ref.inner_index].kind == .import) {
+                    if ((in.assign_target != .none or is_delete_target) and @as(Expr.Tag, e_.target.data) == .e_identifier and p.symbols.items[e_.target.data.e_identifier.ref.innerIndex()].kind == .import) {
                         const r = js_lexer.rangeOfIdentifier(p.source, e_.target.loc);
                         p.log.addRangeErrorFmt(
                             p.source,
                             r,
                             p.allocator,
                             "Cannot assign to property on import \"{s}\"",
-                            .{p.symbols.items[e_.target.data.e_identifier.ref.inner_index].original_name},
+                            .{p.symbols.items[e_.target.data.e_identifier.ref.innerIndex()].original_name},
                         ) catch unreachable;
                     }
 
@@ -12393,7 +12385,7 @@ fn NewParser_(
 
                             // The expression "typeof (0, x)" must not become "typeof x" if "x"
                             // is unbound because that could suppress a ReferenceError from "x"
-                            if (!id_before and id_after and p.symbols.items[e_.value.data.e_identifier.ref.inner_index].kind == .unbound) {
+                            if (!id_before and id_after and p.symbols.items[e_.value.data.e_identifier.ref.innerIndex()].kind == .unbound) {
                                 e_.value = Expr.joinWithComma(
                                     Expr{ .loc = e_.value.loc, .data = Prefill.Data.Zero },
                                     e_.value,
@@ -12611,7 +12603,7 @@ fn NewParser_(
                                     if (@as(Expr.Tag, e2.left.data) == .e_identifier) {
                                         e2.right = p.maybeKeepExprSymbolName(
                                             e2.right,
-                                            p.symbols.items[e2.left.data.e_identifier.ref.inner_index].original_name,
+                                            p.symbols.items[e2.left.data.e_identifier.ref.innerIndex()].original_name,
                                             was_anonymous_named_expr,
                                         );
                                     }
@@ -12685,7 +12677,7 @@ fn NewParser_(
                                 if (@as(Expr.Tag, val.data) == .e_identifier) {
                                     property.initializer = p.maybeKeepExprSymbolName(
                                         property.initializer orelse unreachable,
-                                        p.symbols.items[val.data.e_identifier.ref.inner_index].original_name,
+                                        p.symbols.items[val.data.e_identifier.ref.innerIndex()].original_name,
                                         was_anonymous_named_expr,
                                     );
                                 }
@@ -12779,7 +12771,8 @@ fn NewParser_(
                         if (is_macro_ref) {
                             const ref = e_.target.data.e_import_identifier.ref;
                             const import_record_id = p.macro.refs.get(ref).?;
-                            const name = p.symbols.items[ref.inner_index].original_name;
+                            p.ignoreUsage(ref);
+                            const name = p.symbols.items[ref.innerIndex()].original_name;
                             const record = &p.import_records.items[import_record_id];
                             const copied = Expr{ .loc = expr.loc, .data = .{ .e_call = e_ } };
                             const start_error_count = p.log.msgs.items.len;
@@ -12861,7 +12854,7 @@ fn NewParser_(
                 .e_function => |e_| {
                     e_.func = p.visitFunc(e_.func, expr.loc);
                     if (e_.func.name) |name| {
-                        return p.keepExprSymbolName(expr, p.symbols.items[name.ref.?.inner_index].original_name);
+                        return p.keepExprSymbolName(expr, p.symbols.items[name.ref.?.innerIndex()].original_name);
                     }
                 },
                 .e_class => |e_| {
@@ -13052,7 +13045,7 @@ fn NewParser_(
                     // incorrect but proper TDZ analysis is very complicated and would have to
                     // be very conservative, which would inhibit a lot of optimizations of code
                     // inside closures. This may need to be revisited if it proves problematic.
-                    if (ex.can_be_removed_if_unused or p.symbols.items[ex.ref.inner_index].kind != .unbound) {
+                    if (ex.can_be_removed_if_unused or p.symbols.items[ex.ref.innerIndex()].kind != .unbound) {
                         return true;
                     }
                 },
@@ -13224,7 +13217,7 @@ fn NewParser_(
 
         fn isSideEffectFreeUnboundIdentifierRef(p: *P, value: Expr, guard_condition: Expr, is_yes_branch: bool) bool {
             if (value.data != .e_identifier or
-                p.symbols.items[value.data.e_identifier.ref.inner_index].kind != .unbound or
+                p.symbols.items[value.data.e_identifier.ref.innerIndex()].kind != .unbound or
                 guard_condition.data != .e_binary)
                 return false;
 
@@ -13365,9 +13358,9 @@ fn NewParser_(
 
         pub fn ignoreUsage(p: *P, ref: Ref) void {
             if (!p.is_control_flow_dead) {
-                p.symbols.items[ref.inner_index].use_count_estimate -|= 1;
+                p.symbols.items[ref.innerIndex()].use_count_estimate -|= 1;
                 var use = p.symbol_uses.get(ref) orelse p.panic("Expected symbol_uses to exist {s}\n{s}", .{ ref, p.symbol_uses });
-                use.count_estimate |= 1;
+                use.count_estimate -|= 1;
                 if (use.count_estimate == 0) {
                     _ = p.symbol_uses.swapRemove(ref);
                 } else {
@@ -13418,7 +13411,7 @@ fn NewParser_(
                         const symbol = try p.findSymbol(item.alias_loc, name);
                         const ref = symbol.ref;
 
-                        if (p.symbols.items[ref.inner_index].kind == .unbound) {
+                        if (p.symbols.items[ref.innerIndex()].kind == .unbound) {
                             // Silently strip exports of non-local symbols in TypeScript, since
                             // those likely correspond to type-only exports. But report exports of
                             // non-local symbols as errors in JavaScript.
@@ -13507,10 +13500,10 @@ fn NewParser_(
 
                             // Discard type-only export default statements
                             if (is_typescript_enabled) {
-                                switch (expr.data) {
+                                switch (data.value.expr.data) {
                                     .e_identifier => |ident| {
-                                        if (!ident.ref.is_source_contents_slice) {
-                                            const symbol = p.symbols.items[ident.ref.inner_index];
+                                        if (!ident.ref.isSourceContentsSlice()) {
+                                            const symbol = p.symbols.items[ident.ref.innerIndex()];
                                             if (symbol.kind == .unbound) {
                                                 if (p.local_type_names.get(symbol.original_name)) |local_type| {
                                                     if (local_type) {
@@ -14033,7 +14026,7 @@ fn NewParser_(
                     //     p.keepStmtSymbolName(
                     //         data.func.name.?.loc,
                     //         data.func.name.?.ref.?,
-                    //         p.symbols.items[data.func.name.?.ref.?.inner_index].original_name,
+                    //         p.symbols.items[data.func.name.?.ref.?.innerIndex()].original_name,
                     //     ),
                     // );
                     return;
@@ -14054,7 +14047,7 @@ fn NewParser_(
                     if (was_export_inside_namespace) {
                         stmts.appendAssumeCapacity(Expr.assignStmt(p.e(E.Dot{
                             .target = p.e(E.Identifier{ .ref = p.enclosing_namespace_arg_ref.? }, stmt.loc),
-                            .name = p.symbols.items[data.class.class_name.?.ref.?.inner_index].original_name,
+                            .name = p.symbols.items[data.class.class_name.?.ref.?.innerIndex()].original_name,
                             .name_loc = data.class.class_name.?.loc,
                         }, stmt.loc), p.e(E.Identifier{ .ref = data.class.class_name.?.ref.? }, data.class.class_name.?.loc), p.allocator));
                     }
@@ -14287,7 +14280,7 @@ fn NewParser_(
                 .b_identifier => |id| {
                     decl.value = p.maybeKeepExprSymbolName(
                         decl.value.?,
-                        p.symbols.items[id.ref.inner_index].original_name,
+                        p.symbols.items[id.ref.innerIndex()].original_name,
                         was_anonymous_named_expr,
                     );
                 },
@@ -14372,11 +14365,11 @@ fn NewParser_(
         ) anyerror!void {
             var name_ref = _name_ref;
             // Follow the link chain in case symbols were merged
-            var symbol: Symbol = p.symbols.items[name_ref.inner_index];
+            var symbol: Symbol = p.symbols.items[name_ref.innerIndex()];
             while (symbol.hasLink()) {
                 const link = symbol.link;
                 name_ref = link;
-                symbol = p.symbols.items[name_ref.inner_index];
+                symbol = p.symbols.items[name_ref.innerIndex()];
             }
             const allocator = p.allocator;
 
@@ -14420,7 +14413,7 @@ fn NewParser_(
             if (is_export and p.enclosing_namespace_arg_ref != null) {
                 const namespace = p.enclosing_namespace_arg_ref.?;
                 // "name = enclosing.name || (enclosing.name = {})"
-                const name = p.symbols.items[name_ref.inner_index].original_name;
+                const name = p.symbols.items[name_ref.innerIndex()].original_name;
                 arg_expr = Expr.assign(
                     Expr.initIdentifier(name_ref, name_loc),
                     p.e(
@@ -14567,7 +14560,7 @@ fn NewParser_(
 
             return p.e(E.Dot{
                 .target = Expr.initIdentifier(enclosing_ref, loc),
-                .name = p.symbols.items[ref.inner_index].original_name,
+                .name = p.symbols.items[ref.innerIndex()].original_name,
                 .name_loc = loc,
             }, loc);
         }
@@ -14677,7 +14670,7 @@ fn NewParser_(
                         }
 
                         // The last symbol must be unbound
-                        return p.symbols.items[result.ref.inner_index].kind == .unbound;
+                        return p.symbols.items[result.ref.innerIndex()].kind == .unbound;
                     }
                 },
                 else => {},
@@ -14691,7 +14684,7 @@ fn NewParser_(
                 .b_missing => {},
                 .b_identifier => |bind| {
                     p.recordDeclaredSymbol(bind.ref) catch unreachable;
-                    const name = p.symbols.items[bind.ref.inner_index].original_name;
+                    const name = p.symbols.items[bind.ref.innerIndex()].original_name;
                     if (isEvalOrArguments(name)) {
                         p.markStrictModeFeature(.eval_or_arguments, js_lexer.rangeOfIdentifier(p.source, binding.loc), name) catch unreachable;
                     }
@@ -14718,7 +14711,7 @@ fn NewParser_(
                                 .b_identifier => |bind_| {
                                     item.default_value = p.maybeKeepExprSymbolName(
                                         item.default_value orelse unreachable,
-                                        p.symbols.items[bind_.ref.inner_index].original_name,
+                                        p.symbols.items[bind_.ref.innerIndex()].original_name,
                                         was_anonymous_named_expr,
                                     );
                                 },
@@ -14742,7 +14735,7 @@ fn NewParser_(
                                 .b_identifier => |bind_| {
                                     property.default_value = p.maybeKeepExprSymbolName(
                                         property.default_value orelse unreachable,
-                                        p.symbols.items[bind_.ref.inner_index].original_name,
+                                        p.symbols.items[bind_.ref.innerIndex()].original_name,
                                         was_anonymous_named_expr,
                                     );
                                 },
@@ -14810,7 +14803,7 @@ fn NewParser_(
             while (_scope != null and !_scope.?.kindStopsHoisting()) : (_scope = _scope.?.parent.?) {
                 const scope = _scope orelse unreachable;
                 const label_ref = scope.label_ref orelse continue;
-                if (scope.kind == .label and strings.eql(name, p.symbols.items[label_ref.inner_index].original_name)) {
+                if (scope.kind == .label and strings.eql(name, p.symbols.items[label_ref.innerIndex()].original_name)) {
                     // Track how many times we've referenced this symbol
                     p.recordUsage(label_ref);
                     res.ref = label_ref;
@@ -14856,7 +14849,7 @@ fn NewParser_(
 
             if (!class_name_ref.eql(Ref.None)) {
                 // are not allowed to assign to this symbol (it throws a TypeError).
-                const name = p.symbols.items[class_name_ref.inner_index].original_name;
+                const name = p.symbols.items[class_name_ref.innerIndex()].original_name;
                 var identifier = p.allocator.alloc(u8, name.len + 1) catch unreachable;
                 std.mem.copy(u8, identifier[1..identifier.len], name);
                 identifier[0] = '_';
@@ -14935,7 +14928,7 @@ fn NewParser_(
             }
 
             if (!shadow_ref.eql(Ref.None)) {
-                if (p.symbols.items[shadow_ref.inner_index].use_count_estimate == 0) {
+                if (p.symbols.items[shadow_ref.innerIndex()].use_count_estimate == 0) {
                     // Don't generate a shadowing name if one isn't needed
                     shadow_ref = Ref.None;
                 } else if (class.class_name) |_| {
@@ -15038,7 +15031,7 @@ fn NewParser_(
                             // This is only done for function declarations that are not generators
                             // or async functions, since this is a backwards-compatibility hack from
                             // Annex B of the JavaScript standard.
-                            if (!p.current_scope.kindStopsHoisting() and p.symbols.items[data.func.name.?.ref.?.inner_index].kind == .hoisted_function) {
+                            if (!p.current_scope.kindStopsHoisting() and p.symbols.items[data.func.name.?.ref.?.innerIndex()].kind == .hoisted_function) {
                                 break :list_getter &before;
                             }
                         },
@@ -15695,7 +15688,7 @@ fn NewParser_(
                         if (named_import.is_exported) continue;
                     }
 
-                    const named_export_symbol: Symbol = p.symbols.items[named_export_value.ref.inner_index];
+                    const named_export_symbol: Symbol = p.symbols.items[named_export_value.ref.innerIndex()];
 
                     var export_name_string = export_name_string_remainder[0 .. named_export.key_ptr.len + "$$hmr_".len];
                     export_name_string_remainder = export_name_string_remainder[export_name_string.len..];
@@ -15973,10 +15966,10 @@ fn NewParser_(
                 else
                     p.require_ref,
 
-                .uses_module_ref = (p.symbols.items[p.module_ref.inner_index].use_count_estimate > 0),
-                .uses_exports_ref = (p.symbols.items[p.exports_ref.inner_index].use_count_estimate > 0),
+                .uses_module_ref = (p.symbols.items[p.module_ref.innerIndex()].use_count_estimate > 0),
+                .uses_exports_ref = (p.symbols.items[p.exports_ref.innerIndex()].use_count_estimate > 0),
                 .uses_require_ref = if (p.runtime_imports.__require != null)
-                    (p.symbols.items[p.runtime_imports.__require.?.ref.inner_index].use_count_estimate > 0)
+                    (p.symbols.items[p.runtime_imports.__require.?.ref.innerIndex()].use_count_estimate > 0)
                 else
                     false,
                 // .top_Level_await_keyword = p.top_level_await_keyword,
@@ -16031,6 +16024,7 @@ fn NewParser_(
                 .source = source,
                 .macro = MacroState.init(allocator),
                 .current_scope = scope,
+                .module_scope = scope,
                 .scopes_in_order = scope_order,
                 .needs_jsx_import = if (comptime only_scan_imports_and_do_not_visit) false else NeedsJSXType{},
                 .lexer = lexer,

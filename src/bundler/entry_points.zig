@@ -180,7 +180,6 @@ pub const ServerEntryPoint = struct {
         // we want it to go through the linker and the rest of the transpilation process
 
         const dir_to_use: string = original_path.dirWithTrailingSlash();
-
         const code = try std.fmt.bufPrint(
             &entry.code_buffer,
             \\//Auto-generated file

@@ -350,6 +350,22 @@ port = 5000
 # When loading a .bagel file, run the JS parser
 ".bagel" = "js"
 
+[debug]
+# When navigating to a blob: or src: link, open the file in your editor
+editor = "code"
+
+# List of editors:
+# - "subl", "sublime"
+# - "vscode", "code"
+# - "textmate", "mate"
+# - "idea"
+# - "webstorm"
+# - "nvim", "neovim"
+# - "vim","vi"
+# - "emacs"
+# - "atom"
+# If you pass it a file path, it will open with the file path instead
+# It will recognize non-GUI editors, but I don't think it will work yet
 ```
 
 TODO: list each property name

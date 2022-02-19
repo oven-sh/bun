@@ -97,8 +97,38 @@ const normalizedFilename = (filename: string, cwd: string): string => {
   return filename;
 };
 
-const blobFileURL = (filename: string): string => {
-  return new URL("/blob:" + filename, location.href).href;
+const blobFileURL = (
+  filename: string,
+  line?: number,
+  column?: number
+): string => {
+  var base = `/blob:${filename}`;
+  if (Number.isFinite(line)) {
+    base += `:${line}`;
+
+    if (Number.isFinite(column)) {
+      base += `:${column}`;
+    }
+  }
+
+  return new URL(base, location.href).href;
+};
+
+const openWithoutFlashOfNewTab = (event: MouseEvent) => {
+  const href = event.currentTarget.getAttribute("href");
+  if (!href || event.button !== 0) {
+    return true;
+  }
+  event.target.removeAttribute("target");
+  event.preventDefault();
+  event.nativeEvent.preventDefault();
+  event.nativeEvent.stopPropagation();
+  event.nativeEvent.stopImmediatePropagation();
+  globalThis.fetch(href + "?editor=1").then(
+    () => {},
+    (er) => {}
+  );
+  return false;
 };
 
 const srcFileURL = (filename: string, line: number, column: number): string => {
@@ -107,10 +137,10 @@ const srcFileURL = (filename: string, line: number, column: number): string => {
   }
 
   var base = `/src:${filename}`;
-  if (line > -1) {
+  if (Number.isFinite(line) && line > -1) {
     base = base + `:${line}`;
 
-    if (column > -1) {
+    if (Number.isFinite(column) && column > -1) {
       base = base + `:${column}`;
     }
   }
@@ -197,11 +227,13 @@ const SourceLines = ({
   highlightColumnStart = 0,
   highlightColumnEnd = Infinity,
   children,
+  buildURL,
 }: {
   sourceLines: SourceLine[];
   highlightColumnStart: number;
   highlightColumnEnd: number;
   highlight: number;
+  buildURL: (line?: number, column?: number) => string;
 }) => {
   let start = sourceLines.length;
   let end = 0;
@@ -261,14 +293,17 @@ const SourceLines = ({
       </div>
     );
     numbers[i] = (
-      <div
+      <a
+        href={buildURL(line, highlightColumnStart)}
+        onClickCapture={openWithoutFlashOfNewTab}
+        target="_blank"
         key={line}
         className={`BunError-SourceLine-number ${
           classes.empty ? "BunError-SourceLine-number--empty" : ""
         } ${classes.highlight ? "BunError-SourceLine-number--highlight" : ""}`}
       >
         {line}
-      </div>
+      </a>
     );
 
     if (classes.highlight && children) {
@@ -313,13 +348,24 @@ const SourceLines = ({
   );
 };
 
-const BuildErrorSourceLines = ({ location }: { location: Location }) => {
-  const { line, line_text, column, file } = location;
+const BuildErrorSourceLines = ({
+  location,
+  filename,
+}: {
+  location: Location;
+  filename: string;
+}) => {
+  const { line, line_text, column } = location;
   const sourceLines: SourceLine[] = [{ line, text: line_text }];
+  const buildURL = React.useCallback(
+    (line, column) => srcFileURL(filename, line, column),
+    [srcFileURL, filename]
+  );
   return (
     <SourceLines
       sourceLines={sourceLines}
       highlight={line}
+      buildURL={buildURL}
       highlightColumnStart={column}
       highlightColumnEnd={column}
     />
@@ -335,11 +381,12 @@ const BuildErrorStackTrace = ({ location }: { location: Location }) => {
       <a
         href={srcFileURL(filename, line, column)}
         target="_blank"
+        onClickCapture={openWithoutFlashOfNewTab}
         className="BunError-NativeStackTrace-filename"
       >
         {filename}:{line}:{column}
       </a>
-      <BuildErrorSourceLines location={location} />
+      <BuildErrorSourceLines filename={filename} location={location} />
     </div>
   );
 };
@@ -414,7 +461,8 @@ const NativeStackFrame = ({
 
       <a
         target="_blank"
-        href={blobFileURL(fileName)}
+        href={blobFileURL(fileName, line + 1, column)}
+        onClickCapture={openWithoutFlashOfNewTab}
         className="BunError-StackFrame-link"
       >
         <div className="BunError-StackFrame-link-content">
@@ -451,11 +499,16 @@ const NativeStackTrace = ({
   const { file = "", position } = frames[0];
   const { cwd } = useContext(ErrorGroupContext);
   const filename = normalizedFilename(file, cwd);
+  const buildURL = React.useCallback(
+    (line, column) => blobFileURL(file, line, column),
+    [file, blobFileURL]
+  );
   return (
     <div className={`BunError-NativeStackTrace`}>
       <a
-        href={blobFileURL(filename)}
+        href={blobFileURL(filename, position.line + 1, position.column_start)}
         target="_blank"
+        onClickCapture={openWithoutFlashOfNewTab}
         className="BunError-NativeStackTrace-filename"
       >
         {filename}:{position.line + 1}:{position.column_start}
@@ -465,6 +518,7 @@ const NativeStackTrace = ({
           highlight={position.line}
           sourceLines={sourceLines}
           highlightColumnStart={position.column_start}
+          buildURL={buildURL}
           highlightColumnEnd={position.column_stop}
         >
           {children}

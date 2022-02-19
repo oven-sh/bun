@@ -21,7 +21,7 @@ a:hover {
   border: inset 1px solid rgba(0, 0, 0, 0.2);
   border-radius: 17px;
   background-color: rgba(255, 255, 255, 0.92);
-  width: 480px;
+  width: 512px;
 
   position: fixed;
   top: 120px;
@@ -166,13 +166,20 @@ a:hover {
 
 .BunError-SourceLine-number {
   font-variant: tabular-nums;
+  display: block;
+  cursor: pointer;
   text-align: right;
   user-select: none;
+  text-decoration: none;
   -webkit-user-select: none;
 }
 
 .BunError-SourceLine-number--empty {
   color: rgb(165, 165, 165);
+}
+
+.BunError-SourceLine-number:hover {
+  text-decoration: underline;
 }
 
 .BunError-SourceLine-number,
@@ -281,9 +288,12 @@ a:hover {
 .BunError-StackFrames {
   display: table;
   table-layout: auto;
-  padding: 13px 10px;
-  margin: 8px auto;
+  padding: 16px 12px;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 auto;
   border-radius: 4px;
+  line-height: 1.2;
 
   background-color: rgb(244, 244, 244);
 }

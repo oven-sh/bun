@@ -2375,9 +2375,18 @@ pub const RequestContext = struct {
 
     fn handleBlobURL(ctx: *RequestContext, _: *Server) !void {
         var id = ctx.url.path["blob:".len..];
+        var line: string = "";
+        var column: string = "";
+
         // This makes it Just Work if you pass a line/column number
         if (strings.indexOfChar(id, ':')) |colon| {
+            line = id[@minimum(id.len, colon + 1)..];
             id = id[0..colon];
+
+            if (strings.indexOfChar(line, ':')) |col| {
+                column = line[@minimum(line.len, col + 1)..];
+                line = line[0..col];
+            }
         }
 
         const Blob = @import("./blob.zig");
@@ -2388,11 +2397,28 @@ pub const RequestContext = struct {
                 if (vm.blobs.?.get(id)) |blob| {
                     break :brk blob;
                 }
+
+                if (strings.eqlComptime(id, "node_modules.server.bun")) {
+                    if (vm.node_modules) |bun| {
+                        if (bun.code_string) |code| {
+                            break :brk Blob{ .ptr = code.str.ptr, .len = code.str.len };
+                        }
+                    }
+                }
             }
 
             if (JavaScript.VirtualMachine.vm_loaded) {
-                if (JavaScript.VirtualMachine.vm.blobs.?.get(id)) |blob| {
+                var vm = JavaScript.VirtualMachine.vm;
+                if (vm.blobs.?.get(id)) |blob| {
                     break :brk blob;
+                }
+
+                if (strings.eqlComptime(id, "node_modules.server.bun")) {
+                    if (vm.node_modules) |bun| {
+                        if (bun.code_string) |code| {
+                            break :brk Blob{ .ptr = code.str.ptr, .len = code.str.len };
+                        }
+                    }
                 }
             }
 
@@ -2402,6 +2428,33 @@ pub const RequestContext = struct {
         if (blob.len == 0) {
             try ctx.sendNoContent();
             return;
+        }
+
+        const always_open = strings.contains(ctx.url.query_string, "editor");
+
+        if (always_open) {
+            const real_mime_type = MimeType.byExtension(strings.trim(std.fs.path.extension(id), "."));
+
+            if (real_mime_type.canOpenInEditor() or ctx.bundler.options.loader(std.fs.path.extension(id)) != .file) {
+                if (Server.editor == null) {
+                    Server.detectEditor(ctx.bundler.env);
+                }
+
+                if (Server.editor) |editor| {
+                    if (editor != .none) {
+                        Server.openInEditor(editor, blob.ptr[0..blob.len], id, Fs.FileSystem.instance.tmpdir(), line, column);
+                        if (Server.editor.? != .none) {
+                            defer ctx.done();
+                            try ctx.writeStatus(200);
+                            ctx.appendHeader("Content-Type", MimeType.html.value);
+                            const auto_close = "<html><body><script>window.close();</script></body></html>";
+                            try ctx.prepareToSendBody(auto_close.len, false);
+                            try ctx.writeBodyBuf(auto_close);
+                            return;
+                        }
+                    }
+                }
+            }
         }
 
         defer ctx.done();
@@ -2541,9 +2594,20 @@ pub const RequestContext = struct {
 
     fn handleSrcURL(ctx: *RequestContext, _: *Server) !void {
         var input_path = ctx.url.path["src:".len..];
-        while (std.mem.indexOfScalar(u8, input_path, ':')) |i| {
+        var line: string = "";
+        var column: string = "";
+        if (std.mem.indexOfScalar(u8, input_path, ':')) |i| {
+            line = input_path[i + 1 ..];
             input_path = input_path[0..i];
+
+            if (line.len > 0) {
+                if (std.mem.indexOfScalar(u8, line, ':')) |j| {
+                    column = line[j + 1 ..];
+                    line = line[0..j];
+                }
+            }
         }
+
         if (input_path.len == 0) return ctx.sendNotFound();
 
         const pathname = Fs.PathName.init(input_path);
@@ -2552,6 +2616,33 @@ pub const RequestContext = struct {
         switch (result.file.value) {
             .pending => |resolve_result| {
                 const path = resolve_result.pathConst() orelse return try ctx.sendNotFound();
+                const always_open = strings.contains(ctx.url.query_string, "editor");
+                if (always_open) {
+                    if (Server.editor == null)
+                        Server.detectEditor(ctx.bundler.env);
+
+                    if (Server.editor) |editor| {
+                        if (editor != .none) {
+                            editor.open(Server.editor_path, path.text, line, column, _global.default_allocator) catch |err| {
+                                if (editor != .other) {
+                                    Output.prettyErrorln("Error {s} opening in {s}", .{ @errorName(err), @tagName(editor) });
+                                }
+
+                                Server.editor = Editor.none;
+                            };
+
+                            if (Server.editor.? != .none) {
+                                defer ctx.done();
+                                try ctx.writeStatus(200);
+                                ctx.appendHeader("Content-Type", MimeType.html.value);
+                                const auto_close = "<html><body><script>window.close();</script></body></html>";
+                                try ctx.prepareToSendBody(auto_close.len, false);
+                                try ctx.writeBodyBuf(auto_close);
+                                return;
+                            }
+                        }
+                    }
+                }
 
                 var needs_close = false;
                 const fd = if (resolve_result.file_fd != 0)
@@ -2780,6 +2871,7 @@ var serve_as_package_path = false;
 //      - Resolver time
 //      - Parsing time
 //      - IO read time
+const Editor = @import("./open.zig").Editor;
 
 pub const Server = struct {
     log: logger.Log,
@@ -2790,6 +2882,99 @@ pub const Server = struct {
     transform_options: Api.TransformOptions,
     javascript_enabled: bool = false,
     fallback_only: bool = false,
+
+    pub var editor: ?Editor = null;
+    pub var editor_name: string = "";
+    pub var editor_path: string = "";
+
+    pub fn openInEditor(editor_: Editor, blob: []const u8, id: string, tmpdir: std.fs.Dir, line: string, column: string) void {
+        _openInEditor(editor_, blob, id, tmpdir, line, column) catch |err| {
+            if (editor_ != .other) {
+                Output.prettyErrorln("Error {s} opening in {s}", .{ @errorName(err), @tagName(editor_) });
+            }
+
+            editor = Editor.none;
+        };
+    }
+
+    fn _openInEditor(editor_: Editor, blob: []const u8, id: string, tmpdir: std.fs.Dir, line: string, column: string) !void {
+        var basename_buf: [512]u8 = undefined;
+        var basename = std.fs.path.basename(id);
+        if (strings.endsWith(basename, ".bun") and basename.len < 499) {
+            std.mem.copy(u8, &basename_buf, basename);
+            basename_buf[basename.len..][0..3].* = ".js".*;
+            basename = basename_buf[0 .. basename.len + 3];
+        }
+
+        try tmpdir.writeFile(basename, blob);
+
+        var opened = try tmpdir.openFile(basename, .{});
+        defer opened.close();
+        var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        try editor_.open(
+            Server.editor_path,
+            try std.os.getFdPath(opened.handle, &path_buf),
+            line,
+            column,
+            default_allocator,
+        );
+    }
+
+    pub fn detectEditor(env: *DotEnv.Loader) void {
+        var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+
+        var out: string = "";
+        // first: choose from user preference
+        if (Server.editor_name.len > 0) {
+            // /usr/bin/vim
+            if (std.fs.path.isAbsolute(Server.editor_name)) {
+                Server.editor = Editor.byName(std.fs.path.basename(Server.editor_name)) orelse Editor.other;
+                editor_path = Server.editor_name;
+                return;
+            }
+
+            // "vscode"
+            if (Editor.byName(std.fs.path.basename(Server.editor_name))) |editor_| {
+                if (Editor.byPATHForEditor(env, editor_, &buf, Fs.FileSystem.instance.top_level_dir, &out)) {
+                    editor = editor_;
+                    editor_path = Fs.FileSystem.instance.dirname_store.append(string, out) catch unreachable;
+                    return;
+                }
+
+                // not in path, try common ones
+                if (Editor.byFallbackPathForEditor(editor_, &out)) {
+                    editor = editor_;
+                    editor_path = Fs.FileSystem.instance.dirname_store.append(string, out) catch unreachable;
+                    return;
+                }
+            }
+        }
+
+        // EDITOR=code
+        if (Editor.detect(env)) |editor_| {
+            if (Editor.byPATHForEditor(env, editor_, &buf, Fs.FileSystem.instance.top_level_dir, &out)) {
+                editor = editor_;
+                editor_path = Fs.FileSystem.instance.dirname_store.append(string, out) catch unreachable;
+                return;
+            }
+
+            // not in path, try common ones
+            if (Editor.byFallbackPathForEditor(editor_, &out)) {
+                editor = editor_;
+                editor_path = Fs.FileSystem.instance.dirname_store.append(string, out) catch unreachable;
+                return;
+            }
+        }
+
+        // Don't know, so we will just guess based on what exists
+        if (Editor.byFallback(env, &buf, Fs.FileSystem.instance.top_level_dir, &out)) |editor_| {
+            editor = editor_;
+            editor_path = Fs.FileSystem.instance.dirname_store.append(string, out) catch unreachable;
+            return;
+        }
+
+        Server.editor = Editor.none;
+    }
 
     threadlocal var filechange_buf: [32]u8 = undefined;
     threadlocal var filechange_buf_hinted: [32]u8 = undefined;
@@ -3509,6 +3694,8 @@ pub const Server = struct {
             Global.exit(0);
             return;
         }
+
+        Server.editor_name = debug.editor;
 
         server.bundler.options.macro_remap = debug.macros orelse .{};
 

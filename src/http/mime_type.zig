@@ -20,6 +20,17 @@ const MimeType = @This();
 value: string,
 category: Category,
 
+pub fn canOpenInEditor(this: MimeType) bool {
+    if (this.category == .text or this.category.isCode())
+        return true;
+
+    if (this.category == .image) {
+        return strings.eqlComptime(this.value, "image/svg+xml");
+    }
+
+    return false;
+}
+
 pub const Category = enum {
     image,
     text,
@@ -32,6 +43,13 @@ pub const Category = enum {
     video,
     javascript,
     wasm,
+
+    pub fn isCode(this: Category) bool {
+        return switch (this) {
+            .wasm, .json, .css, .html, .javascript => true,
+            else => false,
+        };
+    }
 
     pub fn isTextLike(this: Category) bool {
         return switch (this) {
@@ -145,6 +163,8 @@ pub fn byExtension(ext: string) MimeType {
         3 => {
             const four = [4]u8{ ext[0], ext[1], ext[2], 0 };
             return switch (std.mem.readIntNative(u32, &four)) {
+                Four.case("bun") => javascript,
+
                 Four.case("css") => css,
                 Four.case("jpg") => MimeType.initComptime("image/jpeg", .image),
                 Four.case("gif") => MimeType.initComptime("image/gif", .image),

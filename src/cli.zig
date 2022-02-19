@@ -720,6 +720,7 @@ pub const Command = struct {
 
         // technical debt
         macros: ?MacroMap = null,
+        editor: string = "",
         package_bundle_map: std.StringArrayHashMapUnmanaged(options.BundlePackage) = std.StringArrayHashMapUnmanaged(options.BundlePackage){},
     };
 

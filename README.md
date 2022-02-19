@@ -352,6 +352,8 @@ port = 5000
 
 [debug]
 # When navigating to a blob: or src: link, open the file in your editor
+# If not, it tries $EDITOR or $VISUAL
+# If that still fails, it will try Visual Studio Code, then Sublime Text, then a few others
 editor = "code"
 
 # List of editors:

@@ -628,6 +628,7 @@ pub const Bun = struct {
                     relative_path,
                     "",
                 ) catch return;
+            }
         } else {
             writer.writeAll(std.mem.trimLeft(u8, relative_path, "/")) catch unreachable;
         }

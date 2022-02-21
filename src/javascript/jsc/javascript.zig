@@ -1010,6 +1010,76 @@ pub const Bun = struct {
         }
     };
 
+    pub const Timer = struct {
+        last_id: i32 = 0,
+        warned: bool = false,
+
+        pub fn getNextID() callconv(.C) i32 {
+            VirtualMachine.vm.timer.last_id += 1;
+            return VirtualMachine.vm.timer.last_id;
+        }
+
+        pub fn setTimeout(
+            _: *JSGlobalObject,
+            _: JSValue,
+            _: JSValue,
+        ) callconv(.C) JSValue {
+            VirtualMachine.vm.timer.last_id += 1;
+
+            Output.prettyWarnln("setTimeout is not implemented yet", .{});
+
+            // For now, we are going to straight up lie
+            return JSValue.jsNumber(@intCast(i32, VirtualMachine.vm.timer.last_id));
+        }
+        pub fn setInterval(
+            _: *JSGlobalObject,
+            _: JSValue,
+            _: JSValue,
+        ) callconv(.C) JSValue {
+            VirtualMachine.vm.timer.last_id += 1;
+
+            Output.prettyWarnln("setInterval is not implemented yet", .{});
+
+            // For now, we are going to straight up lie
+            return JSValue.jsNumber(@intCast(i32, VirtualMachine.vm.timer.last_id));
+        }
+        pub fn clearTimeout(
+            _: *JSGlobalObject,
+            _: JSValue,
+        ) callconv(.C) JSValue {
+            return JSValue.jsUndefined();
+        }
+        pub fn clearInterval(
+            _: *JSGlobalObject,
+            _: JSValue,
+        ) callconv(.C) JSValue {
+            return JSValue.jsUndefined();
+        }
+
+        const Shimmer = @import("./bindings/shimmer.zig").Shimmer;
+
+        pub const shim = Shimmer("Bun", "Timer", @This());
+        pub const name = "Bun__Timer";
+        pub const include = "";
+        pub const namespace = shim.namespace;
+
+        pub const Export = shim.exportFunctions(.{
+            .@"setTimeout" = setTimeout,
+            .@"setInterval" = setInterval,
+            .@"clearTimeout" = clearTimeout,
+            .@"clearInterval" = clearInterval,
+            .@"getNextID" = getNextID,
+        });
+
+        comptime {
+            @export(setTimeout, .{ .name = Export[0].symbol_name });
+            @export(setInterval, .{ .name = Export[1].symbol_name });
+            @export(clearTimeout, .{ .name = Export[2].symbol_name });
+            @export(clearInterval, .{ .name = Export[3].symbol_name });
+            @export(getNextID, .{ .name = Export[4].symbol_name });
+        }
+    };
+
     /// EnvironmentVariables is runtime defined.
     /// Also, you can't iterate over process.env normally since it only exists at build-time otherwise
     // This is aliased to Bun.env
@@ -1343,6 +1413,9 @@ pub const VirtualMachine = struct {
     macro_event_loop: EventLoop = EventLoop{},
     regular_event_loop: EventLoop = EventLoop{},
     event_loop: *EventLoop = undefined,
+
+    is_set_timeout_enabled: bool = false,
+    is_set_interval_enabled: bool = false,
 
     pub inline fn eventLoop(this: *VirtualMachine) *EventLoop {
         return this.event_loop;

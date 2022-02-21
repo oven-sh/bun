@@ -125,8 +125,15 @@ if (typeof window !== "undefined") {
         return;
       }
 
-      const { renderBuildFailure } = BunError.module;
-      renderBuildFailure(BunError.lastError[0], BunError.lastError[1]);
+      const { renderBuildFailure, renderRuntimeError } = BunError.module;
+      if (
+        typeof BunError.lastError[0] === "string" ||
+        BunError.lastError[0] instanceof Error
+      ) {
+        renderRuntimeError(BunError.lastError[0], BunError.lastError[1]);
+      } else {
+        renderBuildFailure(BunError.lastError[0], BunError.lastError[1]);
+      }
     },
 
     clear() {
@@ -464,6 +471,10 @@ if (typeof window !== "undefined") {
 
     sessionId: number;
 
+    get dependencies() {
+      return HMRModule.dependencies;
+    }
+
     start() {
       if (runOnce) {
         __hmrlog.warn(
@@ -666,6 +677,16 @@ if (typeof window !== "undefined") {
         }).then(() => Promise.resolve())
       );
     }
+    static onError(event: ErrorEvent) {
+      if ("error" in event && !!event.error) {
+        console.error(event.error);
+        BunError.render(
+          event.error,
+          HMRClient.client ? HMRClient.client.cwd : ""
+        );
+      }
+    }
+
     static activate(verboseOrFastRefresh: boolean = false) {
       // Support browser-like envirnments where location and WebSocket exist
       // Maybe it'll work in Deno! Who knows.
@@ -677,6 +698,7 @@ if (typeof window !== "undefined") {
         return;
       }
 
+      globalThis.addEventListener("error", HMRClient.onError);
       this.client = new HMRClient();
       // if (
       //   "sessionStorage" in globalThis &&
@@ -1288,6 +1310,7 @@ if (typeof window !== "undefined") {
       try {
         const blob = new Blob([this.bytes], { type: "text/javascript" });
         blobURL = URL.createObjectURL(blob);
+        HMRModule.dependencies.blobToID.set(blobURL, this.module_id);
         await import(blobURL);
         this.timings.import = performance.now() - importStart;
       } catch (exception) {
@@ -1474,6 +1497,30 @@ if (typeof window !== "undefined") {
     modules: AnyHMRModule[];
     graph: Uint32Array;
     graph_used = 0;
+    blobToID = new Map<string, number>();
+
+    getModuleByBlobURL(url: string): AnyHMRModule | null {
+      const id = this.blobToID.get(url);
+      return Number.isFinite(id) && this.getModuleByID(id);
+    }
+
+    getFilePathFromBlob(url: string): string | null {
+      const module = this.getModuleByBlobURL(url);
+      if (!module) return null;
+
+      let filepath = module.file_path;
+      // We cannot safely do this because the hash would change on the server
+      if (filepath.startsWith(HMRClient.client.cwd)) {
+        filepath = filepath.substring(HMRClient.client.cwd.length);
+      }
+
+      return filepath;
+    }
+
+    getModuleByID(id: number): AnyHMRModule | null {
+      const index = this.graph.indexOf(id);
+      return index > -1 ? this.modules[index] : null;
+    }
 
     loadDefaults() {
       this.modules = new Array<AnyHMRModule>(32);
@@ -1726,6 +1773,7 @@ if (typeof window !== "undefined") {
     // window.addEventListener("error", HMRClient.onError, { passive: true });
   }
   globalThis["__BUN"] = HMRClient;
+  globalThis["__BUN_ERROR"] = BunError;
 }
 
 export { __HMRModule, __FastRefreshModule, __HMRClient, __injectFastRefresh };

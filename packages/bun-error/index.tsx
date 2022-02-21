@@ -7,6 +7,7 @@ import type {
   JSException as JSExceptionType,
   Location,
   Message,
+  Problems,
   SourceLine,
   StackFrame,
   WebsocketMessageBuildFailure,
@@ -90,7 +91,7 @@ const errorTags = [
 ];
 
 const normalizedFilename = (filename: string, cwd: string): string => {
-  if (filename.startsWith(cwd)) {
+  if (cwd && filename.startsWith(cwd)) {
     return filename.substring(cwd.length);
   }
 
@@ -115,19 +116,38 @@ const blobFileURL = (
 };
 
 const openWithoutFlashOfNewTab = (event: MouseEvent) => {
-  const href = event.currentTarget.getAttribute("href");
+  const target = event.currentTarget as HTMLAnchorElement;
+  const href = target.getAttribute("href");
   if (!href || event.button !== 0) {
     return true;
   }
-  event.target.removeAttribute("target");
+
   event.preventDefault();
   event.nativeEvent.preventDefault();
   event.nativeEvent.stopPropagation();
   event.nativeEvent.stopImmediatePropagation();
-  globalThis.fetch(href + "?editor=1").then(
-    () => {},
-    (er) => {}
-  );
+
+  const headers = new Headers();
+  headers.set("Accept", "text/plain");
+
+  if (target.dataset.line) {
+    headers.set("Editor-Line", target.dataset.line);
+  }
+
+  if (target.dataset.column) {
+    headers.set("Editor-Column", target.dataset.line);
+  }
+
+  headers.set("Open-In-Editor", "1");
+
+  globalThis
+    .fetch(href.split("?")[0], {
+      headers: headers,
+    })
+    .then(
+      () => {},
+      (er) => {}
+    );
   return false;
 };
 
@@ -220,13 +240,262 @@ class FancyTypeError {
 
 var onClose = dismissError;
 
+const clientURL = (filename) => {
+  return `/${filename.replace(/^(\/)?/g, "")}`;
+};
+
+function bunInfoToMarkdown(_info) {
+  if (!_info) return;
+  const info = { ..._info, platform: { ..._info.platform } };
+
+  var operatingSystemVersion = info.platform.version;
+
+  if (info.platform.os.toLowerCase() === "macos") {
+    const [major, minor, patch] = operatingSystemVersion.split(".");
+    switch (major) {
+      case "22": {
+        operatingSystemVersion = `13.${minor}.${patch}`;
+        break;
+      }
+      case "21": {
+        operatingSystemVersion = `12.${minor}.${patch}`;
+        break;
+      }
+      case "20": {
+        operatingSystemVersion = `11.${minor}.${patch}`;
+        break;
+      }
+
+      case "19": {
+        operatingSystemVersion = `10.15.${patch}`;
+        break;
+      }
+
+      case "18": {
+        operatingSystemVersion = `10.14.${patch}`;
+        break;
+      }
+
+      case "17": {
+        operatingSystemVersion = `10.13.${patch}`;
+        break;
+      }
+
+      case "16": {
+        operatingSystemVersion = `10.12.${patch}`;
+        break;
+      }
+
+      case "15": {
+        operatingSystemVersion = `10.11.${patch}`;
+        break;
+      }
+    }
+    info.platform.os = "macOS";
+  }
+
+  if (info.platform.arch === "arm" && info.platform.os === "macOS") {
+    info.platform.arch = "Apple Silicon";
+  } else if (info.platform.arch === "arm") {
+    info.platform.arch = "aarch64";
+  }
+
+  var base = `Info:
+> bun v${info.bun_version}
+`;
+
+  if (info.framework && info.framework_version) {
+    base += `> framework: ${info.framework}@${info.framework_version}`;
+  } else if (info.framework) {
+    base += `> framework: ${info.framework}`;
+  }
+
+  base =
+    base.trim() +
+    `
+> ${info.platform.os} ${operatingSystemVersion} (${info.platform.arch})
+> User-Agent: ${navigator.userAgent}
+> Pathname: ${location.pathname}
+`;
+
+  return base;
+}
+
+var bunInfoMemoized;
+function getBunInfo() {
+  if (bunInfoMemoized) return bunInfoMemoized;
+  if ("sessionStorage" in globalThis) {
+    try {
+      const bunInfoMemoizedString = sessionStorage.getItem("__bunInfo");
+      if (bunInfoMemoizedString) {
+        bunInfoMemoized = JSON.parse(bunInfoMemoized);
+        return bunInfoMemoized;
+      }
+    } catch (exception) {}
+  }
+  const controller = new AbortController();
+  const timeout = 1000;
+  const id = setTimeout(() => controller.abort(), timeout);
+  return fetch("/bun:info", {
+    signal: controller.signal,
+    headers: {
+      Accept: "application/json",
+    },
+  })
+    .then((resp) => resp.json())
+    .then((bunInfo) => {
+      clearTimeout(id);
+      bunInfoMemoized = bunInfo;
+      if ("sessionStorage" in globalThis) {
+        try {
+          sessionStorage.setItem("__bunInfo", JSON.stringify(bunInfo));
+        } catch (exception) {}
+      }
+
+      return bunInfo;
+    });
+}
+
 const IndentationContext = createContext(0);
+
+enum LoadState {
+  pending,
+  loaded,
+  failed,
+}
+
+const AsyncSourceLines = ({
+  highlight = -1,
+  highlightColumnStart = 0,
+  highlightColumnEnd = Infinity,
+  children,
+  buildURL,
+  isClient,
+  sourceLines,
+  setSourceLines,
+}: {
+  highlightColumnStart: number;
+  highlightColumnEnd: number;
+  highlight: number;
+  buildURL: (line?: number, column?: number) => string;
+  sourceLines: string[];
+  setSourceLines: (lines: SourceLine[]) => void;
+}) => {
+  const [loadState, setLoadState] = React.useState(LoadState.pending);
+
+  const controller = React.useRef<AbortController>(null);
+  const url = React.useRef<string>(buildURL(0, 0));
+
+  React.useEffect(() => {
+    controller.current = new AbortController();
+    var cancelled = false;
+    fetch(url.current, {
+      signal: controller.current.signal,
+      headers: {
+        Accept: "text/plain",
+      },
+    })
+      .then((resp) => {
+        return resp.text();
+      })
+      .then((text) => {
+        if (cancelled) return;
+
+        // TODO: make this faster
+        const lines = text.split("\n");
+        const startLineNumber = Math.max(
+          Math.min(Math.max(highlight - 4, 0), lines.length - 1),
+          0
+        );
+        const endLineNumber = Math.min(startLineNumber + 8, lines.length);
+        const sourceLines: SourceLine[] = new Array(
+          endLineNumber - startLineNumber
+        );
+        var index = 0;
+        for (let i = startLineNumber; i < endLineNumber; i++) {
+          const currentLine = lines[i - 1];
+          if (typeof currentLine === "undefined") break;
+          sourceLines[index++] = {
+            line: i,
+            text: currentLine,
+          };
+        }
+
+        setSourceLines(
+          index !== sourceLines.length
+            ? sourceLines.slice(0, index)
+            : sourceLines
+        );
+        setLoadState(LoadState.loaded);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error(err);
+          setLoadState(LoadState.failed);
+        }
+      });
+    return () => {
+      cancelled = true;
+      if (controller.current) {
+        controller.current.abort();
+        controller.current = null;
+      }
+    };
+  }, [controller, setLoadState, setSourceLines, url, highlight]);
+
+  switch (loadState) {
+    case LoadState.pending: {
+      return (
+        <div className="BunError-SourceLines">
+          <div className="BunError-SourceLines-numbers">
+            <div></div>
+            <div></div>
+            <div></div>
+            <div></div>
+            <div></div>
+          </div>
+          <div className="BunError-SourceLines-lines">
+            <div></div>
+            <div></div>
+            <div></div>
+            <div></div>
+            <div></div>
+          </div>
+        </div>
+      );
+    }
+
+    case LoadState.failed: {
+      return null;
+    }
+
+    case LoadState.loaded: {
+      return (
+        <SourceLines
+          highlight={highlight}
+          highlightColumnStart={highlightColumnStart}
+          highlightColumnEnd={highlightColumnEnd}
+          buildURL={buildURL}
+          sourceLines={sourceLines}
+          isClient={isClient}
+        >
+          {children}
+        </SourceLines>
+      );
+    }
+    default: {
+      throw new Error("Invalid state");
+    }
+  }
+};
+
 const SourceLines = ({
   sourceLines,
   highlight = -1,
   highlightColumnStart = 0,
   highlightColumnEnd = Infinity,
   children,
+  isClient = false,
   buildURL,
 }: {
   sourceLines: SourceLine[];
@@ -238,14 +507,17 @@ const SourceLines = ({
   let start = sourceLines.length;
   let end = 0;
   let dedent = Infinity;
-  let originalLines = new Array(sourceLines.length);
   let _i = 0;
+  var minLineNumber = sourceLines.length + highlight + 1;
+  var maxLineNumber = 0;
   for (let i = 0; i < sourceLines.length; i++) {
     // bun only prints \n, no \r\n, so this should work fine
     sourceLines[i].text = sourceLines[i].text.replaceAll("\n", "");
 
     // This will now only trim spaces (and vertical tab character which never prints)
-    const left = sourceLines[i].text.trimLeft();
+    const left = sourceLines[i].text.trimStart();
+    minLineNumber = Math.min(sourceLines[i].line, minLineNumber);
+    maxLineNumber = Math.max(sourceLines[i].line, maxLineNumber);
 
     if (left.length > 0) {
       start = Math.min(start, i);
@@ -255,9 +527,11 @@ const SourceLines = ({
     }
   }
 
+  const leftPad =
+    maxLineNumber.toString(10).length - minLineNumber.toString(10).length;
+
   const _sourceLines = sourceLines.slice(start, end);
   const childrenArray = children || [];
-  const numbers = new Array(_sourceLines.length + childrenArray.length);
   const lines = new Array(_sourceLines.length + childrenArray.length);
 
   let highlightI = 0;
@@ -265,73 +539,53 @@ const SourceLines = ({
     const { line, text } = _sourceLines[i];
     const classes = {
       empty: text.trim().length === 0,
-      highlight: highlight + 1 === line || _sourceLines.length === 1,
+      highlight: highlight + +!isClient === line || _sourceLines.length === 1,
     };
     if (classes.highlight) highlightI = i;
     const _text = classes.empty ? "" : text.substring(dedent);
     lines[i] = (
-      <div
-        key={i}
-        className={`BunError-SourceLine-text ${
-          classes.empty ? "BunError-SourceLine-text--empty" : ""
-        } ${classes.highlight ? "BunError-SourceLine-text--highlight" : ""}`}
-      >
-        {classes.highlight ? (
-          <>
-            {_text.substring(0, highlightColumnStart - dedent)}
-            <span id="BunError-SourceLine-text-highlightExpression">
-              {_text.substring(
-                highlightColumnStart - dedent,
-                highlightColumnEnd - dedent
-              )}
-            </span>
-            {_text.substring(highlightColumnEnd - dedent)}
-          </>
-        ) : (
-          _text
-        )}
+      <div className="BunError-SourceLine" key={"line-" + i}>
+        <a
+          data-line={line}
+          data-column={classes.highlight ? highlightColumnStart : dedent}
+          title={`Open line ${line} in editor`}
+          href={buildURL(
+            line,
+            classes.highlight ? highlightColumnStart : dedent
+          )}
+          onClickCapture={openWithoutFlashOfNewTab}
+          key={"highlight-number-" + line}
+          className={`BunError-SourceLine-number ${
+            classes.empty ? "BunError-SourceLine-number--empty" : ""
+          } ${
+            classes.highlight ? "BunError-SourceLine-number--highlight" : ""
+          }`}
+        >
+          {line.toString(10).padStart(leftPad, " ")}
+        </a>
+        <div
+          tabIndex={i}
+          className={`BunError-SourceLine-text ${
+            classes.empty ? "BunError-SourceLine-text--empty" : ""
+          } ${classes.highlight ? "BunError-SourceLine-text--highlight" : ""}`}
+        >
+          {classes.highlight ? (
+            <>
+              {_text.substring(0, highlightColumnStart - dedent)}
+              <span id="BunError-SourceLine-text-highlightExpression">
+                {_text.substring(
+                  highlightColumnStart - dedent,
+                  highlightColumnEnd - dedent
+                )}
+              </span>
+              {_text.substring(highlightColumnEnd - dedent)}
+            </>
+          ) : (
+            _text
+          )}
+        </div>
       </div>
     );
-    numbers[i] = (
-      <a
-        href={buildURL(line, highlightColumnStart)}
-        onClickCapture={openWithoutFlashOfNewTab}
-        target="_blank"
-        key={line}
-        className={`BunError-SourceLine-number ${
-          classes.empty ? "BunError-SourceLine-number--empty" : ""
-        } ${classes.highlight ? "BunError-SourceLine-number--highlight" : ""}`}
-      >
-        {line}
-      </a>
-    );
-
-    if (classes.highlight && children) {
-      i++;
-
-      numbers.push(
-        ...childrenArray.map((child, index) => (
-          <div
-            key={"highlight-number-" + index}
-            className={`BunError-SourceLine-number ${
-              classes.empty ? "BunError-SourceLine-number--empty" : ""
-            } ${
-              classes.highlight ? "BunError-SourceLine-number--highlight" : ""
-            }`}
-          ></div>
-        ))
-      );
-      lines.push(
-        ...childrenArray.map((child, index) => (
-          <div
-            key={"highlight-line-" + index}
-            className={`BunError-SourceLine-text`}
-          >
-            {childrenArray[index]}
-          </div>
-        ))
-      );
-    }
   }
 
   return (
@@ -341,8 +595,7 @@ const SourceLines = ({
           className={`BunError-SourceLines-highlighter--${highlightI}`}
         ></div>
 
-        <div className="BunError-SourceLines-numbers">{numbers}</div>
-        <div className="BunError-SourceLines-lines">{lines}</div>
+        {lines}
       </div>
     </IndentationContext.Provider>
   );
@@ -381,7 +634,7 @@ const BuildErrorStackTrace = ({ location }: { location: Location }) => {
       <a
         href={srcFileURL(filename, line, column)}
         target="_blank"
-        onClickCapture={openWithoutFlashOfNewTab}
+        onClick={openWithoutFlashOfNewTab}
         className="BunError-NativeStackTrace-filename"
       >
         {filename}:{line}:{column}
@@ -394,12 +647,16 @@ const BuildErrorStackTrace = ({ location }: { location: Location }) => {
 const StackFrameIdentifier = ({
   functionName,
   scope,
+  markdown = false,
 }: {
   functionName?: string;
+  markdown: boolean;
   scope: StackFrameScope;
 }) => {
   switch (scope) {
     case StackFrameScope.Constructor: {
+      functionName =
+        markdown && functionName ? "`" + functionName + "`" : functionName;
       return functionName ? `new ${functionName}` : "new (anonymous)";
       break;
     }
@@ -425,7 +682,11 @@ const StackFrameIdentifier = ({
     }
 
     default: {
-      return functionName ? functionName : "λ()";
+      return functionName
+        ? markdown
+          ? "`" + functionName + "`"
+          : functionName
+        : "λ()";
       break;
     }
   }
@@ -434,6 +695,7 @@ const StackFrameIdentifier = ({
 const NativeStackFrame = ({
   frame,
   isTop,
+  urlBuilder,
 }: {
   frame: StackFrame;
   isTop: boolean;
@@ -461,15 +723,17 @@ const NativeStackFrame = ({
 
       <a
         target="_blank"
-        href={blobFileURL(fileName, line + 1, column)}
-        onClickCapture={openWithoutFlashOfNewTab}
+        href={urlBuilder(fileName, line, column)}
+        data-line={line}
+        data-column={column}
+        onClick={openWithoutFlashOfNewTab}
         className="BunError-StackFrame-link"
+        title="Open in editor"
+        draggable={false}
       >
         <div className="BunError-StackFrame-link-content">
           <div className={`BunError-StackFrame-file`}>{fileName}</div>
-          {line > -1 && (
-            <div className="BunError-StackFrame-line">:{line + 1}</div>
-          )}
+          {line > -1 && <div className="BunError-StackFrame-line">:{line}</div>}
           {column > -1 && (
             <div className="BunError-StackFrame-column">:{column}</div>
           )}
@@ -479,10 +743,12 @@ const NativeStackFrame = ({
   );
 };
 
-const NativeStackFrames = ({ frames }) => {
+const NativeStackFrames = ({ frames, urlBuilder }) => {
   const items = new Array(frames.length);
   for (let i = 0; i < frames.length; i++) {
-    items[i] = <NativeStackFrame key={i} frame={frames[i]} />;
+    items[i] = (
+      <NativeStackFrame urlBuilder={urlBuilder} key={i} frame={frames[i]} />
+    );
   }
 
   return <div className="BunError-StackFrames">{items}</div>;
@@ -491,27 +757,72 @@ const NativeStackFrames = ({ frames }) => {
 const NativeStackTrace = ({
   frames,
   sourceLines,
+  setSourceLines,
   children,
+  isClient = false,
 }: {
   frames: StackFrame[];
   sourceLines: SourceLine[];
+  isClient: boolean;
+  setSourceLines: (sourceLines: SourceLine[]) => void;
 }) => {
   const { file = "", position } = frames[0];
   const { cwd } = useContext(ErrorGroupContext);
   const filename = normalizedFilename(file, cwd);
+  const urlBuilder = isClient ? clientURL : blobFileURL;
+  // const [isFocused, setFocused] = React.useState(false);
+  const ref = React.useRef<HTMLDivElement>();
   const buildURL = React.useCallback(
-    (line, column) => blobFileURL(file, line, column),
-    [file, blobFileURL]
+    (line, column) => urlBuilder(file, line, column),
+    [file, urlBuilder]
   );
+  // React.useLayoutEffect(() => {
+  //   var handler1, handler2;
+
+  //   handler1 = document.addEventListener(
+  //     "selectionchange",
+  //     (event) => {
+  //       if (event.target && ref.current && ref.current.contains(event.target)) {
+  //         setFocused(true);
+  //       }
+  //     },
+  //     { passive: true }
+  //   );
+  //   handler2 = document.addEventListener(
+  //     "selectstart",
+  //     (event) => {
+  //       console.log(event);
+  //       if (event.target && ref.current && ref.current.contains(event.target)) {
+  //         setFocused(true);
+  //       }
+  //     },
+  //     { passive: true }
+  //   );
+
+  //   return () => {
+  //     if (handler1) {
+  //       document.removeEventListener("selectionchange", handler1);
+  //       handler1 = null;
+  //     }
+
+  //     if (handler2) {
+  //       document.removeEventListener("selectstart", handler2);
+  //       handler2 = null;
+  //     }
+  //   };
+  // }, [setFocused, ref]);
   return (
-    <div className={`BunError-NativeStackTrace`}>
+    <div ref={ref} className={`BunError-NativeStackTrace`}>
       <a
-        href={blobFileURL(filename, position.line + 1, position.column_start)}
+        href={urlBuilder(filename, position.line, position.column_start)}
+        data-line={position.line}
+        data-column={position.column_start}
+        data-is-client="true"
         target="_blank"
-        onClickCapture={openWithoutFlashOfNewTab}
+        onClick={openWithoutFlashOfNewTab}
         className="BunError-NativeStackTrace-filename"
       >
-        {filename}:{position.line + 1}:{position.column_start}
+        {filename}:{position.line}:{position.column_start}
       </a>
       {sourceLines.length > 0 && (
         <SourceLines
@@ -520,11 +831,27 @@ const NativeStackTrace = ({
           highlightColumnStart={position.column_start}
           buildURL={buildURL}
           highlightColumnEnd={position.column_stop}
+          isClient={isClient}
         >
           {children}
         </SourceLines>
       )}
-      {frames.length > 0 && <NativeStackFrames frames={frames} />}
+      {sourceLines.length === 0 && isClient && (
+        <AsyncSourceLines
+          highlight={position.line}
+          sourceLines={sourceLines}
+          setSourceLines={setSourceLines}
+          highlightColumnStart={position.column_start}
+          buildURL={buildURL}
+          highlightColumnEnd={position.column_stop}
+          isClient
+        >
+          {children}
+        </AsyncSourceLines>
+      )}
+      {frames.length > 1 && (
+        <NativeStackFrames urlBuilder={urlBuilder} frames={frames} />
+      )}
     </div>
   );
 };
@@ -551,7 +878,30 @@ const Indent = ({ by, children }) => {
   );
 };
 
-const JSException = ({ value }: { value: JSExceptionType }) => {
+const JSException = ({
+  value,
+  isClient = false,
+}: {
+  value: JSExceptionType;
+  isClient: boolean;
+}) => {
+  const tag = isClient ? ErrorTagType.client : ErrorTagType.server;
+  const [sourceLines, _setSourceLines] = React.useState(
+    value?.stack?.source_lines ?? []
+  );
+
+  // mutating a prop is sacrilege
+  function setSourceLines(sourceLines: SourceLine[]) {
+    _setSourceLines(sourceLines);
+    if (!value.stack) {
+      value.stack = {
+        frames: [],
+        source_lines: sourceLines,
+      };
+    } else {
+      value.stack.source_lines = sourceLines;
+    }
+  }
   switch (value.code) {
     case JSErrorCode.TypeError: {
       const fancyTypeError = new FancyTypeError(value);
@@ -563,7 +913,7 @@ const JSException = ({ value }: { value: JSExceptionType }) => {
           >
             <div className="BunError-error-header">
               <div className={`BunError-error-code`}>TypeError</div>
-              {errorTags[ErrorTagType.server]}
+              {errorTags[tag]}
             </div>
 
             <div className={`BunError-error-message`}>
@@ -583,7 +933,9 @@ const JSException = ({ value }: { value: JSExceptionType }) => {
             {value.stack && (
               <NativeStackTrace
                 frames={value.stack.frames}
-                sourceLines={value.stack.source_lines}
+                isClient={isClient}
+                sourceLines={sourceLines}
+                setSourceLines={setSourceLines}
               >
                 <Indent by={value.stack.frames[0].position.column_start}>
                   <span className="BunError-error-typename">
@@ -607,7 +959,7 @@ const JSException = ({ value }: { value: JSExceptionType }) => {
             <div className={`BunError-JSException`}>
               <div className="BunError-error-header">
                 <div className={`BunError-error-code`}>{value.name}</div>
-                {errorTags[ErrorTagType.server]}
+                {errorTags[tag]}
               </div>
 
               <div className={`BunError-error-message`}>{message}</div>
@@ -616,7 +968,9 @@ const JSException = ({ value }: { value: JSExceptionType }) => {
               {value.stack && (
                 <NativeStackTrace
                   frames={value.stack.frames}
-                  sourceLines={value.stack.source_lines}
+                  isClient={isClient}
+                  sourceLines={sourceLines}
+                  setSourceLines={setSourceLines}
                 />
               )}
             </div>
@@ -628,15 +982,17 @@ const JSException = ({ value }: { value: JSExceptionType }) => {
         <div className={`BunError-JSException`}>
           <div className="BunError-error-header">
             <div className={`BunError-error-code`}>{value.name}</div>
-            {errorTags[ErrorTagType.server]}
+            {errorTags[tag]}
           </div>
 
           <div className={`BunError-error-message`}>{value.message}</div>
 
           {value.stack && (
             <NativeStackTrace
+              isClient={isClient}
               frames={value.stack.frames}
-              sourceLines={value.stack.source_lines}
+              sourceLines={sourceLines}
+              setSourceLines={setSourceLines}
             />
           )}
         </div>
@@ -658,6 +1014,32 @@ const Summary = ({
       <div className="BunError-Summary-Title">
         {errorCount}&nbsp;error{errorCount > 1 ? "s" : ""}&nbsp;on this page
       </div>
+
+      <a
+        href="https://bun.sh/discord"
+        target="_blank"
+        className="BunError-Summary-help"
+      >
+        <svg
+          width="18"
+          viewBox="0 0 71 55"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <g clip-path="url(#clip0)">
+            <path
+              d="M60.1045 4.8978C55.5792 2.8214 50.7265 1.2916 45.6527 0.41542C45.5603 0.39851 45.468 0.440769 45.4204 0.525289C44.7963 1.6353 44.105 3.0834 43.6209 4.2216C38.1637 3.4046 32.7345 3.4046 27.3892 4.2216C26.905 3.0581 26.1886 1.6353 25.5617 0.525289C25.5141 0.443589 25.4218 0.40133 25.3294 0.41542C20.2584 1.2888 15.4057 2.8186 10.8776 4.8978C10.8384 4.9147 10.8048 4.9429 10.7825 4.9795C1.57795 18.7309 -0.943561 32.1443 0.293408 45.3914C0.299005 45.4562 0.335386 45.5182 0.385761 45.5576C6.45866 50.0174 12.3413 52.7249 18.1147 54.5195C18.2071 54.5477 18.305 54.5139 18.3638 54.4378C19.7295 52.5728 20.9469 50.6063 21.9907 48.5383C22.0523 48.4172 21.9935 48.2735 21.8676 48.2256C19.9366 47.4931 18.0979 46.6 16.3292 45.5858C16.1893 45.5041 16.1781 45.304 16.3068 45.2082C16.679 44.9293 17.0513 44.6391 17.4067 44.3461C17.471 44.2926 17.5606 44.2813 17.6362 44.3151C29.2558 49.6202 41.8354 49.6202 53.3179 44.3151C53.3935 44.2785 53.4831 44.2898 53.5502 44.3433C53.9057 44.6363 54.2779 44.9293 54.6529 45.2082C54.7816 45.304 54.7732 45.5041 54.6333 45.5858C52.8646 46.6197 51.0259 47.4931 49.0921 48.2228C48.9662 48.2707 48.9102 48.4172 48.9718 48.5383C50.038 50.6034 51.2554 52.5699 52.5959 54.435C52.6519 54.5139 52.7526 54.5477 52.845 54.5195C58.6464 52.7249 64.529 50.0174 70.6019 45.5576C70.6551 45.5182 70.6887 45.459 70.6943 45.3942C72.1747 30.0791 68.2147 16.7757 60.1968 4.9823C60.1772 4.9429 60.1437 4.9147 60.1045 4.8978ZM23.7259 37.3253C20.2276 37.3253 17.3451 34.1136 17.3451 30.1693C17.3451 26.225 20.1717 23.0133 23.7259 23.0133C27.308 23.0133 30.1626 26.2532 30.1066 30.1693C30.1066 34.1136 27.28 37.3253 23.7259 37.3253ZM47.3178 37.3253C43.8196 37.3253 40.9371 34.1136 40.9371 30.1693C40.9371 26.225 43.7636 23.0133 47.3178 23.0133C50.9 23.0133 53.7545 26.2532 53.6986 30.1693C53.6986 34.1136 50.9 37.3253 47.3178 37.3253Z"
+              fill="#5865F2"
+            />
+          </g>
+          <defs>
+            <clipPath id="clip0">
+              <rect width="71" height="55" fill="white" />
+            </clipPath>
+          </defs>
+        </svg>
+        Want help?
+      </a>
 
       <div onClick={onClose} className="BunError-Summary-CloseButton">
         <div className="BunError-Summary-CloseIcon"></div>
@@ -728,6 +1110,7 @@ const OverlayMessageContainer = ({
   problems,
   reason,
   router,
+  isClient = false,
 }: FallbackMessageContainer) => {
   return (
     <div id="BunErrorOverlay-container">
@@ -737,12 +1120,13 @@ const OverlayMessageContainer = ({
             errorCount={problems.exceptions.length + problems.build.errors}
             onClose={onClose}
             problems={problems}
+            isClient={isClient}
             reason={reason}
           />
         </div>
         <div className={`BunError-list`}>
           {problems.exceptions.map((problem, index) => (
-            <JSException key={index} value={problem} />
+            <JSException isClient={isClient} key={index} value={problem} />
           ))}
           {problems.build.msgs.map((buildMessage, index) => {
             if (buildMessage.on.build) {
@@ -754,13 +1138,277 @@ const OverlayMessageContainer = ({
             }
           })}
         </div>
-        <div className="BunError-footer">
-          <div id="BunError-poweredBy"></div>
-        </div>
+        <Footer toMarkdown={problemsToMarkdown} data={problems} />
       </div>
     </div>
   );
 };
+
+function problemsToMarkdown(problems: Problems) {
+  var markdown = "";
+  if (problems?.build?.msgs?.length) {
+    markdown += messagesToMarkdown(problems.build.msgs);
+  }
+
+  if (problems?.exceptions?.length) {
+    markdown += exceptionsToMarkdown(problems.exceptions);
+  }
+
+  return markdown;
+}
+
+// we can ignore the synchronous copy to clipboard API...I think
+function copyToClipboard(input: string | Promise<string>) {
+  if (!input) return;
+
+  if (input && typeof input === "object" && "then" in input) {
+    return input.then((str) => copyToClipboard(str));
+  }
+
+  return navigator.clipboard.writeText(input).then(() => {});
+}
+
+function messagesToMarkdown(messages: Message[]): string {
+  return messages
+    .map(messageToMarkdown)
+    .map((a) => a.trim())
+    .join("\n");
+}
+
+function exceptionsToMarkdown(exceptions: JSExceptionType[]): string {
+  return exceptions
+    .map(exceptionToMarkdown)
+    .map((a) => a.trim())
+    .join("\n");
+}
+
+function exceptionToMarkdown(exception: JSException): string {
+  const { name, message, stack } = exception;
+
+  let markdown = "";
+
+  if (name === "Error" || name === "RangeError" || name === "TypeError") {
+    markdown += `**${message}**\n`;
+  } else {
+    markdown += `**${name}**\n ${message}\n`;
+  }
+
+  if (stack.frames.length > 0) {
+    var frames = stack.frames;
+    if (stack.source_lines.length > 0) {
+      const {
+        file = "",
+        function_name = "",
+        position: {
+          line = -1,
+          column_start: column = -1,
+          column_stop: columnEnd = column,
+        } = {
+          line: -1,
+          column_start: -1,
+          column_stop: -1,
+        },
+        scope = 0,
+      } = stack.frames[0];
+
+      if (file) {
+        if (function_name.length > 0) {
+          markdown += `In \`${function_name}\` – ${file}`;
+        } else if (scope > 0 && scope < StackFrameScope.Constructor + 1) {
+          markdown += `${StackFrameIdentifier({
+            functionName: function_name,
+            scope,
+            markdown: true,
+          })} ${file}`;
+        } else {
+          markdown += `In ${file}`;
+        }
+
+        if (line > -1) {
+          markdown += `:${line}`;
+          if (column > -1) {
+            markdown += `:${column}`;
+          }
+        }
+
+        if (stack.source_lines.length > 0) {
+          // TODO: include loader
+          const extnameI = file.lastIndexOf(".");
+          const extname = extnameI > -1 ? file.slice(extnameI + 1) : "";
+
+          markdown += "\n```";
+          markdown += extname;
+          markdown += "\n";
+          stack.source_lines.forEach((sourceLine) => {
+            markdown += sourceLine.text + "\n";
+            if (sourceLine.line === line && stack.source_lines.length > 1) {
+              markdown +=
+                ("/* " + "^".repeat(Math.max(columnEnd - column, 1))).padStart(
+                  Math.max(column + 2, 0)
+                ) + " happened here */\n";
+            }
+          });
+          markdown += "\n```";
+        }
+      }
+    }
+
+    if (frames.length > 0) {
+      markdown += "\nStack trace:\n";
+      var padding = 0;
+      for (let frame of frames) {
+        const {
+          function_name = "",
+          position: { line = -1, column_start: column = -1 } = {
+            line: -1,
+            column_start: -1,
+          },
+          scope = 0,
+        } = frame;
+        padding = Math.max(
+          padding,
+          StackFrameIdentifier({
+            scope,
+            functionName: function_name,
+            markdown: true,
+          }).length
+        );
+      }
+
+      markdown += "```js\n";
+
+      for (let frame of frames) {
+        const {
+          file = "",
+          function_name = "",
+          position: { line = -1, column_start: column = -1 } = {
+            line: -1,
+            column_start: -1,
+          },
+          scope = 0,
+        } = frame;
+
+        markdown += `
+${StackFrameIdentifier({
+  scope,
+  functionName: function_name,
+  markdown: true,
+}).padEnd(padding, " ")}`;
+
+        if (file) {
+          markdown += ` ${file}`;
+          if (line > -1) {
+            markdown += `:${line}`;
+            if (column > -1) {
+              markdown += `:${column}`;
+            }
+          }
+        }
+      }
+
+      markdown += "\n```\n";
+    }
+  }
+
+  return markdown;
+}
+
+function messageToMarkdown(message: Message): string {
+  var tag = "Error";
+  if (message.on.build) {
+    tag = "BuildError";
+  }
+  var lines = (message.data.text ?? "").split("\n");
+
+  var markdown = "";
+  if (message?.on?.resolve) {
+    markdown += `**ResolveError**: "${message.on.resolve}" failed to resolve\n`;
+  } else {
+    var firstLine = lines[0];
+    lines = lines.slice(1);
+    if (firstLine.length > 120) {
+      const words = firstLine.split(" ");
+      var end = 0;
+      for (let i = 0; i < words.length; i++) {
+        if (end + words[i].length >= 120) {
+          firstLine = words.slice(0, i).join(" ");
+          lines.unshift(words.slice(i).join(" "));
+          break;
+        }
+      }
+    }
+
+    markdown += `**${tag}**${firstLine.length > 0 ? ": " + firstLine : ""}\n`;
+  }
+
+  if (message.data?.location?.file) {
+    markdown += `In ${normalizedFilename(message.data.location.file, thisCwd)}`;
+    if (message.data.location.line > -1) {
+      markdown += `:${message.data.location.line}`;
+      if (message.data.location.column > -1) {
+        markdown += `:${message.data.location.column}`;
+      }
+    }
+
+    if (message.data.location.line_text.length) {
+      const extnameI = message.data.location.file.lastIndexOf(".");
+      const extname =
+        extnameI > -1 ? message.data.location.file.slice(extnameI + 1) : "";
+
+      markdown +=
+        "\n```" + extname + "\n" + message.data.location.line_text + "\n```\n";
+    } else {
+      markdown += "\n";
+    }
+
+    if (lines.length > 0) {
+      markdown += lines.join("\n");
+    }
+  }
+
+  return markdown;
+}
+
+const withBunInfo = (text) => {
+  const bunInfo = getBunInfo();
+
+  const trimmed = text.trim();
+
+  if (bunInfo && "then" in bunInfo) {
+    return bunInfo.then(
+      (info) => {
+        const markdown = bunInfoToMarkdown(info).trim();
+        return trimmed + "\n" + markdown + "\n";
+      },
+      () => trimmed + "\n"
+    );
+  }
+
+  if (bunInfo) {
+    const markdown = bunInfoToMarkdown(bunInfo).trim();
+
+    return trimmed + "\n" + markdown + "\n";
+  }
+
+  return trimmed + "\n";
+};
+
+const Footer = ({ toMarkdown, data }) => (
+  <div className="BunError-footer">
+    <div
+      title="Copy error as markdown so it can be pasted into a bug report or slack/discord"
+      aria-label="Copy as markdown button"
+      className="BunErrror-footerItem BunError-CopyButton"
+      onClick={() => copyToClipboard(withBunInfo(String(toMarkdown(data))))}
+    >
+      <svg width="24" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+        <path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"></path>
+      </svg>{" "}
+      Copy as markdown
+    </div>
+    <div className="BunErrror-footerItem" id="BunError-poweredBy"></div>
+  </div>
+);
 
 const BuildFailureMessageContainer = ({
   messages,
@@ -784,14 +1432,12 @@ const BuildFailureMessageContainer = ({
             }
           })}
         </div>
-        <div className="BunError-footer">
-          <div id="BunError-poweredBy"></div>
-        </div>
+        <Footer toMarkdown={messagesToMarkdown} data={messages} />
       </div>
     </div>
   );
 };
-
+var thisCwd = "";
 const ErrorGroupContext = createContext<{ cwd: string }>(null);
 var reactRoot;
 
@@ -822,12 +1468,105 @@ function renderWithFunc(func) {
 }
 
 export function renderFallbackError(fallback: FallbackMessageContainer) {
+  if (fallback && fallback.cwd) {
+    thisCwd = fallback.cwd;
+  }
   // Not an error
   if (fallback?.problems?.name === "JSDisabled") return;
 
   return renderWithFunc(() => (
     <ErrorGroupContext.Provider value={fallback}>
       <OverlayMessageContainer {...fallback} />
+    </ErrorGroupContext.Provider>
+  ));
+}
+
+import { parse as getStackTrace } from "./stack-trace-parser";
+
+export function renderRuntimeError(error: Error) {
+  if (typeof error === "string") {
+    error = {
+      name: "Error",
+      message: error,
+    };
+  }
+
+  const exception: JSException = {
+    name: String(error.name),
+    message: String(error.message),
+    runtime_type: 0,
+    stack: {
+      frames: error.stack ? getStackTrace(error.stack) : [],
+      source_lines: [],
+    },
+  };
+
+  var lineNumberProperty = "";
+  var columnNumberProperty = "";
+  var fileNameProperty = "";
+
+  if (error && typeof error === "object") {
+    // safari
+    if ("line" in error) {
+      lineNumberProperty = "line";
+      // firefox
+    } else if ("lineNumber" in error) {
+      lineNumberProperty = "lineNumber";
+    }
+
+    // safari
+    if ("column" in error) {
+      columnNumberProperty = "column";
+      // firefox
+    } else if ("columnNumber" in error) {
+      columnNumberProperty = "columnNumber";
+    }
+
+    // safari
+    if ("sourceURL" in error) {
+      fileNameProperty = "sourceURL";
+      // firefox
+    } else if ("fileName" in error) {
+      fileNameProperty = "fileName";
+    }
+  }
+
+  if (Number.isFinite(error[lineNumberProperty])) {
+    if (exception.stack.frames.length == 0) {
+      exception.stack.frames.push({
+        file: error[fileNameProperty] || "",
+        position: {
+          line: +error[lineNumberProperty] || 1,
+          column_start: +error[columnNumberProperty] || 1,
+        },
+      });
+    } else if (exception.stack.frames.length > 0) {
+      exception.stack.frames[0].position.line = error[lineNumberProperty];
+
+      if (Number.isFinite(error[columnNumberProperty])) {
+        exception.stack.frames[0].position.column_start =
+          error[columnNumberProperty];
+      }
+    }
+  }
+
+  const fallback: FallbackMessageContainer = {
+    message: error.message,
+
+    problems: {
+      build: {
+        warnings: 0,
+        errors: 0,
+        msgs: [],
+      },
+      code: 0,
+      name: error.name,
+      exceptions: [exception],
+    },
+  };
+  return renderWithFunc(() => (
+    <ErrorGroupContext.Provider value={fallback}>
+      <OverlayMessageContainer isClient {...fallback} />
     </ErrorGroupContext.Provider>
   ));
 }
@@ -845,6 +1584,7 @@ export const renderBuildFailure = (
   failure: WebsocketMessageBuildFailure,
   cwd: string
 ) => {
+  thisCwd = cwd;
   renderWithFunc(() => (
     <ErrorGroupContext.Provider value={{ cwd }}>
       <BuildFailureMessageContainer messages={failure.log.msgs} />

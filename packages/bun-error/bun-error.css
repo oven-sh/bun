@@ -5,12 +5,12 @@
     "Source Code Pro", "Fira Mono", "Droid Sans Mono", "Courier New", monospace;
 }
 
-a {
+:host a {
   color: inherit;
   text-decoration: none;
 }
 
-a:hover {
+:host a:hover {
   text-decoration: underline;
 }
 #BunErrorOverlay-container {
@@ -32,7 +32,7 @@ a:hover {
     Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
 }
 
-#BunErrorOverlay-container a {
+:host a {
   color: inherit;
 }
 
@@ -61,7 +61,7 @@ a:hover {
 
 .BunError-Summary {
   display: grid;
-  grid-template-columns: min-content auto min-content;
+  grid-template-columns: min-content auto min-content min-content;
   grid-template-rows: 46px;
   align-items: center;
   padding: 0 18px;
@@ -69,11 +69,16 @@ a:hover {
 }
 
 .BunError-footer {
-  display: grid;
-  padding: 12px 18px;
-  justify-content: flex-end;
+  display: flex;
   border-top: 1px solid rgb(220, 220, 220);
   align-items: center;
+
+  grid-template-columns: auto auto;
+  justify-content: space-between;
+}
+
+.BunError-footerItem {
+  padding: 12px 18px;
 }
 
 .BunError-Summary-Title {
@@ -142,24 +147,113 @@ a:hover {
   text-decoration: underline;
 }
 
+.BunError-SourceLines-lines a {
+  text-decoration: none;
+}
+
+.BunError-SourceLine-text::selection,
+.BunError-SourceLine-text *::selection {
+  background-color: #6437e3;
+  color: white;
+}
+
+.BunError-SourceLine-text:active:before {
+  width: 61px;
+  z-index: -1;
+  pointer-events: none;
+}
+
 .BunError-SourceLines-lines {
 }
 
-.BunError-SourceLines {
+.BunError-SourceLine {
   display: grid;
   grid-template-columns: min-content auto;
-  grid-template-rows: repeat(16px, 6);
-  column-gap: 13px;
+}
+
+.BunError-SourceLines {
   font-size: 14px;
-  padding-left: 24px;
   align-items: center;
-  position: relative;
   overflow-x: auto;
+}
+
+.BunError-CopyButton {
+  font-weight: 500;
+  font-size: 1em;
+  vertical-align: middle;
+  display: flex;
+  align-content: center;
+  align-items: center;
+  border-right: 1px solid #ccc;
+  background: #fcfcfc;
+  border-bottom-left-radius: 12px;
+  color: #333;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform 0.1s linear;
+}
+
+.BunError-CopyButton,
+#BunError-poweredBy {
+  padding: 12px 12px;
+}
+.BunError-Summary-help {
+  display: flex;
+  white-space: nowrap;
+  gap: 9px;
+  margin-right: 18px;
+
+  border-right: 1px solid rgb(220, 220, 220);
+  height: 100%;
+  align-items: center;
+  padding-right: 18px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.BunError-Summary-help svg {
+  opacity: 0.5;
+}
+
+#BunErrorOverlay-container .BunError-Summary-help {
+  color: #999;
+}
+
+#BunErrorOverlay-container .BunError-Summary-help:hover {
+  color: #5865f2;
+}
+
+#BunErrorOverlay-container .BunError-Summary-help:hover svg {
+  opacity: 1;
+}
+
+.BunError-CopyButton svg {
+  width: 18px;
+  margin-right: 0.7em;
+  opacity: 0.75;
+  margin-left: 6px;
+  fill: currentColor;
+  stroke: currentColor;
+}
+
+.BunError-CopyButton:hover {
+  background: #6437e3;
+  color: white;
+
+  border-right-color: #6437e3;
+}
+
+.BunError-CopyButton:active {
+  transform: scale(1.03, 1.03);
+  transform-origin: center center;
 }
 
 .BunError-SourceLine-text {
   white-space: pre;
+  cursor: text;
   display: block;
+  position: relative;
 
   font-family: var(--bun-error-monospace);
 }
@@ -167,19 +261,39 @@ a:hover {
 .BunError-SourceLine-number {
   font-variant: tabular-nums;
   display: block;
+  border-left: 4px solid transparent;
+  margin-left: -1px;
   cursor: pointer;
+  padding-left: 14px;
+  padding-right: 12px;
   text-align: right;
-  user-select: none;
+
   text-decoration: none;
+  position: relative;
+}
+
+.BunError-SourceLine-number,
+.BunError-SourceLine-number * {
+  user-select: none;
   -webkit-user-select: none;
+}
+
+.BunError-SourceLine-number:active + .BunError-SourceLine-text {
+  background-color: #6437e3;
+  color: white;
+}
+
+.BunError-SourceLine-number:hover {
+  background-color: #7443fa;
+  color: white;
+}
+
+.BunError-SourceLine:hover .BunError-SourceLine-number {
+  border-left-color: #7443fa;
 }
 
 .BunError-SourceLine-number--empty {
   color: rgb(165, 165, 165);
-}
-
-.BunError-SourceLine-number:hover {
-  text-decoration: underline;
 }
 
 .BunError-SourceLine-number,
@@ -196,7 +310,7 @@ a:hover {
   position: absolute;
 }
 
-.BunError-SourceLine-text--highlight {
+#BunErrorOverlay-container .BunError-SourceLine-text--highlight {
   color: #e33737;
 }
 
@@ -288,12 +402,13 @@ a:hover {
 .BunError-StackFrames {
   display: table;
   table-layout: auto;
-  padding: 16px 12px;
   width: 100%;
   box-sizing: border-box;
   margin: 0 auto;
   border-radius: 4px;
   line-height: 1.2;
+  border-collapse: separate;
+  border-spacing: 12px 6px;
 
   background-color: rgb(244, 244, 244);
 }

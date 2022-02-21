@@ -479,6 +479,159 @@ pub const PackageJSONVersionChecker = struct {
     }
 };
 
+pub fn toAST(
+    allocator: std.mem.Allocator,
+    comptime Type: type,
+    value: Type,
+) anyerror!js_ast.Expr {
+    const type_info: std.builtin.TypeInfo = @typeInfo(Type);
+
+    switch (type_info) {
+        .Bool => {
+            return Expr{
+                .data = .{ .e_boolean = .{
+                    .value = value,
+                } },
+                .loc = logger.Loc{},
+            };
+        },
+        .Int => {
+            return Expr{
+                .data = .{
+                    .e_number = .{
+                        .value = @intToFloat(f64, value),
+                    },
+                },
+                .loc = logger.Loc{},
+            };
+        },
+        .Float => {
+            return Expr{
+                .data = .{
+                    .e_number = .{
+                        .value = @floatCast(f64, value),
+                    },
+                },
+                .loc = logger.Loc{},
+            };
+        },
+        .Pointer => |ptr_info| switch (ptr_info.size) {
+            .One => switch (@typeInfo(ptr_info.child)) {
+                .Array => {
+                    const Slice = []const std.meta.Elem(ptr_info.child);
+                    return try toAST(allocator, Slice, value.*);
+                },
+                else => {
+                    return try toAST(allocator, @TypeOf(value.*), value.*);
+                },
+            },
+            .Slice => {
+                if (ptr_info.child == u8) {
+                    return Expr.init(js_ast.E.String, js_ast.E.String{ .utf8 = value }, logger.Loc.Empty);
+                }
+
+                var exprs = try allocator.alloc(Expr, value.len);
+                var i: usize = 0;
+                while (i < exprs.len) : (i += 1) {
+                    exprs[i] = try toAST(allocator, @TypeOf(value[i]), value[i]);
+                }
+                return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = exprs }, logger.Loc.Empty);
+            },
+            else => @compileError("Unable to stringify type '" ++ @typeName(T) ++ "'"),
+        },
+        .Array => |Array| {
+            if (Array.child == u8) {
+                return Expr.init(js_ast.E.String, js_ast.E.String{ .utf8 = value }, logger.Loc.Empty);
+            }
+
+            var exprs = try allocator.alloc(Expr, value.len);
+            var i: usize = 0;
+            while (i < exprs.len) : (i += 1) {
+                exprs[i] = try toAST(allocator, @TypeOf(value[i]), value[i]);
+            }
+            return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = exprs }, logger.Loc.Empty);
+        },
+        .Struct => |Struct| {
+            const fields: []const std.builtin.TypeInfo.StructField = Struct.fields;
+            var properties = try allocator.alloc(js_ast.G.Property, fields.len);
+            var property_i: usize = 0;
+            inline for (fields) |field| {
+                properties[property_i] = G.Property{
+                    .key = Expr.init(E.String, E.String{ .utf8 = field.name }, logger.Loc.Empty),
+                    .value = try toAST(allocator, field.field_type, @field(value, field.name)),
+                };
+                property_i += 1;
+            }
+
+            return Expr.init(
+                js_ast.E.Object,
+                js_ast.E.Object{
+                    .properties = js_ast.BabyList(G.Property).init(properties[0..property_i]),
+                    .is_single_line = property_i <= 1,
+                },
+                logger.Loc.Empty,
+            );
+        },
+        .Null => {
+            return Expr{ .data = .{ .e_null = .{} }, .loc = logger.Loc{} };
+        },
+        .Optional => {
+            if (value) |_value| {
+                return try toAST(allocator, @TypeOf(_value), _value);
+            } else {
+                return Expr{ .data = .{ .e_null = .{} }, .loc = logger.Loc{} };
+            }
+        },
+        .Enum => {
+            _ = std.meta.intToEnum(Type, @enumToInt(value)) catch {
+                return Expr{ .data = .{ .e_null = .{} }, .loc = logger.Loc{} };
+            };
+
+            return toAST(allocator, string, std.mem.span(@tagName(value)));
+        },
+        .ErrorSet => return try toAST(allocator, []const u8, std.mem.span(@errorName(value))),
+        .Union => |Union| {
+            const info = Union;
+            if (info.tag_type) |UnionTagType| {
+                inline for (info.fields) |u_field| {
+                    if (value == @field(UnionTagType, u_field.name)) {
+                        const StructType = @Type(
+                            .{
+                                .Struct = .{
+                                    .layout = .Auto,
+                                    .decls = &.{},
+                                    .is_tuple = false,
+                                    .fields = &.{
+                                        .{
+                                            .name = u_field.name,
+                                            .field_type = @TypeOf(
+                                                @field(value, u_field.name),
+                                            ),
+                                            .is_comptime = false,
+                                            .default_value = undefined,
+                                            .alignment = @alignOf(
+                                                @TypeOf(
+                                                    @field(value, u_field.name),
+                                                ),
+                                            ),
+                                        },
+                                    },
+                                },
+                            },
+                        );
+                        var struct_value: StructType = undefined;
+                        @field(struct_value, u_field.name) = value;
+                        return try toAST(allocator, StructType, struct_value);
+                    }
+                }
+            } else {
+                @compileError("Unable to stringify untagged union '" ++ @typeName(T) ++ "'");
+            }
+        },
+        else => @compileError(std.fmt.comptimePrint("Unsupported type: {s} - {s}", .{ @tagName(type_info), @typeName(Type) })),
+    }
+}
+
 const JSONParser = JSONLikeParser(js_lexer.JSONOptions{ .is_json = true });
 const RemoteJSONParser = JSONLikeParser(js_lexer.JSONOptions{ .is_json = true, .json_warn_duplicate_keys = false });
 const DotEnvJSONParser = JSONLikeParser(js_lexer.JSONOptions{

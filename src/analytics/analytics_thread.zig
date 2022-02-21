@@ -271,6 +271,7 @@ pub const GenerateHeader = struct {
 
         pub var linux_os_name: std.c.utsname = undefined;
         var platform_: ?Analytics.Platform = null;
+        pub const Platform = Analytics.Platform;
 
         pub fn forOS() Analytics.Platform {
             if (platform_ != null) return platform_.?;

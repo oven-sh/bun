@@ -194,6 +194,7 @@ pub const Editor = enum(u8) {
             map.put(
                 .sublime,
                 &.{
+                    "/Applications/Sublime Text 4.app/Contents/SharedSupport/bin/subl",
                     "/Applications/Sublime Text 3.app/Contents/SharedSupport/bin/subl",
                     "/Applications/Sublime Text 2.app/Contents/SharedSupport/bin/subl",
                     "/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl",

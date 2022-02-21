@@ -36,6 +36,7 @@ const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const Arena = @import("./mimalloc_arena.zig").Arena;
 const ArenaType = Arena;
+const JSON = @import("./json_parser.zig");
 pub fn constStrToU8(s: string) []u8 {
     return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
 }
@@ -92,6 +93,7 @@ pub const RequestContext = struct {
     has_written_last_header: bool = false,
     has_called_done: bool = false,
     mime_type: MimeType = MimeType.other,
+    to_plain_text: bool = false,
     controlled: bool = false,
     watcher: *Watcher,
     timer: std.time.Timer,
@@ -780,6 +782,36 @@ pub const RequestContext = struct {
 
     pub fn sendJSB(ctx: *RequestContext) !void {
         const node_modules_bundle = ctx.bundler.options.node_modules_bundle orelse unreachable;
+        if (ctx.header("Open-In-Editor") != null) {
+            if (Server.editor == null) {
+                Server.detectEditor(ctx.bundler.env);
+            }
+
+            if (Server.editor.? != .none) {
+                var buf: string = "";
+
+                if (node_modules_bundle.code_string == null) {
+                    buf = try node_modules_bundle.readCodeAsStringSlow(_global.default_allocator);
+                } else {
+                    buf = node_modules_bundle.code_string.?.str;
+                }
+
+                Server.openInEditor(
+                    Server.editor.?,
+                    buf,
+                    std.fs.path.basename(ctx.url.path),
+                    ctx.bundler.fs.tmpdir(),
+                    ctx.header("Editor-Line") orelse "",
+                    ctx.header("Editor-Column") orelse "",
+                );
+
+                if (Server.editor.? != .none) {
+                    try ctx.sendNoContent();
+                    return;
+                }
+            }
+        }
+
         ctx.appendHeader("ETag", node_modules_bundle.bundle.etag);
         ctx.appendHeader("Content-Type", "text/javascript");
         ctx.appendHeader("Cache-Control", "immutable, max-age=99999");
@@ -1702,19 +1734,19 @@ pub const RequestContext = struct {
                 }
             };
 
-            switch (try handler.getWebsocketVersion()) {
-                7, 8, 13 => {},
-                else => {
-                    // Unsupported version
-                    // Set header to indicate to the client which versions are supported
-                    ctx.appendHeader("Sec-WebSocket-Version", "7,8,13");
-                    try ctx.writeStatus(426);
-                    try ctx.flushHeaders();
-                    ctx.done();
-                    is_socket_closed = true;
-                    return;
-                },
-            }
+            // switch (try handler.getWebsocketVersion()) {
+            //     7, 8, 13 => {},
+            //     else => {
+            //         // Unsupported version
+            //         // Set header to indicate to the client which versions are supported
+            //         ctx.appendHeader("Sec-WebSocket-Version", "7,8,13");
+            //         try ctx.writeStatus(426);
+            //         try ctx.flushHeaders();
+            //         ctx.done();
+            //         is_socket_closed = true;
+            //         return;
+            //     },
+            // }
 
             const key = try handler.getWebsocketAcceptKey();
 
@@ -1970,16 +2002,17 @@ pub const RequestContext = struct {
 
         fn getWebsocketVersion(
             self: *WebsocketHandler,
-        ) !u8 {
+        ) !void {
             var request: *RequestContext = &self.ctx;
-            const v = request.header("Sec-WebSocket-Version") orelse {
+            _ = request.header("Sec-WebSocket-Version") orelse {
                 Output.prettyErrorln("HMR WebSocket error: missing Sec-WebSocket-Version header", .{});
                 return error.BadRequest;
             };
-            return std.fmt.parseInt(u8, v, 10) catch {
-                Output.prettyErrorln("HMR WebSocket error: Sec-WebSocket-Version is invalid {s}", .{v});
-                return error.BadRequest;
-            };
+            // this error is noisy
+            // return std.fmt.parseInt(u8, v, 10) catch {
+            //     Output.prettyErrorln("HMR WebSocket error: Sec-WebSocket-Version is invalid {s}", .{v});
+            //     return error.BadRequest;
+            // };
         }
 
         fn getWebsocketAcceptKey(
@@ -2039,7 +2072,21 @@ pub const RequestContext = struct {
         }
 
         ctx.mime_type = result.mime_type;
-        ctx.appendHeader("Content-Type", result.mime_type.value);
+
+        const accept: MimeType = brk: {
+            if (ctx.header("Accept")) |accept|
+                break :brk MimeType.init(accept);
+
+            break :brk ctx.mime_type;
+        };
+
+        ctx.to_plain_text = accept.category == .text and strings.eqlComptime(accept.value, "text/plain");
+
+        if (!ctx.to_plain_text) {
+            ctx.appendHeader("Content-Type", ctx.mime_type.value);
+        } else {
+            ctx.appendHeader("Content-Type", "text/plain");
+        }
 
         const send_body = ctx.method == .GET;
 
@@ -2118,6 +2165,28 @@ pub const RequestContext = struct {
                     ) anyerror!void {
                         const buf = buffer.toOwnedSliceLeaky();
                         defer buffer.reset();
+
+                        if (chunky.rctx.header("Open-In-Editor") != null) {
+                            if (Server.editor == null) {
+                                Server.detectEditor(chunky.rctx.bundler.env);
+                            }
+
+                            if (Server.editor.? != .none) {
+                                Server.openInEditor(
+                                    Server.editor.?,
+                                    buf,
+                                    std.fs.path.basename(chunky.rctx.url.path),
+                                    chunky.rctx.bundler.fs.tmpdir(),
+                                    chunky.rctx.header("Editor-Line") orelse "",
+                                    chunky.rctx.header("Editor-Column") orelse "",
+                                );
+
+                                if (Server.editor.? != .none) {
+                                    try chunky.rctx.sendNoContent();
+                                    return;
+                                }
+                            }
+                        }
 
                         if (buf.len == 0) {
                             try chunky.rctx.sendNoContent();
@@ -2375,6 +2444,7 @@ pub const RequestContext = struct {
 
     fn handleBlobURL(ctx: *RequestContext, _: *Server) !void {
         var id = ctx.url.path["blob:".len..];
+
         var line: string = "";
         var column: string = "";
 
@@ -2430,28 +2500,34 @@ pub const RequestContext = struct {
             return;
         }
 
-        const always_open = strings.contains(ctx.url.query_string, "editor");
+        if (ctx.header("Open-In-Editor") != null) {
+            if (Server.editor == null) {
+                Server.detectEditor(ctx.bundler.env);
+            }
 
-        if (always_open) {
-            const real_mime_type = MimeType.byExtension(strings.trim(std.fs.path.extension(id), "."));
-
-            if (real_mime_type.canOpenInEditor() or ctx.bundler.options.loader(std.fs.path.extension(id)) != .file) {
-                if (Server.editor == null) {
-                    Server.detectEditor(ctx.bundler.env);
+            if (line.len == 0) {
+                if (ctx.header("Editor-Line")) |_line| {
+                    line = _line;
                 }
+            }
 
-                if (Server.editor) |editor| {
-                    if (editor != .none) {
-                        Server.openInEditor(editor, blob.ptr[0..blob.len], id, Fs.FileSystem.instance.tmpdir(), line, column);
-                        if (Server.editor.? != .none) {
-                            defer ctx.done();
-                            try ctx.writeStatus(200);
-                            ctx.appendHeader("Content-Type", MimeType.html.value);
-                            const auto_close = "<html><body><script>window.close();</script></body></html>";
-                            try ctx.prepareToSendBody(auto_close.len, false);
-                            try ctx.writeBodyBuf(auto_close);
-                            return;
-                        }
+            if (column.len == 0) {
+                if (ctx.header("Editor-Column")) |_column| {
+                    column = _column;
+                }
+            }
+
+            if (Server.editor) |editor| {
+                if (editor != .none) {
+                    Server.openInEditor(editor, blob.ptr[0..blob.len], id, Fs.FileSystem.instance.tmpdir(), line, column);
+                    if (Server.editor.? != .none) {
+                        defer ctx.done();
+                        try ctx.writeStatus(200);
+                        ctx.appendHeader("Content-Type", MimeType.html.value);
+                        const auto_close = "<html><body><h1>Opened in editor!</h1><script>window.close();</script></body></html>";
+                        try ctx.prepareToSendBody(auto_close.len, false);
+                        try ctx.writeBodyBuf(auto_close);
+                        return;
                     }
                 }
             }
@@ -2616,8 +2692,7 @@ pub const RequestContext = struct {
         switch (result.file.value) {
             .pending => |resolve_result| {
                 const path = resolve_result.pathConst() orelse return try ctx.sendNotFound();
-                const always_open = strings.contains(ctx.url.query_string, "editor");
-                if (always_open) {
+                if (ctx.header("Open-In-Editor") != null) {
                     if (Server.editor == null)
                         Server.detectEditor(ctx.bundler.env);
 

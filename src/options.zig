@@ -2005,6 +2005,9 @@ pub const Framework = struct {
     fallback: EntryPoint = EntryPoint{},
 
     display_name: string = "",
+    /// "version" field in package.json
+    version: string = "",
+    /// "name" field in package.json
     package: string = "",
     development: bool = true,
     resolved: bool = false,

@@ -299,6 +299,14 @@ pub const PackageJSON = struct {
             }
         }
 
+        if (json.get("version")) |version| {
+            if (version.asString(allocator)) |str| {
+                if (str.len > 0) {
+                    pair.framework.version = str;
+                }
+            }
+        }
+
         if (framework_object.expr.asProperty("static")) |static_prop| {
             if (static_prop.expr.asString(allocator)) |str| {
                 if (str.len > 0) {

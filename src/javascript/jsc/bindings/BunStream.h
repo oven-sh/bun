@@ -23,9 +23,8 @@ class Readable : public JSC::JSNonFinalObject {
 
   static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-  template <typename CellType, JSC::SubspaceAccess>
-  static JSC::CompleteSubspace *subspaceFor(JSC::VM &vm) {
-    return &vm.cellSpace;
+  template <typename CellType, SubspaceAccess> static GCClient::IsoSubspace *subspaceFor(VM &vm) {
+    return &vm.plainObjectSpace();
   }
 
   static JSC::Structure *createStructure(JSC::VM &vm, JSC::JSGlobalObject *globalObject,
@@ -36,7 +35,7 @@ class Readable : public JSC::JSNonFinalObject {
 
   static Readable *create(JSC::VM &vm, Bun__Readable *state, JSC::Structure *structure) {
     Readable *accessor =
-      new (NotNull, JSC::allocateCell<Bun::Readable>(vm.heap)) Readable(vm, state, structure);
+      new (NotNull, JSC::allocateCell<Bun::Readable>(vm)) Readable(vm, state, structure);
     accessor->finishCreation(vm);
     return accessor;
   }
@@ -57,9 +56,8 @@ class Writable : public JSC::JSNonFinalObject {
 
   static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-  template <typename CellType, JSC::SubspaceAccess>
-  static JSC::CompleteSubspace *subspaceFor(JSC::VM &vm) {
-    return &vm.cellSpace;
+  template <typename CellType, SubspaceAccess> static GCClient::IsoSubspace *subspaceFor(VM &vm) {
+    return &vm.plainObjectSpace();
   }
 
   static JSC::Structure *createStructure(JSC::VM &vm, JSC::JSGlobalObject *globalObject,
@@ -69,8 +67,9 @@ class Writable : public JSC::JSNonFinalObject {
   }
 
   static Writable *create(JSC::VM &vm, Bun__Writable *state, JSC::Structure *structure) {
+
     Writable *accessor =
-      new (NotNull, JSC::allocateCell<Writable>(vm.heap)) Writable(vm, state, structure);
+      new (NotNull, JSC::allocateCell<Writable>(vm)) Writable(vm, state, structure);
     accessor->finishCreation(vm);
     return accessor;
   }

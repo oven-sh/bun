@@ -1842,15 +1842,19 @@ bool JSC__JSValue__isTerminationException(JSC__JSValue JSValue0, JSC__VM *arg1) 
 void JSC__VM__shrinkFootprint(JSC__VM *arg0) { arg0->shrinkFootprintWhenIdle(); };
 void JSC__VM__whenIdle(JSC__VM *arg0, void (*ArgFn1)()) { arg0->whenIdle(ArgFn1); };
 
-JSC__JSLock *JSC__VM__apiLock(JSC__VM *arg0) { return makeRefPtr((*arg0).apiLock()).leakRef(); }
+thread_local JSC::VM *g_commonVMOrNull;
 JSC__VM *JSC__VM__create(unsigned char HeapType0) {
-  JSC::VM *vm =
-    &JSC::VM::create(HeapType0 == JSC::SmallHeap ? JSC::SmallHeap : JSC::LargeHeap).leakRef();
+
+  auto &vm = JSC::VM::create(HeapType0 == 0 ? JSC::HeapType::Small : JSC::HeapType::Large, nullptr)
+               .leakRef();
 #if ENABLE(WEBASSEMBLY)
   JSC::Wasm::enableFastMemory();
 #endif
 
-  return vm;
+  g_commonVMOrNull = &vm;
+  vm.heap.acquireAccess(); // At any time, we may do things that affect the GC.
+
+  return g_commonVMOrNull;
 }
 
 void JSC__VM__holdAPILock(JSC__VM *arg0, void *ctx, void (*callback)(void *arg0)) {

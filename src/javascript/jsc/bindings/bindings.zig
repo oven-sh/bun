@@ -1410,6 +1410,7 @@ pub const JSValue = enum(i64) {
     pub const JSType = enum(u8) {
         // The Cell value must come before any JS that is a JSCell.
         Cell,
+        Structure,
         String,
         HeapBigInt,
         Symbol,
@@ -1454,14 +1455,14 @@ pub const JSValue = enum(i64) {
         ScopedArguments,
         ClonedArguments,
 
-        // Start JSArray types.
+        // Start JSArray s.
         Array,
         DerivedArray,
-        // End JSArray types.
+        // End JSArray s.
 
         ArrayBuffer,
 
-        // Start JSArrayBufferView types. Keep in sync with the order of FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW.
+        // Start JSArrayBufferView s. Keep in sync with the order of FOR_EACH_D_ARRAY__EXCLUDING_DATA_VIEW.
         Int8Array,
         Uint8Array,
         Uint8ClampedArray,
@@ -1474,25 +1475,26 @@ pub const JSValue = enum(i64) {
         BigInt64Array,
         BigUint64Array,
         DataView,
-        // End JSArrayBufferView types.
+        // End JSArrayBufferView s.
 
         // JSScope <- JSWithScope
         //         <- StrictEvalActivation
         //         <- JSSymbolTableObject  <- JSLexicalEnvironment      <- JSModuleEnvironment
         //                                 <- JSSegmentedVariableObject <- JSGlobalLexicalEnvironment
         //                                                              <- JSGlobalObject
-        // Start JSScope types.
-        // Start environment record types.
+        // Start JSScope s.
+        // Start environment record s.
         GlobalObject,
         GlobalLexicalEnvironment,
         LexicalEnvironment,
         ModuleEnvironment,
         StrictEvalActivation,
-        // End environment record types.
+        // End environment record s.
         WithScope,
-        // End JSScope types.
+        // End JSScope s.
 
         ModuleNamespaceObject,
+        ShadowRealm,
         RegExpObject,
         JSDate,
         ProxyObject,
@@ -1508,10 +1510,10 @@ pub const JSValue = enum(i64) {
         JSWeakMap,
         JSWeakSet,
         WebAssemblyModule,
-        // Start StringObject types.
+        // Start StringObject s.
         StringObject,
         DerivedStringObject,
-        // End StringObject types.
+        // End StringObject s.
 
         MaxJS = 0b11111111,
         _,

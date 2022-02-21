@@ -6,6 +6,8 @@
 
 namespace Zig {
 
+using namespace JSC;
+
 class Path : public JSC::JSNonFinalObject {
   using Base = JSC::JSNonFinalObject;
 
@@ -18,9 +20,8 @@ class Path : public JSC::JSNonFinalObject {
 
   static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-  template <typename CellType, JSC::SubspaceAccess>
-  static JSC::CompleteSubspace *subspaceFor(JSC::VM &vm) {
-    return &vm.cellSpace;
+  template <typename CellType, SubspaceAccess> static GCClient::IsoSubspace *subspaceFor(VM &vm) {
+    return &vm.plainObjectSpace();
   }
 
   static JSC::Structure *createStructure(JSC::VM &vm, JSC::JSGlobalObject *globalObject,
@@ -30,7 +31,7 @@ class Path : public JSC::JSNonFinalObject {
   }
 
   static Path *create(JSC::VM &vm, bool isWindows, JSC::Structure *structure) {
-    Path *accessor = new (NotNull, JSC::allocateCell<Path>(vm.heap)) Path(vm, structure, isWindows);
+    Path *accessor = new (NotNull, JSC::allocateCell<Path>(vm)) Path(vm, structure, isWindows);
 
     accessor->finishCreation(vm);
     return accessor;

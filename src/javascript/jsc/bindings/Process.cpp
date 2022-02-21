@@ -53,7 +53,8 @@ static JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
 
     case 1: {
       // This is a JSC builtin function
-      globalObject->queueMicrotask(JSC::createJSMicrotask(vm, job));
+      globalObject->queueMicrotask(JSC::createJSMicrotask(vm, job, JSC::JSValue{}, JSC::JSValue{},
+                                                          JSC::JSValue{}, JSC::JSValue{}));
       break;
     }
 

@@ -15,12 +15,12 @@ using String = WTF::String;
 
 namespace JSC {
 
-ALWAYS_INLINE GCDeferralContext::GCDeferralContext(Heap &heap) : m_heap(heap) {}
+ALWAYS_INLINE GCDeferralContext::GCDeferralContext(VM &vm) : m_vm(vm) {}
 
 ALWAYS_INLINE GCDeferralContext::~GCDeferralContext() {
-  if constexpr (validateDFGDoesGC) m_heap.verifyCanGC();
+  if constexpr (validateDFGDoesGC) m_vm.verifyCanGC();
 
-  if (UNLIKELY(m_shouldGC)) m_heap.collectIfNecessaryOrDefer();
+  if (UNLIKELY(m_shouldGC)) m_vm.heap.collectIfNecessaryOrDefer();
 }
 
 } // namespace JSC
@@ -58,7 +58,7 @@ void Zig::ConsoleClient::messageWithTypeAndLevel(MessageType type, MessageLevel 
                                                  JSC::JSGlobalObject *globalObject,
                                                  Ref<ScriptArguments> &&arguments) {
   JSC::VM &vm = globalObject->vm();
-  JSC::GCDeferralContext deferralContext(vm.heap);
+  JSC::GCDeferralContext deferralContext(vm);
   JSC::DisallowGC disallowGC;
   auto args = arguments.ptr();
   JSC__JSValue jsArgs[255];

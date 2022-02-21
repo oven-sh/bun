@@ -104,7 +104,7 @@ extern "C" void JSCInitialize() {
 
 extern "C" JSC__JSGlobalObject *Zig__GlobalObject__create(JSClassRef *globalObjectClass, int count,
                                                           void *console_client) {
-  auto heapSize = JSC::LargeHeap;
+  auto heapSize = JSC::HeapType::Large;
 
   JSC::VM &vm = JSC::VM::create(heapSize).leakRef();
   Bun::JSVMClientData::create(&vm);
@@ -259,7 +259,7 @@ static Zig::ConsoleClient *m_console;
 
 void GlobalObject::setConsole(void *console) {
   m_console = new Zig::ConsoleClient(console);
-  this->setConsoleClient(makeWeakPtr(m_console));
+  this->setConsoleClient(m_console);
 }
 
 #pragma mark - Globals
@@ -324,7 +324,8 @@ static JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
   }
 
   // This is a JSC builtin function
-  globalObject->queueMicrotask(JSC::createJSMicrotask(vm, job));
+  globalObject->queueMicrotask(JSC::createJSMicrotask(vm, job, JSC::JSValue{}, JSC::JSValue{},
+                                                      JSC::JSValue{}, JSC::JSValue{}));
 
   return JSC::JSValue::encode(JSC::jsUndefined());
 }
@@ -350,7 +351,8 @@ static JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
   }
 
   if (callFrame->argumentCount() == 1) {
-    globalObject->queueMicrotask(JSC::createJSMicrotask(vm, job));
+    globalObject->queueMicrotask(JSC::createJSMicrotask(vm, job, JSC::JSValue{}, JSC::JSValue{},
+                                                        JSC::JSValue{}, JSC::JSValue{}));
     return JSC::JSValue::encode(JSC::jsNumber(Bun__Timer__getNextID()));
   }
 

@@ -27,13 +27,12 @@ class GlobalObject : public JSC::JSGlobalObject {
   Zig::Process *m_process;
   static constexpr bool needsDestruction = true;
   template <typename CellType, JSC::SubspaceAccess mode>
-  static JSC::IsoSubspace *subspaceFor(JSC::VM &vm) {
+  static GCClient::IsoSubspace *subspaceFor(VM &vm) {
     return vm.globalObjectSpace<mode>();
   }
 
   static GlobalObject *create(JSC::VM &vm, JSC::Structure *structure) {
-    auto *object =
-      new (NotNull, JSC::allocateCell<GlobalObject>(vm.heap)) GlobalObject(vm, structure);
+    auto *object = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure);
     object->finishCreation(vm);
     return object;
   }
@@ -80,7 +79,6 @@ class JSMicrotaskCallback : public RefCounted<JSMicrotaskCallback> {
   }
 
   void call() {
-    auto protectedThis{makeRef(*this)};
     JSC::VM &vm = m_globalObject->vm();
     auto task = &m_task.get();
     task->run(m_globalObject.get());

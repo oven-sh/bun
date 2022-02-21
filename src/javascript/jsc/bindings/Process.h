@@ -6,6 +6,8 @@
 
 namespace Zig {
 
+using namespace JSC;
+
 class Process : public JSC::JSNonFinalObject {
   using Base = JSC::JSNonFinalObject;
 
@@ -16,9 +18,8 @@ class Process : public JSC::JSNonFinalObject {
 
   static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-  template <typename CellType, JSC::SubspaceAccess>
-  static JSC::CompleteSubspace *subspaceFor(JSC::VM &vm) {
-    return &vm.cellSpace;
+  template <typename CellType, SubspaceAccess> static GCClient::IsoSubspace *subspaceFor(VM &vm) {
+    return &vm.plainObjectSpace();
   }
 
   static JSC::Structure *createStructure(JSC::VM &vm, JSC::JSGlobalObject *globalObject,
@@ -28,7 +29,7 @@ class Process : public JSC::JSNonFinalObject {
   }
 
   static Process *create(JSC::VM &vm, JSC::Structure *structure) {
-    Process *accessor = new (NotNull, JSC::allocateCell<Process>(vm.heap)) Process(vm, structure);
+    Process *accessor = new (NotNull, JSC::allocateCell<Process>(vm)) Process(vm, structure);
     accessor->finishCreation(vm);
     return accessor;
   }

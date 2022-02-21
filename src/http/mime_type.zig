@@ -119,6 +119,10 @@ pub fn init(str_: string) MimeType {
                     if (strings.eqlComptime(str, "javascript")) {
                         return javascript;
                     }
+
+                    if (strings.eqlComptime(str, "plain")) {
+                        return MimeType{ .value = "text/plain", .category = .text };
+                    }
                 }
             },
             "image".len => {

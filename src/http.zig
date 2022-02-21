@@ -2635,6 +2635,10 @@ pub const RequestContext = struct {
             return;
         }
 
+        if (strings.eqlComptime(path, "info")) {
+            return try ctx.sendBunInfoJSON();
+        }
+
         if (strings.eqlComptime(path, "reactfsh-v0.11.0")) {
             const buffer = @embedFile("react-refresh.js");
             ctx.appendHeader("Content-Type", MimeType.javascript.value);
@@ -2659,6 +2663,53 @@ pub const RequestContext = struct {
 
         try ctx.sendNotFound();
         return;
+    }
+
+    fn sendBunInfoJSON(ctx: *RequestContext) anyerror!void {
+        const Info = struct {
+            bun_version: string,
+            platform: Analytics.GenerateHeader.GeneratePlatform.Platform = undefined,
+            framework: string = "",
+            framework_version: string = "",
+        };
+        var info = Info{
+            .bun_version = Global.package_json_version,
+            .platform = Analytics.GenerateHeader.GeneratePlatform.forOS(),
+        };
+
+        if (ctx.bundler.options.framework) |framework| {
+            info.framework = framework.package;
+            info.framework_version = framework.version;
+        }
+
+        var expr = try JSON.toAST(ctx.allocator, Info, info);
+        defer ctx.bundler.resetStore();
+
+        var buffer_writer = try js_printer.BufferWriter.init(default_allocator);
+
+        var writer = js_printer.BufferPrinter.init(buffer_writer);
+        defer writer.ctx.buffer.deinit();
+        var source = logger.Source.initEmptyFile("info.json");
+        _ = try js_printer.printJSON(*js_printer.BufferPrinter, &writer, expr, &source);
+        const buffer = writer.ctx.written;
+
+        ctx.appendHeader("Content-Type", MimeType.json.value);
+        ctx.appendHeader("Cache-Control", "public, max-age=3600");
+        ctx.appendHeader("Age", "0");
+        if (FeatureFlags.strong_etags_for_built_files) {
+            const did_send = ctx.writeETag(buffer) catch false;
+            if (did_send) return;
+        }
+
+        if (buffer.len == 0) {
+            return try ctx.sendNoContent();
+        }
+        const send_body = ctx.method == .GET;
+        defer ctx.done();
+        try ctx.writeStatus(200);
+        try ctx.prepareToSendBody(buffer.len, false);
+        if (!send_body) return;
+        _ = try ctx.writeSocket(buffer, SOCKET_FLAGS);
     }
 
     // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Sec-Fetch-Dest

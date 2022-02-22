@@ -4330,7 +4330,7 @@ pub const BufferWriter = struct {
         return @ptrCast([*]u8, &ctx.buffer.list.items.ptr[ctx.buffer.list.items.len]);
     }
     pub fn advanceBy(ctx: *BufferWriter, count: u32) void {
-        if (comptime Environment.isDebug) std.debug.assert(ctx.buffer.list.items.len + count < ctx.buffer.list.capacity);
+        if (comptime Environment.isDebug) std.debug.assert(ctx.buffer.list.items.len + count <= ctx.buffer.list.capacity);
 
         ctx.buffer.list.items = ctx.buffer.list.items.ptr[0 .. ctx.buffer.list.items.len + count];
     }

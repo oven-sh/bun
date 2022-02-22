@@ -39,7 +39,11 @@ pub const ExprNodeList = js_ast.ExprNodeList;
 pub const StmtNodeList = js_ast.StmtNodeList;
 pub const BindingNodeList = js_ast.BindingNodeList;
 
-pub const assert = std.debug.assert;
+fn _disabledAssert(_: bool) void {
+    unreachable;
+}
+
+const assert = if (Environment.allow_assert) std.debug.assert else _disabledAssert;
 
 pub const LocRef = js_ast.LocRef;
 pub const S = js_ast.S;
@@ -2639,7 +2643,7 @@ pub const Parser = struct {
             p.recordUsage(p.jsx_refresh_runtime.ref);
 
             if (!p.options.jsx.use_embedded_refresh_runtime) {
-                std.debug.assert(!p.options.enable_bundling);
+                if (Environment.allow_assert) assert(!p.options.enable_bundling);
                 var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, 1);
                 const loc = logger.Loc.Empty;
                 const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.refresh_runtime);
@@ -3826,7 +3830,7 @@ fn NewParser_(
             // during minification. These counts shouldn't include references inside dead
             // code regions since those will be culled.
             if (!p.is_control_flow_dead) {
-                std.debug.assert(p.symbols.items.len > ref.innerIndex());
+                if (Environment.allow_assert) assert(p.symbols.items.len > ref.innerIndex());
                 p.symbols.items[ref.innerIndex()].use_count_estimate += 1;
                 var result = p.symbol_uses.getOrPut(p.allocator, ref) catch unreachable;
                 if (!result.found_existing) {
@@ -4336,7 +4340,7 @@ fn NewParser_(
             // errors if a statement in the function body tries to re-declare any of the
             // arguments.
             if (comptime kind == js_ast.Scope.Kind.function_body) {
-                assert(parent.kind == js_ast.Scope.Kind.function_args);
+                if (Environment.allow_assert) assert(parent.kind == js_ast.Scope.Kind.function_args);
 
                 var iter = scope.parent.?.members.iterator();
                 while (iter.next()) |entry| {
@@ -7704,7 +7708,7 @@ fn NewParser_(
 
                     // If we end with a .t_close_paren, that's a bug. It means we aren't following the last parenthese
                     if (Environment.isDebug) {
-                        std.debug.assert(p.lexer.token != .t_close_paren);
+                        if (Environment.allow_assert) assert(p.lexer.token != .t_close_paren);
                     }
                 }
 
@@ -8423,7 +8427,7 @@ fn NewParser_(
             if (ref.isSourceContentsSlice()) {
                 return p.source.contents[ref.sourceIndex() .. ref.sourceIndex() + ref.innerIndex()];
             } else if (ref.sourceIndex() == std.math.maxInt(Ref.Int)) {
-                assert(ref.innerIndex() < p.allocated_names.items.len);
+                if (Environment.allow_assert) assert(ref.innerIndex() < p.allocated_names.items.len);
                 return p.allocated_names.items[ref.innerIndex()];
             } else {
                 return p.symbols.items[ref.innerIndex()].original_name;
@@ -9289,7 +9293,7 @@ fn NewParser_(
                     try p.lexer.next();
                     break :parseTemplatePart;
                 }
-                if (comptime Environment.allow_assert) std.debug.assert(p.lexer.token != .t_end_of_file);
+                if (comptime Environment.allow_assert) if (Environment.allow_assert) assert(p.lexer.token != .t_end_of_file);
             }
 
             p.allow_in = oldAllowIn;
@@ -10625,7 +10629,7 @@ fn NewParser_(
                             var propertyOpts = PropertyOpts{};
                             if (try p.parseProperty(.normal, &propertyOpts, &self_errors)) |prop| {
                                 if (comptime Environment.allow_assert) {
-                                    std.debug.assert(prop.key != null or prop.value != null);
+                                    if (Environment.allow_assert) assert(prop.key != null or prop.value != null);
                                 }
                                 properties.append(prop) catch unreachable;
                             }
@@ -13269,7 +13273,7 @@ fn NewParser_(
 
             var scope = p.current_scope;
             while (!scope.kindStopsHoisting()) {
-                std.debug.assert(scope.parent != null);
+                if (Environment.allow_assert) assert(scope.parent != null);
                 scope = scope.parent.?;
             }
 
@@ -13792,7 +13796,7 @@ fn NewParser_(
                     // we do not attempt to preserve all the semantics of with
                     data.value = p.visitExpr(data.value);
                     // This stmt should be a block
-                    if (comptime Environment.allow_assert) std.debug.assert(data.body.data == .s_block);
+                    if (comptime Environment.allow_assert) if (Environment.allow_assert) assert(data.body.data == .s_block);
                     data.body = p.visitSingleStmt(data.body, StmtsKind.none);
                 },
                 .s_while => |data| {
@@ -15566,7 +15570,7 @@ fn NewParser_(
                 curr_stmts = curr_stmts[export_all_function_body_stmts.len..];
                 // This is the original part statements + 1
                 var part_stmts = curr_stmts;
-                std.debug.assert(part_stmts.len == end_iife_stmts_count);
+                if (Environment.allow_assert) assert(part_stmts.len == end_iife_stmts_count);
                 var part_stmts_i: usize = 0;
 
                 var import_list_i: usize = 0;
@@ -15632,7 +15636,6 @@ fn NewParser_(
                     p.runtime_imports.__HMRModule.?;
 
                 const hmr_import_ref = hmr_import_module_.ref;
-
                 first_decl[0] = G.Decl{
                     .binding = p.b(B.Identifier{ .ref = p.hmr_module.ref }, logger.Loc.Empty),
                     .value = p.e(E.New{

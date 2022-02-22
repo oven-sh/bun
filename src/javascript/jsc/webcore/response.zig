@@ -27,7 +27,7 @@ const castObj = @import("../base.zig").castObj;
 const getAllocator = @import("../base.zig").getAllocator;
 const JSPrivateDataPtr = @import("../base.zig").JSPrivateDataPtr;
 const GetJSPrivateData = @import("../base.zig").GetJSPrivateData;
-
+const Environment = @import("../../../env.zig");
 const ZigString = JSC.ZigString;
 const JSInternalPromise = JSC.JSInternalPromise;
 const JSPromise = JSC.JSPromise;
@@ -1230,9 +1230,9 @@ pub const Headers = struct {
                 else => str.len,
             },
         );
-        std.debug.assert(ptr.length > 0);
+        if (Environment.allow_assert) std.debug.assert(ptr.length > 0);
 
-        std.debug.assert(this.buf.items.len >= ptr.offset + ptr.length);
+        if (Environment.allow_assert) std.debug.assert(this.buf.items.len >= ptr.offset + ptr.length);
         var slice = this.buf.items[ptr.offset..][0..ptr.length];
         switch (comptime StringType) {
             js.JSStringRef => {

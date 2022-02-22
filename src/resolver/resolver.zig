@@ -1503,7 +1503,7 @@ pub const Resolver = struct {
         }
 
         var queue_slice: []DirEntryResolveQueueItem = _dir_entry_paths_to_resolve[0..@intCast(usize, i)];
-        std.debug.assert(queue_slice.len > 0);
+        if (Environment.allow_assert) std.debug.assert(queue_slice.len > 0);
         var open_dir_count: usize = 0;
 
         // When this function halts, any item not processed means it's not found.

@@ -361,7 +361,7 @@ pub const URL = struct {
                 '@' => {
                     // we found a password, everything before this point in the slice is a password
                     url.password = str[0..i];
-                    std.debug.assert(str[i..].len < 2 or std.mem.readIntNative(u16, str[i..][0..2]) != std.mem.readIntNative(u16, "//"));
+                    if (Environment.allow_assert) std.debug.assert(str[i..].len < 2 or std.mem.readIntNative(u16, str[i..][0..2]) != std.mem.readIntNative(u16, "//"));
                     return i + 1;
                 },
                 // if we reach a slash, there's no password
@@ -562,7 +562,8 @@ pub const QueryStringMap = struct {
             count += 1;
         }
 
-        std.debug.assert(count > 0); // We should not call initWithScanner when there are no path params
+        if (Environment.allow_assert)
+            std.debug.assert(count > 0); // We should not call initWithScanner when there are no path params
 
         while (scanner.query.next()) |result| {
             if (result.name_needs_decoding or result.value_needs_decoding) {
@@ -677,8 +678,8 @@ pub const QueryStringMap = struct {
         if (nothing_needs_decoding) {
             scanner = Scanner.init(query_string);
             while (scanner.next()) |result| {
-                std.debug.assert(!result.name_needs_decoding);
-                std.debug.assert(!result.value_needs_decoding);
+                if (Environment.allow_assert) std.debug.assert(!result.name_needs_decoding);
+                if (Environment.allow_assert) std.debug.assert(!result.value_needs_decoding);
 
                 var name = result.name;
                 var value = result.value;

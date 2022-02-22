@@ -405,7 +405,7 @@ pub const SSL = struct {
         _ = boring.SSL_clear_mode(ssl, mode);
 
         var alpns = &[_]u8{ 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
-        std.debug.assert(boring.SSL_set_alpn_protos(this.ssl, alpns, alpns.len) == 0);
+        if (Environment.allow_assert) std.debug.assert(boring.SSL_set_alpn_protos(this.ssl, alpns, alpns.len) == 0);
 
         boring.SSL_enable_signed_cert_timestamps(ssl);
         boring.SSL_enable_ocsp_stapling(ssl);
@@ -744,7 +744,7 @@ pub const SSL = struct {
                             this.first_post_handshake_write = false;
 
                             if (boring.SSL_version(this.ssl) == boring.TLS1_3_VERSION) {
-                                std.debug.assert(boring.SSL_key_update(this.ssl, boring.SSL_KEY_UPDATE_REQUESTED) == 0);
+                                if (Environment.allow_assert) std.debug.assert(boring.SSL_key_update(this.ssl, boring.SSL_KEY_UPDATE_REQUESTED) == 0);
                                 continue;
                             }
                         }

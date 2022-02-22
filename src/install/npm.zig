@@ -1010,7 +1010,7 @@ pub const PackageManifest = struct {
                     }
 
                     const parsed_version = Semver.Version.parse(sliced_string, allocator);
-                    std.debug.assert(parsed_version.valid);
+                    if (Environment.allow_assert) std.debug.assert(parsed_version.valid);
 
                     if (!parsed_version.valid) {
                         log.addErrorFmt(&source, prop.value.?.loc, allocator, "Failed to parse dependency {s}", .{version_name}) catch unreachable;

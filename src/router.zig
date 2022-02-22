@@ -698,8 +698,8 @@ pub const Route = struct {
                 match_name = name[1..];
             }
 
-            std.debug.assert(match_name[0] != '/');
-            std.debug.assert(name[0] == '/');
+            if (Environment.allow_assert) std.debug.assert(match_name[0] != '/');
+            if (Environment.allow_assert) std.debug.assert(name[0] == '/');
         } else {
             name = Route.index_route_name;
             match_name = Route.index_route_name;

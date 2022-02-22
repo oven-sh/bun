@@ -5,6 +5,7 @@ const String = Semver.String;
 const std = @import("std");
 const GitSHA = String;
 const string = @import("../string_types.zig").string;
+const Environment = @import("../env.zig");
 
 pub const Repository = extern struct {
     owner: String = String{},
@@ -50,7 +51,7 @@ pub const Repository = extern struct {
         buf: []const u8,
         repository: Repository,
         pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            std.debug.assert(formatter.label.len > 0);
+            if (Environment.allow_assert) std.debug.assert(formatter.label.len > 0);
 
             try writer.writeAll(formatter.label);
             try writer.writeAll(":");

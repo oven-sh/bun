@@ -5,7 +5,7 @@ const AsyncIO = @import("io");
 pub const buffer_pool_len = std.math.maxInt(u16);
 pub const BufferPoolBytes = [buffer_pool_len]u8;
 pub const BufferPool = ObjectPool(BufferPoolBytes, null, false, 4);
-
+const Environment = @import("../env.zig");
 const AsyncMessage = @This();
 
 used: u32 = 0,
@@ -49,7 +49,7 @@ var _first: ?*AsyncMessage = null;
 pub fn get(allocator: std.mem.Allocator) *AsyncMessage {
     if (_first) |first| {
         var prev = first;
-        std.debug.assert(prev.released);
+        if (Environment.allow_assert) std.debug.assert(prev.released);
         prev.released = false;
 
         if (first.next) |next| {

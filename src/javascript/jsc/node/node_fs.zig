@@ -2918,7 +2918,7 @@ pub const NodeFS = struct {
                                 working_mem[i] = std.fs.path.sep;
                                 switch (err.getErrno()) {
                                     .EXIST => {
-                                        std.debug.assert(false);
+                                        if (Environment.allow_assert) std.debug.assert(false);
                                         continue;
                                     },
                                     else => return .{ .err = err },
@@ -3024,7 +3024,7 @@ pub const NodeFS = struct {
         _ = args;
         _ = this;
         _ = flavor;
-        std.debug.assert(args.position == null);
+        if (Environment.allow_assert) std.debug.assert(args.position == null);
 
         switch (comptime flavor) {
             // The sync version does no allocation except when returning the path

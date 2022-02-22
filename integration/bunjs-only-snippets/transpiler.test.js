@@ -5,6 +5,7 @@ describe("Bun.Transpiler", () => {
     loader: "tsx",
     define: {
       "process.env.NODE_ENV": JSON.stringify("development"),
+      user_undefined: "undefined",
     },
     macro: {
       react: {
@@ -207,6 +208,38 @@ describe("Bun.Transpiler", () => {
       //   "await delete x",
       //   "Delete of a bare identifier cannot be used in an ECMAScript module"
       // );
+    });
+
+    it("import assert", () => {
+      expectPrinted_(
+        `import json from "./foo.json" assert { type: "json" };`,
+        `import json from "./foo.json"`
+      );
+      expectPrinted_(
+        `import json from "./foo.json";`,
+        `import json from "./foo.json"`
+      );
+      expectPrinted_(
+        `import("./foo.json", { type: "json" });`,
+        `import("./foo.json")`
+      );
+    });
+
+    it("define", () => {
+      expectPrinted_(
+        `export default typeof user_undefined === 'undefined';`,
+        `export default true`
+      );
+      expectPrinted_(
+        `export default typeof user_undefined !== 'undefined';`,
+        `export default false`
+      );
+
+      expectPrinted_(
+        `export default typeof user_undefined !== 'undefined';`,
+        `export default false`
+      );
+      expectPrinted_(`export default !user_undefined;`, `export default true`);
     });
 
     it("decls", () => {

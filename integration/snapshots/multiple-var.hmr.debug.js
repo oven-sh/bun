@@ -14,14 +14,12 @@ var hmr = new FastHMR(2883558553, "multiple-var.js", FastRefresh), exports = hmr
   var foo = true;
   globalThis.TRUE_BUT_WE_CANT_TREESHAKE_IT = true;
   if (globalThis.TRUE_BUT_WE_CANT_TREESHAKE_IT)
-    ({
-      foo
-    } = {foo: false });
+    ({ foo } = { foo: false });
+  var foo;
   function test() {
     console.assert(foo === false, "foo should be false");
     return testDone(import.meta.url);
   }
-  var foo;
   hmr.exportAll({
     test: () => test
   });

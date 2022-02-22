@@ -21,9 +21,7 @@ Bun.activate(false);
 
 var hmr = new FastHMR(2717584935, "spread_with_key.tsx", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
-  function SpreadWithTheKey({
-    className
-  }) {
+  function SpreadWithTheKey({ className }) {
     const rest = {};
     return jsxEl("div", {
       className,

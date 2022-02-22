@@ -8,9 +8,7 @@ var JSXClassic = require($bbcd215f);
 var jsx = require(JSX).jsxDEV, jsxEl = require(JSXClassic).createElement;
 
 var { default: React} = require($bbcd215f);
-export function SpreadWithTheKey({
-  className
-}) {
+export function SpreadWithTheKey({ className }) {
   const rest = {};
 
   return jsxEl("div", {

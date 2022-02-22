@@ -8,7 +8,6 @@ var JSXClassic = require($bbcd215f);
 var jsx = require(JSX).jsxDEV, JSXFrag = require(JSXClassic).Fragment;
 
 var tab = "\t";
-var シ = "wow";
 var f = "";
 var f = "₇";
 var obj = {
@@ -319,7 +318,7 @@ const correctEncodedObj = [
   51,
   125
 ];
-const jsxVariants = jsx(JSXFrag, {
+export const jsxVariants = jsx(JSXFrag, {
   children: [
     '"\\r\\n": "\\r\\n", "\\n": "\\n", "\\t": "\\t", "\\f": "\\f", "\\v": "\\v", "\\u2028": "\\u2028", "\\u2029": "\\u2029", "😊": "😊", "😃": "😃", "🕵🏽‍♂️": "🕵🏽‍♂️", "㋡": "㋡", "☺": "☺", シ: "シ", "👋": "👋", f: f, "☹": "☹", "☻": "☻", children: 123,',
     jsx("div", {

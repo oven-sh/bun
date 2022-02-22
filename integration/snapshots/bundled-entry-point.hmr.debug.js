@@ -15,7 +15,6 @@ Bun.activate(true);
 
 var hmr = new FastHMR(3012834585, "bundled-entry-point.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
-  var hello = null ?? "world";
   function test() {
     return testDone(import.meta.url);
   }

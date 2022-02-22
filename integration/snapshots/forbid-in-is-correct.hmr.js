@@ -12,7 +12,7 @@ Bun.activate(false);
 var hmr = new FastHMR(346837007, "forbid-in-is-correct.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   var foo = () => {
-    var D = (i, r) => () => (r || i((r = {exports: {} }).exports, r), r.exports);
+    var D = (i, r) => () => (r || i((r = { exports: {} }).exports, r), r.exports);
     return D;
   };
   function test() {

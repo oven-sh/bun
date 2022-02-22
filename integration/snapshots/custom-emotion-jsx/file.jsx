@@ -8,7 +8,7 @@ var jsx = require(JSX).jsxDEV;
 import * as $5b3cea55 from "http://localhost:8080/node_modules/react-dom/index.js";
 var ReactDOM = require($5b3cea55);
 export const Foo = () => jsx("div", {
-  css: {content: '"it worked!"' }
+  css: { content: '"it worked!"' }
 }, undefined, false, undefined, this);
 
 export function test() {

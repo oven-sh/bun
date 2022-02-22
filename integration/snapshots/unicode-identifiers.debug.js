@@ -1,4 +1,11 @@
-var ε = 0.000001, ε2 = ε * ε, π = Math.PI, τ = 2 * π, τε = τ - ε, halfπ = π / 2, d3_radians = π / 180, d3_degrees = 180 / π;
+var ε = 0.000001;
+var ε2 = ε * ε;
+var π = Math.PI;
+var τ = 2 * π;
+var τε = τ - ε;
+var halfπ = π / 2;
+var d3_radians = π / 180;
+var d3_degrees = 180 / π;
 
 export {d3_radians};
 export function test() {

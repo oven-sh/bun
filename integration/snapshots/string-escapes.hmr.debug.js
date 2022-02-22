@@ -20,7 +20,6 @@ Bun.activate(true);
 var hmr = new FastHMR(2482749838, "string-escapes.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   var tab = "\t";
-  var シ = "wow";
   var f = "";
   var f = "₇";
   var obj = {
@@ -331,7 +330,7 @@ var hmr = new FastHMR(2482749838, "string-escapes.js", FastRefresh), exports = h
     51,
     125
   ];
-  const jsxVariants = jsx(JSXFrag, {
+  var jsxVariants = jsx(JSXFrag, {
     children: [
       '"\\r\\n": "\\r\\n", "\\n": "\\n", "\\t": "\\t", "\\f": "\\f", "\\v": "\\v", "\\u2028": "\\u2028", "\\u2029": "\\u2029", "😊": "😊", "😃": "😃", "🕵🏽‍♂️": "🕵🏽‍♂️", "㋡": "㋡", "☺": "☺", シ: "シ", "👋": "👋", f: f, "☹": "☹", "☻": "☻", children: 123,',
       jsx("div", {
@@ -471,17 +470,20 @@ var hmr = new FastHMR(2482749838, "string-escapes.js", FastRefresh), exports = h
     return testDone(import.meta.url);
   }
   hmr.exportAll({
+    jsxVariants: () => jsxVariants,
     obj: () => obj,
     test: () => test
   });
 })();
-var $$hmr_obj = hmr.exports.obj, $$hmr_test = hmr.exports.test;
+var $$hmr_jsxVariants = hmr.exports.jsxVariants, $$hmr_obj = hmr.exports.obj, $$hmr_test = hmr.exports.test;
 hmr._update = function(exports) {
+  $$hmr_jsxVariants = exports.jsxVariants;
   $$hmr_obj = exports.obj;
   $$hmr_test = exports.test;
 };
 
 export {
+  $$hmr_jsxVariants as jsxVariants,
   $$hmr_obj as obj,
   $$hmr_test as test
 };

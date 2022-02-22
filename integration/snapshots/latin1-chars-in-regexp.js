@@ -1,6 +1,5 @@
-var re_utob = /[\uD800-\uDBFF][\uDC00-\uDFFFF]|[^\x00-\x7F]/g;
-var re_utob = /[\uD800-\uDBFF][\uDC00-\uDFFFF]|[^\x00-\x7F]/g;
-var re_btou = new RegExp([
+export var re_utob = /[\uD800-\uDBFF][\uDC00-\uDFFFF]|[^\x00-\x7F]/g;
+export var re_btou = new RegExp([
   "[\xC0-\xDF][\x80-\xBF]",
   "[\xE0-\xEF][\x80-\xBF]{2}",
   "[\xF0-\xF7][\x80-\xBF]{3}"
@@ -57,12 +56,12 @@ const newlinePreserved = `\n`;
 export function test() {
   if (!real.every((point, i) => point.every((val, j) => val === expected[i][j])))
     throw new Error(`test failed
-${JSON.stringify({expected, real }, null, 2)}`);
+${JSON.stringify({ expected, real }, null, 2)}`);
   if (newlinePreserved.length !== 1 || newlinePreserved.charCodeAt(0) !== 10)
     throw new Error("Newline was not preserved");
   const decoder = new TextDecoder("utf8");
   if (!realLines.every((line, i) => decoder.decode(Uint8Array.from(expected[i])) === line))
     throw new Error(`test failed. Lines did not match.
-${JSON.stringify({expected, real }, null, 2)}`);
+${JSON.stringify({ expected, real }, null, 2)}`);
   testDone(import.meta.url);
 }

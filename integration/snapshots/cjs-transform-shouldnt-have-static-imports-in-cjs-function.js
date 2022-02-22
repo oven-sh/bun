@@ -9,4 +9,5 @@ export {_login as login};
 export function test() {
   return testDone(import.meta.url);
 }
-export let foo, bar;
+export let foo;
+export let bar;

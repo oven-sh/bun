@@ -8,9 +8,8 @@
 //   "g"
 // );
 
-var re_utob = /[\uD800-\uDBFF][\uDC00-\uDFFFF]|[^\x00-\x7F]/g;
-var re_utob = /[\uD800-\uDBFF][\uDC00-\uDFFFF]|[^\x00-\x7F]/g;
-var re_btou = new RegExp(
+export var re_utob = /[\uD800-\uDBFF][\uDC00-\uDFFFF]|[^\x00-\x7F]/g;
+export var re_btou = new RegExp(
   [
     "[\xC0-\xDF][\x80-\xBF]",
     "[\xE0-\xEF][\x80-\xBF]{2}",

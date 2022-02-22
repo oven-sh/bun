@@ -16,10 +16,9 @@ var hmr = new FastHMR(726376257, "code-simplification-neql-define.js", FastRefre
     testFailed = true;
   };
   var $$m = (arg) => {
-    var module = {exports: {} }, exports = module.exports;
+    var module = { exports: {} }, exports = module.exports;
     return arg(module, exports);
   };
-  var size = 100, ttl = 3600;
   var $f332019d = $$m({
     "relay-runtime/lib/network/RelayQueryResponseCache.js": (module, exports) => {
       var RelayQueryResponseCache = function() {
@@ -28,7 +27,7 @@ var hmr = new FastHMR(726376257, "code-simplification-neql-define.js", FastRefre
           !(size > 0) && invariant(false, "RelayQueryResponseCache: Expected the max cache size to be > 0, got " + "`%s`.", size);
           !(ttl > 0) && invariant(false, "RelayQueryResponseCache: Expected the max ttl to be > 0, got `%s`.", ttl);
         };
-        foo({size: 100, ttl: 3600 });
+        foo({ size: 100, ttl: 3600 });
       };
       RelayQueryResponseCache();
     }

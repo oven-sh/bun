@@ -12,7 +12,6 @@ Bun.activate(true);
 var hmr = new FastHMR(1430071586, "latin1-chars-in-regexp.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   var re_utob = /[\uD800-\uDBFF][\uDC00-\uDFFFF]|[^\x00-\x7F]/g;
-  var re_utob = /[\uD800-\uDBFF][\uDC00-\uDFFFF]|[^\x00-\x7F]/g;
   var re_btou = new RegExp([
     "[\xC0-\xDF][\x80-\xBF]",
     "[\xE0-\xEF][\x80-\xBF]{2}",
@@ -70,24 +69,30 @@ var hmr = new FastHMR(1430071586, "latin1-chars-in-regexp.js", FastRefresh), exp
   function test() {
     if (!real.every((point, i) => point.every((val, j) => val === expected[i][j])))
       throw new Error(`test failed
-${JSON.stringify({expected, real }, null, 2)}`);
+${JSON.stringify({ expected, real }, null, 2)}`);
     if (newlinePreserved.length !== 1 || newlinePreserved.charCodeAt(0) !== 10)
       throw new Error("Newline was not preserved");
     const decoder = new TextDecoder("utf8");
     if (!realLines.every((line, i) => decoder.decode(Uint8Array.from(expected[i])) === line))
       throw new Error(`test failed. Lines did not match.
-${JSON.stringify({expected, real }, null, 2)}`);
+${JSON.stringify({ expected, real }, null, 2)}`);
     testDone(import.meta.url);
   }
   hmr.exportAll({
+    re_utob: () => re_utob,
+    re_btou: () => re_btou,
     test: () => test
   });
 })();
-var $$hmr_test = hmr.exports.test;
+var $$hmr_re_utob = hmr.exports.re_utob, $$hmr_re_btou = hmr.exports.re_btou, $$hmr_test = hmr.exports.test;
 hmr._update = function(exports) {
+  $$hmr_re_utob = exports.re_utob;
+  $$hmr_re_btou = exports.re_btou;
   $$hmr_test = exports.test;
 };
 
 export {
+  $$hmr_re_utob as re_utob,
+  $$hmr_re_btou as re_btou,
   $$hmr_test as test
 };

@@ -1,5 +1,5 @@
 var foo = () => {
-  var D = (i, r) => () => (r || i((r = {exports: {} }).exports, r), r.exports);
+  var D = (i, r) => () => (r || i((r = { exports: {} }).exports, r), r.exports);
   return D;
 };
 export function test() {

@@ -19,7 +19,8 @@ var hmr = new FastHMR(3878252498, "cjs-transform-shouldnt-have-static-imports-in
   function test() {
     return testDone(import.meta.url);
   }
-  var foo, bar;
+  var foo;
+  var bar;
   hmr.exportAll({
     login: () => _login,
     test: () => test,

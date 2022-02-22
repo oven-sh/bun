@@ -21,7 +21,7 @@ Bun.activate(false);
 var hmr = new FastHMR(2497996991, "custom-emotion-jsx/file.jsx", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   var Foo = () => jsx("div", {
-    css: {content: '"it worked!"' }
+    css: { content: '"it worked!"' }
   }, undefined, false, undefined, this);
   function test() {
     const element = document.createElement("div");

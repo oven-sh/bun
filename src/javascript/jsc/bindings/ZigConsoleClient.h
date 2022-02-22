@@ -16,50 +16,55 @@ using InspectorScriptProfilerAgent = Inspector::InspectorScriptProfilerAgent;
 using namespace JSC;
 
 class ConsoleClient final : public JSC::ConsoleClient {
-  WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_FAST_ALLOCATED;
 
-    public:
-  ~ConsoleClient() final {}
-  ConsoleClient(void *client) : JSC::ConsoleClient() { m_client = client; }
+public:
+    ~ConsoleClient() final {}
+    ConsoleClient(void* client)
+        : JSC::ConsoleClient()
+    {
+        m_client = client;
+    }
 
-  static bool logToSystemConsole();
-  static void setLogToSystemConsole(bool);
+    static bool logToSystemConsole();
+    static void setLogToSystemConsole(bool);
 
-  void setDebuggerAgent(InspectorDebuggerAgent *agent) { m_debuggerAgent = agent; }
-  void setPersistentScriptProfilerAgent(InspectorScriptProfilerAgent *agent) {
-    m_scriptProfilerAgent = agent;
-  }
+    void setDebuggerAgent(InspectorDebuggerAgent* agent) { m_debuggerAgent = agent; }
+    void setPersistentScriptProfilerAgent(InspectorScriptProfilerAgent* agent)
+    {
+        m_scriptProfilerAgent = agent;
+    }
 
-  void *m_client;
+    void* m_client;
 
-    private:
-  void messageWithTypeAndLevel(MessageType, MessageLevel, JSC::JSGlobalObject *,
-                               Ref<Inspector::ScriptArguments> &&);
-  void count(JSC::JSGlobalObject *, const String &label);
-  void countReset(JSC::JSGlobalObject *, const String &label);
-  void profile(JSC::JSGlobalObject *, const String &title);
-  void profileEnd(JSC::JSGlobalObject *, const String &title);
-  void takeHeapSnapshot(JSC::JSGlobalObject *, const String &title);
-  void time(JSC::JSGlobalObject *, const String &label);
-  void timeLog(JSC::JSGlobalObject *, const String &label, Ref<Inspector::ScriptArguments> &&);
-  void timeEnd(JSC::JSGlobalObject *, const String &label);
-  void timeStamp(JSC::JSGlobalObject *, Ref<Inspector::ScriptArguments> &&);
-  void record(JSC::JSGlobalObject *, Ref<Inspector::ScriptArguments> &&);
-  void recordEnd(JSC::JSGlobalObject *, Ref<Inspector::ScriptArguments> &&);
-  void screenshot(JSC::JSGlobalObject *, Ref<Inspector::ScriptArguments> &&);
+private:
+    void messageWithTypeAndLevel(MessageType, MessageLevel, JSC::JSGlobalObject*,
+        Ref<Inspector::ScriptArguments>&&);
+    void count(JSC::JSGlobalObject*, const String& label);
+    void countReset(JSC::JSGlobalObject*, const String& label);
+    void profile(JSC::JSGlobalObject*, const String& title);
+    void profileEnd(JSC::JSGlobalObject*, const String& title);
+    void takeHeapSnapshot(JSC::JSGlobalObject*, const String& title);
+    void time(JSC::JSGlobalObject*, const String& label);
+    void timeLog(JSC::JSGlobalObject*, const String& label, Ref<Inspector::ScriptArguments>&&);
+    void timeEnd(JSC::JSGlobalObject*, const String& label);
+    void timeStamp(JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
+    void record(JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
+    void recordEnd(JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
+    void screenshot(JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
 
-  void warnUnimplemented(const String &method);
-  void internalAddMessage(MessageType, MessageLevel, JSC::JSGlobalObject *,
-                          Ref<Inspector::ScriptArguments> &&);
+    void warnUnimplemented(const String& method);
+    void internalAddMessage(MessageType, MessageLevel, JSC::JSGlobalObject*,
+        Ref<Inspector::ScriptArguments>&&);
 
-  void startConsoleProfile();
-  void stopConsoleProfile();
+    void startConsoleProfile();
+    void stopConsoleProfile();
 
-  Inspector::InspectorConsoleAgent *m_consoleAgent;
-  Inspector::InspectorDebuggerAgent *m_debuggerAgent{nullptr};
-  Inspector::InspectorScriptProfilerAgent *m_scriptProfilerAgent{nullptr};
-  Vector<String> m_profiles;
-  bool m_profileRestoreBreakpointActiveValue{false};
+    Inspector::InspectorConsoleAgent* m_consoleAgent;
+    Inspector::InspectorDebuggerAgent* m_debuggerAgent { nullptr };
+    Inspector::InspectorScriptProfilerAgent* m_scriptProfilerAgent { nullptr };
+    Vector<String> m_profiles;
+    bool m_profileRestoreBreakpointActiveValue { false };
 };
 
 } // namespace Zig

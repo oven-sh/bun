@@ -3,44 +3,44 @@
 typedef uint16_t ZigErrorCode;
 
 typedef struct ZigString {
-  const unsigned char *ptr;
-  size_t len;
+    const unsigned char* ptr;
+    size_t len;
 } ZigString;
 typedef struct ZigErrorType {
-  ZigErrorCode code;
-  void *ptr;
+    ZigErrorCode code;
+    void* ptr;
 } ZigErrorType;
 typedef union ErrorableZigStringResult {
-  ZigString value;
-  ZigErrorType err;
+    ZigString value;
+    ZigErrorType err;
 } ErrorableZigStringResult;
 typedef struct ErrorableZigString {
-  ErrorableZigStringResult result;
-  bool success;
+    ErrorableZigStringResult result;
+    bool success;
 } ErrorableZigString;
 typedef struct ResolvedSource {
-  ZigString specifier;
-  ZigString source_code;
-  ZigString source_url;
-  uint32_t hash;
-  void *allocator;
-  uint64_t bytecodecache_fd;
+    ZigString specifier;
+    ZigString source_code;
+    ZigString source_url;
+    uint32_t hash;
+    void* allocator;
+    uint64_t bytecodecache_fd;
 } ResolvedSource;
 typedef union ErrorableResolvedSourceResult {
-  ResolvedSource value;
-  ZigErrorType err;
+    ResolvedSource value;
+    ZigErrorType err;
 } ErrorableResolvedSourceResult;
 typedef struct ErrorableResolvedSource {
-  ErrorableResolvedSourceResult result;
-  bool success;
+    ErrorableResolvedSourceResult result;
+    bool success;
 } ErrorableResolvedSource;
 
 typedef struct SystemError {
-  int errno_;
-  ZigString code;
-  ZigString message;
-  ZigString path;
-  ZigString syscall;
+    int errno_;
+    ZigString code;
+    ZigString message;
+    ZigString path;
+    ZigString syscall;
 } SystemError;
 
 typedef uint8_t ZigStackFrameCode;
@@ -53,43 +53,43 @@ const ZigStackFrameCode ZigStackFrameCodeWasm = 5;
 const ZigStackFrameCode ZigStackFrameCodeConstructor = 6;
 
 typedef struct ZigStackFramePosition {
-  int32_t source_offset;
-  int32_t line;
-  int32_t line_start;
-  int32_t line_stop;
-  int32_t column_start;
-  int32_t column_stop;
-  int32_t expression_start;
-  int32_t expression_stop;
+    int32_t source_offset;
+    int32_t line;
+    int32_t line_start;
+    int32_t line_stop;
+    int32_t column_start;
+    int32_t column_stop;
+    int32_t expression_start;
+    int32_t expression_stop;
 } ZigStackFramePosition;
 
 typedef struct ZigStackFrame {
-  ZigString function_name;
-  ZigString source_url;
-  ZigStackFramePosition position;
-  ZigStackFrameCode code_type;
+    ZigString function_name;
+    ZigString source_url;
+    ZigStackFramePosition position;
+    ZigStackFrameCode code_type;
 } ZigStackFrame;
 
 typedef struct ZigStackTrace {
-  ZigString *source_lines_ptr;
-  int32_t *source_lines_numbers;
-  uint8_t source_lines_len;
-  uint8_t source_lines_to_collect;
-  ZigStackFrame *frames_ptr;
-  uint8_t frames_len;
+    ZigString* source_lines_ptr;
+    int32_t* source_lines_numbers;
+    uint8_t source_lines_len;
+    uint8_t source_lines_to_collect;
+    ZigStackFrame* frames_ptr;
+    uint8_t frames_len;
 } ZigStackTrace;
 
 typedef struct ZigException {
-  unsigned char code;
-  uint16_t runtime_type;
-  int errno_;
-  ZigString syscall;
-  ZigString code_;
-  ZigString path;
-  ZigString name;
-  ZigString message;
-  ZigStackTrace stack;
-  void *exception;
+    unsigned char code;
+    uint16_t runtime_type;
+    int errno_;
+    ZigString syscall;
+    ZigString code_;
+    ZigString path;
+    ZigString name;
+    ZigString message;
+    ZigStackTrace stack;
+    void* exception;
 } ZigException;
 
 typedef uint8_t JSErrorCode;
@@ -141,55 +141,55 @@ const ReadableEvent ReadableEvent__Open = 7;
 const ReadableEvent ReadableEventUser = 254;
 
 typedef struct {
-  uint32_t highwater_mark;
-  Encoding encoding;
-  int32_t start;
-  int32_t end;
-  bool readable;
-  bool aborted;
-  bool did_read;
-  bool ended;
-  uint8_t flowing;
-  bool emit_close;
-  bool emit_end;
+    uint32_t highwater_mark;
+    Encoding encoding;
+    int32_t start;
+    int32_t end;
+    bool readable;
+    bool aborted;
+    bool did_read;
+    bool ended;
+    uint8_t flowing;
+    bool emit_close;
+    bool emit_end;
 } Bun__Readable;
 
 typedef struct {
-  uint32_t highwater_mark;
-  Encoding encoding;
-  uint32_t start;
-  bool destroyed;
-  bool ended;
-  bool corked;
-  bool finished;
-  bool emit_close;
+    uint32_t highwater_mark;
+    Encoding encoding;
+    uint32_t start;
+    bool destroyed;
+    bool ended;
+    bool corked;
+    bool finished;
+    bool emit_close;
 } Bun__Writable;
 
 typedef struct {
-  char *ptr;
-  uint32_t offset;
-  uint32_t len;
-  uint32_t byte_len;
-  uint8_t cell_type;
+    char* ptr;
+    uint32_t offset;
+    uint32_t len;
+    uint32_t byte_len;
+    uint8_t cell_type;
 } Bun__ArrayBuffer;
 
 #ifdef __cplusplus
 
 extern "C" ZigErrorCode Zig_ErrorCodeParserError;
 
-extern "C" void ZigString__free(const unsigned char *ptr, size_t len, void *allocator);
-extern "C" void Microtask__run(void *ptr, void *global);
+extern "C" void ZigString__free(const unsigned char* ptr, size_t len, void* allocator);
+extern "C" void Microtask__run(void* ptr, void* global);
 
 // Used in process.version
-extern "C" const char *Bun__version;
+extern "C" const char* Bun__version;
 
 // Used in process.versions
-extern "C" const char *Bun__versions_webkit;
-extern "C" const char *Bun__versions_mimalloc;
-extern "C" const char *Bun__versions_libarchive;
-extern "C" const char *Bun__versions_picohttpparser;
-extern "C" const char *Bun__versions_boringssl;
-extern "C" const char *Bun__versions_zlib;
-extern "C" const char *Bun__versions_zig;
+extern "C" const char* Bun__versions_webkit;
+extern "C" const char* Bun__versions_mimalloc;
+extern "C" const char* Bun__versions_libarchive;
+extern "C" const char* Bun__versions_picohttpparser;
+extern "C" const char* Bun__versions_boringssl;
+extern "C" const char* Bun__versions_zlib;
+extern "C" const char* Bun__versions_zig;
 
 #endif

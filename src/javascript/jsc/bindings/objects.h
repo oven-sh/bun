@@ -30,7 +30,6 @@
 //         return object;
 //     }
 
-
 //     static JSC::JSObject* createPrototype(JSC::VM&, JSC::JSGlobalObject&);
 //     static JSC::JSObject* prototype(JSC::VM&, JSC::JSGlobalObject&);
 
@@ -47,7 +46,7 @@
 //     };
 //     void finishCreation(JSC::VM&, JSC::JSGlobalObject*, void* zigBase);
 //     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-    
+
 // };
 
 // class ModuleExportsMap final : public JSC::JSNonFinalObject {
@@ -71,7 +70,6 @@
 //         return object;
 //     }
 
-
 //     static JSC::JSObject* createPrototype(JSC::VM&, JSC::JSGlobalObject&);
 //     static JSC::JSObject* prototype(JSC::VM&, JSC::JSGlobalObject&);
 
@@ -88,13 +86,10 @@
 //     };
 //     void finishCreation(JSC::VM&, JSC::JSGlobalObject*, void* zigBase);
 //     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-    
+
 // };
 
-
 // }
-
-
 
 // namespace Zig {
 
@@ -126,7 +121,6 @@
 //         return object;
 //     }
 
-
 //     JSC::JSValue get(JSC::JSGlobalObject&, JSC::JSValue);
 //     bool put(JSC::JSGlobalObject&, JSC::JSValue, JSC::JSValue);
 //     bool has(JSC::JSGlobalObject&, JSC::JSValue);
@@ -149,9 +143,8 @@
 //     };
 //     void finishCreation(JSC::VM&, JSC::JSGlobalObject*, void* zigBase);
 //     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-    
-// };
 
+// };
 
 // JSC_DECLARE_HOST_FUNCTION(headersFuncPrototypeGet);
 // JSC_DECLARE_HOST_FUNCTION(headersFuncPrototypePut);
@@ -184,8 +177,6 @@
 // };
 
 // JSC_DECLARE_HOST_FUNCTION(headersFuncConstructor);
-
-
 
 // class RequestConstructor final : public JSC::InternalFunction {
 // public:
@@ -257,10 +248,7 @@
 //     };
 //     void finishCreation(JSC::VM&, JSC::JSGlobalObject*, void* zigBase);
 //     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-    
+
 // };
 
-
-
 // }
-

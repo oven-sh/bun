@@ -9,36 +9,41 @@ namespace Zig {
 using namespace JSC;
 
 class Path : public JSC::JSNonFinalObject {
-  using Base = JSC::JSNonFinalObject;
+    using Base = JSC::JSNonFinalObject;
 
-    public:
-  Path(JSC::VM &vm, JSC::Structure *structure, bool isWindows_) : Base(vm, structure) {
-    isWindows = isWindows_;
-  }
+public:
+    Path(JSC::VM& vm, JSC::Structure* structure, bool isWindows_)
+        : Base(vm, structure)
+    {
+        isWindows = isWindows_;
+    }
 
-  DECLARE_INFO;
+    DECLARE_INFO;
 
-  static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-  template <typename CellType, SubspaceAccess> static GCClient::IsoSubspace *subspaceFor(VM &vm) {
-    return &vm.plainObjectSpace();
-  }
+    template<typename CellType, SubspaceAccess> static GCClient::IsoSubspace* subspaceFor(VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
 
-  static JSC::Structure *createStructure(JSC::VM &vm, JSC::JSGlobalObject *globalObject,
-                                         JSC::JSValue prototype) {
-    return JSC::Structure::create(vm, globalObject, prototype,
-                                  JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-  }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject,
+        JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype,
+            JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
 
-  static Path *create(JSC::VM &vm, bool isWindows, JSC::Structure *structure) {
-    Path *accessor = new (NotNull, JSC::allocateCell<Path>(vm)) Path(vm, structure, isWindows);
+    static Path* create(JSC::VM& vm, bool isWindows, JSC::Structure* structure)
+    {
+        Path* accessor = new (NotNull, JSC::allocateCell<Path>(vm)) Path(vm, structure, isWindows);
 
-    accessor->finishCreation(vm);
-    return accessor;
-  }
-  bool isWindows = false;
+        accessor->finishCreation(vm);
+        return accessor;
+    }
+    bool isWindows = false;
 
-  void finishCreation(JSC::VM &vm);
+    void finishCreation(JSC::VM& vm);
 };
 
 } // namespace Zig

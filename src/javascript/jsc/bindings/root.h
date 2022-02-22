@@ -46,7 +46,6 @@
 
 #endif
 
-
 #ifdef __cplusplus
 #undef new
 #undef delete
@@ -60,12 +59,11 @@
    Make sure this warning does not turn into an error.
 */
 #if COMPILER(MSVC)
-#pragma warning(disable:4206)
+#pragma warning(disable : 4206)
 #endif
 
 #ifdef USE_FOUNDATION
 #include <CoreFoundation/CoreFoundation.h>
 #endif
-
 
 #include <JavaScriptCore/Heap.h>

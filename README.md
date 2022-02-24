@@ -275,7 +275,6 @@ bun is a project with incredibly large scope, and it’s early days.
 | [git: dependencies](https://github.com/Jarred-Sumner/bun/issues/82)                                                    | Package manager |
 | [github: dependencies](https://github.com/Jarred-Sumner/bun/issues/81)                                                 | Package manager |
 | [link: dependencies](https://github.com/Jarred-Sumner/bun/issues/81)                                                   | Package manager |
-| [global installs](https://github.com/Jarred-Sumner/bun/issues/84)                                                      | Package manager |
 | Dates & timestamps                                                                                                     | TOML parser     |
 
 <small>

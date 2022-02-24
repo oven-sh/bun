@@ -6,30 +6,15 @@
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/ScriptArguments.h>
 #include <wtf/text/WTFString.h>
+
+#include "GCDefferalContext.h"
+
 using ScriptArguments = Inspector::ScriptArguments;
 using MessageType = JSC::MessageType;
 using MessageLevel = JSC::MessageLevel;
 using JSGlobalObject = JSC__JSGlobalObject;
 
 using String = WTF::String;
-
-namespace JSC {
-
-ALWAYS_INLINE GCDeferralContext::GCDeferralContext(VM& vm)
-    : m_vm(vm)
-{
-}
-
-ALWAYS_INLINE GCDeferralContext::~GCDeferralContext()
-{
-    if constexpr (validateDFGDoesGC)
-        m_vm.verifyCanGC();
-
-    if (UNLIKELY(m_shouldGC))
-        m_vm.heap.collectIfNecessaryOrDefer();
-}
-
-} // namespace JSC
 
 extern "C" {
 JSC__JSValue Inspector__ScriptArguments__argumentAt(Inspector__ScriptArguments* arg0, size_t i)

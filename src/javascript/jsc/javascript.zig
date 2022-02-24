@@ -952,6 +952,105 @@ pub const Bun = struct {
         Reporter.globalError(error.SegfaultTest);
     }
 
+    // pub const Lockfile = struct {
+    //     const BunLockfile = @import("../../install/install.zig").Lockfile;
+    //     pub const Class = NewClass(
+    //         void,
+    //         .{
+    //             .name = "Lockfile",
+    //             .read_only = true,
+    //         },
+    //         .{
+    //             . = .{
+    //                 .rfn = BunLockfile.load,
+    //             },
+    //         },
+    //         .{},
+    //     );
+
+    //     pub const StaticClass = NewClass(
+    //         void,
+    //         .{
+    //             .name = "Lockfile",
+    //             .read_only = true,
+    //         },
+    //         .{
+    //             .load = .{
+    //                 .rfn = BunLockfile.load,
+    //             },
+    //         },
+    //         .{},
+    //     );
+
+    //     pub fn load(
+    //         // this
+    //         _: void,
+    //         ctx: js.JSContextRef,
+    //         // function
+    //         _: js.JSObjectRef,
+    //         // thisObject
+    //         _: js.JSObjectRef,
+    //         arguments: []const js.JSValueRef,
+    //         exception: js.ExceptionRef,
+    //     ) js.JSValueRef {
+    //         if (arguments.len == 0) {
+    //             JSError(undefined, "Expected file path string or buffer", .{}, ctx, exception);
+    //             return null;
+    //         }
+
+    //         var lockfile: *BunLockfile = getAllocator(ctx).create(BunLockfile) catch return JSValue.jsUndefined().asRef();
+
+    //         var log = logger.Log.init(default_allocator);
+    //         var args_slice = @ptrCast([*]const JSValue, arguments.ptr)[0..arguments.len];
+
+    //         var arguments_slice = Node.ArgumentsSlice.init(args_slice);
+    //         var path_or_buffer = Node.PathLike.fromJS(ctx, &arguments_slice, exception) orelse {
+    //             getAllocator(ctx).destroy(lockfile);
+    //             JSError(undefined, "Expected file path string or buffer", .{}, ctx, exception);
+    //             return null;
+    //         };
+
+    //         const load_from_disk_result = switch (path_or_buffer) {
+    //             Node.PathLike.Tag.string => lockfile.loadFromDisk(getAllocator(ctx), &log, path_or_buffer.string),
+    //             Node.PathLike.Tag.buffer => lockfile.loadFromBytes(getAllocator(ctx), path_or_buffer.buffer.slice(), &log),
+    //             else => {
+    //                 getAllocator(ctx).destroy(lockfile);
+    //                    JSError(undefined, "Expected file path string or buffer", .{}, ctx, exception);
+    //             return null;
+    //             }
+    //         };
+
+    //         switch (load_from_disk_result) {
+    //             .err => |cause| {
+    //                 defer getAllocator(ctx).destroy(lockfile);
+    //                 switch (cause.step) {
+    //                     .open_file => {
+    //                         JSError(undefined, "error opening lockfile: {s}", .{
+    //                             @errorName(cause.value),
+    //                         }, ctx, exception);
+    //                         return null;
+    //                     },
+    //                     .parse_file => {
+    //                         JSError(undefined, "error parsing lockfile: {s}", .{
+    //                             @errorName(cause.value),
+    //                         }, ctx, exception);
+    //                         return null;
+    //                     },
+    //                     .read_file => {
+    //                         JSError(undefined, "error reading lockfile: {s}", .{
+    //                             @errorName(cause.value),
+    //                         }, ctx, exception);
+    //                         return null;
+    //                     },
+    //                 }
+    //             },
+    //             .ok => {
+
+    //             },
+    //         }
+    //     }
+    // };
+
     pub const TOML = struct {
         const TOMLParser = @import("../../toml/toml_parser.zig").TOML;
         pub const Class = NewClass(
@@ -1558,6 +1657,15 @@ pub const VirtualMachine = struct {
         this.event_loop = &this.regular_event_loop;
     }
 
+    pub fn getAPIGlobals() []js.JSClassRef {
+        var classes = default_allocator.alloc(js.JSClassRef, GlobalClasses.len) catch return &[_]js.JSClassRef{};
+        inline for (GlobalClasses) |Class, i| {
+            classes[i] = Class.get().*;
+        }
+
+        return classes;
+    }
+
     pub fn init(
         allocator: std.mem.Allocator,
         _args: Api.TransformOptions,
@@ -1583,6 +1691,7 @@ pub const VirtualMachine = struct {
             existing_bundle,
             env_loader,
         );
+
         VirtualMachine.vm.* = VirtualMachine{
             .global = undefined,
             .allocator = allocator,
@@ -2392,7 +2501,7 @@ pub const VirtualMachine = struct {
             return;
         }
 
-        if (js.JSValueIsObject(vm.global.ref(), value.asRef())) {
+        if (js.JSValueIsObject(this.global.ref(), value.asRef())) {
             if (js.JSObjectGetPrivate(value.asRef())) |priv| {
                 was_internal = this.printErrorFromMaybePrivateData(priv, exception_list, allow_ansi_color);
                 return;

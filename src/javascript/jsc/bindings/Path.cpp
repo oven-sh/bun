@@ -1,18 +1,14 @@
-#include "Path.h"
+#include "BunClientData.h"
+#include "root.h"
+#include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/JSMicrotask.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 
 #pragma mark - Node.js Path
 
-extern JSC__JSValue Bun__Path__create(JSC::JSGlobalObject* globalObject, bool isWindows)
-{
-    JSC::VM& vm = globalObject->vm();
-
-    return JSC::JSValue::encode(JSC::JSValue(Zig::Path::create(
-        vm, isWindows, Zig::Path::createStructure(vm, globalObject, globalObject->objectPrototype()))));
-}
-
 namespace Zig {
+
+static JSC::JSObject* createPath(JSC::JSGlobalObject* globalThis, bool isWindows);
 
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
@@ -28,7 +24,7 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 // clang-format off
 #define DEFINE_CALLBACK_FUNCTION_BODY(ZigFunction) JSC::VM& vm = globalObject->vm(); \
-    auto* thisObject = JSC::jsDynamicCast<Path*>(vm, callFrame->thisValue()); \
+    auto* thisObject = JSC::jsDynamicCast<JSC::JSFinalObject*>(vm, callFrame->thisValue()); \
     auto scope = DECLARE_THROW_SCOPE(vm); \
     if (!thisObject) \
         return throwVMTypeError(globalObject, scope); \
@@ -40,8 +36,10 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
             arguments.uncheckedAppend(JSC::JSValue::encode(callFrame->uncheckedArgument(i))); \
         } \
      } \
+    auto clientData = Bun::clientData(vm); \
+    auto isWindows = thisObject->get(globalObject, clientData->builtinNames().isWindowsPrivateName()); \
     JSC::JSValue result = JSC::JSValue::decode( \
-        ZigFunction(globalObject, thisObject->isWindows, arguments.data(), argCount) \
+        ZigFunction(globalObject, isWindows.asBoolean(), arguments.data(), argCount) \
     ); \
     JSC::JSObject *obj = result.getObject(); \
     if (UNLIKELY(obj != nullptr && obj->isErrorInstance())) { \
@@ -124,72 +122,84 @@ static JSC_DEFINE_HOST_FUNCTION(Path_functionToNamespacedPath,
     return JSC::JSValue::encode(callFrame->argument(0));
 }
 
-void Path::finishCreation(JSC::VM& vm)
+static JSC::JSObject* createPath(JSGlobalObject* globalThis, bool isWindows)
 {
-    Base::finishCreation(vm);
+    JSC::VM& vm = globalThis->vm();
+    JSC::Structure* plainObjectStructure = JSC::JSFinalObject::createStructure(vm, globalThis, globalThis->objectPrototype(), 0);
+    JSC::JSObject* path = JSC::JSFinalObject::create(vm, plainObjectStructure);
     auto clientData = Bun::clientData(vm);
 
-    JSC::JSGlobalObject* globalThis = globalObject();
-    this->putDirect(vm, clientData->builtinNames().basenamePublicName(),
+    path->putDirect(vm, clientData->builtinNames().isWindowsPrivateName(),
+        JSC::jsBoolean(isWindows), 0);
+
+    path->putDirect(vm, clientData->builtinNames().basenamePublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
             WTF::String("basename"), Path_functionBasename),
         0);
-    this->putDirect(vm, clientData->builtinNames().dirnamePublicName(),
+    path->putDirect(vm, clientData->builtinNames().dirnamePublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
             WTF::String("dirname"), Path_functionDirname),
         0);
-    this->putDirect(vm, clientData->builtinNames().extnamePublicName(),
+    path->putDirect(vm, clientData->builtinNames().extnamePublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
             WTF::String("extname"), Path_functionExtname),
         0);
-    this->putDirect(vm, clientData->builtinNames().formatPublicName(),
+    path->putDirect(vm, clientData->builtinNames().formatPublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
             WTF::String("format"), Path_functionFormat),
         0);
-    this->putDirect(vm, clientData->builtinNames().isAbsolutePublicName(),
+    path->putDirect(vm, clientData->builtinNames().isAbsolutePublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
             WTF::String("isAbsolute"), Path_functionIsAbsolute),
         0);
-    this->putDirect(vm, clientData->builtinNames().joinPublicName(),
+    path->putDirect(vm, clientData->builtinNames().joinPublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
             WTF::String("join"), Path_functionJoin),
         0);
-    this->putDirect(vm, clientData->builtinNames().normalizePublicName(),
+    path->putDirect(vm, clientData->builtinNames().normalizePublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
             WTF::String("normalize"), Path_functionNormalize),
         0);
-    this->putDirect(vm, clientData->builtinNames().parsePublicName(),
+    path->putDirect(vm, clientData->builtinNames().parsePublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
             WTF::String("parse"), Path_functionParse),
         0);
-    this->putDirect(vm, clientData->builtinNames().relativePublicName(),
+    path->putDirect(vm, clientData->builtinNames().relativePublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
             WTF::String("relative"), Path_functionRelative),
         0);
-    this->putDirect(vm, clientData->builtinNames().resolvePublicName(),
+    path->putDirect(vm, clientData->builtinNames().resolvePublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
             WTF::String("resolve"), Path_functionResolve),
         0);
 
-    this->putDirect(vm, clientData->builtinNames().toNamespacedPathPublicName(),
+    path->putDirect(vm, clientData->builtinNames().toNamespacedPathPublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
             WTF::String("toNamespacedPath"),
             Path_functionToNamespacedPath),
         0);
 
     if (isWindows) {
-        this->putDirect(vm, clientData->builtinNames().sepPublicName(),
+        path->putDirect(vm, clientData->builtinNames().sepPublicName(),
             JSC::jsString(vm, WTF::String("\\"_s)), 0);
-        this->putDirect(vm, clientData->builtinNames().delimiterPublicName(),
+        path->putDirect(vm, clientData->builtinNames().delimiterPublicName(),
             JSC::jsString(vm, WTF::String(";"_s)), 0);
     } else {
-        this->putDirect(vm, clientData->builtinNames().sepPublicName(),
+        path->putDirect(vm, clientData->builtinNames().sepPublicName(),
             JSC::jsString(vm, WTF::String("/"_s)), 0);
-        this->putDirect(vm, clientData->builtinNames().delimiterPublicName(),
+        path->putDirect(vm, clientData->builtinNames().delimiterPublicName(),
             JSC::jsString(vm, WTF::String(":"_s)), 0);
     }
+
+    return path;
 }
 
-const JSC::ClassInfo Path::s_info = { "Path", &Base::s_info, nullptr, nullptr,
-    CREATE_METHOD_TABLE(Path) };
 } // namespace Zig
+
+extern JSC__JSValue Bun__Path__create(JSC::JSGlobalObject* globalObject, bool isWindows)
+{
+    JSC::VM& vm = globalObject->vm();
+
+    return JSC::JSValue::encode(JSC::JSValue(Zig::createPath(
+        globalObject, isWindows)));
+}

@@ -2310,12 +2310,16 @@ pub const Path = struct {
             parts[i] = args_ptr[i].toSlice(globalThis, arena_allocator).slice();
         }
 
-        var out = if (!isWindows)
+        var out: JSC.ZigString = if (!isWindows)
             JSC.ZigString.init(PathHandler.joinAbsStringBuf(Fs.FileSystem.instance.top_level_dir, &out_buf, parts, .posix))
         else
             JSC.ZigString.init(PathHandler.joinAbsStringBuf(Fs.FileSystem.instance.top_level_dir, &out_buf, parts, .windows));
 
-        if (arena.state.buffer_list.first != null) out.setOutputEncoding();
+        out.len = strings.withoutTrailingSlash(out.slice()).len;
+
+        if (arena.state.buffer_list.first != null)
+            out.setOutputEncoding();
+
         return out.toValueGC(globalThis);
     }
 

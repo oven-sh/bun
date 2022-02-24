@@ -241,6 +241,12 @@ export fn ZigString__free_global(ptr: [*]const u8, len: usize) void {
     default_allocator.free(str);
 }
 
+export fn Zig__getAPIGlobals(count: *usize) [*]JSC.C.JSClassRef {
+    var globals = JSC.VirtualMachine.getAPIGlobals();
+    count.* = globals.len;
+    return globals.ptr;
+}
+
 pub const JSErrorCode = enum(u8) {
     Error = 0,
     EvalError = 1,
@@ -1855,6 +1861,7 @@ comptime {
     if (!is_bindgen) {
         _ = Process.getTitle;
         _ = Process.setTitle;
+        _ = Zig__getAPIGlobals;
         std.testing.refAllDecls(NodeReadableStream);
         std.testing.refAllDecls(Bun.Timer);
         std.testing.refAllDecls(NodeWritableStream);

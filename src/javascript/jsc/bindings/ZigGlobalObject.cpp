@@ -229,6 +229,25 @@ namespace Zig {
 const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject", &Base::s_info, nullptr, nullptr,
     CREATE_METHOD_TABLE(GlobalObject) };
 
+extern "C" JSClassRef* Zig__getAPIGlobals(size_t* count);
+
+static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    Zig::GlobalObject* shadow = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::jsNull()));
+    shadow->setConsole(shadow);
+    size_t count = 0;
+    JSClassRef* globalObjectClass;
+    globalObjectClass = Zig__getAPIGlobals(&count);
+
+    shadow->setConsole(shadow);
+    if (count > 0) {
+        shadow->installAPIGlobals(globalObjectClass, count);
+    }
+
+    return shadow;
+}
+
 const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     &supportsRichSourceInfo,
     &shouldInterruptScript,
@@ -247,6 +266,8 @@ const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     nullptr, // defaultLanguage
     nullptr, // compileStreaming
     nullptr, // instantiateStreaming
+    nullptr,
+    &Zig::deriveShadowRealmGlobalObject
 };
 
 void GlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject* globalObject,

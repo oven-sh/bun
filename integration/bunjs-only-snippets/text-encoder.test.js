@@ -69,6 +69,15 @@ describe("TextEncoder", () => {
     }
   });
 
+  it("should encode long latin1 text", () => {
+    const text = "Hello World!".repeat(1000);
+    const encoder = new TextEncoder();
+    const encoded = encoder.encode(text);
+    expect(encoded instanceof Uint8Array).toBe(true);
+    expect(encoded.length).toBe(text.length);
+    expect(new TextDecoder().decode(encoded)).toBe(text);
+  });
+
   it("should encode latin1 rope text", () => {
     var text = "Hello";
     text += " ";

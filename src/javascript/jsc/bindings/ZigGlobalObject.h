@@ -48,7 +48,7 @@ public:
     }
 
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, JSC::Exception*);
-
+    static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject);
     static void queueMicrotaskToEventLoop(JSC::JSGlobalObject& global, Ref<JSC::Microtask>&& task);
     static JSC::JSInternalPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*,
         JSC::JSString* moduleNameValue,

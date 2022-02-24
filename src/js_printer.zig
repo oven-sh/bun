@@ -282,7 +282,7 @@ pub fn NewPrinter(
 
             var remaining: usize = n;
             while (remaining > 0) {
-                const to_write = std.math.min(remaining, bytes.len);
+                const to_write = @minimum(remaining, bytes.len);
                 try self.writeAll(bytes[0..to_write]);
                 remaining -= to_write;
             }
@@ -931,7 +931,6 @@ pub fn NewPrinter(
 
                                     if (c2 >= first_high_surrogate and c2 <= last_low_surrogate) {
                                         i += 1;
-                                        const r: CodeUnitType = 0x10000 + (((c & 0x03ff) << 10) | (c2 & 0x03ff));
 
                                         // Escape this character if UTF-8 isn't allowed
                                         if (ascii_only) {
@@ -945,6 +944,8 @@ pub fn NewPrinter(
                                             continue;
                                             // Otherwise, encode to UTF-8
                                         }
+
+                                        const r: CodeUnitType = 0x10000 + (((c & 0x03ff) << 10) | (c2 & 0x03ff));
 
                                         var ptr = e.writer.reserve(4) catch unreachable;
                                         e.writer.advance(strings.encodeWTF8RuneT(ptr[0..4], CodeUnitType, r));

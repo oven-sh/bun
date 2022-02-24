@@ -405,6 +405,13 @@ jsc-check:
 
 all-js: runtime_js fallback_decoder bun_error node-fallbacks
 
+fmt-cpp:
+	cd src/javascript/jsc/bindings && clang-format *.cpp *.h -i
+
+fmt-zig:
+	cd src && zig fmt **/*.zig
+
+fmt: fmt-cpp fmt-zig
 
 api: 
 	$(NPM_CLIENT) install
@@ -471,11 +478,16 @@ bun-codesign-release-local:
 	codesign --entitlements $(realpath entitlements.plist) --options runtime --force --timestamp --sign "$(CODESIGN_IDENTITY)" -vvvv --deep --strict $(RELEASE_BUN)
 	codesign --entitlements $(realpath entitlements.plist) --options runtime --force --timestamp --sign "$(CODESIGN_IDENTITY)" -vvvv --deep --strict $(PACKAGE_DIR)/bun-profile
 
+bun-codesign-release-local-debug:
+	codesign --entitlements $(realpath entitlements.debug.plist) --options runtime --force --timestamp --sign "$(CODESIGN_IDENTITY)" -vvvv --deep --strict $(RELEASE_BUN)
+	codesign --entitlements $(realpath entitlements.debug.plist) --options runtime --force --timestamp --sign "$(CODESIGN_IDENTITY)" -vvvv --deep --strict $(PACKAGE_DIR)/bun-profile
+
 
 endif
 
 bun-codesign-debug:
 bun-codesign-release-local:
+bun-codesign-release-local-debug:
 
 
 jsc: jsc-build jsc-copy-headers jsc-bindings  
@@ -716,19 +728,17 @@ jsc-build-mac-compile:
 	mkdir -p $(WEBKIT_RELEASE_DIR) $(WEBKIT_DIR);
 	cd $(WEBKIT_RELEASE_DIR) && \
 		ICU_INCLUDE_DIRS="$(HOMEBREW_PREFIX)opt/icu4c/include" \
-		CMAKE_BUILD_TYPE=Release cmake \
+		CMAKE_BUILD_TYPE=RelWithDebugInfo cmake \
 			-DPORT="JSCOnly" \
 			-DENABLE_STATIC_JSC=ON \
-			-DCMAKE_BUILD_TYPE=Release \
+			-DCMAKE_BUILD_TYPE=RelWithDebugInfo \
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DENABLE_FTL_JIT=ON \
 			-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 			-G Ninja \
-			-DCMAKE_BUILD_TYPE=Release \
 			$(CMAKE_FLAGS_WITHOUT_RELEASE) \
 			-DPTHREAD_JIT_PERMISSIONS_API=1 \
 			-DUSE_PTHREAD_JIT_PERMISSIONS_API=ON \
-			-DCMAKE_BUILD_TYPE=Release \
 			$(WEBKIT_DIR) \
 			$(WEBKIT_RELEASE_DIR) && \
 	CFLAGS="$CFLAGS -ffat-lto-objects" CXXFLAGS="$CXXFLAGS -ffat-lto-objects" \
@@ -814,7 +824,7 @@ bun-link-lld-release:
 ifeq ($(OS_NAME),darwin)
 bun-link-lld-release-dsym:
 	$(DSYMUTIL) -o $(BUN_RELEASE_BIN).dSYM $(BUN_RELEASE_BIN)
-	-$(STRIP) $(BUN_RELEASE_BIN)
+	# -$(STRIP) $(BUN_RELEASE_BIN)
 	mv $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
 
 copy-to-bun-release-dir-dsym:

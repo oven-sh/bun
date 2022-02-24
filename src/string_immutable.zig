@@ -1,10 +1,10 @@
 const std = @import("std");
 const expect = std.testing.expect;
-
+const Environment = @import("./env.zig");
 const string = @import("string_types.zig").string;
 const stringZ = @import("string_types.zig").stringZ;
 const CodePoint = @import("string_types.zig").CodePoint;
-
+const assert = std.debug.assert;
 pub inline fn containsChar(self: string, char: u8) bool {
     return indexOfChar(self, char) != null;
 }
@@ -560,23 +560,513 @@ pub fn toUTF8Alloc(allocator: std.mem.Allocator, js: []const u16) !string {
     return try toUTF8AllocWithType(allocator, []const u16, js);
 }
 
-pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, js: Type) !string {
-    var temp: [4]u8 = undefined;
-    var list = std.ArrayList(u8).initCapacity(allocator, js.len) catch unreachable;
-    var i: usize = 0;
-    while (i < js.len) : (i += 1) {
-        var r1 = @as(i32, js[i]);
-        if (r1 >= 0xD800 and r1 <= 0xDBFF and i + 1 < js.len) {
-            const r2 = @as(i32, js[i] + 1);
-            if (r2 >= 0xDC00 and r2 <= 0xDFFF) {
-                r1 = (r1 - 0xD800) << 10 | (r2 - 0xDC00) + 0x10000;
-                i += 1;
+pub inline fn appendUTF8MachineWordToUTF16MachineWord(output: *[4]u16, input: *const [4]u8) void {
+    output[0] = input[0];
+    output[1] = input[1];
+    output[2] = input[2];
+    output[3] = input[3];
+}
+
+pub inline fn copyU8IntoU16(output_: []u16, input_: []const u8) void {
+    var output = output_;
+    var input = input_;
+    if (comptime Environment.allow_assert) {
+        std.debug.assert(input.len <= output.len);
+    }
+    while (input.len >= 4) {
+        appendUTF8MachineWordToUTF16MachineWord(output[0..4], input[0..4]);
+        output = output[4..];
+        input = input[4..];
+    }
+
+    for (input) |c, i| {
+        output[i] = c;
+    }
+}
+
+pub inline fn copyU16IntoU8(output_: []u8, comptime InputType: type, input_: InputType) void {
+    var output = output_;
+    var input = input_;
+    if (comptime Environment.allow_assert) {
+        std.debug.assert(input.len <= output.len);
+    }
+
+    while (input.len >= 4) {
+        output[0] = @intCast(u8, input[0]);
+        output[1] = @intCast(u8, input[1]);
+        output[2] = @intCast(u8, input[2]);
+        output[3] = @intCast(u8, input[3]);
+
+        output = output[4..];
+        input = input[4..];
+    }
+
+    for (input) |c, i| {
+        output[i] = @intCast(u8, c);
+    }
+}
+
+const strings = @This();
+
+pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool) !?[]u16 {
+    if (strings.firstNonASCII(bytes)) |i| {
+        const ascii = bytes[0..i];
+        const chunk = bytes[i..];
+        var output = try std.ArrayList(u16).initCapacity(allocator, ascii.len + 2);
+        errdefer output.deinit();
+        output.items.len = ascii.len;
+        strings.copyU8IntoU16(output.items, ascii);
+
+        var remaining = chunk;
+
+        {
+            var sequence: [4]u8 = undefined;
+
+            if (remaining.len >= 4) {
+                sequence = remaining[0..4].*;
+            } else {
+                sequence[0] = remaining[0];
+                sequence[1] = if (remaining.len > 1) remaining[1] else 0;
+                sequence[2] = if (remaining.len > 2) remaining[2] else 0;
+                sequence[3] = 0;
+            }
+
+            const replacement = strings.convertUTF8BytesIntoUTF16(&sequence);
+            remaining = remaining[@maximum(replacement.len, 1)..];
+            const new_len = strings.u16Len(replacement.code_point);
+            try output.ensureUnusedCapacity(new_len);
+            output.items.len += @as(usize, new_len);
+
+            if (comptime fail_if_invalid) {
+                if (replacement.code_point == unicode_replacement)
+                    return error.InvalidByteSequence;
+            }
+
+            switch (replacement.code_point) {
+                0...0xffff => {
+                    output.items[output.items.len - 1] = @intCast(u16, replacement.code_point);
+                },
+                else => |c| {
+                    output.items[output.items.len - 2 .. output.items.len][0..2].* = [2]u16{ strings.u16Lead(c), strings.u16Trail(c) };
+                },
             }
         }
-        const width = encodeWTF8Rune(&temp, r1);
-        try list.appendSlice(temp[0..width]);
+
+        while (strings.firstNonASCII(remaining)) |j| {
+            const last = remaining[0..j];
+            remaining = remaining[j..];
+
+            var sequence: [4]u8 = undefined;
+
+            if (remaining.len >= 4) {
+                sequence = remaining[0..4].*;
+            } else {
+                sequence[0] = remaining[0];
+                sequence[1] = if (remaining.len > 1) remaining[1] else 0;
+                sequence[2] = if (remaining.len > 2) remaining[2] else 0;
+                sequence[3] = 0;
+            }
+
+            const replacement = strings.convertUTF8BytesIntoUTF16(&sequence);
+            remaining = remaining[@maximum(replacement.len, 1)..];
+            const new_len = j + @as(usize, strings.u16Len(replacement.code_point));
+            try output.ensureUnusedCapacity(new_len);
+            output.items.len += new_len;
+            strings.copyU8IntoU16(output.items[output.items.len - new_len ..][0..j], last);
+
+            if (comptime fail_if_invalid) {
+                if (replacement.code_point == unicode_replacement)
+                    return error.InvalidByteSequence;
+            }
+
+            switch (replacement.code_point) {
+                0...0xffff => {
+                    output.items[output.items.len - 1] = @intCast(u16, replacement.code_point);
+                },
+                else => |c| {
+                    output.items[output.items.len - 2 .. output.items.len][0..2].* = [2]u16{ strings.u16Lead(c), strings.u16Trail(c) };
+                },
+            }
+        }
+
+        if (remaining.len > 0) {
+            try output.ensureUnusedCapacity(remaining.len);
+            output.items.len += remaining.len;
+            strings.copyU8IntoU16(output.items[output.items.len - remaining.len ..], remaining);
+        }
+
+        return output.toOwnedSlice();
     }
-    return list.items;
+
+    return null;
+}
+
+pub fn utf16Codepoint(comptime Type: type, input: Type) UTF16Replacement {
+    const c0 = @as(u21, input[0]);
+
+    if (c0 & ~@as(u21, 0x03ff) == 0xd800) {
+        // surrogate pair
+        if (input.len == 1)
+            return .{
+                .len = 1,
+            };
+        //error.DanglingSurrogateHalf;
+        const c1 = @as(u21, input[1]);
+        if (c1 & ~@as(u21, 0x03ff) != 0xdc00)
+            if (input.len == 1)
+                return .{
+                    .len = 1,
+                };
+        // return error.ExpectedSecondSurrogateHalf;
+
+        return .{ .len = 2, .code_point = 0x10000 + (((c0 & 0x03ff) << 10) | (c1 & 0x03ff)) };
+    } else if (c0 & ~@as(u21, 0x03ff) == 0xdc00) {
+        // return error.UnexpectedSecondSurrogateHalf;
+        return .{ .len = 1 };
+    } else {
+        return .{ .code_point = c0, .len = 1 };
+    }
+}
+
+pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, utf16: Type) ![]u8 {
+    var list = std.ArrayList(u8).initCapacity(allocator, utf16.len) catch unreachable;
+    var utf16_remaining = utf16;
+
+    while (firstNonASCII16(Type, utf16_remaining)) |i| {
+        const to_copy = utf16_remaining[0..i];
+        utf16_remaining = utf16_remaining[i..];
+
+        const replacement = utf16Codepoint(Type, utf16_remaining);
+        utf16_remaining = utf16_remaining[replacement.len..];
+
+        const count: usize = switch (replacement.code_point) {
+            0...0x7F => 1,
+            (0x7F + 1)...0x7FF => 2,
+            (0x7FF + 1)...0xFFFF => 3,
+            else => 4,
+        };
+        try list.ensureUnusedCapacity(i + count);
+        list.items.len += i;
+
+        copyU16IntoU8(
+            list.items[list.items.len - i ..],
+            Type,
+            to_copy,
+        );
+
+        list.items.len += count;
+
+        _ = encodeWTF8RuneT(
+            list.items.ptr[list.items.len - count .. list.items.len - count + 4][0..4],
+            u32,
+            @as(u32, replacement.code_point),
+        );
+    }
+
+    try list.ensureUnusedCapacity(utf16_remaining.len);
+    const old_len = list.items.len;
+    list.items.len += utf16_remaining.len;
+    copyU16IntoU8(list.items[old_len..], Type, utf16_remaining);
+
+    return list.toOwnedSlice();
+}
+
+pub const EncodeIntoResult = struct {
+    read: u32 = 0,
+    written: u32 = 0,
+};
+pub fn allocateLatin1IntoUTF8(allocator: std.mem.Allocator, comptime Type: type, latin1_: Type) ![]u8 {
+    var list = try std.ArrayList(u8).initCapacity(allocator, latin1_.len);
+    var latin1 = latin1_;
+    while (latin1.len > 0) {
+        var read: usize = 0;
+        var break_outer = false;
+
+        outer: while (latin1.len >= 128) {
+            try list.ensureUnusedCapacity(128);
+            var base = list.items.ptr[list.items.len..list.items.len].ptr;
+
+            comptime var count: usize = 0;
+            inline while (count < 8) : (count += 1) {
+                const vec: AsciiVector = latin1[(comptime count * ascii_vector_size)..][0..ascii_vector_size].*;
+                const cmp = vec > max_16_ascii;
+                const bitmask = @ptrCast(*const u16, &cmp).*;
+                const first = @ctz(u16, bitmask);
+                if (first < 16) {
+                    latin1 = latin1[(comptime count * ascii_vector_size)..];
+                    list.items.len += (comptime count * ascii_vector_size);
+                    try list.appendSlice(latin1[0..first]);
+                    latin1 = latin1[first..];
+                    break_outer = true;
+                    break :outer;
+                }
+                base[(comptime count * ascii_vector_size)..(comptime count * ascii_vector_size + ascii_vector_size)][0..ascii_vector_size].* = @bitCast([ascii_vector_size]u8, vec);
+            }
+
+            latin1 = latin1[(comptime count * ascii_vector_size)..];
+            list.items.len += (comptime count * ascii_vector_size);
+        }
+
+        if (!break_outer) {
+            while (latin1.len >= ascii_vector_size) {
+                const vec: AsciiVector = latin1[0..ascii_vector_size].*;
+                const cmp = vec > max_16_ascii;
+                const bitmask = @ptrCast(*const u16, &cmp).*;
+                const first = @ctz(u16, bitmask);
+                if (first < 16) {
+                    try list.appendSlice(latin1[0..first]);
+                    latin1 = latin1[first..];
+                    break;
+                }
+
+                try list.ensureUnusedCapacity(ascii_vector_size);
+                list.items.len += ascii_vector_size;
+                list.items[list.items.len - ascii_vector_size ..][0..ascii_vector_size].* = @bitCast([ascii_vector_size]u8, vec);
+                latin1 = latin1[ascii_vector_size..];
+            }
+        }
+
+        while (read < latin1.len and latin1[read] < 0x80) : (read += 1) {}
+        try list.appendSlice(latin1[0..read]);
+        latin1 = latin1[read..];
+
+        if (latin1.len > 0) {
+            try list.ensureUnusedCapacity(2);
+            var buf = list.items.ptr[list.items.len .. list.items.len + 2][0..2];
+            list.items.len += 2;
+            buf[0..2].* = latin1ToCodepointBytesAssumeNotASCII(latin1[0]);
+            latin1 = latin1[1..];
+        }
+    }
+
+    return list.toOwnedSlice();
+}
+
+pub const UTF16Replacement = struct {
+    code_point: u32 = unicode_replacement,
+    len: u3 = 0,
+};
+
+// This variation matches WebKit behavior.
+pub fn convertUTF8BytesIntoUTF16(sequence: *const [4]u8) UTF16Replacement {
+    if (Environment.allow_assert)
+        assert(sequence[0] > 127);
+    const len = wtf8ByteSequenceLengthWithInvalid(sequence[0]);
+    switch (len) {
+        2 => {
+            if (Environment.allow_assert)
+                assert(sequence[0] >= 0xC2);
+            if (Environment.allow_assert)
+                assert(sequence[0] <= 0xDF);
+            if (sequence[1] < 0x80 or sequence[1] > 0xBF) {
+                return .{ .len = 1 };
+            }
+            return .{ .len = len, .code_point = ((@as(u32, sequence[0]) << 6) + @as(u32, sequence[1])) - 0x00003080 };
+        },
+        3 => {
+            if (Environment.allow_assert)
+                assert(sequence[0] >= 0xE0);
+            if (Environment.allow_assert)
+                assert(sequence[0] <= 0xEF);
+            switch (sequence[0]) {
+                0xE0 => {
+                    if (sequence[1] < 0xA0 or sequence[1] > 0xBF) {
+                        return .{ .len = 1 };
+                    }
+                },
+                0xED => {
+                    if (sequence[1] < 0x80 or sequence[1] > 0x9F) {
+                        return .{ .len = 1 };
+                    }
+                },
+                else => {
+                    if (sequence[1] < 0x80 or sequence[1] > 0xBF) {
+                        return .{ .len = 1 };
+                    }
+                },
+            }
+            if (sequence[2] < 0x80 or sequence[2] > 0xBF) {
+                return .{ .len = 2 };
+            }
+            return .{
+                .len = len,
+                .code_point = ((@as(u32, sequence[0]) << 12) + (@as(u32, sequence[1]) << 6) + @as(u32, sequence[2])) - 0x000E2080,
+            };
+        },
+        4 => {
+            if (Environment.allow_assert)
+                assert(sequence[0] >= 0xF0);
+            if (Environment.allow_assert)
+                assert(sequence[0] <= 0xF4);
+            switch (sequence[0]) {
+                0xF0 => {
+                    if (sequence[1] < 0x90 or sequence[1] > 0xBF) {
+                        return .{ .len = 1 };
+                    }
+                },
+                0xF4 => {
+                    if (sequence[1] < 0x80 or sequence[1] > 0x8F) {
+                        return .{ .len = 1 };
+                    }
+                },
+                else => {
+                    if (sequence[1] < 0x80 or sequence[1] > 0xBF) {
+                        return .{ .len = 1 };
+                    }
+                },
+            }
+
+            if (sequence[2] < 0x80 or sequence[2] > 0xBF) {
+                return .{ .len = 2 };
+            }
+            if (sequence[3] < 0x80 or sequence[3] > 0xBF) {
+                return .{ .len = 3 };
+            }
+            return .{
+                .len = 4,
+                .code_point = ((@as(u32, sequence[0]) << 18) +
+                    (@as(u32, sequence[1]) << 12) +
+                    (@as(u32, sequence[2]) << 6) + @as(u32, sequence[3])) - 0x03C82080,
+            };
+        },
+        else => unreachable,
+    }
+}
+
+pub fn copyLatin1IntoUTF8(buf_: []u8, comptime Type: type, latin1_: Type) EncodeIntoResult {
+    var buf = buf_;
+    var latin1 = latin1_;
+    while (buf.len > 0 and latin1.len > 0) {
+        var read: usize = 0;
+        var break_outer = false;
+
+        outer: while (latin1.len >= 128 and buf.len >= 128) {
+            comptime var count: usize = 0;
+            inline while (count < 8) : (count += 1) {
+                const vec: AsciiVector = latin1[(comptime count * ascii_vector_size)..][0..ascii_vector_size].*;
+                const cmp = vec > max_16_ascii;
+                const bitmask = @ptrCast(*const u16, &cmp).*;
+                const first = @ctz(u16, bitmask);
+                if (first < 16) {
+                    latin1 = latin1[(comptime count * ascii_vector_size)..];
+                    buf = buf[(comptime count * ascii_vector_size)..];
+                    break_outer = true;
+                    break :outer;
+                }
+                buf[(comptime count * ascii_vector_size)..][0..8].* = @bitCast([ascii_vector_size]u8, vec)[0..8].*;
+                buf[(comptime count * ascii_vector_size)..][8..ascii_vector_size].* = @bitCast([ascii_vector_size]u8, vec)[8..ascii_vector_size].*;
+            }
+
+            latin1 = latin1[(comptime count * ascii_vector_size)..];
+            buf = buf[(comptime count * ascii_vector_size)..];
+        }
+
+        while (latin1.len > ascii_vector_size and !break_outer) {
+            const vec: AsciiVector = latin1[0..ascii_vector_size].*;
+            const cmp = vec > max_16_ascii;
+            const bitmask = @ptrCast(*const u16, &cmp).*;
+            const first = @ctz(u16, bitmask);
+            if (first < 16) {
+                break;
+            }
+            buf[0..8].* = @bitCast([ascii_vector_size]u8, vec)[0..8].*;
+            buf[8..ascii_vector_size].* = @bitCast([ascii_vector_size]u8, vec)[8..ascii_vector_size].*;
+            latin1 = latin1[ascii_vector_size..];
+            buf = buf[ascii_vector_size..];
+        }
+
+        while (read < latin1.len and latin1[read] < 0x80) : (read += 1) {}
+
+        const written = @minimum(read, buf.len);
+        if (written == 0) break;
+        @memcpy(buf.ptr, latin1.ptr, written);
+        latin1 = latin1[written..];
+        buf = buf[written..];
+        if (latin1.len > 0 and buf.len >= 2) {
+            buf[0..2].* = latin1ToCodepointBytesAssumeNotASCII(latin1[0]);
+            latin1 = latin1[1..];
+            buf = buf[2..];
+        }
+    }
+
+    return .{
+        .read = @truncate(u32, buf_.len - buf.len),
+        .written = @truncate(u32, latin1_.len - latin1.len),
+    };
+}
+
+test "copyLatin1IntoUTF8" {
+    var input: string = "hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!";
+    var output = std.mem.zeroes([500]u8);
+    const result = copyLatin1IntoUTF8(&output, string, input);
+    try std.testing.expectEqual(input.len, result.read);
+    try std.testing.expectEqual(input.len, result.written);
+
+    try std.testing.expectEqualSlices(u8, input, output[0..result.written]);
+}
+
+pub fn latin1ToCodepointAssumeNotASCII(char: u8, comptime CodePointType: type) CodePointType {
+    return @intCast(
+        CodePointType,
+        @bitCast(
+            u16,
+            latin1ToCodepointBytesAssumeNotASCII(char),
+        ),
+    );
+}
+
+pub fn latin1ToCodepointBytesAssumeNotASCII(char: u32) [2]u8 {
+    return [2]u8{
+        @truncate(u8, 0xc0 | char >> 6),
+        @truncate(u8, 0x80 | (char & 0x3f)),
+    };
+}
+
+pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type) EncodeIntoResult {
+    var remaining = buf;
+    var utf16_remaining = utf16;
+    var ended_on_non_ascii = false;
+
+    while (firstNonASCII16(Type, utf16_remaining)) |i| {
+        const end = @minimum(i, remaining.len);
+        const to_copy = utf16_remaining[0..end];
+        copyU16IntoU8(remaining, Type, to_copy);
+        remaining = remaining[end..];
+        utf16_remaining = utf16_remaining[end..];
+
+        if (@minimum(utf16_remaining.len, remaining.len) == 0)
+            break;
+
+        const replacement = utf16Codepoint(Type, utf16_remaining);
+
+        const width: usize = switch (replacement.code_point) {
+            0...0x7F => 1,
+            (0x7F + 1)...0x7FF => 2,
+            (0x7FF + 1)...0xFFFF => 3,
+            else => 4,
+        };
+
+        if (width > remaining.len) {
+            ended_on_non_ascii = width > 1;
+            break;
+        }
+
+        utf16_remaining = utf16_remaining[replacement.len..];
+        _ = encodeWTF8RuneT(remaining.ptr[0..4], u32, @as(u32, replacement.code_point));
+        remaining = remaining[width..];
+    }
+
+    if (remaining.len > 0 and !ended_on_non_ascii and utf16_remaining.len > 0) {
+        const len = @minimum(remaining.len, utf16_remaining.len);
+        copyU16IntoU8(remaining[0..len], Type, utf16_remaining[0..len]);
+        utf16_remaining = utf16_remaining[len..];
+        remaining = remaining[len..];
+    }
+
+    return .{
+        .read = @truncate(u32, utf16.len - utf16_remaining.len),
+        .written = @truncate(u32, buf.len - remaining.len),
+    };
 }
 
 // Check utf16 string equals utf8 string without allocating extra memory
@@ -677,6 +1167,21 @@ pub inline fn wtf8ByteSequenceLength(first_byte: u8) u3 {
     };
 }
 
+/// 0 == invalid
+pub inline fn wtf8ByteSequenceLengthWithInvalid(first_byte: u8) u3 {
+    return switch (first_byte) {
+        0...0x80 - 1 => 1,
+        else => if ((first_byte & 0xE0) == 0xC0)
+            @as(u3, 2)
+        else if ((first_byte & 0xF0) == 0xE0)
+            @as(u3, 3)
+        else if ((first_byte & 0xF8) == 0xF0)
+            @as(u3, 4)
+        else
+            @as(u3, 0),
+    };
+}
+
 /// Convert potentially ill-formed UTF-8 or UTF-16 bytes to a Unicode Codepoint.
 /// Invalid codepoints are replaced with `zero` parameter
 /// This is a clone of esbuild's decodeWTF8Rune
@@ -712,6 +1217,209 @@ pub inline fn decodeWTF8RuneTMultibyte(p: *const [4]u8, len: u3, comptime T: typ
     }
 
     unreachable;
+}
+
+const ascii_vector_size = 16;
+const ascii_u16_vector_size = 8;
+const max_16_ascii = @splat(ascii_vector_size, @as(u8, 127));
+const max_u16_ascii = @splat(ascii_u16_vector_size, @as(u16, 127));
+const AsciiVector = std.meta.Vector(ascii_vector_size, u8);
+const AsciiU16Vector = std.meta.Vector(ascii_u16_vector_size, u16);
+const max_4_ascii = @splat(4, @as(u8, 127));
+pub fn isAllASCII(slice: []const u8) bool {
+    var remaining = slice;
+
+    // The NEON SIMD unit is 128-bit wide and includes 16 128-bit registers that can be used as 32 64-bit registers
+    if (comptime Environment.isAarch64 or Environment.isX64) {
+        while (remaining.len >= 128) {
+            comptime var count: usize = 0;
+            inline while (count < 8) : (count += 1) {
+                const vec: AsciiVector = remaining[(comptime count * ascii_vector_size)..][0..ascii_vector_size].*;
+
+                if ((@reduce(.Or, vec > max_16_ascii))) {
+                    return false;
+                }
+            }
+            remaining = remaining[comptime ascii_vector_size * count..];
+        }
+
+        while (remaining.len >= ascii_vector_size) {
+            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
+
+            if ((@reduce(.Or, vec > max_16_ascii))) {
+                return false;
+            }
+
+            remaining = remaining[ascii_vector_size..];
+        }
+
+        while (remaining.len >= 4) {
+            const vec: std.meta.Vector(4, u8) = remaining[0..4].*;
+
+            remaining = remaining[4..];
+            if (@reduce(.Or, vec > max_4_ascii)) {
+                return false;
+            }
+        }
+    }
+
+    for (remaining) |char| {
+        if (char > 127) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+//#define U16_LEAD(supplementary) (UChar)(((supplementary)>>10)+0xd7c0)
+pub inline fn u16Lead(supplementary: anytype) u16 {
+    return @intCast(u16, (supplementary >> 10) + 0xd7c0);
+}
+
+//#define U16_TRAIL(supplementary) (UChar)(((supplementary)&0x3ff)|0xdc00)
+pub inline fn u16Trail(supplementary: anytype) u16 {
+    return @intCast(u16, (supplementary & 0x3ff) | 0xdc00);
+}
+
+//#define U16_LENGTH(c) ((uint32_t)(c)<=0xffff ? 1 : 2)
+pub inline fn u16Len(supplementary: anytype) u2 {
+    return switch (@intCast(u32, supplementary)) {
+        0...0xffff => 1,
+        else => 2,
+    };
+}
+
+pub fn firstNonASCII(slice: []const u8) ?u32 {
+    var remaining = slice;
+
+    if (comptime Environment.isAarch64 or Environment.isX64) {
+        while (remaining.len >= 128) {
+            comptime var count: usize = 0;
+            inline while (count < 8) : (count += 1) {
+                const vec: AsciiVector = remaining[(comptime count * ascii_vector_size)..][0..ascii_vector_size].*;
+                const cmp = vec > max_16_ascii;
+                const bitmask = @ptrCast(*const u16, &cmp).*;
+                const first = @ctz(u16, bitmask);
+                if (first < 16) {
+                    return @intCast(u32, (comptime count * ascii_vector_size) + @as(u32, first) + @intCast(u32, slice.len - remaining.len));
+                }
+            }
+            remaining = remaining[comptime ascii_vector_size * count..];
+        }
+
+        while (remaining.len >= ascii_vector_size) {
+            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
+            const cmp = vec > max_16_ascii;
+            const bitmask = @ptrCast(*const u16, &cmp).*;
+            const first = @ctz(u16, bitmask);
+            if (first < 16) {
+                return @as(u32, first) + @intCast(u32, slice.len - remaining.len);
+            }
+
+            remaining = remaining[ascii_vector_size..];
+        }
+    }
+
+    for (remaining) |char, i| {
+        if (char > 127) {
+            return @truncate(u32, i + (slice.len - remaining.len));
+        }
+    }
+
+    return null;
+}
+
+pub fn firstNonASCII16(comptime Slice: type, slice: Slice) ?u32 {
+    var remaining = slice;
+
+    if (comptime Environment.isAarch64 or Environment.isX64) {
+        while (remaining.len >= 64) {
+            comptime var count: usize = 0;
+            inline while (count < 8) : (count += 1) {
+                const vec: AsciiU16Vector = remaining[(comptime count * ascii_u16_vector_size)..][0..ascii_u16_vector_size].*;
+                const cmp = vec > max_u16_ascii;
+                const bitmask = @ptrCast(*const u16, &cmp).*;
+                const first = @ctz(u16, bitmask);
+                if (first < ascii_u16_vector_size) {
+                    return @intCast(u32, (comptime count * ascii_u16_vector_size) +
+                        @as(u32, first) +
+                        @intCast(u32, slice.len - remaining.len));
+                }
+            }
+            remaining = remaining[comptime ascii_u16_vector_size * count..];
+        }
+
+        while (remaining.len >= ascii_u16_vector_size) {
+            const vec: AsciiU16Vector = remaining[0..ascii_u16_vector_size].*;
+            const cmp = vec > max_u16_ascii;
+            const bitmask = @ptrCast(*const u16, &cmp).*;
+            const first = @ctz(u16, bitmask);
+            if (first < ascii_u16_vector_size) {
+                return @intCast(u32, @as(u32, first) +
+                    @intCast(u32, slice.len - remaining.len));
+            }
+            remaining = remaining[ascii_u16_vector_size..];
+        }
+    }
+
+    for (remaining) |char, i| {
+        if (char > 127) {
+            return @truncate(u32, i + (slice.len - remaining.len));
+        }
+    }
+
+    return null;
+}
+
+test "isAllASCII" {
+    const yes = "aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123";
+    try std.testing.expectEqual(true, isAllASCII(yes));
+
+    const no = "aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdoka🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123";
+    try std.testing.expectEqual(false, isAllASCII(no));
+}
+
+test "firstNonASCII" {
+    const yes = "aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123";
+    try std.testing.expectEqual(true, firstNonASCII(yes) == null);
+
+    {
+        const no = "aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdoka🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123";
+        try std.testing.expectEqual(@as(u32, 50), firstNonASCII(no).?);
+    }
+
+    {
+        const no = "aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd12312🙂3";
+        try std.testing.expectEqual(@as(u32, 366), firstNonASCII(no).?);
+    }
+}
+
+test "firstNonASCII16" {
+    @setEvalBranchQuota(99999);
+    const yes = std.mem.span(std.unicode.utf8ToUtf16LeStringLiteral("aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
+    try std.testing.expectEqual(true, firstNonASCII16(@TypeOf(yes), yes) == null);
+
+    {
+        @setEvalBranchQuota(99999);
+        const no = std.mem.span(std.unicode.utf8ToUtf16LeStringLiteral("aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdoka🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
+        try std.testing.expectEqual(@as(u32, 50), firstNonASCII16(@TypeOf(no), no).?);
+    }
+    {
+        @setEvalBranchQuota(99999);
+        const no = std.mem.span(std.unicode.utf8ToUtf16LeStringLiteral("🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
+        try std.testing.expectEqual(@as(u32, 0), firstNonASCII16(@TypeOf(no), no).?);
+    }
+    {
+        @setEvalBranchQuota(99999);
+        const no = std.mem.span(std.unicode.utf8ToUtf16LeStringLiteral("a🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
+        try std.testing.expectEqual(@as(u32, 1), firstNonASCII16(@TypeOf(no), no).?);
+    }
+    {
+        @setEvalBranchQuota(99999);
+        const no = std.mem.span(std.unicode.utf8ToUtf16LeStringLiteral("aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd12312🙂3"));
+        try std.testing.expectEqual(@as(u32, 366), firstNonASCII16(@TypeOf(no), no).?);
+    }
 }
 
 pub fn formatUTF16(slice_: []align(1) const u16, writer: anytype) !void {

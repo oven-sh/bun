@@ -94,6 +94,9 @@ pub const GlobalClasses = [_]type{
     Crypto.Class,
     Crypto.Prototype,
 
+    WebCore.TextEncoder.Constructor.Class,
+    WebCore.TextDecoder.Constructor.Class,
+
     // The last item in this array becomes "process.env"
     Bun.EnvironmentVariables.Class,
 };
@@ -1314,6 +1317,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         event_loop: *VirtualMachine.EventLoop,
         allocator: std.mem.Allocator,
         promise: JSValue,
+        globalThis: *JSGlobalObject,
 
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
             var this = try allocator.create(This);
@@ -1322,6 +1326,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
                 .ctx = value,
                 .allocator = allocator,
                 .promise = JSValue.createInternalPromise(globalThis),
+                .globalThis = globalThis,
             };
             js.JSValueProtect(globalThis.ref(), this.promise.asObjectRef());
             return this;
@@ -1344,7 +1349,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
 
             var ctx = this.ctx;
 
-            js.JSValueUnprotect(VirtualMachine.vm.global.ref(), promise_value.asObjectRef());
+            js.JSValueUnprotect(this.globalThis.ref(), promise_value.asObjectRef());
             ctx.then(promise);
         }
 

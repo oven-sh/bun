@@ -14,7 +14,7 @@ const JavaScript = @import("./javascript.zig");
 const ResolveError = JavaScript.ResolveError;
 const BuildError = JavaScript.BuildError;
 const JSC = @import("../../jsc.zig");
-const WebCore = @import("./webcore/response.zig");
+const WebCore = @import("./webcore.zig");
 const Test = @import("./test/jest.zig");
 const Fetch = WebCore.Fetch;
 const Response = WebCore.Response;
@@ -22,6 +22,7 @@ const Request = WebCore.Request;
 const Router = @import("./api/router.zig");
 const FetchEvent = WebCore.FetchEvent;
 const Headers = WebCore.Headers;
+
 const Body = WebCore.Body;
 const TaggedPointerTypes = @import("../../tagged_pointer.zig");
 const TaggedPointerUnion = TaggedPointerTypes.TaggedPointerUnion;
@@ -1701,7 +1702,7 @@ pub const ArrayBuffer = extern struct {
             this.ptr,
             this.byte_len,
             MarkedArrayBuffer_deallocator,
-            &_global.default_allocator,
+            @intToPtr(*anyopaque, @ptrToInt(&_global.default_allocator)),
             exception,
         ));
     }
@@ -1709,7 +1710,19 @@ pub const ArrayBuffer = extern struct {
     pub const fromArrayBuffer = fromTypedArray;
 
     pub inline fn slice(this: *const @This()) []u8 {
-        return this.ptr[this.offset .. this.offset + this.byte_len];
+        return this.ptr[this.offset .. this.offset + this.len];
+    }
+
+    pub inline fn asU16(this: *const @This()) []u16 {
+        const sliced = this.slice();
+        const len = if (sliced.len > 0) sliced.len / 2 else 0;
+        return @ptrCast([*]u16, @alignCast(@alignOf(@TypeOf(this.ptr)), this.ptr))[0..len];
+    }
+
+    pub inline fn asU32(this: *const @This()) []u32 {
+        const sliced = this.slice();
+        const len = if (sliced.len > 0) sliced.len / 4 else 0;
+        return @ptrCast([*]u32, @alignCast(@alignOf(@TypeOf(this.ptr)), this.ptr))[0..len];
     }
 };
 
@@ -1816,6 +1829,8 @@ const DirEnt = JSC.Node.DirEnt;
 const Stats = JSC.Node.Stats;
 const BigIntStats = JSC.Node.BigIntStats;
 const Transpiler = @import("./api/transpiler.zig");
+const TextEncoder = WebCore.TextEncoder;
+const TextDecoder = WebCore.TextDecoder;
 pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     ResolveError,
     BuildError,
@@ -1837,6 +1852,8 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     BigIntStats,
     DirEnt,
     Transpiler,
+    TextEncoder,
+    TextDecoder,
 });
 
 pub inline fn GetJSPrivateData(comptime Type: type, ref: js.JSObjectRef) ?*Type {

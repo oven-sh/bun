@@ -70,6 +70,7 @@ using namespace JSC;
     macro(sep) \
     macro(delimiter) \
     macro(toNamespacedPath) \
+    macro(isWindows) \
     BUN_ADDITIONAL_PRIVATE_IDENTIFIERS(macro) \
 
 class BunBuiltinNames {

@@ -236,6 +236,11 @@ export fn ZigString__free(ptr: [*]const u8, len: usize, allocator_: ?*anyopaque)
     allocator.free(str);
 }
 
+export fn ZigString__free_global(ptr: [*]const u8, len: usize) void {
+    var str = ptr[0..len];
+    default_allocator.free(str);
+}
+
 pub const JSErrorCode = enum(u8) {
     Error = 0,
     EvalError = 1,
@@ -1854,5 +1859,7 @@ comptime {
         std.testing.refAllDecls(Bun.Timer);
         std.testing.refAllDecls(NodeWritableStream);
         std.testing.refAllDecls(NodePath);
+        _ = ZigString__free;
+        _ = ZigString__free_global;
     }
 }

@@ -101,6 +101,10 @@ pub const ZigString = extern struct {
             return this.ptr[0..this.len];
         }
 
+        pub fn mut(this: Slice) []u8 {
+            return @intToPtr([*]u8, @ptrToInt(this.ptr))[0..this.len];
+        }
+
         pub fn deinit(this: *Slice) void {
             if (!this.allocated) {
                 return;
@@ -162,16 +166,21 @@ pub const ZigString = extern struct {
     }
 
     pub fn detectEncoding(this: *ZigString) void {
-        for (this.slice()) |char| {
-            if (char > 127) {
-                this.ptr = @intToPtr([*]const u8, @ptrToInt(this.ptr) | (1 << 63));
-                return;
-            }
+        if (!strings.isAllASCII(this.slice())) {
+            this.markUTF16();
         }
+    }
+
+    pub fn toExternalU16(ptr: [*]const u16, len: usize, global: *JSGlobalObject) JSValue {
+        return shim.cppFn("toExternalU16", .{ ptr, len, global });
     }
 
     pub fn markUTF8(this: *ZigString) void {
         this.ptr = @intToPtr([*]const u8, @ptrToInt(this.ptr) | (1 << 61));
+    }
+
+    pub fn markUTF16(this: *ZigString) void {
+        this.ptr = @intToPtr([*]const u8, @ptrToInt(this.ptr) | (1 << 63));
     }
 
     pub fn setOutputEncoding(this: *ZigString) void {
@@ -262,6 +271,10 @@ pub const ZigString = extern struct {
         return shim.cppFn("toValue", .{ this, global });
     }
 
+    pub fn toExternalValue(this: *const ZigString, global: *JSGlobalObject) JSValue {
+        return shim.cppFn("toExternalValue", .{ this, global });
+    }
+
     pub fn to16BitValue(this: *const ZigString, global: *JSGlobalObject) JSValue {
         return shim.cppFn("to16BitValue", .{ this, global });
     }
@@ -293,9 +306,11 @@ pub const ZigString = extern struct {
 
     pub const Extern = [_][]const u8{
         "toValue",
+        "toExternalValue",
         "to16BitValue",
         "toValueGC",
         "toErrorInstance",
+        "toExternalU16",
     };
 };
 
@@ -1662,7 +1677,7 @@ pub const JSValue = enum(i64) {
             c_uint, u32 => if (number < std.math.maxInt(i32))
                 jsNumberFromInt32(@intCast(i32, number))
             else
-                jsNumberFromUint64(@as(u64, number)),
+                jsNumberFromUint64(@intCast(u64, number)),
 
             else => @compileError("Type transformation missing for number of type: " ++ @typeName(Number)),
         };

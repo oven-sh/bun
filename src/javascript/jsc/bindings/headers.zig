@@ -139,6 +139,8 @@ pub extern fn JSC__JSObject__getIndex(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSG
 pub extern fn JSC__JSObject__putRecord(arg0: [*c]JSC__JSObject, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]ZigString, arg3: [*c]ZigString, arg4: usize) void;
 pub extern fn ZigString__to16BitValue(arg0: [*c]const ZigString, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toErrorInstance(arg0: [*c]const ZigString, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
+pub extern fn ZigString__toExternalU16(arg0: [*c]const u16, arg1: usize, arg2: [*c]JSC__JSGlobalObject) JSC__JSValue;
+pub extern fn ZigString__toExternalValue(arg0: [*c]const ZigString, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toValue(arg0: [*c]const ZigString, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toValueGC(arg0: [*c]const ZigString, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn SystemError__toErrorInstance(arg0: [*c]const SystemError, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;

@@ -5,22 +5,6 @@ globalThis.Bun_disableCSSImports = true;
 
 import * as React from "react";
 
-var onlyChildPolyfill = React.Children.only;
-
-React.Children.only = function only(
-  children: React.ReactNode | React.ReactNode[]
-) {
-  if (
-    children &&
-    typeof children === "object" &&
-    (children as any).length == 1
-  ) {
-    return onlyChildPolyfill(children[0]);
-  }
-
-  return onlyChildPolyfill(children);
-};
-
 import * as ReactDOM from "react-dom";
 import NextApp from "next/app";
 import mitt, { MittEmitter } from "next/dist/shared/lib/mitt";
@@ -280,6 +264,13 @@ let reactRoot: any = null;
 
 const USE_REACT_18 = "hydrateRoot" in ReactDOM;
 
+class BootError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "BootError";
+  }
+}
+
 export async function _boot(EntryPointNamespace, isError) {
   NextRouteLoader.getClientBuildManifest = () => Promise.resolve({});
 
@@ -350,6 +341,12 @@ export async function _boot(EntryPointNamespace, isError) {
 
   const domEl = document.querySelector("#__next");
 
+  if (!domEl) {
+    throw new BootError(
+      "Expected #__next to be in the DOM. That means Next.js failed to start"
+    );
+  }
+
   const reactEl = (
     <TopLevelRender
       App={CachedApp}
@@ -373,7 +370,11 @@ export async function _boot(EntryPointNamespace, isError) {
     if (isError || !domEl.hasChildNodes() || !("hydrate" in ReactDOM)) {
       ReactDOM.render(reactEl, domEl);
     } else {
-      ReactDOM.hydrate(reactEl, domEl);
+      try {
+        ReactDOM.hydrate(reactEl, domEl);
+      } catch (e) {
+        ReactDOM.render(reactEl, domEl);
+      }
     }
   }
 }

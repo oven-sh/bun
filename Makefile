@@ -777,7 +777,9 @@ jsc-build-mac-copy:
 	cp $(WEBKIT_RELEASE_DIR)/lib/libJavaScriptCore.a $(BUN_DEPS_OUT_DIR)/libJavaScriptCore.a
 	cp $(WEBKIT_RELEASE_DIR)/lib/libWTF.a $(BUN_DEPS_OUT_DIR)/libWTF.a
 	cp $(WEBKIT_RELEASE_DIR)/lib/libbmalloc.a $(BUN_DEPS_OUT_DIR)/libbmalloc.a
-	 
+
+clean-jsc:
+	cd src/javascript/jsc/WebKit && rm -rf **/CMakeCache.txt **/CMakeFiles
 clean-bindings: 
 	rm -rf $(OBJ_DIR)/*.o
 

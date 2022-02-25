@@ -247,7 +247,6 @@ CLANG_FLAGS += -DDU_DISABLE_RENAMING=1 \
 		-Wl,-no_eh_labels \
 		-Wl,-dead_strip \
 		-Wl,-dead_strip_dylibs \
-		-force_flat_namespace
 endif
 
 

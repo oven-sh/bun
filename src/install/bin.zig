@@ -190,7 +190,7 @@ pub const Bin = extern struct {
                     if (this.i > 0) return null;
                     this.i += 1;
                     this.done = true;
-                    const base = std.fs.path.basename(this.bin.value.file.slice(this.string_buffer));
+                    const base = std.fs.path.basename(this.package_name.slice(this.string_buffer));
                     if (strings.hasPrefix(base, "./")) return base[2..];
                     return base;
                 },

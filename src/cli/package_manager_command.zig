@@ -46,14 +46,12 @@ pub const PackageManagerCommand = struct {
 
         var first: []const u8 = if (pm.options.positionals.len > 0) pm.options.positionals[0] else "";
         if (strings.eqlComptime(first, "pm")) {
+            first = "";
             if (pm.options.positionals.len > 1) {
                 pm.options.positionals = pm.options.positionals[1..];
-            } else {
-                return;
+                first = pm.options.positionals[0];
             }
         }
-
-        first = pm.options.positionals[0];
 
         if (pm.options.global) {
             try pm.setupGlobalDir(&ctx);
@@ -140,6 +138,26 @@ pub const PackageManagerCommand = struct {
             }
 
             _ = try pm.lockfile.hasMetaHashChanged(true);
+            Global.exit(0);
+        }
+
+        Output.prettyln(
+            \\bun pm - package manager related commands
+            \\   
+            \\  bun pm <b>bin<r>          print the path to bin folder
+            \\  bun pm <b>-g bin<r>       print the <b>global<r> path to bin folder
+            \\  bun pm <b>hash<r>         generate & print the hash of the current lockfile
+            \\  bun pm <b>hash-string<r>  print the string used to hash the lockfile
+            \\  bun pm <b>hash-print<r>   print the hash stored in the current lockfile
+            \\
+        , .{});
+
+        if (first.len > 0) {
+            Output.prettyErrorln("\n<red>error<r>: \"{s}\" unknown command\n", .{first});
+            Output.flush();
+
+            Global.exit(1);
+        } else {
             Global.exit(0);
         }
     }

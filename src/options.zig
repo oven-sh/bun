@@ -442,7 +442,7 @@ pub const Platform = enum {
 
     pub inline fn supportsBrowserField(this: Platform) bool {
         return switch (this) {
-            .neutral, .browser => true,
+            .neutral, .browser, .bun, .bun_macro => true,
             else => false,
         };
     }
@@ -630,6 +630,7 @@ pub const Loader = enum(u4) {
     file,
     json,
     toml,
+    wasm,
     pub const Map = std.EnumArray(Loader, string);
     pub const stdin_name: Map = brk: {
         var map = Map.initFill("");
@@ -641,6 +642,7 @@ pub const Loader = enum(u4) {
         map.set(Loader.file, "input");
         map.set(Loader.json, "input.json");
         map.set(Loader.toml, "input.toml");
+        map.set(Loader.wasm, "input.wasm");
         break :brk map;
     };
 
@@ -661,7 +663,7 @@ pub const Loader = enum(u4) {
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
-            JSC.throwInvalidArguments("invalid loader – must be js, jsx, tsx, ts, css, file, toml, or json", .{}, global.ref(), exception);
+            JSC.throwInvalidArguments("invalid loader – must be js, jsx, tsx, ts, css, file, toml, wasm, or json", .{}, global.ref(), exception);
             return null;
         };
     }
@@ -682,6 +684,7 @@ pub const Loader = enum(u4) {
             LoaderMatcher.case("file") => Loader.file,
             LoaderMatcher.case("json") => Loader.json,
             LoaderMatcher.case("toml") => Loader.toml,
+            LoaderMatcher.case("wasm") => Loader.wasm,
             else => null,
         };
     }
@@ -702,6 +705,7 @@ pub const Loader = enum(u4) {
             .css => .css,
             .json => .json,
             .toml => .toml,
+            .wasm => .wasm,
             else => .file,
         };
     }
@@ -751,6 +755,7 @@ pub const defaultLoaders = std.ComptimeStringMap(Loader, .{
     .{ ".cts", Loader.ts },
 
     .{ ".toml", Loader.toml },
+    .{ ".wasm", Loader.wasm },
 });
 
 // https://webpack.js.org/guides/package-exports/#reference-syntax
@@ -1037,6 +1042,7 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
             .tsx => Loader.tsx,
             .json => Loader.json,
             .toml => Loader.toml,
+            .wasm => Loader.wasm,
             else => unreachable,
         };
 
@@ -1058,7 +1064,7 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
         ".ts",   ".tsx",
         ".mts",  ".cts",
 
-        ".toml",
+        ".toml", ".wasm",
     };
 
     inline for (default_loader_ext) |ext| {

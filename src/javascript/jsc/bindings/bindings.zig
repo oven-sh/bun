@@ -602,6 +602,21 @@ pub const JSModuleLoader = extern struct {
     };
 };
 
+pub fn PromiseCallback(comptime Type: type, comptime CallbackFunction: fn (*Type, *JSGlobalObject, []const JSValue) anyerror!JSValue) type {
+    return struct {
+        pub fn callback(
+            ctx: ?*anyopaque,
+            globalThis: *JSGlobalObject,
+            arguments: [*]const JSValue,
+            arguments_len: usize,
+        ) callconv(.C) JSValue {
+            return CallbackFunction(@ptrCast(*Type, @alignCast(@alignOf(*Type), ctx.?)), globalThis, arguments[0..arguments_len]) catch |err| brk: {
+                break :brk ZigString.init(std.mem.span(@errorName(err))).toErrorInstance(globalThis);
+            };
+        }
+    }.callback;
+}
+
 pub const JSModuleRecord = extern struct {
     pub const shim = Shimmer("JSC", "JSModuleRecord", @This());
     bytes: shim.Bytes,
@@ -742,10 +757,150 @@ pub const JSInternalPromise = extern struct {
     pub fn rejectAsHandledException(this: *JSInternalPromise, globalThis: *JSGlobalObject, value: *Exception) void {
         cppFn("rejectAsHandledException", .{ this, globalThis, value });
     }
+    // pub const PromiseCallbackPrimitive = fn (
+    //     ctx: ?*anyopaque,
+    //     globalThis: *JSGlobalObject,
+    //     arguments: [*]const JSValue,
+    //     arguments_len: usize,
+    // ) callconv(.C) JSValue;
+    // pub fn then_(
+    //     this: *JSInternalPromise,
+    //     globalThis: *JSGlobalObject,
+    //     resolve_ctx: ?*anyopaque,
+    //     onResolve: PromiseCallbackPrimitive,
+    //     reject_ctx: ?*anyopaque,
+    //     onReject: PromiseCallbackPrimitive,
+    // ) *JSInternalPromise {
+    //     return cppFn("then_", .{ this, globalThis, resolve_ctx, onResolve, reject_ctx, onReject });
+    // }
 
-    pub fn then(this: *JSInternalPromise, globalThis: *JSGlobalObject, resolvefunc: ?*JSFunction, rejectfunc: ?*JSFunction) *JSInternalPromise {
-        return cppFn("then", .{ this, globalThis, resolvefunc, rejectfunc });
-    }
+    // pub const Completion = struct {
+    //     result: []const JSValue,
+    //     global: *JSGlobalObject,
+    //     resolved: bool = false,
+
+    //     pub const PromiseTask = struct {
+    //         frame: @Frame(JSInternalPromise._wait),
+    //         completion: Completion,
+
+    //         pub fn onResolve(this: *PromiseTask, global: *JSGlobalObject, arguments: []const JSValue) anyerror!JSValue {
+    //             this.completion.global = global;
+    //             this.completion.resolved = true;
+    //             this.completion.result = arguments;
+
+    //             return resume this.frame;
+    //         }
+
+    //         pub fn onReject(this: *PromiseTask, global: *JSGlobalObject, arguments: []const JSValue) anyerror!JSValue {
+    //             this.completion.global = global;
+    //             this.completion.resolved = false;
+    //             this.completion.result = arguments;
+    //             return resume this.frame;
+    //         }
+    //     };
+    // };
+
+    // pub fn _wait(
+    //     this: *JSInternalPromise,
+    //     globalThis: *JSGlobalObject,
+    //     internal: *Completion.PromiseTask,
+    // ) void {
+    //     this.then(
+    //         globalThis,
+    //         Completion.PromiseTask,
+    //         internal,
+    //         Completion.PromiseTask.onResolve,
+    //         Completion.PromiseTask,
+    //         internal,
+    //         Completion.PromiseTask.onReject,
+    //     );
+
+    //     suspend {
+    //         internal.frame = @frame().*;
+    //     }
+    // }
+
+    // pub fn wait(
+    //     this: *JSInternalPromise,
+    //     globalThis: *JSGlobalObject,
+    //     allocator: std.mem.Allocator,
+    // ) callconv(.Async) anyerror!Completion {
+    //     var internal = try allocator.create(Completion.PromiseTask);
+    //     defer allocator.destroy(internal);
+    //     internal.* = Completion.Internal{
+    //         .frame = undefined,
+    //         .completion = Completion{
+    //             .global = globalThis,
+    //             .resolved = false,
+    //             .result = &[_]JSValue{},
+    //         },
+    //     };
+
+    //     this._wait(globalThis, internal);
+
+    //     return internal.completion;
+    // }
+
+    // pub fn then(
+    //     this: *JSInternalPromise,
+    //     globalThis: *JSGlobalObject,
+    //     comptime Resolve: type,
+    //     resolver: *Resolve,
+    //     comptime onResolve: fn (*Resolve, *JSGlobalObject, []const JSValue) anyerror!JSValue,
+    //     comptime Reject: type,
+    //     rejecter: *Reject,
+    //     comptime onReject: fn (*Reject, *JSGlobalObject, []const JSValue) anyerror!JSValue,
+    // ) *JSInternalPromise {
+    //     return then_(this, globalThis, resolver, PromiseCallback(Resolve, onResolve), Reject, rejecter, PromiseCallback(Reject, onReject));
+    // }
+
+    // pub fn thenResolve(
+    //     this: *JSInternalPromise,
+    //     globalThis: *JSGlobalObject,
+    //     comptime Resolve: type,
+    //     resolver: *Resolve,
+    //     comptime onResolve: fn (*Resolve, *JSGlobalObject, []const JSValue) anyerror!JSValue,
+    // ) *JSInternalPromise {
+    //     return thenResolve_(this, globalThis, resolver, PromiseCallback(Resolve, onResolve));
+    // }
+
+    // pub fn thenResolve_(
+    //     this: *JSInternalPromise,
+    //     globalThis: *JSGlobalObject,
+    //     resolve_ctx: ?*anyopaque,
+    //     onResolve: PromiseCallbackPrimitive,
+    // ) *JSInternalPromise {
+    //     return cppFn("thenResolve_", .{
+    //         this,
+    //         globalThis,
+    //         resolve_ctx,
+    //         onResolve,
+    //     });
+    // }
+
+    // pub fn thenReject_(
+    //     this: *JSInternalPromise,
+    //     globalThis: *JSGlobalObject,
+    //     resolve_ctx: ?*anyopaque,
+    //     onResolve: PromiseCallbackPrimitive,
+    // ) *JSInternalPromise {
+    //     return cppFn("thenReject_", .{
+    //         this,
+    //         globalThis,
+    //         resolve_ctx,
+    //         onResolve,
+    //     });
+    // }
+
+    // pub fn thenReject(
+    //     this: *JSInternalPromise,
+    //     globalThis: *JSGlobalObject,
+    //     comptime Resolve: type,
+    //     resolver: *Resolve,
+    //     comptime onResolve: fn (*Resolve, *JSGlobalObject, []const JSValue) anyerror!JSValue,
+    // ) *JSInternalPromise {
+    //     return thenReject_(this, globalThis, resolver, PromiseCallback(Resolve, onResolve));
+    // }
 
     pub fn create(globalThis: *JSGlobalObject) *JSInternalPromise {
         return cppFn("create", .{globalThis});
@@ -753,7 +908,7 @@ pub const JSInternalPromise = extern struct {
 
     pub const Extern = [_][]const u8{
         "create",
-        "then",
+        // "then_",
         "rejectWithCaughtException",
         "status",
         "result",
@@ -763,6 +918,8 @@ pub const JSInternalPromise = extern struct {
         "resolve",
         "reject",
         "rejectAsHandled",
+        // "thenResolve_",
+        // "thenReject_",
         // "rejectException",
         "rejectAsHandledException",
     };

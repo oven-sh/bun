@@ -994,6 +994,16 @@ pub const Range = struct {
     left: Comparator = Comparator{},
     right: Comparator = Comparator{},
 
+    /// *
+    /// >= 0.0.0
+    /// >= 0
+    /// >= 0.0
+    /// >= x
+    /// >= 0
+    pub fn anyRangeSatisfies(this: *const Range) bool {
+        return this.left.op == .gte and this.left.version.eql(Version{});
+    }
+
     pub fn initWildcard(version: Version, wildcard: Query.Token.Wildcard) Range {
         switch (wildcard) {
             .none => {

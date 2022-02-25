@@ -979,13 +979,35 @@ bool JSC__JSInternalPromise__isHandled(const JSC__JSInternalPromise* arg0, JSC__
     return arg0->isHandled(reinterpret_cast<JSC::VM&>(arg1));
 }
 
-JSC__JSInternalPromise* JSC__JSInternalPromise__then(JSC__JSInternalPromise* arg0,
-    JSC__JSGlobalObject* arg1,
-    JSC__JSFunction* arg2, JSC__JSFunction* arg3)
-{
-    return arg0->then(arg1, arg2, arg3);
-}
+// static JSC::JSFunction* nativeFunctionCallback(JSC__JSGlobalObject* globalObject, void* ctx, JSC__JSValue (*Callback)(void* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue* arg2, size_t arg3));
 
+// static JSC::JSFunction* nativeFunctionCallback(JSC__JSGlobalObject* globalObject, void* ctx, JSC__JSValue (*Callback)(void* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue* arg2, size_t arg3))
+// {
+//     return JSC::JSNativeStdFunction::create(
+//         globalObject->vm(), globalObject, 1, String(), [&ctx, &Callback](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+//             size_t argumentCount = callFrame->argumentCount();
+//             Vector<JSC__JSValue, 16> arguments;
+//             arguments.reserveInitialCapacity(argumentCount);
+//             for (size_t i = 0; i < argumentCount; ++i)
+//                 arguments.uncheckedAppend(JSC::JSValue::encode(callFrame->uncheckedArgument(i)));
+
+//             return Callback(ctx, globalObject, arguments.data(), argumentCount);
+//         });
+// }
+
+// JSC__JSInternalPromise* JSC__JSInternalPromise__then_(JSC__JSInternalPromise* promise, JSC__JSGlobalObject* global, void* resolveCtx, JSC__JSValue (*onResolve)(void* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue* arg2, size_t arg3), void* arg4, JSC__JSValue (*ArgFn5)(void* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue* arg2, size_t arg3))
+// {
+
+//     return promise->then(global, nativeFunctionCallback(global, resolveCtx, onResolve), nativeFunctionCallback(global, arg4, ArgFn5));
+// }
+// JSC__JSInternalPromise* JSC__JSInternalPromise__thenReject_(JSC__JSInternalPromise* promise, JSC__JSGlobalObject* global, void* arg2, JSC__JSValue (*ArgFn3)(void* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue* arg2, size_t arg3))
+// {
+//     return promise->then(global, nullptr, nativeFunctionCallback(global, arg2, ArgFn3));
+// }
+// JSC__JSInternalPromise* JSC__JSInternalPromise__thenResolve_(JSC__JSInternalPromise* promise, JSC__JSGlobalObject* global, void* arg2, JSC__JSValue (*ArgFn3)(void* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue* arg2, size_t arg3))
+// {
+//     return promise->then(global, nativeFunctionCallback(global, arg2, ArgFn3), nullptr);
+// }
 // bool JSC__JSPromise__isInternal(JSC__JSPromise* arg0, JSC__VM* arg1) {
 //     return arg0->inf
 // }
@@ -2067,9 +2089,8 @@ JSC__VM* JSC__VM__create(unsigned char HeapType0)
 
     auto& vm = JSC::VM::create(HeapType0 == 0 ? JSC::HeapType::Small : JSC::HeapType::Large, nullptr)
                    .leakRef();
-#if ENABLE(WEBASSEMBLY)
+
     JSC::Wasm::enableFastMemory();
-#endif
 
     g_commonVMOrNull = &vm;
     vm.heap.acquireAccess(); // At any time, we may do things that affect the GC.

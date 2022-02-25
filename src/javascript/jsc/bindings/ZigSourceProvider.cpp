@@ -23,9 +23,13 @@ using SourceOrigin = JSC::SourceOrigin;
 using String = WTF::String;
 using SourceProviderSourceType = JSC::SourceProviderSourceType;
 
+static char* wasmSourceName = "[WebAssembly Source]";
+static size_t wasmSourceName_len = 20;
 Ref<SourceProvider> SourceProvider::create(ResolvedSource resolvedSource)
 {
     void* allocator = resolvedSource.allocator;
+
+    JSC::SourceProviderSourceType sourceType = JSC::SourceProviderSourceType::Module;
 
     WTF::StringImpl* stringImpl = nullptr;
     if (allocator) {
@@ -38,8 +42,7 @@ Ref<SourceProvider> SourceProvider::create(ResolvedSource resolvedSource)
             resolvedSource, reinterpret_cast<WTF::StringImpl*>(stringImpl_.ptr()),
             JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(toString(resolvedSource.source_url))),
             toStringNotConst(resolvedSource.source_url), TextPosition(),
-            JSC::SourceProviderSourceType::Module));
-
+            sourceType));
     } else {
         Ref<WTF::ExternalStringImpl> stringImpl_ = WTF::ExternalStringImpl::createStatic(
             resolvedSource.source_code.ptr, resolvedSource.source_code.len);
@@ -47,7 +50,7 @@ Ref<SourceProvider> SourceProvider::create(ResolvedSource resolvedSource)
             resolvedSource, reinterpret_cast<WTF::StringImpl*>(stringImpl_.ptr()),
             JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(toString(resolvedSource.source_url))),
             toStringNotConst(resolvedSource.source_url), TextPosition(),
-            JSC::SourceProviderSourceType::Module));
+            sourceType));
     }
 }
 
@@ -82,8 +85,8 @@ void SourceProvider::updateCache(const UnlinkedFunctionExecutable* executable, c
     CodeSpecializationKind kind,
     const UnlinkedFunctionCodeBlock* codeBlock)
 {
-    if (!m_resolvedSource.bytecodecache_fd || !m_cachedBytecode)
-        return;
+    // if (!m_resolvedSource.bytecodecache_fd || !m_cachedBytecode)
+    return;
 
     JSC::BytecodeCacheError error;
     RefPtr<JSC::CachedBytecode> cachedBytecode = JSC::encodeFunctionCodeBlock(executable->vm(), codeBlock, error);
@@ -93,8 +96,8 @@ void SourceProvider::updateCache(const UnlinkedFunctionExecutable* executable, c
 
 void SourceProvider::cacheBytecode(const BytecodeCacheGenerator& generator)
 {
-    if (!m_resolvedSource.bytecodecache_fd)
-        return;
+    // if (!m_resolvedSource.bytecodecache_fd)
+    return;
 
     if (!m_cachedBytecode)
         m_cachedBytecode = JSC::CachedBytecode::create();
@@ -104,84 +107,86 @@ void SourceProvider::cacheBytecode(const BytecodeCacheGenerator& generator)
 }
 void SourceProvider::commitCachedBytecode()
 {
-    if (!m_resolvedSource.bytecodecache_fd || !m_cachedBytecode || !m_cachedBytecode->hasUpdates())
-        return;
+    // if (!m_resolvedSource.bytecodecache_fd || !m_cachedBytecode || !m_cachedBytecode->hasUpdates())
+    return;
 
-    auto clearBytecode = WTF::makeScopeExit([&] { m_cachedBytecode = nullptr; });
-    const auto fd = m_resolvedSource.bytecodecache_fd;
+    // auto clearBytecode = WTF::makeScopeExit([&] { m_cachedBytecode = nullptr; });
+    // const auto fd = m_resolvedSource.bytecodecache_fd;
 
-    auto fileSize = FileSystem::fileSize(fd);
-    if (!fileSize)
-        return;
+    // auto fileSize = FileSystem::fileSize(fd);
+    // if (!fileSize)
+    //     return;
 
-    size_t cacheFileSize;
-    if (!WTF::convertSafely(*fileSize, cacheFileSize) || cacheFileSize != m_cachedBytecode->size()) {
-        // The bytecode cache has already been updated
-        return;
-    }
+    // size_t cacheFileSize;
+    // if (!WTF::convertSafely(*fileSize, cacheFileSize) || cacheFileSize != m_cachedBytecode->size()) {
+    //     // The bytecode cache has already been updated
+    //     return;
+    // }
 
-    if (!FileSystem::truncateFile(fd, m_cachedBytecode->sizeForUpdate()))
-        return;
+    // if (!FileSystem::truncateFile(fd, m_cachedBytecode->sizeForUpdate()))
+    //     return;
 
-    m_cachedBytecode->commitUpdates([&](off_t offset, const void* data, size_t size) {
-        long long result = FileSystem::seekFile(fd, offset, FileSystem::FileSeekOrigin::Beginning);
-        ASSERT_UNUSED(result, result != -1);
-        size_t bytesWritten = static_cast<size_t>(FileSystem::writeToFile(fd, data, size));
-        ASSERT_UNUSED(bytesWritten, bytesWritten == size);
-    });
+    // m_cachedBytecode->commitUpdates([&](off_t offset, const void* data, size_t size) {
+    //     long long result = FileSystem::seekFile(fd, offset, FileSystem::FileSeekOrigin::Beginning);
+    //     ASSERT_UNUSED(result, result != -1);
+    //     size_t bytesWritten = static_cast<size_t>(FileSystem::writeToFile(fd, data, size));
+    //     ASSERT_UNUSED(bytesWritten, bytesWritten == size);
+    // });
 }
 
 bool SourceProvider::isBytecodeCacheEnabled() const
 {
-    return m_resolvedSource.bytecodecache_fd > 0;
+    // return m_resolvedSource.bytecodecache_fd > 0;
+    return false;
 }
 
 void SourceProvider::readOrGenerateByteCodeCache(JSC::VM& vm, const JSC::SourceCode& sourceCode)
 {
-    auto status = this->readCache(vm, sourceCode);
-    switch (status) {
-    case -1: {
-        m_resolvedSource.bytecodecache_fd = 0;
-        break;
-    }
-    case 0: {
-        JSC::BytecodeCacheError err;
-        m_cachedBytecode = JSC::generateModuleBytecode(vm, sourceCode, m_resolvedSource.bytecodecache_fd, err);
+    // auto status = this->readCache(vm, sourceCode);
+    // switch (status) {
+    // case -1: {
+    //     m_resolvedSource.bytecodecache_fd = 0;
+    //     break;
+    // }
+    // case 0: {
+    //     JSC::BytecodeCacheError err;
+    //     m_cachedBytecode = JSC::generateModuleBytecode(vm, sourceCode, m_resolvedSource.bytecodecache_fd, err);
 
-        if (err.isValid()) {
-            m_resolvedSource.bytecodecache_fd = 0;
-            m_cachedBytecode = JSC::CachedBytecode::create();
-        }
-    }
-    // TODO: read the bytecode into a JSC::SourceCode object here
-    case 1: {
-    }
-    }
+    //     if (err.isValid()) {
+    //         m_resolvedSource.bytecodecache_fd = 0;
+    //         m_cachedBytecode = JSC::CachedBytecode::create();
+    //     }
+    // }
+    // // TODO: read the bytecode into a JSC::SourceCode object here
+    // case 1: {
+    // }
+    // }
 }
 int SourceProvider::readCache(JSC::VM& vm, const JSC::SourceCode& sourceCode)
 {
-    if (m_resolvedSource.bytecodecache_fd == 0)
-        return -1;
-    if (!FileSystem::isHandleValid(m_resolvedSource.bytecodecache_fd))
-        return -1;
-    const auto fd = m_resolvedSource.bytecodecache_fd;
+    return -1;
+    // if (m_resolvedSource.bytecodecache_fd == 0)
+    //     return -1;
+    // if (!FileSystem::isHandleValid(m_resolvedSource.bytecodecache_fd))
+    //     return -1;
+    // const auto fd = m_resolvedSource.bytecodecache_fd;
 
-    bool success;
-    FileSystem::MappedFileData mappedFile(fd, FileSystem::MappedFileMode::Shared, success);
-    if (!success)
-        return -1;
+    // bool success;
+    // FileSystem::MappedFileData mappedFile(fd, FileSystem::MappedFileMode::Shared, success);
+    // if (!success)
+    //     return -1;
 
-    const uint8_t* fileData = reinterpret_cast<const uint8_t*>(mappedFile.data());
-    unsigned fileTotalSize = mappedFile.size();
-    if (fileTotalSize == 0)
-        return 0;
+    // const uint8_t* fileData = reinterpret_cast<const uint8_t*>(mappedFile.data());
+    // unsigned fileTotalSize = mappedFile.size();
+    // if (fileTotalSize == 0)
+    //     return 0;
 
-    Ref<JSC::CachedBytecode> cachedBytecode = JSC::CachedBytecode::create(WTFMove(mappedFile));
-    // auto key = JSC::sourceCodeKeyForSerializedModule(vm, sourceCode);
-    // if (isCachedBytecodeStillValid(vm, cachedBytecode.copyRef(), key,
-    //                                JSC::SourceCodeType::ModuleType)) {
-    m_cachedBytecode = WTFMove(cachedBytecode);
-    return 1;
+    // Ref<JSC::CachedBytecode> cachedBytecode = JSC::CachedBytecode::create(WTFMove(mappedFile));
+    // // auto key = JSC::sourceCodeKeyForSerializedModule(vm, sourceCode);
+    // // if (isCachedBytecodeStillValid(vm, cachedBytecode.copyRef(), key,
+    // //                                JSC::SourceCodeType::ModuleType)) {
+    // m_cachedBytecode = WTFMove(cachedBytecode);
+    // return 1;
     // } else {
     //   FileSystem::truncateFile(fd, 0);
     //   return 0;

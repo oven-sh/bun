@@ -87,7 +87,10 @@ pub const SmallExternalStringList = ExternalSlice(String);
 /// The version of the lockfile format, intended to prevent data corruption for format changes.
 format: FormatVersion = .v1,
 
-/// 
+/// Not used yet.
+/// Eventually, this will be a relative path to a parent lockfile
+workspace_path: string = "",
+
 packages: Lockfile.Package.List = Lockfile.Package.List{},
 buffers: Buffers = Buffers{},
 
@@ -145,6 +148,9 @@ pub fn loadFromDisk(this: *Lockfile, allocator: std.mem.Allocator, log: *logger.
 
 pub fn loadFromBytes(this: *Lockfile, buf: []u8, allocator: std.mem.Allocator, log: *logger.Log) LoadFromDiskResult {
     var stream = Stream{ .buffer = buf, .pos = 0 };
+
+    this.workspace_path = "";
+    this.format = FormatVersion.current;
 
     Lockfile.Serializer.load(this, &stream, allocator, log) catch |err| {
         return LoadFromDiskResult{ .err = .{ .step = .parse_file, .value = err } };
@@ -2814,6 +2820,11 @@ pub const Serializer = struct {
         try Lockfile.Buffers.save(this.buffers, z_allocator, StreamType, stream, @TypeOf(&writer), &writer);
         try writer.writeIntLittle(u64, 0);
         const end = try stream.getPos();
+
+        try writer.writeIntLittle(u64, this.workspace_path.len);
+        if (this.workspace_path.len > 0)
+            try writer.writeAll(this.workspace_path);
+
         try writer.writeAll(&alignment_bytes_to_repeat_buffer);
 
         _ = try std.os.pwrite(stream.handle, std.mem.asBytes(&end), pos);
@@ -2854,6 +2865,16 @@ pub const Serializer = struct {
             return error.@"Lockfile is malformed (expected 0 at the end)";
         }
         std.debug.assert(stream.pos == total_buffer_size);
+
+        load_workspace: {
+            const workspace_path_len = reader.readIntLittle(u64) catch break :load_workspace;
+            if (workspace_path_len > 0 and workspace_path_len < std.fs.MAX_PATH_BYTES) {
+                var workspace_path = try allocator.alloc(u8, workspace_path_len);
+                const len = reader.readAll(workspace_path) catch break :load_workspace;
+                lockfile.workspace_path = workspace_path[0..len];
+            }
+        }
+
         lockfile.scratch = Lockfile.Scratch.init(allocator);
 
         {

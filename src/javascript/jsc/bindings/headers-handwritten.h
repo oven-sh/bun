@@ -24,7 +24,7 @@ typedef struct ResolvedSource {
     ZigString source_url;
     uint32_t hash;
     void* allocator;
-    uint64_t bytecodecache_fd;
+    uint64_t tag;
 } ResolvedSource;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;

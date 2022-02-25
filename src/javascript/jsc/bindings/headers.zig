@@ -189,7 +189,6 @@ pub extern fn JSC__JSInternalPromise__resolve(arg0: [*c]JSC__JSInternalPromise, 
 pub extern fn JSC__JSInternalPromise__resolvedPromise(arg0: [*c]JSC__JSGlobalObject, JSValue1: JSC__JSValue) [*c]JSC__JSInternalPromise;
 pub extern fn JSC__JSInternalPromise__result(arg0: [*c]const JSC__JSInternalPromise, arg1: [*c]JSC__VM) JSC__JSValue;
 pub extern fn JSC__JSInternalPromise__status(arg0: [*c]const JSC__JSInternalPromise, arg1: [*c]JSC__VM) u32;
-pub extern fn JSC__JSInternalPromise__then(arg0: [*c]JSC__JSInternalPromise, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]JSC__JSFunction, arg3: [*c]JSC__JSFunction) [*c]JSC__JSInternalPromise;
 pub extern fn JSC__SourceOrigin__fromURL(arg0: [*c]const WTF__URL) bJSC__SourceOrigin;
 pub extern fn JSC__SourceCode__fromString(arg0: [*c]JSC__SourceCode, arg1: [*c]const WTF__String, arg2: [*c]const JSC__SourceOrigin, arg3: [*c]WTF__String, SourceType4: u8) void;
 pub extern fn JSC__JSFunction__calculatedDisplayName(arg0: [*c]JSC__JSFunction, arg1: [*c]JSC__VM) bWTF__String;

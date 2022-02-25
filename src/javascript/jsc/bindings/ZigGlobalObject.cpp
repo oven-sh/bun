@@ -94,6 +94,9 @@ extern "C" void JSCInitialize()
         return;
     has_loaded_jsc = true;
 
+    JSC::Options::useConcurrentJIT() = true;
+    JSC::Options::useSigillCrashAnalyzer() = true;
+    JSC::Options::useWebAssembly() = true;
     JSC::Options::useSourceProviderCache() = true;
     JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
     JSC::Options::exposeInternalModuleLoader() = true;
@@ -113,9 +116,8 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObje
     Bun::JSVMClientData::create(&vm);
 
     vm.heap.acquireAccess();
-#if ENABLE(WEBASSEMBLY)
+
     JSC::Wasm::enableFastMemory();
-#endif
 
     JSC::JSLockHolder locker(vm);
     Zig::GlobalObject* globalObject = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::jsNull()));
@@ -237,8 +239,7 @@ static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObjec
     Zig::GlobalObject* shadow = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::jsNull()));
     shadow->setConsole(shadow);
     size_t count = 0;
-    JSClassRef* globalObjectClass;
-    globalObjectClass = Zig__getAPIGlobals(&count);
+    JSClassRef* globalObjectClass = Zig__getAPIGlobals(&count);
 
     shadow->setConsole(shadow);
     if (count > 0) {
@@ -620,17 +621,33 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
         RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
     }
 
-    auto provider = Zig::SourceProvider::create(res.result.value);
+    if (res.result.value.tag == 1) {
+        auto buffer = Vector<uint8_t>(res.result.value.source_code.ptr, res.result.value.source_code.len);
+        auto source = JSC::SourceCode(
+            JSC::WebAssemblySourceProvider::create(WTFMove(buffer),
+                JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(Zig::toString(res.result.value.source_url))),
+                WTFMove(moduleKey)));
 
-    auto jsSourceCode = JSC::JSSourceCode::create(vm, JSC::SourceCode(provider));
+        auto sourceCode = JSSourceCode::create(vm, WTFMove(source));
+        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
 
-    if (provider.ptr()->isBytecodeCacheEnabled()) {
-        provider.ptr()->readOrGenerateByteCodeCache(vm, jsSourceCode->sourceCode());
+        promise->resolve(globalObject, sourceCode);
+        scope.release();
+
+        globalObject->vm().drainMicrotasks();
+        return promise;
+    } else {
+        auto provider = Zig::SourceProvider::create(res.result.value);
+        auto jsSourceCode = JSC::JSSourceCode::create(vm, JSC::SourceCode(provider));
+        promise->resolve(globalObject, jsSourceCode);
     }
+
+    // if (provider.ptr()->isBytecodeCacheEnabled()) {
+    //     provider.ptr()->readOrGenerateByteCodeCache(vm, jsSourceCode->sourceCode());
+    // }
 
     scope.release();
 
-    promise->resolve(globalObject, jsSourceCode);
     globalObject->vm().drainMicrotasks();
     return promise;
 }

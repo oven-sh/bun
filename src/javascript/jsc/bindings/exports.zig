@@ -225,8 +225,12 @@ pub const ResolvedSource = extern struct {
 
     allocator: ?*anyopaque,
 
-    // 0 means disabled
-    bytecodecache_fd: u64,
+    tag: Tag = Tag.javascript,
+
+    pub const Tag = enum(u64) {
+        javascript = 0,
+        wasm = 1,
+    };
 };
 
 export fn ZigString__free(ptr: [*]const u8, len: usize, allocator_: ?*anyopaque) void {

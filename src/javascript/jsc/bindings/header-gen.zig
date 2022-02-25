@@ -325,10 +325,23 @@ pub const C_Generator = struct {
         self: *Self,
         comptime T: type,
     ) void {
-        const TT = comptime if (@typeInfo(T) == .Pointer and !std.meta.trait.isManyItemPtr(T)) @typeInfo(T).Pointer.child else T;
+        const TT = comptime brk: {
+            var Type = T;
+            if (@typeInfo(Type) == .Optional) {
+                const OtherType = std.meta.Child(Type);
+                if (@typeInfo(OtherType) == .Fn) {
+                    Type = OtherType;
+                }
+            }
+            if (@typeInfo(Type) == .Pointer and !std.meta.trait.isManyItemPtr(Type)) {
+                Type = @typeInfo(Type).Pointer.child;
+            }
+
+            break :brk Type;
+        };
 
         if (comptime (isCppObject(TT)) and @hasDecl(TT, "name")) {
-            if (@typeInfo(T) == .Pointer or @hasDecl(TT, "Type") and @typeInfo(TT.Type) == .Pointer) {
+            if (@typeInfo(T) == .Pointer or (@hasDecl(TT, "Type") and (@TypeOf(TT.Type) == type and @typeInfo(TT.Type) == .Pointer))) {
                 if (@hasDecl(TT, "is_pointer") and !TT.is_pointer) {} else if (@typeInfo(T).Pointer.is_const) {
                     write(self, "const ");
                 }
@@ -377,7 +390,7 @@ pub const C_Generator = struct {
                 write(self, comptime formatted_name);
             }
 
-            if (@typeInfo(T) == .Pointer or @hasDecl(TT, "Type") and @typeInfo(TT.Type) == .Pointer) {
+            if (@typeInfo(T) == .Pointer or (@hasDecl(TT, "Type") and (@TypeOf(TT.Type) == type and @typeInfo(TT.Type) == .Pointer))) {
                 if (@hasDecl(TT, "is_pointer") and !TT.is_pointer) {} else {
                     write(self, "*");
                 }

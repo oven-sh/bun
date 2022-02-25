@@ -2574,7 +2574,7 @@ pub const Bundler = struct {
 
                 output_file.value = .{ .move = file_op };
             },
-            .file => {
+            .wasm, .file => {
                 var hashed_name = try bundler.linker.getHashedFilename(file_path, null);
                 var pathname = try bundler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len);
                 std.mem.copy(u8, pathname, hashed_name);
@@ -2749,7 +2749,7 @@ pub const Bundler = struct {
             break :brk logger.Source.initRecycledFile(Fs.File{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
         };
 
-        if (source.contents.len == 0 or (source.contents.len < 33 and std.mem.trim(u8, source.contents, "\n\r ").len == 0)) {
+        if (loader != .wasm and source.contents.len == 0 and source.contents.len < 33 and std.mem.trim(u8, source.contents, "\n\r ").len == 0) {
             return ParseResult{ .source = source, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };
         }
 
@@ -2849,6 +2849,27 @@ pub const Bundler = struct {
                     .loader = loader,
                     .input_fd = input_fd,
                 };
+            },
+            .wasm => {
+                if (bundler.options.platform.isBun()) {
+                    if (source.contents.len < 4 or @bitCast(u32, source.contents[0..4].*) != @bitCast(u32, [4]u8{ 0, 'a', 's', 'm' })) {
+                        bundler.log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            bundler.allocator,
+                            "Invalid wasm file \"{s}\" (missing magic header)",
+                            .{path.text},
+                        ) catch {};
+                        return null;
+                    }
+
+                    return ParseResult{
+                        .ast = js_ast.Ast.empty,
+                        .source = source,
+                        .loader = loader,
+                        .input_fd = input_fd,
+                    };
+                }
             },
             .css => {},
             else => Global.panic("Unsupported loader {s} for path: {s}", .{ loader, source.path.text }),

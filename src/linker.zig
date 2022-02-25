@@ -259,6 +259,12 @@ pub const Linker = struct {
                             continue;
                         }
 
+                        // if (strings.eqlComptime(import_record.path.text, "process") or strings.eqlComptime(import_record.path.text, "node:process")) {
+                        //     import_record.path.text = "node:process";
+                        //     externals.append(record_index) catch unreachable;
+                        //     continue;
+                        // }
+
                         // TODO: this is technical debt
                         if (linker.options.rewrite_jest_for_tests) {
                             if (strings.eqlComptime(
@@ -744,7 +750,7 @@ pub const Linker = struct {
         import_record.path = try linker.generateImportPath(
             source_dir,
             if (path.is_symlink and import_path_format == .absolute_url and linker.options.platform.isNotBun()) path.pretty else path.text,
-            loader == .file,
+            loader == .file or loader == .wasm,
             path.namespace,
             origin,
             import_path_format,
@@ -758,7 +764,7 @@ pub const Linker = struct {
                 // This saves us a less reliable string check
                 import_record.print_mode = .css;
             },
-            .file => {
+            .wasm, .file => {
                 import_record.print_mode = .import_path;
             },
             else => {},

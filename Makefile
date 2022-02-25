@@ -842,6 +842,9 @@ endif
 
 bun-relink: bun-relink-copy bun-link-lld-release bun-link-lld-release-dsym
 
+wasm-return1:
+	zig build-lib -OReleaseSmall integration/bunjs-only-snippets/wasm-return-1-test.zig -femit-bin=integration/bunjs-only-snippets/wasm-return-1-test.wasm -target wasm32-freestanding
+
 
 # We do this outside of build.zig for performance reasons
 # The C compilation stuff with build.zig is really slow and we don't need to run this as often as the rest
@@ -850,7 +853,8 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 		$(CLANG_FLAGS) $(PLATFORM_LINKER_FLAGS) \
 		-O3 \
 		-fvectorize \
-		-w -g
+		-w -g \
+		-ferror-limit=1000
 
 sizegen:
 	$(CXX) src/javascript/jsc/headergen/sizegen.cpp -o $(BUN_TMP_DIR)/sizegen $(CLANG_FLAGS) -O1

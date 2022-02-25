@@ -76,6 +76,7 @@ const Exception = @import("../../jsc.zig").Exception;
 const ErrorableZigString = @import("../../jsc.zig").ErrorableZigString;
 const ZigGlobalObject = @import("../../jsc.zig").ZigGlobalObject;
 const VM = @import("../../jsc.zig").VM;
+const JSFunction = @import("../../jsc.zig").JSFunction;
 const Config = @import("./config.zig");
 const URL = @import("../../query_string_map.zig").URL;
 const Transpiler = @import("./api/transpiler.zig");
@@ -1466,11 +1467,12 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
     };
 }
 const AsyncTransformTask = @import("./api/transpiler.zig").TransformTask.AsyncTransformTask;
+// const PromiseTask = JSInternalPromise.Completion.PromiseTask;
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
     Microtask,
     AsyncTransformTask,
-
+    // PromiseTask,
     // TimeoutTasklet,
 });
 
@@ -1525,18 +1527,19 @@ pub const VirtualMachine = struct {
         return this.event_loop;
     }
 
-    const EventLoop = struct {
+    pub const EventLoop = struct {
         ready_tasks_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
         pending_tasks_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
         io_tasks_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
         tasks: Queue = undefined,
         concurrent_tasks: Queue = undefined,
         concurrent_lock: Lock = Lock.init(),
+        global: *JSGlobalObject = undefined,
         pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
 
         pub fn tickWithCount(this: *EventLoop) u32 {
             var finished: u32 = 0;
-            var global = VirtualMachine.vm.global;
+            var global = this.global;
             while (this.tasks.readItem()) |task| {
                 switch (task.tag()) {
                     .Microtask => {
@@ -1640,6 +1643,7 @@ pub const VirtualMachine = struct {
         if (!this.has_enabled_macro_mode) {
             this.has_enabled_macro_mode = true;
             this.macro_event_loop.tasks = EventLoop.Queue.init(default_allocator);
+            this.macro_event_loop.global = this.global;
             this.macro_event_loop.concurrent_tasks = EventLoop.Queue.init(default_allocator);
         }
 
@@ -1658,6 +1662,8 @@ pub const VirtualMachine = struct {
     }
 
     pub fn getAPIGlobals() []js.JSClassRef {
+        if (is_bindgen)
+            return &[_]js.JSClassRef{};
         var classes = default_allocator.alloc(js.JSClassRef, GlobalClasses.len) catch return &[_]js.JSClassRef{};
         inline for (GlobalClasses) |Class, i| {
             classes[i] = Class.get().*;
@@ -1734,6 +1740,7 @@ pub const VirtualMachine = struct {
             @intCast(i32, global_classes.len),
             vm.console,
         );
+        VirtualMachine.vm.regular_event_loop.global = VirtualMachine.vm.global;
         VirtualMachine.vm_loaded = true;
 
         if (!source_code_printer_loaded) {
@@ -1793,10 +1800,6 @@ pub const VirtualMachine = struct {
                 .specifier = ZigString.init(bun_file_import_path),
                 .source_url = ZigString.init(bun_file_import_path[1..]),
                 .hash = 0, // TODO
-                .bytecodecache_fd = std.math.lossyCast(u64, vm.node_modules.?.fetchByteCodeCache(
-                    bun_file_import_path[1..],
-                    &vm.bundler.fs.fs,
-                ) orelse 0),
             };
         } else if (vm.node_modules == null and strings.eqlComptime(_specifier, Runtime.Runtime.Imports.Name)) {
             return ResolvedSource{
@@ -1805,7 +1808,6 @@ pub const VirtualMachine = struct {
                 .specifier = ZigString.init(Runtime.Runtime.Imports.Name),
                 .source_url = ZigString.init(Runtime.Runtime.Imports.Name),
                 .hash = Runtime.Runtime.versionHash(),
-                .bytecodecache_fd = 0,
             };
             // This is all complicated because the imports have to be linked and we want to run the printer on it
             // so it consistently handles bundled imports
@@ -1869,7 +1871,6 @@ pub const VirtualMachine = struct {
                 .specifier = ZigString.init(std.mem.span(main_file_name)),
                 .source_url = ZigString.init(std.mem.span(main_file_name)),
                 .hash = 0,
-                .bytecodecache_fd = 0,
             };
         } else if (_specifier.len > js_ast.Macro.namespaceWithColon.len and
             strings.eqlComptimeIgnoreLen(_specifier[0..js_ast.Macro.namespaceWithColon.len], js_ast.Macro.namespaceWithColon))
@@ -1881,7 +1882,6 @@ pub const VirtualMachine = struct {
                     .specifier = ZigString.init(_specifier),
                     .source_url = ZigString.init(_specifier),
                     .hash = 0,
-                    .bytecodecache_fd = 0,
                 };
             }
         } else if (strings.eqlComptime(_specifier, "node:fs")) {
@@ -1891,7 +1891,6 @@ pub const VirtualMachine = struct {
                 .specifier = ZigString.init("node:fs"),
                 .source_url = ZigString.init("node:fs"),
                 .hash = 0,
-                .bytecodecache_fd = 0,
             };
         } else if (strings.eqlComptime(_specifier, "node:path")) {
             return ResolvedSource{
@@ -1900,7 +1899,6 @@ pub const VirtualMachine = struct {
                 .specifier = ZigString.init("node:path"),
                 .source_url = ZigString.init("node:path"),
                 .hash = 0,
-                .bytecodecache_fd = 0,
             };
         }
 
@@ -2011,9 +2009,49 @@ pub const VirtualMachine = struct {
                     .specifier = ZigString.init(specifier),
                     .source_url = ZigString.init(path.text),
                     .hash = 0,
-                    .bytecodecache_fd = 0,
                 };
             },
+            // .wasm => {
+            //     vm.transpiled_count += 1;
+            //     var fd: ?StoredFileDescriptorType = null;
+
+            //     var allocator = if (vm.has_loaded) vm.arena.allocator() else vm.allocator;
+
+            //     const hash = http.Watcher.getHash(path.text);
+            //     if (vm.watcher) |watcher| {
+            //         if (watcher.indexOf(hash)) |index| {
+            //             const _fd = watcher.watchlist.items(.fd)[index];
+            //             fd = if (_fd > 0) _fd else null;
+            //         }
+            //     }
+
+            //     var parse_options = Bundler.ParseOptions{
+            //         .allocator = allocator,
+            //         .path = path,
+            //         .loader = loader,
+            //         .dirname_fd = 0,
+            //         .file_descriptor = fd,
+            //         .file_hash = hash,
+            //         .macro_remappings = MacroRemap{},
+            //         .jsx = vm.bundler.options.jsx,
+            //     };
+
+            //     var parse_result = vm.bundler.parse(
+            //         parse_options,
+            //         null,
+            //     ) orelse {
+            //         return error.ParseError;
+            //     };
+
+            //     return ResolvedSource{
+            //         .allocator = if (vm.has_loaded) &vm.allocator else null,
+            //         .source_code = ZigString.init(vm.allocator.dupe(u8, parse_result.source.contents) catch unreachable),
+            //         .specifier = ZigString.init(specifier),
+            //         .source_url = ZigString.init(path.text),
+            //         .hash = 0,
+            //         .tag = ResolvedSource.Tag.wasm,
+            //     };
+            // },
             else => {
                 return ResolvedSource{
                     .allocator = &vm.allocator,
@@ -2021,7 +2059,6 @@ pub const VirtualMachine = struct {
                     .specifier = ZigString.init(path.text),
                     .source_url = ZigString.init(path.text),
                     .hash = 0,
-                    .bytecodecache_fd = 0,
                 };
             },
         }

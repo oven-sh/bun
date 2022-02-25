@@ -1275,6 +1275,13 @@ pub const Writable = struct {
     pub const Chunk = struct {
         data: StringOrBuffer,
         encoding: Encoding = Encoding.utf8,
+
+        pub fn init(allocator: std.mem.Allocator, size: u32) !Chunk {
+            var bytes = try allocator.alloc(u8, size);
+            return Chunk{
+                .data = JSC.ArrayBuffer.fromBytes(bytes, JSC.JSValue.JSType.Uint8Array),
+            };
+        }
     };
 
     pub const Pipe = struct {
@@ -1402,6 +1409,20 @@ pub const Writable = struct {
                 .result => return,
             }
         }
+
+        // fn runGeneric(this: *Pipe, pipeline: *Pipeline) !void {
+        //     var source = this.source;
+        //     var destination = this.destination;
+        //     const source_content_type = source.content_type;
+        //     const destination_content_type = destination.content_type;
+
+        //     if (this.chunk == null) {
+        //         this.chunk = try this.source.allocator.create(Chunk);
+        //         this.chunk.?.* = try Chunk.init(this.source.allocator, this.source.sink.readable.state.highwater_mark);
+        //     }
+
+        //     source.readInto
+        // }
 
         pub fn run(this: *Pipe, pipeline: *Pipeline) void {
             var source = this.source;
@@ -2160,7 +2181,12 @@ pub const Path = struct {
 
         return std.fs.path.isAbsoluteWindows(zig_str.slice());
     }
-    pub fn join(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
+    pub fn join(
+        globalThis: *JSC.JSGlobalObject,
+        isWindows: bool,
+        args_ptr: [*]JSC.JSValue,
+        args_len: u16,
+    ) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
         if (args_len == 0) return JSC.ZigString.init("").toValue(globalThis);
 
@@ -2445,6 +2471,7 @@ pub const Process = struct {
         const slice = to.sliceZBuf(&buf) catch {
             return JSC.toInvalidArguments("Invalid path", .{}, globalObject.ref());
         };
+
         const result = Syscall.chdir(slice);
 
         switch (result) {
@@ -2455,14 +2482,22 @@ pub const Process = struct {
                 // When we update the cwd from JS, we have to update the bundler's version as well
                 // However, this might be called many times in a row, so we use a pre-allocated buffer
                 // that way we don't have to worry about garbage collector
-                var trimmed = std.mem.trimRight(u8, buf[0..slice.len], std.fs.path.sep_str);
-                buf[trimmed.len] = std.fs.path.sep;
-                const with_trailing_slash = buf[0 .. trimmed.len + 1];
-                std.mem.copy(u8, &JSC.VirtualMachine.vm.bundler.fs.top_level_dir_buf, with_trailing_slash);
-                JSC.VirtualMachine.vm.bundler.fs.top_level_dir = JSC.VirtualMachine.vm.bundler.fs.top_level_dir_buf[0..with_trailing_slash.len];
+                JSC.VirtualMachine.vm.bundler.fs.top_level_dir = std.os.getcwd(&JSC.VirtualMachine.vm.bundler.fs.top_level_dir_buf) catch {
+                    _ = Syscall.chdir(std.meta.assumeSentinel(JSC.VirtualMachine.vm.bundler.fs.top_level_dir, 0));
+                    return JSC.toInvalidArguments("Invalid path", .{}, globalObject.ref());
+                };
+
+                JSC.VirtualMachine.vm.bundler.fs.top_level_dir_buf[JSC.VirtualMachine.vm.bundler.fs.top_level_dir.len] = std.fs.path.sep;
+                JSC.VirtualMachine.vm.bundler.fs.top_level_dir_buf[JSC.VirtualMachine.vm.bundler.fs.top_level_dir.len + 1] = 0;
+                JSC.VirtualMachine.vm.bundler.fs.top_level_dir = JSC.VirtualMachine.vm.bundler.fs.top_level_dir_buf[0 .. JSC.VirtualMachine.vm.bundler.fs.top_level_dir.len + 1];
+
                 return JSC.JSValue.jsUndefined();
             },
         }
+    }
+
+    pub fn exit(_: *JSC.JSGlobalObject, code: i32) callconv(.C) void {
+        std.os.exit(@truncate(u8, @intCast(u32, @maximum(code, 0))));
     }
 
     pub export const Bun__version: [:0]const u8 = "v" ++ _global.Global.package_json_version;

@@ -45,11 +45,11 @@ public:
     StringView source() const { return StringView(m_source.get()); }
     RefPtr<JSC::CachedBytecode> cachedBytecode()
     {
-        if (m_resolvedSource.bytecodecache_fd == 0) {
-            return nullptr;
-        }
+        // if (m_resolvedSource.bytecodecache_fd == 0) {
+        return nullptr;
+        // }
 
-        return m_cachedBytecode;
+        // return m_cachedBytecode;
     };
 
     void updateCache(const UnlinkedFunctionExecutable* executable, const SourceCode&,
@@ -73,6 +73,7 @@ private:
         m_resolvedSource = resolvedSource;
 
         m_hash = resolvedSource.hash;
+
         getHash();
     }
 

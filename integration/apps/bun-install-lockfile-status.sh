@@ -32,11 +32,6 @@ diff <(echo "$ORIG_LOCKFILE") <(echo "$NEW_LOCKFILE") || {
     exit 1
 }
 
-[[ -z $(git status --untracked-files=no --porcelain) ]] || {
-    echo "ERR: Expected empty git status, got '$(git status --untracked-files=no --porcelain)'"
-    exit 1
-}
-
 ORIG_HASH=$($BUN_BIN bun.lockb --hash)
 
 $BUN_BIN remove react
@@ -44,12 +39,10 @@ $BUN_BIN add react
 
 NEW_HASH=$($BUN_BIN bun.lockb --hash)
 
-if "$ORIG_HASH" != "$NEW_HASH"; then
+diff <(echo "$ORIG_HASH") <(echo "$NEW_HASH") || {
     echo "ERR: Expected hash to be unchanged, got '$NEW_HASH'"
     exit 1
-fi
-
-[
+}
 
 echo '{ "dependencies": { "react": "17.0.2", "react-dom": "17.0.2" } }' >package.json
 

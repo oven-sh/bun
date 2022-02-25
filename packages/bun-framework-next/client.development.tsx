@@ -339,12 +339,13 @@ export async function _boot(EntryPointNamespace, isError) {
 
   globalThis.next.router = router;
 
-  const domEl = document.querySelector("#__next");
+  var domEl = document.querySelector("#__next");
 
   if (!domEl) {
-    throw new BootError(
-      "Expected #__next to be in the DOM. That means Next.js failed to start"
-    );
+    const nextEl = document.createElement("div");
+    nextEl.id = "__next";
+    document.body.appendChild(nextEl);
+    domEl = nextEl;
   }
 
   const reactEl = (

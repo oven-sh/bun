@@ -51,7 +51,11 @@ function appendNextBody(html: string, docPropsHtml) {
       );
     }
 
-    return html.substring(0, start) + docPropsHtml + html.substring(end);
+    return (
+      html.substring(0, start) +
+      `<div id="__next">${docPropsHtml || ""}</div>` +
+      html.substring(end)
+    );
   }
 }
 

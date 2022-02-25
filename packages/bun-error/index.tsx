@@ -692,13 +692,25 @@ const StackFrameIdentifier = ({
   }
 };
 
+const getNativeStackFrameIdentifier = (frame) => {
+  const { file, function_name: functionName, scope } = frame;
+
+  return StackFrameIdentifier({
+    functionName,
+    scope,
+    markdown: false,
+  });
+};
+
 const NativeStackFrame = ({
   frame,
   isTop,
+  maxLength,
   urlBuilder,
 }: {
   frame: StackFrame;
   isTop: boolean;
+  maxLength: number;
 }) => {
   const { cwd } = useContext(ErrorGroupContext);
   const {
@@ -717,8 +729,9 @@ const NativeStackFrame = ({
       <div
         title={StackFrameScope[scope]}
         className="BunError-StackFrame-identifier"
+        style={{ "--max-length": `${maxLength}ch` }}
       >
-        <StackFrameIdentifier functionName={functionName} scope={scope} />
+        {getNativeStackFrameIdentifier(frame)}
       </div>
 
       <a
@@ -745,13 +758,31 @@ const NativeStackFrame = ({
 
 const NativeStackFrames = ({ frames, urlBuilder }) => {
   const items = new Array(frames.length);
+  var maxLength = 0;
+
   for (let i = 0; i < frames.length; i++) {
-    items[i] = (
-      <NativeStackFrame urlBuilder={urlBuilder} key={i} frame={frames[i]} />
+    maxLength = Math.max(
+      getNativeStackFrameIdentifier(frames[i]).length,
+      maxLength
     );
   }
 
-  return <div className="BunError-StackFrames">{items}</div>;
+  for (let i = 0; i < frames.length; i++) {
+    items[i] = (
+      <NativeStackFrame
+        maxLength={maxLength}
+        urlBuilder={urlBuilder}
+        key={i}
+        frame={frames[i]}
+      />
+    );
+  }
+
+  return (
+    <div className="BunError-StackFrames-container">
+      <div className="BunError-StackFrames">{items}</div>
+    </div>
+  );
 };
 
 const NativeStackTrace = ({

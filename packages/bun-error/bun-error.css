@@ -3,6 +3,7 @@
   --bun-error-monospace: ui-monospace, Menlo, Monaco, "Cascadia Mono",
     "Segoe UI Mono", "Roboto Mono", "Oxygen Mono", "Ubuntu Monospace",
     "Source Code Pro", "Fira Mono", "Droid Sans Mono", "Courier New", monospace;
+  --bun-error-width: 512px;
 }
 
 :host a {
@@ -21,7 +22,7 @@
   border: inset 1px solid rgba(0, 0, 0, 0.2);
   border-radius: 17px;
   background-color: rgba(255, 255, 255, 0.92);
-  width: 512px;
+  width: var(--bun-error-width);
 
   position: fixed;
   top: 120px;
@@ -363,10 +364,13 @@
 }
 
 .BunError-StackFrame-link {
+  text-align: right;
 }
 
 .BunError-StackFrame-link-content {
   display: flex;
+  justify-content: flex-end;
+  text-align: right;
   gap: 0.25ch;
   white-space: nowrap;
 }
@@ -375,11 +379,20 @@
   display: table-row;
 }
 
+.BunError-StackFrame:hover {
+  border-left-color: #5865f2;
+}
+
 .BunError-StackFrame-identifier {
   padding-right: 18px;
   font-size: 0.8em;
   font-family: var(--bun-error-monospace);
   letter-spacing: 0.49px;
+  width: var(--max-length, auto);
+  max-width: 48ch;
+  white-space: nowrap;
+  text-overflow: clip;
+  overflow: hidden;
 }
 
 .BunError-error-message--mono {
@@ -411,4 +424,9 @@
   border-spacing: 12px 6px;
 
   background-color: rgb(244, 244, 244);
+}
+
+.BunError-StackFrames-container {
+  overflow-x: auto;
+  max-width: var(--bun-error-width);
 }

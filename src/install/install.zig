@@ -2662,20 +2662,13 @@ pub const PackageManager = struct {
                     this.native_bin_link_allowlist = buf;
                 }
 
-                if (bun_install.production) |production| {
-                    if (production) {
-                        this.local_package_features.dev_dependencies = false;
-                        this.enable.fail_early = true;
-                        this.enable.frozen_lockfile = true;
-                    }
-                }
-
                 if (bun_install.save_yarn_lockfile orelse false) {
                     this.do.save_yarn_lock = true;
                 }
 
                 if (bun_install.save_lockfile) |save_lockfile| {
                     this.do.save_lockfile = save_lockfile;
+                    this.enable.force_save_lockfile = true;
                 }
 
                 if (bun_install.save_dev) |save| {
@@ -2684,6 +2677,15 @@ pub const PackageManager = struct {
 
                 if (bun_install.save_peer) |save| {
                     this.remote_package_features.peer_dependencies = save;
+                }
+
+                if (bun_install.production) |production| {
+                    if (production) {
+                        this.local_package_features.dev_dependencies = false;
+                        this.enable.fail_early = true;
+                        this.enable.frozen_lockfile = true;
+                        this.enable.force_save_lockfile = false;
+                    }
                 }
 
                 if (bun_install.save_optional) |save| {
@@ -2910,6 +2912,7 @@ pub const PackageManager = struct {
                 if (cli.force) {
                     this.enable.manifest_cache_control = false;
                     this.enable.force_install = true;
+                    this.enable.force_save_lockfile = true;
                 }
 
                 this.update.development = cli.development;
@@ -2934,6 +2937,10 @@ pub const PackageManager = struct {
             /// Disabled because it doesn't actually reduce the number of packages we end up installing
             /// Probably need to be a little smarter
             deduplicate_packages: bool = false,
+
+            // Don't save the lockfile unless there were actual changes
+            // unless...
+            force_save_lockfile: bool = false,
 
             force_install: bool = false,
         };
@@ -4809,7 +4816,9 @@ pub const PackageManager = struct {
         // sleep on since we might not need it anymore
         NetworkThread.global.pool.sleep_on_idle_network_thread = true;
 
-        if (had_any_diffs or needs_new_lockfile or manager.package_json_updates.len > 0) {
+        const needs_clean_lockfile = had_any_diffs or needs_new_lockfile or manager.package_json_updates.len > 0;
+
+        if (needs_clean_lockfile) {
             manager.lockfile = try manager.lockfile.clean(manager.package_json_updates);
         }
 
@@ -4828,7 +4837,16 @@ pub const PackageManager = struct {
             try manager.setupGlobalDir(&ctx);
         }
 
-        if (manager.options.do.save_lockfile) {
+        // We don't always save the lockfile.
+        // This is for two reasons.
+        // 1. It's unnecessary work if there are no changes
+        // 2. There is a determinism issue in the file where alignment bytes might be garbage data
+        //    This is a bug that needs to be fixed, however we can work around it for now
+        //    by avoiding saving the lockfile
+        if (manager.options.do.save_lockfile and (needs_clean_lockfile or
+            manager.lockfile.isEmpty() or
+            manager.options.enable.force_save_lockfile))
+        {
             save: {
                 if (manager.lockfile.isEmpty()) {
                     if (!manager.options.dry_run) {

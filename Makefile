@@ -680,11 +680,17 @@ test-create-next:
 test-bun-run: 
 	cd integration/apps && BUN_BIN=$(RELEASE_BUN) bash ./bun-run-check.sh
 
-test-bun-install: 
+test-bun-install: test-bun-install-git-status
 	cd integration/apps && JS_RUNTIME=$(RELEASE_BUN) NPM_CLIENT=$(RELEASE_BUN) bash ./bun-install.sh
 
-test-dev-bun-install: 
+test-bun-install-git-status:
+	cd integration/apps && JS_RUNTIME=$(RELEASE_BUN) BUN_BIN=$(RELEASE_BUN) bash ./bun-install-lockfile-status.sh
+
+test-dev-bun-install: test-dev-bun-install-git-status
 	cd integration/apps && JS_RUNTIME=$(DEBUG_BUN) NPM_CLIENT=$(DEBUG_BUN) bash ./bun-install.sh
+
+test-dev-bun-install-git-status:
+	cd integration/apps && BUN_BIN=$(DEBUG_BUN) bash ./bun-install-lockfile-status.sh
 
 test-create-react: 
 	BUN_BIN=$(RELEASE_BUN) bash integration/apps/bun-create-react.sh

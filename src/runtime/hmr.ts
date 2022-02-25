@@ -679,7 +679,6 @@ if (typeof window !== "undefined") {
     }
     static onError(event: ErrorEvent) {
       if ("error" in event && !!event.error) {
-        console.error(event.error);
         BunError.render(
           event.error,
           HMRClient.client ? HMRClient.client.cwd : ""

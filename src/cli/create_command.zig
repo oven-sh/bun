@@ -45,7 +45,7 @@ const CopyFile = @import("../copy_file.zig");
 var bun_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 const Futex = @import("../futex.zig");
 
-const target_nextjs_version = "12.0.2";
+const target_nextjs_version = "12.1.0";
 pub var initialized_store = false;
 pub fn initializeStore() void {
     if (initialized_store) return;

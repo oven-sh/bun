@@ -497,6 +497,10 @@ pub const RequestContext = struct {
                     _path = tmp_buildfile_buf[0 .. relative_unrooted_path.len + "/index.html".len];
                 }
 
+                if (extensionless and !strings.eqlComptime(std.fs.path.extension(_path), ".html")) {
+                    break;
+                }
+
                 if (public_dir.openFile(_path, .{})) |file| {
                     const __path = _path;
                     relative_unrooted_path = __path;
@@ -3645,7 +3649,7 @@ pub const Server = struct {
                     // Note: the public folder may actually just be the root folder
                     // In this case, we only check if the pathname has no extension
                     if (!finished) {
-                        if (req_ctx.matchPublicFolder(comptime features.public_folder != .first)) |result| {
+                        if (req_ctx.matchPublicFolder(comptime features.public_folder == .last or features.single_page_app_routing)) |result| {
                             finished = true;
                             req_ctx.renderServeResult(result) catch |err| {
                                 Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
@@ -3854,18 +3858,36 @@ pub const Server = struct {
                 },
             );
         } else if (server.bundler.options.routes.static_dir_enabled) {
-            if (!public_folder_is_top_level) {
-                try server.run(
-                    ConnectionFeatures{
-                        .public_folder = .first,
-                    },
-                );
+            if (server.bundler.options.routes.single_page_app_routing) {
+                if (!public_folder_is_top_level) {
+                    try server.run(
+                        ConnectionFeatures{
+                            .public_folder = .first,
+                            .single_page_app_routing = true,
+                        },
+                    );
+                } else {
+                    try server.run(
+                        ConnectionFeatures{
+                            .public_folder = .last,
+                            .single_page_app_routing = true,
+                        },
+                    );
+                }
             } else {
-                try server.run(
-                    ConnectionFeatures{
-                        .public_folder = .last,
-                    },
-                );
+                if (!public_folder_is_top_level) {
+                    try server.run(
+                        ConnectionFeatures{
+                            .public_folder = .first,
+                        },
+                    );
+                } else {
+                    try server.run(
+                        ConnectionFeatures{
+                            .public_folder = .last,
+                        },
+                    );
+                }
             }
         } else if (server.bundler.options.routes.single_page_app_routing) {
             try server.run(

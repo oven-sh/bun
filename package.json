@@ -1,7 +1,7 @@
 {
   "dependencies": {
     "peechy": "0.4.24",
-    "react": "latest"
+    "react": "^17.0.2"
   },
   "scripts": {
     "build-runtime": "esbuild --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME > src/runtime.out.js; cat src/runtime.footer.js >> src/runtime.out.js",

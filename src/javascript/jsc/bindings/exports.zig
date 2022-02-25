@@ -344,6 +344,7 @@ pub const Process = extern struct {
     pub const getArgv = JSC.Node.Process.getArgv;
     pub const getCwd = JSC.Node.Process.getCwd;
     pub const setCwd = JSC.Node.Process.setCwd;
+    pub const exit = JSC.Node.Process.exit;
 
     pub const Export = shim.exportFunctions(.{
         .@"getTitle" = getTitle,
@@ -351,6 +352,7 @@ pub const Process = extern struct {
         .@"getArgv" = getArgv,
         .@"getCwd" = getCwd,
         .@"setCwd" = setCwd,
+        .@"exit" = exit,
     });
 
     comptime {
@@ -369,6 +371,9 @@ pub const Process = extern struct {
             });
             @export(setCwd, .{
                 .name = Export[4].symbol_name,
+            });
+            @export(exit, .{
+                .name = Export[5].symbol_name,
             });
         }
     }

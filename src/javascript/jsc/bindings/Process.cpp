@@ -103,6 +103,20 @@ static JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+static JSC_DECLARE_HOST_FUNCTION(Process_functionExit);
+static JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    if (callFrame->argumentCount() == 0) {
+        // TODO: exitCode
+        Bun__Process__exit(globalObject, 0);
+    } else {
+        Bun__Process__exit(globalObject, callFrame->argument(0).toInt32(globalObject));
+    }
+
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
 static JSC_DECLARE_HOST_FUNCTION(Process_functionChdir);
 
 static JSC_DEFINE_HOST_FUNCTION(Process_functionChdir,
@@ -122,6 +136,8 @@ static JSC_DEFINE_HOST_FUNCTION(Process_functionChdir,
         scope.throwException(globalObject, obj);
         return JSValue::encode(JSC::jsUndefined());
     }
+
+    scope.release();
 
     return JSC::JSValue::encode(result);
 }
@@ -162,12 +178,20 @@ void Process::finishCreation(JSC::VM& vm)
             WTF::String("chdir"), Process_functionChdir),
         0);
 
+    this->putDirect(vm, JSC::Identifier::fromString(vm, "exit"_s),
+        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
+            WTF::String("exit"), Process_functionExit),
+        0);
+
     putDirectCustomAccessor(
         vm, clientData->builtinNames().versionsPublicName(),
         JSC::CustomGetterSetter::create(vm, Process_getVersionsLazy, Process_setVersionsLazy), 0);
     // this should be transpiled out, but just incase
     this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "browser"),
         JSC::JSValue(false));
+
+    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "exitCode"),
+        JSC::JSValue(JSC::jsNumber(0)));
 
     this->putDirect(this->vm(), clientData->builtinNames().versionPublicName(),
         JSC::jsString(this->vm(), WTF::String(Bun__version)));

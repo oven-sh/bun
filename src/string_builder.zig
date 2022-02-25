@@ -2,6 +2,7 @@ const string = @import("string_types.zig").string;
 const Allocator = @import("std").mem.Allocator;
 const assert = @import("std").debug.assert;
 const copy = @import("std").mem.copy;
+const Env = @import("./env.zig");
 
 const StringBuilder = @This();
 
@@ -19,28 +20,46 @@ pub fn allocate(this: *StringBuilder, allocator: Allocator) !void {
     this.len = 0;
 }
 
+pub fn deinit(this: *StringBuilder, allocator: Allocator) void {
+    if (this.ptr == null or this.cap == 0) return;
+    allocator.free(this.ptr.?[0..this.cap]);
+}
+
 pub fn append(this: *StringBuilder, slice: string) string {
-    assert(this.len <= this.cap); // didn't count everything
-    assert(this.ptr != null); // must call allocate first
+    if (Env.allow_assert) {
+        assert(this.len <= this.cap); // didn't count everything
+        assert(this.ptr != null); // must call allocate first
+    }
 
     copy(u8, this.ptr.?[this.len..this.cap], slice);
     const result = this.ptr.?[this.len..this.cap][0..slice.len];
     this.len += slice.len;
 
-    assert(this.len <= this.cap);
+    if (Env.allow_assert) {
+        assert(this.len <= this.cap);
+    }
+
     return result;
 }
 
 const std = @import("std");
 pub fn fmt(this: *StringBuilder, comptime str: string, args: anytype) string {
-    assert(this.len <= this.cap); // didn't count everything
-    assert(this.ptr != null); // must call allocate first
+    if (Env.allow_assert) {
+        assert(this.len <= this.cap); // didn't count everything
+        assert(this.ptr != null); // must call allocate first
+    }
 
     var buf = this.ptr.?[this.len..this.cap];
     const out = std.fmt.bufPrint(buf, str, args) catch unreachable;
     this.len += out.len;
 
-    assert(this.len <= this.cap);
+    if (Env.allow_assert) {
+        assert(this.len <= this.cap);
+    }
 
     return out;
+}
+
+pub fn fmtCount(this: *StringBuilder, comptime str: string, args: anytype) void {
+    this.cap += std.fmt.count(str, args);
 }

@@ -686,6 +686,8 @@ const AddCompletions = @import("./cli/add_completions.zig");
 
 pub const PrintBundleCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
+        @setCold(true);
+
         const entry_point = ctx.args.entry_points[0];
         var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         var stdout = std.io.getStdOut();
@@ -1053,12 +1055,20 @@ pub const Command = struct {
                     }
 
                     if (strings.eqlComptime(extension, ".lockb")) {
+                        for (std.os.argv) |arg| {
+                            if (strings.eqlComptime(std.mem.span(arg), "--hash")) {
+                                try PackageManagerCommand.printHash(ctx, ctx.args.entry_points[0]);
+                                return;
+                            }
+                        }
+
                         try Install.Lockfile.Printer.print(
                             ctx.allocator,
                             ctx.log,
                             ctx.args.entry_points[0],
                             .yarn,
                         );
+
                         return;
                     }
                 }

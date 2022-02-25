@@ -10,6 +10,34 @@ const Path = @import("../resolver/resolve_path.zig");
 
 pub const PackageManagerCommand = struct {
     pub fn printHelp(_: std.mem.Allocator) void {}
+    pub fn printHash(ctx: Command.Context, lockfile_: []const u8) !void {
+        @setCold(true);
+        var lockfile_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        @memcpy(&lockfile_buffer, lockfile_.ptr, lockfile_.len);
+        lockfile_buffer[lockfile_.len] = 0;
+        var lockfile = lockfile_buffer[0..lockfile_.len :0];
+        var pm = try PackageManager.init(ctx, null, &PackageManager.install_params);
+
+        const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, lockfile);
+        if (load_lockfile == .not_found) {
+            if (pm.options.log_level != .silent)
+                Output.prettyError("Lockfile not found", .{});
+            Global.exit(1);
+        }
+
+        if (load_lockfile == .err) {
+            if (pm.options.log_level != .silent)
+                Output.prettyError("Error loading lockfile: {s}", .{@errorName(load_lockfile.err.value)});
+            Global.exit(1);
+        }
+
+        Output.flush();
+        Output.disableBuffering();
+        try Output.writer().print("{}", .{load_lockfile.ok.fmtMetaHash()});
+        Output.enableBuffering();
+        Global.exit(0);
+    }
+
     pub fn exec(ctx: Command.Context) !void {
         var args = try std.process.argsAlloc(ctx.allocator);
         args = args[1..];
@@ -57,6 +85,62 @@ pub const PackageManagerCommand = struct {
 
             Output.flush();
             return;
+        } else if (strings.eqlComptime(first, "hash")) {
+            const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
+            if (load_lockfile == .not_found) {
+                if (pm.options.log_level != .silent)
+                    Output.prettyError("Lockfile not found", .{});
+                Global.exit(1);
+            }
+
+            if (load_lockfile == .err) {
+                if (pm.options.log_level != .silent)
+                    Output.prettyError("Error loading lockfile: {s}", .{@errorName(load_lockfile.err.value)});
+                Global.exit(1);
+            }
+
+            _ = try pm.lockfile.hasMetaHashChanged(false);
+
+            Output.flush();
+            Output.disableBuffering();
+            try Output.writer().print("{}", .{load_lockfile.ok.fmtMetaHash()});
+            Output.enableBuffering();
+            Global.exit(0);
+        } else if (strings.eqlComptime(first, "hash-print")) {
+            const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
+            if (load_lockfile == .not_found) {
+                if (pm.options.log_level != .silent)
+                    Output.prettyError("Lockfile not found", .{});
+                Global.exit(1);
+            }
+
+            if (load_lockfile == .err) {
+                if (pm.options.log_level != .silent)
+                    Output.prettyError("Error loading lockfile: {s}", .{@errorName(load_lockfile.err.value)});
+                Global.exit(1);
+            }
+
+            Output.flush();
+            Output.disableBuffering();
+            try Output.writer().print("{}", .{load_lockfile.ok.fmtMetaHash()});
+            Output.enableBuffering();
+            Global.exit(0);
+        } else if (strings.eqlComptime(first, "hash-string")) {
+            const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
+            if (load_lockfile == .not_found) {
+                if (pm.options.log_level != .silent)
+                    Output.prettyError("Lockfile not found", .{});
+                Global.exit(1);
+            }
+
+            if (load_lockfile == .err) {
+                if (pm.options.log_level != .silent)
+                    Output.prettyError("Error loading lockfile: {s}", .{@errorName(load_lockfile.err.value)});
+                Global.exit(1);
+            }
+
+            _ = try pm.lockfile.hasMetaHashChanged(true);
+            Global.exit(0);
         }
     }
 };

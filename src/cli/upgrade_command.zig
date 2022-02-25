@@ -340,6 +340,8 @@ pub const UpgradeCommand = struct {
     const exe_subpath = Version.folder_name ++ std.fs.path.sep_str ++ "bun";
 
     pub fn exec(ctx: Command.Context) !void {
+        @setCold(true);
+
         _exec(ctx) catch |err| {
             Output.prettyErrorln("<r>bun upgrade failed with error: <red><b>{s}<r>\n\n<cyan>Please upgrade manually<r>:\n  <b>curl https://bun.sh/install | bash<r>\n\n", .{@errorName(err)});
             Output.flush();

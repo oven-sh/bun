@@ -2925,6 +2925,7 @@ pub const PackageManager = struct {
             load_lockfile: bool = true,
             install_packages: bool = true,
             save_yarn_lock: bool = false,
+            print_meta_hash_string: bool = false,
         };
 
         pub const Enable = struct {
@@ -4817,7 +4818,7 @@ pub const PackageManager = struct {
         NetworkThread.global.pool.sleep_on_idle_network_thread = true;
 
         const needs_clean_lockfile = had_any_diffs or needs_new_lockfile or manager.package_json_updates.len > 0;
-
+        var did_meta_hash_change = needs_clean_lockfile;
         if (needs_clean_lockfile) {
             manager.lockfile = try manager.lockfile.clean(manager.package_json_updates);
         }
@@ -4833,6 +4834,12 @@ pub const PackageManager = struct {
             manager.lockfile.verifyResolutions(manager.options.local_package_features, manager.options.remote_package_features, log_level);
         }
 
+        if (needs_clean_lockfile or manager.options.enable.force_save_lockfile) {
+            did_meta_hash_change = try manager.lockfile.hasMetaHashChanged(
+                PackageManager.verbose_install or manager.options.do.print_meta_hash_string,
+            );
+        }
+
         if (manager.options.global) {
             try manager.setupGlobalDir(&ctx);
         }
@@ -4843,7 +4850,7 @@ pub const PackageManager = struct {
         // 2. There is a determinism issue in the file where alignment bytes might be garbage data
         //    This is a bug that needs to be fixed, however we can work around it for now
         //    by avoiding saving the lockfile
-        if (manager.options.do.save_lockfile and (needs_clean_lockfile or
+        if (manager.options.do.save_lockfile and (did_meta_hash_change or
             manager.lockfile.isEmpty() or
             manager.options.enable.force_save_lockfile))
         {
@@ -4928,6 +4935,12 @@ pub const PackageManager = struct {
                 try Lockfile.Printer.Tree.print(&printer, Output.WriterType, Output.writer(), true);
             } else {
                 try Lockfile.Printer.Tree.print(&printer, Output.WriterType, Output.writer(), false);
+            }
+
+            if (!did_meta_hash_change) {
+                manager.summary.remove = 0;
+                manager.summary.add = 0;
+                manager.summary.update = 0;
             }
 
             var printed_timestamp = false;

@@ -5,7 +5,7 @@ set -euo pipefail
 dir=$(mktemp -d --suffix=bun-install-test-1)
 
 cd $dir
-${NPM_CLIENT:-$(which bun)} add react react-dom @types/react
+${NPM_CLIENT:-$(which bun)} add react react-dom @types/react @babel/parser esbuild
 
 echo "console.log(typeof require(\"react\").createElement);" >index.js
 chmod +x index.js
@@ -24,6 +24,12 @@ echo "console.log(typeof require(\"react-dom\").render);" >index.js
 chmod +x index.js
 
 JS_RUNTIME=${JS_RUNTIME:-"$(which bun)"}
+
+# If this fails to run, it means we didn't link @babel/parser correctly
+realpath -e ./node_modules/.bin/parser
+
+# If this fails to run, it means we didn't link esbuild correctly
+./node_modules/.bin/esbuild --version >/dev/null
 
 if [ "$JS_RUNTIME" == "node" ]; then
     result="$(node ./index.js)"

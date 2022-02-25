@@ -23,9 +23,37 @@ import * as NextDocument from "next/document";
 import * as ReactDOMServer from "react-dom/server.browser";
 import * as React from "react";
 import * as ReactIs from "react-is";
+import nextPackage from "next/package.json";
 
-// This constant was removed from Next, Is it doing anything?
-const BODY_RENDER_TARGET = "__NEXT_BODY_RENDER_TARGET__";
+function appendNextBody(html: string, docPropsHtml) {
+  if (nextPackage.version.startsWith("12.0")) {
+    const NEXT_12_0_BODY_RENDER_TARGET = "__NEXT_BODY_RENDER_TARGET__";
+
+    const bodyRenderIdx = html.indexOf(NEXT_12_0_BODY_RENDER_TARGET);
+
+    return (
+      html.substring(0, bodyRenderIdx) +
+      docPropsHtml +
+      html.substring(bodyRenderIdx + NEXT_12_0_BODY_RENDER_TARGET.length)
+    );
+  } else {
+    const end = html.lastIndexOf("</next-js-internal-body-render-target>");
+
+    const start = html.lastIndexOf(
+      "<next-js-internal-body-render-target>",
+      end
+    );
+
+    if (start === -1 || end === -1) {
+      throw new Error(
+        "Can't find where your <App /> starts or where the <Document /> ends. \nThis is probably a version incompatibility. Please mention this error in Bun's discord\n\n" +
+          html
+      );
+    }
+
+    return html.substring(0, start) + docPropsHtml + html.substring(end);
+  }
+}
 
 const dev = process.env.NODE_ENV === "development";
 
@@ -53,8 +81,9 @@ function getScripts(files: DocumentFiles) {
     devOnlyCacheBusterQueryString,
   } = context;
 
-  const normalScripts = files.allFiles.filter(isJSFile);
-  const lowPriorityScripts = buildManifest.lowPriorityFiles?.filter(isJSFile);
+  const normalScripts = files?.allFiles?.filter(isJSFile) ?? [];
+  const lowPriorityScripts =
+    buildManifest?.lowPriorityFiles?.filter(isJSFile) ?? [];
 
   return [...normalScripts, ...lowPriorityScripts].map((file) => {
     return (
@@ -543,9 +572,6 @@ export async function render({
   });
 
   const pageProps = Object.assign({}, props.pageProps || {});
-  // This isn't correct.
-  // We don't call getServerSideProps on clients.
-  // This isn't correct.
   // We don't call getServerSideProps on clients.
   // @ts-expect-error
   const getServerSideProps = PageNamespace.getServerSideProps;
@@ -749,12 +775,7 @@ export async function render({
     useMaybeDeferContent,
   });
   // __NEXT_BODY_RENDER_TARGET__
-  const bodyRenderIdx = html.indexOf(BODY_RENDER_TARGET);
-  html =
-    html.substring(0, bodyRenderIdx) +
-    (false ? "<!-- __NEXT_DATA__ -->" : "") +
-    docProps.html +
-    html.substring(bodyRenderIdx + BODY_RENDER_TARGET.length);
+  html = appendNextBody(html, docProps.html);
 
   if (responseHeaders) {
     return new Response(

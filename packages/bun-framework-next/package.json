@@ -1,11 +1,10 @@
 {
   "name": "bun-framework-next",
-  "version": "12.0.7",
+  "version": "12.0.8",
   "main": "empty.js",
   "module": "empty.js",
-  "description": "bun compatibility layer for Next.js v12.0.x",
+  "description": "bun compatibility layer for Next.js v12.x.x",
   "scripts": {
-    "test": "echo Worked",
     "check": "tsc --noEmit"
   },
   "author": "",
@@ -14,14 +13,14 @@
     "react-is": "^17.0.2"
   },
   "peerDependencies": {
-    "next": "^12.0.0"
+    "next": "^12"
   },
   "devDependencies": {
     "@types/react": "^17.0.34",
     "@types/react-dom": "^17.0.11",
-    "next": "^12.0.0",
+    "next": "^12.1.0",
+    "react": "^17.0.2",
     "react-dom": "^17.0.2",
-    "react-refresh": "^0.10.0",
     "typescript": "^4.4.4"
   },
   "framework": {

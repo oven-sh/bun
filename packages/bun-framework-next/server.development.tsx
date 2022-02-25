@@ -4,7 +4,9 @@ import { render } from "./renderDocument";
 
 const { version } = nextPackage;
 if (
-  (!version.startsWith("11.1") && !version.startsWith("12.0")) ||
+  (!version.startsWith("11.1") &&
+    !version.startsWith("12.0") &&
+    !version.startsWith("12.1")) ||
   version === "11.1.0" ||
   version === "11.1.1"
 ) {

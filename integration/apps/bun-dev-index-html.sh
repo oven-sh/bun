@@ -56,12 +56,12 @@ if [[ "$(curl --fail -sS http://localhost:8087/foo/foo)" != "$index_content" ]];
 fi
 
 if [[ "$(curl --fail -sS http://localhost:8087/bacon)" != "$bacon_content" ]]; then
-    echo "ERR: Expected '$index_content', got '$(curl --fail -sS http://localhost:8087/bacon)'"
+    echo "ERR: Expected '$bacon_content', got '$(curl --fail -sS http://localhost:8087/bacon)'"
     exit 1
 fi
 
 if [[ "$(curl --fail -sS http://localhost:8087/bacon.html)" != "$bacon_content" ]]; then
-    echo "ERR: Expected '$index_content', got '$(curl --fail -sS http://localhost:8087/bacon.html)'"
+    echo "ERR: Expected '$bacon_content', got '$(curl --fail -sS http://localhost:8087/bacon.html)'"
     exit 1
 fi
 

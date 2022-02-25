@@ -728,10 +728,10 @@ jsc-build-mac-compile:
 	mkdir -p $(WEBKIT_RELEASE_DIR) $(WEBKIT_DIR);
 	cd $(WEBKIT_RELEASE_DIR) && \
 		ICU_INCLUDE_DIRS="$(HOMEBREW_PREFIX)opt/icu4c/include" \
-		CMAKE_BUILD_TYPE=RelWithDebugInfo cmake \
+		CMAKE_BUILD_TYPE=Release cmake \
 			-DPORT="JSCOnly" \
 			-DENABLE_STATIC_JSC=ON \
-			-DCMAKE_BUILD_TYPE=RelWithDebugInfo \
+			-DCMAKE_BUILD_TYPE=Release \
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DENABLE_FTL_JIT=ON \
 			-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \

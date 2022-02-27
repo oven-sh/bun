@@ -114,7 +114,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                 return Expr.init(Type, t, loc);
             }
         }
-        pub fn parseExpr(p: *Parser, comptime maybe_auto_quote: bool, force_utf8: bool) anyerror!Expr {
+        pub fn parseExpr(p: *Parser, comptime maybe_auto_quote: bool, comptime force_utf8: bool) anyerror!Expr {
             const loc = p.lexer.loc();
 
             switch (p.lexer.token) {

@@ -8968,6 +8968,39 @@ fn NewParser_(
                                     },
                                 }
                             }
+                        } else if (p.lexer.token == .t_open_brace and strings.eqlComptime(name, "static")) {
+                            const loc = p.lexer.loc();
+                            try p.lexer.next();
+
+                            const old_fn_or_arrow_data_parse = p.fn_or_arrow_data_parse;
+                            p.fn_or_arrow_data_parse = .{
+                                .is_return_disallowed = true,
+                                .allow_super_property = true,
+                                .allow_await = .forbid_all,
+                            };
+
+                            _ = try p.pushScopeForParsePass(.class_static_init, loc);
+                            var _parse_opts = ParseStatementOptions{};
+                            var stmts = try p.parseStmtsUpTo(.t_close_brace, &_parse_opts);
+
+                            p.popScope();
+
+                            p.fn_or_arrow_data_parse = old_fn_or_arrow_data_parse;
+                            try p.lexer.expect(.t_close_brace);
+
+                            var block = p.allocator.create(
+                                G.ClassStaticBlock,
+                            ) catch unreachable;
+
+                            block.* = G.ClassStaticBlock{
+                                .stmts = js_ast.BabyList(Stmt).init(stmts),
+                                .loc = loc,
+                            };
+
+                            return G.Property{
+                                .kind = .class_static_block,
+                                .class_static_block = block,
+                            };
                         }
                     }
 
@@ -13071,6 +13104,13 @@ fn NewParser_(
             }
 
             for (class.properties) |*property| {
+                if (property.kind == .class_static_block) {
+                    if (!p.stmtsCanBeRemovedIfUnused(property.class_static_block.?.stmts.slice())) {
+                        return false;
+                    }
+                    continue;
+                }
+
                 if (!p.exprCanBeRemovedIfUnused(&(property.key orelse unreachable))) {
                     return false;
                 }
@@ -14970,6 +15010,28 @@ fn NewParser_(
             var i: usize = 0;
             while (i < class.properties.len) : (i += 1) {
                 var property = &class.properties[i];
+
+                if (property.kind == .class_static_block) {
+                    var old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
+                    var old_fn_only_data = p.fn_only_data_visit;
+                    p.fn_or_arrow_data_visit = .{};
+                    p.fn_only_data_visit = .{ .is_this_nested = true, .is_new_target_allowed = true };
+
+                    p.pushScopeForVisitPass(.class_static_init, property.class_static_block.?.loc) catch unreachable;
+
+                    // Make it an error to use "arguments" in a static class block
+                    p.current_scope.forbid_arguments = true;
+
+                    var list = property.class_static_block.?.stmts.listManaged(p.allocator);
+                    p.visitStmts(&list, .fn_body) catch unreachable;
+                    property.class_static_block.?.stmts = js_ast.BabyList(Stmt).fromList(list);
+                    p.popScope();
+
+                    p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
+                    p.fn_only_data_visit = old_fn_only_data;
+
+                    continue;
+                }
                 property.ts_decorators = p.visitTSDecorators(property.ts_decorators);
                 const is_private = if (property.key != null) @as(Expr.Tag, property.key.?.data) == .e_private_identifier else false;
 

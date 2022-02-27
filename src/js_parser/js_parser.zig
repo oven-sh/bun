@@ -7696,7 +7696,7 @@ fn NewParser_(
                 p.declareBinding(kind, &local, opts) catch unreachable;
 
                 // Skip over types
-                if (is_typescript_enabled) {
+                if (comptime is_typescript_enabled) {
                     // "let foo!"
                     var is_definite_assignment_assertion = p.lexer.token == .t_exclamation;
                     if (is_definite_assignment_assertion) {
@@ -7877,20 +7877,108 @@ fn NewParser_(
                 }
                 try p.lexer.next();
 
-                if (p.lexer.isContextualKeyword("as")) {
-                    try p.lexer.next();
-                    alias = try p.parseClauseAlias("export");
-                    alias_loc = p.lexer.loc();
+                if (comptime is_typescript_enabled) {
+                    if (strings.eqlComptime(alias, "type") and p.lexer.token != .t_comma and p.lexer.token != .t_close_brace) {
+                        if (p.lexer.isContextualKeyword("as")) {
+                            try p.lexer.next();
 
-                    try p.lexer.next();
+                            if (p.lexer.isContextualKeyword("as")) {
+                                alias = try p.parseClauseAlias("export");
+                                alias_loc = p.lexer.loc();
+                                try p.lexer.next();
+
+                                if (p.lexer.token != .t_comma and p.lexer.token != .t_close_brace) {
+                                    // "export { type as as as }"
+                                    // "export { type as as foo }"
+                                    // "export { type as as 'foo' }"
+                                    _ = p.parseClauseAlias("export") catch "";
+                                    try p.lexer.next();
+                                } else {
+                                    // "export { type as as }"
+                                    items.append(js_ast.ClauseItem{
+                                        .alias = alias,
+                                        .alias_loc = alias_loc,
+                                        .name = name,
+                                        .original_name = original_name,
+                                    }) catch unreachable;
+                                }
+                            } else if (p.lexer.token != .t_comma and p.lexer.token != .t_close_brace) {
+                                // "export { type as xxx }"
+                                // "export { type as 'xxx' }"
+                                alias = try p.parseClauseAlias("export");
+                                alias_loc = p.lexer.loc();
+                                try p.lexer.next();
+
+                                items.append(js_ast.ClauseItem{
+                                    .alias = alias,
+                                    .alias_loc = alias_loc,
+                                    .name = name,
+                                    .original_name = original_name,
+                                }) catch unreachable;
+                            }
+                        } else {
+                            // The name can actually be a keyword if we're really an "export from"
+                            // statement. However, we won't know until later. Allow keywords as
+                            // identifiers for now and throw an error later if there's no "from".
+                            //
+                            //   // This is fine
+                            //   export { default } from 'path'
+                            //
+                            //   // This is a syntax error
+                            //   export { default }
+                            //
+                            if (p.lexer.token != .t_identifier and first_non_identifier_loc.start == 0) {
+                                first_non_identifier_loc = p.lexer.loc();
+                            }
+
+                            // "export { type xx }"
+                            // "export { type xx as yy }"
+                            // "export { type xx as if }"
+                            // "export { type default } from 'path'"
+                            // "export { type default as if } from 'path'"
+                            // "export { type xx as 'yy' }"
+                            // "export { type 'xx' } from 'mod'"
+                            _ = p.parseClauseAlias("export") catch "";
+                            try p.lexer.next();
+
+                            if (p.lexer.isContextualKeyword("as")) {
+                                try p.lexer.next();
+                                _ = p.parseClauseAlias("export") catch "";
+                                try p.lexer.next();
+                            }
+                        }
+                    } else {
+                        if (p.lexer.isContextualKeyword("as")) {
+                            try p.lexer.next();
+                            alias = try p.parseClauseAlias("export");
+                            alias_loc = p.lexer.loc();
+
+                            try p.lexer.next();
+                        }
+
+                        items.append(js_ast.ClauseItem{
+                            .alias = alias,
+                            .alias_loc = alias_loc,
+                            .name = name,
+                            .original_name = original_name,
+                        }) catch unreachable;
+                    }
+                } else {
+                    if (p.lexer.isContextualKeyword("as")) {
+                        try p.lexer.next();
+                        alias = try p.parseClauseAlias("export");
+                        alias_loc = p.lexer.loc();
+
+                        try p.lexer.next();
+                    }
+
+                    items.append(js_ast.ClauseItem{
+                        .alias = alias,
+                        .alias_loc = alias_loc,
+                        .name = name,
+                        .original_name = original_name,
+                    }) catch unreachable;
                 }
-
-                items.append(js_ast.ClauseItem{
-                    .alias = alias,
-                    .alias_loc = alias_loc,
-                    .name = name,
-                    .original_name = original_name,
-                }) catch unreachable;
 
                 // we're done if there's no comma
                 if (p.lexer.token != .t_comma) {

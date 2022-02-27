@@ -4,7 +4,7 @@ import * as _loginReally from "http://localhost:8080/_login.js";
 import * as _loginReally2 from "http://localhost:8080/_login.js";
 import * as _authReally from "http://localhost:8080/_auth.js";
 
-export {_login as login};
+export { _login as login };
 
 export function test() {
   return testDone(import.meta.url);

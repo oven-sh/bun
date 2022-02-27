@@ -765,6 +765,27 @@ describe("Bun.Transpiler", () => {
     expectPrinted_("delete foo?.bar?.baz", "delete foo?.bar?.baz");
   });
 
+  it("useDefineForConst TypeScript class initialization", () => {
+    var { expectPrinted_ } = ts;
+    expectPrinted_(
+      `
+class Foo {
+  constructor(public x: string = "hey") {}
+  bar: number;
+}
+`.trim(),
+      `
+class Foo {
+  x;
+  constructor(x = "hey") {
+    this.x = x;
+  }
+  bar;
+}
+`.trim()
+    );
+  });
+
   it("class static blocks", () => {
     expectPrinted_(
       "class Foo { static {} }",

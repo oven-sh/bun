@@ -4767,7 +4767,7 @@ fn NewParser_(
                         while (true) {
                             switch (p.lexer.token) {
                                 .t_identifier, .t_open_brace, .t_open_bracket => {
-                                    if (!js_lexer.TypeScriptAccessibilityModifier.has(p.lexer.identifier)) {
+                                    if (!js_lexer.TypeScriptAccessibilityModifier.has(text)) {
                                         break;
                                     }
 
@@ -15180,6 +15180,7 @@ fn NewParser_(
             }
 
             var i: usize = 0;
+            var constructor_function: ?*E.Function = null;
             while (i < class.properties.len) : (i += 1) {
                 var property = &class.properties[i];
 
@@ -15230,11 +15231,23 @@ fn NewParser_(
 
                 // We need to explicitly assign the name to the property initializer if it
                 // will be transformed such that it is no longer an inline initializer.
+
+                var constructor_function_: ?*E.Function = null;
+
                 var name_to_keep: ?string = null;
                 if (is_private) {} else if (!property.flags.is_method and !property.flags.is_computed) {
                     if (property.key) |key| {
                         if (@as(Expr.Tag, key.data) == .e_string) {
                             name_to_keep = key.data.e_string.string(p.allocator) catch unreachable;
+                        }
+                    }
+                } else if (property.flags.is_method) {
+                    if (comptime is_typescript_enabled) {
+                        if (property.value.?.data == .e_function and property.key.?.data == .e_string and
+                            property.key.?.data.e_string.eqlComptime("constructor"))
+                        {
+                            constructor_function_ = property.value.?.data.e_function;
+                            constructor_function = constructor_function_;
                         }
                     }
                 }
@@ -15246,6 +15259,12 @@ fn NewParser_(
                     } else {
                         property.value = p.visitExpr(val);
                     }
+
+                    if (comptime is_typescript_enabled) {
+                        if (constructor_function_ != null and property.value != null and property.value.?.data == .e_function) {
+                            constructor_function = property.value.?.data.e_function;
+                        }
+                    }
                 }
 
                 if (property.initializer) |val| {
@@ -15255,6 +15274,56 @@ fn NewParser_(
                         property.initializer = p.maybeKeepExprSymbolName(p.visitExpr(val), name, was_anon);
                     } else {
                         property.initializer = p.visitExpr(val);
+                    }
+                }
+            }
+
+            // note: our version assumes useDefineForClassFields is true
+            if (comptime is_typescript_enabled) {
+                if (constructor_function) |constructor| {
+                    var to_add: usize = 0;
+                    for (constructor.func.args) |arg| {
+                        to_add += @boolToInt(arg.is_typescript_ctor_field and arg.binding.data == .b_identifier);
+                    }
+
+                    if (to_add > 0) {
+                        // to match typescript behavior, we also must prepend to the class body
+                        var stmts = std.ArrayList(Stmt).fromOwnedSlice(p.allocator, constructor.func.body.stmts);
+                        stmts.ensureUnusedCapacity(to_add) catch unreachable;
+                        var class_body = std.ArrayList(G.Property).fromOwnedSlice(p.allocator, class.properties);
+                        class_body.ensureUnusedCapacity(to_add) catch unreachable;
+                        var j: usize = 0;
+
+                        for (constructor.func.args) |arg| {
+                            if (arg.is_typescript_ctor_field) {
+                                switch (arg.binding.data) {
+                                    .b_identifier => |id| {
+                                        const name = p.symbols.items[id.ref.innerIndex()].original_name;
+                                        const ident = p.e(E.Identifier{ .ref = id.ref }, arg.binding.loc);
+                                        stmts.appendAssumeCapacity(
+                                            Expr.assignStmt(
+                                                p.e(E.Dot{
+                                                    .target = p.e(E.This{}, arg.binding.loc),
+                                                    .name = name,
+                                                    .name_loc = arg.binding.loc,
+                                                }, arg.binding.loc),
+                                                ident,
+                                                p.allocator,
+                                            ),
+                                        );
+                                        // O(N)
+                                        class_body.items.len += 1;
+                                        std.mem.copyBackwards(G.Property, class_body.items[j + 1 .. class_body.items.len], class_body.items[j .. class_body.items.len - 1]);
+                                        class_body.items[j] = G.Property{ .key = ident };
+                                        j += 1;
+                                    },
+                                    else => {},
+                                }
+                            }
+                        }
+
+                        class.properties = class_body.toOwnedSlice();
+                        constructor.func.body.stmts = stmts.toOwnedSlice();
                     }
                 }
             }

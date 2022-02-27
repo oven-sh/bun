@@ -665,7 +665,45 @@ var empty_string_data = Expr.Data{ .e_string = &empty_string };
 var empty_object_data = Expr.Data{ .e_object = &empty_object };
 var empty_array_data = Expr.Data{ .e_array = &empty_array };
 
-pub fn ParseJSON(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
+/// Parse JSON
+/// This leaves UTF-16 strings as UTF-16 strings
+/// The JavaScript Printer will handle escaping strings if necessary
+pub fn ParseJSON(
+    source: *const logger.Source,
+    log: *logger.Log,
+    allocator: std.mem.Allocator,
+) !Expr {
+    var parser = try JSONParser.init(allocator, source.*, log);
+    switch (source.contents.len) {
+        // This is to be consisntent with how disabled JS files are handled
+        0 => {
+            return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+        },
+        // This is a fast pass I guess
+        2 => {
+            if (strings.eqlComptime(source.contents[0..1], "\"\"") or strings.eqlComptime(source.contents[0..1], "''")) {
+                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_string_data };
+            } else if (strings.eqlComptime(source.contents[0..1], "{}")) {
+                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+            } else if (strings.eqlComptime(source.contents[0..1], "[]")) {
+                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_array_data };
+            }
+        },
+        else => {},
+    }
+
+    return try parser.parseExpr(false, false);
+}
+
+/// Parse JSON
+/// This eagerly transcodes UTF-16 strings into UTF-8 strings
+/// Use this when the text may need to be reprinted to disk as JSON (and not as JavaScript)
+/// Eagerly converting UTF-8 to UTF-16 can cause a performance issue
+pub fn ParseJSONUTF8(
+    source: *const logger.Source,
+    log: *logger.Log,
+    allocator: std.mem.Allocator,
+) !Expr {
     var parser = try JSONParser.init(allocator, source.*, log);
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
@@ -708,7 +746,7 @@ pub fn ParseJSONForMacro(source: *const logger.Source, log: *logger.Log, allocat
         else => {},
     }
 
-    return try parser.parseExpr(false, true);
+    return try parser.parseExpr(false, false);
 }
 
 pub const JSONParseResult = struct {

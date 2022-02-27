@@ -40,6 +40,7 @@ const VirtualMachine = @import("../javascript.zig").VirtualMachine;
 const Task = @import("../javascript.zig").Task;
 
 const Fs = @import("../../../fs.zig");
+const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 
 fn notImplementedFn(_: *anyopaque, ctx: js.JSContextRef, _: js.JSObjectRef, _: js.JSObjectRef, _: []const js.JSValueRef, exception: js.ExceptionRef) js.JSValueRef {
     JSError(getAllocator(ctx), "Not implemented yet!", .{}, ctx, exception);
@@ -660,6 +661,7 @@ pub const TestScope = struct {
     pub fn run(
         this: *TestScope,
     ) Result {
+        if (comptime is_bindgen) return undefined;
         var vm = VirtualMachine.vm;
         defer {
             js.JSValueUnprotect(vm.global.ref(), this.callback);
@@ -799,6 +801,7 @@ pub const DescribeScope = struct {
     }
 
     pub fn run(this: *DescribeScope, thisObject: js.JSObjectRef, ctx: js.JSContextRef, callback: js.JSObjectRef, exception: js.ExceptionRef) js.JSObjectRef {
+        if (comptime is_bindgen) return undefined;
         js.JSValueProtect(ctx, callback);
         defer js.JSValueUnprotect(ctx, callback);
         var original_active = active;
@@ -881,6 +884,7 @@ pub const DescribeScope = struct {
     // }
 
     pub fn runCallbacks(this: *DescribeScope, ctx: js.JSContextRef, callbacks: std.ArrayListUnmanaged(js.JSObjectRef), exception: js.ExceptionRef) bool {
+        if (comptime is_bindgen) return undefined;
         var i: usize = 0;
         while (i < callbacks.items.len) : (i += 1) {
             var callback = callbacks.items[i];

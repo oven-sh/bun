@@ -7,6 +7,7 @@ const Maybe = JSC.Node.Maybe;
 const Encoding = JSC.Node.Encoding;
 const FeatureFlags = @import("../../../global.zig").FeatureFlags;
 const Args = JSC.Node.NodeFS.Arguments;
+const d = JSC.d;
 
 const NodeFSFunction = fn (
     *JSC.Node.NodeFS,
@@ -138,7 +139,7 @@ fn call(comptime Function: NodeFSFunctionEnum) NodeFSFunction {
 
 pub const NodeFSBindings = JSC.NewClass(
     JSC.Node.NodeFS,
-    .{ .name = "fs" },
+    .{ .name = "fs", .ts = .{ .module = .{ .path = "fs" } } },
 
     .{
         .access = .{

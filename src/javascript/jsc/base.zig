@@ -443,8 +443,14 @@ fn hasTypeScript(comptime Type: type) bool {
 }
 
 fn getTypeScript(comptime Type: type, value: Type) d.ts.or_decl {
+    if (comptime !@hasDecl(Type, "ts") and !@hasField(Type, "ts")) {
+        return d.ts.or_decl{
+            .ts = .{ .name = @typeName(Type) },
+        };
+    }
+
     if (comptime hasTypeScriptField(Type)) {
-        if (@TypeOf(Type.ts) == d.ts.decl) {
+        if (@TypeOf(value.ts) == d.ts.decl) {
             return d.ts.or_decl{ .decl = value };
         } else {
             return d.ts.or_decl{ .ts = value.ts };
@@ -795,7 +801,7 @@ pub const d = struct {
                     comptime var buf: string = "";
 
                     comptime brk: {
-                        var splitter = std.mem.split(str, "\n");
+                        var splitter = std.mem.split(u8, str, "\n");
 
                         const first = splitter.next() orelse break :brk;
                         const second = splitter.next() orelse {
@@ -1113,13 +1119,14 @@ pub fn NewClass(
 
                         switch (@typeInfo(Func)) {
                             .Struct => {
+                                var total: usize = 1;
                                 if (hasTypeScript(Func)) {
                                     if (std.meta.trait.isIndexable(@TypeOf(func.ts))) {
-                                        count += func.ts.len;
-                                    } else {
-                                        count += 1;
+                                        total = func.ts.len;
                                     }
                                 }
+
+                                count += total;
                             },
                             else => continue,
                         }
@@ -1128,38 +1135,44 @@ pub fn NewClass(
                     var funcs = std.mem.zeroes([count]d.ts);
                     class.functions = std.mem.span(&funcs);
                     var func_i: usize = 0;
-
+                    @setEvalBranchQuota(99999);
                     inline for (function_name_literals) |_, i| {
                         const func = @field(staticFunctions, function_names[i]);
                         const Func = @TypeOf(func);
 
                         switch (@typeInfo(Func)) {
                             .Struct => {
-                                if (hasTypeScript(Func)) {
-                                    var ts_functions: []const d.ts = &[_]d.ts{};
+                                var ts_functions: []const d.ts = &[_]d.ts{};
 
+                                if (hasTypeScript(Func)) {
                                     if (std.meta.trait.isIndexable(@TypeOf(func.ts))) {
                                         ts_functions = std.mem.span(func.ts);
-                                    } else {
-                                        var funcs1 = std.mem.zeroes([1]d.ts);
-                                        funcs1[0] = func.ts;
-                                        ts_functions = std.mem.span(&funcs1);
+                                    }
+                                }
+
+                                if (ts_functions.len == 0 and hasTypeScript(Func)) {
+                                    var funcs1 = std.mem.zeroes([1]d.ts);
+                                    funcs1[0] = func.ts;
+                                    ts_functions = std.mem.span(&funcs1);
+                                } else {
+                                    var funcs1 = std.mem.zeroes([1]d.ts);
+                                    funcs1[0] = .{ .name = function_names[i] };
+                                    ts_functions = std.mem.span(&funcs1);
+                                }
+
+                                for (ts_functions) |ts_function_| {
+                                    var ts_function = ts_function_;
+                                    if (ts_function.name.len == 0) {
+                                        ts_function.name = function_names[i];
                                     }
 
-                                    for (ts_functions) |ts_function_| {
-                                        var ts_function = ts_function_;
-                                        if (ts_function.name.len == 0) {
-                                            ts_function.name = function_names[i];
-                                        }
-
-                                        if (ts_function.read_only == null) {
-                                            ts_function.read_only = class.read_only;
-                                        }
-
-                                        class.functions[func_i] = ts_function;
-
-                                        func_i += 1;
+                                    if (ts_function.read_only == null) {
+                                        ts_function.read_only = class.read_only;
                                     }
+
+                                    class.functions[func_i] = ts_function;
+
+                                    func_i += 1;
                                 }
                             },
                             else => continue,
@@ -1253,9 +1266,17 @@ pub fn NewClass(
                     decl.module = typescriptModuleDeclaration();
                 },
                 .class => {
-                    decl.class = typescriptClassDeclaration();
+                    decl.class = typescriptClassDeclaration(decl.class);
                 },
-                .empty => {},
+                .empty => {
+                    decl = d.ts.decl{
+                        .class = typescriptClassDeclaration(
+                            d.ts.class{
+                                .name = options.name,
+                            },
+                        ),
+                    };
+                },
             };
 
             return decl;
@@ -1297,8 +1318,8 @@ pub fn NewClass(
         }
 
         // This should only be run at comptime
-        pub fn typescriptClassDeclaration() d.ts.class {
-            comptime var class = options.ts.class;
+        pub fn typescriptClassDeclaration(comptime original: d.ts.class) d.ts.class {
+            comptime var class = original;
 
             comptime {
                 if (class.name.len == 0) {
@@ -1317,13 +1338,14 @@ pub fn NewClass(
 
                         switch (@typeInfo(Func)) {
                             .Struct => {
+                                var total: usize = 1;
                                 if (hasTypeScript(Func)) {
                                     if (std.meta.trait.isIndexable(@TypeOf(func.ts))) {
-                                        count += func.ts.len;
-                                    } else {
-                                        count += 1;
+                                        total = func.ts.len;
                                     }
                                 }
+
+                                count += total;
                             },
                             else => continue,
                         }
@@ -1339,35 +1361,41 @@ pub fn NewClass(
 
                         switch (@typeInfo(Func)) {
                             .Struct => {
-                                if (hasTypeScript(Func)) {
-                                    var ts_functions: []const d.ts = &[_]d.ts{};
+                                var ts_functions: []const d.ts = &[_]d.ts{};
 
+                                if (hasTypeScript(Func)) {
                                     if (std.meta.trait.isIndexable(@TypeOf(func.ts))) {
                                         ts_functions = std.mem.span(func.ts);
-                                    } else {
-                                        var funcs1 = std.mem.zeroes([1]d.ts);
-                                        funcs1[0] = func.ts;
-                                        ts_functions = std.mem.span(&funcs1);
+                                    }
+                                }
+
+                                if (ts_functions.len == 0 and hasTypeScript(Func)) {
+                                    var funcs1 = std.mem.zeroes([1]d.ts);
+                                    funcs1[0] = func.ts;
+                                    ts_functions = std.mem.span(&funcs1);
+                                } else {
+                                    var funcs1 = std.mem.zeroes([1]d.ts);
+                                    funcs1[0] = .{ .name = function_names[i] };
+                                    ts_functions = std.mem.span(&funcs1);
+                                }
+
+                                for (ts_functions) |ts_function_| {
+                                    var ts_function = ts_function_;
+                                    if (ts_function.name.len == 0) {
+                                        ts_function.name = function_names[i];
                                     }
 
-                                    for (ts_functions) |ts_function_| {
-                                        var ts_function = ts_function_;
-                                        if (ts_function.name.len == 0) {
-                                            ts_function.name = function_names[i];
-                                        }
-
-                                        if (class.interface and strings.eqlComptime(ts_function.name, "constructor")) {
-                                            ts_function.name = "new";
-                                        }
-
-                                        if (ts_function.read_only == null) {
-                                            ts_function.read_only = class.read_only;
-                                        }
-
-                                        class.functions[func_i] = ts_function;
-
-                                        func_i += 1;
+                                    if (class.interface and strings.eqlComptime(ts_function.name, "constructor")) {
+                                        ts_function.name = "new";
                                     }
+
+                                    if (ts_function.read_only == null) {
+                                        ts_function.read_only = class.read_only;
+                                    }
+
+                                    class.functions[func_i] = ts_function;
+
+                                    func_i += 1;
                                 }
                             },
                             else => continue,
@@ -1376,14 +1404,7 @@ pub fn NewClass(
                 }
 
                 if (property_names.len > 0) {
-                    var count: usize = 0;
-                    inline for (property_names) |_, i| {
-                        const field = @field(properties, property_names[i]);
-
-                        if (hasTypeScript(@TypeOf(field))) {
-                            count += 1;
-                        }
-                    }
+                    var count: usize = property_names.len;
 
                     var props = std.mem.zeroes([count]d.ts);
                     class.properties = std.mem.span(&props);
@@ -1392,24 +1413,26 @@ pub fn NewClass(
                     inline for (property_names) |property_name, i| {
                         const field = @field(properties, property_names[i]);
 
+                        var ts_field: d.ts = .{};
+
                         if (hasTypeScript(@TypeOf(field))) {
-                            var ts_field: d.ts = field.ts;
-                            if (ts_field.name.len == 0) {
-                                ts_field.name = property_name;
-                            }
-
-                            if (ts_field.read_only == null) {
-                                if (hasReadOnly(@TypeOf(field))) {
-                                    ts_field.read_only = field.ro;
-                                } else {
-                                    ts_field.read_only = class.read_only;
-                                }
-                            }
-
-                            class.properties[property_i] = ts_field;
-
-                            property_i += 1;
+                            ts_field = field.ts;
                         }
+
+                        if (ts_field.name.len == 0) {
+                            ts_field.name = property_name;
+                        }
+
+                        if (ts_field.read_only == null) {
+                            if (hasReadOnly(@TypeOf(field))) {
+                                ts_field.read_only = field.ro;
+                            } else {
+                                ts_field.read_only = class.read_only;
+                            }
+                        }
+
+                        class.properties[property_i] = ts_field;
+                        property_i += 1;
                     }
                 }
             }

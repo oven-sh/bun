@@ -3190,10 +3190,11 @@ pub const BuildError = struct {
 
     pub const Class = NewClass(
         BuildError,
-        .{
-            .name = "BuildError",
-            .read_only = true,
-        },
+        .{ .name = "BuildError", .read_only = true, .ts = .{
+            .class = .{
+                .name = "BuildError",
+            },
+        } },
         .{},
         .{
             .@"message" = .{

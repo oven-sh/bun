@@ -1,8 +1,6 @@
 const d = @import("./base.zig").d;
 const std = @import("std");
-const Api = @import("../../api/schema.zig").Api;
 const Router = @import("./api/router.zig");
-const JavaScript = @import("./javascript.zig");
 const builtin = @import("builtin");
 const io = std.io;
 const fs = std.fs;
@@ -14,18 +12,39 @@ const mem = std.mem;
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
 const resolve_path = @import("../../resolver/resolve_path.zig");
+const JSC = @import("../../jsc.zig");
+const _global = @import("../../global.zig");
+const string = _global.string;
+const strings = _global.strings;
+const default_allocator = _global.default_allocator;
 
-const modules = [_]d.ts.decl{
-    Router.Class.typescriptDeclaration(),
-};
-
-const hidden_globals = [_]d.ts.decl{
-    FetchEvent.Class.typescriptDeclaration(),
-};
-
-const global = JavaScript.GlobalObject.GlobalClass.typescriptDeclaration();
+pub const bindgen = true;
 
 pub fn main() anyerror!void {
+    const modules = comptime [_]d.ts.decl{
+        JSC.Node.NodeFSBindings.typescriptDeclaration(),
+    };
+
+    const hidden_globals = comptime [_]d.ts.decl{
+        JSC.WebCore.FetchEvent.Class.typescriptDeclaration(),
+    };
+
+    const globals = comptime [_]d.ts.decl{
+        Router.Instance.typescriptDeclaration(),
+        JSC.Bun.Class.typescriptDeclaration(),
+        JSC.BuildError.Class.typescriptDeclaration(),
+        JSC.ResolveError.Class.typescriptDeclaration(),
+        JSC.WebCore.Response.Class.typescriptDeclaration(),
+        JSC.WebCore.Headers.Class.typescriptDeclaration(),
+        JSC.EventListenerMixin.addEventListener(JSC.VirtualMachine).typescriptDeclaration(),
+        JSC.WebCore.Fetch.Class.typescriptDeclaration(),
+        JSC.Performance.Class.typescriptDeclaration(),
+        JSC.Crypto.Class.typescriptDeclaration(),
+        JSC.WebCore.TextEncoder.Class.typescriptDeclaration(),
+        JSC.WebCore.TextDecoder.Class.typescriptDeclaration(),
+        JSC.API.Transpiler.Class.typescriptDeclaration(),
+    };
+
     var allocator = default_allocator;
     var argv = std.mem.span(std.os.argv);
     var dest = [_]string{ std.mem.span(argv[argv.len - 2]), std.mem.span(argv[argv.len - 1]) };
@@ -53,7 +72,9 @@ pub fn main() anyerror!void {
         \\
         \\
     );
-    try global_file.writeAll(comptime d.ts.class.Printer.printDecl(global, 0));
+    inline for (globals) |global| {
+        try global_file.writeAll(comptime d.ts.class.Printer.printDecl(global, 0));
+    }
 
     var module_file = try dir.createFile("modules.d.ts", .{});
     try module_file.writeAll(
@@ -78,7 +99,7 @@ pub fn main() anyerror!void {
 
     inline for (modules) |decl| {
         comptime var module: d.ts.module = decl.module;
-        const basepath = comptime module.path["bun.js/".len..];
+        const basepath = comptime module.path;
         if (std.fs.path.dirname(basepath)) |dirname| {
             try dir.makePath(dirname);
         }

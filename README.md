@@ -256,23 +256,23 @@ From there, make sure to import the `dist/tailwind.css` file (or what you chose 
 
 bun is a project with incredibly large scope, and it’s early days.
 
-| Feature                                                                                                                | In              |
-| ---------------------------------------------------------------------------------------------------------------------- | --------------- |
-| [Finish Fast Refresh](https://github.com/Jarred-Sumner/bun/issues/18)                                                  | JSX Transpiler  |
-| Source Maps                                                                                                            | JavaScript      |
-| Source Maps                                                                                                            | CSS             |
-| [`extends`](https://www.typescriptlang.org/tsconfig#extends) in tsconfig.json                                          | TS Transpiler   |
-| [TypeScript Decorators](https://www.typescriptlang.org/docs/handbook/decorators.html)                                  | TS Transpiler   |
-| `@jsxPragma` comments                                                                                                  | JS Transpiler   |
-| JSX source file name                                                                                                   | JS Transpiler   |
-| Sharing `.bun` files                                                                                                   | bun             |
-| [Finish fetch](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API)                                             | bun.js          |
-| [setTimeout](https://developer.mozilla.org/en-US/docs/Web/API/setTimeout)                                              | bun.js          |
-| [workspace: dependencies](https://github.com/Jarred-Sumner/bun/issues/83)                                              | Package manager |
-| [git: dependencies](https://github.com/Jarred-Sumner/bun/issues/82)                                                    | Package manager |
-| [github: dependencies](https://github.com/Jarred-Sumner/bun/issues/81)                                                 | Package manager |
-| [link: dependencies](https://github.com/Jarred-Sumner/bun/issues/81)                                                   | Package manager |
-| Dates & timestamps                                                                                                     | TOML parser     |
+| Feature                                                                               | In              |
+| ------------------------------------------------------------------------------------- | --------------- |
+| [Finish Fast Refresh](https://github.com/Jarred-Sumner/bun/issues/18)                 | JSX Transpiler  |
+| Source Maps                                                                           | JavaScript      |
+| Source Maps                                                                           | CSS             |
+| [`extends`](https://www.typescriptlang.org/tsconfig#extends) in tsconfig.json         | TS Transpiler   |
+| [TypeScript Decorators](https://www.typescriptlang.org/docs/handbook/decorators.html) | TS Transpiler   |
+| `@jsxPragma` comments                                                                 | JS Transpiler   |
+| JSX source file name                                                                  | JS Transpiler   |
+| Sharing `.bun` files                                                                  | bun             |
+| [Finish fetch](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API)            | bun.js          |
+| [setTimeout](https://developer.mozilla.org/en-US/docs/Web/API/setTimeout)             | bun.js          |
+| [workspace: dependencies](https://github.com/Jarred-Sumner/bun/issues/83)             | Package manager |
+| [git: dependencies](https://github.com/Jarred-Sumner/bun/issues/82)                   | Package manager |
+| [github: dependencies](https://github.com/Jarred-Sumner/bun/issues/81)                | Package manager |
+| [link: dependencies](https://github.com/Jarred-Sumner/bun/issues/81)                  | Package manager |
+| Dates & timestamps                                                                    | TOML parser     |
 
 <small>
 JS Transpiler == JavaScript Transpiler

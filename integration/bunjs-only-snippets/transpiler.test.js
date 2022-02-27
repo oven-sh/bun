@@ -104,6 +104,55 @@ describe("Bun.Transpiler", () => {
 
     throw new Error("Expected parse error for code\n\t" + code);
   };
+  const ts = {
+    parsed: (code, trim = true, autoExport = false) => {
+      if (autoExport) {
+        code = "export default (" + code + ")";
+      }
+
+      var out = transpiler.transformSync(code, "ts");
+      if (autoExport && out.startsWith("export default ")) {
+        out = out.substring("export default ".length);
+      }
+
+      if (trim) {
+        out = out.trim();
+
+        if (out.endsWith(";")) {
+          out = out.substring(0, out.length - 1);
+        }
+
+        return out.trim();
+      }
+
+      return out;
+    },
+
+    expectPrinted: (code, out) => {
+      expect(ts.parsed(code, true, true)).toBe(out);
+    },
+
+    expectPrinted_: (code, out) => {
+      expect(ts.parsed(code, !out.endsWith(";\n"), false)).toBe(out);
+    },
+
+    expectParseError: (code, message) => {
+      try {
+        ts.parsed(code, false, false);
+      } catch (er) {
+        var err = er;
+        if (er instanceof AggregateError) {
+          err = err.errors[0];
+        }
+
+        expect(er.message).toBe(message);
+
+        return;
+      }
+
+      throw new Error("Expected parse error for code\n\t" + code);
+    },
+  };
 
   describe("parser", () => {
     it("arrays", () => {
@@ -124,8 +173,7 @@ describe("Bun.Transpiler", () => {
       expectPrinted("(delete x.prop) ** 0", "(delete x.prop) ** 0");
       expectPrinted("(delete x[0]) ** 0", "(delete x[0]) ** 0");
 
-      // remember: we are printing from export default
-      expectPrinted("(delete x?.prop) ** 0", "(delete (x?.prop)) ** 0");
+      expectPrinted("(delete x?.prop) ** 0", "(delete x?.prop) ** 0");
 
       expectPrinted("(void x) ** 0", "(void x) ** 0");
       expectPrinted("(typeof x) ** 0", "(typeof x) ** 0");
@@ -423,18 +471,369 @@ describe("Bun.Transpiler", () => {
 
     it("identifier escapes", () => {
       expectPrinted_("var _\u0076\u0061\u0072", "var _var");
-      // expectParseError(
-      //   "var \u0076\u0061\u0072",
-      //   "Expected identifier but found \u0076\u0061\u0072"
-      // );
-      // expectParseError(t, "\\u0076\\u0061\\u0072 foo", "<stdin>: ERROR: Unexpected \"\\\\u0076\\\\u0061\\\\u0072\"\n")
+      expectParseError(
+        "var \u0076\u0061\u0072",
+        'Expected identifier but found "\u0076\u0061\u0072"'
+      );
+      expectParseError(
+        "\\u0076\\u0061\\u0072 foo",
+        "Unexpected \\u0076\\u0061\\u0072"
+      );
 
       expectPrinted_("foo._\u0076\u0061\u0072", "foo._var");
       expectPrinted_("foo.\u0076\u0061\u0072", "foo.var");
 
-      // expectParseError(t, "\u200Ca", "<stdin>: ERROR: Unexpected \"\\u200c\"\n")
-      // expectParseError(t, "\u200Da", "<stdin>: ERROR: Unexpected \"\\u200d\"\n")
+      // expectParseError("\u200Ca", 'Unexpected "\\u200c"');
+      // expectParseError("\u200Da", 'Unexpected "\\u200d"');
     });
+  });
+
+  it("private identifiers", () => {
+    expectParseError("#foo", "Unexpected #foo");
+    expectParseError("#foo in this", "Unexpected #foo");
+    expectParseError("this.#foo", 'Expected identifier but found "#foo"');
+    expectParseError("this?.#foo", 'Expected identifier but found "#foo"');
+    expectParseError("({ #foo: 1 })", 'Expected identifier but found "#foo"');
+    expectParseError(
+      "class Foo { x = { #foo: 1 } }",
+      'Expected identifier but found "#foo"'
+    );
+    expectParseError("class Foo { x = #foo }", 'Expected "in" but found "}"');
+    expectParseError(
+      "class Foo { #foo; foo() { delete this.#foo } }",
+      'Deleting the private name "#foo" is forbidden'
+    );
+    expectParseError(
+      "class Foo { #foo; foo() { delete this?.#foo } }",
+      'Deleting the private name "#foo" is forbidden'
+    );
+    expectParseError(
+      "class Foo extends Bar { #foo; foo() { super.#foo } }",
+      "Parse error"
+      // 'Expected identifier but found "#foo"'
+    );
+    expectParseError(
+      "class Foo { #foo = () => { for (#foo in this) ; } }",
+      "Unexpected #foo"
+    );
+    expectParseError(
+      "class Foo { #foo = () => { for (x = #foo in this) ; } }",
+      "Unexpected #foo"
+    );
+    expectPrinted_("class Foo { #foo }", "class Foo {\n  #foo;\n}");
+    expectPrinted_("class Foo { #foo = 1 }", "class Foo {\n  #foo = 1;\n}");
+    expectPrinted_(
+      "class Foo { #foo = #foo in this }",
+      "class Foo {\n  #foo = #foo in this;\n}"
+    );
+    expectPrinted_(
+      "class Foo { #foo = #foo in (#bar in this); #bar }",
+      "class Foo {\n  #foo = #foo in (#bar in this);\n  #bar;\n}"
+    );
+    expectPrinted_(
+      "class Foo { #foo() {} }",
+      "class Foo {\n  #foo() {\n  }\n}"
+    );
+    expectPrinted_(
+      "class Foo { get #foo() {} }",
+      "class Foo {\n  get #foo() {\n  }\n}"
+    );
+    expectPrinted_(
+      "class Foo { set #foo(x) {} }",
+      "class Foo {\n  set #foo(x) {\n  }\n}"
+    );
+    expectPrinted_(
+      "class Foo { static #foo }",
+      "class Foo {\n  static #foo;\n}"
+    );
+    expectPrinted_(
+      "class Foo { static #foo = 1 }",
+      "class Foo {\n  static #foo = 1;\n}"
+    );
+    expectPrinted_(
+      "class Foo { static #foo() {} }",
+      "class Foo {\n  static #foo() {\n  }\n}"
+    );
+    expectPrinted_(
+      "class Foo { static get #foo() {} }",
+      "class Foo {\n  static get #foo() {\n  }\n}"
+    );
+    expectPrinted_(
+      "class Foo { static set #foo(x) {} }",
+      "class Foo {\n  static set #foo(x) {\n  }\n}"
+    );
+
+    expectParseError(
+      "class Foo { #foo = #foo in #bar in this; #bar }",
+      "Unexpected #bar"
+    );
+
+    expectParseError(
+      "class Foo { #constructor }",
+      'Invalid field name "#constructor"'
+    );
+    expectParseError(
+      "class Foo { #constructor() {} }",
+      'Invalid method name "#constructor"'
+    );
+    expectParseError(
+      "class Foo { static #constructor }",
+      'Invalid field name "#constructor"'
+    );
+    expectParseError(
+      "class Foo { static #constructor() {} }",
+      'Invalid method name "#constructor"'
+    );
+    expectParseError(
+      "class Foo { #\\u0063onstructor }",
+      'Invalid field name "#constructor"'
+    );
+    expectParseError(
+      "class Foo { #\\u0063onstructor() {} }",
+      'Invalid method name "#constructor"'
+    );
+    expectParseError(
+      "class Foo { static #\\u0063onstructor }",
+      'Invalid field name "#constructor"'
+    );
+    expectParseError(
+      "class Foo { static #\\u0063onstructor() {} }",
+      'Invalid method name "#constructor"'
+    );
+    const errorText = '"#foo" has already been declared';
+    expectParseError("class Foo { #foo; #foo }", errorText);
+    expectParseError("class Foo { #foo; static #foo }", errorText);
+    expectParseError("class Foo { static #foo; #foo }", errorText);
+    expectParseError("class Foo { #foo; #foo() {} }", errorText);
+    expectParseError("class Foo { #foo; get #foo() {} }", errorText);
+    expectParseError("class Foo { #foo; set #foo(x) {} }", errorText);
+    expectParseError("class Foo { #foo() {} #foo }", errorText);
+    expectParseError("class Foo { get #foo() {} #foo }", errorText);
+    expectParseError("class Foo { set #foo(x) {} #foo }", errorText);
+    expectParseError("class Foo { get #foo() {} get #foo() {} }", errorText);
+    expectParseError("class Foo { set #foo(x) {} set #foo(x) {} }", errorText);
+    expectParseError(
+      "class Foo { get #foo() {} set #foo(x) {} #foo }",
+      errorText
+    );
+    expectParseError(
+      "class Foo { set #foo(x) {} get #foo() {} #foo }",
+      errorText
+    );
+
+    expectPrinted_(
+      "class Foo { get #foo() {} set #foo(x) { this.#foo } }",
+      "class Foo {\n  get #foo() {\n  }\n  set #foo(x) {\n    this.#foo;\n  }\n}"
+    );
+    expectPrinted_(
+      "class Foo { set #foo(x) { this.#foo } get #foo() {} }",
+      "class Foo {\n  set #foo(x) {\n    this.#foo;\n  }\n  get #foo() {\n  }\n}"
+    );
+    expectPrinted_(
+      "class Foo { #foo } class Bar { #foo }",
+      "class Foo {\n  #foo;\n}\n\nclass Bar {\n  #foo;\n}"
+    );
+    expectPrinted_(
+      "class Foo { foo = this.#foo; #foo }",
+      "class Foo {\n  foo = this.#foo;\n  #foo;\n}"
+    );
+    expectPrinted_(
+      "class Foo { foo = this?.#foo; #foo }",
+      "class Foo {\n  foo = this?.#foo;\n  #foo;\n}"
+    );
+    expectParseError(
+      "class Foo { #foo } class Bar { foo = this.#foo }",
+      'Private name "#foo" must be declared in an enclosing class'
+    );
+    expectParseError(
+      "class Foo { #foo } class Bar { foo = this?.#foo }",
+      'Private name "#foo" must be declared in an enclosing class'
+    );
+    expectParseError(
+      "class Foo { #foo } class Bar { foo = #foo in this }",
+      'Private name "#foo" must be declared in an enclosing class'
+    );
+
+    expectPrinted_(
+      `class Foo {
+  #if
+  #im() { return this.#im(this.#if) }
+  static #sf
+  static #sm() { return this.#sm(this.#sf) }
+  foo() {
+    return class {
+      #inner() {
+        return [this.#im, this?.#inner, this?.x.#if]
+      }
+    }
+  }
+}
+`,
+      `class Foo {
+  #if;
+  #im() {
+    return this.#im(this.#if);
+  }
+  static #sf;
+  static #sm() {
+    return this.#sm(this.#sf);
+  }
+  foo() {
+    return class {
+      #inner() {
+        return [this.#im, this?.#inner, this?.x.#if];
+      }
+    };
+  }
+}`
+    );
+  });
+
+  it("type only exports", () => {
+    let { expectPrinted_, expectParseError } = ts;
+    expectPrinted_("export type {foo, bar as baz} from 'bar'", "");
+    expectPrinted_("export type {foo, bar as baz}", "");
+    expectPrinted_("export type {foo} from 'bar'; x", "x");
+    expectPrinted_("export type {foo} from 'bar'\nx", "x");
+    expectPrinted_("export type {default} from 'bar'", "");
+    expectPrinted_(
+      "export { type } from 'mod'; type",
+      'export { type } from "mod";\ntype'
+    );
+    expectPrinted_(
+      "export { type, as } from 'mod'",
+      'export { type, as } from "mod"'
+    );
+    expectPrinted_(
+      "export { x, type foo } from 'mod'; x",
+      'export { x } from "mod";\nx'
+    );
+    expectPrinted_(
+      "export { x, type as } from 'mod'; x",
+      'export { x } from "mod";\nx'
+    );
+    expectPrinted_(
+      "export { x, type foo as bar } from 'mod'; x",
+      'export { x } from "mod";\nx'
+    );
+    expectPrinted_(
+      "export { x, type foo as as } from 'mod'; x",
+      'export { x } from "mod";\nx'
+    );
+    expectPrinted_(
+      "export { type as as } from 'mod'; as",
+      'export { type as as } from "mod";\nas'
+    );
+    expectPrinted_(
+      "export { type as foo } from 'mod'; foo",
+      'export { type as foo } from "mod";\nfoo'
+    );
+    expectPrinted_(
+      "export { type as type } from 'mod'; type",
+      'export { type } from "mod";\ntype'
+    );
+    expectPrinted_(
+      "export { x, type as as foo } from 'mod'; x",
+      'export { x } from "mod";\nx'
+    );
+    expectPrinted_(
+      "export { x, type as as as } from 'mod'; x",
+      'export { x } from "mod";\nx'
+    );
+    expectPrinted_(
+      "export { x, type type as as } from 'mod'; x",
+      'export { x } from "mod";\nx'
+    );
+    expectPrinted_(
+      "export { x, \\u0074ype y }; let x, y",
+      "export { x };\nlet x, y"
+    );
+    expectPrinted_(
+      "export { x, \\u0074ype y } from 'mod'",
+      'export { x } from "mod"'
+    );
+    expectPrinted_(
+      "export { x, type if } from 'mod'",
+      'export { x } from "mod"'
+    );
+    expectPrinted_("export { x, type y as if }; let x", "export { x };\nlet x");
+  });
+
+  it("delete + optional chain", () => {
+    expectPrinted_("delete foo.bar.baz", "delete foo.bar.baz");
+    expectPrinted_("delete foo?.bar.baz", "delete foo?.bar.baz");
+    expectPrinted_("delete foo?.bar?.baz", "delete foo?.bar?.baz");
+  });
+
+  it("class static blocks", () => {
+    expectPrinted_(
+      "class Foo { static {} }",
+      "class Foo {\n  static {\n  }\n}"
+    );
+    expectPrinted_(
+      "class Foo { static {} x = 1 }",
+      "class Foo {\n  static {\n  }\n  x = 1;\n}"
+    );
+    expectPrinted_(
+      "class Foo { static { this.foo() } }",
+      "class Foo {\n  static {\n    this.foo();\n  }\n}"
+    );
+
+    expectParseError(
+      "class Foo { static { yield } }",
+      '"yield" is a reserved word and cannot be used in strict mode'
+    );
+    expectParseError(
+      "class Foo { static { await } }",
+      'The keyword "await" cannot be used here'
+    );
+    expectParseError(
+      "class Foo { static { return } }",
+      "A return statement cannot be used here"
+    );
+    expectParseError(
+      "class Foo { static { break } }",
+      'Cannot use "break" here'
+    );
+    expectParseError(
+      "class Foo { static { continue } }",
+      'Cannot use "continue" here'
+    );
+    expectParseError(
+      "x: { class Foo { static { break x } } }",
+      'There is no containing label named "x"'
+    );
+    expectParseError(
+      "x: { class Foo { static { continue x } } }",
+      'There is no containing label named "x"'
+    );
+
+    expectParseError(
+      "class Foo { get #x() { this.#x = 1 } }",
+      'Writing to getter-only property "#x" will throw'
+    );
+    expectParseError(
+      "class Foo { get #x() { this.#x += 1 } }",
+      'Writing to getter-only property "#x" will throw'
+    );
+    expectParseError(
+      "class Foo { set #x(x) { this.#x } }",
+      'Reading from setter-only property "#x" will throw'
+    );
+    expectParseError(
+      "class Foo { set #x(x) { this.#x += 1 } }",
+      'Reading from setter-only property "#x" will throw'
+    );
+
+    // Writing to method warnings
+    expectParseError(
+      "class Foo { #x() { this.#x = 1 } }",
+      'Writing to read-only method "#x" will throw'
+    );
+    expectParseError(
+      "class Foo { #x() { this.#x += 1 } }",
+      'Writing to read-only method "#x" will throw'
+    );
   });
 
   describe("simplification", () => {

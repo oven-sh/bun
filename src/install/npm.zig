@@ -756,7 +756,7 @@ pub const PackageManifest = struct {
     ) !?PackageManifest {
         const source = logger.Source.initPathString(expected_name, json_buffer);
         initializeStore();
-        const json = json_parser.ParseJSON(&source, log, allocator) catch return null;
+        const json = json_parser.ParseJSONUTF8(&source, log, allocator) catch return null;
 
         if (json.asProperty("error")) |error_q| {
             if (error_q.expr.asString(allocator)) |err| {

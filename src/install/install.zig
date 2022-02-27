@@ -3778,7 +3778,7 @@ pub const PackageManager = struct {
         );
 
         initializeStore();
-        var current_package_json = json_parser.ParseJSON(&package_json_source, ctx.log, manager.allocator) catch |err| {
+        var current_package_json = json_parser.ParseJSONUTF8(&package_json_source, ctx.log, manager.allocator) catch |err| {
             if (Output.enable_ansi_colors) {
                 ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
             } else {
@@ -3921,7 +3921,7 @@ pub const PackageManager = struct {
 
             // Now, we _re_ parse our in-memory edited package.json
             // so we can commit the version we changed from the lockfile
-            current_package_json = json_parser.ParseJSON(&source, ctx.log, manager.allocator) catch |err| {
+            current_package_json = json_parser.ParseJSONUTF8(&source, ctx.log, manager.allocator) catch |err| {
                 Output.prettyErrorln("<red>error<r><d>:<r> package.json failed to parse due to error {s}", .{@errorName(err)});
                 Output.flush();
                 Global.exit(1);

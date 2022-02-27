@@ -2203,7 +2203,7 @@ pub const Package = extern struct {
         // A valid package.json always has "{}" characters
         if (source.contents.len < 2) return error.InvalidPackageJSON;
 
-        var json = json_parser.ParseJSON(&source, log, allocator) catch |err| {
+        var json = json_parser.ParseJSONUTF8(&source, log, allocator) catch |err| {
             if (Output.enable_ansi_colors) {
                 log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
             } else {

@@ -10765,7 +10765,7 @@ fn NewParser_(
                     const target = try p.parseExprWithFlags(.member, flags);
                     var args = ExprNodeList{};
 
-                    if (is_typescript_enabled) {
+                    if (comptime is_typescript_enabled) {
                         // Skip over TypeScript non-null assertions
                         if (p.lexer.token == .t_exclamation and !p.lexer.has_newline_before) {
                             try p.lexer.next();
@@ -10967,7 +10967,7 @@ fn NewParser_(
                     //     <A[]>(x)
                     //     <A>(x) => {}
                     //     <A = B>(x) => {}
-                    if (is_typescript_enabled and is_jsx_enabled) {
+                    if (comptime is_typescript_enabled and is_jsx_enabled) {
                         var oldLexer = std.mem.toBytes(p.lexer);
 
                         try p.lexer.next();

@@ -265,7 +265,7 @@ fn NewLexer_(
             defer buf_.* = buf;
             if (comptime is_json) lexer.is_ascii_only = false;
 
-            const iterator = strings.CodepointIterator{ .bytes = text[start..], .i = 0 };
+            const iterator = strings.CodepointIterator{ .bytes = text, .i = 0 };
             var iter = strings.CodepointIterator.Cursor{};
             while (iterator.next(&iter)) {
                 const width = iter.width;
@@ -511,6 +511,7 @@ fn NewLexer_(
                                             .{},
                                             true,
                                         );
+
                                         return;
                                     }
 
@@ -602,6 +603,7 @@ fn NewLexer_(
         }
 
         pub const InnerStringLiteral = packed struct { suffix_len: u3, needs_slow_path: bool };
+
         fn parseStringLiteralInnter(lexer: *LexerType, comptime quote: CodePoint) !InnerStringLiteral {
             var needs_slow_path = false;
             var suffix_len: u3 = if (comptime quote == 0) 0 else 1;
@@ -631,6 +633,7 @@ fn NewLexer_(
                             // 0 cannot be in this list because it may be a legacy octal literal
                             'v', 'f', 't', 'r', 'n', '`', '\'', '"', 0x2028, 0x2029 => {
                                 lexer.step();
+
                                 continue :stringLiteral;
                             },
                             else => {
@@ -703,6 +706,40 @@ fn NewLexer_(
                         } else if (is_json and lexer.code_point < 0x20) {
                             try lexer.syntaxError();
                         }
+                        // this is only faster at the 800 KB or so mark
+                        // which is kind of nonsensical for real usage?
+                        // fast path: if you feed bun a string that is greater than around 800 KB
+                        // it becomes worthwhile to do a vectorized search
+                        // if (comptime big) {
+                        //     if (comptime quote == '"' or quote == '\'') {
+                        //         while (lexer.current + 16 < lexer.source.contents.len) {
+                        //             const quote_ = @splat(16, @as(u8, quote));
+                        //             const backslash = @splat(16, @as(u8, '\\'));
+                        //             const V1x16 = @Vector(16, u1);
+
+                        //             {
+                        //                 const vec: strings.AsciiVector = lexer.source.contents[lexer.current..][0..strings.ascii_vector_size].*;
+
+                        //                 const any_significant =
+                        //                     @bitCast(V1x16, vec > strings.max_16_ascii) |
+                        //                     @bitCast(V1x16, quote_ == vec) |
+                        //                     @bitCast(V1x16, backslash == vec);
+
+                        //                 // vec > strings.max_16_ascii);
+                        //                 const bitmask = @ptrCast(*const u16, &any_significant).*;
+                        //                 const first = @ctz(u16, bitmask);
+
+                        //                 if (first < 16) {
+                        //                     lexer.end = lexer.current + @maximum(first, 1) - 1;
+                        //                     lexer.current = lexer.current + first;
+                        //                     lexer.step();
+                        //                     continue :stringLiteral;
+                        //                 }
+                        //                 lexer.current += 16;
+                        //             }
+                        //         }
+                        //     }
+                        // }
                     },
                 }
                 lexer.step();
@@ -723,7 +760,7 @@ fn NewLexer_(
             // .env values may not always be quoted.
             lexer.step();
 
-            var string_literal_details = try lexer.parseStringLiteralInnter(quote);
+            const string_literal_details = try lexer.parseStringLiteralInnter(quote);
 
             // Reset string literal
             const base = if (comptime quote == 0) lexer.start else lexer.start + 1;
@@ -839,7 +876,7 @@ fn NewLexer_(
 
         // This is an edge case that doesn't really exist in the wild, so it doesn't
         // need to be as fast as possible.
-        pub fn scanIdentifierWithEscapes(lexer: *LexerType, comptime kind: IdentifierKind) anyerror!ScanResult {
+        pub fn scanIdentifierWithEscapes(lexer: *LexerType, kind: IdentifierKind) anyerror!ScanResult {
             var result = ScanResult{ .token = .t_end_of_file, .contents = "" };
             // First pass: scan over the identifier to see how long it is
             while (true) {
@@ -860,9 +897,7 @@ fn NewLexer_(
                                 '0'...'9', 'a'...'f', 'A'...'F' => {
                                     lexer.step();
                                 },
-                                else => {
-                                    try lexer.syntaxError();
-                                },
+                                else => try lexer.syntaxError(),
                             }
                         }
 
@@ -875,33 +910,25 @@ fn NewLexer_(
                             '0'...'9', 'a'...'f', 'A'...'F' => {
                                 lexer.step();
                             },
-                            else => {
-                                try lexer.syntaxError();
-                            },
+                            else => try lexer.syntaxError(),
                         }
                         switch (lexer.code_point) {
                             '0'...'9', 'a'...'f', 'A'...'F' => {
                                 lexer.step();
                             },
-                            else => {
-                                try lexer.syntaxError();
-                            },
+                            else => try lexer.syntaxError(),
                         }
                         switch (lexer.code_point) {
                             '0'...'9', 'a'...'f', 'A'...'F' => {
                                 lexer.step();
                             },
-                            else => {
-                                try lexer.syntaxError();
-                            },
+                            else => try lexer.syntaxError(),
                         }
                         switch (lexer.code_point) {
                             '0'...'9', 'a'...'f', 'A'...'F' => {
                                 lexer.step();
                             },
-                            else => {
-                                try lexer.syntaxError();
-                            },
+                            else => try lexer.syntaxError(),
                         }
                     }
                     continue;
@@ -914,7 +941,7 @@ fn NewLexer_(
             }
 
             // Second pass: re-use our existing escape sequence parser
-            var original_text = lexer.raw();
+            const original_text = lexer.raw();
             if (original_text.len < 1024) {
                 var buf = FakeArrayList16{ .items = &small_escape_sequence_buffer, .i = 0 };
                 try lexer.decodeEscapeSequences(lexer.start, original_text, FakeArrayList16, &buf);
@@ -930,10 +957,10 @@ fn NewLexer_(
                 result.contents = lexer.utf16ToString(large_escape_sequence_list.items);
             }
 
-            var identifier = result.contents;
-            if (kind == .private) {
-                identifier = result.contents[1..];
-            }
+            const identifier = if (kind != .private)
+                result.contents
+            else
+                result.contents[1..];
 
             if (!isIdentifier(identifier)) {
                 try lexer.addRangeError(
@@ -943,7 +970,8 @@ fn NewLexer_(
                     true,
                 );
             }
-            result.contents = identifier;
+
+            result.contents = result.contents;
 
             // Escaped keywords are not allowed to work as actual keywords, but they are
             // allowed wherever we allow identifiers or keywords. For example:
@@ -1081,6 +1109,9 @@ fn NewLexer_(
                     },
 
                     '#' => {
+                        if (comptime is_json) {
+                            return lexer.addUnsupportedSyntaxError("Private identifiers are not allowed in JSON");
+                        }
                         if (lexer.start == 0 and lexer.source.contents[1] == '!') {
                             // "#!/usr/bin/env node"
                             lexer.token = .t_hashbang;
@@ -1098,10 +1129,10 @@ fn NewLexer_(
                             }
                             lexer.identifier = lexer.raw();
                         } else {
+                            // "#foo"
                             lexer.step();
                             if (lexer.code_point == '\\') {
                                 lexer.identifier = (try lexer.scanIdentifierWithEscapes(.private)).contents;
-                                lexer.token = T.t_private_identifier;
                             } else {
                                 if (!isIdentifierStart(lexer.code_point)) {
                                     try lexer.syntaxError();
@@ -1113,13 +1144,12 @@ fn NewLexer_(
                                 }
                                 if (lexer.code_point == '\\') {
                                     lexer.identifier = (try lexer.scanIdentifierWithEscapes(.private)).contents;
-                                    lexer.token = T.t_private_identifier;
                                 } else {
-                                    lexer.token = T.t_private_identifier;
                                     lexer.identifier = lexer.raw();
                                 }
-                                break;
                             }
+                            lexer.token = T.t_private_identifier;
+                            break;
                         }
                     },
                     '\r', '\n', 0x2028, 0x2029 => {
@@ -1164,14 +1194,26 @@ fn NewLexer_(
                         lexer.token = T.t_colon;
                     },
                     ';' => {
+                        if (comptime is_json) {
+                            return lexer.addUnsupportedSyntaxError("Semicolons are not allowed in JSON");
+                        }
+
                         lexer.step();
                         lexer.token = T.t_semicolon;
                     },
                     '@' => {
+                        if (comptime is_json) {
+                            return lexer.addUnsupportedSyntaxError("Decorators are not allowed in JSON");
+                        }
+
                         lexer.step();
                         lexer.token = T.t_at;
                     },
                     '~' => {
+                        if (comptime is_json) {
+                            return lexer.addUnsupportedSyntaxError("~ is not allowed in JSON");
+                        }
+
                         lexer.step();
                         lexer.token = T.t_tilde;
                     },
@@ -1212,6 +1254,10 @@ fn NewLexer_(
                         }
                     },
                     '%' => {
+                        if (comptime is_json) {
+                            return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
+                        }
+
                         // '%' or '%='
                         lexer.step();
                         switch (lexer.code_point) {
@@ -1227,6 +1273,10 @@ fn NewLexer_(
                     },
 
                     '&' => {
+                        if (comptime is_json) {
+                            return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
+                        }
+
                         // '&' or '&=' or '&&' or '&&='
                         lexer.step();
                         switch (lexer.code_point) {
@@ -1255,6 +1305,9 @@ fn NewLexer_(
                     },
 
                     '|' => {
+                        if (comptime is_json) {
+                            return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
+                        }
 
                         // '|' or '|=' or '||' or '||='
                         lexer.step();
@@ -1283,6 +1336,10 @@ fn NewLexer_(
                     },
 
                     '^' => {
+                        if (comptime is_json) {
+                            return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
+                        }
+
                         // '^' or '^='
                         lexer.step();
                         switch (lexer.code_point) {
@@ -1298,6 +1355,10 @@ fn NewLexer_(
                     },
 
                     '+' => {
+                        if (comptime is_json) {
+                            return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
+                        }
+
                         // '+' or '+=' or '++'
                         lexer.step();
                         switch (lexer.code_point) {
@@ -1318,6 +1379,10 @@ fn NewLexer_(
                     },
 
                     '-' => {
+                        if (comptime is_json) {
+                            return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
+                        }
+
                         // '+' or '+=' or '++'
                         lexer.step();
                         switch (lexer.code_point) {
@@ -1384,6 +1449,7 @@ fn NewLexer_(
                         }
                     },
                     '/' => {
+
                         // '/' or '/=' or '//' or '/* ... */'
                         lexer.step();
 
@@ -1460,6 +1526,10 @@ fn NewLexer_(
                     },
 
                     '=' => {
+                        if (comptime is_json) {
+                            return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
+                        }
+
                         // '=' or '=>' or '==' or '==='
                         lexer.step();
                         switch (lexer.code_point) {
@@ -1489,6 +1559,10 @@ fn NewLexer_(
                     },
 
                     '<' => {
+                        if (comptime is_json) {
+                            return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
+                        }
+
                         // '<' or '<<' or '<=' or '<<=' or '<!--'
                         lexer.step();
                         switch (lexer.code_point) {
@@ -1527,6 +1601,10 @@ fn NewLexer_(
                     },
 
                     '>' => {
+                        if (comptime is_json) {
+                            return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
+                        }
+
                         // '>' or '>>' or '>>>' or '>=' or '>>=' or '>>>='
                         lexer.step();
 
@@ -1566,6 +1644,10 @@ fn NewLexer_(
                     },
 
                     '!' => {
+                        if (comptime is_json) {
+                            return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
+                        }
+
                         // '!' or '!=' or '!=='
                         lexer.step();
                         switch (lexer.code_point) {
@@ -1707,7 +1789,7 @@ fn NewLexer_(
                 }
             };
 
-            try self.addRangeError(self.range(), "Expected {s} but found {s}", .{ text, found }, true);
+            try self.addRangeError(self.range(), "Expected {s} but found \"{s}\"", .{ text, found }, true);
         }
 
         pub fn scanCommentText(lexer: *LexerType) void {
@@ -1807,7 +1889,13 @@ fn NewLexer_(
             }
         }
 
+        inline fn assertNotJSON(_: *const LexerType) void {
+            if (comptime is_json) @compileError("JSON should not reach this point");
+            if (comptime is_json) unreachable;
+        }
+
         pub fn scanRegExp(lexer: *LexerType) !void {
+            lexer.assertNotJSON();
             lexer.regex_flags_start = null;
             while (true) {
                 switch (lexer.code_point) {
@@ -1887,6 +1975,8 @@ fn NewLexer_(
         }
 
         pub fn nextInsideJSXElement(lexer: *LexerType) !void {
+            lexer.assertNotJSON();
+
             lexer.has_newline_before = false;
 
             while (true) {
@@ -2035,6 +2125,8 @@ fn NewLexer_(
             }
         }
         pub fn parseJSXStringLiteral(lexer: *LexerType, comptime quote: u8) !void {
+            lexer.assertNotJSON();
+
             var backslash = logger.Range.None;
             var needs_decode = false;
 
@@ -2099,6 +2191,8 @@ fn NewLexer_(
         }
 
         pub fn expectJSXElementChild(lexer: *LexerType, token: T) !void {
+            lexer.assertNotJSON();
+
             if (lexer.token != token) {
                 try lexer.expected(token);
             }
@@ -2107,6 +2201,8 @@ fn NewLexer_(
         }
 
         pub fn nextJSXElementChild(lexer: *LexerType) !void {
+            lexer.assertNotJSON();
+
             lexer.has_newline_before = false;
             const original_start = lexer.end;
 
@@ -2173,6 +2269,8 @@ fn NewLexer_(
         threadlocal var jsx_decode_buf: std.ArrayList(u16) = undefined;
         threadlocal var jsx_decode_init = false;
         pub fn fixWhitespaceAndDecodeJSXEntities(lexer: *LexerType, text: string) !JavascriptString {
+            lexer.assertNotJSON();
+
             if (!jsx_decode_init) {
                 jsx_decode_init = true;
                 jsx_decode_buf = std.ArrayList(u16).init(default_allocator);
@@ -2232,6 +2330,8 @@ fn NewLexer_(
         }
 
         inline fn maybeDecodeJSXEntity(lexer: *LexerType, text: string, cursor: *strings.CodepointIterator.Cursor) void {
+            lexer.assertNotJSON();
+
             if (strings.indexOfChar(text[cursor.width + cursor.i ..], ';')) |length| {
                 const end = cursor.width + cursor.i;
                 const entity = text[end .. end + length];
@@ -2266,6 +2366,8 @@ fn NewLexer_(
         }
 
         pub fn decodeJSXEntities(lexer: *LexerType, text: string, out: *std.ArrayList(u16)) !void {
+            lexer.assertNotJSON();
+
             const iterator = strings.CodepointIterator.init(text);
             var cursor = strings.CodepointIterator.Cursor{};
 
@@ -2292,6 +2394,8 @@ fn NewLexer_(
             }
         }
         pub fn expectInsideJSXElement(lexer: *LexerType, token: T) !void {
+            lexer.assertNotJSON();
+
             if (lexer.token != token) {
                 try lexer.expected(token);
             }
@@ -2300,6 +2404,8 @@ fn NewLexer_(
         }
 
         fn scanRegExpValidateAndStep(lexer: *LexerType) !void {
+            lexer.assertNotJSON();
+
             if (lexer.code_point == '\\') {
                 lexer.step();
             }
@@ -2319,6 +2425,8 @@ fn NewLexer_(
         }
 
         pub fn rescanCloseBraceAsTemplateToken(lexer: *LexerType) !void {
+            lexer.assertNotJSON();
+
             if (lexer.token != .t_close_brace) {
                 try lexer.expected(.t_close_brace);
             }
@@ -2332,6 +2440,8 @@ fn NewLexer_(
         }
 
         pub fn rawTemplateContents(lexer: *LexerType) string {
+            lexer.assertNotJSON();
+
             var text: string = undefined;
 
             switch (lexer.token) {
@@ -2805,6 +2915,7 @@ pub fn rangeOfIdentifier(source: *const Source, loc: logger.Loc) logger.Range {
     const end = @intCast(u32, text.len);
 
     if (!iter.next(&cursor)) return r;
+
     // Handle private names
     if (cursor.c == '#') {
         if (!iter.next(&cursor)) {

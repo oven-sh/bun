@@ -1587,7 +1587,7 @@ const FunctionKind = enum { stmt, expr };
 
 const EightLetterMatcher = strings.ExactSizeMatcher(8);
 
-const AsyncPrefixExpression = enum(u4) {
+const AsyncPrefixExpression = enum(u2) {
     none,
     is_yield,
     is_async,
@@ -1885,9 +1885,13 @@ const FnOrArrowDataParse = struct {
     allow_await: AwaitOrYield = AwaitOrYield.allow_ident,
     allow_yield: AwaitOrYield = AwaitOrYield.allow_ident,
     allow_super_call: bool = false,
+    allow_super_property: bool = false,
     is_top_level: bool = false,
     is_constructor: bool = false,
     is_typescript_declare: bool = false,
+
+    is_return_disallowed: bool = false,
+    is_this_disallowed: bool = false,
 
     has_async_range: bool = false,
     arrow_arg_errors: DeferredArrowArgErrors = DeferredArrowArgErrors{},
@@ -1948,6 +1952,13 @@ const FnOnlyDataVisit = struct {
     // will have to reference a captured variable instead of the real variable.
     is_inside_async_arrow_fn: bool = false,
 
+    // If false, disallow "new.target" expressions. We disallow all "new.target"
+    // expressions at the top-level of the file (i.e. not inside a function or
+    // a class field). Technically since CommonJS files are wrapped in a function
+    // you can use "new.target" in node as an alias for "undefined" but we don't
+    // support that.
+    is_new_target_allowed: bool = false,
+
     // If false, the value for "this" is the top-level module scope "this" value.
     // That means it's "undefined" for ECMAScript modules and "exports" for
     // CommonJS modules. We track this information so that we can substitute the
@@ -1999,6 +2010,7 @@ const ModuleType = enum { esm };
 
 const PropertyOpts = struct {
     async_range: logger.Range = logger.Range.None,
+    declare_range: logger.Range = logger.Range.None,
     is_async: bool = false,
     is_generator: bool = false,
 
@@ -3625,6 +3637,16 @@ fn NewParser_(
 
         pub fn s(_: *P, t: anytype, loc: logger.Loc) Stmt {
             const Type = @TypeOf(t);
+            comptime {
+                if (!is_typescript_enabled and (Type == S.TypeScript or Type == *S.TypeScript)) {
+                    @compileError("Attempted to use TypeScript syntax in a non-TypeScript environment");
+                }
+            }
+
+            if (!is_typescript_enabled and (Type == S.TypeScript or Type == *S.TypeScript)) {
+                unreachable;
+            }
+
             // Output.print("\nStmt: {s} - {d}\n", .{ @typeName(@TypeOf(t)), loc.start });
             if (@typeInfo(Type) == .Pointer) {
                 // ExportFrom normally becomes import records during the visiting pass
@@ -3652,6 +3674,14 @@ fn NewParser_(
 
         pub fn e(p: *P, t: anytype, loc: logger.Loc) Expr {
             const Type = @TypeOf(t);
+
+            comptime {
+                if (jsx_transform_type == .none) {
+                    if (Type == E.JSXElement or Type == *E.JSXElement) {
+                        @compileError("JSXElement is not supported in this environment");
+                    }
+                }
+            }
 
             // Output.print("\nExpr: {s} - {d}\n", .{ @typeName(@TypeOf(t)), loc.start });
             if (@typeInfo(Type) == .Pointer) {
@@ -3865,10 +3895,10 @@ fn NewParser_(
         fn keyNameForError(p: *P, key: js_ast.Expr) string {
             switch (key.data) {
                 .e_string => {
-                    return p.lexer.raw();
+                    return key.data.e_string.string(p.allocator) catch unreachable;
                 },
-                .e_private_identifier => {
-                    return p.lexer.raw();
+                .e_private_identifier => |private| {
+                    return p.loadNameFromRef(private.ref);
                     // return p.loadNameFromRef()
                 },
                 else => {
@@ -4248,17 +4278,14 @@ fn NewParser_(
                                         logger.rangeData(
                                         p.source,
                                         r,
-                                        std.fmt.allocPrint(allocator, "{s} has already been declared", .{symbol.original_name}) catch unreachable,
+                                        std.fmt.allocPrint(
+                                            allocator,
+                                            "{s} was originally declared here",
+                                            .{existing_symbol.original_name},
+                                        ) catch unreachable,
                                     );
 
-                                    p.log.addRangeErrorFmtWithNotes(
-                                        p.source,
-                                        js_lexer.rangeOfIdentifier(p.source, existing_member_entry.value.loc),
-                                        allocator,
-                                        notes,
-                                        "{s} was originally declared here",
-                                        .{existing_symbol.original_name},
-                                    ) catch unreachable;
+                                    p.log.addRangeErrorFmtWithNotes(p.source, js_lexer.rangeOfIdentifier(p.source, existing_member_entry.value.loc), allocator, notes, "{s} has already been declared", .{symbol.original_name}) catch unreachable;
                                 }
 
                                 continue :nextMember;
@@ -4500,6 +4527,19 @@ fn NewParser_(
             try p.log.addError(p.source, loc, "Cannot use a declaration in a single-statement context");
         }
 
+        /// If we attempt to parse TypeScript syntax outside of a TypeScript file
+        /// make it a compile error
+        inline fn markTypeScriptOnly(_: *const P) void {
+            if (comptime !is_typescript_enabled) {
+                @compileError("This function can only be used in TypeScript");
+            }
+
+            // explicitly mark it as unreachable in the hopes that the function doesn't exist at all
+            if (!is_typescript_enabled) {
+                unreachable;
+            }
+        }
+
         fn logExprErrors(p: *P, errors: *DeferredErrors) void {
             if (errors.invalid_expr_default_value) |r| {
                 p.log.addRangeError(
@@ -4585,20 +4625,22 @@ fn NewParser_(
                 .allow_missing_body_for_type_script = is_typescript_enabled,
             });
 
-            // Don't output anything if it's just a forward declaration of a function
-            if (opts.is_typescript_declare or func.flags.is_forward_declaration) {
-                p.popAndDiscardScope(scopeIndex);
+            if (comptime is_typescript_enabled) {
+                // Don't output anything if it's just a forward declaration of a function
+                if (opts.is_typescript_declare or func.flags.is_forward_declaration) {
+                    p.popAndDiscardScope(scopeIndex);
 
-                // Balance the fake block scope introduced above
-                if (hasIfScope) {
-                    p.popScope();
+                    // Balance the fake block scope introduced above
+                    if (hasIfScope) {
+                        p.popScope();
+                    }
+
+                    if (opts.is_typescript_declare and opts.is_namespace_scope and opts.is_export) {
+                        p.has_non_local_export_declare_inside_namespace = true;
+                    }
+
+                    return p.s(S.TypeScript{}, loc);
                 }
-
-                if (opts.is_typescript_declare and opts.is_namespace_scope and opts.is_export) {
-                    p.has_non_local_export_declare_inside_namespace = true;
-                }
-
-                return p.s(S.TypeScript{}, loc);
             }
 
             p.popScope();
@@ -4670,10 +4712,20 @@ fn NewParser_(
             // Await and yield are not allowed in function arguments
             var old_fn_or_arrow_data = std.mem.toBytes(p.fn_or_arrow_data_parse);
 
-            p.fn_or_arrow_data_parse.allow_await = if (opts.allow_await == .allow_expr) AwaitOrYield.forbid_all else AwaitOrYield.allow_ident;
-            p.fn_or_arrow_data_parse.allow_yield = if (opts.allow_yield == .allow_expr) AwaitOrYield.forbid_all else AwaitOrYield.allow_ident;
+            p.fn_or_arrow_data_parse.allow_await = if (opts.allow_await == .allow_expr)
+                AwaitOrYield.forbid_all
+            else
+                AwaitOrYield.allow_ident;
+
+            p.fn_or_arrow_data_parse.allow_yield = if (opts.allow_yield == .allow_expr)
+                AwaitOrYield.forbid_all
+            else
+                AwaitOrYield.allow_ident;
+
             // If "super()" is allowed in the body, it's allowed in the arguments
             p.fn_or_arrow_data_parse.allow_super_call = opts.allow_super_call;
+            p.fn_or_arrow_data_parse.allow_super_property = opts.allow_super_property;
+
             var args = List(G.Arg){};
             while (p.lexer.token != T.t_close_paren) {
                 // Skip over "this" type annotations
@@ -4850,10 +4902,12 @@ fn NewParser_(
         }
 
         inline fn skipTypeScriptType(p: *P, level: js_ast.Op.Level) anyerror!void {
+            p.markTypeScriptOnly();
             try p.skipTypeScriptTypeWithOpts(level, .{});
         }
 
         fn skipTypeScriptBinding(p: *P) anyerror!void {
+            p.markTypeScriptOnly();
             switch (p.lexer.token) {
                 .t_identifier, .t_this => {
                     try p.lexer.next();
@@ -4929,6 +4983,8 @@ fn NewParser_(
         }
 
         fn skipTypescriptFnArgs(p: *P) anyerror!void {
+            p.markTypeScriptOnly();
+
             try p.lexer.expect(.t_open_paren);
 
             while (p.lexer.token != .t_close_paren) {
@@ -4977,6 +5033,8 @@ fn NewParser_(
         //     let x = (y: any): asserts y is (y) => {};
         //
         fn skipTypeScriptParenOrFnType(p: *P) anyerror!void {
+            p.markTypeScriptOnly();
+
             if (p.trySkipTypeScriptArrowArgsWithBacktracking()) {
                 try p.skipTypescriptReturnType();
             } else {
@@ -4987,9 +5045,7 @@ fn NewParser_(
         }
 
         fn skipTypeScriptTypeWithOpts(p: *P, level: js_ast.Op.Level, opts: TypeScript.SkipTypeOptions) anyerror!void {
-            if (!is_typescript_enabled) {
-                unreachable;
-            }
+            p.markTypeScriptOnly();
 
             while (true) {
                 switch (p.lexer.token) {
@@ -5260,6 +5316,8 @@ fn NewParser_(
             }
         }
         fn skipTypeScriptObjectType(p: *P) anyerror!void {
+            p.markTypeScriptOnly();
+
             try p.lexer.expect(.t_open_brace);
 
             while (p.lexer.token != .t_close_brace) {
@@ -5541,6 +5599,8 @@ fn NewParser_(
         // This is the type parameter declarations that go with other symbol
         // declarations (class, function, type, etc.)
         fn skipTypeScriptTypeParameters(p: *P) anyerror!void {
+            p.markTypeScriptOnly();
+
             if (p.lexer.token == .t_less_than) {
                 try p.lexer.next();
 
@@ -5655,13 +5715,15 @@ fn NewParser_(
             const scope_index = p.pushScopeForParsePass(.class_name, loc) catch unreachable;
             const class = try p.parseClass(class_keyword, name, class_opts);
 
-            if (opts.is_typescript_declare) {
-                p.popAndDiscardScope(scope_index);
-                if (opts.is_namespace_scope and opts.is_export) {
-                    p.has_non_local_export_declare_inside_namespace = true;
-                }
+            if (comptime is_typescript_enabled) {
+                if (opts.is_typescript_declare) {
+                    p.popAndDiscardScope(scope_index);
+                    if (opts.is_namespace_scope and opts.is_export) {
+                        p.has_non_local_export_declare_inside_namespace = true;
+                    }
 
-                return p.s(S.TypeScript{}, loc);
+                    return p.s(S.TypeScript{}, loc);
+                }
             }
 
             p.popScope();
@@ -5762,7 +5824,11 @@ fn NewParser_(
                     // "@decorator export default abstract class Foo {}"
                     // "@decorator export declare class Foo {}"
                     // "@decorator export declare abstract class Foo {}"
-                    if (opts.ts_decorators != null and p.lexer.token != js_lexer.T.t_class and p.lexer.token != js_lexer.T.t_default and !p.lexer.isContextualKeyword("abstract") and !p.lexer.isContextualKeyword("declare")) {
+                    if (opts.ts_decorators != null and p.lexer.token != js_lexer.T.t_class and
+                        p.lexer.token != js_lexer.T.t_default and
+                        !p.lexer.isContextualKeyword("abstract") and
+                        !p.lexer.isContextualKeyword("declare"))
+                    {
                         try p.lexer.expected(js_lexer.T.t_class);
                     }
 
@@ -5799,14 +5865,16 @@ fn NewParser_(
                                 return p.parseStmt(opts);
                             }
 
-                            if (opts.is_typescript_declare and p.lexer.isContextualKeyword("as")) {
-                                // "export as namespace ns;"
-                                try p.lexer.next();
-                                try p.lexer.expectContextualKeyword("namespace");
-                                try p.lexer.expect(T.t_identifier);
-                                try p.lexer.expectOrInsertSemicolon();
+                            if (comptime is_typescript_enabled) {
+                                if (opts.is_typescript_declare and p.lexer.isContextualKeyword("as")) {
+                                    // "export as namespace ns;"
+                                    try p.lexer.next();
+                                    try p.lexer.expectContextualKeyword("namespace");
+                                    try p.lexer.expect(T.t_identifier);
+                                    try p.lexer.expectOrInsertSemicolon();
 
-                                return p.s(S.TypeScript{}, loc);
+                                    return p.s(S.TypeScript{}, loc);
+                                }
                             }
 
                             if (p.lexer.isContextualKeyword("async")) {
@@ -6726,6 +6794,9 @@ fn NewParser_(
                     return p.s(S.Continue{ .label = name }, loc);
                 },
                 .t_return => {
+                    if (p.fn_or_arrow_data_parse.is_return_disallowed) {
+                        try p.log.addRangeError(p.source, p.lexer.range(), "A return statement cannot be used here");
+                    }
                     try p.lexer.next();
                     var value: ?Expr = null;
                     if ((p.lexer.token != .t_semicolon and
@@ -8004,6 +8075,7 @@ fn NewParser_(
             if (first_non_identifier_loc.start != 0 and !p.lexer.isContextualKeyword("from")) {
                 const r = js_lexer.rangeOfIdentifier(p.source, first_non_identifier_loc);
                 try p.lexer.addRangeError(r, "Expected identifier but found \"{s}\"", .{p.source.textForRange(r)}, true);
+                return error.SyntaxError;
             }
 
             return ExportClauseResult{
@@ -8157,7 +8229,7 @@ fn NewParser_(
                 .delete_bare_name => "\"delete\" of a bare identifier",
                 .for_in_var_init => "Variable initializers within for-in loops",
                 .eval_or_arguments => try std.fmt.allocPrint(p.allocator, "Declarations with the name {s}", .{detail}),
-                .reserved_word => try std.fmt.allocPrint(p.allocator, "{s} is a reserved word and", .{detail}),
+                .reserved_word => try std.fmt.allocPrint(p.allocator, "\"{s}\" is a reserved word and", .{detail}),
                 .legacy_octal_literal => "Legacy octal literals",
                 .legacy_octal_escape => "Legacy octal escape sequences",
                 .if_else_function_stmt => "Function declarations inside if statements",
@@ -8284,10 +8356,27 @@ fn NewParser_(
                 if (comptime !is_generated) {
                     switch (scope.canMergeSymbols(symbol.kind, kind, is_typescript_enabled)) {
                         .forbidden => {
-                            const r = js_lexer.rangeOfIdentifier(p.source, loc);
                             var notes = try p.allocator.alloc(logger.Data, 1);
-                            notes[0] = logger.rangeData(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} has already been declared", .{name}));
-                            try p.log.addRangeErrorWithNotes(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} was originally declared here", .{name}), notes);
+                            notes[0] =
+                                logger.rangeData(
+                                p.source,
+                                js_lexer.rangeOfIdentifier(p.source, existing.loc),
+                                std.fmt.allocPrint(
+                                    p.allocator,
+                                    "{s} was originally declared here",
+                                    .{symbol.original_name},
+                                ) catch unreachable,
+                            );
+
+                            p.log.addRangeErrorFmtWithNotes(
+                                p.source,
+                                js_lexer.rangeOfIdentifier(p.source, loc),
+                                p.allocator,
+                                notes,
+                                "\"{s}\" has already been declared",
+                                .{symbol.original_name},
+                            ) catch unreachable;
+
                             return existing.ref;
                         },
                         .keep_existing => {
@@ -8432,6 +8521,8 @@ fn NewParser_(
 
             // The ability to call "super()" is inherited by arrow functions
             data.allow_super_call = p.fn_or_arrow_data_parse.allow_super_call;
+            data.allow_super_property = p.fn_or_arrow_data_parse.allow_super_property;
+            data.is_this_disallowed = p.fn_or_arrow_data_parse.is_this_disallowed;
 
             if (p.lexer.token == .t_open_brace) {
                 var body = try p.parseFnBody(data);
@@ -8560,6 +8651,7 @@ fn NewParser_(
                     .t_identifier => {
                         if (level.lte(.assign)) {
                             // p.markLoweredSyntaxFeature();
+
                             const ref = try p.storeNameInRef(p.lexer.identifier);
                             var args = try p.allocator.alloc(G.Arg, 1);
                             args[0] = G.Arg{ .binding = p.b(
@@ -8612,6 +8704,7 @@ fn NewParser_(
 
         pub const Backtracking = struct {
             pub inline fn lexerBacktracker(p: *P, func: anytype) bool {
+                p.markTypeScriptOnly();
                 var old_lexer = std.mem.toBytes(p.lexer);
                 const old_log_disabled = p.lexer.is_log_disabled;
                 p.lexer.is_log_disabled = true;
@@ -8876,21 +8969,24 @@ fn NewParser_(
                     const wasIdentifier = p.lexer.token == .t_identifier;
                     const expr = try p.parseExpr(.comma);
 
-                    // Handle index signatures
-                    if (is_typescript_enabled and p.lexer.token == .t_colon and wasIdentifier and opts.is_class) {
-                        switch (expr.data) {
-                            .e_identifier => {
-                                try p.lexer.next();
-                                try p.skipTypeScriptType(.lowest);
-                                try p.lexer.expect(.t_close_bracket);
-                                try p.lexer.expect(.t_colon);
-                                try p.skipTypeScriptType(.lowest);
-                                try p.lexer.expectOrInsertSemicolon();
+                    if (comptime is_typescript_enabled) {
 
-                                // Skip this property entirely
-                                return null;
-                            },
-                            else => {},
+                        // Handle index signatures
+                        if (p.lexer.token == .t_colon and wasIdentifier and opts.is_class) {
+                            switch (expr.data) {
+                                .e_identifier => {
+                                    try p.lexer.next();
+                                    try p.skipTypeScriptType(.lowest);
+                                    try p.lexer.expect(.t_close_bracket);
+                                    try p.lexer.expect(.t_colon);
+                                    try p.skipTypeScriptType(.lowest);
+                                    try p.lexer.expectOrInsertSemicolon();
+
+                                    // Skip this property entirely
+                                    return null;
+                                },
+                                else => {},
+                            }
                         }
                     }
 
@@ -9022,8 +9118,11 @@ fn NewParser_(
                             (p.fn_or_arrow_data_parse.allow_yield != .allow_ident and
                             strings.eqlComptime(name, "yield")))
                         {
-                            // TODO: add fmt to addRangeError
-                            p.log.addRangeError(p.source, name_range, "Cannot use \"yield\" or \"await\" here.") catch unreachable;
+                            if (strings.eqlComptime(name, "await")) {
+                                p.log.addRangeError(p.source, name_range, "Cannot use \"await\" here") catch unreachable;
+                            } else {
+                                p.log.addRangeError(p.source, name_range, "Cannot use \"yield\" here") catch unreachable;
+                            }
                         }
 
                         const ref = p.storeNameInRef(name) catch unreachable;
@@ -9050,7 +9149,7 @@ fn NewParser_(
                 },
             }
 
-            if (is_typescript_enabled) {
+            if (comptime is_typescript_enabled) {
                 // "class X { foo?: number }"
                 // "class X { foo!: number }"
                 if (opts.is_class and (p.lexer.token == .t_question or p.lexer.token == .t_exclamation)) {
@@ -9079,20 +9178,28 @@ fn NewParser_(
                     }
                 }
 
-                // Skip over types
-                if (is_typescript_enabled and p.lexer.token == .t_colon) {
-                    try p.lexer.next();
-                    try p.skipTypeScriptType(.lowest);
+                if (comptime is_typescript_enabled) {
+                    // Skip over types
+                    if (p.lexer.token == .t_colon) {
+                        try p.lexer.next();
+                        try p.skipTypeScriptType(.lowest);
+                    }
                 }
 
                 if (p.lexer.token == .t_equals) {
+                    if (comptime is_typescript_enabled) {
+                        if (!opts.declare_range.isEmpty()) {
+                            try p.log.addRangeError(p.source, p.lexer.range(), "Class fields that use \"declare\" cannot be initialized");
+                        }
+                    }
+
                     try p.lexer.next();
                     initializer = try p.parseExpr(.comma);
                 }
 
                 // Special-case private identifiers
                 switch (key.data) {
-                    .e_private_identifier => |private| {
+                    .e_private_identifier => |*private| {
                         const name = p.loadNameFromRef(private.ref);
                         if (strings.eqlComptime(name, "#constructor")) {
                             p.log.addRangeError(p.source, key_range, "Invalid field name \"#constructor\"") catch unreachable;
@@ -9203,7 +9310,7 @@ fn NewParser_(
 
                 // Special-case private identifiers
                 switch (key.data) {
-                    .e_private_identifier => |private| {
+                    .e_private_identifier => |*private| {
                         var declare: Symbol.Kind = undefined;
                         var suffix: string = "";
                         switch (kind) {
@@ -9285,20 +9392,22 @@ fn NewParser_(
                 // This seems kind of wasteful to me but it's what the official compiler
                 // does and it probably doesn't have that high of a performance overhead
                 // because "extends" clauses aren't that frequent, so it should be ok.
-                if (is_typescript_enabled) {
+                if (comptime is_typescript_enabled) {
                     _ = try p.skipTypeScriptTypeArguments(false); // isInsideJSXElement
                 }
             }
 
-            if (is_typescript_enabled and p.lexer.isContextualKeyword("implements")) {
-                try p.lexer.next();
-
-                while (true) {
-                    try p.skipTypeScriptType(.lowest);
-                    if (p.lexer.token != .t_comma) {
-                        break;
-                    }
+            if (comptime is_typescript_enabled) {
+                if (p.lexer.isContextualKeyword("implements")) {
                     try p.lexer.next();
+
+                    while (true) {
+                        try p.skipTypeScriptType(.lowest);
+                        if (p.lexer.token != .t_comma) {
+                            break;
+                        }
+                        try p.lexer.next();
+                    }
                 }
             }
 
@@ -9372,6 +9481,7 @@ fn NewParser_(
         }
 
         pub fn skipTypeScriptTypeArguments(p: *P, comptime isInsideJSXElement: bool) anyerror!bool {
+            p.markTypeScriptOnly();
             switch (p.lexer.token) {
                 .t_less_than, .t_less_than_equals, .t_less_than_less_than, .t_less_than_less_than_equals => {},
                 else => {
@@ -9594,8 +9704,9 @@ fn NewParser_(
                             },
                             .t_less_than => {
                                 // "a?.<T>()"
-                                if (!is_typescript_enabled) {
+                                if (comptime !is_typescript_enabled) {
                                     try p.lexer.expected(.t_identifier);
+                                    return error.SyntaxError;
                                 }
 
                                 _ = try p.skipTypeScriptTypeArguments(false);
@@ -10300,7 +10411,9 @@ fn NewParser_(
                             }
                         },
                         .t_dot, .t_open_bracket => {
-                            return p.e(E.Super{}, loc);
+                            if (p.fn_or_arrow_data_parse.allow_super_property) {
+                                return p.e(E.Super{}, loc);
+                            }
                         },
                         else => {},
                     }
@@ -10340,11 +10453,14 @@ fn NewParser_(
                     return p.e(E.Null{}, loc);
                 },
                 .t_this => {
+                    if (p.fn_or_arrow_data_parse.is_this_disallowed) {
+                        p.log.addRangeError(p.source, p.lexer.range(), "Cannot use \"this\" here") catch unreachable;
+                    }
                     try p.lexer.next();
                     return Expr{ .data = Prefill.Data.This, .loc = loc };
                 },
                 .t_private_identifier => {
-                    if (!p.allow_private_identifiers or !p.allow_in) {
+                    if (!p.allow_private_identifiers or !p.allow_in or level.gte(.compare)) {
                         try p.lexer.unexpected();
                         return error.SyntaxError;
                     }
@@ -10377,11 +10493,11 @@ fn NewParser_(
                         .is_await => {
                             switch (p.fn_or_arrow_data_parse.allow_await) {
                                 .forbid_all => {
-                                    p.log.addRangeError(p.source, name_range, "The keyword \"await\" cannot be used here.") catch unreachable;
+                                    p.log.addRangeError(p.source, name_range, "The keyword \"await\" cannot be used here") catch unreachable;
                                 },
                                 .allow_expr => {
                                     if (AsyncPrefixExpression.find(raw) != .is_await) {
-                                        p.log.addRangeError(p.source, name_range, "The keyword \"await\" cannot be escaped.") catch unreachable;
+                                        p.log.addRangeError(p.source, name_range, "The keyword \"await\" cannot be escaped") catch unreachable;
                                     } else {
                                         if (p.fn_or_arrow_data_parse.is_top_level) {
                                             p.top_level_await_keyword = name_range;
@@ -10530,12 +10646,14 @@ fn NewParser_(
                         try p.lexer.unexpected();
                         return error.SyntaxError;
                     }
-                    // TODO: add error deleting private identifier
-                    // const private = value.data.e_private_identifier;
-                    // if (private) |private| {
-                    //     const name = p.loadNameFromRef(private.ref);
-                    //     p.log.addRangeError(index.loc, )
-                    // }
+                    if (value.data == .e_index) {
+                        if (value.data.e_index.index.data == .e_private_identifier) {
+                            const private = value.data.e_index.index.data.e_private_identifier;
+                            const name = p.loadNameFromRef(private.ref);
+                            const range = logger.Range{ .loc = value.loc, .len = @intCast(i32, name.len) };
+                            p.log.addRangeErrorFmt(p.source, range, p.allocator, "Deleting the private name \"{s}\" is forbidden", .{name}) catch unreachable;
+                        }
+                    }
 
                     return p.e(E.Unary{ .op = .un_delete, .value = value }, loc);
                 },
@@ -10599,9 +10717,22 @@ fn NewParser_(
                     _ = p.pushScopeForParsePass(.class_name, loc) catch unreachable;
 
                     // Parse an optional class name
-                    if (p.lexer.token == .t_identifier and !js_lexer.StrictModeReservedWords.has(p.lexer.identifier)) {
-                        name = js_ast.LocRef{ .loc = p.lexer.loc(), .ref = p.newSymbol(.other, p.lexer.identifier) catch unreachable };
-                        try p.lexer.next();
+                    if (p.lexer.token == .t_identifier) {
+                        const name_text = p.lexer.identifier;
+                        if (!is_typescript_enabled or !strings.eqlComptime(name_text, "implements")) {
+                            if (p.fn_or_arrow_data_parse.allow_await != .allow_ident and strings.eqlComptime(name_text, "await")) {
+                                p.log.addRangeError(p.source, p.lexer.range(), "Cannot use \"await\" as an identifier here") catch unreachable;
+                            }
+
+                            name = js_ast.LocRef{
+                                .loc = p.lexer.loc(),
+                                .ref = p.newSymbol(
+                                    .other,
+                                    name_text,
+                                ) catch unreachable,
+                            };
+                            try p.lexer.next();
+                        }
                     }
 
                     // Even anonymous classes can have TypeScript type parameters
@@ -10625,9 +10756,10 @@ fn NewParser_(
                             try p.lexer.unexpected();
                             return error.SyntaxError;
                         }
+                        const range = logger.Range{ .loc = loc, .len = p.lexer.range().end().start - loc.start };
 
                         try p.lexer.next();
-                        return p.e(E.NewTarget{}, loc);
+                        return p.e(E.NewTarget{ .range = range }, loc);
                     }
 
                     const target = try p.parseExprWithFlags(.member, flags);
@@ -11192,7 +11324,7 @@ fn NewParser_(
                 const r = p.lexer.range();
                 // Not dealing with this right now.
                 try p.log.addRangeError(p.source, r, "Invalid JSX escape - use XML entity codes quotes or pass a JavaScript string instead");
-                p.panic("", .{});
+                return error.SyntaxError;
             }
 
             // A slash here is a self-closing element
@@ -11626,7 +11758,14 @@ fn NewParser_(
 
             // Output.print("\nVisit: {s} - {d}\n", .{ @tagName(expr.data), expr.loc.start });
             switch (expr.data) {
-                .e_null, .e_super, .e_boolean, .e_big_int, .e_reg_exp, .e_new_target, .e_undefined => {},
+                .e_null, .e_super, .e_boolean, .e_big_int, .e_reg_exp, .e_undefined => {},
+
+                .e_new_target => |target| {
+                    if (!p.fn_only_data_visit.is_new_target_allowed) {
+                        p.log.addRangeError(p.source, target.range, "Cannot use \"new.target\" here") catch unreachable;
+                    }
+                },
+
                 .e_string => {
 
                     // If you're using this, you're probably not using 0-prefixed legacy octal notation
@@ -11725,9 +11864,7 @@ fn NewParser_(
                         .was_originally_identifier = true,
                     });
                 },
-                .e_private_identifier => {
-                    p.panic("Unexpected private identifier. This is an internal error - not your fault.", .{});
-                },
+
                 .e_jsx_element => |e_| {
                     switch (comptime jsx_transform_type) {
                         .macro => {
@@ -12015,20 +12152,23 @@ fn NewParser_(
                 .e_binary => |e_| {
                     switch (e_.left.data) {
                         // Special-case private identifiers
-                        .e_private_identifier => |private| {
+                        .e_private_identifier => |_private| {
                             if (e_.op == .bin_in) {
+                                var private = _private;
                                 const name = p.loadNameFromRef(private.ref);
                                 const result = p.findSymbol(e_.left.loc, name) catch unreachable;
                                 private.ref = result.ref;
 
                                 // Unlike regular identifiers, there are no unbound private identifiers
-                                const symbol: Symbol = p.symbols.items[result.ref.innerIndex()];
-                                if (!Symbol.isKindPrivate(symbol.kind)) {
+                                const kind: Symbol.Kind = p.symbols.items[result.ref.innerIndex()].kind;
+                                if (!Symbol.isKindPrivate(kind)) {
                                     const r = logger.Range{ .loc = e_.left.loc, .len = @intCast(i32, name.len) };
                                     p.log.addRangeErrorFmt(p.source, r, p.allocator, "Private name \"{s}\" must be declared in an enclosing class", .{name}) catch unreachable;
                                 }
 
                                 e_.right = p.visitExpr(e_.right);
+                                e_.left = .{ .data = .{ .e_private_identifier = private }, .loc = e_.left.loc };
+
                                 // privateSymbolNeedsToBeLowered
                                 return expr;
                             }
@@ -12448,8 +12588,40 @@ fn NewParser_(
                         .has_chain_parent = (e_.optional_chain orelse js_ast.OptionalChain.start) == js_ast.OptionalChain.ccontinue,
                     });
                     e_.target = target;
-                    const index = p.visitExpr(e_.index);
-                    e_.index = index;
+
+                    switch (e_.index.data) {
+                        .e_private_identifier => |_private| {
+                            var private = _private;
+                            const name = p.loadNameFromRef(private.ref);
+                            const result = p.findSymbol(e_.index.loc, name) catch unreachable;
+                            private.ref = result.ref;
+
+                            // Unlike regular identifiers, there are no unbound private identifiers
+                            const kind: Symbol.Kind = p.symbols.items[result.ref.innerIndex()].kind;
+                            var r: logger.Range = undefined;
+                            if (!Symbol.isKindPrivate(kind)) {
+                                r = logger.Range{ .loc = e_.index.loc, .len = @intCast(i32, name.len) };
+                                p.log.addRangeErrorFmt(p.source, r, p.allocator, "Private name \"{s}\" must be declared in an enclosing class", .{name}) catch unreachable;
+                            } else {
+                                if (in.assign_target != .none and (kind == .private_method or kind == .private_static_method)) {
+                                    r = logger.Range{ .loc = e_.index.loc, .len = @intCast(i32, name.len) };
+                                    p.log.addRangeWarningFmt(p.source, r, p.allocator, "Writing to read-only method \"{s}\" will throw", .{name}) catch unreachable;
+                                } else if (in.assign_target != .none and (kind == .private_get or kind == .private_static_get)) {
+                                    r = logger.Range{ .loc = e_.index.loc, .len = @intCast(i32, name.len) };
+                                    p.log.addRangeWarningFmt(p.source, r, p.allocator, "Writing to getter-only property \"{s}\" will throw", .{name}) catch unreachable;
+                                } else if (in.assign_target != .replace and (kind == .private_set or kind == .private_static_set)) {
+                                    r = logger.Range{ .loc = e_.index.loc, .len = @intCast(i32, name.len) };
+                                    p.log.addRangeWarningFmt(p.source, r, p.allocator, "Reading from setter-only property \"{s}\" will throw", .{name}) catch unreachable;
+                                }
+                            }
+
+                            e_.index = .{ .data = .{ .e_private_identifier = private }, .loc = e_.index.loc };
+                        },
+                        else => {
+                            const index = p.visitExpr(e_.index);
+                            e_.index = index;
+                        },
+                    }
 
                     if (e_.optional_chain == null and e_.index.data == .e_string and e_.index.data.e_string.isUTF8()) {
                         const literal = e_.index.data.e_string.utf8;
@@ -14951,7 +15123,7 @@ fn NewParser_(
             }
 
             const r = js_lexer.rangeOfIdentifier(p.source, loc);
-            p.log.addRangeErrorFmt(p.source, r, p.allocator, "There is no containing label named {s}", .{name}) catch unreachable;
+            p.log.addRangeErrorFmt(p.source, r, p.allocator, "There is no containing label named \"{s}\"", .{name}) catch unreachable;
 
             // Allocate an "unbound" symbol
             var ref = p.newSymbol(.unbound, name) catch unreachable;
@@ -15051,6 +15223,7 @@ fn NewParser_(
                 const old_is_this_captured = p.fn_only_data_visit.is_this_nested;
                 const old_this = p.fn_only_data_visit.this_class_static_ref;
                 p.fn_only_data_visit.is_this_nested = true;
+                p.fn_only_data_visit.is_new_target_allowed = true;
                 p.fn_only_data_visit.this_class_static_ref = null;
                 defer p.fn_only_data_visit.is_this_nested = old_is_this_captured;
                 defer p.fn_only_data_visit.this_class_static_ref = old_this;
@@ -15388,7 +15561,8 @@ fn NewParser_(
                 // attempt to convert the expressions to bindings first before deciding
                 // whether this is an arrow function, and only pick an arrow function if
                 // there were no conversion errors.
-                if (p.lexer.token == .t_equals_greater_than or (invalidLog.items.len == 0 and
+                if (p.lexer.token == .t_equals_greater_than or ((comptime is_typescript_enabled) and
+                    invalidLog.items.len == 0 and
                     p.trySkipTypeScriptArrowReturnTypeWithBacktracking()) or
                     opts.force_arrow_fn)
                 {

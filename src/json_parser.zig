@@ -114,7 +114,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                 return Expr.init(Type, t, loc);
             }
         }
-        pub fn parseExpr(p: *Parser, comptime maybe_auto_quote: bool) anyerror!Expr {
+        pub fn parseExpr(p: *Parser, comptime maybe_auto_quote: bool, force_utf8: bool) anyerror!Expr {
             const loc = p.lexer.loc();
 
             switch (p.lexer.token) {
@@ -136,6 +136,12 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                 },
                 .t_string_literal => {
                     var str: E.String = p.lexer.toEString();
+                    if (comptime force_utf8) {
+                        if (str.value.len > 0) {
+                            str.utf8 = p.lexer.utf16ToString(str.value);
+                            str.value = &[_]u16{};
+                        }
+                    }
 
                     try p.lexer.next();
                     return p.e(str, loc);
@@ -171,7 +177,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                             }
                         }
 
-                        exprs.append(try p.parseExpr(false)) catch unreachable;
+                        exprs.append(try p.parseExpr(false, force_utf8)) catch unreachable;
                     }
 
                     if (p.lexer.has_newline_before) {
@@ -240,7 +246,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                         try p.lexer.expect(.t_string_literal);
 
                         try p.lexer.expect(.t_colon);
-                        const value = try p.parseExpr(false);
+                        const value = try p.parseExpr(false, force_utf8);
                         properties.append(G.Property{ .key = key, .value = value }) catch unreachable;
                     }
 
@@ -258,7 +264,7 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                     if (comptime maybe_auto_quote) {
                         p.lexer = try Lexer.initJSON(p.log, p.source().*, p.allocator);
                         try p.lexer.parseStringLiteral(0);
-                        return p.parseExpr(false);
+                        return p.parseExpr(false, force_utf8);
                     }
 
                     try p.lexer.unexpected();
@@ -679,7 +685,7 @@ pub fn ParseJSON(source: *const logger.Source, log: *logger.Log, allocator: std.
         else => {},
     }
 
-    return try parser.parseExpr(false);
+    return try parser.parseExpr(false, true);
 }
 
 pub fn ParseJSONForMacro(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
@@ -702,7 +708,7 @@ pub fn ParseJSONForMacro(source: *const logger.Source, log: *logger.Log, allocat
         else => {},
     }
 
-    return try parser.parseExpr(false);
+    return try parser.parseExpr(false, true);
 }
 
 pub const JSONParseResult = struct {
@@ -736,7 +742,7 @@ pub fn ParseJSONForBundling(source: *const logger.Source, log: *logger.Log, allo
         else => {},
     }
 
-    const result = try parser.parseExpr(false);
+    const result = try parser.parseExpr(false, true);
     return JSONParseResult{
         .tag = if (!LEXER_DEBUGGER_WORKAROUND and parser.lexer.is_ascii_only) JSONParseResult.Tag.ascii else JSONParseResult.Tag.expr,
         .expr = result,
@@ -767,7 +773,7 @@ pub fn ParseEnvJSON(source: *const logger.Source, log: *logger.Log, allocator: s
 
     switch (source.contents[0]) {
         '{', '[', '0'...'9', '"', '\'' => {
-            return try parser.parseExpr(false);
+            return try parser.parseExpr(false, false);
         },
         else => {
             switch (parser.lexer.token) {
@@ -785,10 +791,10 @@ pub fn ParseEnvJSON(source: *const logger.Source, log: *logger.Log, allocator: s
                         return Expr{ .loc = logger.Loc{ .start = 0 }, .data = .{ .e_undefined = E.Undefined{} } };
                     }
 
-                    return try parser.parseExpr(true);
+                    return try parser.parseExpr(true, false);
                 },
                 else => {
-                    return try parser.parseExpr(true);
+                    return try parser.parseExpr(true, false);
                 },
             }
         },
@@ -816,7 +822,7 @@ pub fn ParseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: 
 
     var parser = try TSConfigParser.init(allocator, source.*, log);
 
-    return parser.parseExpr(false);
+    return parser.parseExpr(false, true);
 }
 
 const duplicateKeyJson = "{ \"name\": \"valid\", \"name\": \"invalid\" }";

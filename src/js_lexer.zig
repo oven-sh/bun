@@ -401,11 +401,6 @@ fn NewLexer_(
                             },
                             // 2-digit hexadecimal
                             'x' => {
-                                if (comptime is_json) {
-                                    lexer.end = start + iter.i - width2;
-                                    try lexer.syntaxError();
-                                }
-
                                 var value: CodePoint = 0;
                                 var c3: CodePoint = 0;
                                 var width3: u3 = 0;

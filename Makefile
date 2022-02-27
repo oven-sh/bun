@@ -639,7 +639,7 @@ release-bin-dir:
 	echo $(PACKAGE_DIR)
 
 dev-obj:
-	$(ZIG) build obj
+	$(ZIG) build obj --prominent-compile-errors
 
 dev-obj-linux:
 	$(ZIG) build obj -Dtarget=x86_64-linux-gnu
@@ -682,12 +682,14 @@ test-bun-run:
 
 test-bun-install: test-bun-install-git-status
 	cd integration/apps && JS_RUNTIME=$(RELEASE_BUN) NPM_CLIENT=$(RELEASE_BUN) bash ./bun-install.sh
+	cd integration/apps && BUN_BIN=$(RELEASE_BUN) bash ./bun-install-utf8.sh
 
 test-bun-install-git-status:
 	cd integration/apps && JS_RUNTIME=$(RELEASE_BUN) BUN_BIN=$(RELEASE_BUN) bash ./bun-install-lockfile-status.sh
 
 test-dev-bun-install: test-dev-bun-install-git-status
 	cd integration/apps && JS_RUNTIME=$(DEBUG_BUN) NPM_CLIENT=$(DEBUG_BUN) bash ./bun-install.sh
+	cd integration/apps && BUN_BIN=$(DEBUG_BUN) bash ./bun-install-utf8.sh
 
 test-dev-bun-install-git-status:
 	cd integration/apps && BUN_BIN=$(DEBUG_BUN) bash ./bun-install-lockfile-status.sh

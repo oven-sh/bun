@@ -233,8 +233,7 @@ pub fn build(b: *std.build.Builder) !void {
     exe.setBuildMode(mode);
     b.install_path = output_dir;
 
-    var typings_exe = b.addExecutable("typescript-decls", "src/javascript/jsc/typescript.zig");
-    typings_exe.setMainPkgPath(b.pathFromRoot("."));
+    var typings_exe = b.addExecutable("typescript-decls", "src/typegen.zig");
 
     // exe.want_lto = true;
     defer b.default_step.dependOn(&b.addLog("Output: {s}/{s}\n", .{ output_dir, bun_executable_name }).step);
@@ -373,16 +372,21 @@ pub fn build(b: *std.build.Builder) !void {
         }
     }
 
+    try configureObjectStep(typings_exe, target, obj.main_pkg_path.?);
+    try linkObjectFiles(b, typings_exe, target);
+
     var typings_cmd: *std.build.RunStep = typings_exe.run();
     typings_cmd.cwd = cwd;
     typings_cmd.addArg(cwd);
     typings_cmd.addArg("types");
     typings_cmd.step.dependOn(&typings_exe.step);
-
-    typings_exe.linkLibC();
-
-    typings_exe.linkLibCpp();
-    typings_exe.setMainPkgPath(cwd);
+    if (target.getOsTag() == .macos) {
+        typings_exe.linkSystemLibrary("icucore");
+        typings_exe.linkSystemLibrary("iconv");
+        typings_exe.addLibPath(
+            "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib",
+        );
+    }
 
     var typings_step = b.step("types", "Build TypeScript types");
     typings_step.dependOn(&typings_cmd.step);
@@ -432,6 +436,8 @@ pub fn linkObjectFiles(b: *std.build.Builder, obj: *std.build.LibExeObjStep, tar
     for (dirs_to_search.slice()) |deps_path| {
         var deps_dir = std.fs.cwd().openDir(deps_path, .{ .iterate = true }) catch @panic("Failed to open dependencies directory");
         var iterator = deps_dir.iterate();
+        obj.addIncludeDir(deps_path);
+        obj.addLibPath(deps_path);
 
         while (iterator.next() catch null) |entr| {
             const entry: std.fs.Dir.Entry = entr;

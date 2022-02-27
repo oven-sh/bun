@@ -71,7 +71,7 @@ export {
   $$hmr_booop as booop,
   $$hmr_test as test
 };
-export {default as auth} from "http://localhost:8080/_auth.js";
-export {default as login} from "http://localhost:8080/_login.js";
+export { default as auth } from "http://localhost:8080/_auth.js";
+export { default as login } from "http://localhost:8080/_login.js";
 export * from "http://localhost:8080/_bacon.js";
-export {} from "http://localhost:8080/_bacon.js";
+export {  } from "http://localhost:8080/_bacon.js";

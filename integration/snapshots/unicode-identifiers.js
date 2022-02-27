@@ -7,7 +7,7 @@ var halfπ = π / 2;
 var d3_radians = π / 180;
 var d3_degrees = 180 / π;
 
-export {d3_radians};
+export { d3_radians };
 export function test() {
   console.assert(ε === 0.000001);
   return testDone(import.meta.url);

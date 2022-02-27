@@ -450,7 +450,7 @@ const Bar = foo("a", {
 const carriage = obj["\r\n"];
 const newline = obj["\n"];
 
-export {obj};
+export { obj };
 export function test() {
   console.assert(carriage === "\r\n");
   console.assert(newline === "\n");

@@ -261,10 +261,7 @@ bun is a project with incredibly large scope, and it’s early days.
 | [Finish Fast Refresh](https://github.com/Jarred-Sumner/bun/issues/18)                                                  | JSX Transpiler  |
 | Source Maps                                                                                                            | JavaScript      |
 | Source Maps                                                                                                            | CSS             |
-| [Private Class Fields](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Classes/Private_class_fields) | JS Transpiler   |
-| [Import Assertions](https://github.com/tc39/proposal-import-assertions)                                                | JS Transpiler   |
 | [`extends`](https://www.typescriptlang.org/tsconfig#extends) in tsconfig.json                                          | TS Transpiler   |
-| [jsx](https://www.typescriptlang.org/tsconfig)\* in tsconfig.json                                                      | TS Transpiler   |
 | [TypeScript Decorators](https://www.typescriptlang.org/docs/handbook/decorators.html)                                  | TS Transpiler   |
 | `@jsxPragma` comments                                                                                                  | JS Transpiler   |
 | JSX source file name                                                                                                   | JS Transpiler   |

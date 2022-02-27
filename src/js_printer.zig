@@ -144,32 +144,35 @@ pub const Options = struct {
 
 pub const PrintResult = struct { js: string, source_map: ?SourceMapChunk = null };
 
-// Zig represents booleans in packed structs as 1 bit, with no padding
-// This is effectively a bit field
-const ExprFlag = packed struct {
-    forbid_call: bool = false,
-    forbid_in: bool = false,
-    has_non_optional_chain_parent: bool = false,
-    expr_result_is_unused: bool = false,
+// do not make this a packed struct
+// stage1 compiler bug:
+// > /optional-chain-with-function.js: Evaluation failed: TypeError: (intermediate value) is not a function
+// this test failure was caused by the packed structi mplementation
+const ExprFlag = enum {
+    forbid_call,
+    forbid_in,
+    has_non_optional_chain_parent,
+    expr_result_is_unused,
+    pub const Set = std.enums.EnumSet(ExprFlag);
 
-    pub fn None() ExprFlag {
-        return ExprFlag{};
+    pub fn None() ExprFlag.Set {
+        return Set{};
     }
 
-    pub fn ForbidCall() ExprFlag {
-        return ExprFlag{ .forbid_call = true };
+    pub fn ForbidCall() ExprFlag.Set {
+        return Set.init(.{ .forbid_call = true });
     }
 
-    pub fn ForbidAnd() ExprFlag {
-        return ExprFlag{ .forbid_and = true };
+    pub fn ForbidAnd() ExprFlag.Set {
+        return Set.init(.{ .forbid_and = true });
     }
 
-    pub fn HasNonOptionalChainParent() ExprFlag {
-        return ExprFlag{ .has_non_optional_chain_parent = true };
+    pub fn HasNonOptionalChainParent() ExprFlag.Set {
+        return Set.init(.{ .has_non_optional_chain_parent = true });
     }
 
-    pub fn ExprResultIsUnused() ExprFlag {
-        return ExprFlag{ .expr_result_is_unused = true };
+    pub fn ExprResultIsUnused() ExprFlag.Set {
+        return Set.init(.{ .expr_result_is_unused = true });
     }
 };
 
@@ -474,14 +477,14 @@ pub fn NewPrinter(
             }
         }
 
-        pub fn printBlockBody(p: *Printer, stmts: []Stmt) void {
+        pub fn printBlockBody(p: *Printer, stmts: []const Stmt) void {
             for (stmts) |stmt| {
                 p.printSemicolonIfNeeded();
                 p.printStmt(stmt) catch unreachable;
             }
         }
 
-        pub fn printBlock(p: *Printer, loc: logger.Loc, stmts: []Stmt) void {
+        pub fn printBlock(p: *Printer, loc: logger.Loc, stmts: []const Stmt) void {
             p.addSourceMapping(loc);
             p.print("{");
             p.printNewline();
@@ -495,7 +498,7 @@ pub fn NewPrinter(
             p.print("}");
         }
 
-        pub fn printTwoBlocksInOne(p: *Printer, loc: logger.Loc, stmts: []Stmt, prepend: []Stmt) void {
+        pub fn printTwoBlocksInOne(p: *Printer, loc: logger.Loc, stmts: []const Stmt, prepend: []const Stmt) void {
             p.addSourceMapping(loc);
             p.print("{");
             p.printNewline();
@@ -510,7 +513,7 @@ pub fn NewPrinter(
             p.print("}");
         }
 
-        pub fn printDecls(p: *Printer, comptime keyword: string, decls: []G.Decl, _: ExprFlag) void {
+        pub fn printDecls(p: *Printer, comptime keyword: string, decls: []G.Decl, flags: ExprFlag.Set) void {
             p.print(keyword);
             p.printSpace();
 
@@ -526,7 +529,7 @@ pub fn NewPrinter(
                     p.printSpace();
                     p.print("=");
                     p.printSpace();
-                    p.printExpr(value, .comma, ExprFlag.None());
+                    p.printExpr(value, .comma, flags);
                 }
             }
         }
@@ -608,6 +611,15 @@ pub fn NewPrinter(
             for (class.properties) |item| {
                 p.printSemicolonIfNeeded();
                 p.printIndent();
+
+                if (item.kind == .class_static_block) {
+                    p.print("static");
+                    p.printSpace();
+                    p.printBlock(item.class_static_block.?.loc, item.class_static_block.?.stmts.slice());
+                    p.printNewline();
+                    continue;
+                }
+
                 p.printProperty(item);
 
                 if (item.value == null) {
@@ -1023,9 +1035,9 @@ pub fn NewPrinter(
             import_record_index: u32,
             leading_interior_comments: []G.Comment,
             level: Level,
-            flags: ExprFlag,
+            flags: ExprFlag.Set,
         ) void {
-            const wrap = level.gte(.new) or flags.forbid_call;
+            const wrap = level.gte(.new) or flags.contains(.forbid_call);
             if (wrap) p.print("(");
             defer if (wrap) p.print(")");
 
@@ -1107,7 +1119,7 @@ pub fn NewPrinter(
             }
         }
 
-        pub fn printExpr(p: *Printer, expr: Expr, level: Level, _flags: ExprFlag) void {
+        pub fn printExpr(p: *Printer, expr: Expr, level: Level, _flags: ExprFlag.Set) void {
             p.addSourceMapping(expr.loc);
             var flags = _flags;
 
@@ -1180,11 +1192,11 @@ pub fn NewPrinter(
                     }
                 },
                 .e_call => |e| {
-                    var wrap = level.gte(.new) or flags.forbid_call;
+                    var wrap = level.gte(.new) or flags.contains(.forbid_call);
                     var target_flags = ExprFlag.None();
                     if (e.optional_chain == null) {
                         target_flags = ExprFlag.HasNonOptionalChainParent();
-                    } else if (flags.has_non_optional_chain_parent) {
+                    } else if (flags.contains(.has_non_optional_chain_parent)) {
                         wrap = true;
                     }
 
@@ -1247,7 +1259,7 @@ pub fn NewPrinter(
                     }
                 },
                 .e_require_or_require_resolve => |e| {
-                    const wrap = level.gte(.new) or flags.forbid_call;
+                    const wrap = level.gte(.new) or flags.contains(.forbid_call);
                     if (wrap) {
                         p.print("(");
                     }
@@ -1275,7 +1287,7 @@ pub fn NewPrinter(
 
                     // Handle non-string expressions
                     if (Ref.isSourceIndexNull(e.import_record_index)) {
-                        const wrap = level.gte(.new) or flags.forbid_call;
+                        const wrap = level.gte(.new) or flags.contains(.forbid_call);
                         if (wrap) {
                             p.print("(");
                         }
@@ -1306,21 +1318,28 @@ pub fn NewPrinter(
                     }
                 },
                 .e_dot => |e| {
+                    // Ironic Zig compiler bug: e.optional_chain == null or e.optional_chain == .start causes broken LLVM IR
+                    // https://github.com/ziglang/zig/issues/6059
+                    const isOptionalChain = (e.optional_chain orelse js_ast.OptionalChain.ccontinue) == js_ast.OptionalChain.start;
+
                     var wrap = false;
                     if (e.optional_chain == null) {
-                        flags.has_non_optional_chain_parent = true;
+                        flags.insert(.has_non_optional_chain_parent);
                     } else {
-                        if (!flags.has_non_optional_chain_parent) {
+                        if (flags.contains(.has_non_optional_chain_parent) and e.optional_chain.? == .ccontinue) {
                             wrap = true;
                             p.print("(");
                         }
 
-                        flags.has_non_optional_chain_parent = true;
+                        flags.remove(.has_non_optional_chain_parent);
                     }
-                    p.printExpr(e.target, .postfix, flags);
-                    // Ironic Zig compiler bug: e.optional_chain == null or e.optional_chain == .start causes broken LLVM IR
-                    // https://github.com/ziglang/zig/issues/6059
-                    const isOptionalChain = (e.optional_chain orelse js_ast.OptionalChain.ccontinue) == js_ast.OptionalChain.start;
+                    flags.setIntersection(ExprFlag.Set.init(.{ .has_non_optional_chain_parent = true, .forbid_call = true }));
+
+                    p.printExpr(
+                        e.target,
+                        .postfix,
+                        flags,
+                    );
 
                     if (p.canPrintIdentifier(e.name)) {
                         if (!isOptionalChain and p.prev_num_end == p.writer.written) {
@@ -1352,13 +1371,13 @@ pub fn NewPrinter(
                 .e_index => |e| {
                     var wrap = false;
                     if (e.optional_chain == null) {
-                        flags.has_non_optional_chain_parent = false;
+                        flags.insert(.has_non_optional_chain_parent);
                     } else {
-                        if (flags.has_non_optional_chain_parent) {
+                        if (flags.contains(.has_non_optional_chain_parent)) {
                             wrap = true;
                             p.print("(");
                         }
-                        flags.has_non_optional_chain_parent = false;
+                        flags.remove(.has_non_optional_chain_parent);
                     }
 
                     p.printExpr(e.target, .postfix, flags);
@@ -1374,7 +1393,7 @@ pub fn NewPrinter(
                     switch (e.index.data) {
                         .e_private_identifier => {
                             const priv = e.index.data.e_private_identifier;
-                            if (is_optional_chain_start) {
+                            if (!is_optional_chain_start) {
                                 p.print(".");
                             }
 
@@ -1395,7 +1414,7 @@ pub fn NewPrinter(
                     const wrap = level.gte(.conditional);
                     if (wrap) {
                         p.print("(");
-                        flags.forbid_in = false;
+                        flags.remove(.forbid_in);
                     }
                     p.printExpr(e.test_, .conditional, flags);
                     p.printSpace();
@@ -1403,7 +1422,7 @@ pub fn NewPrinter(
                     p.printExpr(e.yes, .yield, ExprFlag.None());
                     p.printSpace();
                     p.print(": ");
-                    flags.forbid_in = true;
+                    flags.insert(.forbid_in);
                     p.printExpr(e.no, .yield, flags);
                     if (wrap) {
                         p.print(")");
@@ -1442,7 +1461,7 @@ pub fn NewPrinter(
                             .s_return => {
                                 if (e.body.stmts[0].data.s_return.value) |val| {
                                     p.arrow_expr_start = p.writer.written;
-                                    p.printExpr(val, .comma, ExprFlag{ .forbid_in = true });
+                                    p.printExpr(val, .comma, ExprFlag.Set.init(.{ .forbid_in = true }));
                                     wasPrinted = true;
                                 }
                             },
@@ -1812,7 +1831,7 @@ pub fn NewPrinter(
                 },
                 .e_binary => |e| {
                     const entry: Op = Op.Table.get(e.op);
-                    var wrap = level.gte(entry.level) or (e.op == Op.Code.bin_in and flags.forbid_in);
+                    var wrap = level.gte(entry.level) or (e.op == Op.Code.bin_in and flags.contains(.forbid_in));
 
                     // Destructuring assignments must be parenthesized
                     const n = p.writer.written;
@@ -1827,7 +1846,7 @@ pub fn NewPrinter(
 
                     if (wrap) {
                         p.print("(");
-                        flags.forbid_in = true;
+                        flags.insert(.forbid_in);
                     }
 
                     var left_level = entry.level.sub(1);
@@ -1892,7 +1911,7 @@ pub fn NewPrinter(
                     if (e.op == .bin_in and @as(Expr.Tag, e.left.data) == .e_private_identifier) {
                         p.printSymbol(e.left.data.e_private_identifier.ref);
                     } else {
-                        flags.forbid_in = true;
+                        flags.insert(.forbid_in);
                         p.printExpr(e.left, left_level, flags);
                     }
 
@@ -1911,7 +1930,7 @@ pub fn NewPrinter(
                     }
 
                     p.printSpace();
-                    flags.forbid_in = true;
+                    flags.insert(.forbid_in);
                     p.printExpr(e.right, right_level, flags);
 
                     if (wrap) {
@@ -2123,6 +2142,7 @@ pub fn NewPrinter(
 
             switch (_key.data) {
                 .e_private_identifier => |priv| {
+                    p.addSourceMapping(_key.loc);
                     p.printSymbol(priv.ref);
                 },
                 .e_string => |key| {
@@ -2226,7 +2246,7 @@ pub fn NewPrinter(
                     }
                 },
                 else => {
-                    p.printExpr(_key, .lowest, ExprFlag{});
+                    p.printExpr(_key, .lowest, ExprFlag.Set{});
                 },
             }
 
@@ -2254,7 +2274,7 @@ pub fn NewPrinter(
 
                 p.print(":");
                 p.printSpace();
-                p.printExpr(val, .comma, ExprFlag{});
+                p.printExpr(val, .comma, ExprFlag.Set{});
             }
 
             if (item.initializer) |initial| {
@@ -2699,6 +2719,7 @@ pub fn NewPrinter(
                             // we have to overwrite it via Object.defineProperty
                             1 => {
                                 const item = s.items[0];
+
                                 const identifier = p.renamer.nameForSymbol(item.name.ref.?);
                                 const name = if (!strings.eql(identifier, item.alias))
                                     item.alias
@@ -2719,6 +2740,7 @@ pub fn NewPrinter(
                                 p.print("(");
                                 p.printModuleExportSymbol();
                                 p.print(", {");
+                                p.printSpace();
                                 const last = s.items.len - 1;
                                 for (s.items) |item, i| {
                                     const symbol = p.symbols.getWithLink(item.name.ref.?).?;
@@ -2745,7 +2767,7 @@ pub fn NewPrinter(
                                             p.printIdentifier(name);
                                         } else if (!strings.eql(name, item.alias)) {
                                             p.print(":");
-                                            p.printSpace();
+                                            p.printSpaceBeforeIdentifier();
                                             p.printIdentifier(name);
                                         }
                                     }
@@ -2833,6 +2855,8 @@ pub fn NewPrinter(
 
                     if (!s.is_single_line) {
                         p.options.indent += 1;
+                    } else {
+                        p.printSpace();
                     }
 
                     for (s.items) |*item, i| {
@@ -2861,6 +2885,8 @@ pub fn NewPrinter(
                         p.options.unindent();
                         p.printNewline();
                         p.printIndent();
+                    } else {
+                        p.printSpace();
                     }
 
                     p.print("}");
@@ -2918,6 +2944,8 @@ pub fn NewPrinter(
 
                     if (!s.is_single_line) {
                         p.options.indent += 1;
+                    } else {
+                        p.printSpace();
                     }
 
                     for (s.items) |*item, i| {
@@ -2945,6 +2973,8 @@ pub fn NewPrinter(
                         p.options.unindent();
                         p.printNewline();
                         p.printIndent();
+                    } else {
+                        p.printSpace();
                     }
 
                     p.print("}");
@@ -3716,19 +3746,19 @@ pub fn NewPrinter(
                     p.printExpr(
                         s.value,
                         .lowest,
-                        ExprFlag{ .forbid_in = true, .expr_result_is_unused = true },
+                        ExprFlag.Set.init(.{ .forbid_in = true, .expr_result_is_unused = true }),
                     );
                 },
                 .s_local => |s| {
                     switch (s.kind) {
                         .k_var => {
-                            p.printDecls("var", s.decls, ExprFlag{ .forbid_in = true });
+                            p.printDecls("var", s.decls, ExprFlag.Set.init(.{ .forbid_in = true }));
                         },
                         .k_let => {
-                            p.printDecls("let", s.decls, ExprFlag{ .forbid_in = true });
+                            p.printDecls("let", s.decls, ExprFlag.Set.init(.{ .forbid_in = true }));
                         },
                         .k_const => {
-                            p.printDecls("const", s.decls, ExprFlag{ .forbid_in = true });
+                            p.printDecls("const", s.decls, ExprFlag.Set.init(.{ .forbid_in = true }));
                         },
                     }
                 },
@@ -4473,7 +4503,7 @@ pub fn printJSON(
         null,
     );
 
-    printer.printExpr(expr, Level.lowest, ExprFlag{});
+    printer.printExpr(expr, Level.lowest, ExprFlag.Set{});
     if (printer.writer.getError()) {} else |err| {
         return err;
     }

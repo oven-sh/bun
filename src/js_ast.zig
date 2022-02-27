@@ -25,6 +25,7 @@ const JSONParser = @import("./json_parser.zig");
 const StringHashMap = _hash_map.StringHashMap;
 const AutoHashMap = _hash_map.AutoHashMap;
 const StringHashMapUnmanaged = _hash_map.StringHashMapUnmanaged;
+const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
 pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
     var max_size = 0;
     var max_align = 1;
@@ -256,6 +257,14 @@ pub fn BabyList(comptime Type: type) type {
             return std.ArrayListUnmanaged(Type){
                 .items = this.ptr[0..this.len],
                 .capacity = this.cap,
+            };
+        }
+
+        pub fn listManaged(this: ListType, allocator: std.mem.Allocator) std.ArrayList(Type) {
+            return std.ArrayList(Type){
+                .items = this.ptr[0..this.len],
+                .capacity = this.cap,
+                .allocator = allocator,
             };
         }
 
@@ -611,7 +620,13 @@ pub const G = struct {
     // invalid shadowing if left as Comment
     pub const Comment = struct { loc: logger.Loc, text: string };
 
+    pub const ClassStaticBlock = struct {
+        stmts: BabyList(Stmt) = .{},
+        loc: logger.Loc,
+    };
+
     pub const Property = struct {
+        class_static_block: ?*ClassStaticBlock = null,
         ts_decorators: ExprNodeList = ExprNodeList{},
         // Key is optional for spread
         key: ?ExprNodeIndex = null,
@@ -634,11 +649,13 @@ pub const G = struct {
 
         pub const List = BabyList(Property);
 
-        pub const Kind = enum(u2) {
+        pub const Kind = enum(u3) {
             normal,
             get,
             set,
             spread,
+            class_static_block,
+
             pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
                 return try std.json.stringify(@tagName(self), opts, o);
             }
@@ -1080,7 +1097,9 @@ pub const E = struct {
         // this call expression. See the comment inside ECall for more details.
         can_be_unwrapped_if_unused: bool = false,
     };
-    pub const NewTarget = struct {};
+    pub const NewTarget = struct {
+        range: logger.Range,
+    };
     pub const ImportMeta = struct {};
 
     pub const Call = struct {
@@ -2596,7 +2615,7 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_private_identifier = Data.Store.All.append(Type, st),
+                        .e_private_identifier = st,
                     },
                 };
             },
@@ -3384,7 +3403,6 @@ pub const Expr = struct {
         e_index: *E.Index,
         e_arrow: *E.Arrow,
 
-        e_private_identifier: *E.PrivateIdentifier,
         e_jsx_element: *E.JSXElement,
         e_object: *E.Object,
         e_spread: *E.Spread,
@@ -3398,6 +3416,7 @@ pub const Expr = struct {
 
         e_identifier: E.Identifier,
         e_import_identifier: E.ImportIdentifier,
+        e_private_identifier: E.PrivateIdentifier,
 
         e_boolean: E.Boolean,
         e_number: E.Number,
@@ -4559,6 +4578,7 @@ pub const Scope = struct {
         entry, // This is a module, TypeScript enum, or TypeScript namespace
         function_args,
         function_body,
+        class_static_init,
 
         pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
             return try std.json.stringify(@tagName(self), opts, o);
@@ -5500,10 +5520,11 @@ pub const Macro = struct {
             e_dot: *E.Dot,
             e_index: *E.Index,
             e_arrow: *E.Arrow,
+
             e_identifier: E.Identifier,
             e_import_identifier: E.ImportIdentifier,
+            e_private_identifier: E.PrivateIdentifier,
 
-            e_private_identifier: *E.PrivateIdentifier,
             e_jsx_element: *E.JSXElement,
 
             e_big_int: *E.BigInt,
@@ -7583,6 +7604,7 @@ pub const Macro = struct {
                     id: i32,
                     visitor: Visitor,
                 ) callconv(.Async) MacroError!Expr {
+                    if (comptime is_bindgen) return undefined;
                     var macro_callback = macro.vm.macros.get(id) orelse return caller;
 
                     var result = js.JSObjectCallAsFunctionReturnValueHoldingAPILock(macro.vm.global.ref(), macro_callback, null, args.len + 1, &args_buf);

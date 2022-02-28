@@ -2050,6 +2050,14 @@ pub const ScanPassResult = struct {
     }
 };
 
+fn MacroContextType() type {
+    if (comptime Environment.isWasm) {
+        return ?*anyopaque;
+    }
+
+    return js_ast.Macro.MacroContext;
+}
+
 pub const Parser = struct {
     options: Options,
     lexer: js_lexer.Lexer,
@@ -2073,7 +2081,7 @@ pub const Parser = struct {
 
         tree_shaking: bool = false,
 
-        macro_context: *js_ast.Macro.MacroContext = undefined,
+        macro_context: *MacroContextType() = undefined,
 
         warn_about_unbundled_modules: bool = true,
 
@@ -2850,7 +2858,11 @@ const FindSymbolResult = struct {
     declare_loc: ?logger.Loc = null,
     is_inside_with_scope: bool = false,
 };
-const ExportClauseResult = struct { clauses: []js_ast.ClauseItem = &([_]js_ast.ClauseItem{}), is_single_line: bool = false };
+const ExportClauseResult = struct {
+    clauses: []js_ast.ClauseItem = &([_]js_ast.ClauseItem{}),
+    is_single_line: bool = false,
+    had_type_only_exports: bool = false,
+};
 
 const DeferredTsDecorators = struct {
     values: []js_ast.Expr,
@@ -6133,10 +6145,22 @@ fn NewParser_(
                             if (p.lexer.isContextualKeyword("from")) {
                                 try p.lexer.expectContextualKeyword("from");
                                 const parsedPath = try p.parsePath();
+
+                                try p.lexer.expectOrInsertSemicolon();
+
+                                if (comptime is_typescript_enabled) {
+                                    // export {type Foo} from 'bar';
+                                    // ->
+                                    // nothing
+                                    // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
+                                    if (export_clause.clauses.len == 0 and export_clause.had_type_only_exports) {
+                                        return p.s(S.TypeScript{}, loc);
+                                    }
+                                }
+
                                 const import_record_index = p.addImportRecord(.stmt, parsedPath.loc, parsedPath.text);
                                 var path_name = fs.PathName.init(strings.append(p.allocator, "import_", parsedPath.text) catch unreachable);
                                 const namespace_ref = p.storeNameInRef(path_name.nonUniqueNameString(p.allocator) catch unreachable) catch unreachable;
-                                try p.lexer.expectOrInsertSemicolon();
 
                                 if (comptime track_symbol_usage_during_parse_pass) {
                                     // In the scan pass, we need _some_ way of knowing *not* to mark as unused
@@ -6146,6 +6170,17 @@ fn NewParser_(
                                 return p.s(S.ExportFrom{ .items = export_clause.clauses, .is_single_line = export_clause.is_single_line, .namespace_ref = namespace_ref, .import_record_index = import_record_index }, loc);
                             }
                             try p.lexer.expectOrInsertSemicolon();
+
+                            if (comptime is_typescript_enabled) {
+                                // export {type Foo};
+                                // ->
+                                // nothing
+                                // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
+                                if (export_clause.clauses.len == 0 and export_clause.had_type_only_exports) {
+                                    return p.s(S.TypeScript{}, loc);
+                                }
+                            }
+
                             return p.s(S.ExportClause{ .items = export_clause.clauses, .is_single_line = export_clause.is_single_line }, loc);
                         },
                         T.t_equals => {
@@ -7922,6 +7957,7 @@ fn NewParser_(
             try p.lexer.expect(.t_open_brace);
             var is_single_line = !p.lexer.has_newline_before;
             var first_non_identifier_loc = logger.Loc{ .start = 0 };
+            var had_type_only_exports = false;
 
             while (p.lexer.token != .t_close_brace) {
                 var alias = try p.parseClauseAlias("export");
@@ -7963,6 +7999,7 @@ fn NewParser_(
                                     // "export { type as as foo }"
                                     // "export { type as as 'foo' }"
                                     _ = p.parseClauseAlias("export") catch "";
+                                    had_type_only_exports = true;
                                     try p.lexer.next();
                                 } else {
                                     // "export { type as as }"
@@ -7986,6 +8023,8 @@ fn NewParser_(
                                     .name = name,
                                     .original_name = original_name,
                                 }) catch unreachable;
+                            } else {
+                                had_type_only_exports = true;
                             }
                         } else {
                             // The name can actually be a keyword if we're really an "export from"
@@ -8017,6 +8056,8 @@ fn NewParser_(
                                 _ = p.parseClauseAlias("export") catch "";
                                 try p.lexer.next();
                             }
+
+                            had_type_only_exports = true;
                         }
                     } else {
                         if (p.lexer.isContextualKeyword("as")) {
@@ -8081,6 +8122,7 @@ fn NewParser_(
             return ExportClauseResult{
                 .clauses = items.items,
                 .is_single_line = is_single_line,
+                .had_type_only_exports = had_type_only_exports,
             };
         }
 

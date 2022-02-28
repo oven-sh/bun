@@ -24,7 +24,7 @@ const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
 const C = _global.C;
 const StoredFileDescriptorType = _global.StoredFileDescriptorType;
-const JSC = @import("./jsc.zig");
+const JSC = @import("javascript_core");
 
 const Analytics = @import("./analytics/analytics_thread.zig");
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
@@ -1076,6 +1076,8 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
     return loaders;
 }
 
+const Dir = std.fs.Dir;
+
 /// BundleOptions is used when ResolveMode is not set to "disable".
 /// BundleOptions is effectively webpack + babel
 pub const BundleOptions = struct {
@@ -1089,7 +1091,7 @@ pub const BundleOptions = struct {
     hot_module_reloading: bool = false,
     inject: ?[]string = null,
     origin: URL = URL{},
-    output_dir_handle: ?std.fs.Dir = null,
+    output_dir_handle: ?Dir = null,
 
     output_dir: string = "out",
     node_modules_bundle_url: string = "",
@@ -1510,7 +1512,7 @@ pub const BundleOptions = struct {
 
             if (!opts.routes.single_page_app_routing and should_try_to_find_a_index_html_file) {
                 attempt: {
-                    var abs_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                    var abs_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
                     // If it's not in static-dir/index.html, check if it's in top level dir/index.html
                     var parts = [_]string{"index.html"};
                     var full_path = resolve_path.joinAbsStringBuf(fs.top_level_dir, &abs_buf, &parts, .auto);

@@ -12,7 +12,7 @@ const Npm = @import("./npm.zig");
 const ExtractTarball = @This();
 const default_allocator = @import("../global.zig").default_allocator;
 const Global = @import("../global.zig").Global;
-
+const _global = @import("../global.zig");
 name: strings.StringOrTinyString,
 resolution: Resolution,
 registry: string,
@@ -140,8 +140,8 @@ pub fn buildURLWithPrinter(
     }
 }
 
-threadlocal var abs_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-threadlocal var abs_buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var abs_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var abs_buf2: [_global.MAX_PATH_BYTES]u8 = undefined;
 
 fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
     var tmpdir = this.temp_dir;

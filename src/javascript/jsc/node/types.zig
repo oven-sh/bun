@@ -250,7 +250,7 @@ pub const PathLike = union(Tag) {
         };
     }
 
-    pub fn sliceZWithForceCopy(this: PathLike, buf: *[std.fs.MAX_PATH_BYTES]u8, comptime force: bool) [:0]const u8 {
+    pub fn sliceZWithForceCopy(this: PathLike, buf: *[_global.MAX_PATH_BYTES]u8, comptime force: bool) [:0]const u8 {
         var sliced = this.slice();
 
         if (sliced.len == 0) return "";
@@ -267,7 +267,7 @@ pub const PathLike = union(Tag) {
         return buf[0..sliced.len :0];
     }
 
-    pub inline fn sliceZ(this: PathLike, buf: *[std.fs.MAX_PATH_BYTES]u8) [:0]const u8 {
+    pub inline fn sliceZ(this: PathLike, buf: *[_global.MAX_PATH_BYTES]u8) [:0]const u8 {
         return sliceZWithForceCopy(this, buf, false);
     }
 
@@ -345,11 +345,11 @@ pub const Valid = struct {
                 JSC.throwInvalidArguments("Invalid path string: can't be empty", .{}, ctx, exception);
                 return false;
             },
-            1...std.fs.MAX_PATH_BYTES => return true,
+            1..._global.MAX_PATH_BYTES => return true,
             else => {
                 // TODO: should this be an EINVAL?
                 JSC.throwInvalidArguments(
-                    comptime std.fmt.comptimePrint("Invalid path string: path is too long (max: {d})", .{std.fs.MAX_PATH_BYTES}),
+                    comptime std.fmt.comptimePrint("Invalid path string: path is too long (max: {d})", .{_global.MAX_PATH_BYTES}),
                     .{},
                     ctx,
                     exception,
@@ -373,14 +373,14 @@ pub const Valid = struct {
 
                 // TODO: should this be an EINVAL?
                 JSC.throwInvalidArguments(
-                    comptime std.fmt.comptimePrint("Invalid path buffer: path is too long (max: {d})", .{std.fs.MAX_PATH_BYTES}),
+                    comptime std.fmt.comptimePrint("Invalid path buffer: path is too long (max: {d})", .{_global.MAX_PATH_BYTES}),
                     .{},
                     ctx,
                     exception,
                 );
                 return false;
             },
-            1...std.fs.MAX_PATH_BYTES => return true,
+            1..._global.MAX_PATH_BYTES => return true,
         }
 
         unreachable;
@@ -2198,7 +2198,7 @@ pub const Path = struct {
         var arena = std.heap.ArenaAllocator.init(heap_allocator);
         var arena_allocator = arena.allocator();
         defer arena.deinit();
-        var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
         var to_join = allocator.alloc(string, args_len) catch unreachable;
         var possibly_utf16 = false;
         for (args_ptr[0..args_len]) |arg, i| {
@@ -2231,7 +2231,7 @@ pub const Path = struct {
         var zig_str: JSC.ZigString = args_ptr[0].getZigString(globalThis);
         if (zig_str.len == 0) return JSC.ZigString.init("").toValue(globalThis);
 
-        var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
         var str_slice = zig_str.toSlice(heap_allocator);
         defer str_slice.deinit();
         var str = str_slice.slice();
@@ -2322,7 +2322,7 @@ pub const Path = struct {
             heap_allocator,
         );
         var allocator = stack_fallback_allocator.get();
-        var out_buf: [std.fs.MAX_PATH_BYTES * 2]u8 = undefined;
+        var out_buf: [_global.MAX_PATH_BYTES * 2]u8 = undefined;
 
         var parts = allocator.alloc(string, args_len) catch unreachable;
         defer allocator.free(parts);
@@ -2447,7 +2447,7 @@ pub const Process = struct {
     }
 
     pub fn getCwd(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        var buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var buffer: [_global.MAX_PATH_BYTES]u8 = undefined;
         switch (Syscall.getcwd(&buffer)) {
             .err => |err| {
                 return err.toJSC(globalObject);
@@ -2467,7 +2467,7 @@ pub const Process = struct {
             return JSC.toInvalidArguments("path is required", .{}, globalObject.ref());
         }
 
-        var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
         const slice = to.sliceZBuf(&buf) catch {
             return JSC.toInvalidArguments("Invalid path", .{}, globalObject.ref());
         };

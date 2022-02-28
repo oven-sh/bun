@@ -92,7 +92,7 @@ pub const BuildCommand = struct {
                 // So don't do that unless we actually need to.
                 // const do_we_need_to_close = !FeatureFlags.store_file_descriptors or (@intCast(usize, root_dir.fd) + open_file_limit) < result.output_files.len;
 
-                var filepath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                var filepath_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
                 filepath_buf[0] = '.';
                 filepath_buf[1] = '/';
 

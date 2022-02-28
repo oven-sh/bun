@@ -3,19 +3,19 @@ pub const string = []const u8;
 pub const stringZ = [:0]const u8;
 pub const stringMutable = []u8;
 pub const CodePoint = i32;
-
+const _global = @import("./global.zig");
 // macOS sets file path limit to 1024
 // Since a pointer on x64 is 64 bits and only 46 bits are used
 // We can safely store the entire path slice in a single u64.
 pub const PathString = packed struct {
-    const PathIntLen = std.math.IntFittingRange(0, std.fs.MAX_PATH_BYTES);
+    const PathIntLen = std.math.IntFittingRange(0, _global.MAX_PATH_BYTES);
     pub const use_small_path_string = @bitSizeOf(usize) - @bitSizeOf(PathIntLen) >= 53;
     pub const PathInt = if (use_small_path_string) PathIntLen else usize;
     pub const PointerIntType = if (use_small_path_string) u53 else usize;
     ptr: PointerIntType = 0,
     len: PathInt = 0,
 
-    const JSC = @import("./jsc.zig");
+    const JSC = @import("javascript_core");
     pub fn fromJS(value: JSC.JSValue, global: *JSC.JSGlobalObject, exception: JSC.C.ExceptionRef) PathString {
         if (!value.jsType().isStringLike()) {
             JSC.JSError(JSC.getAllocator(global.ref()), "Only path strings are supported for now", .{}, global.ref(), exception);
@@ -63,10 +63,12 @@ pub const PathString = packed struct {
 
     pub const empty = @This(){ .ptr = 0, .len = 0 };
     comptime {
-        if (use_small_path_string and @bitSizeOf(@This()) != 64) {
-            @compileError("PathString must be 64 bits");
-        } else if (!use_small_path_string and @bitSizeOf(@This()) != 128) {
-            @compileError("PathString must be 128 bits");
+        if (!_global.Environment.isWasm) {
+            if (use_small_path_string and @bitSizeOf(@This()) != 64) {
+                @compileError("PathString must be 64 bits");
+            } else if (!use_small_path_string and @bitSizeOf(@This()) != 128) {
+                @compileError("PathString must be 128 bits");
+            }
         }
     }
 };

@@ -7,12 +7,12 @@ const Global = @import("../global.zig").Global;
 const Output = @import("../global.zig").Output;
 const Fs = @import("../fs.zig");
 const Path = @import("../resolver/resolve_path.zig");
-
+const _global = @import("../global.zig");
 pub const PackageManagerCommand = struct {
     pub fn printHelp(_: std.mem.Allocator) void {}
     pub fn printHash(ctx: Command.Context, lockfile_: []const u8) !void {
         @setCold(true);
-        var lockfile_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var lockfile_buffer: [_global.MAX_PATH_BYTES]u8 = undefined;
         @memcpy(&lockfile_buffer, lockfile_.ptr, lockfile_.len);
         lockfile_buffer[lockfile_.len] = 0;
         var lockfile = lockfile_buffer[0..lockfile_.len :0];

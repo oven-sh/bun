@@ -2,6 +2,7 @@ const fs = @import("fs.zig");
 const logger = @import("logger.zig");
 const std = @import("std");
 const Ref = @import("ast/base.zig").Ref;
+const Api = @import("./api/schema.zig").Api;
 
 pub const ImportKind = enum(u8) {
 
@@ -61,6 +62,19 @@ pub const ImportKind = enum(u8) {
 
     pub fn isFromCSS(k: ImportKind) bool {
         return k == .at_conditional or k == .at or k == .url;
+    }
+
+    pub fn toAPI(k: ImportKind) Api.ImportKind {
+        return switch (k) {
+            ImportKind.entry_point => Api.ImportKind.entry_point,
+            ImportKind.stmt => Api.ImportKind.stmt,
+            ImportKind.require => Api.ImportKind.require,
+            ImportKind.dynamic => Api.ImportKind.dynamic,
+            ImportKind.require_resolve => Api.ImportKind.require_resolve,
+            ImportKind.at => Api.ImportKind.at,
+            ImportKind.url => Api.ImportKind.url,
+            else => Api.ImportKind.internal,
+        };
     }
 };
 

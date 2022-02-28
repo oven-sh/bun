@@ -58,7 +58,7 @@ pub const CSSInJSImportBehavior = enum {
 pub const remote_inspector = false;
 pub const auto_import_buffer = false;
 
-pub const is_macro_enabled = true;
+pub const is_macro_enabled = !env.isWasm and !env.isWasi;
 
 // pretend everything is always the macro environment
 // useful for debugging the macro's JSX transform

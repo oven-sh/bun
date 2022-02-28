@@ -28,7 +28,7 @@ pub const ErrorCSS = struct {
 
     pub inline fn sourceContent() string {
         if (comptime Environment.isDebug) {
-            var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            var out_buffer: [_global.MAX_PATH_BYTES]u8 = undefined;
             var dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
             var paths = [_]string{ dirname, BUN_ROOT, ErrorCSSPathDev };
             const file = std.fs.cwd().openFile(
@@ -54,7 +54,7 @@ pub const ErrorJS = struct {
 
     pub inline fn sourceContent() string {
         if (comptime Environment.isDebug) {
-            var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            var out_buffer: [_global.MAX_PATH_BYTES]u8 = undefined;
             var dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
             var paths = [_]string{ dirname, BUN_ROOT, ErrorJSPath };
             const file = std.fs.cwd().openFile(

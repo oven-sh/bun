@@ -2031,6 +2031,163 @@ function encodeTransform(message, bb) {
   }
   bb.writeByte(0);
 }
+
+function decodeScan(bb) {
+  var result = {};
+
+  while (true) {
+    switch (bb.readByte()) {
+      case 0:
+        return result;
+
+      case 1:
+        result["path"] = bb.readString();
+        break;
+
+      case 2:
+        result["contents"] = bb.readByteArray();
+        break;
+
+      case 3:
+        result["loader"] = Loader[bb.readByte()];
+        break;
+
+      default:
+        throw new Error("Attempted to parse invalid message");
+    }
+  }
+}
+
+function encodeScan(message, bb) {
+  var value = message["path"];
+  if (value != null) {
+    bb.writeByte(1);
+    bb.writeString(value);
+  }
+
+  var value = message["contents"];
+  if (value != null) {
+    bb.writeByte(2);
+    bb.writeByteArray(value);
+  }
+
+  var value = message["loader"];
+  if (value != null) {
+    bb.writeByte(3);
+    var encoded = Loader[value];
+    if (encoded === void 0)
+      throw new Error(
+        "Invalid value " + JSON.stringify(value) + ' for enum "Loader"'
+      );
+    bb.writeByte(encoded);
+  }
+  bb.writeByte(0);
+}
+
+function decodeScanResult(bb) {
+  var result = {};
+
+  var length = bb.readVarUint();
+  var values = (result["exports"] = Array(length));
+  for (var i = 0; i < length; i++) values[i] = bb.readString();
+  var length = bb.readVarUint();
+  var values = (result["imports"] = Array(length));
+  for (var i = 0; i < length; i++) values[i] = decodeScannedImport(bb);
+  return result;
+}
+
+function encodeScanResult(message, bb) {
+  var value = message["exports"];
+  if (value != null) {
+    var values = value,
+      n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      bb.writeString(value);
+    }
+  } else {
+    throw new Error('Missing required field "exports"');
+  }
+
+  var value = message["imports"];
+  if (value != null) {
+    var values = value,
+      n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      encodeScannedImport(value, bb);
+    }
+  } else {
+    throw new Error('Missing required field "imports"');
+  }
+}
+
+function decodeScannedImport(bb) {
+  var result = {};
+
+  result["path"] = bb.readString();
+  result["kind"] = ImportKind[bb.readByte()];
+  return result;
+}
+
+function encodeScannedImport(message, bb) {
+  var value = message["path"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error('Missing required field "path"');
+  }
+
+  var value = message["kind"];
+  if (value != null) {
+    var encoded = ImportKind[value];
+    if (encoded === void 0)
+      throw new Error(
+        "Invalid value " + JSON.stringify(value) + ' for enum "ImportKind"'
+      );
+    bb.writeByte(encoded);
+  } else {
+    throw new Error('Missing required field "kind"');
+  }
+}
+const ImportKind = {
+  1: 1,
+  2: 2,
+  3: 3,
+  4: 4,
+  5: 5,
+  6: 6,
+  7: 7,
+  8: 8,
+  entry_point: 1,
+  stmt: 2,
+  require: 3,
+  dynamic: 4,
+  require_resolve: 5,
+  at: 6,
+  url: 7,
+  internal: 8,
+};
+const ImportKindKeys = {
+  1: "entry_point",
+  2: "stmt",
+  3: "require",
+  4: "dynamic",
+  5: "require_resolve",
+  6: "at",
+  7: "url",
+  8: "internal",
+  entry_point: "entry_point",
+  stmt: "stmt",
+  require: "require",
+  dynamic: "dynamic",
+  require_resolve: "require_resolve",
+  at: "at",
+  url: "url",
+  internal: "internal",
+};
 const TransformResponseStatus = {
   1: 1,
   2: 2,
@@ -3119,6 +3276,14 @@ export { decodeFileHandle };
 export { encodeFileHandle };
 export { decodeTransform };
 export { encodeTransform };
+export { decodeScan };
+export { encodeScan };
+export { decodeScanResult };
+export { encodeScanResult };
+export { decodeScannedImport };
+export { encodeScannedImport };
+export { ImportKind };
+export { ImportKindKeys };
 export { TransformResponseStatus };
 export { TransformResponseStatusKeys };
 export { decodeOutputFile };

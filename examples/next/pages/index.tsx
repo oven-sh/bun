@@ -29,8 +29,6 @@ export default function Home({}) {
           <code className={styles.code}>pages/index.tsx</code>
         </p>
       </main>
-
-      <footer className={styles.footer}></footer>
     </div>
   );
 }

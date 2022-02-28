@@ -2806,8 +2806,20 @@ fn NewLexer_(
 pub const Lexer = NewLexer(.{});
 
 const JSIdentifier = @import("./js_lexer/identifier.zig");
-pub const isIdentifierStart = JSIdentifier.Bitset.isIdentifierStart;
-pub const isIdentifierContinue = JSIdentifier.Bitset.isIdentifierPart;
+pub inline fn isIdentifierStart(codepoint: i32) bool {
+    if (comptime Environment.isWasm) {
+        return JSIdentifier.JumpTable.isIdentifierStart(codepoint);
+    }
+
+    return JSIdentifier.Bitset.isIdentifierStart(codepoint);
+}
+pub inline fn isIdentifierContinue(codepoint: i32) bool {
+    if (comptime Environment.isWasm) {
+        return JSIdentifier.JumpTable.isIdentifierPart(codepoint);
+    }
+
+    return JSIdentifier.Bitset.isIdentifierPart(codepoint);
+}
 
 pub fn isWhitespace(codepoint: CodePoint) bool {
     return switch (codepoint) {

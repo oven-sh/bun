@@ -536,8 +536,8 @@ pub const Route = struct {
     pub const Ptr = TinyPtr;
 
     pub const index_route_name: string = "/";
-    var route_file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-    var second_route_file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    var route_file_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+    var second_route_file_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
 
     pub const Sorter = struct {
         const sort_table: [std.math.maxInt(u8)]u8 = brk: {

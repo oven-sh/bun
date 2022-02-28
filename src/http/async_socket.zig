@@ -9,7 +9,7 @@ const KeepAlive = @import("../http_client_async.zig").KeepAlive;
 const Output = @import("../global.zig").Output;
 const NetworkThread = @import("../network_thread.zig");
 const Environment = @import("../global.zig").Environment;
-
+const _global = @import("../global.zig");
 const extremely_verbose = @import("../http_client_async.zig").extremely_verbose;
 const SOCKET_FLAGS: u32 = @import("../http_client_async.zig").SOCKET_FLAGS;
 const getAllocator = @import("../http_client_async.zig").getAllocator;
@@ -330,7 +330,7 @@ pub const SSL = struct {
     send_frame: Yield(SSL.send) = Yield(SSL.send){},
     read_frame: Yield(SSL.read) = Yield(SSL.read){},
 
-    hostname: [std.fs.MAX_PATH_BYTES]u8 = undefined,
+    hostname: [_global.MAX_PATH_BYTES]u8 = undefined,
     is_ssl: bool = false,
 
     handshake_state: HandshakeState = HandshakeState.none,

@@ -220,46 +220,35 @@
       "program": "bun-debug",
       // "args": ["--serve", "--origin=http://localhost:3000"],
       "args": ["dev", "--origin=http://localhost:3000"],
-      "cwd": "${workspaceFolder}/examples/hello-next",
+      "cwd": "/tmp/next-app",
       "console": "internalConsole"
     },
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Demo Serve aarch64",
-      "program": "${workspaceFolder}/build/macos-aarch64/bun",
+      "name": "Demo ",
+      "program": "bun-debug",
       // "args": ["--serve", "--origin=http://localhost:3000"],
-      "args": ["dev", "--origin=http://ci.local:3000"],
-      "cwd": "${workspaceFolder}/examples/hello-next",
+      "args": ["/Users/jarred/Desktop/text-encoder-hello.js"],
+      "cwd": "${workspaceFolder}",
       "console": "internalConsole"
     },
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Demo Lazy Build",
+      "name": "wiptest",
       "program": "bun-debug",
-      "args": [
-        "./src/index.tsx",
-        "--resolve=lazy",
-        "--origin=http://localhost:9000/"
-      ],
-      "cwd": "${workspaceFolder}/examples/simple-react",
+      "args": ["wiptest", "transpiler"],
+      "cwd": "${workspaceFolder}/integration",
       "console": "internalConsole"
     },
-
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Demo Build",
+      "name": "debug test",
       "program": "bun-debug",
-      "args": [
-        "./src/index.tsx",
-        "--resolve=dev",
-        "--outdir=outcss",
-        "--platform=browser",
-        "--origin=http://localhost:9000/"
-      ],
-      "cwd": "${workspaceFolder}/examples/css-stress-test",
+      "args": ["build", "/tmp/foo.ts"],
+      "cwd": "/tmp",
       "console": "internalConsole"
     },
     {
@@ -267,11 +256,7 @@
       "request": "launch",
       "name": "Dazzle serve",
       "program": "bun-debug",
-      "args": [
-        "--origin=http://localhost:5001",
-        "--disable-bun.js",
-        "--disable-hmr"
-      ],
+      "args": ["dev"],
       "cwd": "/Users/jarred/Build/lattice/apps/dazzle",
       "console": "internalConsole"
     },
@@ -280,10 +265,9 @@
       "request": "launch",
       "name": "Dazzle bun",
       "program": "bun-debug",
-      "args": ["bun", "--use=next"],
+      "args": ["bun"],
       "cwd": "/Users/jarred/Build/lattice/apps/dazzle",
-      "console": "internalConsole",
-      "env": { "GOMAXPROCS": "1" }
+      "console": "internalConsole"
     },
     {
       "type": "lldb",
@@ -308,8 +292,23 @@
       "request": "launch",
       "name": "bun test",
       "program": "bun-debug",
-      "args": ["wiptest", "import-meta"],
-      "cwd": "${workspaceFolder}",
+      "args": ["wiptest", "transpiler"],
+      "cwd": "${workspaceFolder}/integration",
+      "env": {
+        "FORCE_COLOR": "1"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun tes2t",
+      "program": "bun-debug",
+      "args": ["build", "hello.jsx", "--platform=bun"],
+      "cwd": "/Users/jarred/Desktop/",
+      "env": {
+        "FORCE_COLOR": "1"
+      },
       "console": "internalConsole"
     },
     {
@@ -426,6 +425,35 @@
       "program": "bun-debug",
       "args": [],
       "cwd": "${workspaceFolder}/integration/snippets",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun.sh dev",
+      "program": "bun-debug",
+      "args": ["dev"],
+      "cwd": "${workspaceFolder}/../bun.sh",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Instal 1l",
+      "program": "bun-debug",
+      "args": ["install", "-g", "which"],
+      "cwd": "/tmp/new-app",
+      "env": {},
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Instal 32",
+      "program": "bun-debug",
+      "args": ["install"],
+      "cwd": "/tmp/foo",
+      "env": {},
       "console": "internalConsole"
     },
     {

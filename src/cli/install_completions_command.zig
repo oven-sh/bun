@@ -75,7 +75,7 @@ pub const InstallCompletionsCommand = struct {
 
         var completions_dir: string = "";
         var output_dir: std.fs.Dir = found: {
-            var cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            var cwd_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
             var cwd = std.os.getcwd(&cwd_buf) catch {
                 Output.prettyErrorln("<r><red>error<r>: Could not get current working directory", .{});
                 Output.flush();
@@ -285,9 +285,9 @@ pub const InstallCompletionsCommand = struct {
 
         // Check if they need to load the zsh completions file into their .zshrc
         if (shell == .zsh) {
-            var completions_absolute_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            var completions_absolute_path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
             var completions_path = std.os.getFdPath(output_file.handle, &completions_absolute_path_buf) catch unreachable;
-            var zshrc_filepath: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            var zshrc_filepath: [_global.MAX_PATH_BYTES]u8 = undefined;
             const needs_to_tell_them_to_add_completions_file = brk: {
                 var dot_zshrc: std.fs.File = zshrc: {
                     first: {

@@ -1069,7 +1069,7 @@ pub const ESModule = struct {
         "%5C",
     };
 
-    threadlocal var resolved_path_buf_percent: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var resolved_path_buf_percent: [_global.MAX_PATH_BYTES]u8 = undefined;
     pub fn resolve(r: *const ESModule, package_url: string, subpath: string, exports: ExportsMap.Entry) Resolution {
         var result = r.resolveExports(package_url, subpath, exports);
 
@@ -1239,8 +1239,8 @@ pub const ESModule = struct {
         };
     }
 
-    threadlocal var resolve_target_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var resolve_target_buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var resolve_target_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var resolve_target_buf2: [_global.MAX_PATH_BYTES]u8 = undefined;
     fn resolveTarget(
         r: *const ESModule,
         package_url: string,
@@ -1505,8 +1505,8 @@ pub const ESModule = struct {
         }
     }
 
-    threadlocal var resolve_target_reverse_prefix_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var resolve_target_reverse_prefix_buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var resolve_target_reverse_prefix_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var resolve_target_reverse_prefix_buf2: [_global.MAX_PATH_BYTES]u8 = undefined;
 
     fn resolveTargetReverse(
         r: *const ESModule,

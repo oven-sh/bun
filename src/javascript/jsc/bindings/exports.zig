@@ -1,6 +1,6 @@
 const JSC = @import("../../../jsc.zig");
 const Fs = @import("../../../fs.zig");
-const CAPI = @import("../../../jsc.zig").C;
+const CAPI = JSC.C;
 const JS = @import("../javascript.zig");
 const JSBase = @import("../base.zig");
 const ZigURL = @import("../../../query_string_map.zig").URL;

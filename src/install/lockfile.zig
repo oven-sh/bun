@@ -35,8 +35,8 @@ const HeaderBuilder = @import("http").HeaderBuilder;
 const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
 const Lock = @import("../lock.zig").Lock;
-var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-var path_buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+var path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+var path_buf2: [_global.MAX_PATH_BYTES]u8 = undefined;
 const URL = @import("../query_string_map.zig").URL;
 const AsyncHTTP = @import("http").AsyncHTTP;
 const HTTPChannel = @import("http").HTTPChannel;
@@ -222,13 +222,13 @@ pub const Tree = struct {
         package_ids: []const PackageID,
         names: []const String,
         tree_id: Id = 0,
-        path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
+        path_buf: [_global.MAX_PATH_BYTES]u8 = undefined,
         path_buf_len: usize = 0,
         last_parent: Id = invalid_id,
         string_buf: string,
 
         // max number of node_modules folders
-        depth_stack: [(std.fs.MAX_PATH_BYTES / "node_modules".len) + 1]Id = undefined,
+        depth_stack: [(_global.MAX_PATH_BYTES / "node_modules".len) + 1]Id = undefined,
 
         pub fn init(
             trees: []const Tree,
@@ -842,8 +842,8 @@ pub const Printer = struct {
 
     pub const Format = enum { yarn };
 
-    var lockfile_path_buf1: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-    var lockfile_path_buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    var lockfile_path_buf1: [_global.MAX_PATH_BYTES]u8 = undefined;
+    var lockfile_path_buf2: [_global.MAX_PATH_BYTES]u8 = undefined;
 
     pub fn print(
         allocator: std.mem.Allocator,
@@ -2282,7 +2282,7 @@ pub const Package = extern struct {
 
                         // If it's a folder, pessimistically assume we will need a maximum path
                         if (Dependency.Version.Tag.infer(value) == .folder) {
-                            string_builder.cap += std.fs.MAX_PATH_BYTES;
+                            string_builder.cap += _global.MAX_PATH_BYTES;
                         }
                     }
                     total_dependencies_count += @truncate(u32, dependencies_q.expr.data.e_object.properties.len);
@@ -2911,7 +2911,7 @@ pub const Serializer = struct {
 
         load_workspace: {
             const workspace_path_len = reader.readIntLittle(u64) catch break :load_workspace;
-            if (workspace_path_len > 0 and workspace_path_len < std.fs.MAX_PATH_BYTES) {
+            if (workspace_path_len > 0 and workspace_path_len < _global.MAX_PATH_BYTES) {
                 var workspace_path = try allocator.alloc(u8, workspace_path_len);
                 const len = reader.readAll(workspace_path) catch break :load_workspace;
                 lockfile.workspace_path = workspace_path[0..len];

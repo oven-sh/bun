@@ -38,7 +38,7 @@ pub fn main() anyerror!void {
         std.os.abort();
     }
 
-    var tarball_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    var tarball_path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
     var basename = std.fs.path.basename(std.mem.span(args[args.len - 1]));
     while (RecognizedExtensions.has(std.fs.path.extension(basename))) {
         basename = basename[0 .. basename.len - std.fs.path.extension(basename).len];

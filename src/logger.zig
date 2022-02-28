@@ -1,6 +1,6 @@
 const std = @import("std");
 const Api = @import("./api/schema.zig").Api;
-const js = @import("./jsc.zig");
+const js = @import("javascript_core");
 const ImportKind = @import("./import_record.zig").ImportKind;
 const _global = @import("./global.zig");
 const string = _global.string;
@@ -12,7 +12,7 @@ const MutableString = _global.MutableString;
 const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
 const C = _global.C;
-const JSC = @import("./jsc.zig");
+const JSC = @import("javascript_core");
 const fs = @import("fs.zig");
 const unicode = std.unicode;
 

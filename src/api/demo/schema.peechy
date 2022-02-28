@@ -362,34 +362,6 @@ message Transform {
   TransformOptions options = 5;
 }
 
-message Scan {
-  string path = 1;
-  byte[] contents = 2;
-  Loader loader = 3;
-}
-
-struct ScanResult {
-    string[] exports;
-    ScannedImport[] imports;
-}
-
-struct ScannedImport {
-  string path;
-  ImportKind kind;
-}
-
-smol ImportKind {
-  entry_point = 1;
-  stmt = 2;
-  require = 3;
-  dynamic = 4;
-  require_resolve = 5;
-  at = 6;
-  url = 7;
-  internal = 8;
-}
-
-
 enum TransformResponseStatus {
   success = 1;
   fail = 2;

@@ -80,7 +80,7 @@ pub const FileSystem = struct {
     top_level_dir: string = "/",
 
     // used on subsequent updates
-    top_level_dir_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
+    top_level_dir_buf: [_global.MAX_PATH_BYTES]u8 = undefined,
 
     fs: Implementation,
 
@@ -503,7 +503,7 @@ pub const FileSystem = struct {
         file_limit: usize = 32,
         file_quota: usize = 32,
 
-        pub var tmpdir_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        pub var tmpdir_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
 
         const PLATFORM_TMP_DIR: string = switch (@import("builtin").target.os.tag) {
             .windows => "TMPDIR",
@@ -927,7 +927,7 @@ pub const FileSystem = struct {
         pub fn kind(fs: *RealFS, _dir: string, base: string, existing_fd: StoredFileDescriptorType) !Entry.Cache {
             var dir = _dir;
             var combo = [2]string{ dir, base };
-            var outpath: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            var outpath: [_global.MAX_PATH_BYTES]u8 = undefined;
             var entry_path = path_handler.joinAbsStringBuf(fs.cwd, &outpath, &combo, .auto);
 
             outpath[entry_path.len + 1] = 0;

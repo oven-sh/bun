@@ -6,7 +6,7 @@
   "search.exclude": {},
   "search.followSymlinks": false,
   "search.useIgnoreFiles": true,
-  "zig.buildOnSave": false,
+  "zig.buildOnSave": true,
   "[zig]": {
     "editor.defaultFormatter": "AugusteRame.zls-vscode"
   },

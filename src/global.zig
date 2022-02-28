@@ -41,7 +41,14 @@ pub const Output = struct {
                 // return @TypeOf(std.io.bufferedWriter(stdout.writer()));
             }
         };
-        pub const BufferedStream: type = std.io.BufferedWriter(4096, @typeInfo(std.meta.declarationInfo(StreamType, "writer").data.Fn.fn_type).Fn.return_type.?);
+        pub const BufferedStream: type = struct {
+            fn getBufferedStream() type {
+                if (comptime Environment.isWasm)
+                    return StreamType;
+
+                return std.io.BufferedWriter(4096, @typeInfo(std.meta.declarationInfo(StreamType, "writer").data.Fn.fn_type).Fn.return_type.?);
+            }
+        }.getBufferedStream();
 
         buffered_stream: BufferedStream,
         buffered_error_stream: BufferedStream,
@@ -68,8 +75,14 @@ pub const Output = struct {
             return Source{
                 .stream = stream,
                 .error_stream = err,
-                .buffered_stream = BufferedStream{ .unbuffered_writer = stream.writer() },
-                .buffered_error_stream = BufferedStream{ .unbuffered_writer = err.writer() },
+                .buffered_stream = if (Environment.isNative)
+                    BufferedStream{ .unbuffered_writer = stream.writer() }
+                else
+                    stream,
+                .buffered_error_stream = if (Environment.isNative)
+                    BufferedStream{ .unbuffered_writer = err.writer() }
+                else
+                    err,
             };
         }
 
@@ -112,32 +125,32 @@ pub const Output = struct {
             source = _source.*;
 
             source_set = true;
-
             if (!stdout_stream_set) {
                 stdout_stream_set = true;
+                if (comptime Environment.isNative) {
+                    var is_color_terminal: ?bool = null;
+                    if (_source.stream.isTty()) {
+                        stdout_descriptor_type = OutputStreamDescriptor.terminal;
+                        is_color_terminal = is_color_terminal orelse isColorTerminal();
+                        enable_ansi_colors_stdout = is_color_terminal.?;
+                    } else if (isForceColor()) |val| {
+                        enable_ansi_colors_stdout = val;
+                    } else {
+                        enable_ansi_colors_stdout = false;
+                    }
 
-                var is_color_terminal: ?bool = null;
-                if (_source.stream.isTty()) {
-                    stdout_descriptor_type = OutputStreamDescriptor.terminal;
-                    is_color_terminal = is_color_terminal orelse isColorTerminal();
-                    enable_ansi_colors_stdout = is_color_terminal.?;
-                } else if (isForceColor()) |val| {
-                    enable_ansi_colors_stdout = val;
-                } else {
-                    enable_ansi_colors_stdout = false;
+                    if (_source.error_stream.isTty()) {
+                        stderr_descriptor_type = OutputStreamDescriptor.terminal;
+                        is_color_terminal = is_color_terminal orelse isColorTerminal();
+                        enable_ansi_colors_stderr = is_color_terminal.?;
+                    } else if (isForceColor()) |val| {
+                        enable_ansi_colors_stderr = val;
+                    } else {
+                        enable_ansi_colors_stderr = false;
+                    }
+
+                    enable_ansi_colors = enable_ansi_colors_stderr or enable_ansi_colors_stdout;
                 }
-
-                if (_source.error_stream.isTty()) {
-                    stderr_descriptor_type = OutputStreamDescriptor.terminal;
-                    is_color_terminal = is_color_terminal orelse isColorTerminal();
-                    enable_ansi_colors_stderr = is_color_terminal.?;
-                } else if (isForceColor()) |val| {
-                    enable_ansi_colors_stderr = val;
-                } else {
-                    enable_ansi_colors_stderr = false;
-                }
-
-                enable_ansi_colors = enable_ansi_colors_stderr or enable_ansi_colors_stdout;
 
                 stdout_stream = _source.stream;
                 stderr_stream = _source.error_stream;
@@ -155,7 +168,7 @@ pub const Output = struct {
     pub var enable_ansi_colors = Environment.isNative;
     pub var enable_ansi_colors_stderr = Environment.isNative;
     pub var enable_ansi_colors_stdout = Environment.isNative;
-    pub var enable_buffering = true;
+    pub var enable_buffering = Environment.isNative;
 
     pub var stderr_descriptor_type = OutputStreamDescriptor.unknown;
     pub var stdout_descriptor_type = OutputStreamDescriptor.unknown;
@@ -175,12 +188,12 @@ pub const Output = struct {
         Output.Source.set(&_source_for_test);
     }
     pub fn enableBuffering() void {
-        enable_buffering = true;
+        if (comptime Environment.isNative) enable_buffering = true;
     }
 
     pub fn disableBuffering() void {
         Output.flush();
-        enable_buffering = false;
+        if (comptime Environment.isNative) enable_buffering = false;
     }
 
     pub fn panic(comptime fmt: string, args: anytype) noreturn {
@@ -284,7 +297,7 @@ pub const Output = struct {
         if (comptime Environment.isWasm) {
             try source.stream.seekTo(0);
             try source.stream.writer().print(fmt, args);
-            root.console_log(root.Uint8Array.fromSlice(source.out_buffer[0..source.stream.pos]));
+            root.console_error(root.Uint8Array.fromSlice(source.stream.buffer[0..source.stream.pos]));
         } else {
             std.fmt.format(source.stream.writer(), fmt, args) catch unreachable;
         }
@@ -313,14 +326,13 @@ pub const Output = struct {
     }
 
     pub fn print(comptime fmt: string, args: anytype) void {
-        std.debug.assert(source_set);
-
         if (comptime Environment.isWasm) {
-            source.stream.seekTo(0) catch return;
-            source.stream.writer().print(fmt, args) catch return;
-
-            root.console_log(root.Uint8Array.fromSlice(source.out_buffer[0..source.stream.pos]));
+            source.stream.pos = 0;
+            std.fmt.format(source.stream.writer(), fmt, args) catch unreachable;
+            root.console_log(root.Uint8Array.fromSlice(source.stream.buffer[0..source.stream.pos]));
         } else {
+            std.debug.assert(source_set);
+
             if (enable_buffering) {
                 std.fmt.format(source.buffered_stream.writer(), fmt, args) catch unreachable;
             } else {
@@ -656,3 +668,5 @@ pub const MutableString = @import("string_mutable.zig").MutableString;
 pub inline fn constStrToU8(s: []const u8) []u8 {
     return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
 }
+
+pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.MAX_PATH_BYTES;

@@ -69,11 +69,17 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
         .name = "io",
         .path = pkgPath("src/io/io_linux.zig"),
     };
+    var io_stub: std.build.Pkg = .{
+        .name = "io",
+        .path = pkgPath("src/io/io_stub.zig"),
+    };
 
     var io = if (target.isDarwin())
         io_darwin
+    else if (target.isLinux())
+        io_linux
     else
-        io_linux;
+        io_stub;
 
     var strings: std.build.Pkg = .{
         .name = "strings",
@@ -90,10 +96,20 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
         .path = pkgPath("src/http_client_async.zig"),
     };
 
-    var javascript_core: std.build.Pkg = .{
+    var javascript_core_real: std.build.Pkg = .{
         .name = "javascript_core",
         .path = pkgPath("src/jsc.zig"),
     };
+
+    var javascript_core_stub: std.build.Pkg = .{
+        .name = "javascript_core",
+        .path = pkgPath("src/jsc_stub.zig"),
+    };
+
+    var javascript_core = if (target.getOsTag() == .freestanding)
+        javascript_core_stub
+    else
+        javascript_core_real;
 
     var analytics: std.build.Pkg = .{
         .name = "analytics",
@@ -169,6 +185,12 @@ fn updateRuntime() anyerror!void {
 
 var x64 = "x64";
 var mode: std.builtin.Mode = undefined;
+
+const Builder = std.build.Builder;
+const CrossTarget = std.zig.CrossTarget;
+const Mode = std.builtin.Mode;
+const fs = std.fs;
+
 pub fn build(b: *std.build.Builder) !void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
@@ -221,7 +243,10 @@ pub fn build(b: *std.build.Builder) !void {
     const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{s}{s}", .{ bin_label, triplet });
     output_dir = b.pathFromRoot(output_dir_base);
     const bun_executable_name = if (mode == std.builtin.Mode.Debug) "bun-debug" else "bun";
-    exe = b.addExecutable(bun_executable_name, "src/main.zig");
+    exe = b.addExecutable(bun_executable_name, if (target.getOsTag() == std.Target.Os.Tag.freestanding)
+        "src/main_wasm.zig"
+    else
+        "src/main.zig");
     // exe.setLibCFile("libc.txt");
     exe.linkLibC();
     // exe.linkLibCpp();
@@ -235,14 +260,22 @@ pub fn build(b: *std.build.Builder) !void {
 
     var typings_exe = b.addExecutable("typescript-decls", "src/typegen.zig");
 
+    const min_version: std.builtin.Version = if (target.getOsTag() != .freestanding)
+        target.getOsVersionMin().semver
+    else .{ .major = 0, .minor = 0, .patch = 0 };
+
+    const max_version: std.builtin.Version = if (target.getOsTag() != .freestanding)
+        target.getOsVersionMin().semver
+    else .{ .major = 0, .minor = 0, .patch = 0 };
+
     // exe.want_lto = true;
     defer b.default_step.dependOn(&b.addLog("Output: {s}/{s}\n", .{ output_dir, bun_executable_name }).step);
     defer b.default_step.dependOn(&b.addLog(
         "Build {s} v{} - v{}\n",
         .{
             triplet,
-            target.getOsVersionMin().semver,
-            target.getOsVersionMax().semver,
+            min_version,
+            max_version,
         },
     ).step);
 
@@ -265,8 +298,8 @@ pub fn build(b: *std.build.Builder) !void {
                 "Build {s} v{} - v{}\n",
                 .{
                     triplet,
-                    obj.target.getOsVersionMin().semver,
-                    obj.target.getOsVersionMax().semver,
+                    min_version,
+                    max_version,
                 },
             ).step);
         }
@@ -304,6 +337,17 @@ pub fn build(b: *std.build.Builder) !void {
         var headers_obj: *std.build.LibExeObjStep = b.addObject("headers", "src/bindgen.zig");
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(headers_obj, target, obj.main_pkg_path.?);
+    }
+
+    {
+        const wasm = b.step("bun-wasm", "Build WASM");
+        var wasm_step: *std.build.LibExeObjStep = b.addStaticLibrary("bun-wasm", "src/main_wasm.zig");
+        defer wasm.dependOn(&wasm_step.step);
+        wasm_step.strip = false;
+        // wasm_step.link_function_sections = true;
+        // wasm_step.link_emit_relocs = true;
+        // wasm_step.single_threaded = true;
+        try configureObjectStep(wasm_step, target, obj.main_pkg_path.?);
     }
 
     {
@@ -399,6 +443,8 @@ pub var original_make_fn: ?fn (step: *std.build.Step) anyerror!void = null;
 // so I am leaving this here for now, with the eventual intent to switch to std.build.Builder
 // but it is dead code
 pub fn linkObjectFiles(b: *std.build.Builder, obj: *std.build.LibExeObjStep, target: anytype) !void {
+    if (target.getOsTag() == .freestanding)
+        return;
     var dirs_to_search = std.BoundedArray([]const u8, 32).init(0) catch unreachable;
     const arm_brew_prefix: []const u8 = "/opt/homebrew";
     const x86_brew_prefix: []const u8 = "/usr/local";
@@ -455,16 +501,16 @@ pub fn linkObjectFiles(b: *std.build.Builder, obj: *std.build.LibExeObjStep, tar
 pub fn configureObjectStep(obj: *std.build.LibExeObjStep, target: anytype, main_pkg_path: []const u8) !void {
     obj.setMainPkgPath(main_pkg_path);
     obj.setTarget(target);
-
     try addInternalPackages(obj, std.heap.page_allocator, target);
-    addPicoHTTP(obj, false);
+    if (target.getOsTag() != .freestanding)
+        addPicoHTTP(obj, false);
 
     obj.strip = false;
     obj.setOutputDir(output_dir);
     obj.setBuildMode(mode);
-    obj.linkLibC();
-    obj.linkLibCpp();
-    obj.bundle_compiler_rt = true;
+    if (target.getOsTag() != .freestanding) obj.linkLibC();
+    if (target.getOsTag() != .freestanding) obj.linkLibCpp();
+    if (target.getOsTag() != .freestanding) obj.bundle_compiler_rt = true;
 
     if (target.getOsTag() == .linux) {
         // obj.want_lto = tar;

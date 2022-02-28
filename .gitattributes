@@ -1,3 +1,4 @@
 .vscode/launch.json linguist-generated
 src/api/schema.d.ts linguist-generated
 src/api/schema.js linguist-generated
+*.lockb binary diff=lockb

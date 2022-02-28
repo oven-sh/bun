@@ -63,8 +63,8 @@ const MethodNames = std.ComptimeStringMap(Method, .{
     .{ "head", Method.HEAD },
 });
 
-var file_path_buf: [std.fs.MAX_PATH_BYTES + 1]u8 = undefined;
-var cwd_buf: [std.fs.MAX_PATH_BYTES + 1]u8 = undefined;
+var file_path_buf: [_global.MAX_PATH_BYTES + 1]u8 = undefined;
+var cwd_buf: [_global.MAX_PATH_BYTES + 1]u8 = undefined;
 
 pub const Arguments = struct {
     url: URL,

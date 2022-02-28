@@ -31,8 +31,8 @@ const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
-var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-var path_buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+var path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+var path_buf2: [_global.MAX_PATH_BYTES]u8 = undefined;
 const PathString = _global.PathString;
 
 const JSC = @import("javascript_core");
@@ -104,8 +104,8 @@ const Scanner = struct {
     dirs_to_scan: Fifo,
     results: std.ArrayList(_global.PathString),
     fs: *FileSystem,
-    open_dir_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
-    scan_dir_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
+    open_dir_buf: [_global.MAX_PATH_BYTES]u8 = undefined,
+    scan_dir_buf: [_global.MAX_PATH_BYTES]u8 = undefined,
     options: *options.BundleOptions,
     has_iterated: bool = false,
 

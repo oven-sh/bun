@@ -89,7 +89,7 @@ pub const Editor = enum(u8) {
     }
 
     const which = @import("./which.zig").which;
-    pub fn byPATH(env: *DotEnv.Loader, buf: *[std.fs.MAX_PATH_BYTES]u8, cwd: string, out: *[]const u8) ?Editor {
+    pub fn byPATH(env: *DotEnv.Loader, buf: *[_global.MAX_PATH_BYTES]u8, cwd: string, out: *[]const u8) ?Editor {
         const PATH = env.get("PATH") orelse return null;
 
         inline for (default_preference_list) |editor| {
@@ -104,7 +104,7 @@ pub const Editor = enum(u8) {
         return null;
     }
 
-    pub fn byPATHForEditor(env: *DotEnv.Loader, editor: Editor, buf: *[std.fs.MAX_PATH_BYTES]u8, cwd: string, out: *[]const u8) bool {
+    pub fn byPATHForEditor(env: *DotEnv.Loader, editor: Editor, buf: *[_global.MAX_PATH_BYTES]u8, cwd: string, out: *[]const u8) bool {
         const PATH = env.get("PATH") orelse return false;
 
         if (bin_name.get(editor)) |path| {
@@ -135,7 +135,7 @@ pub const Editor = enum(u8) {
         return false;
     }
 
-    pub fn byFallback(env: *DotEnv.Loader, buf: *[std.fs.MAX_PATH_BYTES]u8, cwd: string, out: *[]const u8) ?Editor {
+    pub fn byFallback(env: *DotEnv.Loader, buf: *[_global.MAX_PATH_BYTES]u8, cwd: string, out: *[]const u8) ?Editor {
         inline for (default_preference_list) |editor| {
             if (byPATHForEditor(env, editor, buf, cwd, out)) {
                 return editor;
@@ -220,7 +220,7 @@ pub const Editor = enum(u8) {
         column: ?string,
         allocator: std.mem.Allocator,
     ) !void {
-        var file_path_buf: [std.fs.MAX_PATH_BYTES + 1024]u8 = undefined;
+        var file_path_buf: [_global.MAX_PATH_BYTES + 1024]u8 = undefined;
         var file_path_buf_stream = std.io.fixedBufferStream(&file_path_buf);
         var file_path_buf_writer = file_path_buf_stream.writer();
         var args_buf: [10]string = undefined;

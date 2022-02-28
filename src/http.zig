@@ -768,7 +768,7 @@ pub const RequestContext = struct {
     };
 
     threadlocal var file_chunk_buf: [chunk_preamble_len + 2]u8 = undefined;
-    threadlocal var symlink_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var symlink_buffer: [_global.MAX_PATH_BYTES]u8 = undefined;
     threadlocal var weak_etag_buffer: [100]u8 = undefined;
     threadlocal var strong_etag_buffer: [100]u8 = undefined;
     threadlocal var weak_etag_tmp_buffer: [100]u8 = undefined;
@@ -1763,7 +1763,7 @@ pub const RequestContext = struct {
             // Output.prettyErrorln("<r><green>101<r><d> Hot Module Reloading connected.<r>", .{});
             // Output.flush();
             Analytics.Features.hot_module_reloading = true;
-            var build_file_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            var build_file_path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
 
             var cmd: Api.WebsocketCommand = undefined;
             var msg: Api.WebsocketMessage = .{
@@ -1772,7 +1772,7 @@ pub const RequestContext = struct {
             };
             var cmd_reader: ApiReader = undefined;
             {
-                var byte_buf: [32 + std.fs.MAX_PATH_BYTES]u8 = undefined;
+                var byte_buf: [32 + _global.MAX_PATH_BYTES]u8 = undefined;
                 var fbs = std.io.fixedBufferStream(&byte_buf);
                 var writer = ByteApiWriter.init(&fbs);
 
@@ -3040,7 +3040,7 @@ pub const Server = struct {
 
         var opened = try tmpdir.openFile(basename, .{});
         defer opened.close();
-        var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
         try editor_.open(
             Server.editor_path,
             try std.os.getFdPath(opened.handle, &path_buf),
@@ -3051,7 +3051,7 @@ pub const Server = struct {
     }
 
     pub fn detectEditor(env: *DotEnv.Loader) void {
-        var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
 
         var out: string = "";
         // first: choose from user preference
@@ -3130,7 +3130,7 @@ pub const Server = struct {
         }
     }
 
-    var _on_file_update_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    var _on_file_update_path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
     fn _onFileUpdate(
         ctx: *Server,
         events: []watcher.WatchEvent,

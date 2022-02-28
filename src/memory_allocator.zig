@@ -32,12 +32,6 @@ const c = struct {
 const Allocator = mem.Allocator;
 const assert = std.debug.assert;
 const CAllocator = struct {
-    comptime {
-        if (!@import("builtin").link_libc) {
-            @compileError("C allocator is only available when linking against libc");
-        }
-    }
-
     usingnamespace if (@hasDecl(c, "malloc_size"))
         struct {
             pub const supports_malloc_size = true;
@@ -161,12 +155,6 @@ const c_allocator_vtable = Allocator.VTable{
 
 // This is a memory allocator which always writes zero instead of undefined
 const ZAllocator = struct {
-    comptime {
-        if (!@import("builtin").link_libc) {
-            @compileError("C allocator is only available when linking against libc");
-        }
-    }
-
     usingnamespace if (@hasDecl(c, "malloc_size"))
         struct {
             pub const supports_malloc_size = true;

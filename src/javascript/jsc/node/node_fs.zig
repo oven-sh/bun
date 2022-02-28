@@ -2417,7 +2417,7 @@ pub const NodeFS = struct {
     /// We want to avoid allocating a new path buffer for every error message so that JSC can clone + GC it.
     /// That means a stack-allocated buffer won't suffice. Instead, we re-use
     /// the heap allocated buffer on the NodefS struct
-    sync_error_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
+    sync_error_buf: [_global.MAX_PATH_BYTES]u8 = undefined,
 
     pub const ReturnType = Return;
 
@@ -2506,8 +2506,8 @@ pub const NodeFS = struct {
 
         switch (comptime flavor) {
             .sync => {
-                var src_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-                var dest_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                var src_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+                var dest_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
                 var src = args.src.sliceZ(&src_buf);
                 var dest = args.dest.sliceZ(&dest_buf);
 
@@ -2776,7 +2776,7 @@ pub const NodeFS = struct {
         return Maybe(Return.Lchown).todo;
     }
     pub fn link(this: *NodeFS, args: Arguments.Link, comptime flavor: Flavor) Maybe(Return.Link) {
-        var new_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var new_path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
         const from = args.old_path.sliceZ(&this.sync_error_buf);
         const to = args.new_path.sliceZ(&new_path_buf);
 
@@ -2846,7 +2846,7 @@ pub const NodeFS = struct {
         switch (comptime flavor) {
             // The sync version does no allocation except when returning the path
             .sync => {
-                var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
                 const path = args.path.sliceZWithForceCopy(&buf, true);
                 const len = @truncate(u16, path.len);
 
@@ -3393,7 +3393,7 @@ pub const NodeFS = struct {
     }
 
     pub fn readlink(this: *NodeFS, args: Arguments.Readlink, comptime flavor: Flavor) Maybe(Return.Readlink) {
-        var outbuf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var outbuf: [_global.MAX_PATH_BYTES]u8 = undefined;
         var inbuf = &this.sync_error_buf;
         switch (comptime flavor) {
             .sync => {
@@ -3426,7 +3426,7 @@ pub const NodeFS = struct {
         return Maybe(Return.Readlink).todo;
     }
     pub fn realpath(this: *NodeFS, args: Arguments.Realpath, comptime flavor: Flavor) Maybe(Return.Realpath) {
-        var outbuf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var outbuf: [_global.MAX_PATH_BYTES]u8 = undefined;
         var inbuf = &this.sync_error_buf;
         if (comptime Environment.allow_assert) std.debug.assert(FileSystem.instance_loaded);
 
@@ -3491,7 +3491,7 @@ pub const NodeFS = struct {
     // }
     pub fn rename(this: *NodeFS, args: Arguments.Rename, comptime flavor: Flavor) Maybe(Return.Rename) {
         var from_buf = &this.sync_error_buf;
-        var to_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var to_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
 
         switch (comptime flavor) {
             .sync => {
@@ -3550,7 +3550,7 @@ pub const NodeFS = struct {
     }
 
     pub fn symlink(this: *NodeFS, args: Arguments.Symlink, comptime flavor: Flavor) Maybe(Return.Symlink) {
-        var to_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var to_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
 
         switch (comptime flavor) {
             .sync => {

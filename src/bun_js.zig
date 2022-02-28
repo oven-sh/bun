@@ -28,7 +28,7 @@ const bundler = @import("bundler.zig");
 const NodeModuleBundle = @import("node_module_bundle.zig").NodeModuleBundle;
 const DotEnv = @import("env_loader.zig");
 const which = @import("which.zig").which;
-const VirtualMachine = @import("./javascript/jsc/javascript.zig").VirtualMachine;
+const VirtualMachine = @import("javascript_core").VirtualMachine;
 const JSC = @import("javascript_core");
 
 const OpaqueWrap = JSC.OpaqueWrap;

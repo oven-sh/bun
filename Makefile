@@ -382,6 +382,26 @@ init-submodules:
 build-obj: 
 	$(ZIG) build obj -Drelease-fast
 
+dev-build-obj-wasm: 
+	$(ZIG) build bun-wasm -Dtarget=wasm32-freestanding --prominent-compile-errors
+
+dev-wasm: dev-build-obj-wasm
+	emcc -sEXPORTED_FUNCTIONS="['_bun_free', '_cycleStart', '_cycleEnd', '_bun_malloc', '_scan', '_transform', '_init']" \
+		-g -s ERROR_ON_UNDEFINED_SYMBOLS=0  -DNDEBUG  \
+		$(BUN_DEPS_DIR)/libmimalloc.a.wasm  \
+		packages/debug-bun-freestanding-wasm32/bun-wasm.o -O3 --no-entry --allow-undefined  -s ASSERTIONS=0  -s ALLOW_MEMORY_GROWTH=1 -s WASM_BIGINT=1  \
+		-o packages/debug-bun-freestanding-wasm32/bun-wasm.wasm
+	cp packages/debug-bun-freestanding-wasm32/bun-wasm.wasm src/api/demo/public/bun-wasm.wasm
+
+build-obj-wasm: 
+	$(ZIG) build bun-wasm -Drelease-fast -Dtarget=wasm32-freestanding --prominent-compile-errors
+	emcc -sEXPORTED_FUNCTIONS="['_bun_free', '_cycleStart', '_cycleEnd', '_bun_malloc', '_scan', '_transform', '_init']" \
+		-g -s ERROR_ON_UNDEFINED_SYMBOLS=0  -DNDEBUG  \
+		$(BUN_DEPS_DIR)/libmimalloc.a.wasm  \
+		packages/bun-freestanding-wasm32/bun-wasm.o -O3 --no-entry --allow-undefined  -s ASSERTIONS=0  -s ALLOW_MEMORY_GROWTH=1 -s WASM_BIGINT=1  \
+		-o packages/bun-freestanding-wasm32/bun-wasm.wasm
+	cp packages/bun-freestanding-wasm32/bun-wasm.wasm src/api/demo/public/bun-wasm.wasm
+
 build-obj-safe: 
 	$(ZIG) build obj -Drelease-safe
 
@@ -803,8 +823,14 @@ jsc-bindings-mac: $(OBJ_FILES)
 
 # mimalloc is built as object files so that it can overload the system malloc
 mimalloc:
+	rm -rf $(BUN_DEPS_DIR)/mimalloc/CMakeCache* $(BUN_DEPS_DIR)/mimalloc/CMakeFiles
 	cd $(BUN_DEPS_DIR)/mimalloc; CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) -DMI_SKIP_COLLECT_ON_EXIT=1 -DMI_BUILD_SHARED=OFF -DMI_BUILD_STATIC=ON -DMI_BUILD_TESTS=OFF -DMI_BUILD_OBJECT=ON ${MIMALLOC_OVERRIDE_FLAG} -DMI_USE_CXX=ON .; make; 
 	cp $(BUN_DEPS_DIR)/mimalloc/$(MIMALLOC_INPUT_PATH) $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE)
+
+
+mimalloc-wasm:
+	cd $(BUN_DEPS_DIR)/mimalloc; emcmake cmake -DMI_BUILD_SHARED=OFF -DMI_BUILD_STATIC=ON -DMI_BUILD_TESTS=OFF -DMI_BUILD_OBJECT=ON ${MIMALLOC_OVERRIDE_FLAG} -DMI_USE_CXX=ON .; emmake make; 
+	cp $(BUN_DEPS_DIR)/mimalloc/$(MIMALLOC_INPUT_PATH) $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE).wasm
 
 bun-link-lld-debug:
 	$(CXX) $(BUN_LLD_FLAGS) \

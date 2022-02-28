@@ -586,7 +586,7 @@ pub const Bun = struct {
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
         const path = getFilePath(ctx, arguments, &buf, exception) orelse return null;
         buf[path.len] = 0;
 
@@ -603,7 +603,7 @@ pub const Bun = struct {
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
         const path = getFilePath(ctx, arguments, &buf, exception) orelse return null;
         buf[path.len] = 0;
 
@@ -728,7 +728,7 @@ pub const Bun = struct {
         return out.toValueGC(ctx.ptr()).asObjectRef();
     }
 
-    var public_path_temp_str: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    var public_path_temp_str: [_global.MAX_PATH_BYTES]u8 = undefined;
 
     pub fn getPublicPathJS(
         _: void,
@@ -760,7 +760,7 @@ pub const Bun = struct {
     //     if (arguments.len == 0) return ZigString.Empty.toValue(ctx.ptr()).asObjectRef();
     //     var zig_str: ZigString = ZigString.Empty;
     //     JSValue.toZigString(JSValue.fromRef(arguments[0]), &zig_str, ctx.ptr());
-    //     var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    //     var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
     //     var stack = std.heap.stackFallback(32 * @sizeOf(string), VirtualMachine.vm.allocator);
     //     var allocator = stack.get();
     //     var parts = allocator.alloc(string, arguments.len) catch {};

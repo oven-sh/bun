@@ -20,9 +20,10 @@ const CrashReporter = @import("crash_reporter");
 const Report = @This();
 
 var crash_report_writer: CrashReportWriter = CrashReportWriter{ .file = null };
+const CrashWritable = if (Environment.isWasm) std.io.fixedBufferStream([2048]u8) else std.fs.File.Writer;
 var crash_reporter_path: [1024]u8 = undefined;
 pub const CrashReportWriter = struct {
-    file: ?std.io.BufferedWriter(4096, std.fs.File.Writer) = null,
+    file: ?std.io.BufferedWriter(4096, CrashWritable) = null,
     file_path: []const u8 = "",
 
     pub fn printFrame(_: ?*anyopaque, frame: CrashReporter.StackFrame) void {
@@ -32,11 +33,13 @@ pub const CrashReportWriter = struct {
     }
 
     pub fn dump() void {
-        CrashReporter.print();
+        if (comptime !Environment.isWasm)
+            CrashReporter.print();
     }
 
     pub fn done() void {
-        CrashReporter.print();
+        if (comptime !Environment.isWasm)
+            CrashReporter.print();
     }
 
     pub fn print(this: *CrashReportWriter, comptime fmt: string, args: anytype) void {

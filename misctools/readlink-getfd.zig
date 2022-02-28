@@ -29,12 +29,12 @@ pub fn main() anyerror!void {
     const to_resolve = args[args.len - 1];
     const cwd = try std.process.getCwdAlloc(allocator);
     var path: []u8 = undefined;
-    var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    var out_buffer: [_global.MAX_PATH_BYTES]u8 = undefined;
 
     var j: usize = 0;
     while (j < 1000) : (j += 1) {
         var parts = [1][]const u8{std.mem.span(to_resolve)};
-        var joined_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var joined_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
         var joined = path_handler.joinAbsStringBuf(
             cwd,
             &joined_buf,

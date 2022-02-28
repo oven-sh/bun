@@ -42,7 +42,7 @@ const clap = @import("clap");
 const Lock = @import("../lock.zig").Lock;
 const Headers = @import("http").Headers;
 const CopyFile = @import("../copy_file.zig");
-var bun_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+var bun_path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
 const Futex = @import("../futex.zig");
 
 const target_nextjs_version = "12.1.0";
@@ -244,7 +244,7 @@ const CreateOptions = struct {
 };
 
 const BUN_CREATE_DIR = ".bun-create";
-var home_dir_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+var home_dir_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
 pub const CreateCommand = struct {
     pub fn exec(ctx: Command.Context, _: []const []const u8) !void {
         @setCold(true);

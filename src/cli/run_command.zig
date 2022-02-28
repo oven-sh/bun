@@ -30,8 +30,8 @@ const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
-var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-var path_buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+var path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+var path_buf2: [_global.MAX_PATH_BYTES]u8 = undefined;
 const NpmArgs = struct {
     // https://github.com/npm/rfcs/blob/main/implemented/0021-reduce-lifecycle-script-environment.md#detailed-explanation
     pub const package_name: string = "npm_package_name";

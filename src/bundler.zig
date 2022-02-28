@@ -411,7 +411,7 @@ pub const Bundler = struct {
             // So it is not fast! Unless it's already cached.
             var paths = [_]string{std.mem.trimLeft(u8, this.options.entry_points[0], "./")};
             if (std.mem.indexOfScalar(u8, paths[0], '.') == null) {
-                var pages_dir_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                var pages_dir_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
                 var entry = this.fs.absBuf(&paths, &pages_dir_buf);
 
                 if (std.fs.path.extension(entry).len == 0) {
@@ -1503,7 +1503,7 @@ pub const Bundler = struct {
         };
         const json_parse_string = "parse";
         var json_ast_symbols_list = std.mem.span(&json_ast_symbols);
-        threadlocal var override_file_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        threadlocal var override_file_path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
 
         pub fn appendToModuleList(
             this: *GenerateNodeModuleBundle,
@@ -2879,9 +2879,9 @@ pub const Bundler = struct {
     }
 
     // This is public so it can be used by the HTTP handler when matching against public dir.
-    pub threadlocal var tmp_buildfile_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var tmp_buildfile_buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var tmp_buildfile_buf3: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var tmp_buildfile_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var tmp_buildfile_buf2: [_global.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var tmp_buildfile_buf3: [_global.MAX_PATH_BYTES]u8 = undefined;
 
     // We try to be mostly stateless when serving
     // This means we need a slightly different resolver setup

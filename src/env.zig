@@ -3,9 +3,7 @@ const builtin = @import("builtin");
 
 pub const BuildTarget = enum { native, wasm, wasi };
 pub const build_target: BuildTarget = brk: {
-    if (@import("builtin").target.isWasm() and @import("builtin").target.getOsTag() == .wasi) {
-        break :brk BuildTarget.wasi;
-    } else if (@import("builtin").target.isWasm()) {
+    if (@import("builtin").target.isWasm()) {
         break :brk BuildTarget.wasm;
     } else {
         break :brk BuildTarget.native;

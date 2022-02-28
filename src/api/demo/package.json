@@ -8,8 +8,13 @@
     "start": "next start"
   },
   "dependencies": {
-    "next": "10.2.0",
-    "peechy": "^0.4.5",
+    "@swc/wasm-web": "^1.2.146",
+    "bun-framework-next": "^12.1.0",
+    "es-module-loader": "^2.3.0",
+    "esbuild": "^0.14.23",
+    "esbuild-wasm": "^0.14.23",
+    "next": "12",
+    "peechy": "latest",
     "react": "17.0.2",
     "react-dom": "17.0.2",
     "sucrase": "^3.18.1"

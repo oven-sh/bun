@@ -79,7 +79,7 @@ pub const INotify = struct {
     pub var inotify_fd: EventListIndex = 0;
     pub var loaded_inotify = false;
 
-    const EventListBuffer = [@sizeOf([128]INotifyEvent) + (128 * std.fs.MAX_PATH_BYTES)]u8;
+    const EventListBuffer = [@sizeOf([128]INotifyEvent) + (128 * _global.MAX_PATH_BYTES)]u8;
     var eventlist: EventListBuffer = undefined;
     var eventlist_ptrs: [128]*const INotifyEvent = undefined;
 
@@ -193,12 +193,19 @@ const DarwinWatcher = struct {
     }
 };
 
+pub const Placeholder = struct {
+    pub const EventListIndex = u32;
+
+    pub var eventlist: [WATCHER_MAX_LIST]EventListIndex = undefined;
+    pub var eventlist_index: EventListIndex = 0;
+};
+
 const PlatformWatcher = if (Environment.isMac)
     DarwinWatcher
 else if (Environment.isLinux)
     INotify
 else
-    void;
+    Placeholder;
 
 pub const WatchItem = struct {
     file_path: string,
@@ -599,7 +606,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 );
             } else if (comptime Environment.isLinux) {
                 // var file_path_to_use_ = std.mem.trimRight(u8, file_path_, "/");
-                // var buf: [std.fs.MAX_PATH_BYTES+1]u8 = undefined;
+                // var buf: [_global.MAX_PATH_BYTES+1]u8 = undefined;
                 // std.mem.copy(u8, &buf, file_path_to_use_);
                 // buf[file_path_to_use_.len] = 0;
                 var buf = file_path_.ptr;
@@ -683,7 +690,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 );
             } else if (Environment.isLinux) {
                 var file_path_to_use_ = std.mem.trimRight(u8, file_path_, "/");
-                var buf: [std.fs.MAX_PATH_BYTES + 1]u8 = undefined;
+                var buf: [_global.MAX_PATH_BYTES + 1]u8 = undefined;
                 std.mem.copy(u8, &buf, file_path_to_use_);
                 buf[file_path_to_use_.len] = 0;
                 var slice: [:0]u8 = buf[0..file_path_to_use_.len :0];

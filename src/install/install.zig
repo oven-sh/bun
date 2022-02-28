@@ -35,8 +35,8 @@ const HeaderBuilder = @import("http").HeaderBuilder;
 const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
 const Lock = @import("../lock.zig").Lock;
-var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-var path_buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+var path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+var path_buf2: [_global.MAX_PATH_BYTES]u8 = undefined;
 const URL = @import("../query_string_map.zig").URL;
 const AsyncHTTP = @import("http").AsyncHTTP;
 const HTTPChannel = @import("http").HTTPChannel;
@@ -587,8 +587,8 @@ const PackageInstall = struct {
             var this: *PackageInstall.Task = @fieldParentPtr(PackageInstall.Task, "task", task);
             var ctx = this.ctx;
 
-            var destination_dir_subpath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-            var cache_dir_subpath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            var destination_dir_subpath_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+            var cache_dir_subpath_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
             const name = ctx.names[this.package_id].slice(ctx.string_buf);
             const resolution = ctx.resolutions[this.package_id];
             std.mem.copy(u8, &destination_dir_subpath_buf, name);
@@ -811,7 +811,7 @@ const PackageInstall = struct {
                 walker: *Walker,
             ) !u32 {
                 var real_file_count: u32 = 0;
-                var stackpath: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                var stackpath: [_global.MAX_PATH_BYTES]u8 = undefined;
                 while (try walker.next()) |entry| {
                     switch (entry.kind) {
                         .Directory => std.os.mkdirat(destination_dir_.fd, entry.path, 0o755) catch {},
@@ -1284,7 +1284,7 @@ pub const PackageManager = struct {
         }
     }
 
-    var cached_package_folder_name_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    var cached_package_folder_name_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
 
     pub inline fn getCacheDirectory(this: *PackageManager) std.fs.Dir {
         return this.cache_directory_ orelse brk: {
@@ -2562,14 +2562,14 @@ pub const PackageManager = struct {
             }
 
             if (std.os.getenvZ("BUN_INSTALL")) |home_dir| {
-                var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
                 var parts = [_]string{ "install", "global" };
                 var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
                 return try std.fs.cwd().makeOpenPath(path, .{ .iterate = true });
             }
 
             if (std.os.getenvZ("XDG_CACHE_HOME") orelse std.os.getenvZ("HOME")) |home_dir| {
-                var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
                 var parts = [_]string{ ".bun", "install", "global" };
                 var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
                 return try std.fs.cwd().makeOpenPath(path, .{ .iterate = true });
@@ -2592,7 +2592,7 @@ pub const PackageManager = struct {
             }
 
             if (std.os.getenvZ("BUN_INSTALL")) |home_dir| {
-                var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
                 var parts = [_]string{
                     "bin",
                 };
@@ -2601,7 +2601,7 @@ pub const PackageManager = struct {
             }
 
             if (std.os.getenvZ("XDG_CACHE_HOME") orelse std.os.getenvZ("HOME")) |home_dir| {
-                var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
                 var parts = [_]string{
                     ".bun",
                     "bin",
@@ -3460,8 +3460,8 @@ pub const PackageManager = struct {
             }
 
             if (args.option("--cwd")) |cwd_| {
-                var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-                var buf2: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+                var buf2: [_global.MAX_PATH_BYTES]u8 = undefined;
                 var final_path: [:0]u8 = undefined;
                 if (cwd_.len > 0 and cwd_[0] == '.') {
                     var cwd = try std.os.getcwd(&buf);
@@ -3956,7 +3956,7 @@ pub const PackageManager = struct {
             if (op == .remove) {
                 var cwd = std.fs.cwd();
                 // This is not exactly correct
-                var node_modules_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                var node_modules_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
                 std.mem.copy(u8, &node_modules_buf, "node_modules" ++ std.fs.path.sep_str);
                 var offset_buf: []u8 = node_modules_buf["node_modules/".len..];
                 const name_hashes = manager.lockfile.packages.items(.name_hash);
@@ -4003,8 +4003,8 @@ pub const PackageManager = struct {
         }
     }
 
-    var cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-    var package_json_cwd_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    var cwd_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+    var package_json_cwd_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
 
     pub inline fn install(
         ctx: Command.Context,
@@ -4051,8 +4051,8 @@ pub const PackageManager = struct {
         node: *Progress.Node,
         has_created_bin: bool = false,
         global_bin_dir: std.fs.Dir,
-        destination_dir_subpath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
-        folder_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined,
+        destination_dir_subpath_buf: [_global.MAX_PATH_BYTES]u8 = undefined,
+        folder_path_buf: [_global.MAX_PATH_BYTES]u8 = undefined,
         install_count: usize = 0,
         successfully_installed: Bitset,
 
@@ -4523,7 +4523,7 @@ pub const PackageManager = struct {
 
     pub fn setupGlobalDir(manager: *PackageManager, ctx: *const Command.Context) !void {
         manager.options.global_bin_dir = try Options.openGlobalBinDir(ctx.install);
-        var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var out_buffer: [_global.MAX_PATH_BYTES]u8 = undefined;
         var result = try std.os.getFdPath(manager.options.global_bin_dir.fd, &out_buffer);
         out_buffer[result.len] = 0;
         var result_: [:0]u8 = out_buffer[0..result.len :0];

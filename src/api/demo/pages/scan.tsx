@@ -5,7 +5,7 @@ import styles from "../styles/Home.module.css";
 import React from "react";
 
 if (typeof window !== "undefined") {
-  globalThis.Run = await import("../lib/run");
+  globalThis.Scan = await import("../lib/scan");
   await import("../lib/api.ts");
 }
 
@@ -15,32 +15,32 @@ export async function getStaticProps(ctx) {
       code: Bun.readFile(
         "/Users/jarred/Build/es-module-lexer/test/samples/magic-string.js"
       ),
+      defaultFile: "magic-string.js",
     },
   };
 }
 
 var textDecoder = new TextDecoder();
-export default function Home({ code }) {
+export default function Home({ code, defaultFile }) {
   const fileNameRef = React.useRef();
-  const [esbuildResult, setEsbuildResult] = React.useState("");
+  const [lexer, setLexer] = React.useState("");
   const [bunResult, setBunResult] = React.useState("");
-  const [swcResult, setSWCResult] = React.useState("");
+  const [file, setFile] = React.useState(defaultFile);
   React.useEffect(() => {
-    globalThis.Run.start();
+    globalThis.Scan.start();
   }, []);
 
   const runBuild = React.useCallback(
     (event) => {
-      globalThis.Run.transform(
+      globalThis.Scan.transform(
         event.target.value,
         fileNameRef.current.value
       ).then((result) => {
-        setEsbuildResult(result.esbuild.code);
-        setBunResult(textDecoder.decode(result.bun.files[0].data));
-        setSWCResult(result.swc.code);
+        setLexer(JSON.stringify(result.lexer, null, 2));
+        setBunResult(JSON.stringify(result.bun, null, 2));
       }, console.error);
     },
-    [fileNameRef, setEsbuildResult, setBunResult, setSWCResult]
+    [fileNameRef, setBunResult, setLexer]
   );
   return (
     <div className={styles.container}>
@@ -56,14 +56,14 @@ export default function Home({ code }) {
             autoComplete="filename"
             type="text"
             placeholder="filename"
-            defaultValue="input.tsx"
+            value={file}
+            onChange={(event) => setFile(event.target.value)}
             ref={fileNameRef}
           />
           <textarea onChange={runBuild} defaultValue={code}></textarea>
 
-          <textarea readOnly value={esbuildResult}></textarea>
           <textarea readOnly value={bunResult}></textarea>
-          <textarea readOnly value={swcResult}></textarea>
+          <textarea readOnly value={lexer}></textarea>
         </div>
       </main>
     </div>

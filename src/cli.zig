@@ -240,7 +240,7 @@ pub const Arguments = struct {
         try Bunfig.parse(allocator, logger.Source.initPathString(std.mem.span(config_path), contents), ctx, cmd);
     }
 
-    fn getHomeConfigPath(buf: *[std.fs.MAX_PATH_BYTES]u8) ?[:0]const u8 {
+    fn getHomeConfigPath(buf: *[_global.MAX_PATH_BYTES]u8) ?[:0]const u8 {
         if (std.os.getenvZ("XDG_CONFIG_HOME") orelse std.os.getenvZ("HOME")) |data_dir| {
             var paths = [_]string{".bunfig.toml"};
             var outbuf = resolve_path.joinAbsStringBuf(data_dir, buf, &paths, .auto);
@@ -252,7 +252,7 @@ pub const Arguments = struct {
     }
 
     pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
-        var config_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var config_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
         if (comptime cmd.readGlobalConfig()) {
             if (getHomeConfigPath(&config_buf)) |path| {
                 try loadConfigPath(allocator, true, path, ctx, comptime cmd);
@@ -278,7 +278,7 @@ pub const Arguments = struct {
             config_path = config_buf[0..config_path_.len :0];
         } else {
             if (ctx.args.absolute_working_dir == null) {
-                var secondbuf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                var secondbuf: [_global.MAX_PATH_BYTES]u8 = undefined;
                 var cwd = std.os.getcwd(&secondbuf) catch return;
                 ctx.args.absolute_working_dir = try allocator.dupe(u8, cwd);
             }
@@ -689,7 +689,7 @@ pub const PrintBundleCommand = struct {
         @setCold(true);
 
         const entry_point = ctx.args.entry_points[0];
-        var out_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var out_buffer: [_global.MAX_PATH_BYTES]u8 = undefined;
         var stdout = std.io.getStdOut();
 
         var input = try std.fs.openFileAbsolute(try std.os.realpath(entry_point, &out_buffer), .{ .read = true });
@@ -712,7 +712,7 @@ pub const PrintBundleCommand = struct {
 };
 
 pub const Command = struct {
-    var script_name_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    var script_name_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
 
     pub const DebugOptions = struct {
         dump_environment_variables: bool = false,
@@ -1098,7 +1098,7 @@ pub const Command = struct {
 
                                     break :brk std.fs.cwd().openFileZ(file_pathZ, .{ .read = true });
                                 } else {
-                                    var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                                    var path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
                                     const cwd = std.os.getcwd(&path_buf) catch break :possibly_open_with_bun_js;
                                     path_buf[cwd.len] = std.fs.path.sep;
                                     var parts = [_]string{script_name_to_search};

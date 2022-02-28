@@ -4606,7 +4606,7 @@ pub fn printmem(comptime format: string, args: anytype) void {
 }
 
 pub const Macro = struct {
-    const JavaScript = @import("./javascript/jsc/javascript.zig");
+    const JavaScript = @import("javascript_core");
     const JSCBase = @import("./javascript/jsc/base.zig");
     const Resolver = @import("./resolver/resolver.zig").Resolver;
     const isPackagePath = @import("./resolver/resolver.zig").isPackagePath;

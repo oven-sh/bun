@@ -273,6 +273,13 @@ describe("Bun.Transpiler", () => {
       );
     });
 
+    it("import with unicode escape", () => {
+      expectPrinted_(
+        `import { name } from 'mod\\u1011';`,
+        `import {name} from "mod\\u1011"`
+      );
+    });
+
     it("define", () => {
       expectPrinted_(
         `export default typeof user_undefined === 'undefined';`,
@@ -757,6 +764,7 @@ describe("Bun.Transpiler", () => {
       'export { x } from "mod"'
     );
     expectPrinted_("export { x, type y as if }; let x", "export { x };\nlet x");
+    expectPrinted_("export { type x };", "");
   });
 
   it("delete + optional chain", () => {

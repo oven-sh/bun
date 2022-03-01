@@ -2748,8 +2748,6 @@ pub const VirtualMachine = struct {
     }
 
     pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTrace, comptime allow_ansi_colors: bool) !void {
-
-        // We are going to print the stack trace backwards
         const stack = trace.frames();
         if (stack.len > 0) {
             var i: i16 = 0;
@@ -2778,54 +2776,6 @@ pub const VirtualMachine = struct {
                         ),
                     },
                 );
-
-                // if (!frame.position.isInvalid()) {
-                //     if (func.len > 0) {
-                //         writer.print(
-                //             comptime Output.prettyFmt("<r><d>{s}<r> {s}{s} - {s}:{d}:{d}\n", true),
-                //             .{
-                //                 if (i > 1) "↓" else "↳",
-                //                 frame.code_type.ansiColor(),
-                //                 func,
-                //                 file,
-                //                 frame.position.line,
-                //                 frame.position.column_start,
-                //             },
-                //         ) catch unreachable;
-                //     } else {
-                //         writer.print(comptime Output.prettyFmt("<r><d>{s}<r> {u} - {s}{s}:{d}:{d}\n", true), .{
-                //             if (i > 1) "↓" else "↳",
-                //             frame.code_type.emoji(),
-
-                //             frame.code_type.ansiColor(),
-                //             file,
-                //             frame.position.line,
-                //             frame.position.column_start,
-                //         }) catch unreachable;
-                //     }
-                // } else {
-                //     if (func.len > 0) {
-                //         writer.print(
-                //             comptime Output.prettyFmt("<r><d>{s}<r> {s}{s} - {s}\n", true),
-                //             .{
-                //                 if (i > 1) "↓" else "↳",
-                //                 frame.code_type.ansiColor(),
-                //                 func,
-                //                 file,
-                //             },
-                //         ) catch unreachable;
-                //     } else {
-                //         writer.print(
-                //             comptime Output.prettyFmt("<r><d>{s}<r> {u} - {s}{s}\n", true),
-                //             .{
-                //                 if (i > 1) "↓" else "↳",
-                //                 frame.code_type.emoji(),
-                //                 frame.code_type.ansiColor(),
-                //                 file,
-                //             },
-                //         ) catch unreachable;
-                //     }
-                // }
             }
         }
     }

@@ -507,28 +507,28 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count)
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { setTimeoutIdentifier,
             JSC::JSFunction::create(vm(), JSC::jsCast<JSC::JSGlobalObject*>(this), 0,
-                "setTimeout", functionQueueMicrotask),
+                "setTimeout", functionSetTimeout),
             JSC::PropertyAttribute::DontDelete | 0 });
 
     JSC::Identifier clearTimeoutIdentifier = JSC::Identifier::fromString(vm(), "clearTimeout"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { clearTimeoutIdentifier,
             JSC::JSFunction::create(vm(), JSC::jsCast<JSC::JSGlobalObject*>(this), 0,
-                "clearTimeout", functionQueueMicrotask),
+                "clearTimeout", functionClearTimeout),
             JSC::PropertyAttribute::DontDelete | 0 });
 
     JSC::Identifier setIntervalIdentifier = JSC::Identifier::fromString(vm(), "setInterval"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { setIntervalIdentifier,
             JSC::JSFunction::create(vm(), JSC::jsCast<JSC::JSGlobalObject*>(this), 0,
-                "setInterval", functionQueueMicrotask),
+                "setInterval", functionSetInterval),
             JSC::PropertyAttribute::DontDelete | 0 });
 
     JSC::Identifier clearIntervalIdentifier = JSC::Identifier::fromString(vm(), "clearInterval"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { clearIntervalIdentifier,
             JSC::JSFunction::create(vm(), JSC::jsCast<JSC::JSGlobalObject*>(this), 0,
-                "clearInterval", functionQueueMicrotask),
+                "clearInterval", functionClearInterval),
             JSC::PropertyAttribute::DontDelete | 0 });
 
     auto clientData = Bun::clientData(vm());

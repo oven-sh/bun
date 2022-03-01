@@ -14,6 +14,7 @@ const default_allocator = _global.default_allocator;
 const StoredFileDescriptorType = _global.StoredFileDescriptorType;
 const Arena = @import("../../mimalloc_arena.zig").Arena;
 const C = _global.C;
+const NetworkThread = @import("http").NetworkThread;
 
 pub fn zigCast(comptime Destination: type, value: anytype) *Destination {
     return @ptrCast(*Destination, @alignCast(@alignOf(*Destination), value));
@@ -52,6 +53,7 @@ const Headers = WebCore.Headers;
 const Fetch = WebCore.Fetch;
 const FetchEvent = WebCore.FetchEvent;
 const js = @import("../../jsc.zig").C;
+const JSC = @import("../../jsc.zig");
 const JSError = @import("./base.zig").JSError;
 const d = @import("./base.zig").d;
 const MarkedArrayBuffer = @import("./base.zig").MarkedArrayBuffer;
@@ -1116,46 +1118,138 @@ pub const Bun = struct {
     pub const Timer = struct {
         last_id: i32 = 0,
         warned: bool = false,
+        active: u32 = 0,
+        timeouts: TimeoutMap = TimeoutMap{},
+
+        const TimeoutMap = std.AutoArrayHashMapUnmanaged(i32, *Timeout);
 
         pub fn getNextID() callconv(.C) i32 {
             VirtualMachine.vm.timer.last_id += 1;
             return VirtualMachine.vm.timer.last_id;
         }
 
+        pub const Timeout = struct {
+            id: i32 = 0,
+            callback: JSValue,
+            interval: i32 = 0,
+            completion: NetworkThread.Completion = undefined,
+            repeat: bool = false,
+            io_task: ?*TimeoutTask = null,
+            cancelled: bool = false,
+
+            pub const TimeoutTask = IOTask(Timeout);
+
+            pub fn run(this: *Timeout, _task: *TimeoutTask) void {
+                this.io_task = _task;
+                NetworkThread.global.pool.io.?.timeout(
+                    *Timeout,
+                    this,
+                    onCallback,
+                    &this.completion,
+                    std.time.ns_per_ms * @intCast(
+                        u63,
+                        @maximum(
+                            this.interval,
+                            1,
+                        ),
+                    ),
+                );
+            }
+
+            pub fn onCallback(this: *Timeout, _: *NetworkThread.Completion, _: NetworkThread.AsyncIO.TimeoutError!void) void {
+                this.io_task.?.onFinish();
+            }
+
+            pub fn then(this: *Timeout, global: *JSGlobalObject) void {
+                if (!this.cancelled) {
+                    if (this.repeat) {
+                        this.io_task.?.deinit();
+                        var task = Timeout.TimeoutTask.createOnJSThread(VirtualMachine.vm.allocator, global, this) catch unreachable;
+                        this.io_task = task;
+                        task.schedule();
+                    }
+
+                    _ = JSC.C.JSObjectCallAsFunction(global.ref(), this.callback.asObjectRef(), null, 0, null, null);
+
+                    if (this.repeat)
+                        return;
+                }
+
+                this.clear(global);
+            }
+
+            pub fn clear(this: *Timeout, global: *JSGlobalObject) void {
+                this.cancelled = true;
+                JSC.C.JSValueUnprotect(global.ref(), this.callback.asObjectRef());
+                _ = VirtualMachine.vm.timer.timeouts.swapRemove(this.id);
+                if (this.io_task) |task| {
+                    task.deinit();
+                }
+                VirtualMachine.vm.allocator.destroy(this);
+                VirtualMachine.vm.timer.active -|= 1;
+            }
+        };
+
+        fn set(
+            id: i32,
+            globalThis: *JSGlobalObject,
+            callback: JSValue,
+            countdown: JSValue,
+            repeat: bool,
+        ) !void {
+            var timeout = try VirtualMachine.vm.allocator.create(Timeout);
+            js.JSValueProtect(globalThis.ref(), callback.asObjectRef());
+            timeout.* = Timeout{ .id = id, .callback = callback, .interval = countdown.toInt32(), .repeat = repeat };
+            var task = try Timeout.TimeoutTask.createOnJSThread(VirtualMachine.vm.allocator, globalThis, timeout);
+            VirtualMachine.vm.timer.timeouts.put(VirtualMachine.vm.allocator, id, timeout) catch unreachable;
+            VirtualMachine.vm.timer.active +|= 1;
+            task.schedule();
+        }
+
         pub fn setTimeout(
-            _: *JSGlobalObject,
-            _: JSValue,
-            _: JSValue,
+            globalThis: *JSGlobalObject,
+            callback: JSValue,
+            countdown: JSValue,
         ) callconv(.C) JSValue {
-            VirtualMachine.vm.timer.last_id += 1;
+            const id = VirtualMachine.vm.timer.last_id;
+            VirtualMachine.vm.timer.last_id +%= 1;
 
-            Output.prettyWarnln("setTimeout is not implemented yet", .{});
+            Timer.set(id, globalThis, callback, countdown, false) catch
+                return JSValue.jsUndefined();
 
-            // For now, we are going to straight up lie
-            return JSValue.jsNumber(@intCast(i32, VirtualMachine.vm.timer.last_id));
+            return JSValue.jsNumber(@intCast(i32, id));
         }
         pub fn setInterval(
-            _: *JSGlobalObject,
-            _: JSValue,
-            _: JSValue,
+            globalThis: *JSGlobalObject,
+            callback: JSValue,
+            countdown: JSValue,
         ) callconv(.C) JSValue {
-            VirtualMachine.vm.timer.last_id += 1;
+            const id = VirtualMachine.vm.timer.last_id;
+            VirtualMachine.vm.timer.last_id +%= 1;
 
-            Output.prettyWarnln("setInterval is not implemented yet", .{});
+            Timer.set(id, globalThis, callback, countdown, true) catch
+                return JSValue.jsUndefined();
 
-            // For now, we are going to straight up lie
-            return JSValue.jsNumber(@intCast(i32, VirtualMachine.vm.timer.last_id));
+            return JSValue.jsNumber(@intCast(i32, id));
         }
+
+        pub fn clearTimer(id: JSValue, _: *JSGlobalObject) void {
+            var timer: *Timeout = VirtualMachine.vm.timer.timeouts.get(id.toInt32()) orelse return;
+            timer.cancelled = true;
+        }
+
         pub fn clearTimeout(
-            _: *JSGlobalObject,
-            _: JSValue,
+            globalThis: *JSGlobalObject,
+            id: JSValue,
         ) callconv(.C) JSValue {
+            Timer.clearTimer(id, globalThis);
             return JSValue.jsUndefined();
         }
         pub fn clearInterval(
-            _: *JSGlobalObject,
-            _: JSValue,
+            globalThis: *JSGlobalObject,
+            id: JSValue,
         ) callconv(.C) JSValue {
+            Timer.clearTimer(id, globalThis);
             return JSValue.jsUndefined();
         }
 
@@ -1466,12 +1560,60 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         }
     };
 }
+
+pub fn IOTask(comptime Context: type) type {
+    return struct {
+        const This = @This();
+        ctx: *Context,
+        task: NetworkThread.Task = .{ .callback = runFromThreadPool },
+        event_loop: *VirtualMachine.EventLoop,
+        allocator: std.mem.Allocator,
+        globalThis: *JSGlobalObject,
+
+        pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
+            var this = try allocator.create(This);
+            this.* = .{
+                .event_loop = VirtualMachine.vm.event_loop,
+                .ctx = value,
+                .allocator = allocator,
+                .globalThis = globalThis,
+            };
+            return this;
+        }
+
+        pub fn runFromThreadPool(task: *NetworkThread.Task) void {
+            var this = @fieldParentPtr(This, "task", task);
+            Context.run(this.ctx, this);
+        }
+
+        pub fn runFromJS(this: This) void {
+            var ctx = this.ctx;
+            ctx.then(this.globalThis);
+        }
+
+        pub fn schedule(this: *This) void {
+            NetworkThread.init() catch return;
+            NetworkThread.global.pool.schedule(NetworkThread.Batch.from(&this.task));
+        }
+
+        pub fn onFinish(this: *This) void {
+            this.event_loop.enqueueTaskConcurrent(Task.init(this));
+        }
+
+        pub fn deinit(this: *This) void {
+            this.allocator.destroy(this);
+        }
+    };
+}
+
 const AsyncTransformTask = @import("./api/transpiler.zig").TransformTask.AsyncTransformTask;
+const BunTimerTimeoutTask = Bun.Timer.Timeout.TimeoutTask;
 // const PromiseTask = JSInternalPromise.Completion.PromiseTask;
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
     Microtask,
     AsyncTransformTask,
+    BunTimerTimeoutTask,
     // PromiseTask,
     // TimeoutTasklet,
 });
@@ -1556,6 +1698,11 @@ pub const VirtualMachine = struct {
                         var transform_task: *AsyncTransformTask = task.get(AsyncTransformTask).?;
                         transform_task.*.runFromJS();
                         transform_task.deinit();
+                        finished += 1;
+                    },
+                    @field(Task.Tag, @typeName(BunTimerTimeoutTask)) => {
+                        var transform_task: *BunTimerTimeoutTask = task.get(BunTimerTimeoutTask).?;
+                        transform_task.*.runFromJS();
                         finished += 1;
                     },
                     else => unreachable,

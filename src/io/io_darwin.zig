@@ -406,6 +406,10 @@ completed: FIFO(Completion) = .{},
 io_pending: FIFO(Completion) = .{},
 last_event_fd: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(32),
 
+pub fn hasNoWork(this: *IO) bool {
+    return  this.io_inflight == 0 and this.io_pending.peek() == null and this.completed.peek() == null and this.timeouts.peek() == null;
+}
+
 pub fn init(_: u12, _: u32) !IO {
     const kq = try os.kqueue();
     assert(kq > -1);

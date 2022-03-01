@@ -285,7 +285,7 @@ fn _wait(self: *ThreadPool, _is_waking: bool, comptime sleep_on_idle: bool) erro
 
                 const idle = HTTP.AsyncHTTP.active_requests_count.loadUnchecked() == 0;
 
-                if (sleep_on_idle) {
+                if (sleep_on_idle and io.hasNoWork()) {
                     idle_network_ticks += @as(u32, @boolToInt(idle));
 
                     // If it's been roughly 2ms since the last network request, go to sleep!

@@ -1,8 +1,9 @@
 const ThreadPool = @import("thread_pool");
 pub const Batch = ThreadPool.Batch;
 pub const Task = ThreadPool.Task;
+pub const Completion = AsyncIO.Completion;
 const std = @import("std");
-const AsyncIO = @import("io");
+pub const AsyncIO = @import("io");
 const Output = @import("./global.zig").Output;
 const IdentityContext = @import("./identity_context.zig").IdentityContext;
 const HTTP = @import("./http_client_async.zig");

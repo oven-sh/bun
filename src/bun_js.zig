@@ -105,9 +105,32 @@ pub const Run = struct {
                 this.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
             }
             Output.prettyErrorln("\n", .{});
+            Output.flush();
         }
 
-        Output.flush();
+        {
+            var i: usize = 0;
+            while (this.vm.*.event_loop.pending_tasks_count.loadUnchecked() > 0 or this.vm.timer.active > 0) {
+                this.vm.tick();
+                i +%= 1;
+
+                if (i > 0 and i % 100 == 0) {
+                    std.time.sleep(std.time.ns_per_us);
+                }
+            }
+
+            if (i > 0) {
+                if (this.vm.log.msgs.items.len > 0) {
+                    if (Output.enable_ansi_colors) {
+                        this.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                    } else {
+                        this.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                    }
+                    Output.prettyErrorln("\n", .{});
+                    Output.flush();
+                }
+            }
+        }
 
         Global.exit(0);
     }

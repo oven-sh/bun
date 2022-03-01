@@ -453,6 +453,10 @@ completed: FIFO(Completion) = .{},
 
 next_tick: FIFO(Completion) = .{},
 
+pub fn hasNoWork(this: *IO) bool {
+    return this.completed.peek() == null and this.unqueued.peek() == null and this.next_tick.peek() == null;
+}
+
 pub fn init(entries_: u12, flags: u32) !IO {
     var ring: IO_Uring = undefined;
     var entries = entries_;

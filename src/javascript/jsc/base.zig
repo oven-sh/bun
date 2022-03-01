@@ -1854,6 +1854,7 @@ const BigIntStats = JSC.Node.BigIntStats;
 const Transpiler = @import("./api/transpiler.zig");
 const TextEncoder = WebCore.TextEncoder;
 const TextDecoder = WebCore.TextDecoder;
+const TimeoutTask = JSC.BunTimer.Timeout.TimeoutTask;
 pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     ResolveError,
     BuildError,
@@ -1877,6 +1878,7 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     Transpiler,
     TextEncoder,
     TextDecoder,
+    TimeoutTask,
 });
 
 pub inline fn GetJSPrivateData(comptime Type: type, ref: js.JSObjectRef) ?*Type {

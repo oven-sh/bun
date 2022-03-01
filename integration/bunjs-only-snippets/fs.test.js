@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { mkdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  existsSync,
+  readFileSync,
+  writeFileSync,
+  readFile,
+} from "node:fs";
 
 const Buffer = globalThis.Buffer || Uint8Array;
 
@@ -33,6 +39,32 @@ describe("readFileSync", () => {
     for (let i = 0; i < encoded.length; i++) {
       expect(text[i]).toBe(encoded[i]);
     }
+  });
+});
+
+describe("readFile", () => {
+  it("works", async () => {
+    await new Promise((resolve, reject) => {
+      readFile(import.meta.dir + "/readFileSync.txt", "utf8", (err, text) => {
+        expect(text).toBe("File read successfully");
+        resolve(true);
+      });
+    });
+  });
+
+  it("returning Buffer works", async () => {
+    await new Promise((resolve, reject) => {
+      readFile(import.meta.dir + "/readFileSync.txt", (err, text) => {
+        const encoded = [
+          70, 105, 108, 101, 32, 114, 101, 97, 100, 32, 115, 117, 99, 99, 101,
+          115, 115, 102, 117, 108, 108, 121,
+        ];
+        for (let i = 0; i < encoded.length; i++) {
+          expect(text[i]).toBe(encoded[i]);
+        }
+        resolve(true);
+      });
+    });
   });
 });
 

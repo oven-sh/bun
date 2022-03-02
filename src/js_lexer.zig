@@ -1787,8 +1787,8 @@ fn NewLexer_(
             try self.addRangeError(self.range(), "Expected {s} but found \"{s}\"", .{ text, found }, true);
         }
 
-        pub fn scanCommentText(lexer: *LexerType) void {
-            var text = lexer.source.contents[lexer.start..lexer.end];
+        fn scanCommentText(lexer: *LexerType) void {
+            const text = lexer.source.contents[lexer.start..lexer.end];
             const has_preserve_annotation = text.len > 2 and text[2] == '!';
             const is_multiline_comment = text[1] == '*';
 

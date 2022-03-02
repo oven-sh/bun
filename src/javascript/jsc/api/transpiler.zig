@@ -40,6 +40,8 @@ const JSParser = @import("../../../js_parser.zig");
 const JSPrinter = @import("../../../js_printer.zig");
 const ScanPassResult = JSParser.ScanPassResult;
 const Mimalloc = @import("../../../mimalloc_arena.zig");
+const Runtime = @import("../../../runtime.zig").Runtime;
+
 bundler: Bundler.Bundler,
 arena: std.heap.ArenaAllocator,
 transpiler_options: TranspilerOptions,
@@ -94,6 +96,7 @@ const TranspilerOptions = struct {
     macros_buf: []const u8 = "",
     log: logger.Log,
     pending_tasks: u32 = 0,
+    runtime: Runtime.Features = Runtime.Features{ .top_level_await = true },
 };
 
 // Mimalloc gets unstable if we try to move this to a different thread
@@ -438,6 +441,8 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
         }
     }
 
+    transpiler.runtime.allow_runtime = false;
+
     if (object.getIfPropertyExists(globalThis, "macro")) |macros| {
         macros: {
             if (macros.isUndefinedOrNull()) break :macros;
@@ -466,6 +471,14 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
             ) catch null) orelse break :macros;
             transpiler.macro_map = PackageJSON.parseMacrosJSON(allocator, json, &transpiler.log, &source);
         }
+    }
+
+    if (object.get(globalThis, "autoImportJSX")) |flag| {
+        transpiler.runtime.auto_import_jsx = flag.toBoolean();
+    }
+
+    if (object.get(globalThis, "allowBunRuntime")) |flag| {
+        transpiler.runtime.allow_runtime = flag.toBoolean();
     }
 
     return transpiler;
@@ -530,6 +543,12 @@ pub fn constructor(
         bundler.options.macro_remap = transpiler_options.macro_map;
     }
 
+    bundler.options.allow_runtime = transpiler_options.runtime.allow_runtime;
+    bundler.options.auto_import_jsx = transpiler_options.runtime.auto_import_jsx;
+    bundler.options.hot_module_reloading = transpiler_options.runtime.hot_module_reloading;
+    bundler.options.jsx.supports_fast_refresh = bundler.options.hot_module_reloading and
+        bundler.options.allow_runtime and transpiler_options.runtime.react_fast_refresh;
+
     var transpiler = getAllocator(ctx).create(Transpiler) catch unreachable;
     transpiler.* = Transpiler{
         .transpiler_options = transpiler_options,
@@ -578,7 +597,19 @@ fn getParseResult(this: *Transpiler, allocator: std.mem.Allocator, code: []const
         // .allocator = this.
     };
 
-    return this.bundler.parse(parse_options, null);
+    var parse_result = this.bundler.parse(parse_options, null);
+
+    // necessary because we don't run the linker
+    if (parse_result) |*res| {
+        for (res.ast.import_records) |*import| {
+            if (import.kind.isCommonJS()) {
+                import.wrap_with_to_module = true;
+                import.module_id = @truncate(u32, std.hash.Wyhash.hash(0, import.path.pretty));
+            }
+        }
+    }
+
+    return parse_result;
 }
 
 pub fn scan(

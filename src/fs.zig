@@ -21,6 +21,9 @@ const PathString = _global.PathString;
 const allocators = @import("./allocators.zig");
 const hash_map = @import("hash_map.zig");
 
+pub const MAX_PATH_BYTES = _global.MAX_PATH_BYTES;
+pub const PathBuffer = [_global.MAX_PATH_BYTES]u8;
+
 // pub const FilesystemImplementation = @import("fs_impl.zig");
 
 pub const Preallocate = struct {

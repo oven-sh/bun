@@ -3401,7 +3401,8 @@ pub const PackageManager = struct {
                 .diagnostic = &diag,
                 .allocator = allocator,
             }) catch |err| {
-                // Report useful error and exit
+                clap.help(Output.errorWriter(), params) catch {};
+                Output.errorWriter().writeAll("\n") catch {};
                 diag.report(Output.errorWriter(), err) catch {};
                 return err;
             };

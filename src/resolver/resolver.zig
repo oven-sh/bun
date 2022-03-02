@@ -102,9 +102,6 @@ pub const Result = struct {
     // effects. This means they should be removed if unused.
     primary_side_effects_data: ?SideEffectsData = null,
 
-    // If true, the class field transform should use Object.defineProperty().
-    use_define_for_class_fields_ts: ?bool = null,
-
     // If true, unused imports are retained in TypeScript code. This matches the
     // behavior of the "importsNotUsedAsValues" field in "tsconfig.json" when the
     // value is not "remove".

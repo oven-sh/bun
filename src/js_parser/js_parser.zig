@@ -2742,7 +2742,10 @@ pub const Parser = struct {
         // - don't import runtime if we're bundling, it's already included
         // - when HMR is enabled, we always need to import the runtime for HMRClient and HMRModule.
         // - when HMR is not enabled, we only need any runtime imports if we're importing require()
-        if (!p.options.enable_bundling and (p.has_called_runtime or p.options.features.hot_module_reloading or has_cjs_imports)) {
+        if (p.options.features.allow_runtime and
+            !p.options.enable_bundling and
+            (p.has_called_runtime or p.options.features.hot_module_reloading or has_cjs_imports))
+        {
             const before_start = before.items.len;
             if (p.options.features.hot_module_reloading) p.resolveHMRSymbols();
 
@@ -15928,7 +15931,7 @@ fn NewParser_(
                     logger.Loc.Empty,
                 );
                 part.stmts = new_stmts_list;
-            } else if (p.options.features.hot_module_reloading) {
+            } else if (p.options.features.hot_module_reloading and p.options.features.allow_runtime) {
                 var named_exports_count: usize = p.named_exports.count();
                 const named_imports: js_ast.Ast.NamedImports = p.named_imports;
 

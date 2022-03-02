@@ -240,10 +240,10 @@ pub const Runtime = struct {
     pub const Features = struct {
         react_fast_refresh: bool = false,
         hot_module_reloading: bool = false,
-        hot_module_reloading_entry: bool = false,
-        keep_names_for_arrow_functions: bool = true,
         is_macro_runtime: bool = false,
         top_level_await: bool = false,
+        auto_import_jsx: bool = false,
+        allow_runtime: bool = true,
     };
 
     pub const Names = struct {

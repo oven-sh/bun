@@ -25,7 +25,7 @@ const default_allocator = _global.default_allocator;
 const C = _global.C;
 const StoredFileDescriptorType = _global.StoredFileDescriptorType;
 const JSC = @import("javascript_core");
-
+const Runtime = @import("./runtime.zig").Runtime;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const DotEnv = @import("./env_loader.zig");
@@ -1087,6 +1087,8 @@ pub const BundleOptions = struct {
     loaders: std.StringHashMap(Loader),
     resolve_dir: string = "/",
     jsx: JSX.Pragma = JSX.Pragma{},
+    auto_import_jsx: bool = true,
+    allow_runtime: bool = true,
 
     hot_module_reloading: bool = false,
     inject: ?[]string = null,
@@ -1285,6 +1287,7 @@ pub const BundleOptions = struct {
         switch (opts.platform) {
             .node => {
                 opts.import_path_format = .relative_nodejs;
+                opts.allow_runtime = false;
             },
             .bun => {
                 // If we're doing SSR, we want all the URLs to be the same as what it would be in the browser

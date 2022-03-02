@@ -3155,13 +3155,59 @@ pub const ResolveError = struct {
         }
     }
 
+    pub fn toStringFn(this: *ResolveError, ctx: js.JSContextRef) js.JSValueRef {
+        var text = std.fmt.allocPrint(default_allocator, "ResolveError: {s}", .{this.msg.data.text}) catch return null;
+        var str = ZigString.init(text);
+        str.setOutputEncoding();
+        if (str.isUTF8()) {
+            const out = str.toValueGC(ctx.ptr());
+            default_allocator.free(text);
+            return out.asObjectRef();
+        }
+
+        return str.toExternalValue(ctx.ptr()).asObjectRef();
+    }
+
+    pub fn toString(
+        // this
+        this: *ResolveError,
+        ctx: js.JSContextRef,
+        // function
+        _: js.JSObjectRef,
+        // thisObject
+        _: js.JSObjectRef,
+        _: []const js.JSValueRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        return this.toStringFn(ctx);
+    }
+
+    pub fn convertToType(ctx: js.JSContextRef, obj: js.JSObjectRef, kind: js.JSType, _: js.ExceptionRef) callconv(.C) js.JSValueRef {
+        switch (kind) {
+            js.JSType.kJSTypeString => {
+                if (js.JSObjectGetPrivate(obj)) |priv| {
+                    if (JSPrivateDataPtr.from(priv).is(ResolveError)) {
+                        var this = JSPrivateDataPtr.from(priv).as(ResolveError);
+                        return this.toStringFn(ctx);
+                    }
+                }
+            },
+            else => {},
+        }
+
+        return obj;
+    }
+
     pub const Class = NewClass(
         ResolveError,
         .{
             .name = "ResolveError",
             .read_only = true,
         },
-        .{},
+        .{
+            .toString = .{ .rfn = toString },
+            .convertToType = .{ .rfn = convertToType },
+        },
         .{
             .@"referrer" = .{
                 .@"get" = getReferrer,
@@ -3292,7 +3338,10 @@ pub const BuildError = struct {
                 .name = "BuildError",
             },
         } },
-        .{},
+        .{
+            .convertToType = .{ .rfn = convertToType },
+            .toString = .{ .rfn = toString },
+        },
         .{
             .@"message" = .{
                 .@"get" = getMessage,
@@ -3309,6 +3358,49 @@ pub const BuildError = struct {
             },
         },
     );
+
+    pub fn toStringFn(this: *BuildError, ctx: js.JSContextRef) js.JSValueRef {
+        var text = std.fmt.allocPrint(default_allocator, "BuildError: {s}", .{this.msg.data.text}) catch return null;
+        var str = ZigString.init(text);
+        str.setOutputEncoding();
+        if (str.isUTF8()) {
+            const out = str.toValueGC(ctx.ptr());
+            default_allocator.free(text);
+            return out.asObjectRef();
+        }
+
+        return str.toExternalValue(ctx.ptr()).asObjectRef();
+    }
+
+    pub fn toString(
+        // this
+        this: *BuildError,
+        ctx: js.JSContextRef,
+        // function
+        _: js.JSObjectRef,
+        // thisObject
+        _: js.JSObjectRef,
+        _: []const js.JSValueRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        return this.toStringFn(ctx);
+    }
+
+    pub fn convertToType(ctx: js.JSContextRef, obj: js.JSObjectRef, kind: js.JSType, _: js.ExceptionRef) callconv(.C) js.JSValueRef {
+        switch (kind) {
+            js.JSType.kJSTypeString => {
+                if (js.JSObjectGetPrivate(obj)) |priv| {
+                    if (JSPrivateDataPtr.from(priv).is(BuildError)) {
+                        var this = JSPrivateDataPtr.from(priv).as(BuildError);
+                        return this.toStringFn(ctx);
+                    }
+                }
+            },
+            else => {},
+        }
+
+        return obj;
+    }
 
     pub fn create(
         globalThis: *JSGlobalObject,

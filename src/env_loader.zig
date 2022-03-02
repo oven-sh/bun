@@ -15,6 +15,7 @@ const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const Fs = @import("./fs.zig");
 const Api = @import("./api/schema.zig").Api;
+const which = @import("./which.zig").which;
 const Variable = struct {
     key: string,
     value: string,
@@ -395,6 +396,29 @@ pub const Loader = struct {
     did_load_process: bool = false,
 
     const empty_string_value: string = "\"\"";
+
+    pub fn getNodePath(this: *Loader, fs: *Fs.FileSystem, buf: *Fs.PathBuffer) ?[:0]const u8 {
+        if (this.get("NODE") orelse this.get("npm_node_execpath")) |node| {
+            @memcpy(buf, node.ptr, node.len);
+            buf[node.len] = 0;
+            return buf[0..node.len :0];
+        }
+
+        if (which(buf, this.map.get("PATH") orelse return null, fs.top_level_dir, "node")) |node| {
+            return node;
+        }
+
+        return null;
+    }
+
+    pub fn loadNodeJSConfig(this: *Loader, fs: *Fs.FileSystem) !void {
+        var buf: Fs.PathBuffer = undefined;
+
+        var node = this.getNodePath(fs, &buf) orelse return;
+        var cloned = try fs.dirname_store.append([]const u8, std.mem.span(node));
+        try this.map.put("NODE", cloned);
+        try this.map.put("npm_node_execpath", cloned);
+    }
 
     pub fn get(this: *const Loader, key: string) ?string {
         var _key = key;

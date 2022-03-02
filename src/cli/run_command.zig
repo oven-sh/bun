@@ -775,6 +775,35 @@ pub const RunCommand = struct {
             PATH = new_path.items;
         }
 
+        this_bundler.env.loadNodeJSConfig(this_bundler.fs) catch {};
+        this_bundler.env.map.putDefault("npm_config_local_prefix", this_bundler.fs.top_level_dir) catch unreachable;
+        if (this_bundler.env.get("BUN_INSTALL")) |bun_install| {
+            this_bundler.env.map.putDefault("npm_config_prefix", bun_install) catch unreachable;
+        }
+
+        // we have no way of knowing what version they're expecting without running the node executable
+        // running the node executable is too slow
+        // so we will just hardcode it to LTS
+        this_bundler.env.map.putDefault(
+            "npm_config_user_agent",
+            // the use of npm/? is copying yarn
+            // e.g.
+            // > "yarn/1.22.4 npm/? node/v12.16.3 darwin x64",
+            "bun/" ++ Global.package_json_version ++ "npm/? node/v16.14.0 " ++ Global.os_name ++ " " ++ Global.arch_name,
+        ) catch unreachable;
+
+        if (this_bundler.env.get("npm_execpath") == null) {
+            // we don't care if this fails
+            if (std.fs.selfExePathAlloc(ctx.allocator)) |self_exe_path| {
+                this_bundler.env.map.putDefault("npm_execpath", self_exe_path) catch unreachable;
+                if (strings.lastIndexOf(self_exe_path, std.fs.path.sep_str ++ "bin" ++ std.fs.path.sep_str)) |bin_dir_i| {
+                    this_bundler.env.map.putDefault("npm_config_prefix", std.fs.path.dirname(self_exe_path[0..bin_dir_i]) orelse "/") catch unreachable;
+                } else {
+                    this_bundler.env.map.putDefault("npm_config_prefix", std.fs.path.dirname(self_exe_path) orelse "/") catch unreachable;
+                }
+            } else |_| {}
+        }
+
         var did_print = false;
         if (root_dir_info.enclosing_package_json) |package_json| {
             if (package_json.name.len > 0) {
@@ -782,6 +811,8 @@ pub const RunCommand = struct {
                     this_bundler.env.map.put(NpmArgs.package_name, package_json.name) catch unreachable;
                 }
             }
+
+            this_bundler.env.map.putDefault("npm_package_json", package_json.source.path.text) catch unreachable;
 
             if (package_json.version.len > 0) {
                 if (this_bundler.env.map.get(NpmArgs.package_version) == null) {

@@ -1681,6 +1681,7 @@ pub const Bundler = struct {
                             opts.enable_bundling = true;
                             opts.warn_about_unbundled_modules = false;
                             opts.macro_context = &worker.data.macro_context;
+                            opts.features.auto_import_jsx = jsx.parse;
 
                             ast = (bundler.resolver.caches.js.parse(
                                 bundler.allocator,
@@ -2763,7 +2764,9 @@ pub const Bundler = struct {
                 jsx.parse = loader.isJSX();
                 var opts = js_parser.Parser.Options.init(jsx, loader);
                 opts.enable_bundling = false;
-                opts.transform_require_to_import = true;
+                opts.transform_require_to_import = bundler.options.allow_runtime;
+                opts.features.allow_runtime = bundler.options.allow_runtime;
+
                 opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
 
                 opts.tree_shaking = bundler.options.tree_shaking;
@@ -2780,6 +2783,7 @@ pub const Bundler = struct {
                     jsx.parse and
                     bundler.options.jsx.supports_fast_refresh;
                 opts.filepath_hash_for_hmr = file_hash orelse 0;
+                opts.features.auto_import_jsx = bundler.options.auto_import_jsx;
                 opts.warn_about_unbundled_modules = bundler.options.platform.isNotBun();
 
                 if (bundler.macro_context == null) {

@@ -223,7 +223,10 @@ pub const Diagnostic = struct {
         switch (err) {
             error.DoesntTakeValue => try stream.print("The argument '{s}{s}' does not take a value\n", .{ a.prefix, a.name }),
             error.MissingValue => try stream.print("The argument '{s}{s}' requires a value but none was supplied\n", .{ a.prefix, a.name }),
-            error.InvalidArgument => try stream.print("Invalid argument '{s}{s}'\n", .{ a.prefix, a.name }),
+            error.InvalidArgument => if (a.prefix.len > 0 and a.name.len > 0)
+                try stream.print("Invalid argument '{s}{s}'\n", .{ a.prefix, a.name })
+            else
+                try stream.print("Failed to parse argument due to unexpected single dash\n", .{}),
             else => try stream.print("Error while parsing arguments: {s}\n", .{@errorName(err)}),
         }
     }

@@ -8566,7 +8566,7 @@ fn NewParser_(
                 try p.declareBinding(Symbol.Kind.hoisted, &arg.binding, &opts);
             }
 
-            // The ability to call "super()" is inherited by arrow functions
+            // The ability to use "this" and "super()" is inherited by arrow functions
             data.allow_super_call = p.fn_or_arrow_data_parse.allow_super_call;
             data.allow_super_property = p.fn_or_arrow_data_parse.allow_super_property;
             data.is_this_disallowed = p.fn_or_arrow_data_parse.is_this_disallowed;
@@ -9241,7 +9241,17 @@ fn NewParser_(
                     }
 
                     try p.lexer.next();
+
+                    // "this" and "super" property access is allowed in field initializers
+                    const old_is_this_disallowed = p.fn_or_arrow_data_parse.is_this_disallowed;
+                    const old_allow_super_property = p.fn_or_arrow_data_parse.allow_super_property;
+                    p.fn_or_arrow_data_parse.is_this_disallowed = false;
+                    p.fn_or_arrow_data_parse.allow_super_property = true;
+
                     initializer = try p.parseExpr(.comma);
+
+                    p.fn_or_arrow_data_parse.is_this_disallowed = old_is_this_disallowed;
+                    p.fn_or_arrow_data_parse.allow_super_property = old_allow_super_property;
                 }
 
                 // Special-case private identifiers
@@ -9317,6 +9327,7 @@ fn NewParser_(
                     .allow_await = if (opts.is_async) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
                     .allow_yield = if (opts.is_generator) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
                     .allow_super_call = opts.class_has_extends and is_constructor,
+                    .allow_super_property = true,
                     .allow_ts_decorators = opts.allow_ts_decorators,
                     .is_constructor = is_constructor,
 

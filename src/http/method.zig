@@ -8,6 +8,7 @@ const MutableString = _global.MutableString;
 const stringZ = _global.stringZ;
 const default_allocator = _global.default_allocator;
 const C = _global.C;
+const std = @import("std");
 
 pub const Method = enum {
     GET,
@@ -18,6 +19,17 @@ pub const Method = enum {
     OPTIONS,
     CONNECT,
     TRACE,
+
+    const with_body: std.enums.EnumSet(Method) = brk: {
+        var values = std.enums.EnumSet(Method).initFull();
+        values.remove(.HEAD);
+        values.remove(.TRACE);
+        break :brk values;
+    };
+
+    pub fn hasBody(this: Method) bool {
+        return with_body.contains(this);
+    }
 
     pub fn which(str: []const u8) ?Method {
         if (str.len < 3) {

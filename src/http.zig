@@ -2092,7 +2092,7 @@ pub const RequestContext = struct {
             ctx.appendHeader("Content-Type", "text/plain");
         }
 
-        const send_body = ctx.method == .GET;
+        const send_body = ctx.method.hasBody();
 
         switch (result.file.value) {
             .pending => |resolve_result| {
@@ -2570,7 +2570,7 @@ pub const RequestContext = struct {
             if (buffer.len == 0) {
                 return try ctx.sendNoContent();
             }
-            const send_body = ctx.method == .GET;
+            const send_body = ctx.method.hasBody();
             defer ctx.done();
             try ctx.writeStatus(200);
             try ctx.prepareToSendBody(buffer.len, false);
@@ -2593,7 +2593,7 @@ pub const RequestContext = struct {
             if (buffer.len == 0) {
                 return try ctx.sendNoContent();
             }
-            const send_body = ctx.method == .GET;
+            const send_body = ctx.method.hasBody();
             defer ctx.done();
             try ctx.writeStatus(200);
             try ctx.prepareToSendBody(buffer.len, false);
@@ -2630,7 +2630,7 @@ pub const RequestContext = struct {
             if (buffer.len == 0) {
                 return try ctx.sendNoContent();
             }
-            const send_body = ctx.method == .GET;
+            const send_body = ctx.method.hasBody();
             defer ctx.done();
             try ctx.writeStatus(200);
             try ctx.prepareToSendBody(buffer.len, false);
@@ -2656,7 +2656,7 @@ pub const RequestContext = struct {
             if (buffer.len == 0) {
                 return try ctx.sendNoContent();
             }
-            const send_body = ctx.method == .GET;
+            const send_body = ctx.method.hasBody();
             defer ctx.done();
             try ctx.writeStatus(200);
             try ctx.prepareToSendBody(buffer.len, false);
@@ -2708,7 +2708,7 @@ pub const RequestContext = struct {
         if (buffer.len == 0) {
             return try ctx.sendNoContent();
         }
-        const send_body = ctx.method == .GET;
+        const send_body = ctx.method.hasBody();
         defer ctx.done();
         try ctx.writeStatus(200);
         try ctx.prepareToSendBody(buffer.len, false);

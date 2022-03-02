@@ -558,6 +558,23 @@ pub const Global = struct {
         std.fmt.comptimePrint("0.0.{d}_debug", .{build_id})
     else
         std.fmt.comptimePrint("0.0.{d}", .{build_id});
+    pub const os_name = if (Environment.isWindows)
+        "win32"
+    else if (Environment.isMac)
+        "darwin"
+    else if (Environment.isLinux)
+        "linux"
+    else if (Environment.isWasm)
+        "wasm"
+    else
+        "unknown";
+
+    pub const arch_name = if (Environment.isX64)
+        "x64"
+    else if (Environment.isAarch64)
+        "arm64"
+    else
+        "unknown";
 
     pub inline fn getStartTime() i128 {
         if (Environment.isTest) return 0;

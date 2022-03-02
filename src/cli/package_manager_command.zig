@@ -139,6 +139,24 @@ pub const PackageManagerCommand = struct {
 
             _ = try pm.lockfile.hasMetaHashChanged(true);
             Global.exit(0);
+        } else if (strings.eqlComptime(first, "cache")) {
+            var dir: [_global.MAX_PATH_BYTES]u8 = undefined;
+            var fd = pm.getCacheDirectory();
+            var outpath = std.os.getFdPath(fd.fd, &dir) catch |err| {
+                Output.prettyErrorln("{s} getting cache directory", .{@errorName(err)});
+                Global.crash();
+            };
+
+            if (pm.options.positionals.len > 0 and strings.eqlComptime(pm.options.positionals[0], "rm")) {
+                std.fs.deleteTreeAbsolute(outpath) catch |err| {
+                    Output.prettyErrorln("{s} deleting cache directory", .{@errorName(err)});
+                    Global.crash();
+                };
+                Output.prettyln("Cache directory deleted:\n  {s}", .{outpath});
+                Global.exit(0);
+            }
+            Output.writer().writeAll(outpath) catch {};
+            Global.exit(0);
         }
 
         Output.prettyln(
@@ -149,6 +167,8 @@ pub const PackageManagerCommand = struct {
             \\  bun pm <b>hash<r>         generate & print the hash of the current lockfile
             \\  bun pm <b>hash-string<r>  print the string used to hash the lockfile
             \\  bun pm <b>hash-print<r>   print the hash stored in the current lockfile
+            \\  bun pm <b>cache<r>        print the path to the cache folder
+            \\  bun pm <b>cache rm<r>     clear the cache
             \\
         , .{});
 

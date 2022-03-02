@@ -24,7 +24,6 @@ const resolve_path = @import("./resolve_path.zig");
 // so use an array-backed hash table instead of bucketed
 const MainFieldMap = std.StringArrayHashMap(string);
 pub const BrowserMap = std.StringArrayHashMap(string);
-threadlocal var hashy: [2048]u8 = undefined;
 pub const MacroImportReplacementMap = std.StringArrayHashMap(string);
 pub const MacroMap = std.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
 
@@ -36,6 +35,21 @@ pub const PackageJSON = struct {
         development,
         production,
     };
+
+    pub fn generateHash(package_json: *PackageJSON) void {
+        var hashy: [1024]u8 = undefined;
+        std.mem.set(u8, &hashy, 0);
+        var used: usize = 0;
+        std.mem.copy(u8, &hashy, package_json.name);
+        used = package_json.name.len;
+
+        hashy[used] = '@';
+        used += 1;
+        std.mem.copy(u8, hashy[used..], package_json.version);
+        used += package_json.version.len;
+
+        package_json.hash = std.hash.Murmur3_32.hash(hashy[0..used]);
+    }
 
     const node_modules_path = std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str;
     pub fn nameForImport(this: *const PackageJSON, allocator: std.mem.Allocator) !string {
@@ -734,17 +748,7 @@ pub const PackageJSON = struct {
 
         if (generate_hash) {
             if (package_json.name.len > 0 and package_json.version.len > 0) {
-                std.mem.set(u8, &hashy, 0);
-                var used: usize = 0;
-                std.mem.copy(u8, &hashy, package_json.name);
-                used = package_json.name.len;
-
-                hashy[used] = '@';
-                used += 1;
-                std.mem.copy(u8, hashy[used..], package_json.version);
-                used += package_json.version.len;
-
-                package_json.hash = std.hash.Murmur3_32.hash(hashy[0..used]);
+                package_json.generateHash();
             }
         }
 

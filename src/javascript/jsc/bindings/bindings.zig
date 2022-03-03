@@ -175,6 +175,10 @@ pub const ZigString = extern struct {
         return shim.cppFn("toExternalU16", .{ ptr, len, global });
     }
 
+    pub fn isUTF8(this: *ZigString) bool {
+        return (@ptrToInt(this.ptr) & (1 << 61)) != 0;
+    }
+
     pub fn markUTF8(this: *ZigString) void {
         this.ptr = @intToPtr([*]const u8, @ptrToInt(this.ptr) | (1 << 61));
     }

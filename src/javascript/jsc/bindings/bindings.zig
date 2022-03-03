@@ -2407,12 +2407,6 @@ pub const VM = extern struct {
         });
     }
 
-    pub fn apiLock(vm: *VM) *JSLock {
-        return cppFn("apiLock", .{
-            vm,
-        });
-    }
-
     pub fn drainMicrotasks(
         vm: *VM,
     ) void {
@@ -2421,7 +2415,7 @@ pub const VM = extern struct {
         });
     }
 
-    pub const Extern = [_][]const u8{ "holdAPILock", "runGC", "generateHeapSnapshot", "isJITEnabled", "deleteAllCode", "apiLock", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
+    pub const Extern = [_][]const u8{ "holdAPILock", "runGC", "generateHeapSnapshot", "isJITEnabled", "deleteAllCode", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
 };
 
 pub const ThrowScope = extern struct {

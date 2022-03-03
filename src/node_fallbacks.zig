@@ -4,60 +4,33 @@ const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const logger = @import("./logger.zig");
 const Fs = @import("./fs.zig");
 
-const _assert_code: string = @embedFile("./node-fallbacks/out/assert.js");
-const _buffer_code: string = @embedFile("./node-fallbacks/out/buffer.js");
-const _console_code: string = @embedFile("./node-fallbacks/out/console.js");
-const _constants_code: string = @embedFile("./node-fallbacks/out/constants.js");
-const _crypto_code: string = @embedFile("./node-fallbacks/out/crypto.js");
-const _domain_code: string = @embedFile("./node-fallbacks/out/domain.js");
-const _events_code: string = @embedFile("./node-fallbacks/out/events.js");
-const _http_code: string = @embedFile("./node-fallbacks/out/http.js");
-const _https_code: string = @embedFile("./node-fallbacks/out/https.js");
-const _os_code: string = @embedFile("./node-fallbacks/out/os.js");
-const _path_code: string = @embedFile("./node-fallbacks/out/path.js");
-const _process_code: string = @embedFile("./node-fallbacks/out/process.js");
-const _punycode_code: string = @embedFile("./node-fallbacks/out/punycode.js");
-const _querystring_code: string = @embedFile("./node-fallbacks/out/querystring.js");
-const _stream_code: string = @embedFile("./node-fallbacks/out/stream.js");
-const _string_decoder_code: string = @embedFile("./node-fallbacks/out/string_decoder.js");
-const _sys_code: string = @embedFile("./node-fallbacks/out/sys.js");
-const _timers_code: string = @embedFile("./node-fallbacks/out/timers.js");
-const _tty_code: string = @embedFile("./node-fallbacks/out/tty.js");
-const _url_code: string = @embedFile("./node-fallbacks/out/url.js");
-const _util_code: string = @embedFile("./node-fallbacks/out/util.js");
-const _zlib_code: string = @embedFile("./node-fallbacks/out/zlib.js");
-const _supports_color_code: string = @embedFile("./node-fallbacks/out/supports-color.js");
+const assert_code: string = @embedFile("./node-fallbacks/out/assert.js");
+const buffer_code: string = @embedFile("./node-fallbacks/out/buffer.js");
+const console_code: string = @embedFile("./node-fallbacks/out/console.js");
+const constants_code: string = @embedFile("./node-fallbacks/out/constants.js");
+const crypto_code: string = @embedFile("./node-fallbacks/out/crypto.js");
+const domain_code: string = @embedFile("./node-fallbacks/out/domain.js");
+const events_code: string = @embedFile("./node-fallbacks/out/events.js");
+const http_code: string = @embedFile("./node-fallbacks/out/http.js");
+const https_code: string = @embedFile("./node-fallbacks/out/https.js");
+const os_code: string = @embedFile("./node-fallbacks/out/os.js");
+const path_code: string = @embedFile("./node-fallbacks/out/path.js");
+const process_code: string = @embedFile("./node-fallbacks/out/process.js");
+const punycode_code: string = @embedFile("./node-fallbacks/out/punycode.js");
+const querystring_code: string = @embedFile("./node-fallbacks/out/querystring.js");
+const stream_code: string = @embedFile("./node-fallbacks/out/stream.js");
+const string_decoder_code: string = @embedFile("./node-fallbacks/out/string_decoder.js");
+const sys_code: string = @embedFile("./node-fallbacks/out/sys.js");
+const timers_code: string = @embedFile("./node-fallbacks/out/timers.js");
+const tty_code: string = @embedFile("./node-fallbacks/out/tty.js");
+const url_code: string = @embedFile("./node-fallbacks/out/url.js");
+const util_code: string = @embedFile("./node-fallbacks/out/util.js");
+const zlib_code: string = @embedFile("./node-fallbacks/out/zlib.js");
+const supports_color_code: string = @embedFile("./node-fallbacks/out/supports-color.js");
 
-const _node_fetch_code: string = @embedFile("./node-fallbacks/out/node-fetch.js");
-const _isomorphic_fetch_code: string = @embedFile("./node-fallbacks/out/isomorphic-fetch.js");
-const _vercel_fetch_code: string = @embedFile("./node-fallbacks/out/@vercel_fetch.js");
-
-const assert_code: *const string = &_assert_code;
-const buffer_code: *const string = &_buffer_code;
-const console_code: *const string = &_console_code;
-const constants_code: *const string = &_constants_code;
-const crypto_code: *const string = &_crypto_code;
-const domain_code: *const string = &_domain_code;
-const events_code: *const string = &_events_code;
-const http_code: *const string = &_http_code;
-const https_code: *const string = &_https_code;
-const isomorphic_fetch_code: *const string = &_isomorphic_fetch_code;
-const node_fetch_code: *const string = &_node_fetch_code;
-const os_code: *const string = &_os_code;
-const path_code: *const string = &_path_code;
-const process_code: *const string = &_process_code;
-const punycode_code: *const string = &_punycode_code;
-const querystring_code: *const string = &_querystring_code;
-const stream_code: *const string = &_stream_code;
-const string_decoder_code: *const string = &_string_decoder_code;
-const supports_color_code: *const string = &_supports_color_code;
-const sys_code: *const string = &_sys_code;
-const timers_code: *const string = &_timers_code;
-const tty_code: *const string = &_tty_code;
-const url_code: *const string = &_url_code;
-const util_code: *const string = &_util_code;
-const vercel_fetch_code: *const string = &_vercel_fetch_code;
-const zlib_code: *const string = &_zlib_code;
+const node_fetch_code: string = @embedFile("./node-fallbacks/out/node-fetch.js");
+const isomorphic_fetch_code: string = @embedFile("./node-fallbacks/out/isomorphic-fetch.js");
+const vercel_fetch_code: string = @embedFile("./node-fallbacks/out/@vercel_fetch.js");
 
 const assert_import_path = "/bun-vfs/node_modules/assert/index.js";
 const buffer_import_path = "/bun-vfs/node_modules/buffer/index.js";
@@ -331,7 +304,7 @@ const vercel_fetch_package_json = PackageJSON{
 
 pub const FallbackModule = struct {
     path: Fs.Path,
-    code: *const string,
+    code: string,
     package_json: *const PackageJSON,
 
     pub const @"assert" = FallbackModule{
@@ -502,6 +475,7 @@ pub const Map = std.ComptimeStringMap(FallbackModule, .{
 });
 
 pub fn contentsFromPath(path: string) ?string {
+    @setCold(true);
     var module_name = path["/bun-vfs/node_modules/".len..];
 
     if (module_name[0] == '@') {
@@ -514,7 +488,7 @@ pub fn contentsFromPath(path: string) ?string {
     }
 
     if (Map.get(module_name)) |mod| {
-        return mod.code.*;
+        return mod.code;
     }
     return null;
 }

@@ -1403,14 +1403,13 @@ bool JSC__JSValue__isIterable(JSC__JSValue JSValue, JSC__JSGlobalObject* global)
     return JSC::hasIteratorMethod(global, JSC::JSValue::decode(JSValue));
 }
 
-void JSC__JSValue__forEach(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,
-    void (*ArgFn2)(JSC__VM* arg0, JSC__JSGlobalObject* arg1,
-        JSC__JSValue JSValue2))
+void JSC__JSValue__forEach(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, void* ctx, void (*ArgFn3)(JSC__VM* arg0, JSC__JSGlobalObject* arg1, void* arg2, JSC__JSValue JSValue3))
 {
+
     JSC::forEachInIterable(
         arg1, JSC::JSValue::decode(JSValue0),
-        [ArgFn2](JSC::VM& vm, JSC::JSGlobalObject* global, JSC::JSValue value) -> void {
-            ArgFn2(&vm, global, JSC::JSValue::encode(value));
+        [ArgFn3, ctx](JSC::VM& vm, JSC::JSGlobalObject* global, JSC::JSValue value) -> void {
+            ArgFn3(&vm, global, ctx, JSC::JSValue::encode(value));
         });
 }
 
@@ -1639,8 +1638,8 @@ static void populateStackFrameMetadata(const JSC::StackFrame* stackFrame, ZigSta
     }
 
     /* For functions (either JSFunction or InternalFunction), fallback to their "native" name
-   * property. Based on JSC::getCalculatedDisplayName, "inlining" the
-   * JSFunction::calculatedDisplayName\InternalFunction::calculatedDisplayName calls */
+     * property. Based on JSC::getCalculatedDisplayName, "inlining" the
+     * JSFunction::calculatedDisplayName\InternalFunction::calculatedDisplayName calls */
     if (JSC::JSFunction* function = JSC::jsDynamicCast<JSC::JSFunction*>(m_codeBlock->vm(), callee)) {
 
         WTF::String actualName = function->name(m_codeBlock->vm());
@@ -1671,11 +1670,11 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, ZigStr
     JSC::BytecodeIndex bytecodeOffset = stackFrame->hasBytecodeIndex() ? stackFrame->bytecodeIndex() : JSC::BytecodeIndex();
 
     /* Get the "raw" position info.
-   * Note that we're using m_codeBlock->unlinkedCodeBlock()->expressionRangeForBytecodeOffset
-   * rather than m_codeBlock->expressionRangeForBytecodeOffset in order get the "raw" offsets and
-   * avoid the CodeBlock's expressionRangeForBytecodeOffset modifications to the line and column
-   * numbers, (we don't need the column number from it, and we'll calculate the line "fixes"
-   * ourselves). */
+     * Note that we're using m_codeBlock->unlinkedCodeBlock()->expressionRangeForBytecodeOffset
+     * rather than m_codeBlock->expressionRangeForBytecodeOffset in order get the "raw" offsets and
+     * avoid the CodeBlock's expressionRangeForBytecodeOffset modifications to the line and column
+     * numbers, (we don't need the column number from it, and we'll calculate the line "fixes"
+     * ourselves). */
     int startOffset = 0;
     int endOffset = 0;
     int divotPoint = 0;
@@ -1689,11 +1688,11 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, ZigStr
     // through source text.
 
     /* On the first line of the source code, it seems that we need to "fix" the column with the
-   * starting offset. We currently use codeBlock->source()->startPosition().m_column.oneBasedInt()
-   * as the offset in the first line rather than codeBlock->firstLineColumnOffset(), which seems
-   * simpler (and what CodeBlock::expressionRangeForBytecodeOffset does). This is because
-   * firstLineColumnOffset values seems different from what we expect (according to v8's tests)
-   * and I haven't dove into the relevant parts in JSC (yet) to figure out why. */
+     * starting offset. We currently use codeBlock->source()->startPosition().m_column.oneBasedInt()
+     * as the offset in the first line rather than codeBlock->firstLineColumnOffset(), which seems
+     * simpler (and what CodeBlock::expressionRangeForBytecodeOffset does). This is because
+     * firstLineColumnOffset values seems different from what we expect (according to v8's tests)
+     * and I haven't dove into the relevant parts in JSC (yet) to figure out why. */
     unsigned columnOffset = line ? 0 : m_codeBlock->source().startColumn().zeroBasedInt();
 
     // "Fix" the line number
@@ -1761,15 +1760,15 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, ZigStr
     }
 
     /* Finally, store the source "positions" info.
-   * Notes:
-   * - The retrieved column seem to point the "end column". To make sure we're current, we'll
-   *calculate the columns ourselves, since we've already found where the line starts. Note that in
-   *v8 it should be 0-based here (in contrast the 1-based column number in v8::StackFrame).
-   * - The static_casts are ugly, but comes from differences between JSC and v8's api, and should
-   *be OK since no source should be longer than "max int" chars.
-   * TODO: If expressionStart == expressionStop, then m_endColumn will be equal to m_startColumn.
-   *Should we handle this case?
-   */
+     * Notes:
+     * - The retrieved column seem to point the "end column". To make sure we're current, we'll
+     *calculate the columns ourselves, since we've already found where the line starts. Note that in
+     *v8 it should be 0-based here (in contrast the 1-based column number in v8::StackFrame).
+     * - The static_casts are ugly, but comes from differences between JSC and v8's api, and should
+     *be OK since no source should be longer than "max int" chars.
+     * TODO: If expressionStart == expressionStop, then m_endColumn will be equal to m_startColumn.
+     *Should we handle this case?
+     */
     position->expression_start = expressionStart;
     position->expression_stop = expressionStop;
     position->line = WTF::OrdinalNumber::fromOneBasedInt(static_cast<int>(line)).zeroBasedInt();
@@ -2083,19 +2082,8 @@ bool JSC__JSValue__isTerminationException(JSC__JSValue JSValue0, JSC__VM* arg1)
 void JSC__VM__shrinkFootprint(JSC__VM* arg0) { arg0->shrinkFootprintWhenIdle(); };
 void JSC__VM__whenIdle(JSC__VM* arg0, void (*ArgFn1)()) { arg0->whenIdle(ArgFn1); };
 
-thread_local JSC::VM* g_commonVMOrNull;
 JSC__VM* JSC__VM__create(unsigned char HeapType0)
 {
-
-    auto& vm = JSC::VM::create(HeapType0 == 0 ? JSC::HeapType::Small : JSC::HeapType::Large, nullptr)
-                   .leakRef();
-
-    JSC::Wasm::enableFastMemory();
-
-    g_commonVMOrNull = &vm;
-    vm.heap.acquireAccess(); // At any time, we may do things that affect the GC.
-
-    return g_commonVMOrNull;
 }
 
 void JSC__VM__holdAPILock(JSC__VM* arg0, void* ctx, void (*callback)(void* arg0))

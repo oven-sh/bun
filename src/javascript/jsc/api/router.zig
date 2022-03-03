@@ -397,9 +397,7 @@ pub fn getScriptSrc(
         break :brk this.script_src_buf[0..this.script_src_buf_writer.pos];
     };
 
-    this.script_src = src;
-
-    return js.JSValueMakeString(ctx, ZigString.init(src).toJSStringRef());
+    return ZigString.init(src).toValueGC(ctx.ptr()).asObjectRef();
 }
 
 pub fn getParams(

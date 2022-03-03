@@ -34,6 +34,7 @@ const Run = @import("../bun_js.zig").Run;
 var path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
 var path_buf2: [_global.MAX_PATH_BYTES]u8 = undefined;
 const PathString = _global.PathString;
+const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
 
 const JSC = @import("javascript_core");
 const Jest = JSC.Jest;
@@ -229,6 +230,7 @@ const Scanner = struct {
 pub const TestCommand = struct {
     pub const name = "wiptest";
     pub fn exec(ctx: Command.Context) !void {
+        if (comptime is_bindgen) unreachable;
         var env_loader = brk: {
             var map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);

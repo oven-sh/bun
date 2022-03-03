@@ -40,6 +40,7 @@ pub const Run = struct {
     entry_path: string,
 
     pub fn boot(ctx: Command.Context, file: std.fs.File, entry_path: string) !void {
+        if (comptime JSC.is_bindgen) unreachable;
         @import("javascript/jsc/javascript_core_c_api.zig").JSCInitialize();
 
         js_ast.Expr.Data.Store.create(default_allocator);

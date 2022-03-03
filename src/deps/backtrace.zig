@@ -1,3 +1,4 @@
+const Environment = @import("../env.zig");
 pub const backtrace_state = struct_backtrace_state;
 pub const struct_backtrace_state = opaque {};
 pub const backtrace_error_callback = ?fn (
@@ -88,6 +89,7 @@ noinline fn full_callback(_: ?*anyopaque, pc: usize, filename: [*c]const u8, lin
 
 var state: ?*backtrace_state = null;
 pub inline fn print() void {
+    if (Environment.isMac) return;
     state = backtrace_create_state(null, BACKTRACE_SUPPORTS_THREADS, null, null);
     _ = backtrace_full(state, 2, full_callback, null, null);
 }

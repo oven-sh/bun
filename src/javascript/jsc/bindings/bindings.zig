@@ -2179,8 +2179,13 @@ pub const JSValue = enum(i64) {
         return cppFn("isAggregateError", .{ this, globalObject });
     }
 
-    pub fn forEach(this: JSValue, globalObject: *JSGlobalObject, callback: fn (vm: [*c]VM, globalObject: [*c]JSGlobalObject, nextValue: JSValue) callconv(.C) void) void {
-        return cppFn("forEach", .{ this, globalObject, callback });
+    pub fn forEach(
+        this: JSValue,
+        globalObject: *JSGlobalObject,
+        ctx: ?*anyopaque,
+        callback: fn (vm: [*c]VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void,
+    ) void {
+        return cppFn("forEach", .{ this, globalObject, ctx, callback });
     }
 
     pub fn isIterable(this: JSValue, globalObject: *JSGlobalObject) bool {

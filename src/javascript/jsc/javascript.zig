@@ -236,6 +236,45 @@ pub const Bun = struct {
         return css_imports_list_strings[0..tail];
     }
 
+    pub fn inspect(
+        // this
+        _: void,
+        ctx: js.JSContextRef,
+        // function
+        _: js.JSObjectRef,
+        // thisObject
+        _: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        if (arguments.len == 0)
+            return ZigString.Empty.toValue(ctx.ptr()).asObjectRef();
+
+        var array = std.ArrayList(u8).init(getAllocator(ctx));
+        var writer = array.writer();
+        // we buffer this because it'll almost always be < 4096
+        const BufferedWriter = std.io.BufferedWriter(4096, std.ArrayList(u8).Writer);
+        var buffered_writer = BufferedWriter{ .unbuffered_writer = writer };
+        ZigConsoleClient.format(
+            .Debug,
+            ctx.ptr(),
+            @ptrCast([*]const JSValue, arguments.ptr),
+            arguments.len,
+            @TypeOf(buffered_writer.writer()),
+            buffered_writer.writer(),
+            false,
+            false,
+        );
+        buffered_writer.flush() catch unreachable;
+        var zig_str = ZigString.init(array.toOwnedSlice()).withEncoding();
+        if (zig_str.len == 0) return ZigString.Empty.toValue(ctx.ptr()).asObjectRef();
+        if (!zig_str.isUTF8()) {
+            return zig_str.toExternalValue(ctx.ptr()).asObjectRef();
+        } else {
+            return zig_str.toValueGC(ctx.ptr()).asObjectRef();
+        }
+    }
+
     pub fn registerMacro(
         // this
         _: void,
@@ -808,6 +847,13 @@ pub const Bun = struct {
                     .@"return" = "string[]",
                 },
             },
+            .inspect = .{
+                .rfn = Bun.inspect,
+                .ts = d.ts{
+                    .name = "inspect",
+                    .@"return" = "string",
+                },
+            },
             .getRouteFiles = .{
                 .rfn = Bun.getRouteFiles,
                 .ts = d.ts{
@@ -1197,6 +1243,7 @@ pub const Bun = struct {
             countdown: JSValue,
             repeat: bool,
         ) !void {
+            if (comptime is_bindgen) unreachable;
             var timeout = try VirtualMachine.vm.allocator.create(Timeout);
             js.JSValueProtect(globalThis.ref(), callback.asObjectRef());
             timeout.* = Timeout{ .id = id, .callback = callback, .interval = countdown.toInt32(), .repeat = repeat };
@@ -1211,6 +1258,7 @@ pub const Bun = struct {
             callback: JSValue,
             countdown: JSValue,
         ) callconv(.C) JSValue {
+            if (comptime is_bindgen) unreachable;
             const id = VirtualMachine.vm.timer.last_id;
             VirtualMachine.vm.timer.last_id +%= 1;
 
@@ -1224,6 +1272,7 @@ pub const Bun = struct {
             callback: JSValue,
             countdown: JSValue,
         ) callconv(.C) JSValue {
+            if (comptime is_bindgen) unreachable;
             const id = VirtualMachine.vm.timer.last_id;
             VirtualMachine.vm.timer.last_id +%= 1;
 
@@ -1234,6 +1283,7 @@ pub const Bun = struct {
         }
 
         pub fn clearTimer(id: JSValue, _: *JSGlobalObject) void {
+            if (comptime is_bindgen) unreachable;
             var timer: *Timeout = VirtualMachine.vm.timer.timeouts.get(id.toInt32()) orelse return;
             timer.cancelled = true;
         }
@@ -1242,6 +1292,7 @@ pub const Bun = struct {
             globalThis: *JSGlobalObject,
             id: JSValue,
         ) callconv(.C) JSValue {
+            if (comptime is_bindgen) unreachable;
             Timer.clearTimer(id, globalThis);
             return JSValue.jsUndefined();
         }
@@ -1249,6 +1300,7 @@ pub const Bun = struct {
             globalThis: *JSGlobalObject,
             id: JSValue,
         ) callconv(.C) JSValue {
+            if (comptime is_bindgen) unreachable;
             Timer.clearTimer(id, globalThis);
             return JSValue.jsUndefined();
         }
@@ -2506,11 +2558,17 @@ pub const VirtualMachine = struct {
 
     pub const ExceptionList = std.ArrayList(Api.JsException);
 
-    pub fn printException(this: *VirtualMachine, exception: *Exception, exception_list: ?*ExceptionList) void {
+    pub fn printException(
+        this: *VirtualMachine,
+        exception: *Exception,
+        exception_list: ?*ExceptionList,
+        comptime Writer: type,
+        writer: Writer,
+    ) void {
         if (Output.enable_ansi_colors) {
-            this.printErrorlikeObject(exception.value(), exception, exception_list, true);
+            this.printErrorlikeObject(exception.value(), exception, exception_list, Writer, writer, true);
         } else {
-            this.printErrorlikeObject(exception.value(), exception, exception_list, false);
+            this.printErrorlikeObject(exception.value(), exception, exception_list, Writer, writer, false);
         }
     }
 
@@ -2518,11 +2576,16 @@ pub const VirtualMachine = struct {
         if (result.isException(this.global.vm())) {
             var exception = @ptrCast(*Exception, result.asVoid());
 
-            this.printException(exception, exception_list);
+            this.printException(
+                exception,
+                exception_list,
+                @TypeOf(Output.errorWriter()),
+                Output.errorWriter(),
+            );
         } else if (Output.enable_ansi_colors) {
-            this.printErrorlikeObject(result, null, exception_list, true);
+            this.printErrorlikeObject(result, null, exception_list, @TypeOf(Output.errorWriter()), Output.errorWriter(), true);
         } else {
-            this.printErrorlikeObject(result, null, exception_list, false);
+            this.printErrorlikeObject(result, null, exception_list, @TypeOf(Output.errorWriter()), Output.errorWriter(), false);
         }
     }
 
@@ -2629,8 +2692,16 @@ pub const VirtualMachine = struct {
     // In that case, this function becomes recursive.
     // In all other cases, we will convert it to a ZigException.
     const errors_property = ZigString.init("errors");
-    pub fn printErrorlikeObject(this: *VirtualMachine, value: JSValue, exception: ?*Exception, exception_list: ?*ExceptionList, comptime allow_ansi_color: bool) void {
-        if (comptime @hasDecl(@import("root"), "bindgen")) {
+    pub fn printErrorlikeObject(
+        this: *VirtualMachine,
+        value: JSValue,
+        exception: ?*Exception,
+        exception_list: ?*ExceptionList,
+        comptime Writer: type,
+        writer: Writer,
+        comptime allow_ansi_color: bool,
+    ) void {
+        if (comptime JSC.is_bindgen) {
             return;
         }
 
@@ -2643,16 +2714,11 @@ pub const VirtualMachine = struct {
                     var zig_exception: *ZigException = holder.zigException();
                     exception_.getStackTrace(&zig_exception.stack);
                     if (zig_exception.stack.frames_len > 0) {
-                        var buffered_writer = std.io.bufferedWriter(Output.errorWriter());
-                        var writer = buffered_writer.writer();
-
-                        if (Output.enable_ansi_colors) {
-                            printStackTrace(@TypeOf(writer), writer, zig_exception.stack, true) catch {};
+                        if (allow_ansi_color) {
+                            printStackTrace(Writer, writer, zig_exception.stack, true) catch {};
                         } else {
-                            printStackTrace(@TypeOf(writer), writer, zig_exception.stack, false) catch {};
+                            printStackTrace(Writer, writer, zig_exception.stack, false) catch {};
                         }
-
-                        buffered_writer.flush() catch {};
                     }
 
                     if (exception_list) |list| {
@@ -2662,40 +2728,75 @@ pub const VirtualMachine = struct {
             }
         }
 
+        const ChildWriterType = comptime if (@typeInfo(Writer) == .Pointer)
+            Writer
+        else
+            *Writer;
+
         if (value.isAggregateError(this.global)) {
             const AggregateErrorIterator = struct {
                 pub var current_exception_list: ?*ExceptionList = null;
-                pub fn iteratorWithColor(_vm: [*c]VM, globalObject: [*c]JSGlobalObject, nextValue: JSValue) callconv(.C) void {
-                    iterator(_vm, globalObject, nextValue, true);
+                pub fn iteratorWithColor(_vm: [*c]VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                    iterator(_vm, globalObject, nextValue, ctx.?, true);
                 }
-                pub fn iteratorWithOutColor(_vm: [*c]VM, globalObject: [*c]JSGlobalObject, nextValue: JSValue) callconv(.C) void {
-                    iterator(_vm, globalObject, nextValue, false);
+                pub fn iteratorWithOutColor(_vm: [*c]VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                    iterator(_vm, globalObject, nextValue, ctx.?, false);
                 }
-                inline fn iterator(_: [*c]VM, _: [*c]JSGlobalObject, nextValue: JSValue, comptime color: bool) void {
-                    VirtualMachine.vm.printErrorlikeObject(nextValue, null, current_exception_list, color);
+                inline fn iterator(_: [*c]VM, _: [*c]JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
+                    var casted = @intToPtr(ChildWriterType, @ptrToInt(ctx));
+                    if (comptime ChildWriterType == Writer) {
+                        VirtualMachine.vm.printErrorlikeObject(nextValue, null, current_exception_list, ChildWriterType, casted, color);
+                    } else {
+                        VirtualMachine.vm.printErrorlikeObject(nextValue, null, current_exception_list, Writer, casted.*, color);
+                    }
                 }
             };
             AggregateErrorIterator.current_exception_list = exception_list;
             defer AggregateErrorIterator.current_exception_list = null;
-            if (comptime allow_ansi_color) {
-                value.getErrorsProperty(this.global).forEach(this.global, AggregateErrorIterator.iteratorWithColor);
+            var writer_ctx: ?*anyopaque = null;
+            if (comptime @typeInfo(Writer) == .Pointer) {
+                writer_ctx = @intToPtr(?*anyopaque, @ptrToInt(writer));
             } else {
-                value.getErrorsProperty(this.global).forEach(this.global, AggregateErrorIterator.iteratorWithOutColor);
+                writer_ctx = @intToPtr(?*anyopaque, @ptrToInt(&writer));
+            }
+            if (comptime allow_ansi_color) {
+                value.getErrorsProperty(this.global).forEach(this.global, writer_ctx, AggregateErrorIterator.iteratorWithColor);
+            } else {
+                value.getErrorsProperty(this.global).forEach(this.global, writer_ctx, AggregateErrorIterator.iteratorWithOutColor);
             }
             return;
         }
 
         if (js.JSValueIsObject(this.global.ref(), value.asRef())) {
             if (js.JSObjectGetPrivate(value.asRef())) |priv| {
-                was_internal = this.printErrorFromMaybePrivateData(priv, exception_list, allow_ansi_color);
+                was_internal = this.printErrorFromMaybePrivateData(
+                    priv,
+                    exception_list,
+                    Writer,
+                    writer,
+                    allow_ansi_color,
+                );
                 return;
             }
         }
 
-        was_internal = this.printErrorFromMaybePrivateData(value.asRef(), exception_list, allow_ansi_color);
+        was_internal = this.printErrorFromMaybePrivateData(
+            value.asRef(),
+            exception_list,
+            Writer,
+            writer,
+            allow_ansi_color,
+        );
     }
 
-    pub fn printErrorFromMaybePrivateData(this: *VirtualMachine, value: ?*anyopaque, exception_list: ?*ExceptionList, comptime allow_ansi_color: bool) bool {
+    pub fn printErrorFromMaybePrivateData(
+        this: *VirtualMachine,
+        value: ?*anyopaque,
+        exception_list: ?*ExceptionList,
+        comptime Writer: type,
+        writer: Writer,
+        comptime allow_ansi_color: bool,
+    ) bool {
         const private_data_ptr = JSPrivateDataPtr.from(value);
 
         switch (private_data_ptr.tag()) {
@@ -2703,7 +2804,6 @@ pub const VirtualMachine = struct {
                 defer Output.flush();
                 var build_error = private_data_ptr.as(BuildError);
                 if (!build_error.logged) {
-                    var writer = Output.errorWriter();
                     build_error.msg.writeFormat(writer, allow_ansi_color) catch {};
                     writer.writeAll("\n") catch {};
                     build_error.logged = true;
@@ -2720,7 +2820,6 @@ pub const VirtualMachine = struct {
                 defer Output.flush();
                 var resolve_error = private_data_ptr.as(ResolveError);
                 if (!resolve_error.logged) {
-                    var writer = Output.errorWriter();
                     resolve_error.msg.writeFormat(writer, allow_ansi_color) catch {};
                     resolve_error.logged = true;
                 }
@@ -2735,7 +2834,13 @@ pub const VirtualMachine = struct {
                 return true;
             },
             else => {
-                this.printErrorInstance(@intToEnum(JSValue, @intCast(i64, (@ptrToInt(value)))), exception_list, allow_ansi_color) catch |err| {
+                this.printErrorInstance(
+                    @intToEnum(JSValue, @intCast(i64, (@ptrToInt(value)))),
+                    exception_list,
+                    Writer,
+                    writer,
+                    allow_ansi_color,
+                ) catch |err| {
                     if (comptime Environment.isDebug) {
                         // yo dawg
                         Output.printErrorln("Error while printing Error-like object: {s}", .{@errorName(err)});
@@ -2780,7 +2885,7 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, exception_list: ?*ExceptionList, comptime allow_ansi_color: bool) !void {
+    pub fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, exception_list: ?*ExceptionList, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool) !void {
         var exception_holder = ZigException.Holder.init();
         var exception = exception_holder.zigException();
         error_instance.toZigException(vm.global, exception);
@@ -2789,11 +2894,6 @@ pub const VirtualMachine = struct {
         }
 
         this.had_errors = true;
-
-        var stderr: std.fs.File = Output.errorStream();
-        var buffered = std.io.bufferedWriter(stderr.writer());
-        var writer = buffered.writer();
-        defer buffered.flush() catch unreachable;
 
         var line_numbers = exception.stack.source_lines_numbers[0..exception.stack.source_lines_len];
         var max_line: i32 = -1;
@@ -3018,6 +3118,7 @@ pub const EventListenerMixin = struct {
         ctx: *CtxType,
         comptime onError: fn (ctx: *CtxType, err: anyerror, value: JSValue, request_ctx: *http.RequestContext) anyerror!void,
     ) !void {
+        if (comptime JSC.is_bindgen) unreachable;
         defer {
             if (request_context.has_called_done) request_context.arena.deinit();
         }

@@ -804,7 +804,7 @@ pub const ZigConsoleClient = struct {
         vals: [*]JSValue,
         len: usize,
     ) callconv(.C) void {
-        if (comptime @hasDecl(@import("root"), "bindgen")) {
+        if (comptime is_bindgen) {
             return;
         }
 
@@ -835,7 +835,19 @@ pub const ZigConsoleClient = struct {
         var writer = buffered_writer.writer();
 
         const BufferedWriterType = @TypeOf(writer);
+        format(level, global, vals, len, BufferedWriterType, writer, enable_colors, true);
+    }
 
+    pub fn format(
+        level: MessageLevel,
+        global: *JSGlobalObject,
+        vals: [*]const JSValue,
+        len: usize,
+        comptime BufferedWriterType: type,
+        writer: BufferedWriterType,
+        enable_colors: bool,
+        add_newline: bool,
+    ) void {
         var fmt: Formatter = undefined;
         defer {
             if (fmt.map_node) |node| {
@@ -849,7 +861,7 @@ pub const ZigConsoleClient = struct {
             fmt = Formatter{ .remaining_values = &[_]JSValue{} };
             const tag = Formatter.Tag.get(vals[0], global);
 
-            var unbuffered_writer = buffered_writer.unbuffered_writer.context.writer();
+            var unbuffered_writer = writer.context.unbuffered_writer.context.writer();
             const UnbufferedWriterType = @TypeOf(unbuffered_writer);
 
             if (tag.tag == .String) {
@@ -878,9 +890,9 @@ pub const ZigConsoleClient = struct {
                         false,
                     );
                 }
-                _ = unbuffered_writer.write("\n") catch 0;
+                if (add_newline) _ = unbuffered_writer.write("\n") catch 0;
             } else {
-                defer buffered_writer.flush() catch {};
+                defer writer.context.flush() catch {};
                 if (enable_colors) {
                     fmt.format(
                         tag,
@@ -900,13 +912,13 @@ pub const ZigConsoleClient = struct {
                         false,
                     );
                 }
-                _ = writer.write("\n") catch 0;
+                if (add_newline) _ = writer.write("\n") catch 0;
             }
 
             return;
         }
 
-        defer buffered_writer.flush() catch {};
+        defer writer.context.flush() catch {};
 
         var this_value: JSValue = vals[0];
         fmt = Formatter{ .remaining_values = vals[0..len][1..] };
@@ -959,11 +971,11 @@ pub const ZigConsoleClient = struct {
             }
         }
 
-        _ = writer.write("\n") catch 0;
+        if (add_newline) _ = writer.write("\n") catch 0;
     }
 
     pub const Formatter = struct {
-        remaining_values: []JSValue = &[_]JSValue{},
+        remaining_values: []const JSValue = &[_]JSValue{},
         map: Visited.Map = undefined,
         map_node: ?*Visited.Pool.Node = null,
         hide_native: bool = false,
@@ -1308,7 +1320,15 @@ pub const ZigConsoleClient = struct {
                     writer.print(comptime Output.prettyFmt("<r><yellow>null<r>", enable_ansi_colors), .{});
                 },
                 .Error => {
-                    JS.VirtualMachine.printErrorlikeObject(JS.VirtualMachine.vm, value, null, null, enable_ansi_colors);
+                    JS.VirtualMachine.vm.printErrorlikeObject(
+                        value,
+                        null,
+                        null,
+
+                        Writer,
+                        writer_,
+                        enable_ansi_colors,
+                    );
                 },
                 .Class => {
                     var printable = ZigString.init(&name_buf);
@@ -1521,7 +1541,7 @@ pub const ZigConsoleClient = struct {
         }
 
         pub fn format(this: *Formatter, result: Tag.Result, comptime Writer: type, writer: Writer, value: JSValue, globalThis: *JSGlobalObject, comptime enable_ansi_colors: bool) void {
-            if (comptime @hasDecl(@import("root"), "bindgen")) {
+            if (comptime is_bindgen) {
                 return;
             }
 

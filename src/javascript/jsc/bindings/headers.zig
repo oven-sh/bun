@@ -83,7 +83,6 @@ pub const JSC__JSObject = bJSC__JSObject;
 pub const WTF__ExternalStringImpl = bWTF__ExternalStringImpl;
 
 pub const JSC__AsyncIteratorPrototype = struct_JSC__AsyncIteratorPrototype;
-pub const JSC__JSLock = bJSC__JSLock;
 pub const JSC__JSModuleLoader = bJSC__JSModuleLoader;
 
 pub const JSC__AsyncGeneratorPrototype = struct_JSC__AsyncGeneratorPrototype;
@@ -287,7 +286,7 @@ pub extern fn JSC__JSValue__createStringArray(arg0: [*c]JSC__JSGlobalObject, arg
 pub extern fn JSC__JSValue__createTypeError(arg0: [*c]const ZigString, arg1: [*c]const ZigString, arg2: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__eqlCell(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSCell) bool;
 pub extern fn JSC__JSValue__eqlValue(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue) bool;
-pub extern fn JSC__JSValue__forEach(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, ArgFn2: ?fn ([*c]JSC__VM, [*c]JSC__JSGlobalObject, JSC__JSValue) callconv(.C) void) void;
+pub extern fn JSC__JSValue__forEach(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?fn ([*c]JSC__VM, [*c]JSC__JSGlobalObject, ?*anyopaque, JSC__JSValue) callconv(.C) void) void;
 pub extern fn JSC__JSValue__fromEntries(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]ZigString, arg2: [*c]ZigString, arg3: usize, arg4: bool) JSC__JSValue;
 pub extern fn JSC__JSValue__getClassName(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]ZigString) void;
 pub extern fn JSC__JSValue__getErrorsProperty(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
@@ -355,7 +354,6 @@ pub extern fn JSC__PropertyName__uid(arg0: [*c]JSC__PropertyName) [*c]const WTF_
 pub extern fn JSC__Exception__create(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]JSC__JSObject, StackCaptureAction2: u8) [*c]JSC__Exception;
 pub extern fn JSC__Exception__getStackTrace(arg0: [*c]JSC__Exception, arg1: [*c]ZigStackTrace) void;
 pub extern fn JSC__Exception__value(arg0: [*c]JSC__Exception) JSC__JSValue;
-pub extern fn JSC__VM__apiLock(arg0: [*c]JSC__VM) [*c]JSC__JSLock;
 pub extern fn JSC__VM__clearExecutionTimeLimit(arg0: [*c]JSC__VM) void;
 pub extern fn JSC__VM__create(HeapType0: u8) [*c]JSC__VM;
 pub extern fn JSC__VM__deinit(arg0: [*c]JSC__VM, arg1: [*c]JSC__JSGlobalObject) void;

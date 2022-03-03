@@ -7,8 +7,12 @@ pub const Bitset = struct {
     const Cache = @import("identifier_cache.zig");
     const id_start_range: [2]i32 = Cache.id_start_meta.range;
     const id_end_range: [2]i32 = Cache.id_continue_meta.range;
-    const id_start = Cache.id_start;
-    const id_continue = Cache.id_continue;
+    // this is a pointer because otherwise it may be copied onto the stack
+    // and it's a huge bitset
+    const id_start = &Cache.id_start;
+    // this is a pointer because otherwise it may be copied onto the stack
+    // and it's a huge bitset
+    const id_continue = &Cache.id_continue;
 
     pub fn init() void {}
 

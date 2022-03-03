@@ -121,10 +121,15 @@ fn doConnect(this: *AsyncSocket, name: []const u8, port: u16) ConnectError!void 
     this.was_keepalive = false;
 
     outer: while (true) {
+        // getAddrList allocates, but it really shouldn't
+        // it allocates about 1024 bytes, so we can just make it a stack allocation
+        var stack_fallback_allocator = std.heap.stackFallback(4096, getAllocator());
+        var allocator = stack_fallback_allocator.get();
+
         // on macOS, getaddrinfo() is very slow
         // If you send ~200 network requests, about 1.5s is spent on getaddrinfo()
         // So, we cache this.
-        var list = NetworkThread.getAddressList(getAllocator(), name, port) catch |err| {
+        var list = NetworkThread.getAddressList(allocator, name, port) catch |err| {
             return @errSetCast(ConnectError, err);
         };
 

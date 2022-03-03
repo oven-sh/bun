@@ -19,6 +19,7 @@ pub const Method = enum {
     OPTIONS,
     CONNECT,
     TRACE,
+    DELETE,
 
     const with_body: std.enums.EnumSet(Method) = brk: {
         var values = std.enums.EnumSet(Method).initFull();
@@ -61,6 +62,9 @@ pub const Method = enum {
             },
             Match.case("TR"), Match.case("tr") => {
                 return .TRACE;
+            },
+            Match.case("DE"), Match.case("de") => {
+                return .DELETE;
             },
             else => {
                 return null;

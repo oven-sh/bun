@@ -23,12 +23,14 @@ pub const MainPanicHandler = panicky.NewPanicHandler(std.builtin.default_panic);
 const js = @import("javascript/jsc/bindings/bindings.zig");
 const JavaScript = @import("javascript/jsc/javascript.zig");
 pub const io_mode = .blocking;
+pub const bindgen = @import("build_options").bindgen;
 const Report = @import("./report.zig");
 pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace) noreturn {
     MainPanicHandler.handle_panic(msg, error_return_trace);
 }
 
 const CrashReporter = @import("crash_reporter");
+
 
 pub fn PLCrashReportHandler() void {
     Report.fatal(null, null);

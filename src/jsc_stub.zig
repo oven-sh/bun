@@ -1,4 +1,5 @@
 // For WASM builds
+pub const is_bindgen = true;
 pub const C = struct {};
 pub const WebCore = struct {};
 pub const Jest = struct {};

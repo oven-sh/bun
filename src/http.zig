@@ -3533,6 +3533,15 @@ pub const Server = struct {
         const is_navigation_request = req_ctx_.isBrowserNavigation();
         defer if (is_navigation_request == .yes) Analytics.enqueue(Analytics.EventName.http_build);
         req_ctx.parseOrigin();
+        outer: {
+            const now = DateTime.Datetime.now();
+            req_ctx.appendHeader(
+                "Date",
+                now.formatHttpBuf(&req_ctx.datetime_buf) catch brk: {
+                    break :brk now.formatHttp(req_ctx.allocator) catch break :outer;
+                },
+            );
+        }
 
         if (req_ctx.url.needs_redirect) {
             req_ctx.handleRedirect(req_ctx.url.path) catch |err| {

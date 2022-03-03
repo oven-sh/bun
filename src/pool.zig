@@ -120,26 +120,36 @@ pub fn ObjectPool(
         const LinkedList = SinglyLinkedList(Type, Pool);
         pub const Node = LinkedList.Node;
         const MaxCountInt = std.math.IntFittingRange(0, max_count);
-        const Data = if (threadsafe)
-            struct {
-                pub threadlocal var list: LinkedList = undefined;
-                pub threadlocal var loaded: bool = false;
-                pub threadlocal var count: MaxCountInt = 0;
-            }
-        else
-            struct {
-                pub var list: LinkedList = undefined;
-                pub var loaded: bool = false;
-                pub var count: MaxCountInt = 0;
-            };
+        const DataStruct = struct {
+            list: LinkedList = undefined,
+            loaded: bool = false,
+            count: MaxCountInt = 0,
+        };
 
-        const data = Data;
+        // We want this to be global
+        // but we don't want to create 3 global variables per pool
+        // instead, we create one global variable per pool
+        const DataStructNonThreadLocal = if (threadsafe) void else DataStruct;
+        const DataStructThreadLocal = if (!threadsafe) void else DataStruct;
+        threadlocal var data_threadlocal: DataStructThreadLocal = DataStructThreadLocal{};
+        var data__: DataStructNonThreadLocal = DataStructNonThreadLocal{};
+        inline fn data() *DataStruct {
+            if (comptime threadsafe) {
+                return &data_threadlocal;
+            }
+
+            if (comptime !threadsafe) {
+                return &data__;
+            }
+
+            unreachable;
+        }
 
         pub fn get(allocator: std.mem.Allocator) *LinkedList.Node {
-            if (data.loaded) {
-                if (data.list.popFirst()) |node| {
+            if (data().loaded) {
+                if (data().list.popFirst()) |node| {
                     if (comptime std.meta.trait.isContainer(Type) and @hasDecl(Type, "reset")) node.data.reset();
-                    if (comptime max_count > 0) data.count -|= 1;
+                    if (comptime max_count > 0) data().count -|= 1;
                     return node;
                 }
             }
@@ -162,7 +172,7 @@ pub fn ObjectPool(
 
         pub fn release(node: *LinkedList.Node) void {
             if (comptime max_count > 0) {
-                if (data.count >= max_count) {
+                if (data().count >= max_count) {
                     if (comptime log_allocations) std.io.getStdErr().writeAll(comptime std.fmt.comptimePrint("Free {s} - {d} bytes\n", .{ @typeName(Type), @sizeOf(Type) })) catch {};
                     if (comptime std.meta.trait.isContainer(Type) and @hasDecl(Type, "deinit")) node.data.deinit();
                     node.allocator.destroy(node);
@@ -170,15 +180,15 @@ pub fn ObjectPool(
                 }
             }
 
-            if (comptime max_count > 0) data.count +|= 1;
+            if (comptime max_count > 0) data().count +|= 1;
 
-            if (data.loaded) {
-                data.list.prepend(node);
+            if (data().loaded) {
+                data().list.prepend(node);
                 return;
             }
 
-            data.list = LinkedList{ .first = node };
-            data.loaded = true;
+            data().list = LinkedList{ .first = node };
+            data().loaded = true;
         }
     };
 }

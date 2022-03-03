@@ -64,6 +64,8 @@ const CAllocator = struct {
     }
 
     fn alignedAlloc(len: usize, alignment: usize) ?[*]u8 {
+        if (comptime FeatureFlags.log_allocations) std.debug.print("Malloc: {d}\n", .{len});
+
         var ptr = if (mi_malloc_satisfies_alignment(alignment, len))
             mimalloc.mi_malloc(len)
         else
@@ -187,6 +189,8 @@ const ZAllocator = struct {
     }
 
     fn alignedAlloc(len: usize, alignment: usize) ?[*]u8 {
+        if (comptime FeatureFlags.log_allocations) std.debug.print("Malloc: {d}\n", .{len});
+
         var ptr = if (mi_malloc_satisfies_alignment(alignment, len))
             mimalloc.mi_zalloc(len)
         else

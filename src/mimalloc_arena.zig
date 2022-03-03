@@ -4,6 +4,7 @@ const std = @import("std");
 
 const mimalloc = @import("./allocators/mimalloc.zig");
 const Environment = @import("./env.zig");
+const FeatureFlags = @import("./feature_flags.zig");
 const Allocator = mem.Allocator;
 const assert = std.debug.assert;
 
@@ -46,6 +47,8 @@ pub const Arena = struct {
     }
 
     fn alignedAlloc(heap: *mimalloc.mi_heap_t, len: usize, alignment: usize) ?[*]u8 {
+        if (comptime FeatureFlags.log_allocations) std.debug.print("Malloc: {d}\n", .{len});
+
         // this is the logic that posix_memalign does
         var ptr = if (mi_malloc_satisfies_alignment(alignment, len))
             mimalloc.mi_heap_malloc(heap, len)

@@ -265,7 +265,9 @@ pub fn getFilePath(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    return ZigString.init(this.route.file_path).toValue(ctx.ptr()).asRef();
+    return ZigString.init(this.route.file_path)
+        .withEncoding()
+        .toValueGC(ctx.ptr()).asRef();
 }
 
 pub fn finalize(
@@ -283,7 +285,9 @@ pub fn getPathname(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    return ZigString.init(this.route.pathname).toValue(ctx.ptr()).asRef();
+    return ZigString.init(this.route.pathname)
+        .withEncoding()
+        .toValueGC(ctx.ptr()).asRef();
 }
 
 pub fn getRoute(
@@ -293,7 +297,9 @@ pub fn getRoute(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    return ZigString.init(this.route.name).toValue(ctx.ptr()).asRef();
+    return ZigString.init(this.route.name)
+        .withEncoding()
+        .toValueGC(ctx.ptr()).asRef();
 }
 
 const KindEnum = struct {

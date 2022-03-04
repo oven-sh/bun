@@ -178,7 +178,6 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
     const count = _count * 2;
     const max_index = count - 1;
     return struct {
-        pub var backing_buf: [count]ValueType = undefined;
         const ChunkSize = 256;
         const OverflowBlock = struct {
             used: std.atomic.Atomic(u16) = std.atomic.Atomic(u16).init(0),
@@ -193,7 +192,6 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
             }
         };
 
-        pub var used: u32 = 0;
         const Allocator = std.mem.Allocator;
         const Self = @This();
 
@@ -201,6 +199,8 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
         mutex: Mutex = Mutex.init(),
         head: *OverflowBlock = undefined,
         tail: OverflowBlock = OverflowBlock{},
+        backing_buf: [count]ValueType = undefined,
+        used: u32 = 0,
 
         pub var instance: Self = undefined;
         pub var loaded = false;
@@ -223,15 +223,15 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
         }
 
         pub fn isOverflowing() bool {
-            return used >= @as(u16, count);
+            return instance.used >= @as(u16, count);
         }
 
         pub fn exists(_: *Self, value: ValueType) bool {
-            return isSliceInBuffer(value, backing_buf);
+            return isSliceInBuffer(value, instance.backing_buf);
         }
 
         fn appendOverflow(self: *Self, value: ValueType) !*ValueType {
-            used += 1;
+            instance.used += 1;
             return self.head.append(value) catch brk: {
                 var new_block = try self.allocator.create(OverflowBlock);
                 new_block.* = OverflowBlock{};
@@ -244,13 +244,13 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
         pub fn append(self: *Self, value: ValueType) !*ValueType {
             self.mutex.lock();
             defer self.mutex.unlock();
-            if (used > max_index) {
+            if (instance.used > max_index) {
                 return self.appendOverflow(value);
             } else {
-                const index = used;
-                backing_buf[index] = value;
-                used += 1;
-                return &backing_buf[index];
+                const index = instance.used;
+                instance.backing_buf[index] = value;
+                instance.used += 1;
+                return &instance.backing_buf[index];
             }
         }
         pub const Pair = struct { index: IndexType, value: *ValueType };
@@ -276,20 +276,19 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
 
     return struct {
         pub const Overflow = OverflowList([]const u8, count / 4);
-        pub var slice_buf: [count][]const u8 = undefined;
-        pub var slice_buf_used: u16 = 0;
-        pub var backing_buf: [count * item_length]u8 = undefined;
-        pub var backing_buf_used: u64 = undefined;
         const Allocator = std.mem.Allocator;
         const Self = @This();
 
+        backing_buf: [count * item_length]u8 = undefined,
+        backing_buf_used: u64 = undefined,
         overflow_list: Overflow = Overflow{},
         allocator: Allocator,
-
+        slice_buf: [count][]const u8 = undefined,
+        slice_buf_used: u16 = 0,
+        mutex: Mutex = Mutex.init(),
         pub var instance: Self = undefined;
         var loaded: bool = false;
         // only need the mutex on append
-        var mutex: Mutex = undefined;
 
         const EmptyType = struct {
             len: usize = 0,
@@ -300,7 +299,6 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
                 instance = Self{
                     .allocator = allocator,
                 };
-                mutex = Mutex.init();
                 loaded = true;
             }
 
@@ -308,11 +306,11 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
         }
 
         pub inline fn isOverflowing() bool {
-            return slice_buf_used >= @as(u16, count);
+            return instance.slice_buf_used >= @as(u16, count);
         }
 
         pub fn exists(_: *const Self, value: ValueType) bool {
-            return isSliceInBuffer(value, &backing_buf);
+            return isSliceInBuffer(value, &instance.backing_buf);
         }
 
         pub fn editableSlice(slice: []const u8) []u8 {
@@ -339,16 +337,16 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
         }
 
         pub fn append(self: *Self, comptime AppendType: type, _value: AppendType) ![]const u8 {
-            mutex.lock();
-            defer mutex.unlock();
+            self.mutex.lock();
+            defer self.mutex.unlock();
 
             return try self.doAppend(AppendType, _value);
         }
 
         threadlocal var lowercase_append_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
         pub fn appendLowerCase(self: *Self, comptime AppendType: type, _value: AppendType) ![]const u8 {
-            mutex.lock();
-            defer mutex.unlock();
+            self.mutex.lock();
+            defer self.mutex.unlock();
 
             for (_value) |c, i| {
                 lowercase_append_buf[i] = std.ascii.toLower(c);
@@ -383,20 +381,20 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             } + 1;
 
             var value: [:0]u8 = undefined;
-            if (value_len + backing_buf_used < backing_buf.len - 1) {
-                const start = backing_buf_used;
-                backing_buf_used += value_len;
+            if (value_len + instance.backing_buf_used < instance.backing_buf.len - 1) {
+                const start = instance.backing_buf_used;
+                instance.backing_buf_used += value_len;
 
                 switch (AppendType) {
                     EmptyType => {
-                        backing_buf[backing_buf_used - 1] = 0;
+                        instance.backing_buf[instance.backing_buf_used - 1] = 0;
                     },
                     []const u8, []u8, [:0]const u8, [:0]u8 => {
-                        std.mem.copy(u8, backing_buf[start .. backing_buf_used - 1], _value);
-                        backing_buf[backing_buf_used - 1] = 0;
+                        std.mem.copy(u8, instance.backing_buf[start .. instance.backing_buf_used - 1], _value);
+                        instance.backing_buf[instance.backing_buf_used - 1] = 0;
                     },
                     else => {
-                        var remainder = backing_buf[start..];
+                        var remainder = instance.backing_buf[start..];
                         for (_value) |val| {
                             std.mem.copy(u8, remainder, val);
                             remainder = remainder[val.len..];
@@ -405,7 +403,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
                     },
                 }
 
-                value = backing_buf[start .. backing_buf_used - 1 :0];
+                value = instance.backing_buf[start .. instance.backing_buf_used - 1 :0];
             } else {
                 var value_buf = try self.allocator.alloc(u8, value_len);
 
@@ -427,13 +425,13 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
                 value = value_buf[0 .. value_len - 1 :0];
             }
 
-            var result = IndexType{ .index = std.math.maxInt(u31), .is_overflow = slice_buf_used > max_index };
+            var result = IndexType{ .index = std.math.maxInt(u31), .is_overflow = instance.slice_buf_used > max_index };
 
             if (result.is_overflow) {
                 result.index = @intCast(u31, self.overflow_list.len());
             } else {
-                result.index = slice_buf_used;
-                slice_buf_used += 1;
+                result.index = instance.slice_buf_used;
+                instance.slice_buf_used += 1;
             }
 
             if (result.is_overflow) {
@@ -445,9 +443,9 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
 
                 return value;
             } else {
-                slice_buf[result.index] = value;
+                instance.slice_buf[result.index] = value;
 
-                return slice_buf[result.index];
+                return instance.slice_buf[result.index];
             }
         }
     };
@@ -456,8 +454,6 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
 pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: bool, estimated_key_length: usize, remove_trailing_slashes: bool) type {
     const max_index = count - 1;
     const BSSMapType = struct {
-        pub var backing_buf: [count]ValueType = undefined;
-        pub var backing_buf_used: u16 = 0;
         const Allocator = std.mem.Allocator;
         const Self = @This();
         const Overflow = OverflowList(ValueType, count / 4);
@@ -466,6 +462,8 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
         overflow_list: Overflow = Overflow{},
         allocator: Allocator,
         mutex: Mutex = Mutex.init(),
+        backing_buf: [count]ValueType = undefined,
+        backing_buf_used: u16 = 0,
 
         pub var instance: Self = undefined;
 
@@ -484,7 +482,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
         }
 
         pub fn isOverflowing() bool {
-            return backing_buf_used >= @as(u16, count);
+            return instance.backing_buf_used >= @as(u16, count);
         }
 
         pub fn getOrPut(self: *Self, denormalized_key: []const u8) !Result {
@@ -537,7 +535,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
             if (index.is_overflow) {
                 return self.overflow_list.atIndexMut(index);
             } else {
-                return &backing_buf[index.index];
+                return &instance.backing_buf[index.index];
             }
         }
 
@@ -546,12 +544,12 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
             defer self.mutex.unlock();
 
             if (result.index.index == NotFound.index or result.index.index == Unassigned.index) {
-                result.index.is_overflow = backing_buf_used > max_index;
+                result.index.is_overflow = instance.backing_buf_used > max_index;
                 if (result.index.is_overflow) {
                     result.index.index = self.overflow_list.len();
                 } else {
-                    result.index.index = backing_buf_used;
-                    backing_buf_used += 1;
+                    result.index.index = instance.backing_buf_used;
+                    instance.backing_buf_used += 1;
                 }
             }
 
@@ -566,9 +564,9 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
                     return ptr;
                 }
             } else {
-                backing_buf[result.index.index] = value;
+                instance.backing_buf[result.index.index] = value;
 
-                return &backing_buf[result.index.index];
+                return &instance.backing_buf[result.index.index];
             }
         }
 
@@ -587,10 +585,10 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
             //     },
             //     0...max_index => {
             //         if (comptime hasDeinit(ValueType)) {
-            //             backing_buf[index].deinit();
+            //             instance.backing_buf[index].deinit();
             //         }
 
-            //         backing_buf[index] = undefined;
+            //         instance.backing_buf[index] = undefined;
             //     },
             //     else => {
             //         const i = index - count;
@@ -609,13 +607,15 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
 
     return struct {
         map: *BSSMapType,
+        key_list_buffer: [count * estimated_key_length]u8 = undefined,
+        key_list_buffer_used: usize = 0,
+        key_list_slices: [count][]u8 = undefined,
+        key_list_overflow: OverflowList([]u8, count / 4) = OverflowList([]u8, count / 4){},
+
         const Self = @This();
         pub var instance: Self = undefined;
-        var key_list_buffer: [count * estimated_key_length]u8 = undefined;
-        var key_list_buffer_used: usize = 0;
-        var key_list_slices: [count][]u8 = undefined;
-        var key_list_overflow: OverflowList([]u8, count / 4) = OverflowList([]u8, count / 4){};
-        var instance_loaded = false;
+        pub var instance_loaded = false;
+
         pub fn init(allocator: std.mem.Allocator) *Self {
             if (!instance_loaded) {
                 instance = Self{
@@ -646,9 +646,9 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
                 Unassigned.index, NotFound.index => null,
                 else => {
                     if (!index.is_overflow) {
-                        return key_list_slices[index.index];
+                        return instance.key_list_slices[index.index];
                     } else {
-                        return key_list_overflow.items[index.index];
+                        return instance.key_list_overflow.items[index.index];
                     }
                 },
             };
@@ -664,7 +664,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
         }
 
         pub fn isKeyStaticallyAllocated(key: anytype) bool {
-            return isSliceInBuffer(key, &key_list_buffer);
+            return isSliceInBuffer(key, &instance.key_list_buffer);
         }
 
         // There's two parts to this.
@@ -678,10 +678,10 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
             // Is this actually a slice into the map? Don't free it.
             if (isKeyStaticallyAllocated(key)) {
                 slice = constStrToU8(key);
-            } else if (key_list_buffer_used + key.len < key_list_buffer.len) {
-                const start = key_list_buffer_used;
-                key_list_buffer_used += key.len;
-                slice = key_list_buffer[start..key_list_buffer_used];
+            } else if (instance.key_list_buffer_used + key.len < instance.key_list_buffer.len) {
+                const start = instance.key_list_buffer_used;
+                instance.key_list_buffer_used += key.len;
+                slice = instance.key_list_buffer[start..instance.key_list_buffer_used];
                 std.mem.copy(u8, slice, key);
             } else {
                 slice = try self.map.allocator.dupe(u8, key);
@@ -692,16 +692,16 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
             }
 
             if (!result.index.is_overflow) {
-                key_list_slices[result.index.index] = slice;
+                instance.key_list_slices[result.index.index] = slice;
             } else {
-                if (@intCast(u31, key_list_overflow.items.len) > result.index.index) {
-                    const existing_slice = key_list_overflow.items[result.index.index];
+                if (@intCast(u31, instance.key_list_overflow.items.len) > result.index.index) {
+                    const existing_slice = instance.key_list_overflow.items[result.index.index];
                     if (!isKeyStaticallyAllocated(existing_slice)) {
                         self.map.allocator.free(existing_slice);
                     }
-                    key_list_overflow.items[result.index.index] = slice;
+                    instance.key_list_overflow.items[result.index.index] = slice;
                 } else {
-                    try key_list_overflow.append(self.map.allocator, slice);
+                    try instance.key_list_overflow.append(self.map.allocator, slice);
                 }
             }
         }

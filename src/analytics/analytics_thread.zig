@@ -349,8 +349,8 @@ pub const GenerateHeader = struct {
         pub var linux_machine_id: [256]u8 = undefined;
 
         pub fn forLinux() !Analytics.Uint64 {
-            var file = std.fs.openFileAbsoluteZ("/var/lib/dbus/machine-id", .{ .read = true }) catch brk: {
-                break :brk try std.fs.openFileAbsoluteZ("/etc/machine-id", .{ .read = true });
+            var file = std.fs.openFileAbsoluteZ("/var/lib/dbus/machine-id", .{ .mode = .read_only }) catch brk: {
+                break :brk try std.fs.openFileAbsoluteZ("/etc/machine-id", .{ .mode = .read_only });
             };
             defer file.close();
             var read_count = try file.read(&linux_machine_id);

@@ -65,7 +65,7 @@
 #include <cstdlib>
 #include <exception>
 #include <iostream>
-
+#include <wtf/text/Base64.h>
 // #include <JavaScriptCore/CachedType.h>
 #include <JavaScriptCore/JSCallbackObject.h>
 #include <JavaScriptCore/JSClassRef.h>
@@ -455,13 +455,76 @@ static JSC_DEFINE_HOST_FUNCTION(functionClearTimeout,
     return Bun__Timer__clearTimeout(globalObject, JSC::JSValue::encode(num));
 }
 
+static JSC_DECLARE_HOST_FUNCTION(functionBTOA);
+
+static JSC_DEFINE_HOST_FUNCTION(functionBTOA,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+
+    if (callFrame->argumentCount() == 0) {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        JSC::throwTypeError(globalObject, scope, "btoa requires 1 argument (a string)"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    const String& stringToEncode = callFrame->argument(0).toWTFString(globalObject);
+
+    if (!stringToEncode || stringToEncode.isNull()) {
+        return JSC::JSValue::encode(JSC::jsString(vm, WTF::String()));
+    }
+
+    if (!stringToEncode.isAllLatin1()) {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        // TODO: DOMException
+        JSC::throwTypeError(globalObject, scope, "The string contains invalid characters."_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    return JSC::JSValue::encode(JSC::jsString(vm, WTF::base64EncodeToString(stringToEncode.latin1())));
+}
+
+static JSC_DECLARE_HOST_FUNCTION(functionATOB);
+
+static JSC_DEFINE_HOST_FUNCTION(functionATOB,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+
+    if (callFrame->argumentCount() == 0) {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        JSC::throwTypeError(globalObject, scope, "atob requires 1 argument (a string)"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    const WTF::String& encodedString = callFrame->argument(0).toWTFString(globalObject);
+
+    if (encodedString.isNull()) {
+        return JSC::JSValue::encode(JSC::jsString(vm, ""));
+    }
+
+    auto decodedData = WTF::base64Decode(encodedString, {
+                                                            WTF::Base64DecodeOptions::ValidatePadding,
+                                                            WTF::Base64DecodeOptions::IgnoreSpacesAndNewLines,
+                                                            WTF::Base64DecodeOptions::DiscardVerticalTab,
+                                                        });
+    if (!decodedData) {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        // TODO: DOMException
+        JSC::throwTypeError(globalObject, scope, "The string contains invalid characters."_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(decodedData->data(), decodedData->size())));
+}
+
 // This is not a publicly exposed API currently.
 // This is used by the bundler to make Response, Request, FetchEvent,
 // and any other objects available globally.
 void GlobalObject::installAPIGlobals(JSClassRef* globals, int count)
 {
     WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
-    extraStaticGlobals.reserveCapacity((size_t)count + 3 + 4);
+    extraStaticGlobals.reserveCapacity((size_t)count + 3 + 7);
 
     int i = 0;
     for (; i < count - 1; i++) {
@@ -529,6 +592,20 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count)
         GlobalPropertyInfo { clearIntervalIdentifier,
             JSC::JSFunction::create(vm(), JSC::jsCast<JSC::JSGlobalObject*>(this), 0,
                 "clearInterval", functionClearInterval),
+            JSC::PropertyAttribute::DontDelete | 0 });
+
+    JSC::Identifier atobIdentifier = JSC::Identifier::fromString(vm(), "atob"_s);
+    extraStaticGlobals.uncheckedAppend(
+        GlobalPropertyInfo { atobIdentifier,
+            JSC::JSFunction::create(vm(), JSC::jsCast<JSC::JSGlobalObject*>(this), 0,
+                "atob", functionATOB),
+            JSC::PropertyAttribute::DontDelete | 0 });
+
+    JSC::Identifier btoaIdentifier = JSC::Identifier::fromString(vm(), "btoa"_s);
+    extraStaticGlobals.uncheckedAppend(
+        GlobalPropertyInfo { btoaIdentifier,
+            JSC::JSFunction::create(vm(), JSC::jsCast<JSC::JSGlobalObject*>(this), 0,
+                "btoa", functionBTOA),
             JSC::PropertyAttribute::DontDelete | 0 });
 
     auto clientData = Bun::clientData(vm());

@@ -121,19 +121,19 @@ test "Check" {
     const id_start_cached_correct = Cache.CachedBitset{ .range = id_start_range, .len = id_start_count + 1 };
     const id_continue_cached_correct = Cache.CachedBitset{ .range = id_end_range, .len = id_end_count + 1 };
     try std.os.chdir(std.fs.path.dirname(@src().file).?);
-    var start_cached = try std.fs.cwd().openFileZ("id_start_bitset.meta.blob", .{ .read = true });
+    var start_cached = try std.fs.cwd().openFileZ("id_start_bitset.meta.blob", .{ .mode = .read_only });
     var start_cached_data = try start_cached.readToEndAlloc(std.heap.c_allocator, 4096);
 
     try std.testing.expectEqualSlices(u8, start_cached_data, std.mem.asBytes(&id_start_cached_correct));
 
-    var continue_cached = try std.fs.cwd().openFileZ("id_continue_bitset.meta.blob", .{ .read = true });
+    var continue_cached = try std.fs.cwd().openFileZ("id_continue_bitset.meta.blob", .{ .mode = .read_only });
     var continue_cached_data = try continue_cached.readToEndAlloc(std.heap.c_allocator, 4096);
 
     try std.testing.expectEqualSlices(u8, continue_cached_data, std.mem.asBytes(&id_continue_cached_correct));
 
-    var start_blob_file = try std.fs.cwd().openFileZ("id_start_bitset.blob", .{ .read = true });
+    var start_blob_file = try std.fs.cwd().openFileZ("id_start_bitset.blob", .{ .mode = .read_only });
     var start_blob_data = try start_blob_file.readToEndAlloc(std.heap.c_allocator, try start_blob_file.getEndPos());
-    var continue_blob_file = try std.fs.cwd().openFileZ("id_continue_bitset.blob", .{ .read = true });
+    var continue_blob_file = try std.fs.cwd().openFileZ("id_continue_bitset.blob", .{ .mode = .read_only });
     var continue_blob_data = try continue_blob_file.readToEndAlloc(std.heap.c_allocator, try continue_blob_file.getEndPos());
 
     try std.testing.expectEqualSlices(u8, start_blob_data, std.mem.asBytes(&id_start.masks));

@@ -590,7 +590,7 @@ pub fn NewPrinter(
         }
 
         pub fn printFunc(p: *Printer, func: G.Fn) void {
-            p.printFnArgs(func.args, func.flags.has_rest_arg, false);
+            p.printFnArgs(func.args, func.flags.contains(.has_rest_arg), false);
             p.printSpace();
             p.printBlock(func.body.loc, func.body.stmts);
         }
@@ -1486,11 +1486,11 @@ pub fn NewPrinter(
                     }
 
                     p.printSpaceBeforeIdentifier();
-                    if (e.func.flags.is_async) {
+                    if (e.func.flags.contains(.is_async)) {
                         p.print("async ");
                     }
                     p.print("function");
-                    if (e.func.flags.is_generator) {
+                    if (e.func.flags.contains(.is_generator)) {
                         p.print("*");
                         p.printSpace();
                     }
@@ -2053,45 +2053,55 @@ pub fn NewPrinter(
         }
 
         pub fn printProperty(p: *Printer, item: G.Property) void {
-            if (item.kind == .spread) {
-                p.print("...");
-                p.printExpr(item.value.?, .comma, ExprFlag.None());
-                return;
-            }
+            if (comptime !is_json) {
+                if (item.kind == .spread) {
+                    if (comptime is_json and Environment.allow_assert)
+                        unreachable;
+                    p.print("...");
+                    p.printExpr(item.value.?, .comma, ExprFlag.None());
+                    return;
+                }
 
-            if (item.flags.is_static) {
-                p.print("static");
-                p.printSpace();
-            }
+                if (item.flags.contains(.is_static)) {
+                    if (comptime is_json and Environment.allow_assert)
+                        unreachable;
+                    p.print("static");
+                    p.printSpace();
+                }
 
-            switch (item.kind) {
-                .get => {
-                    p.printSpaceBeforeIdentifier();
-                    p.print("get");
-                    p.printSpace();
-                },
-                .set => {
-                    p.printSpaceBeforeIdentifier();
-                    p.print("set");
-                    p.printSpace();
-                },
-                else => {},
+                switch (item.kind) {
+                    .get => {
+                        if (comptime is_json and Environment.allow_assert)
+                            unreachable;
+                        p.printSpaceBeforeIdentifier();
+                        p.print("get");
+                        p.printSpace();
+                    },
+                    .set => {
+                        if (comptime is_json and Environment.allow_assert)
+                            unreachable;
+                        p.printSpaceBeforeIdentifier();
+                        p.print("set");
+                        p.printSpace();
+                    },
+                    else => {},
+                }
             }
 
             if (item.value) |val| {
                 switch (val.data) {
                     .e_function => |func| {
-                        if (item.flags.is_method) {
-                            if (func.func.flags.is_async) {
+                        if (item.flags.contains(.is_method)) {
+                            if (func.func.flags.contains(.is_async)) {
                                 p.printSpaceBeforeIdentifier();
                                 p.print("async");
                             }
 
-                            if (func.func.flags.is_generator) {
+                            if (func.func.flags.contains(.is_generator)) {
                                 p.print("*");
                             }
 
-                            if (func.func.flags.is_generator and func.func.flags.is_async) {
+                            if (func.func.flags.contains(.is_generator) and func.func.flags.contains(.is_async)) {
                                 p.printSpace();
                             }
                         }
@@ -2113,7 +2123,7 @@ pub fn NewPrinter(
 
             const _key = item.key.?;
 
-            if (item.flags.is_computed) {
+            if (item.flags.contains(.is_computed)) {
                 p.print("[");
                 p.printExpr(_key, .comma, ExprFlag.None());
                 p.print("]");
@@ -2121,7 +2131,7 @@ pub fn NewPrinter(
                 if (item.value) |val| {
                     switch (val.data) {
                         .e_function => |func| {
-                            if (item.flags.is_method) {
+                            if (item.flags.contains(.is_method)) {
                                 p.printFunc(func.func);
                                 return;
                             }
@@ -2212,11 +2222,11 @@ pub fn NewPrinter(
                             switch (val.data) {
                                 .e_identifier => |e| {
 
-                                    // TODO: is needing to check item.flags.was_shorthand a bug?
+                                    // TODO: is needing to check item.flags.contains(.was_shorthand) a bug?
                                     // esbuild doesn't have to do that...
                                     // maybe it's a symptom of some other underlying issue
                                     // or maybe, it's because i'm not lowering the same way that esbuild does.
-                                    if (item.flags.was_shorthand or strings.utf16EqlString(key.value, p.renamer.nameForSymbol(e.ref))) {
+                                    if (item.flags.contains(.was_shorthand) or strings.utf16EqlString(key.value, p.renamer.nameForSymbol(e.ref))) {
                                         if (item.initializer) |initial| {
                                             p.printInitializer(initial);
                                         }
@@ -2263,7 +2273,7 @@ pub fn NewPrinter(
             if (item.value) |val| {
                 switch (val.data) {
                     .e_function => |f| {
-                        if (item.flags.is_method) {
+                        if (item.flags.contains(.is_method)) {
                             p.printFunc(f.func);
 
                             return;
@@ -2357,10 +2367,10 @@ pub fn NewPrinter(
                                 p.printIndent();
                             }
 
-                            if (property.flags.is_spread) {
+                            if (property.flags.contains(.is_spread)) {
                                 p.print("...");
                             } else {
-                                if (property.flags.is_computed) {
+                                if (property.flags.contains(.is_computed)) {
                                     p.print("[");
                                     p.printExpr(property.key, .comma, ExprFlag.None());
                                     p.print("]:");
@@ -2478,16 +2488,16 @@ pub fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     const name = s.func.name orelse Global.panic("Internal error: expected func to have a name ref\n{s}", .{s});
                     const nameRef = name.ref orelse Global.panic("Internal error: expected func to have a name\n{s}", .{s});
-                    if (s.func.flags.is_export) {
+                    if (s.func.flags.contains(.is_export)) {
                         if (!rewrite_esm_to_cjs) {
                             p.print("export ");
                         }
                     }
-                    if (s.func.flags.is_async) {
+                    if (s.func.flags.contains(.is_async)) {
                         p.print("async ");
                     }
                     p.print("function");
-                    if (s.func.flags.is_generator) {
+                    if (s.func.flags.contains(.is_generator)) {
                         p.print("*");
                         p.printSpace();
                     }
@@ -2496,7 +2506,7 @@ pub fn NewPrinter(
                     p.printSymbol(nameRef);
                     p.printFunc(s.func);
 
-                    // if (rewrite_esm_to_cjs and s.func.flags.is_export) {
+                    // if (rewrite_esm_to_cjs and s.func.flags.contains(.is_export)) {
                     //     p.printSemicolonAfterStatement();
                     //     p.print("var ");
                     //     p.printSymbol(nameRef);
@@ -2507,7 +2517,7 @@ pub fn NewPrinter(
                     p.printNewline();
                     // }
 
-                    if (rewrite_esm_to_cjs and s.func.flags.is_export) {
+                    if (rewrite_esm_to_cjs and s.func.flags.contains(.is_export)) {
                         p.printIndent();
                         p.printBundledExport(p.renamer.nameForSymbol(nameRef), p.renamer.nameForSymbol(nameRef));
                         p.printSemicolonAfterStatement();
@@ -2587,12 +2597,12 @@ pub fn NewPrinter(
                                         }
                                     }
 
-                                    if (func.func.flags.is_async) {
+                                    if (func.func.flags.contains(.is_async)) {
                                         p.print("async ");
                                     }
                                     p.print("function");
 
-                                    if (func.func.flags.is_generator) {
+                                    if (func.func.flags.contains(.is_generator)) {
                                         p.print("*");
                                         p.printSpace();
                                     } else {

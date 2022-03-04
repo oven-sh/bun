@@ -357,7 +357,7 @@ pub const Archive = struct {
             pub fn hash(_: @This(), k: u64) u32 {
                 return @truncate(u32, k);
             }
-            pub fn eql(_: @This(), a: u64, b: u64) bool {
+            pub fn eql(_: @This(), a: u64, b: u64, _: usize) bool {
                 return a == b;
             }
         };
@@ -428,7 +428,7 @@ pub const Archive = struct {
 
                     const size = @intCast(usize, std.math.max(lib.archive_entry_size(entry), 0));
                     if (size > 0) {
-                        var opened = dir.openFileZ(pathname, .{ .write = true }) catch continue :loop;
+                        var opened = dir.openFileZ(pathname, .{ .mode = .write_only }) catch continue :loop;
                         var stat = try opened.stat();
 
                         if (stat.size > 0) {

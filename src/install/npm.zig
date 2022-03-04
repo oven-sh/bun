@@ -30,6 +30,7 @@ const VersionSlice = @import("./install.zig").VersionSlice;
 const ObjectPool = @import("../pool.zig").ObjectPool;
 const Api = @import("../api/schema.zig").Api;
 const DotEnv = @import("../env_loader.zig");
+const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMap;
 
 const Npm = @This();
 
@@ -267,7 +268,16 @@ pub const OperatingSystem = enum(u16) {
         }
     }
 
-    const Matcher = strings.ExactSizeMatcher(8);
+    const NameMap = ComptimeStringMap(u16, .{
+        .{ "aix", aix },
+        .{ "darwin", darwin },
+        .{ "freebsd", freebsd },
+        .{ "linux", linux },
+        .{ "openbsd", openbsd },
+        .{ "sunos", sunos },
+        .{ "win32", win32 },
+        .{ "android", android },
+    });
 
     pub fn apply(this_: OperatingSystem, str: []const u8) OperatingSystem {
         if (str.len == 0) {
@@ -277,19 +287,8 @@ pub const OperatingSystem = enum(u16) {
 
         const is_not = str[0] == '!';
         const offset: usize = if (str[0] == '!') 1 else 0;
-        const input = str[offset..];
 
-        const field: u16 = switch (Matcher.match(input)) {
-            Matcher.case("aix") => aix,
-            Matcher.case("darwin") => darwin,
-            Matcher.case("freebsd") => freebsd,
-            Matcher.case("linux") => linux,
-            Matcher.case("openbsd") => openbsd,
-            Matcher.case("sunos") => sunos,
-            Matcher.case("win32") => win32,
-            Matcher.case("android") => android,
-            else => return this_,
-        };
+        const field: u16 = NameMap.get(str[offset..]) orelse return this_;
 
         if (is_not) {
             return @intToEnum(OperatingSystem, this & ~field);
@@ -320,6 +319,20 @@ pub const Architecture = enum(u16) {
 
     pub const all_value: u16 = arm | arm64 | ia32 | mips | mipsel | ppc | ppc64 | s390 | s390x | x32 | x64;
 
+    const NameMap = ComptimeStringMap(u16, .{
+        .{ "arm", arm },
+        .{ "arm64", arm64 },
+        .{ "ia32", ia32 },
+        .{ "mips", mips },
+        .{ "mipsel", mipsel },
+        .{ "ppc", ppc },
+        .{ "ppc64", ppc64 },
+        .{ "s390", s390 },
+        .{ "s390x", s390x },
+        .{ "x32", x32 },
+        .{ "x64", x64 },
+    });
+
     pub fn isMatch(this: Architecture) bool {
         if (comptime Environment.isAarch64) {
             return (@enumToInt(this) & arm64) != 0;
@@ -329,8 +342,6 @@ pub const Architecture = enum(u16) {
             return false;
         }
     }
-
-    const Matcher = strings.ExactSizeMatcher(8);
 
     pub fn apply(this_: Architecture, str: []const u8) Architecture {
         if (str.len == 0) {
@@ -342,20 +353,7 @@ pub const Architecture = enum(u16) {
         const offset: usize = if (str[0] == '!') 1 else 0;
         const input = str[offset..];
 
-        const field: u16 = switch (Matcher.match(input)) {
-            Matcher.case("arm") => arm,
-            Matcher.case("arm64") => arm64,
-            Matcher.case("ia32") => ia32,
-            Matcher.case("mips") => mips,
-            Matcher.case("mipsel") => mipsel,
-            Matcher.case("ppc") => ppc,
-            Matcher.case("ppc64") => ppc64,
-            Matcher.case("s390") => s390,
-            Matcher.case("s390x") => s390x,
-            Matcher.case("x32") => x32,
-            Matcher.case("x64") => x64,
-            else => return this_,
-        };
+        const field: u16 = NameMap.get(input) orelse return this_;
 
         if (is_not) {
             return @intToEnum(Architecture, this & ~field);
@@ -570,9 +568,7 @@ pub const PackageManifest = struct {
             var file_path = try std.fmt.bufPrintZ(&file_path_buf, "{x}.npm", .{file_id});
             var cache_file = cache_dir.openFileZ(
                 file_path,
-                .{
-                    .read = true,
-                },
+                .{ .mode = .read_only },
             ) catch return null;
             var timer: std.time.Timer = undefined;
             if (PackageManager.verbose_install) {

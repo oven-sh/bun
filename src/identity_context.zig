@@ -17,7 +17,7 @@ pub const ArrayIdentityContext = struct {
         return key;
     }
 
-    pub fn eql(_: @This(), a: u32, b: u32) bool {
+    pub fn eql(_: @This(), a: u32, b: u32, _: usize) bool {
         return a == b;
     }
 };

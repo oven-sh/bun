@@ -49,7 +49,7 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                 .chaining => |state| return try parser.chainging(state),
                 .rest_are_positional => {
                     const param = parser.positionalParam() orelse unreachable;
-                    const value = (try parser.iter.next()) orelse return null;
+                    const value = parser.iter.next() orelse return null;
                     return Arg(Id){ .param = param, .value = value };
                 },
             }
@@ -82,7 +82,7 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                             if (maybe_value) |v|
                                 break :blk v;
 
-                            break :blk (try parser.iter.next()) orelse brk2: {
+                            break :blk parser.iter.next() orelse brk2: {
                                 if (param.takes_value != .one_optional)
                                     return parser.err(arg, .{ .long = name }, error.MissingValue);
 
@@ -105,7 +105,7 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                     // arguments.
                     if (mem.eql(u8, arg, "--")) {
                         parser.state = .rest_are_positional;
-                        const value = (try parser.iter.next()) orelse return null;
+                        const value = parser.iter.next() orelse return null;
                         return Arg(Id){ .param = param, .value = value };
                     }
 
@@ -148,7 +148,7 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                 }
 
                 if (arg.len <= next_index) {
-                    const value = (try parser.iter.next()) orelse
+                    const value = parser.iter.next() orelse
                         return parser.err(arg, .{ .short = short }, error.MissingValue);
 
                     return Arg(Id){ .param = param, .value = value };
@@ -190,7 +190,7 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
         };
 
         fn parseNextArg(parser: *@This()) !?ArgInfo {
-            const full_arg = (try parser.iter.next()) orelse return null;
+            const full_arg = parser.iter.next() orelse return null;
             if (mem.eql(u8, full_arg, "--") or mem.eql(u8, full_arg, "-"))
                 return ArgInfo{ .arg = full_arg, .kind = .positional };
             if (mem.startsWith(u8, full_arg, "--"))

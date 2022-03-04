@@ -13,6 +13,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const mem = std.mem;
 const Allocator = mem.Allocator;
+const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMap;
 
 // https://github.com/Vexu/zuri/blob/master/src/zuri.zig#L61-L127
 pub const PercentEncoding = struct {
@@ -83,7 +84,7 @@ pub const MimeType = enum {
     TextJavaScript,
     ApplicationJSON,
 
-    pub const Map = std.ComptimeStringMap(MimeType, .{
+    pub const Map = ComptimeStringMap(MimeType, .{
         .{ "text/css", MimeType.TextCSS },
         .{ "text/javascript", MimeType.TextJavaScript },
         .{ "application/json", MimeType.ApplicationJSON },

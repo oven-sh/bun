@@ -366,7 +366,7 @@ pub const UpgradeCommand = struct {
 
         {
             var refresher = std.Progress{};
-            var progress = try refresher.start("Fetching version tags", 0);
+            var progress = refresher.start("Fetching version tags", 0);
 
             version = (try getLatestVersion(ctx.allocator, &env_loader, &refresher, progress, false)) orelse return;
 
@@ -399,7 +399,7 @@ pub const UpgradeCommand = struct {
             Output.flush();
 
             var refresher = std.Progress{};
-            var progress = try refresher.start("Downloading", version.size);
+            var progress = refresher.start("Downloading", version.size);
             refresher.refresh();
             var async_http = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
             var zip_file_buffer = try ctx.allocator.create(MutableString);

@@ -522,7 +522,7 @@ pub const RequestContext = struct {
             var absolute_path = resolve_path.joinAbs(this.bundler.options.routes.static_dir, .auto, relative_unrooted_path);
 
             if (stat.kind == .SymLink) {
-                file.* = std.fs.openFileAbsolute(absolute_path, .{ .read = true }) catch return null;
+                file.* = std.fs.openFileAbsolute(absolute_path, .{ .mode = .read_only }) catch return null;
 
                 absolute_path = std.os.getFdPath(
                     file.handle,
@@ -1800,8 +1800,11 @@ pub const RequestContext = struct {
                         reloader = Api.Reloader.fast_refresh;
                     }
                 }
+
                 const welcome_message = Api.WebsocketMessageWelcome{
-                    .epoch = WebsocketHandler.toTimestamp(handler.ctx.timer.start_time),
+                    .epoch = WebsocketHandler.toTimestamp(
+                        @intCast(u64, (handler.ctx.timer.started.timestamp.tv_sec * std.time.ns_per_s)) + @intCast(u64, handler.ctx.timer.started.timestamp.tv_nsec),
+                    ),
                     .javascript_reloader = reloader,
                     .cwd = handler.ctx.bundler.fs.top_level_dir,
                 };
@@ -1873,7 +1876,7 @@ pub const RequestContext = struct {
                                     var path_buf = _global.constStrToU8(file_path);
                                     path_buf.ptr[path_buf.len] = 0;
                                     var file_path_z: [:0]u8 = path_buf.ptr[0..path_buf.len :0];
-                                    const file = std.fs.openFileAbsoluteZ(file_path_z, .{ .read = true }) catch |err| {
+                                    const file = std.fs.openFileAbsoluteZ(file_path_z, .{ .mode = .read_only }) catch |err| {
                                         Output.prettyErrorln("<r><red>ERR:<r>{s} opening file <b>{s}<r> <r>", .{ @errorName(err), full_build.file_path });
                                         continue;
                                     };
@@ -2794,7 +2797,7 @@ pub const RequestContext = struct {
                 const fd = if (resolve_result.file_fd != 0)
                     resolve_result.file_fd
                 else brk: {
-                    var file = std.fs.openFileAbsoluteZ(path.textZ(), .{ .read = true }) catch |err| {
+                    var file = std.fs.openFileAbsoluteZ(path.textZ(), .{ .mode = .read_only }) catch |err| {
                         Output.prettyErrorln("Failed to open {s} due to error {s}", .{ path.text, @errorName(err) });
                         return try ctx.sendInternalError(err);
                     };

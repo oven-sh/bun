@@ -38,6 +38,7 @@ pub const ExprNodeIndex = js_ast.ExprNodeIndex;
 pub const ExprNodeList = js_ast.ExprNodeList;
 pub const StmtNodeList = js_ast.StmtNodeList;
 pub const BindingNodeList = js_ast.BindingNodeList;
+const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMap;
 
 fn _disabledAssert(_: bool) void {
     if (!Environment.allow_assert) @compileLog("assert is missing an if (Environment.allow_assert)");
@@ -279,7 +280,7 @@ pub const TypeScript = struct {
                 else => return null,
             }
         }
-        pub const IMap = std.ComptimeStringMap(Kind, .{
+        pub const IMap = ComptimeStringMap(Kind, .{
             .{ "unique", .unique },
             .{ "abstract", .abstract },
             .{ "asserts", .asserts },
@@ -581,13 +582,13 @@ pub const ImportScanner = struct {
                 },
 
                 .s_function => |st| {
-                    if (st.func.flags.is_export) {
+                    if (st.func.flags.contains(.is_export)) {
                         if (st.func.name) |name| {
                             const original_name = p.symbols.items[name.ref.?.innerIndex()].original_name;
                             try p.recordExport(name.loc, original_name, name.ref.?);
 
                             if (p.options.features.hot_module_reloading) {
-                                st.func.flags.is_export = false;
+                                st.func.flags.remove(.is_export);
                             }
                         } else {
                             try p.log.addRangeError(p.source, logger.Range{ .loc = st.func.open_parens_loc, .len = 2 }, "Exported functions must have a name");
@@ -1099,7 +1100,7 @@ pub const SideEffects = enum(u1) {
                 var any_computed = false;
                 for (properties_slice) |spread| {
                     end = 0;
-                    any_computed = any_computed or spread.flags.is_computed;
+                    any_computed = any_computed or spread.flags.contains(.is_computed);
                     if (spread.kind == .spread) {
                         // Spread properties must always be evaluated
                         for (properties_slice) |prop_| {
@@ -1108,7 +1109,7 @@ pub const SideEffects = enum(u1) {
                                 if (prop.value != null) {
                                     if (simpifyUnusedExpr(p, prop.value.?)) |value| {
                                         prop.value = value;
-                                    } else if (!prop.flags.is_computed) {
+                                    } else if (!prop.flags.contains(.is_computed)) {
                                         continue;
                                     } else {
                                         prop.value = p.e(E.Number{ .value = 0.0 }, prop.value.?.loc);
@@ -1585,34 +1586,20 @@ const ExprOrLetStmt = struct {
 
 const FunctionKind = enum { stmt, expr };
 
-const EightLetterMatcher = strings.ExactSizeMatcher(8);
-
 const AsyncPrefixExpression = enum(u2) {
     none,
     is_yield,
     is_async,
     is_await,
 
+    const map = ComptimeStringMap(AsyncPrefixExpression, .{
+        .{ "yield", .is_yield },
+        .{ "await", .is_await },
+        .{ "async", .is_async },
+    });
+
     pub fn find(ident: string) AsyncPrefixExpression {
-        if (ident.len != 5) {
-            return .none;
-        }
-
-        switch (EightLetterMatcher.match(ident)) {
-            EightLetterMatcher.case("yield") => {
-                return .is_yield;
-            },
-            EightLetterMatcher.case("await") => {
-                return .is_await;
-            },
-            EightLetterMatcher.case("async") => {
-                return .is_async;
-            },
-
-            else => {
-                return .none;
-            },
-        }
+        return map.get(ident) orelse .none;
     }
 };
 
@@ -2185,6 +2172,16 @@ pub const Parser = struct {
     }
 
     pub fn parse(self: *Parser) !js_ast.Result {
+        if (comptime Environment.isWasm) {
+            self.options.ts = true;
+            self.options.jsx.parse = true;
+            // if (self.options.features.is_macro_runtime) {
+            //     return try self._parse(TSParserMacro);
+            // }
+
+            return try self._parse(TSXParser);
+        }
+
         if (self.options.ts and self.options.features.is_macro_runtime) return try self._parse(TSParserMacro);
         if (!self.options.ts and self.options.features.is_macro_runtime) return try self._parse(JSParserMacro);
 
@@ -3575,7 +3572,7 @@ fn NewParser_(
                                     }
                                 },
                                 .s_function => |func| {
-                                    if (func.func.flags.is_export) break :can_remove_part false;
+                                    if (func.func.flags.contains(.is_export)) break :can_remove_part false;
                                     if (func.func.name) |name| {
                                         const symbol: *const Symbol = &p.symbols.items[name.ref.?.innerIndex()];
 
@@ -4473,10 +4470,10 @@ fn NewParser_(
 
                     var properties = List(B.Property).initCapacity(p.allocator, ex.properties.len) catch unreachable;
                     for (ex.properties.slice()) |*item| {
-                        if (item.flags.is_method or item.kind == .get or item.kind == .set) {
+                        if (item.flags.contains(.is_method) or item.kind == .get or item.kind == .set) {
                             invalid_loc.append(.{
                                 .loc = item.key.?.loc,
-                                .kind = if (item.flags.is_method)
+                                .kind = if (item.flags.contains(.is_method))
                                     InvalidLoc.Tag.method
                                 else if (item.kind == .get)
                                     InvalidLoc.Tag.getter
@@ -4488,12 +4485,12 @@ fn NewParser_(
                         var value = &item.value.?;
                         const tup = p.convertExprToBindingAndInitializer(value, invalid_loc, false);
                         const initializer = tup.expr orelse item.initializer;
-                        const is_spread = item.kind == .spread or item.flags.is_spread;
+                        const is_spread = item.kind == .spread or item.flags.contains(.is_spread);
                         properties.appendAssumeCapacity(B.Property{
-                            .flags = Flags.Property{
+                            .flags = Flags.Property.init(.{
                                 .is_spread = is_spread,
-                                .is_computed = item.flags.is_computed,
-                            },
+                                .is_computed = item.flags.contains(.is_computed),
+                            }),
                             .key = item.key orelse p.e(E.Missing{}, expr.loc),
                             .value = tup.binding orelse p.b(B.Missing{}, expr.loc),
                             .default_value = initializer,
@@ -4644,7 +4641,7 @@ fn NewParser_(
 
             if (comptime is_typescript_enabled) {
                 // Don't output anything if it's just a forward declaration of a function
-                if (opts.is_typescript_declare or func.flags.is_forward_declaration) {
+                if (opts.is_typescript_declare or func.flags.contains(.is_forward_declaration)) {
                     p.popAndDiscardScope(scopeIndex);
 
                     // Balance the fake block scope introduced above
@@ -4674,8 +4671,8 @@ fn NewParser_(
                 func.name = name_.*;
             }
 
-            func.flags.has_if_scope = hasIfScope;
-            func.flags.is_export = opts.is_export;
+            func.flags.setPresent(.has_if_scope, hasIfScope);
+            func.flags.setPresent(.is_export, opts.is_export);
 
             // Balance the fake block scope introduced above
             if (hasIfScope) {
@@ -4715,11 +4712,11 @@ fn NewParser_(
             var func = G.Fn{
                 .name = name,
 
-                .flags = Flags.Function{
+                .flags = Flags.Function.init(.{
                     .has_rest_arg = false,
                     .is_async = opts.allow_await == .allow_expr,
                     .is_generator = opts.allow_yield == .allow_expr,
-                },
+                }),
 
                 .arguments_ref = null,
                 .open_parens_loc = p.lexer.loc(),
@@ -4765,10 +4762,10 @@ fn NewParser_(
                     ts_decorators = try p.parseTypeScriptDecorators();
                 }
 
-                if (!func.flags.has_rest_arg and p.lexer.token == T.t_dot_dot_dot) {
+                if (!func.flags.contains(.has_rest_arg) and p.lexer.token == T.t_dot_dot_dot) {
                     // p.markSyntaxFeature
                     try p.lexer.next();
-                    func.flags.has_rest_arg = true;
+                    func.flags.insert(.has_rest_arg);
                 }
 
                 var is_typescript_ctor_field = false;
@@ -4822,7 +4819,7 @@ fn NewParser_(
                 p.declareBinding(.hoisted, &arg, &parseStmtOpts) catch unreachable;
 
                 var default_value: ?ExprNodeIndex = null;
-                if (!func.flags.has_rest_arg and p.lexer.token == .t_equals) {
+                if (!func.flags.contains(.has_rest_arg) and p.lexer.token == .t_equals) {
                     // p.markSyntaxFeature
                     try p.lexer.next();
                     default_value = try p.parseExpr(.comma);
@@ -4841,7 +4838,7 @@ fn NewParser_(
                     break;
                 }
 
-                if (func.flags.has_rest_arg) {
+                if (func.flags.contains(.has_rest_arg)) {
                     // JavaScript does not allow a comma after a rest argument
                     if (opts.is_typescript_declare) {
                         // TypeScript does allow a comma after a rest argument in a "declare" context
@@ -4880,7 +4877,7 @@ fn NewParser_(
             // "function foo(): any;"
             if (opts.allow_missing_body_for_type_script and p.lexer.token != .t_open_brace) {
                 try p.lexer.expectOrInsertSemicolon();
-                func.flags.is_forward_declaration = true;
+                func.flags.insert(.is_forward_declaration);
                 return func;
             }
             var tempOpts = opts;
@@ -7663,7 +7660,7 @@ fn NewParser_(
                         properties.append(property) catch unreachable;
 
                         // Commas after spread elements are not allowed
-                        if (property.flags.is_spread and p.lexer.token == .t_comma) {
+                        if (property.flags.contains(.is_spread) and p.lexer.token == .t_comma) {
                             p.log.addRangeError(p.source, p.lexer.range(), "Unexpected \",\" after rest pattern") catch unreachable;
                             return error.SyntaxError;
                         }
@@ -7717,7 +7714,7 @@ fn NewParser_(
                     return B.Property{
                         .key = p.e(E.Missing{}, p.lexer.loc()),
 
-                        .flags = Flags.Property{ .is_spread = true },
+                        .flags = Flags.Property.init(.{ .is_spread = true }),
                         .value = value,
                     };
                 },
@@ -7784,9 +7781,9 @@ fn NewParser_(
             }
 
             return B.Property{
-                .flags = Flags.Property{
+                .flags = Flags.Property.init(.{
                     .is_computed = is_computed,
-                },
+                }),
                 .key = key,
                 .value = value,
                 .default_value = default_value,
@@ -8465,13 +8462,13 @@ fn NewParser_(
             if (func.name) |name| {
                 const original_name = p.symbols.items[name.ref.?.innerIndex()].original_name;
 
-                if (func.flags.is_async and strings.eqlComptime(original_name, "await")) {
+                if (func.flags.contains(.is_async) and strings.eqlComptime(original_name, "await")) {
                     p.log.addRangeError(
                         p.source,
                         js_lexer.rangeOfIdentifier(p.source, name.loc),
                         "An async function cannot be named \"await\"",
                     ) catch unreachable;
-                } else if (kind == .expr and func.flags.is_generator and strings.eqlComptime(original_name, "yield")) {
+                } else if (kind == .expr and func.flags.contains(.is_generator) and strings.eqlComptime(original_name, "yield")) {
                     p.log.addRangeError(
                         p.source,
                         js_lexer.rangeOfIdentifier(p.source, name.loc),
@@ -9188,9 +9185,9 @@ fn NewParser_(
                             .key = key,
                             .value = value,
                             .initializer = initializer,
-                            .flags = Flags.Property{
+                            .flags = Flags.Property.init(.{
                                 .was_shorthand = true,
-                            },
+                            }),
                         };
                     }
                 },
@@ -9278,10 +9275,10 @@ fn NewParser_(
                 return G.Property{
                     .ts_decorators = ExprNodeList.init(opts.ts_decorators),
                     .kind = kind,
-                    .flags = Flags.Property{
+                    .flags = Flags.Property.init(.{
                         .is_computed = is_computed,
                         .is_static = opts.is_static,
-                    },
+                    }),
                     .key = key,
                     .initializer = initializer,
                 };
@@ -9336,14 +9333,14 @@ fn NewParser_(
                 });
 
                 // "class Foo { foo(): void; foo(): void {} }"
-                if (func.flags.is_forward_declaration) {
+                if (func.flags.contains(.is_forward_declaration)) {
                     // Skip this property entirely
                     p.popAndDiscardScope(scope_index);
                     return null;
                 }
 
                 p.popScope();
-                func.flags.is_unique_formal_parameters = true;
+                func.flags.insert(.is_unique_formal_parameters);
                 const value = p.e(E.Function{ .func = func }, loc);
 
                 // Enforce argument rules for accessors
@@ -9410,11 +9407,11 @@ fn NewParser_(
                 return G.Property{
                     .ts_decorators = ExprNodeList.init(opts.ts_decorators),
                     .kind = kind,
-                    .flags = Flags.Property{
+                    .flags = Flags.Property.init(.{
                         .is_computed = is_computed,
                         .is_method = true,
                         .is_static = opts.is_static,
-                    },
+                    }),
                     .key = key,
                     .value = value,
                 };
@@ -9426,9 +9423,9 @@ fn NewParser_(
 
             return G.Property{
                 .kind = kind,
-                .flags = Flags.Property{
+                .flags = Flags.Property.init(.{
                     .is_computed = is_computed,
-                },
+                }),
                 .key = key,
                 .value = value,
             };
@@ -11572,7 +11569,7 @@ fn NewParser_(
                 },
                 .b_object => |bi| {
                     for (bi.properties) |*property| {
-                        if (!property.flags.is_spread and !p.exprCanBeRemovedIfUnused(&property.key)) {
+                        if (!property.flags.contains(.is_spread) and !p.exprCanBeRemovedIfUnused(&property.key)) {
                             return false;
                         }
 
@@ -11729,7 +11726,7 @@ fn NewParser_(
             var func = _func;
             const old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
             const old_fn_only_data = p.fn_only_data_visit;
-            p.fn_or_arrow_data_visit = FnOrArrowDataVisit{ .is_async = func.flags.is_async };
+            p.fn_or_arrow_data_visit = FnOrArrowDataVisit{ .is_async = func.flags.contains(.is_async) };
             p.fn_only_data_visit = FnOnlyDataVisit{ .is_this_nested = true, .arguments_ref = func.arguments_ref };
 
             if (func.name) |name| {
@@ -11748,7 +11745,7 @@ fn NewParser_(
             p.visitArgs(
                 func.args,
                 VisitArgsOpts{
-                    .has_rest_arg = func.flags.has_rest_arg,
+                    .has_rest_arg = func.flags.contains(.has_rest_arg),
                     .body = body.stmts,
                     .is_unique_formal_parameters = true,
                 },
@@ -12992,9 +12989,9 @@ fn NewParser_(
                             property.key = p.visitExpr(property.key orelse Global.panic("Expected property key", .{}));
                             const key = property.key.?;
                             // Forbid duplicate "__proto__" properties according to the specification
-                            if (!property.flags.is_computed and
-                                !property.flags.was_shorthand and
-                                !property.flags.is_method and
+                            if (!property.flags.contains(.is_computed) and
+                                !property.flags.contains(.was_shorthand) and
+                                !property.flags.contains(.is_method) and
                                 in.assign_target == .none and
                                 key.data.isStringValue() and
                                 strings.eqlComptime(
@@ -13116,12 +13113,24 @@ fn NewParser_(
                     }
 
                     if (e_.optional_chain == null and @as(Expr.Tag, e_.target.data) == .e_identifier and e_.target.data.e_identifier.ref.eql(p.require_ref)) {
+                        e_.can_be_unwrapped_if_unused = false;
+
                         // Heuristic: omit warnings inside try/catch blocks because presumably
                         // the try/catch statement is there to handle the potential run-time
                         // error from the unbundled require() call failing.
                         if (e_.args.len == 1) {
-                            return p.require_transposer.maybeTransposeIf(e_.args.first_(), null);
-                        } else if (p.options.warn_about_unbundled_modules) {
+                            const first = e_.args.first_();
+                            if (first.data == .e_string) {
+                                // require(FOO) => require(FOO)
+                                return p.transposeRequire(first, null);
+                            } else if (first.data == .e_if) {
+                                // require(FOO  ? '123' : '456') => FOO ? require('123') : require('456')
+                                // This makes static analysis later easier
+                                return p.require_transposer.maybeTransposeIf(first, null);
+                            }
+                        }
+
+                        if (p.options.warn_about_unbundled_modules) {
                             const r = js_lexer.rangeOfIdentifier(p.source, e_.target.loc);
                             p.log.addRangeDebug(p.source, r, "This call to \"require\" will not be bundled because it has multiple arguments") catch unreachable;
                         }
@@ -13465,7 +13474,7 @@ fn NewParser_(
                     for (ex.properties.slice()) |*property| {
 
                         // The key must still be evaluated if it's computed or a spread
-                        if (property.kind == .spread or property.flags.is_computed or property.flags.is_spread) {
+                        if (property.kind == .spread or property.flags.contains(.is_computed) or property.flags.contains(.is_spread)) {
                             return false;
                         }
 
@@ -14372,8 +14381,8 @@ fn NewParser_(
                     data.func = p.visitFunc(data.func, data.func.open_parens_loc);
 
                     // Handle exporting this function from a namespace
-                    if (data.func.flags.is_export and p.enclosing_namespace_arg_ref != null) {
-                        data.func.flags.is_export = false;
+                    if (data.func.flags.contains(.is_export) and p.enclosing_namespace_arg_ref != null) {
+                        data.func.flags.remove(.is_export);
 
                         const enclosing_namespace_arg_ref = p.enclosing_namespace_arg_ref orelse unreachable;
                         stmts.ensureUnusedCapacity(3) catch unreachable;
@@ -14598,7 +14607,7 @@ fn NewParser_(
                     {
                         var object = expr.data.e_object;
                         for (bound_object.properties) |property| {
-                            if (property.flags.is_spread) return;
+                            if (property.flags.contains(.is_spread)) return;
                         }
                         var output_properties = object.properties.slice();
                         var end: u32 = 0;
@@ -15089,7 +15098,7 @@ fn NewParser_(
                 },
                 .b_object => |bind| {
                     for (bind.properties) |*property| {
-                        if (!property.flags.is_spread) {
+                        if (!property.flags.contains(.is_spread)) {
                             property.key = p.visitExpr(property.key);
                         }
 
@@ -15128,7 +15137,7 @@ fn NewParser_(
 
         fn visitSingleStmt(p: *P, stmt: Stmt, kind: StmtsKind) Stmt {
             const has_if_scope = switch (stmt.data) {
-                .s_function => stmt.data.s_function.func.flags.has_if_scope,
+                .s_function => stmt.data.s_function.func.flags.contains(.has_if_scope),
                 else => false,
             };
 
@@ -15293,13 +15302,13 @@ fn NewParser_(
                 var constructor_function_: ?*E.Function = null;
 
                 var name_to_keep: ?string = null;
-                if (is_private) {} else if (!property.flags.is_method and !property.flags.is_computed) {
+                if (is_private) {} else if (!property.flags.contains(.is_method) and !property.flags.contains(.is_computed)) {
                     if (property.key) |key| {
                         if (@as(Expr.Tag, key.data) == .e_string) {
                             name_to_keep = key.data.e_string.string(p.allocator) catch unreachable;
                         }
                     }
-                } else if (property.flags.is_method) {
+                } else if (property.flags.contains(.is_method)) {
                     if (comptime is_typescript_enabled) {
                         if (property.value.?.data == .e_function and property.key.?.data == .e_string and
                             property.key.?.data.e_string.eqlComptime("constructor"))
@@ -15917,7 +15926,7 @@ fn NewParser_(
                         .open_parens_loc = logger.Loc.Empty,
                         .args = require_function_args,
                         .body = .{ .loc = logger.Loc.Empty, .stmts = parts[parts.len - 1].stmts },
-                        .flags = .{ .is_export = true },
+                        .flags = Flags.Function.init(.{ .is_export = true }),
                     } },
                     logger.Loc.Empty,
                 );
@@ -16259,10 +16268,10 @@ fn NewParser_(
                             .body = .{ .loc = logger.Loc.Empty, .stmts = part_stmts[0 .. part_stmts_i + 1] },
                             .name = null,
                             .open_parens_loc = logger.Loc.Empty,
-                            .flags = .{
+                            .flags = Flags.Function.init(.{
                                 .print_as_iife = true,
                                 .is_async = is_async,
-                            },
+                            }),
                         },
                     },
                     logger.Loc.Empty,
@@ -16361,7 +16370,7 @@ fn NewParser_(
                 }
 
                 part.stmts = _stmts[0 .. imports_list.len + toplevel_stmts.len + exports_from.len];
-            }
+            } else if (p.options.features.hot_module_reloading) {}
 
             {
 

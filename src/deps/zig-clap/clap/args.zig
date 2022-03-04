@@ -46,7 +46,7 @@ test "SliceIterator" {
 /// An argument iterator which wraps the ArgIterator in ::std.
 /// On windows, this iterator allocates.
 pub const OsIterator = struct {
-    const Error = process.ArgIterator.NextError;
+    const Error = process.ArgIterator.InitError;
 
     arena: heap.ArenaAllocator,
     args: process.ArgIterator,
@@ -62,7 +62,7 @@ pub const OsIterator = struct {
             .args = process.args(),
             .exe_arg = undefined,
         };
-        res.exe_arg = try res.next();
+        res.exe_arg = res.next();
         return res;
     }
 
@@ -70,12 +70,8 @@ pub const OsIterator = struct {
         iter.arena.deinit();
     }
 
-    pub fn next(iter: *OsIterator) Error!?[:0]const u8 {
-        if (builtin.os.tag == .windows) {
-            return try iter.args.next(&iter.arena.allocator) orelse return null;
-        } else {
-            return iter.args.nextPosix();
-        }
+    pub fn next(iter: *OsIterator) ?[:0]const u8 {
+        return iter.args.next();
     }
 };
 

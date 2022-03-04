@@ -92,7 +92,7 @@ pub const Fs = struct {
         const file_handle: std.fs.File = if (_file_handle) |__file|
             std.fs.File{ .handle = __file }
         else
-            try std.fs.openFileAbsoluteZ(path, .{ .read = true });
+            try std.fs.openFileAbsoluteZ(path, .{ .mode = .read_only });
 
         defer {
             if (rfs.needToCloseFiles() and _file_handle == null) {
@@ -127,10 +127,10 @@ pub const Fs = struct {
 
         if (_file_handle == null) {
             if (FeatureFlags.store_file_descriptors and dirname_fd > 0) {
-                file_handle = std.fs.Dir.openFile(std.fs.Dir{ .fd = dirname_fd }, std.fs.path.basename(path), .{ .read = true }) catch |err| brk: {
+                file_handle = std.fs.Dir.openFile(std.fs.Dir{ .fd = dirname_fd }, std.fs.path.basename(path), .{ .mode = .read_only }) catch |err| brk: {
                     switch (err) {
                         error.FileNotFound => {
-                            const handle = try std.fs.openFileAbsolute(path, .{ .read = true });
+                            const handle = try std.fs.openFileAbsolute(path, .{ .mode = .read_only });
                             Output.prettyErrorln(
                                 "<r><d>Internal error: directory mismatch for directory \"{s}\", fd {d}<r>. You don't need to do anything, but this indicates a bug.",
                                 .{ path, dirname_fd },
@@ -141,7 +141,7 @@ pub const Fs = struct {
                     }
                 };
             } else {
-                file_handle = try std.fs.openFileAbsolute(path, .{ .read = true });
+                file_handle = try std.fs.openFileAbsolute(path, .{ .mode = .read_only });
             }
         }
 

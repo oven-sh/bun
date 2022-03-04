@@ -28,7 +28,7 @@ pub const RefHashCtx = struct {
         return key.hash();
     }
 
-    pub fn eql(_: @This(), ref: Ref, b: Ref) bool {
+    pub fn eql(_: @This(), ref: Ref, b: Ref, _: usize) bool {
         return ref.asU64() == b.asU64();
     }
 };

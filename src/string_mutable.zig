@@ -39,13 +39,15 @@ pub const MutableString = struct {
         return bytes.len;
     }
 
-    pub fn writeAll(self: *MutableString, bytes: string) !usize {
-        try self.list.appendSlice(self.allocator, bytes);
-        return self.list.items.len;
+    pub fn bufferedWriter(self: *MutableString) BufferedWriter {
+        return BufferedWriter{ .context = self };
     }
 
     pub fn init(allocator: std.mem.Allocator, capacity: usize) !MutableString {
-        return MutableString{ .allocator = allocator, .list = try std.ArrayListUnmanaged(u8).initCapacity(allocator, capacity) };
+        return MutableString{ .allocator = allocator, .list = if (capacity > 0)
+            try std.ArrayListUnmanaged(u8).initCapacity(allocator, capacity)
+        else
+            std.ArrayListUnmanaged(u8){} };
     }
 
     pub fn initCopy(allocator: std.mem.Allocator, str: anytype) !MutableString {
@@ -223,6 +225,54 @@ pub const MutableString = struct {
     pub fn eql(self: *MutableString, other: anytype) bool {
         return std.mem.eql(u8, self.list.items, other);
     }
+
+    pub const BufferedWriter = struct {
+        context: *MutableString,
+        buffer: [max]u8 = undefined,
+        pos: usize = 0,
+
+        const max = 2048;
+
+        pub const Writer = std.io.Writer(*BufferedWriter, anyerror, BufferedWriter.writeAll);
+
+        inline fn remain(this: *BufferedWriter) []u8 {
+            return this.buffer[this.pos..];
+        }
+
+        pub fn flush(this: *BufferedWriter) !void {
+            _ = try this.context.writeAll(this.buffer[0..this.pos]);
+            this.pos = 0;
+        }
+
+        pub fn writeAll(this: *BufferedWriter, bytes: []const u8) anyerror!usize {
+            var pending = bytes;
+
+            if (pending.len >= max) {
+                try this.flush();
+                try this.context.append(pending);
+                return pending.len;
+            }
+
+            if (pending.len > 0) {
+                if (pending.len + this.pos > max) {
+                    try this.flush();
+                }
+                @memcpy(this.remain().ptr, pending.ptr, pending.len);
+                this.pos += pending.len;
+            }
+
+            return pending.len;
+        }
+
+        pub fn writer(this: *BufferedWriter) BufferedWriter.Writer {
+            return BufferedWriter.Writer{ .context = this };
+        }
+    };
+
+    pub fn writeAll(self: *MutableString, bytes: string) !usize {
+        try self.list.appendSlice(self.allocator, bytes);
+        return bytes.len;
+    }
 };
 
 test "MutableString" {
@@ -237,4 +287,16 @@ test "MutableString.ensureValidIdentifier" {
 
     try std.testing.expectEqualStrings("jquery", try MutableString.ensureValidIdentifier("jquery", alloc));
     try std.testing.expectEqualStrings("jquery_foo", try MutableString.ensureValidIdentifier("jquery😋foo", alloc));
+}
+
+test "MutableString BufferedWriter" {
+    const alloc = std.heap.page_allocator;
+
+    var str = try MutableString.init(alloc, 0);
+    var buffered_writer = str.bufferedWriter();
+    var writer = buffered_writer.writer();
+    try writer.writeAll("hello world hello world hello world hello world hello world hello world");
+    try writer.context.flush();
+    str = writer.context.context.*;
+    try std.testing.expectEqualStrings("hello world hello world hello world hello world hello world hello world", str.toOwnedSlice());
 }

@@ -828,14 +828,26 @@ pub const ZigConsoleClient = struct {
             Output.enable_ansi_colors_stderr
         else
             Output.enable_ansi_colors_stdout;
+
         var buffered_writer = if (level == .Warning or level == .Error)
             console.error_writer
         else
             console.writer;
         var writer = buffered_writer.writer();
 
-        const BufferedWriterType = @TypeOf(writer);
-        format(level, global, vals, len, BufferedWriterType, writer, enable_colors, true);
+        const Writer = @TypeOf(writer);
+        format(
+            level,
+            global,
+            vals,
+            len,
+            @TypeOf(buffered_writer.unbuffered_writer.context),
+            Writer,
+            writer,
+            enable_colors,
+            true,
+            true,
+        );
     }
 
     pub fn format(
@@ -843,10 +855,12 @@ pub const ZigConsoleClient = struct {
         global: *JSGlobalObject,
         vals: [*]const JSValue,
         len: usize,
-        comptime BufferedWriterType: type,
-        writer: BufferedWriterType,
+        comptime RawWriter: type,
+        comptime Writer: type,
+        writer: Writer,
         enable_colors: bool,
         add_newline: bool,
+        flush: bool,
     ) void {
         var fmt: Formatter = undefined;
         defer {
@@ -861,8 +875,10 @@ pub const ZigConsoleClient = struct {
             fmt = Formatter{ .remaining_values = &[_]JSValue{} };
             const tag = Formatter.Tag.get(vals[0], global);
 
-            var unbuffered_writer = writer.context.unbuffered_writer.context.writer();
-            const UnbufferedWriterType = @TypeOf(unbuffered_writer);
+            var unbuffered_writer = if (comptime Writer != RawWriter)
+                writer.context.unbuffered_writer.context.writer()
+            else
+                writer;
 
             if (tag.tag == .String) {
                 if (enable_colors) {
@@ -871,7 +887,7 @@ pub const ZigConsoleClient = struct {
                     }
                     fmt.format(
                         tag,
-                        UnbufferedWriterType,
+                        @TypeOf(unbuffered_writer),
                         unbuffered_writer,
                         vals[0],
                         global,
@@ -883,7 +899,7 @@ pub const ZigConsoleClient = struct {
                 } else {
                     fmt.format(
                         tag,
-                        UnbufferedWriterType,
+                        @TypeOf(unbuffered_writer),
                         unbuffered_writer,
                         vals[0],
                         global,
@@ -892,11 +908,15 @@ pub const ZigConsoleClient = struct {
                 }
                 if (add_newline) _ = unbuffered_writer.write("\n") catch 0;
             } else {
-                defer writer.context.flush() catch {};
+                defer {
+                    if (comptime Writer != RawWriter) {
+                        if (flush) writer.context.flush() catch {};
+                    }
+                }
                 if (enable_colors) {
                     fmt.format(
                         tag,
-                        BufferedWriterType,
+                        Writer,
                         writer,
                         vals[0],
                         global,
@@ -905,7 +925,7 @@ pub const ZigConsoleClient = struct {
                 } else {
                     fmt.format(
                         tag,
-                        BufferedWriterType,
+                        Writer,
                         writer,
                         vals[0],
                         global,
@@ -918,7 +938,11 @@ pub const ZigConsoleClient = struct {
             return;
         }
 
-        defer writer.context.flush() catch {};
+        defer {
+            if (comptime Writer != RawWriter) {
+                if (flush) writer.context.flush() catch {};
+            }
+        }
 
         var this_value: JSValue = vals[0];
         fmt = Formatter{ .remaining_values = vals[0..len][1..] };
@@ -940,7 +964,7 @@ pub const ZigConsoleClient = struct {
                     tag.tag = .StringPossiblyFormatted;
                 }
 
-                fmt.format(tag, BufferedWriterType, writer, this_value, global, true);
+                fmt.format(tag, Writer, writer, this_value, global, true);
                 if (fmt.remaining_values.len == 0) {
                     break;
                 }
@@ -962,7 +986,7 @@ pub const ZigConsoleClient = struct {
                     tag.tag = .StringPossiblyFormatted;
                 }
 
-                fmt.format(tag, BufferedWriterType, writer, this_value, global, false);
+                fmt.format(tag, Writer, writer, this_value, global, false);
                 if (fmt.remaining_values.len == 0)
                     break;
 
@@ -1636,7 +1660,7 @@ pub const ZigConsoleClient = struct {
 
         const id = std.hash.Wyhash.hash(0, chars[0..len]);
         var result = (pending_time_logs.fetchPut(id, null) catch null) orelse return;
-        const value: std.time.Timer = result.value orelse return;
+        var value: std.time.Timer = result.value orelse return;
         // get the duration in microseconds
         // then display it in milliseconds
         Output.printElapsed(@intToFloat(f64, value.read() / std.time.ns_per_us) / std.time.us_per_ms);

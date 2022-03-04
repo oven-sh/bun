@@ -591,7 +591,7 @@ pub const RunCommand = struct {
                             var file_path = script_name_to_search;
                             const file_: std.fs.File.OpenError!std.fs.File = brk: {
                                 if (script_name_to_search[0] == std.fs.path.sep) {
-                                    break :brk std.fs.openFileAbsolute(script_name_to_search, .{ .read = true });
+                                    break :brk std.fs.openFileAbsolute(script_name_to_search, .{ .mode = .read_only });
                                 } else {
                                     const cwd = std.os.getcwd(&path_buf) catch break :possibly_open_with_bun_js;
                                     path_buf[cwd.len] = std.fs.path.sep;
@@ -605,7 +605,7 @@ pub const RunCommand = struct {
                                     if (file_path.len == 0) break :possibly_open_with_bun_js;
                                     path_buf2[file_path.len] = 0;
                                     var file_pathZ = path_buf2[0..file_path.len :0];
-                                    break :brk std.fs.openFileAbsoluteZ(file_pathZ, .{ .read = true });
+                                    break :brk std.fs.openFileAbsoluteZ(file_pathZ, .{ .mode = .read_only });
                                 }
                             };
 
@@ -925,7 +925,7 @@ pub const RunCommand = struct {
 
         if (path_for_which.len > 0) {
             if (which(&path_buf, path_for_which, this_bundler.fs.top_level_dir, script_name_to_search)) |destination| {
-                // var file = std.fs.openFileAbsoluteZ(destination, .{ .read = true }) catch |err| {
+                // var file = std.fs.openFileAbsoluteZ(destination, .{ .mode = .read_only }) catch |err| {
                 //     if (!log_errors) return false;
 
                 //     Output.prettyErrorln("<r>error: <red>{s}<r> opening file: \"{s}\"", .{ err, std.mem.span(destination) });

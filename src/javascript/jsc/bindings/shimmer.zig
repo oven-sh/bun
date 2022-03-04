@@ -127,7 +127,7 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
             if (!@hasDecl(Parent, typeName)) {
                 @compileError(@typeName(Parent) ++ " is missing cppFn: " ++ typeName);
             }
-            break :ret std.meta.declarationInfo(Parent, typeName).data.Fn.return_type;
+            break :ret @typeInfo(@TypeOf(@field(Parent, typeName))).Fn.return_type.?;
         }) {
             @setEvalBranchQuota(99999);
             if (comptime is_bindgen) {
@@ -135,7 +135,7 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
             } else {
                 const Fn = comptime @field(headers, symbolName(typeName));
                 return matchNullable(
-                    comptime std.meta.declarationInfo(Parent, typeName).data.Fn.return_type,
+                    comptime @typeInfo(@TypeOf(@field(Parent, typeName))).Fn.return_type.?,
                     comptime @typeInfo(@TypeOf(Fn)).Fn.return_type.?,
                     @call(.{}, Fn, args),
                 );

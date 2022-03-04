@@ -1884,6 +1884,14 @@ fn NewLexer_(
             }
         }
 
+        pub fn toUTF8EString(lexer: *LexerType) js_ast.E.String {
+            if (lexer.string_literal_is_ascii) {
+                return js_ast.E.String{ .utf8 = lexer.string_literal_slice };
+            } else {
+                return js_ast.E.String{ .utf8 = lexer.utf16ToString(lexer.string_literal) };
+            }
+        }
+
         inline fn assertNotJSON(_: *const LexerType) void {
             if (comptime is_json) @compileError("JSON should not reach this point");
             if (comptime is_json) unreachable;

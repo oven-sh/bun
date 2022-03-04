@@ -13,6 +13,7 @@ pub const C = @import("c.zig");
 pub const FeatureFlags = @import("feature_flags.zig");
 const root = @import("root");
 pub const meta = @import("./meta.zig");
+pub const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 
 pub const Output = struct {
     // These are threadlocal so we don't have stdout/stderr writing on top of each other
@@ -46,7 +47,7 @@ pub const Output = struct {
                 if (comptime Environment.isWasm)
                     return StreamType;
 
-                return std.io.BufferedWriter(4096, @typeInfo(std.meta.declarationInfo(StreamType, "writer").data.Fn.fn_type).Fn.return_type.?);
+                return std.io.BufferedWriter(4096, @TypeOf(StreamType.writer(undefined)));
             }
         }.getBufferedStream();
 
@@ -204,7 +205,7 @@ pub const Output = struct {
         }
     }
 
-    pub const WriterType: type = @typeInfo(std.meta.declarationInfo(Source.StreamType, "writer").data.Fn.fn_type).Fn.return_type.?;
+    pub const WriterType: type = @TypeOf(Source.StreamType.writer(undefined));
 
     pub fn errorWriter() WriterType {
         std.debug.assert(source_set);
@@ -355,7 +356,7 @@ pub const Output = struct {
     // </r> - reset
     // <r> - reset
     pub const ED = "\x1b[";
-    pub const color_map = std.ComptimeStringMap(string, .{
+    pub const color_map = ComptimeStringMap(string, .{
         &.{ "black", ED ++ "30m" },
         &.{ "blue", ED ++ "34m" },
         &.{ "b", ED ++ "1m" },

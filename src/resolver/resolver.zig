@@ -575,7 +575,7 @@ pub const Resolver = struct {
 
         defer {
             if (FeatureFlags.tracing) {
-                if (timer) |time| {
+                if (timer) |*time| {
                     // technically, this should be an atomic op
                     r.elapsed += time.read();
                 }
@@ -672,6 +672,13 @@ pub const Resolver = struct {
         return result;
     }
 
+    const ModuleTypeMap = _global.ComptimeStringMap(options.ModuleType, .{
+        .{ ".mjs", options.ModuleType.esm },
+        .{ ".mts", options.ModuleType.esm },
+        .{ ".cjs", options.ModuleType.cjs },
+        .{ ".cts", options.ModuleType.cjs },
+    });
+
     pub fn finalizeResult(r: *ThisResolver, result: *Result, kind: ast.ImportKind) !void {
         if (result.is_external) return;
 
@@ -693,12 +700,7 @@ pub const Resolver = struct {
             // If you use cjs or cts, then you're using cjs
             // This should win out over the module type from package.json
             if (!kind.isFromCSS() and module_type == .unknown and path.name.ext.len == 4) {
-                const FourLetterMatcher = strings.ExactSizeMatcher(4);
-                module_type = switch (FourLetterMatcher.match(path.name.ext)) {
-                    FourLetterMatcher.case(".mjs"), FourLetterMatcher.case(".mts") => .esm,
-                    FourLetterMatcher.case(".cjs"), FourLetterMatcher.case(".cts") => .cjs,
-                    else => .unknown,
-                };
+                module_type = ModuleTypeMap.getWithLength(path.name.ext, 4) orelse .unknown;
             }
 
             if (dir.getEntries()) |entries| {
@@ -720,7 +722,7 @@ pub const Resolver = struct {
                         if (query.entry.cache.fd == 0) {
                             buf[out.len] = 0;
                             const span = buf[0..out.len :0];
-                            var file = try std.fs.openFileAbsoluteZ(span, .{ .read = true });
+                            var file = try std.fs.openFileAbsoluteZ(span, .{ .mode = .read_only });
 
                             if (comptime !FeatureFlags.store_file_descriptors) {
                                 out = try std.os.getFdPath(query.entry.cache.fd, &buf);

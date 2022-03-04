@@ -804,12 +804,12 @@ fn StatsLike(comptime name: string, comptime T: type) type {
                 .birthtime_ms = if (Environment.isLinux)
                     0
                 else
-                    @truncate(T, @intCast(i64, if (stat_.birthtimensec > 0) (@intCast(usize, stat_.birthtimensec) / std.time.ns_per_ms) else 0)),
+                    @truncate(T, @intCast(i64, if (stat_.birthtime().tv_nsec > 0) (@intCast(usize, stat_.birthtime().tv_nsec) / std.time.ns_per_ms) else 0)),
 
                 .birthtime = if (Environment.isLinux)
                     @intToEnum(Date, 0)
                 else
-                    @intToEnum(Date, @intCast(u64, @maximum(stat_.birthtimesec, 0))),
+                    @intToEnum(Date, @intCast(u64, @maximum(stat_.birthtime().tv_sec, 0))),
             };
         }
 
@@ -2427,7 +2427,7 @@ pub const Process = struct {
         {
             var args_iterator = std.process.args();
 
-            if (args_iterator.nextPosix()) |arg0| {
+            if (args_iterator.next()) |arg0| {
                 var argv0 = JSC.ZigString.init(std.mem.span(arg0));
                 argv0.setOutputEncoding();
                 // https://github.com/yargs/yargs/blob/adb0d11e02c613af3d9427b3028cc192703a3869/lib/utils/process-argv.ts#L1

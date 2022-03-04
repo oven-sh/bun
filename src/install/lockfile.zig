@@ -136,7 +136,7 @@ pub fn loadFromDisk(this: *Lockfile, allocator: std.mem.Allocator, log: *logger.
     var file = std.io.getStdIn();
 
     if (filename.len > 0)
-        file = std.fs.cwd().openFileZ(filename, .{ .read = true }) catch |err| {
+        file = std.fs.cwd().openFileZ(filename, .{ .mode = .read_only }) catch |err| {
             return switch (err) {
                 error.FileNotFound, error.AccessDenied, error.BadPathName => LoadFromDiskResult{ .not_found = .{} },
                 else => LoadFromDiskResult{ .err = .{ .step = .open_file, .value = err } },

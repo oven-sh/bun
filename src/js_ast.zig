@@ -26,6 +26,7 @@ const StringHashMap = _hash_map.StringHashMap;
 const AutoHashMap = _hash_map.AutoHashMap;
 const StringHashMapUnmanaged = _hash_map.StringHashMapUnmanaged;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
+const ComptimeStringMap = _global.ComptimeStringMap;
 pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
     var max_size = 0;
     var max_align = 1;
@@ -343,35 +344,47 @@ pub const Flags = struct {
         is_key_before_rest: bool = false,
     };
 
-    pub const Property = packed struct {
-        is_computed: bool = false,
-        is_method: bool = false,
-        is_static: bool = false,
-        was_shorthand: bool = false,
-        is_spread: bool = false,
+    pub const Property = enum {
+        is_computed,
+        is_method,
+        is_static,
+        was_shorthand,
+        is_spread,
 
-        const None = Flags.Property{};
+        pub inline fn init(fields: Fields) Set {
+            return Set.init(fields);
+        }
+
+        pub const None = Set{};
+        pub const Fields = std.enums.EnumFieldStruct(Flags.Property, bool, false);
+        pub const Set = std.enums.EnumSet(Flags.Property);
     };
 
-    pub const Function = packed struct {
-        is_async: bool = false,
-        is_generator: bool = false,
-        has_rest_arg: bool = false,
-        has_if_scope: bool = false,
+    pub const Function = enum {
+        is_async,
+        is_generator,
+        has_rest_arg,
+        has_if_scope,
 
-        is_forward_declaration: bool = false,
+        is_forward_declaration,
 
-        // This is true if the function is a method
-        is_unique_formal_parameters: bool = false,
+        /// This is true if the function is a method
+        is_unique_formal_parameters,
 
-        // Only applicable to function statements.
-        is_export: bool = false,
+        /// Only applicable to function statements.
+        is_export,
 
-        // Used for Hot Module Reloading's wrapper function
-        // "iife" stands for "immediately invoked function expression"
-        print_as_iife: bool = false,
+        /// Used for Hot Module Reloading's wrapper function
+        /// "iife" stands for "immediately invoked function expression"
+        print_as_iife,
 
-        const None = Flags.Function{};
+        pub inline fn init(fields: Fields) Set {
+            return Set.init(fields);
+        }
+
+        pub const None = Set{};
+        pub const Fields = std.enums.EnumFieldStruct(Function, bool, false);
+        pub const Set = std.enums.EnumSet(Function);
     };
 };
 
@@ -447,7 +460,7 @@ pub const Binding = struct {
                     properties[i] = G.Property{
                         .flags = item.flags,
                         .key = item.key,
-                        .kind = if (item.flags.is_spread)
+                        .kind = if (item.flags.contains(.is_spread))
                             G.Property.Kind.spread
                         else
                             G.Property.Kind.normal,
@@ -549,7 +562,7 @@ pub const B = union(Binding.Tag) {
     };
 
     pub const Property = struct {
-        flags: Flags.Property = Flags.Property.None,
+        flags: Flags.Property.Set = Flags.Property.None,
         key: ExprNodeIndex,
         value: BindingNodeIndex,
         default_value: ?ExprNodeIndex = null,
@@ -645,7 +658,7 @@ pub const G = struct {
         //
         initializer: ?ExprNodeIndex = null,
         kind: Kind = Kind.normal,
-        flags: Flags.Property = Flags.Property.None,
+        flags: Flags.Property.Set = Flags.Property.None,
 
         pub const List = BabyList(Property);
 
@@ -676,7 +689,7 @@ pub const G = struct {
         body: FnBody = FnBody{ .loc = logger.Loc.Empty, .stmts = &([_]StmtNodeIndex{}) },
         arguments_ref: ?Ref = null,
 
-        flags: Flags.Function = Flags.Function.None,
+        flags: Flags.Function.Set = Flags.Function.None,
     };
     pub const Arg = struct {
         ts_decorators: ExprNodeList = ExprNodeList{},
@@ -1281,7 +1294,7 @@ pub const E = struct {
             key,
             any,
 
-            pub const Map = std.ComptimeStringMap(SpecialProp, .{
+            pub const Map = ComptimeStringMap(SpecialProp, .{
                 .{ "__self", .__self },
                 .{ "__source", .__source },
                 .{ "key", .key },
@@ -1591,39 +1604,47 @@ pub const E = struct {
         }
 
         const PackageJSONSort = struct {
-            const Fields = struct {
-                const name: u8 = 0;
-                const version: u8 = 1;
-                const main: u8 = 2;
-                const module: u8 = 3;
-                const dependencies: u8 = 3;
-                const devDependencies: u8 = 4;
-                const optionalDependencies: u8 = 5;
-                const peerDependencies: u8 = 6;
-                const exports: u8 = 7;
+            const Fields = enum(u8) {
+                name,
+                version,
+                author,
+                repository,
+                config,
+                main,
+                module,
+                dependencies,
+                devDependencies,
+                optionalDependencies,
+                peerDependencies,
+                exports,
+                __fake,
 
-                pub const Map = std.ComptimeStringMap(u8, .{
-                    .{ "name", name },
-                    .{ "version", version },
-                    .{ "main", main },
-                    .{ "module", module },
-                    .{ "dependencies", dependencies },
-                    .{ "devDependencies", devDependencies },
-                    .{ "optionalDependencies", optionalDependencies },
-                    .{ "peerDependencies", peerDependencies },
-                    .{ "exports", exports },
+                pub const Map = ComptimeStringMap(Fields, .{
+                    .{ "name", Fields.name },
+                    .{ "version", Fields.version },
+                    .{ "author", Fields.author },
+                    .{ "repository", Fields.repository },
+                    .{ "config", Fields.config },
+                    .{ "main", Fields.main },
+                    .{ "module", Fields.module },
+                    .{ "dependencies", Fields.dependencies },
+                    .{ "devDependencies", Fields.devDependencies },
+                    .{ "optionalDependencies", Fields.optionalDependencies },
+                    .{ "peerDependencies", Fields.peerDependencies },
+                    .{ "exports", Fields.exports },
                 });
+                const max_key_size = 12;
 
                 pub fn isLessThan(ctx: void, lhs: G.Property, rhs: G.Property) bool {
-                    var lhs_key_size: u8 = 8;
-                    var rhs_key_size: u8 = 8;
+                    var lhs_key_size: u8 = @enumToInt(Fields.__fake);
+                    var rhs_key_size: u8 = @enumToInt(Fields.__fake);
 
                     if (lhs.key != null and lhs.key.?.data == .e_string) {
-                        lhs_key_size = Map.get(lhs.key.?.data.e_string.utf8) orelse 8;
+                        lhs_key_size = @enumToInt(Map.get(lhs.key.?.data.e_string.utf8) orelse Fields.__fake);
                     }
 
                     if (rhs.key != null and rhs.key.?.data == .e_string) {
-                        rhs_key_size = Map.get(rhs.key.?.data.e_string.utf8) orelse 8;
+                        rhs_key_size = @enumToInt(Map.get(rhs.key.?.data.e_string.utf8) orelse Fields.__fake);
                     }
 
                     return switch (std.math.order(lhs_key_size, rhs_key_size)) {
@@ -5628,7 +5649,7 @@ pub const Macro = struct {
                 break :brk list;
             };
 
-            pub const names = std.ComptimeStringMap(Tag, .{
+            pub const names = ComptimeStringMap(Tag, .{
                 .{ "array", Tag.e_array },
                 .{ "unary", Tag.e_unary },
                 .{ "binary", Tag.e_binary },
@@ -6745,8 +6766,8 @@ pub const Macro = struct {
                             .e_missing, .e_undefined => null,
                             else => expr,
                         };
-                        property.flags.is_spread = expr.data == .e_spread;
-                        expect_key = property.value == null or !property.flags.is_spread;
+                        property.flags.setPresent(.is_spread, expr.data == .e_spread);
+                        expect_key = property.value == null or !property.flags.contains(.is_spread);
                     },
                     TagOrJSNode.node => |node| {
                         const expr = node.toExpr();
@@ -6754,8 +6775,8 @@ pub const Macro = struct {
                             .e_missing, .e_undefined => null,
                             else => expr,
                         };
-                        property.flags.is_spread = expr.data == .e_spread;
-                        expect_key = property.value == null or !property.flags.is_spread;
+                        property.flags.setPresent(.is_spread, expr.data == .e_spread);
+                        expect_key = property.value == null or !property.flags.contains(.is_spread);
                     },
                     TagOrJSNode.invalid => {
                         return false;

@@ -140,7 +140,7 @@ pub const Arguments = struct {
         var paths = [_]string{ cwd, filename };
         const outpath = try std.fs.path.resolve(allocator, &paths);
         defer allocator.free(outpath);
-        var file = try std.fs.openFileAbsolute(outpath, std.fs.File.OpenFlags{ .read = true, .write = false });
+        var file = try std.fs.openFileAbsolute(outpath, std.fs.File.OpenFlags{ .mode = .read_only });
         defer file.close();
         const stats = try file.stat();
         return try file.readToEndAlloc(allocator, stats.size);
@@ -206,7 +206,7 @@ pub const Arguments = struct {
     }
 
     fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
-        var config_file = std.fs.openFileAbsoluteZ(config_path, .{ .read = true }) catch |err| {
+        var config_file = std.fs.openFileAbsoluteZ(config_path, .{ .mode = .read_only }) catch |err| {
             if (auto_loaded) return;
             Output.prettyErrorln("<r><red>error<r>: {s} opening config \"{s}\"", .{
                 @errorName(err),
@@ -694,7 +694,7 @@ pub const PrintBundleCommand = struct {
         var out_buffer: [_global.MAX_PATH_BYTES]u8 = undefined;
         var stdout = std.io.getStdOut();
 
-        var input = try std.fs.openFileAbsolute(try std.os.realpath(entry_point, &out_buffer), .{ .read = true });
+        var input = try std.fs.openFileAbsolute(try std.os.realpath(entry_point, &out_buffer), .{ .mode = .read_only });
         const params = comptime [_]Arguments.ParamType{
             clap.parseParam("--summary  Peek inside the .bun") catch unreachable,
         };
@@ -1083,7 +1083,7 @@ pub const Command = struct {
                             var file_path = script_name_to_search;
                             const file_: std.fs.File.OpenError!std.fs.File = brk: {
                                 if (script_name_to_search[0] == std.fs.path.sep) {
-                                    break :brk std.fs.openFileAbsolute(script_name_to_search, .{ .read = true });
+                                    break :brk std.fs.openFileAbsolute(script_name_to_search, .{ .mode = .read_only });
                                 } else if (!strings.hasPrefix(script_name_to_search, "..") and script_name_to_search[0] != '~') {
                                     const file_pathZ = brk2: {
                                         if (!strings.hasPrefix(file_path, "./")) {
@@ -1098,7 +1098,7 @@ pub const Command = struct {
                                         }
                                     };
 
-                                    break :brk std.fs.cwd().openFileZ(file_pathZ, .{ .read = true });
+                                    break :brk std.fs.cwd().openFileZ(file_pathZ, .{ .mode = .read_only });
                                 } else {
                                     var path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
                                     const cwd = std.os.getcwd(&path_buf) catch break :possibly_open_with_bun_js;
@@ -1113,7 +1113,7 @@ pub const Command = struct {
                                     if (file_path.len == 0) break :possibly_open_with_bun_js;
                                     script_name_buf[file_path.len] = 0;
                                     var file_pathZ = script_name_buf[0..file_path.len :0];
-                                    break :brk std.fs.openFileAbsoluteZ(file_pathZ, .{ .read = true });
+                                    break :brk std.fs.openFileAbsoluteZ(file_pathZ, .{ .mode = .read_only });
                                 }
                             };
 

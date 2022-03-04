@@ -78,7 +78,7 @@ pub const FolderResolution = union(Tag) {
         joined[abs.len] = 0;
         var joinedZ: [:0]u8 = joined[0..abs.len :0];
 
-        var package_json: std.fs.File = std.fs.cwd().openFileZ(joinedZ, .{ .read = true }) catch |err| {
+        var package_json: std.fs.File = std.fs.cwd().openFileZ(joinedZ, .{ .mode = .read_only }) catch |err| {
             entry.value_ptr.* = .{ .err = err };
             return entry.value_ptr.*;
         };

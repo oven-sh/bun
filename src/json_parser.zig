@@ -84,7 +84,37 @@ const HashMapPool = struct {
     }
 };
 
+// This hack fixes using LLDB
 fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
+    return JSONLikeParser_(
+        opts.is_json,
+        opts.allow_comments,
+        opts.allow_trailing_commas,
+        opts.ignore_leading_escape_sequences,
+        opts.ignore_trailing_escape_sequences,
+        opts.json_warn_duplicate_keys,
+        opts.was_originally_macro,
+    );
+}
+
+fn JSONLikeParser_(
+    opts_is_json: bool,
+    opts_allow_comments: bool,
+    opts_allow_trailing_commas: bool,
+    opts_ignore_leading_escape_sequences: bool,
+    opts_ignore_trailing_escape_sequences: bool,
+    opts_json_warn_duplicate_keys: bool,
+    opts_was_originally_macro: bool,
+) type {
+    const opts = js_lexer.JSONOptions{
+        .is_json = opts_is_json,
+        .allow_comments = opts_allow_comments,
+        .allow_trailing_commas = opts_allow_trailing_commas,
+        .ignore_leading_escape_sequences = opts_ignore_leading_escape_sequences,
+        .ignore_trailing_escape_sequences = opts_ignore_trailing_escape_sequences,
+        .json_warn_duplicate_keys = opts_json_warn_duplicate_keys,
+        .was_originally_macro = opts_was_originally_macro,
+    };
     return struct {
         const Lexer = js_lexer.NewLexer(if (LEXER_DEBUGGER_WORKAROUND) js_lexer.JSONOptions{} else opts);
 
@@ -228,8 +258,14 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                             }
                         }
 
-                        const str = p.lexer.toEString();
+                        const str = if (comptime force_utf8)
+                            p.lexer.toUTF8EString()
+                        else
+                            p.lexer.toEString();
+
                         const key_range = p.lexer.range();
+                        const key = p.e(str, key_range.loc);
+                        try p.lexer.expect(.t_string_literal);
 
                         if (comptime opts.json_warn_duplicate_keys) {
                             const hash_key = str.hash();
@@ -242,12 +278,13 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
                             }
                         }
 
-                        const key = p.e(str, key_range.loc);
-                        try p.lexer.expect(.t_string_literal);
-
                         try p.lexer.expect(.t_colon);
                         const value = try p.parseExpr(false, force_utf8);
-                        properties.append(G.Property{ .key = key, .value = value }) catch unreachable;
+                        properties.append(G.Property{
+                            .key = key,
+                            .value = value,
+                            .kind = js_ast.G.Property.Kind.normal,
+                        }) catch unreachable;
                     }
 
                     if (p.lexer.has_newline_before) {

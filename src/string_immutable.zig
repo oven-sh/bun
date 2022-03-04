@@ -403,7 +403,7 @@ pub fn eqlComptimeIgnoreLen(self: string, comptime alt: anytype) bool {
     return eqlComptimeCheckLenWithType(u8, self, alt, false);
 }
 
-inline fn eqlComptimeCheckLenWithType(comptime Type: type, a: []const Type, comptime b: anytype, comptime check_len: bool) bool {
+pub inline fn eqlComptimeCheckLenWithType(comptime Type: type, a: []const Type, comptime b: anytype, comptime check_len: bool) bool {
     @setEvalBranchQuota(9999);
     if (comptime check_len) {
         if (comptime b.len == 0) {

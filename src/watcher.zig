@@ -68,7 +68,6 @@ pub const INotify = struct {
 
         pub fn name(this: *const INotifyEvent) [:0]u8 {
             if (comptime Environment.allow_assert) std.debug.assert(this.name_len > 0);
-
             // the name_len field is wrong
             // it includes alignment / padding
             // but it is a sentineled value
@@ -136,9 +135,7 @@ pub const INotify = struct {
                     var i: u32 = 0;
                     while (i < len) : (i += @sizeOf(INotifyEvent)) {
                         const event = @ptrCast(*const INotifyEvent, @alignCast(@alignOf(*const INotifyEvent), eventlist[i..][0..@sizeOf(INotifyEvent)]));
-                        if (event.name_len > 0) {
-                            i += event.name_len;
-                        }
+                        i += event.name_len;
 
                         eventlist_ptrs[count] = event;
                         count += 1;

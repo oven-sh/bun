@@ -11,9 +11,7 @@ const default_allocator = _global.default_allocator;
 const C = _global.C;
 
 const Loader = @import("../options.zig").Loader;
-const Two = strings.ExactSizeMatcher(2);
-const Four = strings.ExactSizeMatcher(4);
-const Eight = strings.ExactSizeMatcher(8);
+const ComptimeStringMap = _global.ComptimeStringMap;
 
 const MimeType = @This();
 
@@ -155,69 +153,50 @@ pub fn byLoader(loader: Loader, ext: string) MimeType {
     }
 }
 
+const extensions = ComptimeStringMap(MimeType, .{
+    .{ "bun", javascript },
+    .{ "jsx", javascript },
+    .{ "js", javascript },
+    .{ "css", css },
+    .{ "jpg", MimeType.initComptime("image/jpeg", .image) },
+    .{ "gif", MimeType.initComptime("image/gif", .image) },
+    .{ "png", MimeType.initComptime("image/png", .image) },
+    .{ "bmp", MimeType.initComptime("image/bmp", .image) },
+    .{ "wav", MimeType.initComptime("audio/wave", .audio) },
+    .{ "aac", MimeType.initComptime("audio/aic", .audio) },
+    .{ "mp4", MimeType.initComptime("video/mp4", .video) },
+    .{ "htm", MimeType.initComptime("text/html;charset=utf-8", .html) },
+    .{ "xml", MimeType.initComptime("text/xml", .other) },
+    .{ "zip", MimeType.initComptime("application/zip", .other) },
+    .{ "txt", MimeType.initComptime("text/plain", .other) },
+    .{ "ttf", MimeType.initComptime("font/ttf", .font) },
+    .{ "otf", MimeType.initComptime("font/otf", .font) },
+    .{ "ico", ico },
+    .{ "mp3", MimeType.initComptime("audio/mpeg", .video) },
+    .{ "svg", MimeType.initComptime("image/svg+xml", .image) },
+    .{ "csv", MimeType.initComptime("text/csv", .other) },
+    .{ "mid", MimeType.initComptime("audio/mid", .audio) },
+    .{ "mid", MimeType.initComptime("audio/mid", .audio) },
+    .{ "json", MimeType.json },
+    .{ "jpeg", MimeType.initComptime("image/jpeg", .image) },
+    .{ "aiff", MimeType.initComptime("image/png", .image) },
+    .{ "tiff", MimeType.initComptime("image/tiff", .image) },
+    .{ "html", MimeType.html },
+    .{
+        "wasm", MimeType.initComptime(
+            "application/wasm",
+            .wasm,
+        ),
+    },
+    .{ "woff", MimeType.initComptime("font/woff", .font) },
+    .{ "webm", MimeType.initComptime("video/webm", .video) },
+    .{ "webp", MimeType.initComptime("image/webp", .image) },
+    .{ "midi", MimeType.initComptime("audio/midi", .audio) },
+    .{ "woff2", MimeType.initComptime("font/woff2", .font) },
+    .{ "xhtml", MimeType.initComptime("application/xhtml+xml;charset=utf-8", .html) },
+});
+
 // TODO: improve this
 pub fn byExtension(ext: string) MimeType {
-    return switch (ext.len) {
-        2 => {
-            return switch (std.mem.readIntNative(u16, ext[0..2])) {
-                Two.case("js") => javascript,
-                else => MimeType.other,
-            };
-        },
-        3 => {
-            const four = [4]u8{ ext[0], ext[1], ext[2], 0 };
-            return switch (std.mem.readIntNative(u32, &four)) {
-                Four.case("bun") => javascript,
-
-                Four.case("css") => css,
-                Four.case("jpg") => MimeType.initComptime("image/jpeg", .image),
-                Four.case("gif") => MimeType.initComptime("image/gif", .image),
-                Four.case("png") => MimeType.initComptime("image/png", .image),
-                Four.case("bmp") => MimeType.initComptime("image/bmp", .image),
-                Four.case("jsx"), Four.case("mjs") => MimeType.javascript,
-                Four.case("wav") => MimeType.initComptime("audio/wave", .audio),
-                Four.case("aac") => MimeType.initComptime("audio/aic", .audio),
-                Four.case("mp4") => MimeType.initComptime("video/mp4", .video),
-                Four.case("htm") => MimeType.initComptime("text/html;charset=utf-8", .html),
-                Four.case("xml") => MimeType.initComptime("text/xml", .other),
-                Four.case("zip") => MimeType.initComptime("application/zip", .other),
-                Four.case("txt") => MimeType.initComptime("text/plain", .other),
-                Four.case("ttf") => MimeType.initComptime("font/ttf", .font),
-                Four.case("otf") => MimeType.initComptime("font/otf", .font),
-                Four.case("ico") => ico,
-                Four.case("mp3") => MimeType.initComptime("audio/mpeg", .video),
-                Four.case("svg") => MimeType.initComptime("image/svg+xml", .image),
-                Four.case("csv") => MimeType.initComptime("text/csv", .other),
-                Four.case("mid") => MimeType.initComptime("audio/mid", .audio),
-                else => MimeType.other,
-            };
-        },
-        4 => {
-            return switch (Four.match(ext)) {
-                Four.case("json") => MimeType.json,
-                Four.case("jpeg") => MimeType.initComptime("image/jpeg", .image),
-                Four.case("aiff") => MimeType.initComptime("image/png", .image),
-                Four.case("tiff") => MimeType.initComptime("image/tiff", .image),
-                Four.case("html") => MimeType.html,
-                Four.case("wasm") => MimeType.initComptime(
-                    "application/wasm",
-                    .wasm,
-                ),
-                Four.case("woff") => MimeType.initComptime("font/woff", .font),
-                Four.case("webm") => MimeType.initComptime("video/webm", .video),
-                Four.case("webp") => MimeType.initComptime("image/webp", .image),
-                Four.case("midi") => MimeType.initComptime("audio/midi", .audio),
-                else => MimeType.other,
-            };
-        },
-        5 => {
-            const eight = [8]u8{ ext[0], ext[1], ext[2], ext[3], ext[4], 0, 0, 0 };
-            return switch (std.mem.readIntNative(u64, &eight)) {
-                Eight.case("woff2") => MimeType.initComptime("font/woff2", .font),
-                Eight.case("xhtml") => MimeType.initComptime("application/xhtml+xml;charset=utf-8", .html),
-                else => MimeType.other,
-            };
-        },
-        else => MimeType.other,
-    };
+    return extensions.get(ext) orelse MimeType.other;
 }

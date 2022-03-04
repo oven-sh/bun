@@ -694,7 +694,7 @@ const PackageInstall = struct {
         var package_json_path: [:0]u8 = this.destination_dir_subpath_buf[0 .. this.destination_dir_subpath.len + std.fs.path.sep_str.len + "package.json".len :0];
         defer this.destination_dir_subpath_buf[this.destination_dir_subpath.len] = 0;
 
-        var package_json_file = this.destination_dir.openFileZ(package_json_path, .{ .read = true }) catch return false;
+        var package_json_file = this.destination_dir.openFileZ(package_json_path, .{ .mode = .read_only }) catch return false;
         defer package_json_file.close();
 
         var body_pool = Npm.Registry.BodyPool.get(allocator);
@@ -944,7 +944,7 @@ const PackageInstall = struct {
                     };
                     defer outfile.close();
 
-                    var infile = try entry.dir.openFile(entry.basename, .{ .read = true });
+                    var infile = try entry.dir.openFile(entry.basename, .{ .mode = .read_only });
                     defer infile.close();
 
                     const stat = infile.stat() catch continue;
@@ -3176,7 +3176,7 @@ pub const PackageManager = struct {
         } else {
 
             // can't use orelse due to a stage1 bug
-            package_json_file = std.fs.cwd().openFileZ("package.json", .{ .read = true, .write = true }) catch brk: {
+            package_json_file = std.fs.cwd().openFileZ("package.json", .{ .mode = .read_write }) catch brk: {
                 var this_cwd = original_cwd;
                 outer: while (std.fs.path.dirname(this_cwd)) |parent| {
                     cwd_buf[parent.len] = 0;
@@ -3188,7 +3188,7 @@ pub const PackageManager = struct {
                         return err;
                     };
 
-                    break :brk std.fs.cwd().openFileZ("package.json", .{ .read = true, .write = true }) catch {
+                    break :brk std.fs.cwd().openFileZ("package.json", .{ .mode = .read_write }) catch {
                         this_cwd = parent;
                         continue :outer;
                     };
@@ -3612,9 +3612,7 @@ pub const PackageManager = struct {
             switch (err) {
                 error.MissingPackageJSON => {
                     if (op == .add or op == .update) {
-                        var package_json_file = std.fs.cwd().createFileZ("package.json", .{
-                            .read = true,
-                        }) catch |err2| {
+                        var package_json_file = std.fs.cwd().createFileZ("package.json", .{ .read = true }) catch |err2| {
                             Output.prettyErrorln("<r><red>error:<r> {s} create package.json", .{@errorName(err2)});
                             Global.crash();
                         };
@@ -3989,7 +3987,7 @@ pub const PackageManager = struct {
                                 node_modules_buf[entry.name.len] = 0;
                                 var buf: [:0]u8 = node_modules_buf[0..entry.name.len :0];
 
-                                var file = node_modules_bin.openFileZ(buf, .{ .read = true }) catch {
+                                var file = node_modules_bin.openFileZ(buf, .{ .mode = .read_only }) catch {
                                     node_modules_bin.deleteFileZ(buf) catch {};
                                     continue :iterator;
                                 };
@@ -4285,7 +4283,7 @@ pub const PackageManager = struct {
         var progress = &this.progress;
 
         if (comptime log_level.showProgress()) {
-            root_node = try progress.start("", 0);
+            root_node = progress.start("", 0);
             progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
             download_node = root_node.start(ProgressStrings.download(), 0);
 
@@ -4781,7 +4779,7 @@ pub const PackageManager = struct {
             }
 
             if (comptime log_level.showProgress()) {
-                manager.downloads_node = try manager.progress.start(ProgressStrings.download(), 0);
+                manager.downloads_node = manager.progress.start(ProgressStrings.download(), 0);
                 manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
                 manager.setNodeName(manager.downloads_node.?, ProgressStrings.download_no_emoji_, ProgressStrings.download_emoji, true);
                 manager.downloads_node.?.setEstimatedTotalItems(manager.total_tasks + manager.extracted_count);
@@ -4879,7 +4877,7 @@ pub const PackageManager = struct {
                 var node: *Progress.Node = undefined;
 
                 if (comptime log_level.showProgress()) {
-                    node = try manager.progress.start(ProgressStrings.save(), 0);
+                    node = manager.progress.start(ProgressStrings.save(), 0);
                     manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
                     node.activate();
 
@@ -4910,7 +4908,7 @@ pub const PackageManager = struct {
         if (manager.options.do.save_yarn_lock) {
             var node: *Progress.Node = undefined;
             if (comptime log_level.showProgress()) {
-                node = try manager.progress.start("Saving yarn.lock", 0);
+                node = manager.progress.start("Saving yarn.lock", 0);
                 manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
                 manager.progress.refresh();
             }

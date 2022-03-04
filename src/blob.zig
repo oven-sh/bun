@@ -21,7 +21,7 @@ pub const Map = struct {
         pub fn hash(_: @This(), s: u64) u32 {
             return @truncate(u32, s);
         }
-        pub fn eql(_: @This(), a: u64, b: u64) bool {
+        pub fn eql(_: @This(), a: u64, b: u64, _: usize) bool {
             return a == b;
         }
     };

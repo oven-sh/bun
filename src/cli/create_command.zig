@@ -44,6 +44,7 @@ const Headers = @import("http").Headers;
 const CopyFile = @import("../copy_file.zig");
 var bun_path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
 const Futex = @import("../futex.zig");
+const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMap;
 
 const target_nextjs_version = "12.1.0";
 pub var initialized_store = false;
@@ -378,7 +379,7 @@ pub const CreateCommand = struct {
         const destination = try filesystem.dirname_store.append([]const u8, resolve_path.joinAbs(filesystem.top_level_dir, .auto, dirname));
 
         var progress = std.Progress{};
-        var node = try progress.start(try ProgressBuf.print("Loading {s}", .{template}), 0);
+        var node = progress.start(try ProgressBuf.print("Loading {s}", .{template}), 0);
         progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
 
         // alacritty is fast
@@ -616,7 +617,7 @@ pub const CreateCommand = struct {
                             defer outfile.close();
                             defer node_.completeOne();
 
-                            var infile = try entry.dir.openFile(entry.basename, .{ .read = true });
+                            var infile = try entry.dir.openFile(entry.basename, .{ .mode = .read_only });
                             defer infile.close();
 
                             // Assumption: you only really care about making sure something that was executable is still executable
@@ -640,7 +641,7 @@ pub const CreateCommand = struct {
 
                 try FileCopier.copy(destination_dir, &walker_, node, &progress);
 
-                package_json_file = destination_dir.openFile("package.json", .{ .read = true, .write = true }) catch null;
+                package_json_file = destination_dir.openFile("package.json", .{ .mode = .read_write }) catch null;
 
                 read_package_json: {
                     if (package_json_file) |pkg| {
@@ -765,7 +766,7 @@ pub const CreateCommand = struct {
                 var has_react_scripts = false;
 
                 const Prune = struct {
-                    pub const packages = std.ComptimeStringMap(void, .{
+                    pub const packages = ComptimeStringMap(void, .{
                         .{ "@parcel/babel-preset", void{} },
                         .{ "@parcel/core", void{} },
                         .{ "@swc/cli", void{} },
@@ -1249,7 +1250,7 @@ pub const CreateCommand = struct {
                         var public_index_html_parts = [_]string{ destination, "public/index.html" };
                         var public_index_html_path = filesystem.absBuf(&public_index_html_parts, &bun_path_buf);
 
-                        const public_index_html_file = std.fs.openFileAbsolute(public_index_html_path, .{ .read = true, .write = true }) catch break :bail;
+                        const public_index_html_file = std.fs.openFileAbsolute(public_index_html_path, .{ .mode = .read_write }) catch break :bail;
                         defer public_index_html_file.close();
 
                         const file_extensions_to_try = [_]string{ ".tsx", ".ts", ".jsx", ".js", ".mts", ".mcjs" };
@@ -1759,9 +1760,7 @@ pub const Example = struct {
 
                                 var path: [:0]u8 = home_dir_buf[0 .. entry.name.len + 1 + "package.json".len :0];
 
-                                folder.accessZ(path, .{
-                                    .read = true,
-                                }) catch continue :loop;
+                                folder.accessZ(path, .{ .mode = .read_only }) catch continue :loop;
 
                                 try examples.append(
                                     Example{
@@ -2113,7 +2112,7 @@ pub const CreateListExamplesCommand = struct {
 
         const time = std.time.nanoTimestamp();
         var progress = std.Progress{};
-        var node = try progress.start("Fetching manifest", 0);
+        var node = progress.start("Fetching manifest", 0);
         progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
         progress.refresh();
 

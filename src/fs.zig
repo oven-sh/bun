@@ -592,12 +592,12 @@ pub const FileSystem = struct {
         inline fn _fetchCacheFile(fs: *RealFS, basename: string) !std.fs.File {
             var parts = [_]string{ "node_modules", ".cache", basename };
             var path = fs.parent_fs.join(&parts);
-            return std.fs.cwd().openFile(path, .{ .write = true, .read = true, .lock = .Shared }) catch {
+            return std.fs.cwd().openFile(path, .{ .mode = .read_write, .lock = .Shared }) catch {
                 path = fs.parent_fs.join(parts[0..2]);
                 try std.fs.cwd().makePath(path);
 
                 path = fs.parent_fs.join(&parts);
-                return try std.fs.cwd().createFile(path, .{ .read = true, .lock = .Shared });
+                return try std.fs.cwd().createFile(path, .{ .mode = .read_write, .lock = .Shared });
             };
         }
 
@@ -733,7 +733,7 @@ pub const FileSystem = struct {
         }
 
         pub fn modKey(fs: *RealFS, path: string) anyerror!ModKey {
-            var file = try std.fs.openFileAbsolute(path, std.fs.File.OpenFlags{ .read = true });
+            var file = try std.fs.openFileAbsolute(path, std.fs.File.OpenFlags{ .mode = .read_only });
             defer {
                 if (fs.needToCloseFiles()) {
                     file.close();
@@ -948,7 +948,7 @@ pub const FileSystem = struct {
             var symlink: []const u8 = "";
 
             if (is_symlink) {
-                var file = if (existing_fd != 0) std.fs.File{ .handle = existing_fd } else try std.fs.openFileAbsoluteZ(absolute_path_c, .{ .read = true });
+                var file = if (existing_fd != 0) std.fs.File{ .handle = existing_fd } else try std.fs.openFileAbsoluteZ(absolute_path_c, .{ .mode = .read_only });
                 setMaxFd(file.handle);
 
                 defer {

@@ -3,6 +3,7 @@ const string = @import("./string_types.zig").string;
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const logger = @import("./logger.zig");
 const Fs = @import("./fs.zig");
+const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 
 const assert_code: string = @embedFile("./node-fallbacks/out/assert.js");
 const buffer_code: string = @embedFile("./node-fallbacks/out/buffer.js");
@@ -443,7 +444,7 @@ pub const FallbackModule = struct {
     };
 };
 
-pub const Map = std.ComptimeStringMap(FallbackModule, .{
+pub const Map = ComptimeStringMap(FallbackModule, .{
     &.{ "assert", FallbackModule.assert },
     &.{ "buffer", FallbackModule.buffer },
     &.{ "console", FallbackModule.console },

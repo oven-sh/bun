@@ -250,28 +250,59 @@ pub const Bun = struct {
         if (arguments.len == 0)
             return ZigString.Empty.toValue(ctx.ptr()).asObjectRef();
 
-        var array = std.ArrayList(u8).init(getAllocator(ctx));
-        var writer = array.writer();
+        for (arguments) |arg| {
+            JSC.C.JSValueProtect(ctx, arg);
+        }
+        defer {
+            for (arguments) |arg| {
+                JSC.C.JSValueUnprotect(ctx, arg);
+            }
+        }
+
+        // very stable memory address
+        var array = MutableString.init(getAllocator(ctx), 0) catch unreachable;
+        var buffered_writer_ = MutableString.BufferedWriter{ .context = &array };
+        var buffered_writer = &buffered_writer_;
+
+        var writer = buffered_writer.writer();
+        const Writer = @TypeOf(writer);
         // we buffer this because it'll almost always be < 4096
-        const BufferedWriter = std.io.BufferedWriter(4096, std.ArrayList(u8).Writer);
-        var buffered_writer = BufferedWriter{ .unbuffered_writer = writer };
+        // when it's under 4096, we want to avoid the dynamic allocation
         ZigConsoleClient.format(
             .Debug,
             ctx.ptr(),
             @ptrCast([*]const JSValue, arguments.ptr),
             arguments.len,
-            @TypeOf(buffered_writer.writer()),
-            buffered_writer.writer(),
+            Writer,
+            Writer,
+            writer,
+            false,
             false,
             false,
         );
-        buffered_writer.flush() catch unreachable;
-        var zig_str = ZigString.init(array.toOwnedSlice()).withEncoding();
-        if (zig_str.len == 0) return ZigString.Empty.toValue(ctx.ptr()).asObjectRef();
-        if (!zig_str.isUTF8()) {
-            return zig_str.toExternalValue(ctx.ptr()).asObjectRef();
-        } else {
+
+        // when it's a small thing, rely on GC to manage the memory
+        if (writer.context.pos < 2048 and array.list.items.len == 0) {
+            var slice = writer.context.buffer[0..writer.context.pos];
+            if (slice.len == 0) {
+                return ZigString.Empty.toValue(ctx.ptr()).asObjectRef();
+            }
+
+            var zig_str = ZigString.init(slice).withEncoding();
             return zig_str.toValueGC(ctx.ptr()).asObjectRef();
+        }
+
+        // when it's a big thing, we will manage it
+        {
+            writer.context.flush() catch {};
+            var slice = writer.context.context.toOwnedSlice();
+
+            var zig_str = ZigString.init(slice).withEncoding();
+            if (!zig_str.isUTF8()) {
+                return zig_str.toExternalValue(ctx.ptr()).asObjectRef();
+            } else {
+                return zig_str.toValueGC(ctx.ptr()).asObjectRef();
+            }
         }
     }
 
@@ -501,7 +532,7 @@ pub const Bun = struct {
         exception: js.ExceptionRef,
     ) js.JSValueRef {
         const path = buf_z.ptr[0..buf_z.len];
-        var file = std.fs.cwd().openFileZ(buf_z, .{ .read = true, .write = false }) catch |err| {
+        var file = std.fs.cwd().openFileZ(buf_z, .{ .mode = .read_only }) catch |err| {
             JSError(getAllocator(ctx), "Opening file {s} for path: \"{s}\"", .{ @errorName(err), path }, ctx, exception);
             return js.JSValueMakeUndefined(ctx);
         };
@@ -541,7 +572,7 @@ pub const Bun = struct {
     ) js.JSValueRef {
         const path = buf_z.ptr[0..buf_z.len];
 
-        var file = std.fs.cwd().openFileZ(buf_z, .{ .read = true, .write = false }) catch |err| {
+        var file = std.fs.cwd().openFileZ(buf_z, .{ .mode = .read_only }) catch |err| {
             JSError(getAllocator(ctx), "Opening file {s} for path: \"{s}\"", .{ @errorName(err), path }, ctx, exception);
             return js.JSValueMakeUndefined(ctx);
         };
@@ -2728,14 +2759,11 @@ pub const VirtualMachine = struct {
             }
         }
 
-        const ChildWriterType = comptime if (@typeInfo(Writer) == .Pointer)
-            Writer
-        else
-            *Writer;
-
         if (value.isAggregateError(this.global)) {
             const AggregateErrorIterator = struct {
-                pub var current_exception_list: ?*ExceptionList = null;
+                writer: Writer,
+                current_exception_list: ?*ExceptionList = null,
+
                 pub fn iteratorWithColor(_vm: [*c]VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     iterator(_vm, globalObject, nextValue, ctx.?, true);
                 }
@@ -2743,26 +2771,15 @@ pub const VirtualMachine = struct {
                     iterator(_vm, globalObject, nextValue, ctx.?, false);
                 }
                 inline fn iterator(_: [*c]VM, _: [*c]JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
-                    var casted = @intToPtr(ChildWriterType, @ptrToInt(ctx));
-                    if (comptime ChildWriterType == Writer) {
-                        VirtualMachine.vm.printErrorlikeObject(nextValue, null, current_exception_list, ChildWriterType, casted, color);
-                    } else {
-                        VirtualMachine.vm.printErrorlikeObject(nextValue, null, current_exception_list, Writer, casted.*, color);
-                    }
+                    var this_ = @intToPtr(*@This(), @ptrToInt(ctx));
+                    VirtualMachine.vm.printErrorlikeObject(nextValue, null, this_.current_exception_list, Writer, this_.writer, color);
                 }
             };
-            AggregateErrorIterator.current_exception_list = exception_list;
-            defer AggregateErrorIterator.current_exception_list = null;
-            var writer_ctx: ?*anyopaque = null;
-            if (comptime @typeInfo(Writer) == .Pointer) {
-                writer_ctx = @intToPtr(?*anyopaque, @ptrToInt(writer));
-            } else {
-                writer_ctx = @intToPtr(?*anyopaque, @ptrToInt(&writer));
-            }
+            var iter = AggregateErrorIterator{ .writer = writer, .current_exception_list = exception_list };
             if (comptime allow_ansi_color) {
-                value.getErrorsProperty(this.global).forEach(this.global, writer_ctx, AggregateErrorIterator.iteratorWithColor);
+                value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithColor);
             } else {
-                value.getErrorsProperty(this.global).forEach(this.global, writer_ctx, AggregateErrorIterator.iteratorWithOutColor);
+                value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithOutColor);
             }
             return;
         }
@@ -2897,7 +2914,7 @@ pub const VirtualMachine = struct {
 
         var line_numbers = exception.stack.source_lines_numbers[0..exception.stack.source_lines_len];
         var max_line: i32 = -1;
-        for (line_numbers) |line| max_line = std.math.max(max_line, line);
+        for (line_numbers) |line| max_line = @maximum(max_line, line);
         const max_line_number_pad = std.fmt.count("{d}", .{max_line});
 
         var source_lines = exception.stack.sourceLineIterator();

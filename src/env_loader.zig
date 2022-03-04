@@ -870,7 +870,7 @@ pub const Loader = struct {
             return;
         }
 
-        var file = dir.openFile(base, .{ .read = true }) catch |err| {
+        var file = dir.openFile(base, .{ .mode = .read_only }) catch |err| {
             switch (err) {
                 error.FileNotFound => {
                     // prevent retrying

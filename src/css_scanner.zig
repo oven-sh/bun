@@ -1267,7 +1267,7 @@ pub fn NewBundler(
             const watcher_index = this.watcher.indexOf(hash);
 
             if (watcher_index == null) {
-                var file = try std.fs.openFileAbsolute(absolute_path, .{ .read = true });
+                var file = try std.fs.openFileAbsolute(absolute_path, .{ .mode = .read_only });
 
                 try this.watcher.appendFile(file.handle, absolute_path, hash, .css, 0, null, true);
                 if (this.watcher.watchloop_handle == null) {

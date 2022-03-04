@@ -2976,7 +2976,7 @@ pub const Bundler = struct {
             },
             else => {
                 var abs_path = path.text;
-                const file = try std.fs.openFileAbsolute(abs_path, .{ .read = true });
+                const file = try std.fs.openFileAbsolute(abs_path, .{ .mode = .read_only });
                 var stat = try file.stat();
                 return ServeResult{
                     .file = options.OutputFile.initFile(file, abs_path, stat.size),
@@ -3360,7 +3360,7 @@ pub const Transformer = struct {
         var _log = logger.Log.init(allocator);
         const absolutePath = resolve_path.joinAbs(transformer.cwd, .auto, entry_point);
 
-        const file = try std.fs.openFileAbsolute(absolutePath, std.fs.File.OpenFlags{ .read = true });
+        const file = try std.fs.openFileAbsolute(absolutePath, std.fs.File.OpenFlags{ .mode = .read_only });
         defer {
             if (care_about_closing_files) {
                 file.close();

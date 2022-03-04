@@ -10,6 +10,7 @@ const default_allocator = _global.default_allocator;
 const C = _global.C;
 const std = @import("std");
 const DotEnv = @import("env_loader.zig");
+const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 const opener = switch (@import("builtin").target.os.tag) {
     .macos => "/usr/bin/open",
     .windows => "start",
@@ -49,7 +50,7 @@ pub const Editor = enum(u8) {
     const StringMap = std.EnumMap(Editor, string);
     const StringArrayMap = std.EnumMap(Editor, []const [:0]const u8);
 
-    const name_map = std.ComptimeStringMap(Editor, .{
+    const name_map = ComptimeStringMap(Editor, .{
         .{ "sublime", Editor.sublime },
         .{ "subl", Editor.sublime },
         .{ "vscode", Editor.vscode },

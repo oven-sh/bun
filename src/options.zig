@@ -29,6 +29,7 @@ const Runtime = @import("./runtime.zig").Runtime;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const DotEnv = @import("./env_loader.zig");
+const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 
 const assert = std.debug.assert;
 
@@ -290,7 +291,7 @@ pub const ExternalModules = struct {
         "zlib",
     };
 
-    pub const NodeBuiltinsMap = std.ComptimeStringMap(bool, .{
+    pub const NodeBuiltinsMap = ComptimeStringMap(bool, .{
         .{ "_http_agent", true },
         .{ "_http_client", true },
         .{ "_http_common", true },
@@ -362,7 +363,7 @@ pub const ModuleType = enum {
     cjs,
     esm,
 
-    pub const List = std.ComptimeStringMap(ModuleType, .{
+    pub const List = ComptimeStringMap(ModuleType, .{
         .{ "commonjs", ModuleType.cjs },
         .{ "module", ModuleType.esm },
     });
@@ -739,7 +740,7 @@ pub const Loader = enum(u4) {
     }
 };
 
-pub const defaultLoaders = std.ComptimeStringMap(Loader, .{
+pub const defaultLoaders = ComptimeStringMap(Loader, .{
     .{ ".jsx", Loader.jsx },
     .{ ".json", Loader.json },
     .{ ".js", Loader.jsx },
@@ -1310,7 +1311,7 @@ pub const BundleOptions = struct {
             if (bundle_path.len > 0) {
                 load_bundle: {
                     const pretty_path = fs.relativeTo(bundle_path);
-                    var bundle_file = std.fs.openFileAbsolute(bundle_path, .{ .read = true, .write = true }) catch |err| {
+                    var bundle_file = std.fs.openFileAbsolute(bundle_path, .{ .mode = .read_write }) catch |err| {
                         if (is_generating_bundle) {
                             break :load_bundle;
                         }
@@ -1492,7 +1493,7 @@ pub const BundleOptions = struct {
 
             if (opts.routes.static_dir_enabled and should_try_to_find_a_index_html_file) {
                 const dir = opts.routes.static_dir_handle.?;
-                var index_html_file = dir.openFile("index.html", .{ .read = true }) catch |err| brk: {
+                var index_html_file = dir.openFile("index.html", .{ .mode = .read_only }) catch |err| brk: {
                     switch (err) {
                         error.FileNotFound => {},
                         else => {
@@ -1522,7 +1523,7 @@ pub const BundleOptions = struct {
                     abs_buf[full_path.len] = 0;
                     var abs_buf_z: [:0]u8 = abs_buf[0..full_path.len :0];
 
-                    const file = std.fs.openFileAbsoluteZ(abs_buf_z, .{ .read = true }) catch |err| {
+                    const file = std.fs.openFileAbsoluteZ(abs_buf_z, .{ .mode = .read_only }) catch |err| {
                         switch (err) {
                             error.FileNotFound => {},
                             else => {
@@ -1737,7 +1738,7 @@ pub const OutputFile = struct {
         const fd_out = file_out.handle;
         var do_close = false;
         // TODO: close file_out on error
-        const fd_in = (try std.fs.openFileAbsolute(file.input.text, .{ .read = true })).handle;
+        const fd_in = (try std.fs.openFileAbsolute(file.input.text, .{ .mode = .read_only })).handle;
 
         if (Environment.isWindows) {
             Fs.FileSystem.setMaxFd(fd_out);

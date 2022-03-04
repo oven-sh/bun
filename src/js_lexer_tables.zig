@@ -6,6 +6,7 @@ const unicode = std.unicode;
 const default_allocator = @import("./global.zig").default_allocator;
 const string = @import("string_types.zig").string;
 const CodePoint = @import("string_types.zig").CodePoint;
+const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 
 pub const T = enum(u8) {
     t_end_of_file,
@@ -152,7 +153,7 @@ pub const T = enum(u8) {
     }
 };
 
-pub const Keywords = std.ComptimeStringMap(T, .{
+pub const Keywords = ComptimeStringMap(T, .{
     .{ "break", .t_break },
     .{ "case", .t_case },
     .{ "catch", .t_catch },
@@ -191,7 +192,7 @@ pub const Keywords = std.ComptimeStringMap(T, .{
     .{ "with", .t_with },
 });
 
-pub const StrictModeReservedWords = std.ComptimeStringMap(bool, .{
+pub const StrictModeReservedWords = ComptimeStringMap(bool, .{
     .{ "implements", true },
     .{ "interface", true },
     .{ "let", true },
@@ -203,7 +204,7 @@ pub const StrictModeReservedWords = std.ComptimeStringMap(bool, .{
     .{ "yield", true },
 });
 
-pub const StrictModeReservedWordsRemap = std.ComptimeStringMap(string, .{
+pub const StrictModeReservedWordsRemap = ComptimeStringMap(string, .{
     .{ "implements", "_implements" },
     .{ "interface", "_interface" },
     .{ "let", "_let" },
@@ -228,7 +229,7 @@ pub const PropertyModifierKeyword = enum {
     p_set,
     p_static,
 
-    pub const List = std.ComptimeStringMap(PropertyModifierKeyword, .{
+    pub const List = ComptimeStringMap(PropertyModifierKeyword, .{
         .{ "abstract", .p_abstract },
         .{ "async", .p_async },
         .{ "declare", .p_declare },
@@ -243,7 +244,7 @@ pub const PropertyModifierKeyword = enum {
     });
 };
 
-pub const TypeScriptAccessibilityModifier = std.ComptimeStringMap(u1, .{
+pub const TypeScriptAccessibilityModifier = ComptimeStringMap(u1, .{
     .{ "public", 1 },
     .{ "private", 1 },
     .{ "protected", 1 },
@@ -511,7 +512,7 @@ pub const TypescriptStmtKeyword = enum {
     ts_stmt_global,
     ts_stmt_declare,
 
-    pub const List = std.ComptimeStringMap(TypescriptStmtKeyword, .{
+    pub const List = ComptimeStringMap(TypescriptStmtKeyword, .{
         .{
             "type",
             TypescriptStmtKeyword.ts_stmt_type,
@@ -546,7 +547,7 @@ pub const TypescriptStmtKeyword = enum {
 pub const JSXEntityMap = std.StringHashMap(CodePoint);
 
 //  Error: meta is a void element tag and must neither have `children` nor use `dangerouslySetInnerHTML`.
-pub const ChildlessJSXTags = std.ComptimeStringMap(void, .{
+pub const ChildlessJSXTags = ComptimeStringMap(void, .{
     .{ "area", void },
     .{ "base", void },
     .{ "br", void },

@@ -47,6 +47,65 @@ describe("Bun.Transpiler", () => {
 
   `;
 
+  it("require with a dynamic non-string expression", () => {
+    var nodeTranspiler = new Bun.Transpiler({ platform: "node" });
+    expect(nodeTranspiler.transformSync("require('hi' + bar)")).toBe(
+      'require("hi" + bar);\n'
+    );
+  });
+
+  it("CommonJS", () => {
+    var nodeTranspiler = new Bun.Transpiler({ platform: "node" });
+    expect(nodeTranspiler.transformSync("module.require('hi' + 123)")).toBe(
+      'require("hi" + 123);\n'
+    );
+
+    expect(
+      nodeTranspiler.transformSync("module.require(1 ? 'foo' : 'bar')")
+    ).toBe('require("foo");\n');
+    expect(nodeTranspiler.transformSync("require(1 ? 'foo' : 'bar')")).toBe(
+      'require("foo");\n'
+    );
+
+    expect(
+      nodeTranspiler.transformSync("module.require(unknown ? 'foo' : 'bar')")
+    ).toBe('unknown ? require("foo") : require("bar");\n');
+  });
+
+  describe("regressions", () => {
+    it("unexpected super", () => {
+      const input = `
+      'use strict';
+
+      const ErrorReportingMixinBase = require('./mixin-base');
+      const PositionTrackingPreprocessorMixin = require('../position-tracking/preprocessor-mixin');
+      const Mixin = require('../../utils/mixin');
+      
+      class ErrorReportingPreprocessorMixin extends ErrorReportingMixinBase {
+          constructor(preprocessor, opts) {
+              super(preprocessor, opts);
+      
+              this.posTracker = Mixin.install(preprocessor, PositionTrackingPreprocessorMixin);
+              this.lastErrOffset = -1;
+          }
+      
+          _reportError(code) {
+              //NOTE: avoid reporting error twice on advance/retreat
+              if (this.lastErrOffset !== this.posTracker.offset) {
+                  this.lastErrOffset = this.posTracker.offset;
+                  super._reportError(code);
+              }
+          }
+      }
+      
+      module.exports = ErrorReportingPreprocessorMixin;
+      
+
+`;
+      expect(transpiler.transformSync(input, "js").length > 0).toBe(true);
+    });
+  });
+
   describe("scanImports", () => {
     it("reports import paths, excluding types", () => {
       const imports = transpiler.scanImports(code, "tsx");
@@ -395,11 +454,7 @@ describe("Bun.Transpiler", () => {
         "(({}) = {}) => {}",
         "Unexpected parentheses in binding pattern"
       );
-      expectParseError(
-        "function f(([]) = []) {}",
-        "Parse error"
-        // 'Expected identifier but found "("\n'
-      );
+      expectParseError("function f(([]) = []) {}", "Parse error");
       expectParseError(
         "function f(({}) = {}) {}",
         "Parse error"
@@ -516,8 +571,7 @@ describe("Bun.Transpiler", () => {
     );
     expectParseError(
       "class Foo extends Bar { #foo; foo() { super.#foo } }",
-      "Parse error"
-      // 'Expected identifier but found "#foo"'
+      'Expected identifier but found "#foo"'
     );
     expectParseError(
       "class Foo { #foo = () => { for (#foo in this) ; } }",

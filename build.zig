@@ -46,6 +46,11 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
         .path = pkgPath("src/deps/boringssl.zig"),
     };
 
+    var datetime: std.build.Pkg = .{
+        .name = "datetime",
+        .path = pkgPath("src/deps/zig-datetime/src/datetime.zig"),
+    };
+
     var thread_pool: std.build.Pkg = .{
         .name = "thread_pool",
         .path = pkgPath("src/thread_pool.zig"),
@@ -150,10 +155,11 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
     step.addPackage(boringssl);
     step.addPackage(javascript_core);
     step.addPackage(crash_reporter);
+    step.addPackage(datetime);
 }
 var output_dir: []const u8 = "";
 fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
-    var file = std.fs.cwd().openFile(filepath, .{ .read = true }) catch |err| {
+    var file = std.fs.cwd().openFile(filepath, .{ .mode = .read_only }) catch |err| {
         std.debug.panic("error: {s} opening {s}. Please ensure you've downloaded git submodules, and ran `make vendor`, `make jsc`.", .{ filepath, @errorName(err) });
     };
     file.close();
@@ -162,7 +168,7 @@ fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
 }
 
 fn updateRuntime() anyerror!void {
-    var runtime_out_file = try std.fs.cwd().openFile("src/runtime.out.js", .{ .read = true });
+    var runtime_out_file = try std.fs.cwd().openFile("src/runtime.out.js", .{ .mode = .read_only });
     const runtime_hash = std.hash.Wyhash.hash(
         0,
         try runtime_out_file.readToEndAlloc(std.heap.page_allocator, try runtime_out_file.getEndPos()),
@@ -170,7 +176,7 @@ fn updateRuntime() anyerror!void {
     const runtime_version_file = std.fs.cwd().createFile("src/runtime.version", .{ .truncate = true }) catch std.debug.panic("Failed to create src/runtime.version", .{});
     defer runtime_version_file.close();
     runtime_version_file.writer().print("{x}", .{runtime_hash}) catch unreachable;
-    var fallback_out_file = try std.fs.cwd().openFile("src/fallback.out.js", .{ .read = true });
+    var fallback_out_file = try std.fs.cwd().openFile("src/fallback.out.js", .{ .mode = .read_only });
     const fallback_hash = std.hash.Wyhash.hash(
         0,
         try fallback_out_file.readToEndAlloc(std.heap.page_allocator, try fallback_out_file.getEndPos()),
@@ -265,7 +271,7 @@ pub fn build(b: *std.build.Builder) !void {
     else .{ .major = 0, .minor = 0, .patch = 0 };
 
     const max_version: std.builtin.Version = if (target.getOsTag() != .freestanding)
-        target.getOsVersionMin().semver
+        target.getOsVersionMax().semver
     else .{ .major = 0, .minor = 0, .patch = 0 };
 
     // exe.want_lto = true;
@@ -286,6 +292,14 @@ pub fn build(b: *std.build.Builder) !void {
         obj.setTarget(target);
         addPicoHTTP(obj, false);
         obj.setMainPkgPath(b.pathFromRoot("."));
+
+        var opts = b.addOptions();
+        opts.addOption(
+            bool,
+            "bindgen",
+            false,
+        );
+        obj.addOptions("build_options", opts);
 
         try addInternalPackages(
             obj,
@@ -309,7 +323,6 @@ pub fn build(b: *std.build.Builder) !void {
         obj.setOutputDir(output_dir);
         obj.setBuildMode(mode);
         obj.linkLibC();
-        obj.linkLibCpp();
         if (mode == std.builtin.Mode.Debug)
             obj.emit_llvm_ir = .{
                 .emit_to = try std.fmt.allocPrint(b.allocator, "{s}/{s}.ll", .{ output_dir, bun_executable_name }),
@@ -336,7 +349,15 @@ pub fn build(b: *std.build.Builder) !void {
         const headers_step = b.step("headers-obj", "Build JavaScriptCore headers");
         var headers_obj: *std.build.LibExeObjStep = b.addObject("headers", "src/bindgen.zig");
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(headers_obj, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        var opts = b.addOptions();
+        opts.addOption(
+            bool,
+            "bindgen",
+            true,
+        );
+        headers_obj.addOptions("build_options", opts);
+        headers_obj.linkLibCpp();
     }
 
     {
@@ -347,28 +368,28 @@ pub fn build(b: *std.build.Builder) !void {
         // wasm_step.link_function_sections = true;
         // wasm_step.link_emit_relocs = true;
         // wasm_step.single_threaded = true;
-        try configureObjectStep(wasm_step, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, wasm_step, target, obj.main_pkg_path.?);
     }
 
     {
         const headers_step = b.step("httpbench-obj", "Build HTTPBench tool (object files)");
         var headers_obj: *std.build.LibExeObjStep = b.addObject("httpbench", "misctools/http_bench.zig");
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(headers_obj, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
     }
 
     {
         const headers_step = b.step("fetch-obj", "Build fetch (object files)");
         var headers_obj: *std.build.LibExeObjStep = b.addObject("fetch", "misctools/fetch.zig");
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(headers_obj, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
     }
 
     {
         const headers_step = b.step("tgz-obj", "Build tgz (object files)");
         var headers_obj: *std.build.LibExeObjStep = b.addObject("tgz", "misctools/tgz.zig");
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(headers_obj, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
     }
 
     {
@@ -385,7 +406,7 @@ pub fn build(b: *std.build.Builder) !void {
             if (std.fs.path.dirname(test_bin)) |dir| headers_obj.setOutputDir(dir);
         }
 
-        try configureObjectStep(headers_obj, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
         try linkObjectFiles(b, headers_obj, target);
         {
             var before = b.addLog("\x1b[" ++ color_map.get("magenta").? ++ "\x1b[" ++ color_map.get("b").? ++ "[{s} tests]" ++ "\x1b[" ++ color_map.get("d").? ++ " ----\n\n" ++ "\x1b[0m", .{"bun"});
@@ -416,7 +437,7 @@ pub fn build(b: *std.build.Builder) !void {
         }
     }
 
-    try configureObjectStep(typings_exe, target, obj.main_pkg_path.?);
+    try configureObjectStep(b, typings_exe, target, obj.main_pkg_path.?);
     try linkObjectFiles(b, typings_exe, target);
 
     var typings_cmd: *std.build.RunStep = typings_exe.run();
@@ -498,8 +519,9 @@ pub fn linkObjectFiles(b: *std.build.Builder, obj: *std.build.LibExeObjStep, tar
     }
 }
 
-pub fn configureObjectStep(obj: *std.build.LibExeObjStep, target: anytype, main_pkg_path: []const u8) !void {
+pub fn configureObjectStep(_: *std.build.Builder, obj: *std.build.LibExeObjStep, target: anytype, main_pkg_path: []const u8) !void {
     obj.setMainPkgPath(main_pkg_path);
+
     obj.setTarget(target);
     try addInternalPackages(obj, std.heap.page_allocator, target);
     if (target.getOsTag() != .freestanding)
@@ -509,7 +531,6 @@ pub fn configureObjectStep(obj: *std.build.LibExeObjStep, target: anytype, main_
     obj.setOutputDir(output_dir);
     obj.setBuildMode(mode);
     if (target.getOsTag() != .freestanding) obj.linkLibC();
-    if (target.getOsTag() != .freestanding) obj.linkLibCpp();
     if (target.getOsTag() != .freestanding) obj.bundle_compiler_rt = true;
 
     if (target.getOsTag() == .linux) {

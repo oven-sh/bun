@@ -54,7 +54,7 @@ pub fn main() anyerror!void {
 
     // var dir = try std.fs.cwd().makeOpenPath(folder, .{ .iterate = true });
 
-    var tarball = try std.fs.openFileAbsolute(tarball_path, .{ .read = true });
+    var tarball = try std.fs.openFileAbsolute(tarball_path, .{ .mode = .read_only });
 
     var tarball_buf_list = std.ArrayListUnmanaged(u8){};
 

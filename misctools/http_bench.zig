@@ -119,7 +119,7 @@ pub const Arguments = struct {
                 var absolute_path_len = absolute_path.len;
                 var absolute_path_ = file_path_buf[0..absolute_path_len :0];
 
-                var body_file = std.fs.openFileAbsoluteZ(absolute_path_, .{ .read = true }) catch |err| {
+                var body_file = std.fs.openFileAbsoluteZ(absolute_path_, .{ .mode = .read_only }) catch |err| {
                     Output.printErrorln("<r><red>{s}<r> opening file {s}", .{ @errorName(err), absolute_path });
                     Output.flush();
                     Global.exit(1);

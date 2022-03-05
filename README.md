@@ -252,7 +252,7 @@ npx tailwindcss -i ./src/tailwind.css -o ./dist/tailwind.css --watch
 
 From there, make sure to import the `dist/tailwind.css` file (or what you chose as the output).
 
-## Things that don’t work yet
+## Not implemented yet
 
 bun is a project with incredibly large scope, and it’s early days.
 

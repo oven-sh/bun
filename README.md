@@ -263,7 +263,7 @@ bun is a project with incredibly large scope, and it’s early days.
 | Source Maps                                                                           | CSS             |
 | JavaScript Minifier                                                                   | JavaScript      |
 | CSS Minifier                                                                          | CSS             |
-| CSS Parser                                                                            | CSS             |
+| CSS Parser (it only bundles)                                                          | CSS             |
 | Tree-shaking                                                                          | JavaScript      |
 | Tree-shaking                                                                          | CSS             |
 | [`extends`](https://www.typescriptlang.org/tsconfig#extends) in tsconfig.json         | TS Transpiler   |

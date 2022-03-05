@@ -1,4 +1,4 @@
-import { expect, describe, it } from "bun:test";
+import { expect, it } from "bun:test";
 
 function expectInvalidCharacters(val) {
   try {
@@ -49,7 +49,6 @@ it("atob", () => {
   expectInvalidCharacters("==");
   expectInvalidCharacters("===");
   expectInvalidCharacters("====");
-
   expectInvalidCharacters("=====");
 });
 

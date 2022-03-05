@@ -47,6 +47,71 @@ describe("Bun.Transpiler", () => {
 
   `;
 
+  it("JSX", () => {
+    var bun = new Bun.Transpiler({
+      loader: "jsx",
+    });
+    expect(bun.transformSync("export var foo = <div foo />")).toBe(
+      `export var foo = jsx("div", {
+  foo: true
+}, undefined, false, undefined, this);
+`
+    );
+    expect(bun.transformSync("export var foo = <div foo={foo} />")).toBe(
+      `export var foo = jsx("div", {
+  foo
+}, undefined, false, undefined, this);
+`
+    );
+    expect(bun.transformSync("export var foo = <div {...foo} />")).toBe(
+      `export var foo = jsx("div", {
+  ...foo
+}, undefined, false, undefined, this);
+`
+    );
+    expect(bun.transformSync("export var hi = <div {foo} />")).toBe(
+      `export var hi = jsx("div", {
+  foo
+}, undefined, false, undefined, this);
+`
+    );
+    try {
+      bun.transformSync("export var hi = <div {foo}={foo}= />");
+      throw new Error("Expected error");
+    } catch (e) {
+      expect(e.errors[0].message.includes('Expected ">"')).toBe(true);
+    }
+
+    expect(
+      bun.transformSync("export var hi = <div {Foo}><Foo></Foo></div>")
+    ).toBe(
+      `export var hi = jsx("div", {
+  Foo,
+  children: jsx(Foo, {}, undefined, false, undefined, this)
+}, undefined, false, undefined, this);
+`
+    );
+    expect(
+      bun.transformSync("export var hi = <div {Foo}><Foo></Foo></div>")
+    ).toBe(
+      `export var hi = jsx("div", {
+  Foo,
+  children: jsx(Foo, {}, undefined, false, undefined, this)
+}, undefined, false, undefined, this);
+`
+    );
+
+    expect(bun.transformSync("export var hi = <div>{123}}</div>").trim()).toBe(
+      `export var hi = jsx("div", {
+  children: [
+    123,
+    "}"
+  ]
+}, undefined, true, undefined, this);
+      `.trim()
+    );
+  });
+
   it("require with a dynamic non-string expression", () => {
     var nodeTranspiler = new Bun.Transpiler({ platform: "node" });
     expect(nodeTranspiler.transformSync("require('hi' + bar)")).toBe(

@@ -11342,10 +11342,46 @@ fn NewParser_(
                             defer i += 1;
                             // Use Next() not ExpectInsideJSXElement() so we can parse "..."
                             try p.lexer.next();
-                            try p.lexer.expect(.t_dot_dot_dot);
-                            spread_prop_i = i;
-                            spread_loc = p.lexer.loc();
-                            try props.append(G.Property{ .value = try p.parseExpr(.comma), .kind = .spread });
+
+                            switch (p.lexer.token) {
+                                .t_dot_dot_dot => {
+                                    try p.lexer.next();
+
+                                    spread_prop_i = i;
+                                    spread_loc = p.lexer.loc();
+                                    try props.append(G.Property{ .value = try p.parseExpr(.comma), .kind = .spread });
+                                },
+                                // This implements
+                                //  <div {foo} />
+                                //  ->
+                                //  <div foo={foo} />
+                                T.t_identifier => {
+                                    const name = p.lexer.identifier;
+                                    if (strings.eqlComptime(name, "let")) {
+                                        p.lexer.addError(p.source, p.lexer.loc(), "\"let\" is not allowed with JSX prop punning") catch unreachable;
+                                    }
+                                    const key = p.e(E.String{ .utf8 = name }, p.lexer.loc());
+                                    const ref = p.storeNameInRef(name) catch unreachable;
+                                    const value = p.e(E.Identifier{ .ref = ref }, key.loc);
+                                    try p.lexer.next();
+
+                                    try props.append(G.Property{ .value = value, .key = key, .kind = .normal });
+                                },
+                                // This implements
+                                //  <div {"foo"} />
+                                //  <div {'foo'} />
+                                //  ->
+                                //  <div foo="foo" />
+                                // note: template literals are not supported, operations on strings are not supported either
+                                T.t_string_literal => {
+                                    const key = p.e(p.lexer.toEString(), p.lexer.loc());
+                                    try p.lexer.next();
+                                    try props.append(G.Property{ .value = key, .key = key, .kind = .normal });
+                                },
+
+                                else => try p.lexer.unexpected(),
+                            }
+
                             try p.lexer.nextInsideJSXElement();
                         },
                         else => {

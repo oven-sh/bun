@@ -261,6 +261,11 @@ bun is a project with incredibly large scope, and it’s early days.
 | [Hash components for Fast Refresh](https://github.com/Jarred-Sumner/bun/issues/18)    | JSX Transpiler  |
 | Source Maps                                                                           | JavaScript      |
 | Source Maps                                                                           | CSS             |
+| JavaScript Minifier                                                                   | JavaScript      |
+| CSS Minifier                                                                          | CSS             |
+| CSS Parser                                                                            | CSS             |
+| Tree-shaking                                                                          | JavaScript      |
+| Tree-shaking                                                                          | CSS             |
 | [`extends`](https://www.typescriptlang.org/tsconfig#extends) in tsconfig.json         | TS Transpiler   |
 | [TypeScript Decorators](https://www.typescriptlang.org/docs/handbook/decorators.html) | TS Transpiler   |
 | `@jsxPragma` comments                                                                 | JS Transpiler   |
@@ -648,6 +653,10 @@ To fix this issue:
 1. Remove any scripts that call `ulimit -n` and restart your shell.
 2. Try agin, and if the error still occurs, try setting `ulimit -n` to an absurdly high number, such as `ulimit -n 2147483646`
 3. Try again, and if that still doesn’t fix it, open an issue
+
+### bun install is stuck
+
+Please run `bun install --verbose 2> logs.txt` and send them to me in bun's discord. If you're on Linux, it would also be helpful if you run `sudo perf trace bun install --silent` and attach the logs.
 
 ## Reference
 
@@ -1145,6 +1154,8 @@ Run `bun bun ./path-to.js` to generate a `node_modules.bun` file containing all 
 
 #### What is `.bun`?
 
+Note: [This format may change soon](https://github.com/Jarred-Sumner/bun/issues/121)
+
 The `.bun` file contains:
 
 - all the bundled source code
@@ -1164,7 +1175,7 @@ Here are some of the questions `.bun` files answer:
 
 All in one file.
 
-It’s a little like a build cache, but designed for reuse. I hope people will eventually check it into version control so their coworkers don’t have to run `npm install` as often.
+It’s a little like a build cache, but designed for reuse across builds.
 
 #### Position-independent code
 

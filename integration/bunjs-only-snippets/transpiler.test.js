@@ -50,6 +50,9 @@ describe("Bun.Transpiler", () => {
   it("JSX", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",
+      define: {
+        "process.env.NODE_ENV": JSON.stringify("development"),
+      },
     });
     expect(bun.transformSync("export var foo = <div foo />")).toBe(
       `export var foo = jsx("div", {
@@ -69,9 +72,59 @@ describe("Bun.Transpiler", () => {
 }, undefined, false, undefined, this);
 `
     );
+
     expect(bun.transformSync("export var hi = <div {foo} />")).toBe(
       `export var hi = jsx("div", {
   foo
+}, undefined, false, undefined, this);
+`
+    );
+    expect(bun.transformSync("export var hi = <div {foo.bar.baz} />")).toBe(
+      `export var hi = jsx("div", {
+  baz: foo.bar.baz
+}, undefined, false, undefined, this);
+`
+    );
+    expect(bun.transformSync("export var hi = <div {foo?.bar?.baz} />")).toBe(
+      `export var hi = jsx("div", {
+  baz: foo?.bar?.baz
+}, undefined, false, undefined, this);
+`
+    );
+    expect(
+      bun.transformSync("export var hi = <div {foo['baz'].bar?.baz} />")
+    ).toBe(
+      `export var hi = jsx("div", {
+  baz: foo["baz"].bar?.baz
+}, undefined, false, undefined, this);
+`
+    );
+
+    // cursed
+    expect(
+      bun.transformSync(
+        "export var hi = <div {foo[{name: () => true}.name].hi} />"
+      )
+    ).toBe(
+      `export var hi = jsx("div", {
+  hi: foo[{ name: () => true }.name].hi
+}, undefined, false, undefined, this);
+`
+    );
+    expect(
+      bun.transformSync("export var hi = <Foo {process.env.NODE_ENV} />")
+    ).toBe(
+      `export var hi = jsx(Foo, {
+  NODE_ENV: "development"
+}, undefined, false, undefined, this);
+`
+    );
+
+    expect(
+      bun.transformSync("export var hi = <div {foo['baz'].bar?.baz} />")
+    ).toBe(
+      `export var hi = jsx("div", {
+  baz: foo["baz"].bar?.baz
 }, undefined, false, undefined, this);
 `
     );

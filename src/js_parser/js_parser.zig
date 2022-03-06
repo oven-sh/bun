@@ -11356,16 +11356,35 @@ fn NewParser_(
                                 //  ->
                                 //  <div foo={foo} />
                                 T.t_identifier => {
-                                    const name = p.lexer.identifier;
-                                    if (strings.eqlComptime(name, "let")) {
-                                        p.lexer.addError(p.source, p.lexer.loc(), "\"let\" is not allowed with JSX prop punning") catch unreachable;
-                                    }
-                                    const key = p.e(E.String{ .utf8 = name }, p.lexer.loc());
-                                    const ref = p.storeNameInRef(name) catch unreachable;
-                                    const value = p.e(E.Identifier{ .ref = ref }, key.loc);
-                                    try p.lexer.next();
+                                    // we need to figure out what the key they mean is
+                                    // to do that, we must determine the key name
+                                    const expr = try p.parseExpr(Level.lowest);
 
-                                    try props.append(G.Property{ .value = value, .key = key, .kind = .normal });
+                                    const key = brk: {
+                                        switch (expr.data) {
+                                            .e_import_identifier => |ident| {
+                                                break :brk p.e(E.String{ .utf8 = p.loadNameFromRef(ident.ref) }, expr.loc);
+                                            },
+                                            .e_identifier => |ident| {
+                                                break :brk p.e(E.String{ .utf8 = p.loadNameFromRef(ident.ref) }, expr.loc);
+                                            },
+                                            .e_dot => |dot| {
+                                                break :brk p.e(E.String{ .utf8 = dot.name }, dot.name_loc);
+                                            },
+                                            .e_index => |index| {
+                                                if (index.index.data == .e_string) {
+                                                    break :brk index.index;
+                                                }
+                                            },
+                                            else => {},
+                                        }
+
+                                        // If we get here, it's invalid
+                                        try p.log.addError(p.source, expr.loc, "Invalid JSX prop shorthand, must be identifier, dot or string");
+                                        return error.SyntaxError;
+                                    };
+
+                                    try props.append(G.Property{ .value = expr, .key = key, .kind = .normal });
                                 },
                                 // This implements
                                 //  <div {"foo"} />

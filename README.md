@@ -261,7 +261,7 @@ bun is a project with incredibly large scope, and it’s early days.
 | [Hash components for Fast Refresh](https://github.com/Jarred-Sumner/bun/issues/18)    | JSX Transpiler  |
 | Source Maps                                                                           | JavaScript      |
 | Source Maps                                                                           | CSS             |
-| JavaScript Minifier                                                                   | JavaScript      |
+| JavaScript Minifier                                                                   | JS Transpiler   |
 | CSS Minifier                                                                          | CSS             |
 | CSS Parser (it only bundles)                                                          | CSS             |
 | Tree-shaking                                                                          | JavaScript      |

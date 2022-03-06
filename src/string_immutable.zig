@@ -33,8 +33,14 @@ pub inline fn indexAnyComptime(target: string, comptime chars: string) ?usize {
     return null;
 }
 
-pub inline fn indexOfChar(self: string, char: u8) ?usize {
-    return std.mem.indexOfScalar(@TypeOf(char), self, char);
+pub fn repeatingAlloc(allocator: std.mem.Allocator, count: usize, char: u8) ![]u8 {
+    var buf = try allocator.alloc(u8, count);
+    repeatingBuf(buf, char);
+    return buf;
+}
+
+pub fn repeatingBuf(self: []u8, char: u8) void {
+    @memset(self.ptr, char, self.len);
 }
 
 pub fn indexOfCharNeg(self: string, char: u8) i32 {
@@ -61,6 +67,43 @@ pub inline fn lastIndexOf(self: string, str: string) ?usize {
 pub inline fn indexOf(self: string, str: string) ?usize {
     return std.mem.indexOf(u8, self, str);
 }
+
+// --
+// This is faster when the string is found, by about 2x for a 4 MB file.
+// It is slower when the string is NOT found
+// fn indexOfPosN(comptime T: type, buf: []const u8, start_index: usize, delimiter: []const u8, comptime n: comptime_int) ?usize {
+//     const k = delimiter.len;
+//     const V8x32 = @Vector(n, T);
+//     const V1x32 = @Vector(n, u1);
+//     const Vbx32 = @Vector(n, bool);
+//     const first = @splat(n, delimiter[0]);
+//     const last = @splat(n, delimiter[k - 1]);
+
+//     var end: usize = start_index + n;
+//     var start: usize = end - n;
+//     while (end < buf.len) {
+//         start = end - n;
+//         const last_end = @minimum(end + k - 1, buf.len);
+//         const last_start = last_end - n;
+
+//         // Look for the first character in the delimter
+//         const first_chunk: V8x32 = buf[start..end][0..n].*;
+//         const last_chunk: V8x32 = buf[last_start..last_end][0..n].*;
+//         const mask = @bitCast(V1x32, first == first_chunk) & @bitCast(V1x32, last == last_chunk);
+
+//         if (@reduce(.Or, mask) != 0) {
+//             // TODO: Use __builtin_clz???
+//             for (@as([n]bool, @bitCast(Vbx32, mask))) |match, i| {
+//                 if (match and eqlLong(buf[start + i .. start + i + k], delimiter, false)) {
+//                     return start + i;
+//                 }
+//             }
+//         }
+//         end = @minimum(end + n, buf.len);
+//     }
+//     if (start < buf.len) return std.mem.indexOfPos(T, buf, start_index, delimiter);
+//     return null; // Not found
+// }
 
 pub fn cat(allocator: std.mem.Allocator, first: string, second: string) !string {
     var out = try allocator.alloc(u8, first.len + second.len);
@@ -182,6 +225,42 @@ pub fn copyLowercase(in: string, out: []u8) string {
     }
 
     return out[0..in.len];
+}
+
+test "indexOf" {
+    const fixtures = .{
+        .{
+            "0123456789",
+            "456",
+        },
+        .{
+            "/foo/bar/baz/bacon/eggs/lettuce/tomatoe",
+            "bacon",
+        },
+        .{
+            "/foo/bar/baz/bacon////eggs/lettuce/tomatoe",
+            "eggs",
+        },
+        .{
+            "////////////////zfoo/bar/baz/bacon/eggs/lettuce/tomatoe",
+            "/",
+        },
+        .{
+            "/okay/well/thats/even/longer/now/well/thats/even/longer/now/well/thats/even/longer/now/foo/bar/baz/bacon/eggs/lettuce/tomatoe",
+            "/tomatoe",
+        },
+        .{
+            "/okay///////////so much length i can't believe it!much length i can't believe it!much length i can't believe it!much length i can't believe it!much length i can't believe it!much length i can't believe it!much length i can't believe it!much length i can't believe it!/well/thats/even/longer/now/well/thats/even/longer/now/well/thats/even/longer/now/foo/bar/baz/bacon/eggs/lettuce/tomatoe",
+            "/tomatoe",
+        },
+    };
+
+    inline for (fixtures) |pair| {
+        try std.testing.expectEqual(
+            indexOf(pair[0], pair[1]).?,
+            std.mem.indexOf(u8, pair[0], pair[1]).?,
+        );
+    }
 }
 
 test "eqlComptimeCheckLen" {
@@ -358,6 +437,38 @@ pub fn eqlAnyComptime(self: string, comptime list: []const string) bool {
     }
 
     return false;
+}
+
+/// Count the occurences of a character in an ASCII byte array
+/// uses SIMD
+pub fn countChar(self: string, char: u8) usize {
+    var total: usize = 0;
+    var remaining = self;
+
+    const splatted: AsciiVector = @splat(ascii_vector_size, char);
+
+    while (remaining.len >= 16) {
+        const vec: AsciiVector = remaining[0..ascii_vector_size].*;
+        const cmp = @popCount(std.meta.Int(.unsigned, ascii_vector_size), @bitCast(@Vector(ascii_vector_size, u1), vec == splatted));
+        total += @as(usize, @reduce(.Add, cmp));
+        remaining = remaining[ascii_vector_size..];
+    }
+
+    while (remaining.len > 0) {
+        total += @as(usize, @boolToInt(remaining[0] == char));
+        remaining = remaining[1..];
+    }
+
+    return total;
+}
+
+test "countChar" {
+    try std.testing.expectEqual(countChar("hello there", ' '), 1);
+    try std.testing.expectEqual(countChar("hello;;;there", ';'), 3);
+    try std.testing.expectEqual(countChar("hello there", 'z'), 0);
+    try std.testing.expectEqual(countChar("hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there ", ' '), 28);
+    try std.testing.expectEqual(countChar("hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there ", 'z'), 0);
+    try std.testing.expectEqual(countChar("hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there hello there", ' '), 27);
 }
 
 pub fn endsWithAnyComptime(self: string, comptime str: string) bool {
@@ -1167,6 +1278,11 @@ pub inline fn wtf8ByteSequenceLength(first_byte: u8) u3 {
     };
 }
 
+pub fn firstCodePoint(text: []const u8) CodePoint {
+    const len = wtf8ByteSequenceLength(text[0]);
+    return decodeWTF8RuneT(text.ptr[0..4], len, CodePoint, 0);
+}
+
 /// 0 == invalid
 pub inline fn wtf8ByteSequenceLengthWithInvalid(first_byte: u8) u3 {
     return switch (first_byte) {
@@ -1219,11 +1335,15 @@ pub inline fn decodeWTF8RuneTMultibyte(p: *const [4]u8, len: u3, comptime T: typ
     unreachable;
 }
 
-const ascii_vector_size = 16;
-const ascii_u16_vector_size = 8;
+const ascii_vector_size = if (Environment.isWasm) 8 else 16;
+const ascii_u16_vector_size = if (Environment.isWasm) 4 else 8;
+const AsciiVectorInt = std.meta.Int(.unsigned, ascii_vector_size);
+const AsciiVectorIntU16 = std.meta.Int(.unsigned, ascii_u16_vector_size);
 const max_16_ascii = @splat(ascii_vector_size, @as(u8, 127));
+const min_16_ascii = @splat(ascii_vector_size, @as(u8, 0x20));
 const max_u16_ascii = @splat(ascii_u16_vector_size, @as(u16, 127));
 const AsciiVector = std.meta.Vector(ascii_vector_size, u8);
+const AsciiVectorU1 = std.meta.Vector(ascii_vector_size, u1);
 const AsciiU16Vector = std.meta.Vector(ascii_u16_vector_size, u16);
 const max_4_ascii = @splat(4, @as(u8, 127));
 pub fn isAllASCII(slice: []const u8) bool {
@@ -1294,26 +1414,12 @@ pub fn firstNonASCII(slice: []const u8) ?u32 {
     var remaining = slice;
 
     if (comptime Environment.isAarch64 or Environment.isX64) {
-        while (remaining.len >= 128) {
-            comptime var count: usize = 0;
-            inline while (count < 8) : (count += 1) {
-                const vec: AsciiVector = remaining[(comptime count * ascii_vector_size)..][0..ascii_vector_size].*;
-                const cmp = vec > max_16_ascii;
-                const bitmask = @ptrCast(*const u16, &cmp).*;
-                const first = @ctz(u16, bitmask);
-                if (first < 16) {
-                    return @intCast(u32, (comptime count * ascii_vector_size) + @as(u32, first) + @intCast(u32, slice.len - remaining.len));
-                }
-            }
-            remaining = remaining[comptime ascii_vector_size * count..];
-        }
-
         while (remaining.len >= ascii_vector_size) {
             const vec: AsciiVector = remaining[0..ascii_vector_size].*;
             const cmp = vec > max_16_ascii;
-            const bitmask = @ptrCast(*const u16, &cmp).*;
-            const first = @ctz(u16, bitmask);
-            if (first < 16) {
+            const bitmask = @ptrCast(*const AsciiVectorInt, &cmp).*;
+            const first = @ctz(AsciiVectorInt, bitmask);
+            if (first < ascii_vector_size) {
                 return @as(u32, first) + @intCast(u32, slice.len - remaining.len);
             }
 
@@ -1328,6 +1434,174 @@ pub fn firstNonASCII(slice: []const u8) ?u32 {
     }
 
     return null;
+}
+
+pub fn indexOfNeedsEscape(slice: []const u8) ?u32 {
+    var remaining = slice;
+    if (remaining.len == 0)
+        return null;
+
+    if (remaining[0] > 127 or remaining[0] < 0x20 or remaining[0] == '\\' or remaining[0] == '"') {
+        return 0;
+    }
+
+    if (comptime Environment.isAarch64 or Environment.isX64) {
+        while (remaining.len >= ascii_vector_size) {
+            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
+            const cmp = @bitCast(AsciiVectorU1, (vec > max_16_ascii)) | @bitCast(AsciiVectorU1, (vec < min_16_ascii)) |
+                @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '\\'))) |
+                @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '"')));
+            const bitmask = @ptrCast(*const AsciiVectorInt, &cmp).*;
+            const first = @ctz(AsciiVectorInt, bitmask);
+            if (first < ascii_vector_size) {
+                return @as(u32, first) + @intCast(u32, slice.len - remaining.len);
+            }
+
+            remaining = remaining[ascii_vector_size..];
+        }
+    }
+
+    for (remaining) |char, i| {
+        if (char > 127 or char < 0x20 or char == '\\' or char == '"') {
+            return @truncate(u32, i + (slice.len - remaining.len));
+        }
+    }
+
+    return null;
+}
+
+test "indexOfNeedsEscape" {
+    const out = indexOfNeedsEscape(
+        \\la la la la la la la la la la la la la la la la "oh!" okay "well"
+        ,
+    );
+    try std.testing.expectEqual(out.?, 48);
+}
+
+pub fn indexOfChar(slice: []const u8, char: u8) ?u32 {
+    var remaining = slice;
+    if (remaining.len == 0)
+        return null;
+
+    if (remaining[0] == char)
+        return 0;
+
+    if (comptime Environment.isAarch64 or Environment.isX64) {
+        while (remaining.len >= ascii_vector_size) {
+            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
+            const cmp = vec == @splat(ascii_vector_size, char);
+            const bitmask = @ptrCast(*const AsciiVectorInt, &cmp).*;
+            const first = @ctz(AsciiVectorInt, bitmask);
+            if (first < 16) {
+                return @intCast(u32, @as(u32, first) + @intCast(u32, slice.len - remaining.len));
+            }
+            remaining = remaining[ascii_vector_size..];
+        }
+    }
+
+    for (remaining) |c, i| {
+        if (c == char) {
+            return @truncate(u32, i + (slice.len - remaining.len));
+        }
+    }
+
+    return null;
+}
+
+test "indexOfChar" {
+    const pairs = .{
+        .{
+            "fooooooboooooofoooooofoooooofoooooofoooooozball",
+            'b',
+        },
+        .{
+            "foooooofoooooofoooooofoooooofoooooofoooooozball",
+            'z',
+        },
+        .{
+            "foooooofoooooofoooooofoooooofoooooofoooooozball",
+            'a',
+        },
+        .{
+            "foooooofoooooofoooooofoooooofoooooofoooooozball",
+            'l',
+        },
+        .{
+            "baconaopsdkaposdkpaosdkpaosdkaposdkpoasdkpoaskdpoaskdpoaskdpo;",
+            ';',
+        },
+        .{
+            ";baconaopsdkaposdkpaosdkpaosdkaposdkpoasdkpoaskdpoaskdpoaskdpo;",
+            ';',
+        },
+    };
+    inline for (pairs) |pair| {
+        try std.testing.expectEqual(
+            indexOfChar(pair.@"0", pair.@"1").?,
+            @truncate(u32, std.mem.indexOfScalar(u8, pair.@"0", pair.@"1").?),
+        );
+    }
+}
+
+pub fn indexOfNotChar(slice: []const u8, char: u8) ?u32 {
+    var remaining = slice;
+    if (remaining.len == 0)
+        return null;
+
+    if (remaining[0] != char)
+        return 0;
+
+    if (comptime Environment.isAarch64 or Environment.isX64) {
+        while (remaining.len >= ascii_vector_size) {
+            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
+            const cmp = vec != @splat(ascii_vector_size, char);
+            const bitmask = @ptrCast(*const AsciiVectorInt, &cmp).*;
+            const first = @ctz(AsciiVectorInt, bitmask);
+            if (first < ascii_vector_size) {
+                return @as(u32, first) + @intCast(u32, slice.len - remaining.len);
+            }
+
+            remaining = remaining[ascii_vector_size..];
+        }
+    }
+
+    while (remaining.len > 0) {
+        if (remaining[0] != char) {
+            return @truncate(u32, (slice.len - remaining.len));
+        }
+        remaining = remaining[1..];
+    }
+
+    return null;
+}
+
+pub fn trimLeadingChar(slice: []const u8, char: u8) []const u8 {
+    if (indexOfNotChar(slice, char)) |i| {
+        return slice[i..];
+    }
+
+    return "";
+}
+
+pub fn containsAnyBesidesChar(bytes: []const u8, char: u8) bool {
+    var remain = bytes;
+    while (remain.len >= ascii_vector_size) {
+        const vec: AsciiVector = remain[0..ascii_vector_size].*;
+        const comparator = @splat(ascii_vector_size, char);
+        remain = remain[ascii_vector_size..];
+        if ((@reduce(.Or, vec != comparator))) {
+            return true;
+        }
+    }
+
+    while (remain.len > 0) {
+        if (remain[0] != char) {
+            return true;
+        }
+        remain = remain[1..];
+    }
+
+    return bytes.len > 0;
 }
 
 pub fn firstNonASCII16(comptime Slice: type, slice: Slice) ?u32 {
@@ -1370,6 +1644,24 @@ pub fn firstNonASCII16(comptime Slice: type, slice: Slice) ?u32 {
     }
 
     return null;
+}
+
+test "indexOfNotChar" {
+    {
+        const yes = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        try std.testing.expectEqual(indexOfNotChar(yes, 'a').?, 36);
+    }
+    {
+        const yes = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        try std.testing.expectEqual(indexOfNotChar(yes, 'a').?, 108);
+    }
+}
+
+test "trimLeadingChar" {
+    {
+        const yes = "                                                                        fooo bar";
+        try std.testing.expectEqualStrings(trimLeadingChar(yes, ' '), "fooo bar");
+    }
 }
 
 test "isAllASCII" {

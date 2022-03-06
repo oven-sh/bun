@@ -211,6 +211,10 @@ pub const BindingNodeIndex = Binding;
 pub const StmtNodeIndex = Stmt;
 pub const ExprNodeIndex = Expr;
 
+/// This is like ArrayList except it stores the length and capacity as u32
+/// In practice, it is very unusual to have lengths above 4 GB
+///
+/// This lets us have array lists which occupy the same amount of space as a slice
 pub fn BabyList(comptime Type: type) type {
     return struct {
         const ListType = @This();

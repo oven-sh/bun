@@ -2277,6 +2277,8 @@ pub const Bundler = struct {
         watcher: *WatcherType,
         client_entry_point: ?*EntryPoints.ClientEntryPoint,
         origin: URL,
+        comptime is_source_map: bool,
+        source_map_handler: ?js_printer.SourceMapHandler,
     ) !BuildResolveResultPair {
         if (resolve_result.is_external) {
             return BuildResolveResultPair{
@@ -2394,17 +2396,21 @@ pub const Bundler = struct {
                 if (bundler.options.platform.isBun()) {
                     return BuildResolveResultPair{
                         .written = switch (result.ast.exports_kind) {
-                            .esm => try bundler.print(
+                            .esm => try bundler.printWithSourceMapMaybe(
                                 result,
                                 Writer,
                                 writer,
                                 .esm_ascii,
+                                is_source_map,
+                                source_map_handler,
                             ),
-                            .cjs => try bundler.print(
+                            .cjs => try bundler.printWithSourceMapMaybe(
                                 result,
                                 Writer,
                                 writer,
                                 .cjs_ascii,
+                                is_source_map,
+                                source_map_handler,
                             ),
                             else => unreachable,
                         },
@@ -2414,17 +2420,21 @@ pub const Bundler = struct {
 
                 return BuildResolveResultPair{
                     .written = switch (result.ast.exports_kind) {
-                        .none, .esm => try bundler.print(
+                        .none, .esm => try bundler.printWithSourceMapMaybe(
                             result,
                             Writer,
                             writer,
                             .esm,
+                            is_source_map,
+                            source_map_handler,
                         ),
-                        .cjs => try bundler.print(
+                        .cjs => try bundler.printWithSourceMapMaybe(
                             result,
                             Writer,
                             writer,
                             .cjs,
+                            is_source_map,
+                            source_map_handler,
                         ),
                         else => unreachable,
                     },
@@ -2598,12 +2608,14 @@ pub const Bundler = struct {
         return output_file;
     }
 
-    pub fn print(
+    pub fn printWithSourceMapMaybe(
         bundler: *ThisBundler,
         result: ParseResult,
         comptime Writer: type,
         writer: Writer,
         comptime format: js_printer.Format,
+        comptime enable_source_map: bool,
+        source_map_context: ?js_printer.SourceMapHandler,
     ) !usize {
         const ast = result.ast;
         var symbols: [][]js_ast.Symbol = &([_][]js_ast.Symbol{ast.symbols});
@@ -2622,9 +2634,11 @@ pub const Bundler = struct {
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
                     .css_import_behavior = bundler.options.cssImportBehavior(),
+                    .source_map_handler = source_map_context,
                 },
                 Linker,
                 &bundler.linker,
+                enable_source_map,
             ),
 
             .esm => try js_printer.printAst(
@@ -2639,11 +2653,12 @@ pub const Bundler = struct {
                     .externals = ast.externals,
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
-
+                    .source_map_handler = source_map_context,
                     .css_import_behavior = bundler.options.cssImportBehavior(),
                 },
                 Linker,
                 &bundler.linker,
+                enable_source_map,
             ),
             .esm_ascii => try js_printer.printAst(
                 Writer,
@@ -2657,11 +2672,12 @@ pub const Bundler = struct {
                     .externals = ast.externals,
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
-
                     .css_import_behavior = bundler.options.cssImportBehavior(),
+                    .source_map_handler = source_map_context,
                 },
                 Linker,
                 &bundler.linker,
+                enable_source_map,
             ),
             .cjs_ascii => try js_printer.printCommonJS(
                 Writer,
@@ -2676,11 +2692,48 @@ pub const Bundler = struct {
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
                     .css_import_behavior = bundler.options.cssImportBehavior(),
+                    .source_map_handler = source_map_context,
                 },
                 Linker,
                 &bundler.linker,
+                enable_source_map,
             ),
         };
+    }
+
+    pub fn print(
+        bundler: *ThisBundler,
+        result: ParseResult,
+        comptime Writer: type,
+        writer: Writer,
+        comptime format: js_printer.Format,
+    ) !usize {
+        return bundler.printWithSourceMapMaybe(
+            result,
+            Writer,
+            writer,
+            format,
+            false,
+            null,
+        );
+    }
+
+    pub fn printWithSourceMap(
+        bundler: *ThisBundler,
+        result: ParseResult,
+        comptime Writer: type,
+        writer: Writer,
+        comptime format: js_printer.Format,
+        handler: js_printer.SourceMapHandler,
+    ) !usize {
+        return bundler.printWithSourceMapMaybe(
+            result,
+            Writer,
+            writer,
+            format,
+            true,
+            handler,
+        );
     }
 
     pub const ParseOptions = struct {
@@ -3447,6 +3500,7 @@ pub const Transformer = struct {
                     },
                     ?*anyopaque,
                     null,
+                    false,
                 );
             },
             else => {

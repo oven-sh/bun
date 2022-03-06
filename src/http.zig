@@ -40,6 +40,7 @@ const ArenaType = Arena;
 const JSON = @import("./json_parser.zig");
 const DateTime = @import("datetime");
 const ThreadPool = @import("thread_pool");
+const SourceMap = @import("./sourcemap/sourcemap.zig");
 pub fn constStrToU8(s: string) []u8 {
     return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
 }
@@ -62,7 +63,7 @@ pub const Headers = picohttp.Headers;
 pub const MimeType = @import("./http/mime_type.zig");
 const Bundler = bundler.Bundler;
 const Websocket = @import("./http/websocket.zig");
-const js_printer = @import("./js_printer.zig");
+const JSPrinter = @import("./js_printer.zig");
 const watcher = @import("./watcher.zig");
 threadlocal var req_headers_buf: [100]picohttp.Header = undefined;
 threadlocal var res_headers_buf: [100]picohttp.Header = undefined;
@@ -237,6 +238,18 @@ pub const RequestContext = struct {
         return this.full_url;
     }
 
+    pub fn getFullURLForSourceMap(this: *RequestContext) [:0]const u8 {
+        if (this.full_url.len == 0) {
+            if (this.origin.isAbsolute()) {
+                this.full_url = std.fmt.allocPrintZ(this.allocator, "{s}{s}.map", .{ this.origin.origin, this.request.path }) catch unreachable;
+            } else {
+                this.full_url = std.fmt.allocPrintZ(this.allocator, "{s}.map", .{this.request.path}) catch unreachable;
+            }
+        }
+
+        return this.full_url;
+    }
+
     pub fn handleRedirect(this: *RequestContext, url: string) !void {
         this.appendHeader("Location", url);
         defer this.done();
@@ -316,8 +329,8 @@ pub const RequestContext = struct {
                 @as(?*bundler.FallbackEntryPoint, &fallback_entry_point),
             )) |*result| {
                 try bundler_.linker.link(fallback_entry_point.source.path, result, this.origin, .absolute_url, false);
-                var buffer_writer = try js_printer.BufferWriter.init(default_allocator);
-                var writer = js_printer.BufferPrinter.init(buffer_writer);
+                var buffer_writer = try JSPrinter.BufferWriter.init(default_allocator);
+                var writer = JSPrinter.BufferPrinter.init(buffer_writer);
                 _ = try bundler_.print(
                     result.*,
                     @TypeOf(&writer),
@@ -891,7 +904,7 @@ pub const RequestContext = struct {
         watcher: *Watcher,
         bundler: *Bundler,
         allocator: std.mem.Allocator,
-        printer: js_printer.BufferPrinter,
+        printer: JSPrinter.BufferPrinter,
         timer: std.time.Timer,
         count: usize = 0,
         origin: ZigURL,
@@ -912,14 +925,8 @@ pub const RequestContext = struct {
             };
         };
         pub fn build(this: *WatchBuilder, id: u32, from_timestamp: u32, allocator: std.mem.Allocator) !WatchBuildResult {
-            if (this.count == 0) {
-                var writer = try js_printer.BufferWriter.init(this.allocator);
-                this.printer = js_printer.BufferPrinter.init(writer);
-                this.printer.ctx.append_null_byte = false;
-            }
-
             defer this.count += 1;
-
+            this.printer.ctx.reset();
             var log = logger.Log.init(allocator);
 
             var watchlist_slice = this.watcher.watchlist.slice();
@@ -1621,17 +1628,17 @@ pub const RequestContext = struct {
             clone.conn = ctx.conn.*;
             try ctx.bundler.clone(server.allocator, &clone.bundler);
             ctx.bundler = &clone.bundler;
+
             clone.task = .{ .callback = onTask };
             clone.message_buffer = try MutableString.init(server.allocator, 0);
             clone.ctx.conn = &clone.conn;
             clone.ctx.log = logger.Log.init(server.allocator);
             clone.ctx.origin = ZigURL.parse(server.allocator.dupe(u8, ctx.origin.href) catch unreachable);
-            var printer_writer = try js_printer.BufferWriter.init(server.allocator);
 
             clone.builder = WatchBuilder{
                 .allocator = server.allocator,
                 .bundler = ctx.bundler,
-                .printer = js_printer.BufferPrinter.init(printer_writer),
+                .printer = undefined,
                 .timer = ctx.timer,
                 .watcher = ctx.watcher,
                 .origin = clone.ctx.origin,
@@ -1710,36 +1717,45 @@ pub const RequestContext = struct {
             Output.Source.configureThread();
             js_ast.Stmt.Data.Store.create(default_allocator);
             js_ast.Expr.Data.Store.create(default_allocator);
+            websocket_handler_caches = CacheSet.init(default_allocator);
+            websocket_printer = JSPrinter.BufferWriter.init(default_allocator) catch unreachable;
+
             return null;
         }
 
         pub fn onTask(self: *ThreadPool.Task) void {
             handle(@fieldParentPtr(WebsocketHandler, "task", self));
         }
+        const CacheSet = @import("./cache.zig").Set;
+        threadlocal var websocket_handler_caches: CacheSet = undefined;
+        threadlocal var websocket_printer: JSPrinter.BufferWriter = undefined;
         pub fn handle(self: *WebsocketHandler) void {
             defer {
                 js_ast.Stmt.Data.Store.reset();
                 js_ast.Expr.Data.Store.reset();
             }
 
-            self.builder.printer = js_printer.BufferPrinter.init(
-                js_printer.BufferWriter.init(self.ctx.allocator) catch unreachable,
+            self.builder.printer = JSPrinter.BufferPrinter.init(
+                websocket_printer,
             );
+            self.builder.bundler.resolver.caches = websocket_handler_caches;
             _handle(self) catch {};
         }
 
         fn _handle(handler: *WebsocketHandler) !void {
             var ctx = &handler.ctx;
-            defer handler.tombstone = true;
-            defer removeWebsocket(handler);
-            defer ctx.arena.deinit();
             var is_socket_closed = false;
             defer {
+                websocket_handler_caches = handler.builder.bundler.resolver.caches;
+                websocket_printer = handler.builder.printer.ctx;
+                handler.tombstone = true;
+                removeWebsocket(handler);
+                ctx.arena.deinit();
                 if (!is_socket_closed) {
                     ctx.conn.deinit();
                 }
+                Output.flush();
             }
-            defer Output.flush();
 
             handler.checkUpgradeHeaders() catch |err| {
                 switch (err) {
@@ -1815,6 +1831,7 @@ pub const RequestContext = struct {
                     Output.prettyErrorln("<r><red>ERR:<r> <b>Websocket failed to write.<r>", .{});
                 }
             }
+
             while (!handler.tombstone) {
                 Output.flush();
 
@@ -1903,19 +1920,36 @@ pub const RequestContext = struct {
                                     .len = 0,
                                 };
 
+                                // theres an issue where on the 4th or 5th build
+                                // sometimes the final byte has incorrect data
+                                // we never end up using all those bytes
+                                if (handler.message_buffer.list.items.len > 0) {
+                                    @memset(
+                                        handler.message_buffer.list.items.ptr,
+                                        0,
+                                        @minimum(handler.message_buffer.list.items.len, 128),
+                                    );
+                                }
+
                                 const build_result = handler.builder.build(request_id, cmd.timestamp, arena.allocator()) catch |err| {
                                     if (err == error.MissingWatchID) {
                                         msg.timestamp = cmd.timestamp;
                                         msg.kind = Api.WebsocketMessageKind.resolve_file;
+
                                         handler.message_buffer.reset();
                                         var buffer_writer = MutableStringAPIWriter.init(&handler.message_buffer);
                                         try msg.encode(&buffer_writer);
-                                        _ = try handler.conn.client.write(handler.message_buffer.list.items, SOCKET_FLAGS);
                                         const resolve_id = Api.WebsocketMessageResolveId{ .id = request_id };
                                         try resolve_id.encode(&buffer_writer);
                                         head.len = Websocket.WebsocketHeader.packLength(handler.message_buffer.list.items.len);
-                                        try handler.websocket.writeHeader(head, handler.message_buffer.list.items.len);
-                                        _ = try handler.conn.client.write(handler.message_buffer.list.items, SOCKET_FLAGS);
+                                        var writer = buffer_writer.writable.writer();
+                                        const body_len = handler.message_buffer.list.items.len;
+                                        try head.writeHeader(&writer, body_len);
+                                        const buffers = handler.message_buffer.toSocketBuffers(2, .{
+                                            .{ body_len, handler.message_buffer.list.items.len },
+                                            .{ 0, body_len },
+                                        });
+                                        _ = try handler.conn.client.writeMessage(std.x.os.Socket.Message.fromBuffers(&buffers), SOCKET_FLAGS);
                                         continue;
                                     }
 
@@ -1959,25 +1993,43 @@ pub const RequestContext = struct {
                                     handler.message_buffer.reset();
                                     var buffer_writer = MutableStringAPIWriter.init(&handler.message_buffer);
                                     try msg.encode(&buffer_writer);
+                                    var socket_buffers = std.mem.zeroes([4]std.x.os.Buffer);
+
+                                    var socket_buffer_count: usize = 2;
 
                                     switch (build_result.value) {
                                         .success => |success| {
                                             try success.encode(&buffer_writer);
-                                            const total = handler.message_buffer.list.items.len + build_result.bytes.len;
+                                            const total = handler.message_buffer.list.items.len + build_result.bytes.len + (if (build_result.bytes.len > 0) @as(usize, @sizeOf(u32)) else @as(usize, 0));
+                                            const first_message_len = handler.message_buffer.list.items.len;
                                             head.len = Websocket.WebsocketHeader.packLength(total);
-                                            try handler.websocket.writeHeader(head, total);
-                                            _ = try handler.conn.client.write(handler.message_buffer.list.items, SOCKET_FLAGS);
+                                            try head.writeHeader(&handler.message_buffer.writer(), total);
+                                            socket_buffers[0] = std.x.os.Buffer.from(handler.message_buffer.list.items[first_message_len..]);
+                                            socket_buffers[1] = std.x.os.Buffer.from(handler.message_buffer.list.items[0..first_message_len]);
+
                                             if (build_result.bytes.len > 0) {
-                                                _ = try handler.conn.client.write(build_result.bytes, SOCKET_FLAGS);
+                                                socket_buffers[2] = std.x.os.Buffer.from(build_result.bytes);
+                                                // we reuse the accept key buffer
+                                                // so we have a pointer that is not stack memory
+                                                handler.accept_key[0..@sizeOf(usize)].* = @bitCast([@sizeOf(usize)]u8, std.hash.Wyhash.hash(0, build_result.bytes));
+                                                socket_buffers[3] = std.x.os.Buffer.from(handler.accept_key[0..4]);
+                                                socket_buffer_count = 4;
                                             }
                                         },
                                         .fail => |fail| {
                                             try fail.encode(&buffer_writer);
                                             head.len = Websocket.WebsocketHeader.packLength(handler.message_buffer.list.items.len);
-                                            try handler.websocket.writeHeader(head, handler.message_buffer.list.items.len);
-                                            _ = try handler.conn.client.write(handler.message_buffer.list.items, SOCKET_FLAGS);
+                                            const first_message_len = handler.message_buffer.list.items.len;
+                                            try head.writeHeader(&handler.message_buffer.writer(), handler.message_buffer.list.items.len);
+                                            socket_buffers[0] = std.x.os.Buffer.from(handler.message_buffer.list.items[first_message_len..]);
+                                            socket_buffers[1] = std.x.os.Buffer.from(handler.message_buffer.list.items[0..first_message_len]);
                                         },
                                     }
+
+                                    _ = try handler.conn.client.writeMessage(
+                                        std.x.os.Socket.Message.fromBuffers(socket_buffers[0..socket_buffer_count]),
+                                        SOCKET_FLAGS,
+                                    );
                                 }
                             },
                             else => {
@@ -2106,7 +2158,11 @@ pub const RequestContext = struct {
         ctx.to_plain_text = accept.category == .text and strings.eqlComptime(accept.value, "text/plain");
 
         if (!ctx.to_plain_text) {
-            ctx.appendHeader("Content-Type", ctx.mime_type.value);
+            if (!ctx.url.is_source_map) {
+                ctx.appendHeader("Content-Type", ctx.mime_type.value);
+            } else {
+                ctx.appendHeader("Content-Type", MimeType.json.value);
+            }
         } else {
             ctx.appendHeader("Content-Type", "text/plain");
         }
@@ -2183,9 +2239,35 @@ pub const RequestContext = struct {
                         return if (buffer.list.items.len > 1) buffer.list.items[buffer.list.items.len - 2] else 0;
                     }
 
+                    pub fn getWritten(_: *const SocketPrinterInternal) []u8 {
+                        return buffer.list.items;
+                    }
+
+                    const SourceMapHandler = JSPrinter.SourceMapHandler.For(SocketPrinterInternal, onSourceMapChunk);
+                    pub fn onSourceMapChunk(this: *SocketPrinterInternal, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
+                        if (this.rctx.has_called_done) return;
+                        buffer.reset();
+                        buffer = try chunk.printSourceMapContents(source, buffer, false);
+                        defer buffer.reset();
+                        const buf = buffer.toOwnedSliceLeaky();
+                        if (buf.len == 0) {
+                            try this.rctx.sendNoContent();
+                            return;
+                        }
+
+                        defer this.rctx.done();
+                        try this.rctx.writeStatus(200);
+                        try this.rctx.prepareToSendBody(buf.len, false);
+                        try this.rctx.writeBodyBuf(buf);
+                    }
+                    pub fn sourceMapHandler(this: *SocketPrinterInternal) JSPrinter.SourceMapHandler {
+                        return SourceMapHandler.init(this);
+                    }
+
                     pub fn done(
                         chunky: *SocketPrinterInternal,
                     ) anyerror!void {
+                        if (chunky.rctx.has_called_done) return;
                         const buf = buffer.toOwnedSliceLeaky();
                         defer buffer.reset();
 
@@ -2216,6 +2298,16 @@ pub const RequestContext = struct {
                             return;
                         }
 
+                        var source_map_url: string = "";
+                        const send_sourcemap_info = chunky._loader.isJavaScriptLike();
+
+                        if (send_sourcemap_info) {
+                            // This will be cleared by the arena
+                            source_map_url = std.mem.span(chunky.rctx.getFullURLForSourceMap());
+
+                            chunky.rctx.appendHeader("SourceMap", source_map_url);
+                        }
+
                         // Failed experiment: inject "Link" tags for each import path
                         // Browsers ignore this header when it's coming from a script import.
                         // In Chrome, the header appears in the Network tab but doesn't seem to do anything
@@ -2241,8 +2333,20 @@ pub const RequestContext = struct {
 
                         defer chunky.rctx.done();
                         try chunky.rctx.writeStatus(200);
-                        try chunky.rctx.prepareToSendBody(buf.len, false);
+                        const source_map_url_len: usize = if (send_sourcemap_info)
+                            "\n//# sourceMappingURL=".len + source_map_url.len + "\n".len
+                        else
+                            0;
+                        try chunky.rctx.prepareToSendBody(buf.len + source_map_url_len, false);
+
                         try chunky.rctx.writeBodyBuf(buf);
+
+                        if (send_sourcemap_info) {
+                            // TODO: use an io vec
+                            try chunky.rctx.writeBodyBuf("\n//# sourceMappingURL=");
+                            try chunky.rctx.writeBodyBuf(source_map_url);
+                            try chunky.rctx.writeBodyBuf("\n");
+                        }
                     }
 
                     pub fn flush(
@@ -2250,7 +2354,7 @@ pub const RequestContext = struct {
                     ) anyerror!void {}
                 };
 
-                const SocketPrinter = js_printer.NewWriter(
+                const SocketPrinter = JSPrinter.NewWriter(
                     SocketPrinterInternal,
                     SocketPrinterInternal.writeByte,
                     SocketPrinterInternal.writeAll,
@@ -2261,7 +2365,7 @@ pub const RequestContext = struct {
                 );
                 const loader = ctx.bundler.options.loaders.get(result.file.input.name.ext) orelse .file;
 
-                var chunked_encoder = SocketPrinter.init(
+                var socket_printer = SocketPrinter.init(
                     SocketPrinterInternal.init(ctx, loader),
                 );
 
@@ -2280,20 +2384,40 @@ pub const RequestContext = struct {
                     }
                 }
 
-                var written = ctx.bundler.buildWithResolveResult(
-                    resolve_result,
-                    ctx.allocator,
-                    loader,
-                    SocketPrinter,
-                    chunked_encoder,
-                    .absolute_url,
-                    input_fd,
-                    hash,
-                    Watcher,
-                    ctx.watcher,
-                    client_entry_point_,
-                    ctx.origin,
-                ) catch |err| {
+                const written = (if (!ctx.url.is_source_map)
+                    ctx.bundler.buildWithResolveResult(
+                        resolve_result,
+                        ctx.allocator,
+                        loader,
+                        SocketPrinter,
+                        socket_printer,
+                        .absolute_url,
+                        input_fd,
+                        hash,
+                        Watcher,
+                        ctx.watcher,
+                        client_entry_point_,
+                        ctx.origin,
+                        false,
+                        null,
+                    )
+                else
+                    ctx.bundler.buildWithResolveResult(
+                        resolve_result,
+                        ctx.allocator,
+                        loader,
+                        SocketPrinter,
+                        socket_printer,
+                        .absolute_url,
+                        input_fd,
+                        hash,
+                        Watcher,
+                        ctx.watcher,
+                        client_entry_point_,
+                        ctx.origin,
+                        true,
+                        socket_printer.ctx.sourceMapHandler(),
+                    )) catch |err| {
                     ctx.sendInternalError(err) catch {};
                     return;
                 };
@@ -2708,12 +2832,12 @@ pub const RequestContext = struct {
         var expr = try JSON.toAST(ctx.allocator, Info, info);
         defer ctx.bundler.resetStore();
 
-        var buffer_writer = try js_printer.BufferWriter.init(default_allocator);
+        var buffer_writer = try JSPrinter.BufferWriter.init(default_allocator);
 
-        var writer = js_printer.BufferPrinter.init(buffer_writer);
+        var writer = JSPrinter.BufferPrinter.init(buffer_writer);
         defer writer.ctx.buffer.deinit();
         var source = logger.Source.initEmptyFile("info.json");
-        _ = try js_printer.printJSON(*js_printer.BufferPrinter, &writer, expr, &source);
+        _ = try JSPrinter.printJSON(*JSPrinter.BufferPrinter, &writer, expr, &source);
         const buffer = writer.ctx.written;
 
         ctx.appendHeader("Content-Type", MimeType.json.value);
@@ -3032,7 +3156,9 @@ pub const Server = struct {
     javascript_enabled: bool = false,
     fallback_only: bool = false,
     websocket_threadpool: ThreadPool = ThreadPool.init(.{
-        .stack_size = 128 * 1024, // `pthread_attr_setstacksize` does not like 128 KB stack size
+        // on macOS, the max stack size is 65520 bytes,
+        // so we ask for 65519
+        .stack_size = 65519,
         .max_threads = std.math.maxInt(u32),
     }),
 
@@ -3341,11 +3467,19 @@ pub const Server = struct {
 
     fn run(server: *Server, comptime features: ConnectionFeatures) !void {
         _ = Fs.FileSystem.RealFS.adjustUlimit() catch {};
+
         RequestContext.WebsocketHandler.open_websockets = @TypeOf(
             RequestContext.WebsocketHandler.open_websockets,
         ).init(server.allocator);
         const listener = try tcp.Listener.init(.ip, .{ .close_on_exec = true });
         defer listener.deinit();
+        server.websocket_threadpool.stack_size = @truncate(
+            u32,
+            @minimum(
+                @maximum(128_000, Fs.FileSystem.RealFS.Limit.stack),
+                4_000_000,
+            ),
+        );
 
         listener.setReuseAddress(true) catch {};
         listener.setReusePort(false) catch {};

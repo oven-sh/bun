@@ -178,6 +178,7 @@ const extensions = ComptimeStringMap(MimeType, .{
     .{ "mid", MimeType.initComptime("audio/mid", .audio) },
     .{ "mid", MimeType.initComptime("audio/mid", .audio) },
     .{ "json", MimeType.json },
+    .{ "map", MimeType.json }, // source map
     .{ "jpeg", MimeType.initComptime("image/jpeg", .image) },
     .{ "aiff", MimeType.initComptime("image/png", .image) },
     .{ "tiff", MimeType.initComptime("image/tiff", .image) },

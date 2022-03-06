@@ -616,6 +616,11 @@ pub const FileSystem = struct {
             rfs.entries.remove(file_path);
         }
 
+        pub const Limit = struct {
+            pub var handles: usize = 0;
+            pub var stack: usize = 0;
+        };
+
         // Always try to max out how many files we can keep open
         pub fn adjustUlimit() !usize {
             const LIMITS = [_]std.os.rlimit_resource{ std.os.rlimit_resource.STACK, std.os.rlimit_resource.NOFILE };
@@ -627,7 +632,13 @@ pub const FileSystem = struct {
                     new_limit.cur = limit.max;
                     new_limit.max = limit.max;
 
-                    try std.os.setrlimit(limit_type, new_limit);
+                    if (std.os.setrlimit(limit_type, new_limit)) {
+                        if (i == 1) {
+                            Limit.handles = limit.max;
+                        } else {
+                            Limit.stack = limit.max;
+                        }
+                    } else |_| {}
                 }
 
                 if (i == LIMITS.len - 1) return limit.max;

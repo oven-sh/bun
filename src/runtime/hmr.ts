@@ -361,9 +361,16 @@ if (typeof window !== "undefined") {
     ) {
       const start = performance.now();
       var update = this.findCSSLinkTag(build.id);
+      // The last 4 bytes of the build message are the hash of the module
+      // Currently, this hash is only used for ensuring we reload the source-map
+      var end = buffer.index + build.blob_length;
+      if (end > buffer.data.length && end > 4) {
+        end = buffer.data.length - 4;
+      }
+
       let bytes =
         buffer.data.length > buffer.index
-          ? buffer.data.subarray(buffer.index)
+          ? buffer.data.subarray(buffer.index, end)
           : new Uint8Array(0);
       if (update === null) {
         __hmrlog.debug("Skipping unused CSS.");
@@ -853,16 +860,36 @@ if (typeof window !== "undefined") {
         __hmrlog.debug("Preparing to reload", filepath);
       }
 
+      // The last 4 bytes of the build message are the hash of the module
+      // Currently, this hash is only used for ensuring we reload the source-map
+      var end = buffer.index + build.blob_length;
+      var hash = 0;
+      if (end > buffer.data.length && end > 4) {
+        end = buffer.data.length - 4;
+      }
+
+      if (end > 4 && buffer.data.length >= end + 4) {
+        new Uint8Array(this.hashBuffer.buffer).set(
+          buffer.data.subarray(end, end + 4)
+        );
+        hash = this.hashBuffer[0];
+      }
+
+      // These are the bytes!!
+      const fileBytes =
+        buffer.data.length > buffer.index
+          ? buffer.data.subarray(buffer.index, end)
+          : new Uint8Array(0);
+
       var reload = new HotReload(
         build.id,
         index,
         build,
-        // These are the bytes!!
-        buffer.data.length > buffer.index
-          ? buffer.data.subarray(buffer.index)
-          : new Uint8Array(0),
-        ReloadBehavior.hotReload
+        fileBytes,
+        ReloadBehavior.hotReload,
+        hash || 0
       );
+
       reload.timings.notify = timestamp - build.from_timestamp;
 
       BunError.clear();
@@ -1068,6 +1095,7 @@ if (typeof window !== "undefined") {
     buildCommandBuf = new Uint8Array(9);
     buildCommandUArray = new Uint32Array(1);
     buildCommandUArrayEight = new Uint8Array(this.buildCommandUArray.buffer);
+    hashBuffer = new Uint32Array(1);
 
     // lazily allocate because it's going to be much larger than 9 bytes
     buildCommandBufWithFilePath: Uint8Array;
@@ -1254,6 +1282,7 @@ if (typeof window !== "undefined") {
     module_id: number = 0;
     module_index: number = 0;
     build: API.WebsocketMessageBuildSuccess;
+    hash: number = 0 | 0;
 
     timings = {
       notify: 0,
@@ -1272,13 +1301,15 @@ if (typeof window !== "undefined") {
       module_index: HotReload["module_index"],
       build: HotReload["build"],
       bytes: Uint8Array,
-      reloader: ReloadBehavior
+      reloader: ReloadBehavior,
+      hash: number
     ) {
       this.module_id = module_id;
       this.module_index = module_index;
       this.build = build;
       this.bytes = bytes;
       this.reloader = reloader;
+      this.hash = hash;
     }
 
     async run() {
@@ -1306,8 +1337,28 @@ if (typeof window !== "undefined") {
       var oldModule = HMRModule.dependencies.modules[this.module_index];
       HMRModule.dependencies = orig_deps.fork(this.module_index);
       var blobURL = null;
+
+      // We inject the source map URL into the end of the file.
+      // We do that here for a few reasons:
+      // 1. It is hard to correctly set the path in here to what the browser expects.
+      // 2.
+      const modulePathWithoutLeadingSlash =
+        this.build.module_path.length > 0 && this.build.module_path[0] === "/"
+          ? this.build.module_path.substring(1)
+          : this.build.module_path;
+      const sourceMapURL =
+        this.hash > 0 && this.build.module_path.length > 0
+          ? `\n//# sourceMappingURL=${
+              // location.origin does not have a trailing slash
+              globalThis.location.origin
+            }/${modulePathWithoutLeadingSlash}.map?b=${this.hash.toString(16)}`
+          : "";
+
       try {
-        const blob = new Blob([this.bytes], { type: "text/javascript" });
+        const blob = new Blob(
+          sourceMapURL.length > 0 ? [this.bytes, sourceMapURL] : [this.bytes],
+          { type: "text/javascript" }
+        );
         blobURL = URL.createObjectURL(blob);
         HMRModule.dependencies.blobToID.set(blobURL, this.module_id);
         await import(blobURL);

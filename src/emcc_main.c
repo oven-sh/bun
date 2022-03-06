@@ -1,5 +1,5 @@
 #define STBI_ASSERT(x)
-#include <stdint.h>out.w
+#include <stdint.h>
 
 #include <stdlib.h>
 

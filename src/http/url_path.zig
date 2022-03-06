@@ -21,6 +21,9 @@ pathname: string = "",
 first_segment: string = "",
 query_string: string = "",
 needs_redirect: bool = false,
+/// Treat URLs as non-sourcemap URLS
+/// Then at the very end, we check.
+is_source_map: bool = false,
 
 pub fn isRoot(this: *const URLPath, asset_prefix: string) bool {
     const without = this.pathWithoutAssetPrefix(asset_prefix);
@@ -36,7 +39,12 @@ pub fn pathWithoutAssetPrefix(this: *const URLPath, asset_prefix: string) string
     const base = this.path;
     const origin = asset_prefix[leading_slash_offset..];
 
-    return if (base.len >= origin.len and strings.eql(base[0..origin.len], origin)) base[origin.len..] else base;
+    const out = if (base.len >= origin.len and strings.eql(base[0..origin.len], origin)) base[origin.len..] else base;
+    if (this.is_source_map and strings.endsWithComptime(out, ".map")) {
+        return out[0 .. out.len - 4];
+    }
+
+    return out;
 }
 
 // optimization: very few long strings will be URL-encoded
@@ -50,7 +58,7 @@ pub fn parse(possibly_encoded_pathname_: string) !URLPath {
     var decoded_pathname = possibly_encoded_pathname_;
     var needs_redirect = false;
 
-    if (strings.indexOfChar(decoded_pathname, '%') != null) {
+    if (strings.containsChar(decoded_pathname, '%')) {
         var possibly_encoded_pathname = switch (decoded_pathname.len) {
             0...1024 => &temp_path_buf,
             else => &big_temp_path_buf,
@@ -78,6 +86,7 @@ pub fn parse(possibly_encoded_pathname_: string) !URLPath {
 
     var question_mark_i: i16 = -1;
     var period_i: i16 = -1;
+
     var first_segment_end: i16 = std.math.maxInt(i16);
     var last_slash: i16 = -1;
 
@@ -88,7 +97,7 @@ pub fn parse(possibly_encoded_pathname_: string) !URLPath {
 
         switch (c) {
             '?' => {
-                question_mark_i = std.math.max(question_mark_i, i);
+                question_mark_i = @maximum(question_mark_i, i);
                 if (question_mark_i < period_i) {
                     period_i = -1;
                 }
@@ -98,13 +107,13 @@ pub fn parse(possibly_encoded_pathname_: string) !URLPath {
                 }
             },
             '.' => {
-                period_i = std.math.max(period_i, i);
+                period_i = @maximum(period_i, i);
             },
             '/' => {
-                last_slash = std.math.max(last_slash, i);
+                last_slash = @maximum(last_slash, i);
 
                 if (i > 0) {
-                    first_segment_end = std.math.min(first_segment_end, i);
+                    first_segment_end = @minimum(first_segment_end, i);
                 }
             },
             else => {},
@@ -115,6 +124,8 @@ pub fn parse(possibly_encoded_pathname_: string) !URLPath {
         period_i = -1;
     }
 
+    // .js.map
+    //    ^
     const extname = brk: {
         if (question_mark_i > -1 and period_i > -1) {
             period_i += 1;
@@ -127,12 +138,22 @@ pub fn parse(possibly_encoded_pathname_: string) !URLPath {
         }
     };
 
-    const path = if (question_mark_i < 0) decoded_pathname[1..] else decoded_pathname[1..@intCast(usize, question_mark_i)];
+    var path = if (question_mark_i < 0) decoded_pathname[1..] else decoded_pathname[1..@intCast(usize, question_mark_i)];
 
-    const first_segment = decoded_pathname[1..std.math.min(@intCast(usize, first_segment_end), decoded_pathname.len)];
+    const first_segment = decoded_pathname[1..@minimum(@intCast(usize, first_segment_end), decoded_pathname.len)];
+    const is_source_map = strings.eqlComptime(extname, "map");
+    var backup_extname: string = extname;
+    if (is_source_map and path.len > ".map".len) {
+        if (std.mem.lastIndexOfScalar(u8, path[0 .. path.len - ".map".len], '.')) |j| {
+            backup_extname = path[j + 1 ..];
+            backup_extname = backup_extname[0 .. backup_extname.len - ".map".len];
+            path = path[0 .. j + backup_extname.len + 1];
+        }
+    }
 
     return URLPath{
-        .extname = extname,
+        .extname = if (!is_source_map) extname else backup_extname,
+        .is_source_map = is_source_map,
         .pathname = decoded_pathname,
         .first_segment = first_segment,
         .path = if (decoded_pathname.len == 1) "." else path,

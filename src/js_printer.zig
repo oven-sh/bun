@@ -57,6 +57,7 @@ const assert = std.debug.assert;
 threadlocal var imported_module_ids_list: std.ArrayList(u32) = undefined;
 threadlocal var imported_module_ids_list_unset: bool = true;
 const ImportRecord = importRecord.ImportRecord;
+const SourceMap = @import("./sourcemap/sourcemap.zig");
 
 fn notimpl() void {
     Global.panic("Not implemented yet!", .{});
@@ -80,27 +81,178 @@ pub fn writeModuleId(comptime Writer: type, writer: Writer, module_id: u32) void
     std.fmt.formatInt(module_id, 16, .lower, .{}, writer) catch unreachable;
 }
 
-pub const SourceMapChunk = struct {
-    buffer: MutableString,
-    end_state: State = State{},
-    final_generated_column: usize = 0,
-    should_ignore: bool = false,
+pub fn canPrintWithoutEscape(comptime CodePointType: type, c: CodePointType, comptime ascii_only: bool) bool {
+    if (c <= last_ascii) {
+        return c >= first_ascii and c != '\\' and c != '"';
+    } else {
+        return !ascii_only and c != 0xFEFF and (c < first_high_surrogate or c > last_low_surrogate);
+    }
+}
 
-    // Coordinates in source maps are stored using relative offsets for size
-    // reasons. When joining together chunks of a source map that were emitted
-    // in parallel for different parts of a file, we need to fix up the first
-    // segment of each chunk to be relative to the end of the previous chunk.
-    pub const State = struct {
-        // This isn't stored in the source map. It's only used by the bundler to join
-        // source map chunks together correctly.
-        generated_line: i32 = 0,
+pub fn estimateLengthForJSON(input: []const u8, comptime ascii_only: bool) usize {
+    var remaining = input;
+    var len: u32 = 2; // for quotes
 
-        // These are stored in the source map in VLQ format.
-        generated_column: i32 = 0,
-        source_index: i32 = 0,
-        original_line: i32 = 0,
-        original_column: i32 = 0,
-    };
+    while (strings.indexOfNeedsEscape(remaining)) |i| {
+        len += i;
+        remaining = remaining[i..];
+        const char_len = strings.wtf8ByteSequenceLength(remaining[0]);
+        const c = strings.decodeWTF8RuneT(remaining.ptr[0..4], char_len, i32, 0);
+        if (canPrintWithoutEscape(i32, c, ascii_only)) {
+            len += @as(u32, char_len);
+        } else if (c <= 0xFFFF) {
+            len += 6;
+        } else {
+            len += 12;
+        }
+        remaining = remaining[char_len..];
+    } else {
+        return @truncate(u32, remaining.len) + 2;
+    }
+
+    return len;
+}
+
+pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_only: bool) !MutableString {
+    var bytes = output_;
+    try bytes.growIfNeeded(estimateLengthForJSON(text, ascii_only));
+    try bytes.appendChar('"');
+    var i: usize = 0;
+    var n: usize = text.len;
+    while (i < n) {
+        const width = strings.wtf8ByteSequenceLength(text[i]);
+        const c = strings.decodeWTF8RuneT(text.ptr[i .. i + 4][0..4], width, i32, 0);
+        if (canPrintWithoutEscape(i32, c, ascii_only)) {
+            const remain = text[i + @as(usize, width) ..];
+            if (strings.indexOfNeedsEscape(remain)) |j| {
+                try bytes.appendSlice(text[i .. i + j + @as(usize, width)]);
+                i += j + @as(usize, width);
+                continue;
+            } else {
+                try bytes.appendSlice(text[i..]);
+                i = n;
+                break;
+            }
+        }
+        switch (c) {
+            // Special-case the bell character since it may cause dumping this file to
+            // the terminal to make a sound, which is undesirable. Note that we can't
+            // use an octal literal to print this shorter since octal literals are not
+            // allowed in strict mode (or in template strings).
+            0x07 => {
+                try bytes.appendSlice("\\x07");
+                i += 1;
+            },
+            0x08 => {
+                try bytes.appendSlice("\\b");
+                i += 1;
+            },
+            0x0C => {
+                try bytes.appendSlice("\\f");
+                i += 1;
+            },
+            '\n' => {
+                try bytes.appendSlice("\\n");
+                i += 1;
+            },
+            std.ascii.control_code.CR => {
+                try bytes.appendSlice("\\r");
+                i += 1;
+            },
+            // \v
+            std.ascii.control_code.VT => {
+                try bytes.appendSlice("\\v");
+                i += 1;
+            },
+            // "\\"
+            '\\' => {
+                try bytes.appendSlice("\\\\");
+                i += 1;
+            },
+            '"' => {
+                try bytes.appendSlice("\\\"");
+                i += 1;
+            },
+
+            '\t' => {
+                try bytes.appendSlice("\\t");
+                i += 1;
+            },
+
+            else => {
+                i += @as(usize, width);
+
+                if (c < 0xFFFF) {
+                    const k = @intCast(usize, c);
+                    bytes.ensureUnusedCapacity(6) catch unreachable;
+                    const old = bytes.list.items.len;
+                    bytes.list.items.len += 6;
+
+                    bytes.list.items[old .. old + 6].ptr[0..6].* = [_]u8{
+                        '\\',
+                        'u',
+                        hex_chars[(k >> 12) & 0xF],
+                        hex_chars[(k >> 8) & 0xF],
+                        hex_chars[(k >> 4) & 0xF],
+                        hex_chars[k & 0xF],
+                    };
+                } else {
+                    bytes.ensureUnusedCapacity(12) catch unreachable;
+                    const old = bytes.list.items.len;
+                    bytes.list.items.len += 12;
+
+                    const k = c - 0x10000;
+                    const lo = @intCast(usize, first_high_surrogate + ((k >> 10) & 0x3FF));
+                    const hi = @intCast(usize, first_low_surrogate + (k & 0x3FF));
+
+                    bytes.list.items[old .. old + 12][0..12].* = [_]u8{
+                        '\\',
+                        'u',
+                        hex_chars[lo >> 12],
+                        hex_chars[(lo >> 8) & 15],
+                        hex_chars[(lo >> 4) & 15],
+                        hex_chars[lo & 15],
+                        '\\',
+                        'u',
+                        hex_chars[hi >> 12],
+                        hex_chars[(hi >> 8) & 15],
+                        hex_chars[(hi >> 4) & 15],
+                        hex_chars[hi & 15],
+                    };
+                }
+            },
+        }
+    }
+    bytes.appendChar('"') catch unreachable;
+    return bytes;
+}
+
+test "quoteForJSON" {
+    var allocator = default_allocator;
+    try std.testing.expectEqualStrings("\"I don't need any quotes.\"", try quoteForJSON("I don't need any quotes.", allocator, false));
+    try std.testing.expectEqualStrings("\"I need a quote for \\\"this\\\".\"", try quoteForJSON("I need a quote for \"this\".", allocator, false));
+}
+
+pub const SourceMapHandler = struct {
+    ctx: *anyopaque,
+    callback: Callback,
+
+    const Callback = (fn (*anyopaque, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void);
+    pub fn onSourceMapChunk(self: *const @This(), chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
+        try self.callback(self.ctx, chunk, source);
+    }
+
+    pub fn For(comptime Type: type, comptime handler: (fn (t: *Type, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void)) type {
+        return struct {
+            pub fn onChunk(self: *anyopaque, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
+                try handler(@ptrCast(*Type, @alignCast(@alignOf(*Type), self)), chunk, source);
+            }
+
+            pub fn init(self: *Type) SourceMapHandler {
+                return SourceMapHandler{ .ctx = self, .callback = onChunk };
+            }
+        };
+    }
 };
 
 pub const Options = struct {
@@ -114,6 +266,8 @@ pub const Options = struct {
     source_path: ?fs.Path = null,
     bundle_export_ref: ?Ref = null,
     rewrite_require_resolve: bool = true,
+    allocator: std.mem.Allocator = default_allocator,
+    source_map_handler: ?SourceMapHandler = null,
 
     css_import_behavior: Api.CssInJsBehavior = Api.CssInJsBehavior.facade,
 
@@ -142,7 +296,10 @@ pub const Options = struct {
     }
 };
 
-pub const PrintResult = struct { js: string, source_map: ?SourceMapChunk = null };
+pub const PrintResult = struct {
+    js: string,
+    source_map: ?SourceMap.Chunk = null,
+};
 
 // do not make this a packed struct
 // stage1 compiler bug:
@@ -247,6 +404,7 @@ pub fn NewPrinter(
     comptime bun: bool,
     comptime is_inside_bundle: bool,
     comptime is_json: bool,
+    comptime generate_source_map: bool,
 ) type {
     return struct {
         symbols: Symbol.Map,
@@ -271,6 +429,7 @@ pub fn NewPrinter(
 
         renamer: rename.Renamer,
         prev_stmt_tag: Stmt.Tag = .s_empty,
+        source_map_builder: SourceMap.Chunk.Builder = undefined,
 
         const Printer = @This();
 
@@ -535,7 +694,13 @@ pub fn NewPrinter(
         }
 
         // noop for now
-        pub fn addSourceMapping(_: *Printer, _: logger.Loc) void {}
+        pub inline fn addSourceMapping(printer: *Printer, location: logger.Loc) void {
+            if (comptime !generate_source_map) {
+                return;
+            }
+
+            printer.source_map_builder.addSourceMapping(location, printer.writer.slice());
+        }
 
         pub fn printSymbol(p: *Printer, ref: Ref) void {
             const name = p.renamer.nameForSymbol(ref);
@@ -4066,6 +4231,7 @@ pub fn NewPrinter(
             symbols: Symbol.Map,
             opts: Options,
             linker: ?*Linker,
+            allocator: std.mem.Allocator,
         ) !Printer {
             if (imported_module_ids_list_unset) {
                 imported_module_ids_list = std.ArrayList(u32).init(default_allocator);
@@ -4073,6 +4239,13 @@ pub fn NewPrinter(
             }
 
             imported_module_ids_list.clearRetainingCapacity();
+
+            var source_map_builder: SourceMap.Chunk.Builder = undefined;
+
+            if (comptime generate_source_map) {
+                source_map_builder = SourceMap.Chunk.Builder{ .source_map = MutableString.initEmpty(allocator) };
+                source_map_builder.line_offset_tables = SourceMap.LineOffsetTable.generate(allocator, source.contents, @intCast(i32, tree.approximate_newline_count));
+            }
 
             return Printer{
                 .import_records = tree.import_records,
@@ -4082,6 +4255,7 @@ pub fn NewPrinter(
                 .linker = linker,
                 .imported_module_ids = imported_module_ids_list,
                 .renamer = rename.Renamer.init(symbols, source),
+                .source_map_builder = source_map_builder,
             };
         }
     };
@@ -4451,8 +4625,18 @@ pub fn printAst(
     opts: Options,
     comptime LinkerType: type,
     linker: ?*LinkerType,
+    comptime generate_source_map: bool,
 ) !usize {
-    const PrinterType = NewPrinter(ascii_only, Writer, LinkerType, false, false, false, false);
+    const PrinterType = NewPrinter(
+        ascii_only,
+        Writer,
+        LinkerType,
+        false,
+        false,
+        false,
+        false,
+        generate_source_map,
+    );
     var writer = _writer;
 
     var printer = try PrinterType.init(
@@ -4462,6 +4646,7 @@ pub fn printAst(
         symbols,
         opts,
         linker,
+        opts.allocator,
     );
     defer {
         imported_module_ids_list = printer.imported_module_ids;
@@ -4484,6 +4669,12 @@ pub fn printAst(
         }
     }
 
+    if (comptime generate_source_map) {
+        if (opts.source_map_handler) |handler| {
+            try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source.*);
+        }
+    }
+
     try printer.writer.done();
 
     return @intCast(usize, @maximum(printer.writer.written, 0));
@@ -4495,7 +4686,7 @@ pub fn printJSON(
     expr: Expr,
     source: *const logger.Source,
 ) !usize {
-    const PrinterType = NewPrinter(false, Writer, void, false, false, false, true);
+    const PrinterType = NewPrinter(false, Writer, void, false, false, false, true, false);
     var writer = _writer;
     var s_expr = S.SExpr{ .value = expr };
     var stmt = Stmt{ .loc = logger.Loc.Empty, .data = .{
@@ -4511,6 +4702,7 @@ pub fn printJSON(
         std.mem.zeroes(Symbol.Map),
         .{},
         null,
+        undefined,
     );
 
     printer.printExpr(expr, Level.lowest, ExprFlag.Set{});
@@ -4532,8 +4724,9 @@ pub fn printCommonJS(
     opts: Options,
     comptime LinkerType: type,
     linker: ?*LinkerType,
+    comptime generate_source_map: bool,
 ) !usize {
-    const PrinterType = NewPrinter(ascii_only, Writer, LinkerType, true, false, false, false);
+    const PrinterType = NewPrinter(ascii_only, Writer, LinkerType, true, false, false, false, generate_source_map);
     var writer = _writer;
     var printer = try PrinterType.init(
         writer,
@@ -4542,6 +4735,7 @@ pub fn printCommonJS(
         symbols,
         opts,
         linker,
+        opts.allocator,
     );
     defer {
         imported_module_ids_list = printer.imported_module_ids;
@@ -4566,6 +4760,12 @@ pub fn printCommonJS(
 
     // Add a couple extra newlines at the end
     printer.writer.print(@TypeOf("\n\n"), "\n\n");
+
+    if (comptime generate_source_map) {
+        if (opts.source_map_handler) |handler| {
+            try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source.*);
+        }
+    }
 
     try printer.writer.done();
 
@@ -4594,7 +4794,7 @@ pub fn printCommonJSThreaded(
     comptime getPos: fn (ctx: GetPosType) anyerror!u64,
     end_off_ptr: *u32,
 ) !WriteResult {
-    const PrinterType = NewPrinter(ascii_only, Writer, LinkerType, true, false, true, false);
+    const PrinterType = NewPrinter(ascii_only, Writer, LinkerType, true, false, true, false, false);
     var writer = _writer;
     var printer = try PrinterType.init(
         writer,
@@ -4603,6 +4803,7 @@ pub fn printCommonJSThreaded(
         symbols,
         opts,
         linker,
+        undefined,
     );
 
     defer {

@@ -16,7 +16,7 @@ pub const Bitset = struct {
 
     pub fn init() void {}
 
-    pub inline fn isIdentifierStart(codepoint: i32) bool {
+    pub fn isIdentifierStart(codepoint: i32) bool {
         return codepoint >= (comptime id_start_range[0]) and
             codepoint <= (comptime id_start_range[1]) and
             id_start.isSet((comptime @intCast(usize, id_start_range[1])) - @intCast(
@@ -38,7 +38,7 @@ pub const Bitset = struct {
         return true;
     }
 
-    pub inline fn isIdentifierPart(codepoint: i32) bool {
+    pub fn isIdentifierPart(codepoint: i32) bool {
         return codepoint >= (comptime id_end_range[0]) and
             codepoint <= (comptime id_end_range[1]) and
             id_continue.isSet(

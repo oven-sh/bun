@@ -53,6 +53,17 @@ pub const WebsocketHeader = packed struct {
     compressed: bool = false, // rsv1
     final: bool = true,
 
+    pub fn writeHeader(header: WebsocketHeader, writer: anytype, n: usize) anyerror!void {
+        try writer.writeIntBig(u16, @bitCast(u16, header));
+
+        // Write extended length if needed
+        switch (n) {
+            0...126 => {}, // Included in header
+            127...0xFFFF => try writer.writeIntBig(u16, @truncate(u16, n)),
+            else => try writer.writeIntBig(u64, n),
+        }
+    }
+
     pub fn packLength(length: usize) u7 {
         return switch (length) {
             0...126 => @truncate(u7, length),
@@ -192,22 +203,6 @@ pub const Websocket = struct {
             },
             .data = message,
         });
-    }
-
-    pub fn writeHeader(self: *Websocket, header: WebsocketHeader, n: usize) anyerror!void {
-        var stream = self.conn.client.writer(self.flags);
-
-        try stream.writeIntBig(u16, @bitCast(u16, header));
-
-        // Write extended length if needed
-        switch (n) {
-            0...126 => {}, // Included in header
-            127...0xFFFF => try stream.writeIntBig(u16, @truncate(u16, n)),
-            else => try stream.writeIntBig(u64, n),
-        }
-
-        // try self.io.flush();
-
     }
 
     // Write a raw data frame

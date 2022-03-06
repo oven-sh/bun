@@ -50,6 +50,12 @@ pub const MutableString = struct {
             std.ArrayListUnmanaged(u8){} };
     }
 
+    pub fn initEmpty(allocator: std.mem.Allocator) MutableString {
+        return MutableString{ .allocator = allocator, .list = .{} };
+    }
+
+    pub const ensureUnusedCapacity = growIfNeeded;
+
     pub fn initCopy(allocator: std.mem.Allocator, str: anytype) !MutableString {
         var mutable = try MutableString.init(allocator, std.mem.len(str));
         try mutable.copy(str);
@@ -146,6 +152,10 @@ pub const MutableString = struct {
         try self.list.ensureUnusedCapacity(self.allocator, amount);
     }
 
+    pub inline fn appendSlice(self: *MutableString, slice: []const u8) !void {
+        try self.list.appendSlice(self.allocator, slice);
+    }
+
     pub inline fn reset(
         self: *MutableString,
     ) void {
@@ -202,28 +212,37 @@ pub const MutableString = struct {
     //     self.list.swapRemove(i);
     // }
 
-    pub fn containsChar(self: *MutableString, char: u8) bool {
+    pub fn containsChar(self: *const MutableString, char: u8) bool {
         return self.indexOfChar(char) != null;
     }
 
-    pub fn indexOfChar(self: *MutableString, char: u8) ?usize {
-        return std.mem.indexOfScalar(@TypeOf(char), self.list.items, char);
+    pub fn indexOfChar(self: *const MutableString, char: u8) ?usize {
+        return strings.indexOfChar(self.list.items, char);
     }
 
-    pub fn lastIndexOfChar(self: *MutableString, char: u8) ?usize {
-        return std.mem.lastIndexOfScalar(@TypeOf(char), self.list.items, char);
+    pub fn lastIndexOfChar(self: *const MutableString, char: u8) ?usize {
+        return strings.lastIndexOfChar(self.list.items, char);
     }
 
-    pub fn lastIndexOf(self: *MutableString, str: u8) ?usize {
-        return std.mem.lastIndexOf(u8, self.list.items, str);
+    pub fn lastIndexOf(self: *const MutableString, str: u8) ?usize {
+        return strings.lastIndexOfChar(self.list.items, str);
     }
 
-    pub fn indexOf(self: *MutableString, str: u8) ?usize {
+    pub fn indexOf(self: *const MutableString, str: u8) ?usize {
         return std.mem.indexOf(u8, self.list.items, str);
     }
 
     pub fn eql(self: *MutableString, other: anytype) bool {
         return std.mem.eql(u8, self.list.items, other);
+    }
+
+    pub fn toSocketBuffers(self: *MutableString, comptime count: usize, ranges: anytype) [count]std.x.os.Buffer {
+        var buffers: [count]std.x.os.Buffer = undefined;
+        comptime var i: usize = 0;
+        inline while (i < count) : (i += 1) {
+            buffers[i] = std.x.os.Buffer.from(self.list.items[ranges[i][0]..ranges[i][1]]);
+        }
+        return buffers;
     }
 
     pub const BufferedWriter = struct {

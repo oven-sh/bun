@@ -26,8 +26,8 @@ pub fn ColonListType(comptime t: type, value_resolver: anytype) type {
                 // Support either ":" or "=" as the separator, preferring whichever is first.
                 // ":" is less confusing IMO because that syntax is used with flags
                 // but "=" is what esbuild uses and I want this to be somewhat familiar for people using esbuild
-                const midpoint = @minimum(strings.indexOfChar(str, ':') orelse std.math.maxInt(usize), strings.indexOfChar(str, '=') orelse std.math.maxInt(usize));
-                if (midpoint == std.math.maxInt(usize)) {
+                const midpoint = @minimum(strings.indexOfChar(str, ':') orelse std.math.maxInt(u32), strings.indexOfChar(str, '=') orelse std.math.maxInt(u32));
+                if (midpoint == std.math.maxInt(u32)) {
                     return error.InvalidSeparator;
                 }
 

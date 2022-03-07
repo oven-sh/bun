@@ -461,7 +461,7 @@ fn NewLexer_(
                                         try lexer.syntaxError();
                                     }
 
-                                    const hex_start = iter.i - width - width2 - width3;
+                                    const hex_start = (iter.i + start) - width - width2 - width3;
                                     var is_first = true;
                                     var is_out_of_range = false;
                                     variableLength: while (true) {
@@ -480,13 +480,13 @@ fn NewLexer_(
                                             },
                                             '}' => {
                                                 if (is_first) {
-                                                    lexer.end = start + iter.i - width3;
+                                                    lexer.end = (start + iter.i) -| width3;
                                                     return lexer.syntaxError();
                                                 }
                                                 break :variableLength;
                                             },
                                             else => {
-                                                lexer.end = start + iter.i - width3;
+                                                lexer.end = (start + iter.i) -| width3;
                                                 return lexer.syntaxError();
                                             },
                                         }
@@ -501,7 +501,7 @@ fn NewLexer_(
 
                                     if (is_out_of_range) {
                                         try lexer.addRangeError(
-                                            .{ .loc = .{ .start = @intCast(i32, start + hex_start) }, .len = @intCast(i32, (iter.i - hex_start)) },
+                                            .{ .loc = .{ .start = @intCast(i32, start + hex_start) }, .len = @intCast(i32, ((iter.i + start) - hex_start)) },
                                             "Unicode escape sequence is out of range",
                                             .{},
                                             true,

@@ -1079,6 +1079,34 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
 
 const Dir = std.fs.Dir;
 
+pub const SourceMapOption = enum {
+    none,
+    @"inline",
+    external,
+
+    pub fn fromApi(source_map: ?Api.SourceMapMode) SourceMapOption {
+        return switch (source_map orelse Api.SourceMapMode._none) {
+            Api.SourceMapMode.external => .external,
+            Api.SourceMapMode.inline_into_file => .@"inline",
+            else => .none,
+        };
+    }
+
+    pub fn toAPI(source_map: SourceMapOption) Api.SourceMapMode {
+        return switch (source_map orelse Api.SourceMapMode._none) {
+            .external => .external,
+            .@"inline" => .@"inline",
+            else => ._none,
+        };
+    }
+
+    pub const map = ComptimeStringMap(SourceMapOption, .{
+        .{ "none", .none },
+        .{ "inline", .@"inline" },
+        .{ "external", .@"external" },
+    });
+};
+
 /// BundleOptions is used when ResolveMode is not set to "disable".
 /// BundleOptions is effectively webpack + babel
 pub const BundleOptions = struct {
@@ -1133,8 +1161,8 @@ pub const BundleOptions = struct {
     macro_remap: MacroRemap = MacroRemap{},
 
     conditions: ESMConditions = undefined,
-
     tree_shaking: bool = false,
+    sourcemap: SourceMapOption = SourceMapOption.none,
 
     pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {
         switch (this.platform) {
@@ -1416,6 +1444,8 @@ pub const BundleOptions = struct {
             opts.preserve_extensions = true;
             opts.append_package_version_in_query_string = true;
 
+            opts.sourcemap = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode.external);
+
             opts.resolve_mode = .lazy;
 
             var dir_to_use: string = opts.routes.static_dir;
@@ -1552,6 +1582,8 @@ pub const BundleOptions = struct {
                 opts.hot_module_reloading = false;
 
             opts.serve = true;
+        } else {
+            opts.sourcemap = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode._none);
         }
 
         opts.tree_shaking = opts.serve or opts.platform.isBun() or opts.production or is_generating_bundle;
@@ -1562,6 +1594,7 @@ pub const BundleOptions = struct {
 
         if (opts.write and opts.output_dir.len > 0) {
             opts.output_dir_handle = try openOutputDir(opts.output_dir);
+            opts.output_dir = try fs.getFdPath(opts.output_dir_handle.?.fd);
         }
 
         opts.polyfill_node_globals = opts.platform != .node;
@@ -1580,13 +1613,13 @@ pub const BundleOptions = struct {
 };
 
 pub fn openOutputDir(output_dir: string) !std.fs.Dir {
-    return std.fs.openDirAbsolute(output_dir, std.fs.Dir.OpenDirOptions{}) catch brk: {
-        std.fs.makeDirAbsolute(output_dir) catch |err| {
+    return std.fs.cwd().openDir(output_dir, std.fs.Dir.OpenDirOptions{ .iterate = true }) catch brk: {
+        std.fs.cwd().makeDir(output_dir) catch |err| {
             Output.printErrorln("error: Unable to mkdir \"{s}\": \"{s}\"", .{ output_dir, @errorName(err) });
             Global.crash();
         };
 
-        var handle = std.fs.openDirAbsolute(output_dir, std.fs.Dir.OpenDirOptions{}) catch |err2| {
+        var handle = std.fs.cwd().openDir(output_dir, std.fs.Dir.OpenDirOptions{ .iterate = true }) catch |err2| {
             Output.printErrorln("error: Unable to open \"{s}\": \"{s}\"", .{ output_dir, @errorName(err2) });
             Global.crash();
         };

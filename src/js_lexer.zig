@@ -740,7 +740,7 @@ fn NewLexer_(
             lexer.string_literal_buffer.shrinkRetainingCapacity(0);
             if (string_literal_details.needs_slow_path) {
                 lexer.string_literal_buffer.ensureUnusedCapacity(lexer.string_literal_slice.len) catch unreachable;
-                try lexer.decodeEscapeSequences(0, lexer.string_literal_slice, @TypeOf(lexer.string_literal_buffer), &lexer.string_literal_buffer);
+                try lexer.decodeEscapeSequences(lexer.start, lexer.string_literal_slice, @TypeOf(lexer.string_literal_buffer), &lexer.string_literal_buffer);
                 lexer.string_literal = lexer.string_literal_buffer.items;
             }
             if (comptime is_json) lexer.is_ascii_only = lexer.is_ascii_only and lexer.string_literal_is_ascii;
@@ -787,7 +787,7 @@ fn NewLexer_(
             return code_point;
         }
 
-        inline fn step(lexer: *LexerType) void {
+        fn step(lexer: *LexerType) void {
             lexer.code_point = lexer.nextCodepoint();
 
             // Track the approximate number of newlines in the file so we can preallocate

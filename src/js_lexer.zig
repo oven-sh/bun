@@ -700,8 +700,18 @@ fn NewLexer_(
                             needs_slow_path = true;
                         } else if (is_json and lexer.code_point < 0x20) {
                             try lexer.syntaxError();
+                        } else if (comptime quote == '"' or quote == '\'') {
+                            // this is only faster at the 800 KB or so mark
+                            // so, pretty good for source maps
+                            // but probably not a lot else
+                            const remainder = lexer.source.contents[lexer.current..];
+                            if (remainder.len > 16_000) {
+                                lexer.current += indexOfInterestingCharacterInStringLiteral(remainder, quote) orelse remainder.len;
+                                lexer.end = lexer.current -| 1;
+                                lexer.step();
+                                continue;
+                            }
                         }
-                        // this is only faster at the 800 KB or so mark
                         // which is kind of nonsensical for real usage?
                         // fast path: if you feed bun a string that is greater than around 800 KB
                         // it becomes worthwhile to do a vectorized search
@@ -3015,6 +3025,32 @@ pub fn isLatin1Identifier(comptime Buffer: type, name: Buffer) bool {
     return true;
 }
 
+fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usize {
+    var text = text_;
+    const quote_ = @splat(strings.ascii_vector_size, @as(u8, quote));
+    const backslash = @splat(strings.ascii_vector_size, @as(u8, '\\'));
+    const V1x16 = strings.AsciiVectorU1;
+
+    while (strings.ascii_vector_size < text.len) {
+        const vec: strings.AsciiVector = text[0..strings.ascii_vector_size].*;
+
+        const any_significant =
+            @bitCast(V1x16, vec > strings.max_16_ascii) |
+            @bitCast(V1x16, vec < strings.min_16_ascii) |
+            @bitCast(V1x16, quote_ == vec) |
+            @bitCast(V1x16, backslash == vec);
+
+        const bitmask = @ptrCast(*const u16, &any_significant).*;
+        const first = @ctz(u16, bitmask);
+
+        if (first < strings.ascii_vector_size) {
+            return first + (text_.len - text.len);
+        }
+        text = text[strings.ascii_vector_size..];
+    }
+
+    return null;
+}
 test "isIdentifier" {
     const expect = std.testing.expect;
     try expect(!isIdentifierStart(0x2029));

@@ -12095,6 +12095,17 @@ fn NewParser_(
                                     // Babel defines static jsx as children.len > 1
                                     const is_static_jsx = e_.children.len > 1;
 
+                                    // Optimization: if the only non-child prop is a spread object
+                                    // we can just pass the object as the first argument
+                                    // this goes as deep as there are spreads
+                                    // <div {{...{...{...{...foo}}}}} />
+                                    // ->
+                                    // <div {{...foo}} />
+                                    // jsx("div", {...foo})
+                                    while (props.items.len == 1 and props.items[0].kind == .spread and props.items[0].value.?.data == .e_object) {
+                                        props = props.items[0].value.?.data.e_object.properties.list();
+                                    }
+
                                     // if (p.options.jsx.development) {
                                     switch (e_.children.len) {
                                         0 => {},

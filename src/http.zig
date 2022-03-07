@@ -2191,18 +2191,19 @@ pub const RequestContext = struct {
                     const SocketPrinterInternal = @This();
                     rctx: *RequestContext,
                     _loader: Options.Loader,
+                    buffer: MutableString = undefined,
                     threadlocal var buffer: MutableString = undefined;
                     threadlocal var has_loaded_buffer: bool = false;
 
-                    pub fn reserveNext(_: *SocketPrinterInternal, count: u32) anyerror![*]u8 {
-                        try buffer.growIfNeeded(count);
-                        return @ptrCast([*]u8, &buffer.list.items.ptr[buffer.list.items.len]);
+                    pub fn reserveNext(this: *SocketPrinterInternal, count: u32) anyerror![*]u8 {
+                        try this.buffer.growIfNeeded(count);
+                        return @ptrCast([*]u8, &this.buffer.list.items.ptr[buffer.list.items.len]);
                     }
 
-                    pub fn advanceBy(_: *SocketPrinterInternal, count: u32) void {
-                        if (comptime Environment.isDebug) std.debug.assert(buffer.list.items.len + count <= buffer.list.capacity);
+                    pub fn advanceBy(this: *SocketPrinterInternal, count: u32) void {
+                        if (comptime Environment.isDebug) std.debug.assert(this.buffer.list.items.len + count <= this.buffer.list.capacity);
 
-                        buffer.list.items = buffer.list.items.ptr[0 .. buffer.list.items.len + count];
+                        this.buffer.list.items = this.buffer.list.items.ptr[0 .. this.buffer.list.items.len + count];
                     }
 
                     pub fn init(rctx: *RequestContext, _loader: Options.Loader) SocketPrinterInternal {
@@ -2216,40 +2217,44 @@ pub const RequestContext = struct {
                         return SocketPrinterInternal{
                             .rctx = rctx,
                             ._loader = _loader,
+                            .buffer = buffer,
                         };
                     }
-                    pub fn writeByte(_: *SocketPrinterInternal, byte: u8) anyerror!usize {
-                        try buffer.appendChar(byte);
+                    pub fn writeByte(this: *SocketPrinterInternal, byte: u8) anyerror!usize {
+                        try this.buffer.appendChar(byte);
                         return 1;
                     }
-                    pub fn writeAll(_: *SocketPrinterInternal, bytes: anytype) anyerror!usize {
-                        try buffer.append(bytes);
+                    pub fn writeAll(this: *SocketPrinterInternal, bytes: anytype) anyerror!usize {
+                        try this.buffer.append(bytes);
                         return bytes.len;
                     }
 
-                    pub fn slice(_: *SocketPrinterInternal) string {
-                        return buffer.list.items;
+                    pub fn slice(this: *SocketPrinterInternal) string {
+                        return this.buffer.list.items;
                     }
 
-                    pub fn getLastByte(_: *const SocketPrinterInternal) u8 {
-                        return if (buffer.list.items.len > 0) buffer.list.items[buffer.list.items.len - 1] else 0;
+                    pub fn getLastByte(this: *const SocketPrinterInternal) u8 {
+                        return if (this.buffer.list.items.len > 0) this.buffer.list.items[this.buffer.list.items.len - 1] else 0;
                     }
 
-                    pub fn getLastLastByte(_: *const SocketPrinterInternal) u8 {
-                        return if (buffer.list.items.len > 1) buffer.list.items[buffer.list.items.len - 2] else 0;
+                    pub fn getLastLastByte(this: *const SocketPrinterInternal) u8 {
+                        return if (this.buffer.list.items.len > 1) this.buffer.list.items[this.buffer.list.items.len - 2] else 0;
                     }
 
-                    pub fn getWritten(_: *const SocketPrinterInternal) []u8 {
-                        return buffer.list.items;
+                    pub fn getWritten(this: *const SocketPrinterInternal) []u8 {
+                        return this.buffer.list.items;
                     }
 
                     const SourceMapHandler = JSPrinter.SourceMapHandler.For(SocketPrinterInternal, onSourceMapChunk);
                     pub fn onSourceMapChunk(this: *SocketPrinterInternal, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
                         if (this.rctx.has_called_done) return;
-                        buffer.reset();
-                        buffer = try chunk.printSourceMapContents(source, buffer, false);
-                        defer buffer.reset();
-                        const buf = buffer.toOwnedSliceLeaky();
+                        this.buffer.reset();
+                        this.buffer = try chunk.printSourceMapContents(source, this.buffer, false);
+                        defer {
+                            this.buffer.reset();
+                            buffer = this.buffer;
+                        }
+                        const buf = this.buffer.toOwnedSliceLeaky();
                         if (buf.len == 0) {
                             try this.rctx.sendNoContent();
                             return;
@@ -2268,8 +2273,11 @@ pub const RequestContext = struct {
                         chunky: *SocketPrinterInternal,
                     ) anyerror!void {
                         if (chunky.rctx.has_called_done) return;
-                        const buf = buffer.toOwnedSliceLeaky();
-                        defer buffer.reset();
+                        const buf = chunky.buffer.toOwnedSliceLeaky();
+                        defer {
+                            chunky.buffer.reset();
+                            buffer = chunky.buffer;
+                        }
 
                         if (chunky.rctx.header("Open-In-Editor") != null) {
                             if (Server.editor == null) {

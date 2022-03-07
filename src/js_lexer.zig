@@ -281,9 +281,7 @@ fn NewLexer_(
                         // include a <CR> or <CR><LF> sequence.
 
                         // Convert '\r\n' into '\n'
-                        if (iter.i < text.len and text[iter.i] == '\n') {
-                            iter.i += 1;
-                        }
+                        iter.i += @as(u32, @boolToInt(iter.i < text.len and text[iter.i] == '\n'));
 
                         // Convert '\r' into '\n'
                         buf.append('\n') catch unreachable;
@@ -712,41 +710,9 @@ fn NewLexer_(
                                 continue;
                             }
                         }
-                        // which is kind of nonsensical for real usage?
-                        // fast path: if you feed bun a string that is greater than around 800 KB
-                        // it becomes worthwhile to do a vectorized search
-                        // if (comptime big) {
-                        //     if (comptime quote == '"' or quote == '\'') {
-                        //         while (lexer.current + 16 < lexer.source.contents.len) {
-                        //             const quote_ = @splat(16, @as(u8, quote));
-                        //             const backslash = @splat(16, @as(u8, '\\'));
-                        //             const V1x16 = @Vector(16, u1);
-
-                        //             {
-                        //                 const vec: strings.AsciiVector = lexer.source.contents[lexer.current..][0..strings.ascii_vector_size].*;
-
-                        //                 const any_significant =
-                        //                     @bitCast(V1x16, vec > strings.max_16_ascii) |
-                        //                     @bitCast(V1x16, quote_ == vec) |
-                        //                     @bitCast(V1x16, backslash == vec);
-
-                        //                 // vec > strings.max_16_ascii);
-                        //                 const bitmask = @ptrCast(*const u16, &any_significant).*;
-                        //                 const first = @ctz(u16, bitmask);
-
-                        //                 if (first < 16) {
-                        //                     lexer.end = lexer.current + @maximum(first, 1) - 1;
-                        //                     lexer.current = lexer.current + first;
-                        //                     lexer.step();
-                        //                     continue :stringLiteral;
-                        //                 }
-                        //                 lexer.current += 16;
-                        //             }
-                        //         }
-                        //     }
-                        // }
                     },
                 }
+
                 lexer.step();
             }
 

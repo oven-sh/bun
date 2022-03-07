@@ -102,6 +102,12 @@ pub const FileSystem = struct {
         return tmpdir_handle.?;
     }
 
+    pub fn getFdPath(this: *const FileSystem, fd: FileDescriptorType) ![]const u8 {
+        var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+        var dir = try std.os.getFdPath(fd, &buf);
+        return try this.dirname_store.append([]u8, dir);
+    }
+
     pub fn tmpname(_: *const FileSystem, extname: string, buf: []u8, hash: u64) ![*:0]u8 {
         // PRNG was...not so random
         return try std.fmt.bufPrintZ(buf, ".{x}{s}", .{ @truncate(u64, @intCast(u128, hash) * @intCast(u128, std.time.nanoTimestamp())), extname });

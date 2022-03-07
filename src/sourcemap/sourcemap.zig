@@ -10,6 +10,10 @@ const Logger = @import("../logger.zig");
 const strings = @import("../string_immutable.zig");
 const MutableString = @import("../string_mutable.zig").MutableString;
 const base64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const Joiner = @import("../string_joiner.zig");
+const JSPrinter = @import("../js_printer.zig");
+const URL = @import("../query_string_map.zig").URL;
+const FileSystem = @import("../fs.zig").FileSystem;
 const base64_lut: [std.math.maxInt(u8)]u8 = brk: {
     @setEvalBranchQuota(9999);
     var bytes = [_]u8{255} ** std.math.maxInt(u8);
@@ -46,36 +50,48 @@ pub const SourceMapState = struct {
 
 sources: [][]const u8 = &[_][]u8{},
 sources_content: [][]SourceContent,
-mapping: std.ArrayListUnmanaged(Mapping) = .{},
+mapping: Mapping.List = .{},
 allocator: std.mem.Allocator,
 
-pub const Mapping = extern struct {
-    contents: [5]i32 = undefined,
+pub const Mapping = struct {
+    generated: LineColumnOffset,
+    original: LineColumnOffset,
+    source_index: i32,
+
+    pub const List = std.MultiArrayList(Mapping);
 
     pub inline fn generatedLine(mapping: Mapping) i32 {
-        return mapping.contents[0];
+        return mapping.generated.lines;
     }
 
     pub inline fn generatedColumn(mapping: Mapping) i32 {
-        return mapping.contents[1];
+        return mapping.generated.columns;
     }
 
     pub inline fn sourceIndex(mapping: Mapping) i32 {
-        return mapping.contents[2];
+        return mapping.source_index;
     }
 
     pub inline fn originalLine(mapping: Mapping) i32 {
-        return mapping.contents[3];
+        return mapping.original.lines;
     }
 
     pub inline fn originalColumn(mapping: Mapping) i32 {
-        return mapping.contents[4];
+        return mapping.original.columns;
     }
 };
 
 pub const LineColumnOffset = struct {
     lines: i32 = 0,
     columns: i32 = 0,
+
+    pub fn cmp(_: void, a: LineColumnOffset, b: LineColumnOffset) std.math.Order {
+        if (a.lines != b.lines) {
+            return std.math.order(a.lines, b.lines);
+        }
+
+        return std.math.order(a.columns, b.columns);
+    }
 };
 
 pub const SourceContent = struct {
@@ -87,10 +103,83 @@ pub fn find(
     this: *const SourceMap,
     line: i32,
     column: i32,
-) ?*const Mapping {
+) ?Mapping {
     _ = this;
     _ = line;
     _ = column;
+
+    const generated = this.mapping.items(.generated);
+
+    if (std.sort.binarySearch(LineColumnOffset, LineColumnOffset{ .lines = line, .columns = column }, generated, void{}, LineColumnOffset.cmp)) |i| {
+        return this.mapping.get(i);
+    }
+
+    return null;
+}
+
+pub const SourceMapPieces = struct {
+    prefix: std.ArrayList(u8),
+    mappings: std.ArrayList(u8),
+    suffix: std.ArrayList(u8),
+};
+
+// -- comment from esbuild --
+// Source map chunks are computed in parallel for speed. Each chunk is relative
+// to the zero state instead of being relative to the end state of the previous
+// chunk, since it's impossible to know the end state of the previous chunk in
+// a parallel computation.
+//
+// After all chunks are computed, they are joined together in a second pass.
+// This rewrites the first mapping in each chunk to be relative to the end
+// state of the previous chunk.
+pub fn appendSourceMapChunk(j: *Joiner, prev_end_state_: SourceMapState, start_state_: SourceMapState, source_map_: MutableString) !void {
+    var prev_end_state = prev_end_state_;
+    var start_state = start_state_;
+    // Handle line breaks in between this mapping and the previous one
+    if (start_state.generated_line > 0) {
+        j.append(try strings.repeatingAlloc(source_map_.allocator, @intCast(usize, start_state.generated_line), ';'), 0, source_map_.allocator);
+        prev_end_state.generated_column = 0;
+    }
+
+    var source_map = source_map_.list.items;
+    if (strings.indexOfNotChar(source_map, ';')) |semicolons| {
+        j.append(source_map[0..semicolons], 0, null);
+        source_map = source_map[semicolons..];
+        prev_end_state.generated_column = 0;
+        start_state.generated_column = 0;
+    }
+
+    // Strip off the first mapping from the buffer. The first mapping should be
+    // for the start of the original file (the printer always generates one for
+    // the start of the file).
+    var i: usize = 0;
+    const generated_column_ = decodeVLQ(source_map, 0);
+    i = generated_column_.start;
+    const source_index_ = decodeVLQ(source_map, i);
+    i = source_index_.start;
+    const original_line_ = decodeVLQ(source_map, i);
+    i = original_line_.start;
+    const original_column_ = decodeVLQ(source_map, i);
+    i = original_column_.start;
+
+    source_map = source_map[i..];
+
+    // Rewrite the first mapping to be relative to the end state of the previous
+    // chunk. We now know what the end state is because we're in the second pass
+    // where all chunks have already been generated.
+    start_state.source_index += source_index_.value;
+    start_state.generated_column += generated_column_.value;
+    start_state.original_line += original_line_.value;
+    start_state.original_column += original_column_.value;
+
+    j.append(
+        appendMappingToBuffer(MutableString.initEmpty(source_map.allocator), j.lastByte(), prev_end_state, start_state).list.items,
+        0,
+        source_map.allocator,
+    );
+
+    // Then append everything after that without modification.
+    j.append(source_map_.list.items, @truncate(u32, @ptrToInt(source_map.ptr) - @ptrToInt(source_map_.list.items.ptr)), source_map_.allocator);
 }
 
 // A single base 64 digit can contain 6 bits of data. For the base 64 variable
@@ -203,7 +292,7 @@ pub const LineOffsetTable = struct {
 
     pub fn findLine(list: List, loc: Logger.Loc) i32 {
         const byte_offsets_to_start_of_line = list.items(.byte_offset_to_start_of_line);
-        var original_line: i32 = 0;
+        var original_line: u32 = 0;
         if (loc.start <= -1) {
             return 0;
         }
@@ -217,7 +306,7 @@ pub const LineOffsetTable = struct {
                 const step = count / 2;
                 i = original_line + step;
                 if (byte_offsets_to_start_of_line[i] <= loc_start) {
-                    original_line = @intCast(i32, i + 1);
+                    original_line = i + 1;
                     count = count - step - 1;
                 } else {
                     count = step;
@@ -225,7 +314,7 @@ pub const LineOffsetTable = struct {
             }
         }
 
-        return original_line - 1;
+        return @intCast(i32, original_line) - 1;
     }
 
     pub fn generate(allocator: std.mem.Allocator, contents: []const u8, approximate_line_count: i32) List {
@@ -247,9 +336,9 @@ pub const LineOffsetTable = struct {
 
         var remaining = contents;
         while (remaining.len > 0) {
-            // TODO: SIMD
             const len_ = strings.wtf8ByteSequenceLength(remaining[0]);
             const c = strings.decodeWTF8RuneT(remaining.ptr[0..4], len_, i32, 0);
+            const cp_len = @as(usize, len_);
 
             if (column == 0) {
                 line_byte_offset = @truncate(
@@ -284,9 +373,25 @@ pub const LineOffsetTable = struct {
                     u32,
                     @ptrToInt(remaining.ptr) - @ptrToInt(contents.ptr),
                 )) - line_byte_offset;
-                try columns_for_non_ascii.ensureUnusedCapacity((line_bytes_so_far - column_byte_offset) + 1);
+                columns_for_non_ascii.ensureUnusedCapacity((line_bytes_so_far - column_byte_offset) + 1) catch unreachable;
                 while (column_byte_offset <= line_bytes_so_far) : (column_byte_offset += 1) {
                     columns_for_non_ascii.appendAssumeCapacity(column);
+                }
+            } else {
+                switch (c) {
+                    (@maximum('\r', '\n') + 1)...127 => {
+                        // skip ahead to the next newline or non-ascii character
+                        if (strings.indexOfNewlineOrNonASCIICheckStart(remaining, @as(u32, len_), false)) |j| {
+                            column += @intCast(i32, j);
+                            remaining = remaining[j..];
+                            continue;
+                        } else {
+                            // if there are no more lines, we are done!
+                            column += @intCast(i32, remaining.len);
+                            remaining = remaining[remaining.len..];
+                        }
+                    },
+                    else => {},
                 }
             }
 
@@ -299,16 +404,16 @@ pub const LineOffsetTable = struct {
                         continue;
                     }
                     var columns_list = columns_for_non_ascii;
-                    if (columns_for_non_ascii.items.len > 0 and stack_fallback.fixed_buffer_allocator.ownsSlice(columns_for_non_ascii.items)) {
-                        columns_for_non_ascii.items = try allocator.dupe(i32, columns_for_non_ascii.toOwnedSlice());
+                    if (columns_for_non_ascii.items.len > 0 and stack_fallback.fixed_buffer_allocator.ownsSlice(std.mem.sliceAsBytes(columns_for_non_ascii.items))) {
+                        columns_for_non_ascii.items = allocator.dupe(i32, columns_for_non_ascii.toOwnedSlice()) catch unreachable;
                         columns_for_non_ascii.capacity = columns_for_non_ascii.items.len;
                     }
 
-                    try list.append(allocator, .{
+                    list.append(allocator, .{
                         .byte_offset_to_start_of_line = line_byte_offset,
                         .byte_offset_to_first_non_ascii = byte_offset_to_first_non_ascii,
                         .columns_for_non_ascii = BabyList(i32).fromList(columns_list),
-                    });
+                    }) catch unreachable;
                     column = 0;
                     byte_offset_to_first_non_ascii = 0;
                     column_byte_offset = 0;
@@ -323,17 +428,17 @@ pub const LineOffsetTable = struct {
                 },
             }
 
-            remaining = remaining[len_..];
+            remaining = remaining[cp_len..];
         }
 
         // Mark the start of the next line
         if (column == 0) {
-            line_byte_offset = @intCast(i32, contents.len);
+            line_byte_offset = @intCast(u32, contents.len);
         }
 
         if (columns_for_non_ascii.items.len > 0) {
             const line_bytes_so_far = @intCast(u32, contents.len) - line_byte_offset;
-            try columns_for_non_ascii.ensureUnusedCapacity((line_bytes_so_far - column_byte_offset) + 1);
+            columns_for_non_ascii.ensureUnusedCapacity((line_bytes_so_far - column_byte_offset) + 1) catch unreachable;
             while (column_byte_offset <= line_bytes_so_far) : (column_byte_offset += 1) {
                 columns_for_non_ascii.appendAssumeCapacity(column);
             }
@@ -341,21 +446,36 @@ pub const LineOffsetTable = struct {
 
         {
             var columns_list = columns_for_non_ascii;
-            if (columns_for_non_ascii.items.len > 0 and stack_fallback.fixed_buffer_allocator.ownsSlice(columns_for_non_ascii.items)) {
-                columns_for_non_ascii.items = try allocator.dupe(i32, columns_for_non_ascii.toOwnedSlice());
+            if (columns_for_non_ascii.items.len > 0 and stack_fallback.fixed_buffer_allocator.ownsSlice(std.mem.sliceAsBytes(columns_for_non_ascii.items))) {
+                columns_for_non_ascii.items = allocator.dupe(i32, columns_for_non_ascii.toOwnedSlice()) catch unreachable;
                 columns_for_non_ascii.capacity = columns_for_non_ascii.items.len;
             }
 
-            try list.append(allocator, .{
+            list.append(allocator, .{
                 .byte_offset_to_start_of_line = line_byte_offset,
                 .byte_offset_to_first_non_ascii = byte_offset_to_first_non_ascii,
                 .columns_for_non_ascii = BabyList(i32).fromList(columns_list),
-            });
+            }) catch unreachable;
         }
 
         return list;
     }
 };
+
+pub fn appendSourceMappingURLRemote(
+    origin: URL,
+    source: Logger.Source,
+    asset_prefix_path: []const u8,
+    comptime Writer: type,
+    writer: Writer,
+) !void {
+    try writer.writeAll("\n//# sourceMappingURL=");
+    try writer.writeAll(strings.withoutTrailingSlash(origin.href));
+    if (asset_prefix_path.len > 0)
+        try writer.writeAll(asset_prefix_path);
+    try writer.writeAll(source.path.pretty);
+    try writer.writeAll(".map");
+}
 
 pub fn appendMappingToBuffer(buffer_: MutableString, last_byte: u8, prev_state: SourceMapState, current_state: SourceMapState) MutableString {
     var buffer = buffer_;
@@ -383,9 +503,9 @@ pub fn appendMappingToBuffer(buffer_: MutableString, last_byte: u8, prev_state: 
     if (needs_comma) {
         buffer.appendCharAssumeCapacity(',');
     }
-
-    inline for (vlq) |*item| {
-        buffer.appendAssumeCapacity(item.bytes[0..item.len]);
+    comptime var i: usize = 0;
+    inline while (i < vlq.len) : (i += 1) {
+        buffer.appendAssumeCapacity(vlq[i].bytes[0..vlq[i].len]);
     }
 
     return buffer;
@@ -405,6 +525,42 @@ pub const Chunk = struct {
 
     /// ignore empty chunks
     should_ignore: bool = true,
+
+    pub fn printSourceMapContents(
+        chunk: Chunk,
+        source: Logger.Source,
+        mutable: MutableString,
+        comptime ascii_only: bool,
+    ) !MutableString {
+        var output = mutable;
+
+        // attempt to pre-allocate
+
+        var filename_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var filename = source.path.text;
+        if (strings.hasPrefix(source.path.text, FileSystem.instance.top_level_dir)) {
+            filename = filename[FileSystem.instance.top_level_dir.len - 1 ..];
+        } else if (filename.len > 0 and filename[0] != '/') {
+            filename_buf[0] = '/';
+            @memcpy(filename_buf[1..], filename.ptr, filename.len);
+            filename = filename_buf[0 .. filename.len + 1];
+        }
+
+        output.growIfNeeded(
+            filename.len + 2 + source.contents.len + chunk.buffer.list.items.len + 32 + 39 + 29 + 22 + 20,
+        ) catch unreachable;
+        try output.append("{\n  \"version\":3,\n  \"sources\": [");
+
+        output = try JSPrinter.quoteForJSON(filename, output, ascii_only);
+
+        try output.append("],\n  \"sourcesContent\": [");
+        output = try JSPrinter.quoteForJSON(source.contents, output, ascii_only);
+        try output.append("],\n  \"mappings\": ");
+        output = try JSPrinter.quoteForJSON(chunk.buffer.list.items, output, ascii_only);
+        try output.append(", \"names\": []\n}");
+
+        return output;
+    }
 
     pub const Builder = struct {
         input_source_map: ?*SourceMap = null,
@@ -433,7 +589,7 @@ pub const Chunk = struct {
                 .buffer = b.source_map,
                 .end_state = b.prev_state,
                 .final_generated_column = b.generated_column,
-                .should_ignore = strings.containsAnyBesidesChar(b.source_map.list.items, ';'),
+                .should_ignore = !strings.containsAnyBesidesChar(b.source_map.list.items, ';'),
             };
         }
 
@@ -441,22 +597,40 @@ pub const Chunk = struct {
         // generated line and column numbers
         pub fn updateGeneratedLineAndColumn(b: *Builder, output: []const u8) void {
             const slice = output[b.last_generated_update..];
+            var needs_mapping = b.cover_lines_without_mappings and !b.line_starts_with_mapping and b.has_prev_state;
 
-            var iter = strings.CodepointIterator.init(slice);
-            var cursor = strings.CodepointIterator.Cursor{};
-            while (iter.next(&cursor)) {
-                switch (cursor.c) {
+            var i: usize = 0;
+            const n = @intCast(usize, slice.len);
+            var c: i32 = 0;
+            while (i < n) {
+                const len = strings.wtf8ByteSequenceLength(slice[i]);
+                c = strings.decodeWTF8RuneT(slice[i..].ptr[0..4], len, i32, strings.unicode_replacement);
+                i += @as(usize, len);
+
+                switch (c) {
+                    14...127 => {
+                        if (strings.indexOfNewlineOrNonASCII(slice, @intCast(u32, i))) |j| {
+                            b.generated_column += @intCast(i32, (@as(usize, j) - i) + 1);
+                            i = j;
+                            continue;
+                        } else {
+                            b.generated_column += @intCast(i32, slice[i..].len);
+                            i = n;
+                            break;
+                        }
+                    },
                     '\r', '\n', 0x2028, 0x2029 => {
                         // windows newline
-                        if (cursor.c == '\r') {
-                            const newline_check = b.last_generated_update + cursor.i + 1;
-                            if (newline_check < output.len and output[newline_check] == '\n')
+                        if (c == '\r') {
+                            const newline_check = b.last_generated_update + i;
+                            if (newline_check < output.len and output[newline_check] == '\n') {
                                 continue;
+                            }
                         }
 
                         // If we're about to move to the next line and the previous line didn't have
                         // any mappings, add a mapping at the start of the previous line.
-                        if (b.cover_lines_without_mappings and !b.line_starts_with_mapping and b.has_prev_state) {
+                        if (needs_mapping) {
                             b.appendMappingWithoutRemapping(.{
                                 .generated_line = b.prev_state.generated_line,
                                 .generated_column = 0,
@@ -473,10 +647,13 @@ pub const Chunk = struct {
 
                         // This new line doesn't have a mapping yet
                         b.line_starts_with_mapping = false;
+
+                        needs_mapping = b.cover_lines_without_mappings and !b.line_starts_with_mapping and b.has_prev_state;
                     },
+
                     else => {
                         // Mozilla's "source-map" library counts columns using UTF-16 code units
-                        b.generated_column += @as(i32, @boolToInt(cursor.c > 0xFFFF)) + 1;
+                        b.generated_column += @as(i32, @boolToInt(c > 0xFFFF)) + 1;
                     },
                 }
             }

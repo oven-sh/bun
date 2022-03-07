@@ -671,29 +671,57 @@ pub fn toUTF8Alloc(allocator: std.mem.Allocator, js: []const u16) !string {
     return try toUTF8AllocWithType(allocator, []const u16, js);
 }
 
-pub inline fn appendUTF8MachineWordToUTF16MachineWord(output: *[4]u16, input: *const [4]u8) void {
-    output[0] = input[0];
-    output[1] = input[1];
-    output[2] = input[2];
-    output[3] = input[3];
+pub inline fn appendUTF8MachineWordToUTF16MachineWord(output: *[@sizeOf(usize) / 2]u16, input: *const [@sizeOf(usize) / 2]u8) void {
+    comptime var i: usize = 0;
+    inline while (i < @sizeOf(usize) / 2) : (i += 1) {
+        output[i] = input[i];
+    }
 }
 
 pub inline fn copyU8IntoU16(output_: []u16, input_: []const u8) void {
     var output = output_;
     var input = input_;
+    const word = @sizeOf(usize) / 2;
     if (comptime Environment.allow_assert) {
         std.debug.assert(input.len <= output.len);
     }
-    while (input.len >= 4) {
-        appendUTF8MachineWordToUTF16MachineWord(output[0..4], input[0..4]);
-        output = output[4..];
-        input = input[4..];
+    while (input.len >= word) {
+        appendUTF8MachineWordToUTF16MachineWord(output[0..word], input[0..word]);
+        output = output[word..];
+        input = input[word..];
     }
 
     for (input) |c, i| {
         output[i] = c;
     }
 }
+
+// pub inline fn copy(output_: []u8, input_: []const u8) void {
+//     var output = output_;
+//     var input = input_;
+//     if (comptime Environment.allow_assert) {
+//         std.debug.assert(input.len <= output.len);
+//     }
+
+//     if (input.len > @sizeOf(usize) * 4) {
+//         comptime var i: usize = 0;
+//         inline while (i < 4) : (i += 1) {
+//             appendUTF8MachineWord(output[i * @sizeOf(usize) ..][0..@sizeOf(usize)], input[i * @sizeOf(usize) ..][0..@sizeOf(usize)]);
+//         }
+//         output = output[4 * @sizeOf(usize) ..];
+//         input = input[4 * @sizeOf(usize) ..];
+//     }
+
+//     while (input.len >= @sizeOf(usize)) {
+//         appendUTF8MachineWord(output[0..@sizeOf(usize)], input[0..@sizeOf(usize)]);
+//         output = output[@sizeOf(usize)..];
+//         input = input[@sizeOf(usize)..];
+//     }
+
+//     for (input) |c, i| {
+//         output[i] = c;
+//     }
+// }
 
 pub inline fn copyU16IntoU8(output_: []u8, comptime InputType: type, input_: InputType) void {
     var output = output_;
@@ -1335,17 +1363,17 @@ pub inline fn decodeWTF8RuneTMultibyte(p: *const [4]u8, len: u3, comptime T: typ
     unreachable;
 }
 
-const ascii_vector_size = if (Environment.isWasm) 8 else 16;
-const ascii_u16_vector_size = if (Environment.isWasm) 4 else 8;
-const AsciiVectorInt = std.meta.Int(.unsigned, ascii_vector_size);
-const AsciiVectorIntU16 = std.meta.Int(.unsigned, ascii_u16_vector_size);
-const max_16_ascii = @splat(ascii_vector_size, @as(u8, 127));
-const min_16_ascii = @splat(ascii_vector_size, @as(u8, 0x20));
-const max_u16_ascii = @splat(ascii_u16_vector_size, @as(u16, 127));
-const AsciiVector = std.meta.Vector(ascii_vector_size, u8);
-const AsciiVectorU1 = std.meta.Vector(ascii_vector_size, u1);
-const AsciiU16Vector = std.meta.Vector(ascii_u16_vector_size, u16);
-const max_4_ascii = @splat(4, @as(u8, 127));
+pub const ascii_vector_size = if (Environment.isWasm) 8 else 16;
+pub const ascii_u16_vector_size = if (Environment.isWasm) 4 else 8;
+pub const AsciiVectorInt = std.meta.Int(.unsigned, ascii_vector_size);
+pub const AsciiVectorIntU16 = std.meta.Int(.unsigned, ascii_u16_vector_size);
+pub const max_16_ascii = @splat(ascii_vector_size, @as(u8, 127));
+pub const min_16_ascii = @splat(ascii_vector_size, @as(u8, 0x20));
+pub const max_u16_ascii = @splat(ascii_u16_vector_size, @as(u16, 127));
+pub const AsciiVector = std.meta.Vector(ascii_vector_size, u8);
+pub const AsciiVectorU1 = std.meta.Vector(ascii_vector_size, u1);
+pub const AsciiU16Vector = std.meta.Vector(ascii_u16_vector_size, u16);
+pub const max_4_ascii = @splat(4, @as(u8, 127));
 pub fn isAllASCII(slice: []const u8) bool {
     var remaining = slice;
 
@@ -1430,6 +1458,49 @@ pub fn firstNonASCII(slice: []const u8) ?u32 {
     for (remaining) |char, i| {
         if (char > 127) {
             return @truncate(u32, i + (slice.len - remaining.len));
+        }
+    }
+
+    return null;
+}
+
+pub fn indexOfNewlineOrNonASCII(slice_: []const u8, offset: u32) ?u32 {
+    return indexOfNewlineOrNonASCIICheckStart(slice_, offset, true);
+}
+
+pub fn indexOfNewlineOrNonASCIICheckStart(slice_: []const u8, offset: u32, comptime check_start: bool) ?u32 {
+    const slice = slice_[offset..];
+    var remaining = slice;
+
+    if (remaining.len == 0)
+        return null;
+
+    if (comptime check_start) {
+        // this shows up in profiling
+        if (remaining[0] > 127 or remaining[0] < 0x20 or remaining[0] == '\r' or remaining[0] == '\n') {
+            return offset;
+        }
+    }
+
+    if (comptime Environment.isAarch64 or Environment.isX64) {
+        while (remaining.len >= ascii_vector_size) {
+            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
+            const cmp = @bitCast(AsciiVectorU1, (vec > max_16_ascii)) | @bitCast(AsciiVectorU1, (vec < min_16_ascii)) |
+                @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '\r'))) |
+                @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '\n')));
+            const bitmask = @ptrCast(*const AsciiVectorInt, &cmp).*;
+            const first = @ctz(AsciiVectorInt, bitmask);
+            if (first < ascii_vector_size) {
+                return @as(u32, first) + @intCast(u32, slice.len - remaining.len) + offset;
+            }
+
+            remaining = remaining[ascii_vector_size..];
+        }
+    }
+
+    for (remaining) |char, i| {
+        if (char > 127 or char < 0x20 or char == '\n' or char == '\r') {
+            return @truncate(u32, i + (slice.len - remaining.len)) + offset;
         }
     }
 

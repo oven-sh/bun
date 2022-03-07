@@ -1744,6 +1744,9 @@ pub const Api = struct {
         /// logLevel
         log_level: ?MessageLevel = null,
 
+        /// source_map
+        source_map: ?SourceMapMode = null,
+
         pub fn decode(reader: anytype) anyerror!TransformOptions {
             var this = std.mem.zeroes(TransformOptions);
 
@@ -1830,6 +1833,9 @@ pub const Api = struct {
                     },
                     26 => {
                         this.log_level = try reader.readValue(MessageLevel);
+                    },
+                    27 => {
+                        this.source_map = try reader.readValue(SourceMapMode);
                     },
                     else => {
                         return error.InvalidMessage;
@@ -1944,7 +1950,26 @@ pub const Api = struct {
                 try writer.writeFieldID(26);
                 try writer.writeEnum(log_level);
             }
+            if (this.source_map) |source_map| {
+                try writer.writeFieldID(27);
+                try writer.writeEnum(source_map);
+            }
             try writer.endMessage();
+        }
+    };
+
+    pub const SourceMapMode = enum(u8) {
+        _none,
+        /// inline_into_file
+        inline_into_file,
+
+        /// external
+        external,
+
+        _,
+
+        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+            return try std.json.stringify(@tagName(self), opts, o);
         }
     };
 

@@ -2192,12 +2192,11 @@ pub const RequestContext = struct {
                     rctx: *RequestContext,
                     _loader: Options.Loader,
                     buffer: MutableString = undefined,
-                    threadlocal var buffer: MutableString = undefined;
-                    threadlocal var has_loaded_buffer: bool = false;
+                    threadlocal var buffer: ?*MutableString = null;
 
                     pub fn reserveNext(this: *SocketPrinterInternal, count: u32) anyerror![*]u8 {
                         try this.buffer.growIfNeeded(count);
-                        return @ptrCast([*]u8, &this.buffer.list.items.ptr[buffer.list.items.len]);
+                        return @ptrCast([*]u8, &this.buffer.list.items.ptr[this.buffer.list.items.len]);
                     }
 
                     pub fn advanceBy(this: *SocketPrinterInternal, count: u32) void {
@@ -2207,17 +2206,17 @@ pub const RequestContext = struct {
                     }
 
                     pub fn init(rctx: *RequestContext, _loader: Options.Loader) SocketPrinterInternal {
-                        if (!has_loaded_buffer) {
-                            buffer = MutableString.init(default_allocator, 0) catch unreachable;
-                            has_loaded_buffer = true;
+                        if (buffer == null) {
+                            buffer = default_allocator.create(MutableString) catch unreachable;
+                            buffer.?.* = MutableString.init2048(default_allocator) catch unreachable;
                         }
 
-                        buffer.reset();
+                        buffer.?.reset();
 
                         return SocketPrinterInternal{
                             .rctx = rctx,
                             ._loader = _loader,
-                            .buffer = buffer,
+                            .buffer = buffer.?.*,
                         };
                     }
                     pub fn writeByte(this: *SocketPrinterInternal, byte: u8) anyerror!usize {
@@ -2247,12 +2246,15 @@ pub const RequestContext = struct {
 
                     const SourceMapHandler = JSPrinter.SourceMapHandler.For(SocketPrinterInternal, onSourceMapChunk);
                     pub fn onSourceMapChunk(this: *SocketPrinterInternal, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
+                        defer {
+                            SocketPrinterInternal.buffer.?.* = this.buffer;
+                        }
                         if (this.rctx.has_called_done) return;
                         this.buffer.reset();
                         this.buffer = try chunk.printSourceMapContents(source, this.buffer, false);
                         defer {
                             this.buffer.reset();
-                            buffer = this.buffer;
+                            SocketPrinterInternal.buffer.?.* = this.buffer;
                         }
                         const buf = this.buffer.toOwnedSliceLeaky();
                         if (buf.len == 0) {
@@ -2272,11 +2274,12 @@ pub const RequestContext = struct {
                     pub fn done(
                         chunky: *SocketPrinterInternal,
                     ) anyerror!void {
+                        SocketPrinterInternal.buffer.?.* = chunky.buffer;
                         if (chunky.rctx.has_called_done) return;
                         const buf = chunky.buffer.toOwnedSliceLeaky();
                         defer {
                             chunky.buffer.reset();
-                            buffer = chunky.buffer;
+                            SocketPrinterInternal.buffer.?.* = chunky.buffer;
                         }
 
                         if (chunky.rctx.header("Open-In-Editor") != null) {

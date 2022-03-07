@@ -196,7 +196,15 @@ pub const Arguments = struct {
         clap.parseParam("--disable-bun.js                Disable bun.js from loading in the dev server") catch unreachable,
     };
 
-    const params = public_params ++ debug_params;
+    pub const params = public_params ++ debug_params;
+
+    const build_only_params = [_]ParamType{
+        clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'inline', 'external', or 'none'") catch unreachable,
+        clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
+    };
+
+    const build_params_public = public_params ++ build_only_params;
+    pub const build_params = build_params_public ++ debug_params;
 
     fn printVersionAndExit() noreturn {
         @setCold(true);
@@ -296,19 +304,25 @@ pub const Arguments = struct {
         try loadConfigPath(allocator, auto_loaded, config_path, ctx, comptime cmd);
     }
 
-    pub fn loadConfigWithCmdArgs(allocator: std.mem.Allocator, args: clap.Args(clap.Help, &params), ctx: *Command.Context, comptime cmd: Command.Tag) !void {
+    fn loadConfigWithCmdArgs(
+        comptime cmd: Command.Tag,
+        allocator: std.mem.Allocator,
+        args: clap.Args(clap.Help, cmd.params()),
+        ctx: *Command.Context,
+    ) !void {
         return try loadConfig(allocator, args.option("--config"), ctx, comptime cmd);
     }
 
     pub fn parse(allocator: std.mem.Allocator, ctx: *Command.Context, comptime cmd: Command.Tag) !Api.TransformOptions {
         var diag = clap.Diagnostic{};
+        const params_to_use = comptime cmd.params();
 
-        var args = clap.parse(clap.Help, &params, .{
+        var args = clap.parse(clap.Help, params_to_use, .{
             .diagnostic = &diag,
             .allocator = allocator,
         }) catch |err| {
             // Report useful error and exit
-            clap.help(Output.errorWriter(), &params) catch {};
+            clap.help(Output.errorWriter(), params_to_use) catch {};
             Output.errorWriter().writeAll("\n") catch {};
             diag.report(Output.errorWriter(), err) catch {};
             Global.exit(1);
@@ -329,7 +343,7 @@ pub const Arguments = struct {
         ctx.args.absolute_working_dir = cwd;
 
         if (comptime Command.Tag.loads_config.get(cmd)) {
-            try loadConfigWithCmdArgs(allocator, args, ctx, cmd);
+            try loadConfigWithCmdArgs(cmd, allocator, args, ctx);
         }
 
         var opts: Api.TransformOptions = ctx.args;
@@ -389,7 +403,8 @@ pub const Arguments = struct {
 
         const print_help = args.flag("--help");
         if (print_help) {
-            clap.help(Output.writer(), std.mem.span(params[0..public_params.len])) catch {};
+            const params_len = if (cmd == .BuildCommand) build_params_public.len else public_params.len;
+            clap.help(Output.writer(), std.mem.span(params_to_use[0..params_len])) catch {};
             Output.prettyln("\n-------\n\n", .{});
             Output.flush();
             HelpCommand.printWithReason(.explicit);
@@ -404,6 +419,27 @@ pub const Arguments = struct {
         // var output_dir = args.option("--outdir");
         var output_dir: ?string = null;
         const production = false;
+
+        if (cmd == .BuildCommand) {
+            if (args.option("--outdir")) |outdir| {
+                if (outdir.len > 0) {
+                    output_dir = outdir;
+                }
+            }
+
+            if (args.option("--sourcemap")) |setting| {
+                if (setting.len == 0 or strings.eqlComptime(setting, "inline")) {
+                    opts.source_map = Api.SourceMapMode.inline_into_file;
+                } else if (strings.eqlComptime(setting, "none")) {
+                    opts.source_map = Api.SourceMapMode._none;
+                } else if (strings.eqlComptime(setting, "external")) {
+                    opts.source_map = Api.SourceMapMode.external;
+                } else {
+                    Output.prettyErrorln("<r><red>error<r>: Invalid sourcemap setting: \"{s}\"", .{setting});
+                    Global.crash();
+                }
+            }
+        }
 
         if (opts.entry_points.len == 0) {
             var entry_points = args.positionals();
@@ -439,12 +475,12 @@ pub const Arguments = struct {
                         entry_points = entry_points[1..];
                     }
 
-                    var write = entry_points.len > 1 or output_dir != null;
-                    if (write and output_dir == null) {
-                        var _paths = [_]string{ cwd, "out" };
-                        output_dir = try std.fs.path.resolve(allocator, &_paths);
+                    opts.write = entry_points.len > 1 or
+                        output_dir != null or
+                        @enumToInt(opts.source_map orelse Api.SourceMapMode._none) > 0;
+                    if ((opts.write orelse false) and (output_dir orelse "").len == 0) {
+                        output_dir = "out";
                     }
-                    opts.write = write;
                 },
                 .RunCommand => {
                     if (entry_points.len > 0 and (strings.eqlComptime(
@@ -1179,6 +1215,13 @@ pub const Command = struct {
         UpgradeCommand,
         PackageManagerCommand,
         TestCommand,
+
+        pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
+            return &comptime switch (cmd) {
+                Command.Tag.BuildCommand => Arguments.build_params,
+                else => Arguments.params,
+            };
+        }
 
         pub fn readGlobalConfig(this: Tag) bool {
             return switch (this) {

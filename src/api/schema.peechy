@@ -345,6 +345,12 @@ message TransformOptions {
 
   uint16 port = 25;
   MessageLevel logLevel = 26;
+  SourceMapMode source_map = 27;
+}
+
+smol SourceMapMode {
+  inline_into_file = 1;
+  external = 2;
 }
 
 struct FileHandle {

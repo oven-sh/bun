@@ -1718,6 +1718,10 @@ function decodeTransformOptions(bb) {
         result["logLevel"] = MessageLevel[bb.readVarUint()];
         break;
 
+      case 27:
+        result["source_map"] = SourceMapMode[bb.readByte()];
+        break;
+
       default:
         throw new Error("Attempted to parse invalid message");
     }
@@ -1925,8 +1929,31 @@ function encodeTransformOptions(message, bb) {
       );
     bb.writeVarUint(encoded);
   }
+
+  var value = message["source_map"];
+  if (value != null) {
+    bb.writeByte(27);
+    var encoded = SourceMapMode[value];
+    if (encoded === void 0)
+      throw new Error(
+        "Invalid value " + JSON.stringify(value) + ' for enum "SourceMapMode"'
+      );
+    bb.writeByte(encoded);
+  }
   bb.writeByte(0);
 }
+const SourceMapMode = {
+  1: 1,
+  2: 2,
+  inline_into_file: 1,
+  external: 2,
+};
+const SourceMapModeKeys = {
+  1: "inline_into_file",
+  2: "external",
+  inline_into_file: "inline_into_file",
+  external: "external",
+};
 
 function decodeFileHandle(bb) {
   var result = {};
@@ -3272,6 +3299,8 @@ export { decodeRouteConfig };
 export { encodeRouteConfig };
 export { decodeTransformOptions };
 export { encodeTransformOptions };
+export { SourceMapMode };
+export { SourceMapModeKeys };
 export { decodeFileHandle };
 export { encodeFileHandle };
 export { decodeTransform };

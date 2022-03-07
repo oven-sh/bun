@@ -349,6 +349,11 @@ pub const Bunfig = struct {
                         try this.expect(file, .e_string);
                         this.bunfig.node_modules_bundle_path = try file.data.e_string.string(allocator);
                     }
+
+                    if (bun.get("outdir")) |dir| {
+                        try this.expect(dir, .e_string);
+                        this.bunfig.output_dir = try dir.data.e_string.string(allocator);
+                    }
                 }
 
                 if (comptime cmd == .BunCommand) {

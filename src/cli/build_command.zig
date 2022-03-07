@@ -59,16 +59,13 @@ pub const BuildCommand = struct {
         var did_write = false;
 
         defer Output.flush();
-        var writer = Output.writer();
+        var writer = Output.errorWriter();
         var err_writer = writer;
 
-        var open_file_limit: usize = 32;
+        var open_file_limit: usize = fs.FileSystem.RealFS.Limit.handles;
         if (ctx.args.write) |write| {
             if (write) {
                 const root_dir = result.root_dir orelse unreachable;
-                if (std.os.getrlimit(.NOFILE)) |limit| {
-                    open_file_limit = limit.cur;
-                } else |_| {}
 
                 var all_paths = try ctx.allocator.alloc([]const u8, result.output_files.len);
                 var max_path_len: usize = 0;

@@ -194,6 +194,16 @@ export const DotEnvBehaviorKeys = {
   3: "load_all",
   load_all: "load_all",
 };
+export enum SourceMapMode {
+  inline_into_file = 1,
+  external = 2,
+}
+export const SourceMapModeKeys = {
+  1: "inline_into_file",
+  inline_into_file: "inline_into_file",
+  2: "external",
+  external: "external",
+};
 export enum ImportKind {
   entry_point = 1,
   stmt = 2,
@@ -520,6 +530,7 @@ export interface TransformOptions {
   disable_hmr?: boolean;
   port?: uint16;
   logLevel?: MessageLevel;
+  source_map?: SourceMapMode;
 }
 
 export interface FileHandle {

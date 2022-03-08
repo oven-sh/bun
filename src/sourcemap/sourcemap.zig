@@ -298,7 +298,7 @@ const base64_lut: [std.math.maxInt(u7)]u7 = brk: {
     break :brk bytes;
 };
 
-fn decodeVLQ(encoded: []const u8, start: usize) VLQResult {
+pub fn decodeVLQ(encoded: []const u8, start: usize) VLQResult {
     var shift: u8 = 0;
     var vlq: u32 = 0;
 
@@ -306,8 +306,10 @@ fn decodeVLQ(encoded: []const u8, start: usize) VLQResult {
     // by doing it this way, we can hint to the compiler that it will not exceed 9
     const encoded_ = encoded[start..][0..@minimum(encoded.len - start, comptime (vlq_max_in_bytes + 1))];
 
-    for (encoded_) |c, i| {
-        const index = @as(u32, base64_lut[@truncate(u7, c)]);
+    comptime var i: usize = 0;
+
+    inline while (i < vlq_max_in_bytes + 1) : (i += 1) {
+        const index = @as(u32, base64_lut[@truncate(u7, encoded_[i])]);
 
         // decode a byte
         vlq |= (index & 31) << @truncate(u5, shift);
@@ -563,6 +565,7 @@ pub fn appendMappingToBuffer(buffer_: MutableString, last_byte: u8, prev_state: 
     if (needs_comma) {
         buffer.appendCharAssumeCapacity(',');
     }
+
     comptime var i: usize = 0;
     inline while (i < vlq.len) : (i += 1) {
         buffer.appendAssumeCapacity(vlq[i].bytes[0..vlq[i].len]);

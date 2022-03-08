@@ -393,6 +393,13 @@ pub fn build(b: *std.build.Builder) !void {
     }
 
     {
+        const headers_step = b.step("vlq-bench", "Build vlq bench");
+        var headers_obj: *std.build.LibExeObjStep = b.addExecutable("vlq-bench", "src/sourcemap/vlq_bench.zig");
+        defer headers_step.dependOn(&headers_obj.step);
+        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+    }
+
+    {
         const headers_step = b.step("tgz-obj", "Build tgz (object files)");
         var headers_obj: *std.build.LibExeObjStep = b.addObject("tgz", "misctools/tgz.zig");
         defer headers_step.dependOn(&headers_obj.step);

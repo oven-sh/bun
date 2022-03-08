@@ -161,7 +161,16 @@ MACOS_MIN_FLAG=
 
 POSIX_PKG_MANAGER=sudo apt
 
-STRIP ?= $(shell which llvm-strip || which llvm-strip-13 || echo "Missing llvm-strip. Please pass it in the STRIP environment var"; exit 1;)
+STRIP=
+
+ifeq ($(OS_NAME),darwin)
+STRIP=strip -u -r
+endif
+
+ifeq ($(OS_NAME),linux)
+STRIP=$(which llvm-strip || echo "Missing strip")
+endif
+
 
 HOMEBREW_PREFIX ?= $(BREW_PREFIX_PATH)
 
@@ -234,17 +243,18 @@ CLANG_FLAGS = $(INCLUDE_DIRS) \
 		-DBUILDING_JSCONLY__ \
 		-DASSERT_ENABLED=0 \
 		-fvisibility=hidden \
-		-fvisibility-inlines-hidden \
-		-fno-omit-frame-pointer $(CFLAGS)
+		-fvisibility-inlines-hidden
+	
+PLATFORM_LINKER_FLAGS =
 		
 # This flag is only added to webkit builds on Apple platforms
 # It has something to do with ICU
 ifeq ($(OS_NAME), darwin)
-CLANG_FLAGS += -DDU_DISABLE_RENAMING=1 \
+PLATFORM_LINKER_FLAGS += -DDU_DISABLE_RENAMING=1 \
 		-lstdc++ \
+		-fno-keep-static-consts \
 		-ffunction-sections \
 		-fdata-sections \
-		-Wl,-no_eh_labels \
 		-Wl,-dead_strip \
 		-Wl,-dead_strip_dylibs
 endif
@@ -256,12 +266,11 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MIMALLOC_FILE_PATH) \
 		$(BUN_DEPS_OUT_DIR)/libarchive.a \
 		$(BUN_DEPS_OUT_DIR)/libssl.a \
 		$(BUN_DEPS_OUT_DIR)/picohttpparser.o \
-		$(BUN_DEPS_OUT_DIR)/libbacktrace.a
 
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) $(BUN_DEPS_OUT_DIR)/libcrypto.boring.a
 
 
-PLATFORM_LINKER_FLAGS =
+
 
 STATIC_MUSL_FLAG ?= 
 
@@ -277,24 +286,23 @@ PLATFORM_LINKER_FLAGS = \
 		-fdata-sections \
 		-static-libstdc++ \
 		-static-libgcc \
+		-fno-omit-frame-pointer $(CFLAGS) \
 		-Wl,--compress-debug-sections,zlib \
 		${STATIC_MUSL_FLAG} 
-endif
 
-ifeq ($(OS_NAME), darwin)
-PLATFORM_LINKER_FLAGS = \
-		-Wl,-keep_private_externs 
+ARCHIVE_FILES_WITHOUT_LIBCRYPTO += $(BUN_DEPS_OUT_DIR)/libbacktrace.a
 endif
 
 
-BUN_LLD_FLAGS = $(OBJ_FILES) \
-		${ICU_FLAGS} \
-		${JSC_FILES} \
-		$(ARCHIVE_FILES) \
+BUN_LLD_FLAGS_WITHOUT_JSC = $(ARCHIVE_FILES) \
 		$(LIBICONV_PATH) \
 		$(CLANG_FLAGS) \
 		$(DEFAULT_LINKER_FLAGS) \
-		$(PLATFORM_LINKER_FLAGS)
+		$(PLATFORM_LINKER_FLAGS) 
+		
+
+
+BUN_LLD_FLAGS = $(OBJ_FILES) $(JSC_FILES) ${ICU_FLAGS} $(BUN_LLD_FLAGS_WITHOUT_JSC)
 
 CLANG_VERSION = $(shell $(CC) --version | awk '/version/ {for(i=1; i<=NF; i++){if($$i=="version"){split($$(i+1),v,".");print v[1]}}}')
 
@@ -402,8 +410,21 @@ build-obj-wasm:
 		-o packages/bun-freestanding-wasm32/bun-wasm.wasm
 	cp packages/bun-freestanding-wasm32/bun-wasm.wasm src/api/demo/public/bun-wasm.wasm
 
+build-obj-wasm-small: 
+	$(ZIG) build bun-wasm -Drelease-small -Dtarget=wasm32-freestanding --prominent-compile-errors
+	emcc -sEXPORTED_FUNCTIONS="['_bun_free', '_cycleStart', '_cycleEnd', '_bun_malloc', '_scan', '_transform', '_init']" \
+		-g -s ERROR_ON_UNDEFINED_SYMBOLS=0  -DNDEBUG  \
+		$(BUN_DEPS_DIR)/libmimalloc.a.wasm  \
+		packages/bun-freestanding-wasm32/bun-wasm.o -Oz --no-entry --allow-undefined  -s ASSERTIONS=0  -s ALLOW_MEMORY_GROWTH=1 -s WASM_BIGINT=1  \
+		-o packages/bun-freestanding-wasm32/bun-wasm.wasm
+	cp packages/bun-freestanding-wasm32/bun-wasm.wasm src/api/demo/public/bun-wasm.wasm
+
+
 build-obj-safe: 
 	$(ZIG) build obj -Drelease-safe
+
+
+
 
 sign-macos-x64: 
 	gon sign.macos-x64.json
@@ -755,9 +776,10 @@ jsc-build-mac-compile:
 	mkdir -p $(WEBKIT_RELEASE_DIR) $(WEBKIT_DIR);
 	cd $(WEBKIT_RELEASE_DIR) && \
 		ICU_INCLUDE_DIRS="$(HOMEBREW_PREFIX)opt/icu4c/include" \
-		CMAKE_BUILD_TYPE=Release cmake \
+		cmake \
 			-DPORT="JSCOnly" \
 			-DENABLE_STATIC_JSC=ON \
+			-DCMAKE_BUILD_TYPE=Release \
 			-DCMAKE_BUILD_TYPE=Release \
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DENABLE_FTL_JIT=ON \
@@ -806,7 +828,7 @@ jsc-build-mac-copy:
 	cp $(WEBKIT_RELEASE_DIR)/lib/libbmalloc.a $(BUN_DEPS_OUT_DIR)/libbmalloc.a
 
 clean-jsc:
-	cd src/javascript/jsc/WebKit && rm -rf **/CMakeCache.txt **/CMakeFiles
+	cd src/javascript/jsc/WebKit && rm -rf **/CMakeCache.txt **/CMakeFiles && rm -rf src/javascript/jsc/WebKit/WebKitBuild
 clean-bindings: 
 	rm -rf $(OBJ_DIR)/*.o
 
@@ -824,7 +846,16 @@ jsc-bindings-mac: $(OBJ_FILES)
 # mimalloc is built as object files so that it can overload the system malloc
 mimalloc:
 	rm -rf $(BUN_DEPS_DIR)/mimalloc/CMakeCache* $(BUN_DEPS_DIR)/mimalloc/CMakeFiles
-	cd $(BUN_DEPS_DIR)/mimalloc; CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) -DMI_SKIP_COLLECT_ON_EXIT=1 -DMI_BUILD_SHARED=OFF -DMI_BUILD_STATIC=ON -DMI_BUILD_TESTS=OFF -DMI_BUILD_OBJECT=ON ${MIMALLOC_OVERRIDE_FLAG} -DMI_USE_CXX=ON .; make; 
+	cd $(BUN_DEPS_DIR)/mimalloc; \
+		CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) \
+			-DMI_SKIP_COLLECT_ON_EXIT=1 \
+			-DMI_BUILD_SHARED=OFF \
+			-DMI_BUILD_STATIC=ON \
+			-DMI_BUILD_TESTS=OFF \
+			-DMI_BUILD_OBJECT=ON \
+			${MIMALLOC_OVERRIDE_FLAG} \
+			-DMI_USE_CXX=OFF .\
+			&& make -j $(CPUS); 
 	cp $(BUN_DEPS_DIR)/mimalloc/$(MIMALLOC_INPUT_PATH) $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE)
 
 
@@ -837,8 +868,22 @@ bun-link-lld-debug:
 		-g \
 		$(DEBUG_BIN)/bun-debug.o \
 		-W \
-		-o $(DEBUG_BIN)/bun-debug \
+		-o $(DEBUG_BIN)/bun-debug
 
+bun-link-lld-debug-no-jsc:
+	$(CXX) $(BUN_LLD_FLAGS_WITHOUT_JSC) \
+		-g \
+		$(DEBUG_BIN)/bun-debug.o \
+		-W \
+		-o $(DEBUG_BIN)/bun-debug
+
+
+bun-link-lld-release-no-jsc:
+	$(CXX) $(BUN_LLD_FLAGS_WITHOUT_JSC) \
+		-g \
+		$(BUN_RELEASE_BIN).o \
+		-W \
+		-o $(BUN_RELEASE_BIN) -Wl,-undefined,dynamic_lookup -Wl,-why_load
 
 bun-relink-copy:
 	cp /tmp/bun-$(PACKAGE_JSON_VERSION).o $(BUN_RELEASE_BIN).o
@@ -851,7 +896,6 @@ bun-link-lld-release:
 		-o $(BUN_RELEASE_BIN) \
 		-W \
 		-flto \
-		-ftls-model=initial-exec \
 		-O3
 	rm -rf $(BUN_RELEASE_BIN).dSYM
 	cp $(BUN_RELEASE_BIN) $(BUN_RELEASE_BIN)-profile
@@ -859,7 +903,7 @@ bun-link-lld-release:
 ifeq ($(OS_NAME),darwin)
 bun-link-lld-release-dsym:
 	$(DSYMUTIL) -o $(BUN_RELEASE_BIN).dSYM $(BUN_RELEASE_BIN)
-	# -$(STRIP) $(BUN_RELEASE_BIN)
+	-$(STRIP) $(BUN_RELEASE_BIN)
 	mv $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
 
 copy-to-bun-release-dir-dsym:
@@ -885,10 +929,11 @@ wasm-return1:
 # The C compilation stuff with build.zig is really slow and we don't need to run this as often as the rest
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	$(CXX) -c -o $@ $< \
-		$(CLANG_FLAGS) $(PLATFORM_LINKER_FLAGS) \
+		$(CLANG_FLAGS) \
+		$(MACOS_MIN_FLAG) \
 		-O3 \
-		-fvectorize \
-		-w -g \
+		-fno-exceptions \
+		-ffunction-sections -fdata-sections -g \
 		-ferror-limit=1000
 
 sizegen:

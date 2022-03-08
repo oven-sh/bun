@@ -14,22 +14,19 @@ const Joiner = @import("../string_joiner.zig");
 const JSPrinter = @import("../js_printer.zig");
 const URL = @import("../query_string_map.zig").URL;
 const FileSystem = @import("../fs.zig").FileSystem;
-const base64_lut: [std.math.maxInt(u8)]u8 = brk: {
-    @setEvalBranchQuota(9999);
-    var bytes = [_]u8{255} ** std.math.maxInt(u8);
 
-    for (base64) |c, i| {
-        bytes[c] = i;
-    }
-
-    break :brk bytes;
-};
 const SourceMap = @This();
 
-// One VLQ value never exceeds 20 bits of data, so 15 is more than enough
+const vlq_max_in_bytes = 8;
 pub const VLQ = struct {
-    bytes: [15]u8,
-    len: u8 = 0,
+    // We only need to worry about i32
+    // That means the maximum VLQ-encoded value is 8 bytes
+    // because there are only 4 bits of number inside each VLQ value
+    // and it expects i32
+    // therefore, it can never be more than 32 bits long
+    // I believe the actual number is 7 bytes long, however we can add an extra byte to be more cautious
+    bytes: [vlq_max_in_bytes]u8,
+    len: u4 = 0,
 };
 
 /// Coordinates in source maps are stored using relative offsets for size
@@ -182,6 +179,62 @@ pub fn appendSourceMapChunk(j: *Joiner, prev_end_state_: SourceMapState, start_s
     j.append(source_map_.list.items, @truncate(u32, @ptrToInt(source_map.ptr) - @ptrToInt(source_map_.list.items.ptr)), source_map_.allocator);
 }
 
+const vlq_lookup_table: [256]VLQ = brk: {
+    var entries: [256]VLQ = undefined;
+    var i: usize = 0;
+    var j: i32 = 0;
+    while (i < 256) : (i += 1) {
+        entries[i] = encodeVLQ(j);
+        j += 1;
+    }
+    break :brk entries;
+};
+
+pub fn encodeVLQWithLookupTable(
+    value: i32,
+) VLQ {
+    return if (value >= 0 and value <= 255)
+        vlq_lookup_table[@intCast(usize, value)]
+    else
+        encodeVLQ(value);
+}
+
+test "encodeVLQ" {
+    const fixtures = .{
+        .{ 2_147_483_647, "+/////D" },
+        .{ -2_147_483_647, "//////D" },
+        .{ 0, "A" },
+        .{ 1, "C" },
+        .{ -1, "D" },
+        .{ 123, "2H" },
+        .{ 123456789, "qxmvrH" },
+    };
+    inline for (fixtures) |fixture| {
+        const result = encodeVLQ(fixture[0]);
+        try std.testing.expectEqualStrings(fixture[1], result.bytes[0..result.len]);
+    }
+}
+
+test "decodeVLQ" {
+    const fixtures = .{
+        .{ 2_147_483_647, "+/////D" },
+        .{ -2_147_483_647, "//////D" },
+        .{ 0, "A" },
+        .{ 1, "C" },
+        .{ -1, "D" },
+        .{ 123, "2H" },
+        .{ 123456789, "qxmvrH" },
+        .{ 8, "Q" },
+    };
+    inline for (fixtures) |fixture| {
+        const result = decodeVLQ(fixture[1], 0);
+        try std.testing.expectEqual(
+            result.value,
+            fixture[0],
+        );
+    }
+}
+
 // A single base 64 digit can contain 6 bits of data. For the base 64 variable
 // length quantities we use in the source map spec, the first bit is the sign,
 // the next four bits are the actual value, and the 6th bit is the continuation
@@ -197,27 +250,19 @@ pub fn appendSourceMapChunk(j: *Joiner, prev_end_state_: SourceMapState, start_s
 pub fn encodeVLQ(
     value: i32,
 ) VLQ {
-    var vlq: i32 = 0;
-    var bytes = std.mem.zeroes([15]u8);
-    var len: u8 = 0;
-    if (value < 0) {
-        vlq = ((-value) << 1) | 1;
-    } else {
-        vlq = value << 1;
-    }
+    var len: u4 = 0;
+    var bytes: [vlq_max_in_bytes]u8 = undefined;
 
-    if ((vlq >> 5) == 0) {
-        const digit = @intCast(u8, vlq & 31);
-        bytes[0] = base64[digit];
-        return .{ .bytes = bytes, .len = 1 };
-    }
+    var vlq: u32 = if (value >= 0)
+        @bitCast(u32, value << 1)
+    else
+        @bitCast(u32, (-value << 1) | 1);
 
-    // i32 contains 32 bits
-    // since
-    // the maximum possible number is @maxInt(u20)
-    //
-    while (true) {
-        var digit = @intCast(u8, vlq & 31);
+    // The max amount of digits a VLQ value for sourcemaps can contain is 9
+    // therefore, we can unroll the loop
+    comptime var i: usize = 0;
+    inline while (i < vlq_max_in_bytes) : (i += 1) {
+        var digit = vlq & 31;
         vlq >>= 5;
 
         // If there are still more digits in this value, we must make sure the
@@ -230,11 +275,11 @@ pub fn encodeVLQ(
         len += 1;
 
         if (vlq == 0) {
-            break;
+            return .{ .bytes = bytes, .len = len };
         }
     }
 
-    return .{ .bytes = bytes, .len = len };
+    return .{ .bytes = bytes, .len = 0 };
 }
 
 pub const VLQResult = struct {
@@ -242,33 +287,45 @@ pub const VLQResult = struct {
     start: usize = 0,
 };
 
-fn decodeVLQ(encoded: []const u8, start: usize) VLQResult {
-    var shift: i32 = 0;
-    var vlq: i32 = 0;
-    var len: usize = encoded.len;
-    var i: usize = start;
+const base64_lut: [std.math.maxInt(u7)]u7 = brk: {
+    @setEvalBranchQuota(9999);
+    var bytes = [_]u7{std.math.maxInt(u7)} ** std.math.maxInt(u7);
 
-    while (i < len) {
-        const index = @as(i32, base64_lut[encoded[i]]);
-        if (index == std.math.maxInt(u8)) break;
+    for (base64) |c, i| {
+        bytes[c] = i;
+    }
+
+    break :brk bytes;
+};
+
+fn decodeVLQ(encoded: []const u8, start: usize) VLQResult {
+    var shift: u8 = 0;
+    var vlq: u32 = 0;
+
+    // it will never exceed 9
+    // by doing it this way, we can hint to the compiler that it will not exceed 9
+    const encoded_ = encoded[start..][0..@minimum(encoded.len - start, comptime (vlq_max_in_bytes + 1))];
+
+    for (encoded_) |c, i| {
+        const index = @as(u32, base64_lut[@truncate(u7, c)]);
 
         // decode a byte
-        vlq |= (index & 31) << shift;
-        i += 1;
+        vlq |= (index & 31) << @truncate(u5, shift);
         shift += 5;
 
         // Stop if there's no continuation bit
         if ((index & 32) == 0) {
-            break;
+            return VLQResult{
+                .start = i + start,
+                .value = if ((vlq & 1) == 0)
+                    @intCast(i32, vlq >> 1)
+                else
+                    -@intCast(i32, (vlq >> 1)),
+            };
         }
     }
 
-    var value = vlq >> 1;
-    if ((vlq & 1) != 0) {
-        value = -value;
-    }
-
-    return VLQResult{ .start = i, .value = value };
+    return VLQResult{ .start = start + encoded_.len, .value = 0 };
 }
 
 pub const LineOffsetTable = struct {
@@ -473,6 +530,9 @@ pub fn appendSourceMappingURLRemote(
     try writer.writeAll(strings.withoutTrailingSlash(origin.href));
     if (asset_prefix_path.len > 0)
         try writer.writeAll(asset_prefix_path);
+    if (source.path.pretty.len > 0 and source.path.pretty[0] != '/') {
+        try writer.writeAll("/");
+    }
     try writer.writeAll(source.path.pretty);
     try writer.writeAll(".map");
 }
@@ -483,13 +543,13 @@ pub fn appendMappingToBuffer(buffer_: MutableString, last_byte: u8, prev_state: 
 
     const vlq = [_]VLQ{
         // Record the generated column (the line is recorded using ';' elsewhere)
-        encodeVLQ(current_state.generated_column - prev_state.generated_column),
+        encodeVLQWithLookupTable(current_state.generated_column - prev_state.generated_column),
         // Record the generated source
-        encodeVLQ(current_state.source_index - prev_state.source_index),
+        encodeVLQWithLookupTable(current_state.source_index - prev_state.source_index),
         // Record the original line
-        encodeVLQ(current_state.original_line - prev_state.original_line),
+        encodeVLQWithLookupTable(current_state.original_line - prev_state.original_line),
         // Record the original column
-        encodeVLQ(current_state.original_column - prev_state.original_column),
+        encodeVLQWithLookupTable(current_state.original_column - prev_state.original_column),
     };
 
     // Count exactly how many bytes we need to write
@@ -687,7 +747,8 @@ pub const Chunk = struct {
         }
 
         pub fn addSourceMapping(b: *Builder, loc: Logger.Loc, output: []const u8) void {
-            if (b.prev_loc.eql(loc)) {
+            // exclude generated code from source
+            if (b.prev_loc.eql(loc) or loc.start == Logger.Loc.Empty.start) {
                 return;
             }
 
@@ -699,7 +760,7 @@ pub const Chunk = struct {
             // Use the line to compute the column
             var original_column = loc.start - @intCast(i32, line.byte_offset_to_start_of_line);
             if (line.columns_for_non_ascii.len > 0 and original_column >= @intCast(i32, line.byte_offset_to_first_non_ascii)) {
-                original_column = line.columns_for_non_ascii.slice()[@intCast(u32, original_column) - line.byte_offset_to_first_non_ascii];
+                original_column = line.columns_for_non_ascii.ptr[@intCast(u32, original_column) - line.byte_offset_to_first_non_ascii];
             }
 
             b.updateGeneratedLineAndColumn(output);

@@ -481,6 +481,24 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
         transpiler.runtime.allow_runtime = flag.toBoolean();
     }
 
+    if (object.get(globalThis, "sourcemap")) |flag| {
+        if (flag.isBoolean() or flag.isUndefinedOrNull()) {
+            if (flag.toBoolean()) {
+                transpiler.transform.source_map = Api.SourceMapMode.external;
+            } else {
+                transpiler.transform.source_map = Api.SourceMapMode.inline_into_file;
+            }
+        } else {
+            var sourcemap = flag.toSlice(globalThis, allocator);
+            if (options.SourceMapOption.map.get(sourcemap.slice())) |source| {
+                transpiler.transform.source_map = source.toAPI();
+            } else {
+                JSC.throwInvalidArguments("sourcemap must be one of \"inline\", \"external\", or \"none\"", .{}, ctx, exception);
+                return transpiler;
+            }
+        }
+    }
+
     return transpiler;
 }
 

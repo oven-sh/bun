@@ -33,9 +33,7 @@ pub const ErrorCSS = struct {
             var paths = [_]string{ dirname, BUN_ROOT, ErrorCSSPathDev };
             const file = std.fs.cwd().openFile(
                 resolve_path.joinAbsString(dirname, std.mem.span(&paths), .auto),
-                .{
-                    .read = true,
-                },
+                .{ .mode = .read_only },
             ) catch @panic("Missing packages/bun-error/bun-error.css. Please run \"make bun_error\"");
             defer file.close();
             return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
@@ -59,9 +57,7 @@ pub const ErrorJS = struct {
             var paths = [_]string{ dirname, BUN_ROOT, ErrorJSPath };
             const file = std.fs.cwd().openFile(
                 resolve_path.joinAbsString(dirname, std.mem.span(&paths), .auto),
-                .{
-                    .read = true,
-                },
+                .{ .mode = .read_only },
             ) catch @panic("Missing " ++ ErrorJSPath ++ ". Please run \"make bun_error\"");
             defer file.close();
             return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;

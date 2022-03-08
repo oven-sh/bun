@@ -1092,10 +1092,10 @@ pub const SourceMapOption = enum {
         };
     }
 
-    pub fn toAPI(source_map: SourceMapOption) Api.SourceMapMode {
-        return switch (source_map orelse Api.SourceMapMode._none) {
+    pub fn toAPI(source_map: ?SourceMapOption) Api.SourceMapMode {
+        return switch (source_map orelse .none) {
             .external => .external,
-            .@"inline" => .@"inline",
+            .@"inline" => .@"inline_into_file",
             else => ._none,
         };
     }

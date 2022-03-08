@@ -80,7 +80,7 @@ pub const Loc = packed struct {
 
     pub const Empty = Loc{ .start = -1 };
 
-    pub inline fn eql(loc: *Loc, other: Loc) bool {
+    pub inline fn eql(loc: Loc, other: Loc) bool {
         return loc.start == other.start;
     }
 

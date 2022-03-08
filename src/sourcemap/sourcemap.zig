@@ -9,25 +9,12 @@ const BabyList = JSAst.BabyList;
 const Logger = @import("../logger.zig");
 const strings = @import("../string_immutable.zig");
 const MutableString = @import("../string_mutable.zig").MutableString;
-const base64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const Joiner = @import("../string_joiner.zig");
 const JSPrinter = @import("../js_printer.zig");
 const URL = @import("../query_string_map.zig").URL;
 const FileSystem = @import("../fs.zig").FileSystem;
 
 const SourceMap = @This();
-
-const vlq_max_in_bytes = 8;
-pub const VLQ = struct {
-    // We only need to worry about i32
-    // That means the maximum VLQ-encoded value is 8 bytes
-    // because there are only 4 bits of number inside each VLQ value
-    // and it expects i32
-    // therefore, it can never be more than 32 bits long
-    // I believe the actual number is 7 bytes long, however we can add an extra byte to be more cautious
-    bytes: [vlq_max_in_bytes]u8,
-    len: u4 = 0,
-};
 
 /// Coordinates in source maps are stored using relative offsets for size
 /// reasons. When joining together chunks of a source map that were emitted
@@ -55,7 +42,7 @@ pub const Mapping = struct {
     original: LineColumnOffset,
     source_index: i32,
 
-    pub const List = std.MultiArrayList(Mapping);
+    pub const List = std.ArrayList(Mapping);
 
     pub inline fn generatedLine(mapping: Mapping) i32 {
         return mapping.generated.lines;
@@ -190,6 +177,18 @@ const vlq_lookup_table: [256]VLQ = brk: {
     break :brk entries;
 };
 
+const vlq_max_in_bytes = 8;
+pub const VLQ = struct {
+    // We only need to worry about i32
+    // That means the maximum VLQ-encoded value is 8 bytes
+    // because there are only 4 bits of number inside each VLQ value
+    // and it expects i32
+    // therefore, it can never be more than 32 bits long
+    // I believe the actual number is 7 bytes long, however we can add an extra byte to be more cautious
+    bytes: [vlq_max_in_bytes]u8,
+    len: u4 = 0,
+};
+
 pub fn encodeVLQWithLookupTable(
     value: i32,
 ) VLQ {
@@ -224,7 +223,6 @@ test "decodeVLQ" {
         .{ -1, "D" },
         .{ 123, "2H" },
         .{ 123456789, "qxmvrH" },
-        .{ 8, "Q" },
     };
     inline for (fixtures) |fixture| {
         const result = decodeVLQ(fixture[1], 0);
@@ -258,8 +256,7 @@ pub fn encodeVLQ(
     else
         @bitCast(u32, (-value << 1) | 1);
 
-    // The max amount of digits a VLQ value for sourcemaps can contain is 9
-    // therefore, we can unroll the loop
+    // source mappings are limited to i32
     comptime var i: usize = 0;
     inline while (i < vlq_max_in_bytes) : (i += 1) {
         var digit = vlq & 31;
@@ -287,6 +284,9 @@ pub const VLQResult = struct {
     start: usize = 0,
 };
 
+const base64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+// base64 stores values up to 7 bits
 const base64_lut: [std.math.maxInt(u7)]u7 = brk: {
     @setEvalBranchQuota(9999);
     var bytes = [_]u7{std.math.maxInt(u7)} ** std.math.maxInt(u7);
@@ -302,12 +302,11 @@ pub fn decodeVLQ(encoded: []const u8, start: usize) VLQResult {
     var shift: u8 = 0;
     var vlq: u32 = 0;
 
-    // it will never exceed 9
-    // by doing it this way, we can hint to the compiler that it will not exceed 9
+    // hint to the compiler what the maximum value is
     const encoded_ = encoded[start..][0..@minimum(encoded.len - start, comptime (vlq_max_in_bytes + 1))];
 
+    // inlining helps for the 1 or 2 byte case, hurts a little for larger
     comptime var i: usize = 0;
-
     inline while (i < vlq_max_in_bytes + 1) : (i += 1) {
         const index = @as(u32, base64_lut[@truncate(u7, encoded_[i])]);
 
@@ -473,6 +472,7 @@ pub const LineOffsetTable = struct {
                         .byte_offset_to_first_non_ascii = byte_offset_to_first_non_ascii,
                         .columns_for_non_ascii = BabyList(i32).fromList(columns_list),
                     }) catch unreachable;
+
                     column = 0;
                     byte_offset_to_first_non_ascii = 0;
                     column_byte_offset = 0;
@@ -577,6 +577,8 @@ pub fn appendMappingToBuffer(buffer_: MutableString, last_byte: u8, prev_state: 
 pub const Chunk = struct {
     buffer: MutableString,
 
+    mappings_count: usize = 0,
+
     /// This end state will be used to rewrite the start of the following source
     /// map chunk so that the delta-encoded VLQ numbers are preserved.
     end_state: SourceMapState = .{},
@@ -625,171 +627,260 @@ pub const Chunk = struct {
         return output;
     }
 
-    pub const Builder = struct {
-        input_source_map: ?*SourceMap = null,
-        source_map: MutableString,
-        line_offset_tables: LineOffsetTable.List = .{},
-        prev_state: SourceMapState = SourceMapState{},
-        last_generated_update: u32 = 0,
-        generated_column: i32 = 0,
-        prev_loc: Logger.Loc = Logger.Loc.Empty,
-        has_prev_state: bool = false,
+    pub fn SourceMapFormat(comptime Type: type) type {
+        return struct {
+            ctx: Type,
+            const Format = @This();
 
-        // This is a workaround for a bug in the popular "source-map" library:
-        // https://github.com/mozilla/source-map/issues/261. The library will
-        // sometimes return null when querying a source map unless every line
-        // starts with a mapping at column zero.
-        //
-        // The workaround is to replicate the previous mapping if a line ends
-        // up not starting with a mapping. This is done lazily because we want
-        // to avoid replicating the previous mapping if we don't need to.
-        line_starts_with_mapping: bool = false,
-        cover_lines_without_mappings: bool = false,
+            pub fn init(allocator: std.mem.Allocator) Format {
+                return Format{ .ctx = Type.init(allocator) };
+            }
 
-        pub fn generateChunk(b: *Builder, output: []const u8) Chunk {
-            b.updateGeneratedLineAndColumn(output);
-            return Chunk{
-                .buffer = b.source_map,
-                .end_state = b.prev_state,
-                .final_generated_column = b.generated_column,
-                .should_ignore = !strings.containsAnyBesidesChar(b.source_map.list.items, ';'),
+            pub inline fn appendLineSeparator(this: *Format) anyerror!void {
+                try this.ctx.appendLineSeparator();
+            }
+
+            pub inline fn append(this: *Format, current_state: SourceMapState, prev_state: SourceMapState) anyerror!void {
+                try this.ctx.append(current_state, prev_state);
+            }
+
+            pub inline fn shouldIgnore(this: Format) bool {
+                return this.ctx.shouldIgnore();
+            }
+
+            pub inline fn getBuffer(this: Format) MutableString {
+                return this.ctx.getBuffer();
+            }
+
+            pub inline fn getCount(this: Format) usize {
+                return this.ctx.getCount();
+            }
+        };
+    }
+
+    pub const VLQSourceMap = struct {
+        data: MutableString,
+        count: usize = 0,
+        offset: usize = 0,
+
+        pub const Format = SourceMapFormat(VLQSourceMap);
+
+        pub fn init(allocator: std.mem.Allocator, prepend_count: bool) VLQSourceMap {
+            var map = VLQSourceMap{
+                .data = MutableString.initEmpty(allocator),
             };
-        }
 
-        // Scan over the printed text since the last source mapping and update the
-        // generated line and column numbers
-        pub fn updateGeneratedLineAndColumn(b: *Builder, output: []const u8) void {
-            const slice = output[b.last_generated_update..];
-            var needs_mapping = b.cover_lines_without_mappings and !b.line_starts_with_mapping and b.has_prev_state;
-
-            var i: usize = 0;
-            const n = @intCast(usize, slice.len);
-            var c: i32 = 0;
-            while (i < n) {
-                const len = strings.wtf8ByteSequenceLength(slice[i]);
-                c = strings.decodeWTF8RuneT(slice[i..].ptr[0..4], len, i32, strings.unicode_replacement);
-                i += @as(usize, len);
-
-                switch (c) {
-                    14...127 => {
-                        if (strings.indexOfNewlineOrNonASCII(slice, @intCast(u32, i))) |j| {
-                            b.generated_column += @intCast(i32, (@as(usize, j) - i) + 1);
-                            i = j;
-                            continue;
-                        } else {
-                            b.generated_column += @intCast(i32, slice[i..].len);
-                            i = n;
-                            break;
-                        }
-                    },
-                    '\r', '\n', 0x2028, 0x2029 => {
-                        // windows newline
-                        if (c == '\r') {
-                            const newline_check = b.last_generated_update + i;
-                            if (newline_check < output.len and output[newline_check] == '\n') {
-                                continue;
-                            }
-                        }
-
-                        // If we're about to move to the next line and the previous line didn't have
-                        // any mappings, add a mapping at the start of the previous line.
-                        if (needs_mapping) {
-                            b.appendMappingWithoutRemapping(.{
-                                .generated_line = b.prev_state.generated_line,
-                                .generated_column = 0,
-                                .source_index = b.prev_state.source_index,
-                                .original_line = b.prev_state.original_line,
-                                .original_column = b.prev_state.original_column,
-                            });
-                        }
-
-                        b.prev_state.generated_line += 1;
-                        b.prev_state.generated_column = 0;
-                        b.generated_column = 0;
-                        b.source_map.appendChar(';') catch unreachable;
-
-                        // This new line doesn't have a mapping yet
-                        b.line_starts_with_mapping = false;
-
-                        needs_mapping = b.cover_lines_without_mappings and !b.line_starts_with_mapping and b.has_prev_state;
-                    },
-
-                    else => {
-                        // Mozilla's "source-map" library counts columns using UTF-16 code units
-                        b.generated_column += @as(i32, @boolToInt(c > 0xFFFF)) + 1;
-                    },
-                }
+            // For bun.js, we store the number of mappings and how many bytes the final list is at the beginning of the array
+            if (prepend_count) {
+                map.offset = 16;
+                map.data.append([16]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }) catch unreachable;
             }
 
-            b.last_generated_update = @truncate(u32, output.len);
+            return map;
         }
 
-        pub fn appendMapping(b: *Builder, current_state_: SourceMapState) void {
-            var current_state = current_state_;
-            // If the input file had a source map, map all the way back to the original
-            if (b.input_source_map) |input| {
-                if (input.find(current_state.original_line, current_state.original_column)) |mapping| {
-                    current_state.source_index = mapping.sourceIndex();
-                    current_state.original_line = mapping.originalLine();
-                    current_state.original_column = mapping.originalColumn();
-                }
-            }
-
-            b.appendMappingWithoutRemapping(current_state);
+        pub fn appendLineSeparator(this: *VLQSourceMap) anyerror!void {
+            try this.data.appendChar(';');
         }
 
-        pub fn appendMappingWithoutRemapping(b: *Builder, current_state: SourceMapState) void {
-            const last_byte: u8 = if (b.source_map.list.items.len > 0)
-                b.source_map.list.items[b.source_map.list.items.len - 1]
+        pub fn append(this: *VLQSourceMap, current_state: SourceMapState, prev_state: SourceMapState) anyerror!void {
+            const last_byte: u8 = if (this.data.list.items.len > this.offset)
+                this.data.list.items[this.data.list.items.len - 1]
             else
                 0;
 
-            b.source_map = appendMappingToBuffer(b.source_map, last_byte, b.prev_state, current_state);
-            b.prev_state = current_state;
-            b.has_prev_state = true;
+            this.data = appendMappingToBuffer(this.data, last_byte, prev_state, current_state);
+            this.count += 1;
         }
 
-        pub fn addSourceMapping(b: *Builder, loc: Logger.Loc, output: []const u8) void {
-            // exclude generated code from source
-            if (b.prev_loc.eql(loc) or loc.start == Logger.Loc.Empty.start) {
-                return;
-            }
+        pub fn shouldIgnore(this: VLQSourceMap) bool {
+            return this.count == 0;
+        }
 
-            b.prev_loc = loc;
-            const list = b.line_offset_tables;
-            const original_line = LineOffsetTable.findLine(list, loc);
-            const line = list.get(@intCast(usize, @maximum(original_line, 0)));
+        pub fn getBuffer(this: VLQSourceMap) MutableString {
+            return this.data;
+        }
 
-            // Use the line to compute the column
-            var original_column = loc.start - @intCast(i32, line.byte_offset_to_start_of_line);
-            if (line.columns_for_non_ascii.len > 0 and original_column >= @intCast(i32, line.byte_offset_to_first_non_ascii)) {
-                original_column = line.columns_for_non_ascii.ptr[@intCast(u32, original_column) - line.byte_offset_to_first_non_ascii];
-            }
-
-            b.updateGeneratedLineAndColumn(output);
-
-            // If this line doesn't start with a mapping and we're about to add a mapping
-            // that's not at the start, insert a mapping first so the line starts with one.
-            if (b.cover_lines_without_mappings and !b.line_starts_with_mapping and b.generated_column > 0 and b.has_prev_state) {
-                b.appendMappingWithoutRemapping(.{
-                    .generated_line = b.prev_state.generated_line,
-                    .generated_column = 0,
-                    .source_index = b.prev_state.source_index,
-                    .original_line = b.prev_state.original_line,
-                    .original_column = b.prev_state.original_column,
-                });
-            }
-
-            b.appendMapping(.{
-                .generated_line = b.prev_state.generated_line,
-                .generated_column = b.generated_column,
-                .source_index = b.prev_state.source_index,
-                .original_line = original_line,
-                .original_column = b.prev_state.original_column,
-            });
-
-            // This line now has a mapping on it, so don't insert another one
-            b.line_starts_with_mapping = true;
+        pub fn getCount(this: VLQSourceMap) usize {
+            return this.count;
         }
     };
+
+    pub fn NewBuilder(comptime SourceMapFormatType: type) type {
+        return struct {
+            const ThisBuilder = @This();
+            input_source_map: ?*SourceMap = null,
+            source_map: SourceMapper,
+            line_offset_tables: LineOffsetTable.List = .{},
+            prev_state: SourceMapState = SourceMapState{},
+            last_generated_update: u32 = 0,
+            generated_column: i32 = 0,
+            prev_loc: Logger.Loc = Logger.Loc.Empty,
+            has_prev_state: bool = false,
+
+            // This is a workaround for a bug in the popular "source-map" library:
+            // https://github.com/mozilla/source-map/issues/261. The library will
+            // sometimes return null when querying a source map unless every line
+            // starts with a mapping at column zero.
+            //
+            // The workaround is to replicate the previous mapping if a line ends
+            // up not starting with a mapping. This is done lazily because we want
+            // to avoid replicating the previous mapping if we don't need to.
+            line_starts_with_mapping: bool = false,
+            cover_lines_without_mappings: bool = false,
+
+            /// When generating sourcemappings for bun, we store a count of how many mappings there were
+            prepend_count: bool = false,
+
+            pub const SourceMapper = SourceMapFormat(SourceMapFormatType);
+
+            pub fn generateChunk(b: *ThisBuilder, output: []const u8) Chunk {
+                b.updateGeneratedLineAndColumn(output);
+                if (b.prepend_count) {
+                    b.source_map.getBuffer().list.items[0..8].* = @bitCast([8]u8, b.source_map.getBuffer().list.items.len);
+                    b.source_map.getBuffer().list.items[8..16].* = @bitCast([8]u8, b.source_map.getCount());
+                }
+                return Chunk{
+                    .buffer = b.source_map.getBuffer(),
+                    .mappings_count = b.source_map.getCount(),
+                    .end_state = b.prev_state,
+                    .final_generated_column = b.generated_column,
+                    .should_ignore = !b.source_map.shouldIgnore(),
+                };
+            }
+
+            // Scan over the printed text since the last source mapping and update the
+            // generated line and column numbers
+            pub fn updateGeneratedLineAndColumn(b: *ThisBuilder, output: []const u8) void {
+                const slice = output[b.last_generated_update..];
+                var needs_mapping = b.cover_lines_without_mappings and !b.line_starts_with_mapping and b.has_prev_state;
+
+                var i: usize = 0;
+                const n = @intCast(usize, slice.len);
+                var c: i32 = 0;
+                while (i < n) {
+                    const len = strings.wtf8ByteSequenceLength(slice[i]);
+                    c = strings.decodeWTF8RuneT(slice[i..].ptr[0..4], len, i32, strings.unicode_replacement);
+                    i += @as(usize, len);
+
+                    switch (c) {
+                        14...127 => {
+                            if (strings.indexOfNewlineOrNonASCII(slice, @intCast(u32, i))) |j| {
+                                b.generated_column += @intCast(i32, (@as(usize, j) - i) + 1);
+                                i = j;
+                                continue;
+                            } else {
+                                b.generated_column += @intCast(i32, slice[i..].len);
+                                i = n;
+                                break;
+                            }
+                        },
+                        '\r', '\n', 0x2028, 0x2029 => {
+                            // windows newline
+                            if (c == '\r') {
+                                const newline_check = b.last_generated_update + i;
+                                if (newline_check < output.len and output[newline_check] == '\n') {
+                                    continue;
+                                }
+                            }
+
+                            // If we're about to move to the next line and the previous line didn't have
+                            // any mappings, add a mapping at the start of the previous line.
+                            if (needs_mapping) {
+                                b.appendMappingWithoutRemapping(.{
+                                    .generated_line = b.prev_state.generated_line,
+                                    .generated_column = 0,
+                                    .source_index = b.prev_state.source_index,
+                                    .original_line = b.prev_state.original_line,
+                                    .original_column = b.prev_state.original_column,
+                                });
+                            }
+
+                            b.prev_state.generated_line += 1;
+                            b.prev_state.generated_column = 0;
+                            b.generated_column = 0;
+                            b.source_map.appendLineSeparator();
+
+                            // This new line doesn't have a mapping yet
+                            b.line_starts_with_mapping = false;
+
+                            needs_mapping = b.cover_lines_without_mappings and !b.line_starts_with_mapping and b.has_prev_state;
+                        },
+
+                        else => {
+                            // Mozilla's "source-map" library counts columns using UTF-16 code units
+                            b.generated_column += @as(i32, @boolToInt(c > 0xFFFF)) + 1;
+                        },
+                    }
+                }
+
+                b.last_generated_update = @truncate(u32, output.len);
+            }
+
+            pub fn appendMapping(b: *ThisBuilder, current_state_: SourceMapState) void {
+                var current_state = current_state_;
+                // If the input file had a source map, map all the way back to the original
+                if (b.input_source_map) |input| {
+                    if (input.find(current_state.original_line, current_state.original_column)) |mapping| {
+                        current_state.source_index = mapping.sourceIndex();
+                        current_state.original_line = mapping.originalLine();
+                        current_state.original_column = mapping.originalColumn();
+                    }
+                }
+
+                b.appendMappingWithoutRemapping(current_state);
+            }
+
+            pub fn appendMappingWithoutRemapping(b: *ThisBuilder, current_state: SourceMapState) void {
+                try b.source_map.append(current_state, b.prev_state);
+                b.prev_state = current_state;
+                b.has_prev_state = true;
+            }
+
+            pub fn addSourceMapping(b: *ThisBuilder, loc: Logger.Loc, output: []const u8) void {
+                // exclude generated code from source
+                if (b.prev_loc.eql(loc) or loc.start == Logger.Loc.Empty.start) {
+                    return;
+                }
+
+                b.prev_loc = loc;
+                const list = b.line_offset_tables;
+                const original_line = LineOffsetTable.findLine(list, loc);
+                const line = list.get(@intCast(usize, @maximum(original_line, 0)));
+
+                // Use the line to compute the column
+                var original_column = loc.start - @intCast(i32, line.byte_offset_to_start_of_line);
+                if (line.columns_for_non_ascii.len > 0 and original_column >= @intCast(i32, line.byte_offset_to_first_non_ascii)) {
+                    original_column = line.columns_for_non_ascii.ptr[@intCast(u32, original_column) - line.byte_offset_to_first_non_ascii];
+                }
+
+                b.updateGeneratedLineAndColumn(output);
+
+                // If this line doesn't start with a mapping and we're about to add a mapping
+                // that's not at the start, insert a mapping first so the line starts with one.
+                if (b.cover_lines_without_mappings and !b.line_starts_with_mapping and b.generated_column > 0 and b.has_prev_state) {
+                    b.appendMappingWithoutRemapping(.{
+                        .generated_line = b.prev_state.generated_line,
+                        .generated_column = 0,
+                        .source_index = b.prev_state.source_index,
+                        .original_line = b.prev_state.original_line,
+                        .original_column = b.prev_state.original_column,
+                    });
+                }
+
+                b.appendMapping(.{
+                    .generated_line = b.prev_state.generated_line,
+                    .generated_column = b.generated_column,
+                    .source_index = b.prev_state.source_index,
+                    .original_line = original_line,
+                    .original_column = b.prev_state.original_column,
+                });
+
+                // This line now has a mapping on it, so don't insert another one
+                b.line_starts_with_mapping = true;
+            }
+        };
+    }
+
+    pub const Builder = NewBuilder(VLQSourceMap);
 };

@@ -42,7 +42,7 @@ pub const Mapping = struct {
     original: LineColumnOffset,
     source_index: i32,
 
-    pub const List = std.ArrayList(Mapping);
+    pub const List = std.MultiArrayList(Mapping);
 
     pub inline fn generatedLine(mapping: Mapping) i32 {
         return mapping.generated.lines;
@@ -632,8 +632,8 @@ pub const Chunk = struct {
             ctx: Type,
             const Format = @This();
 
-            pub fn init(allocator: std.mem.Allocator) Format {
-                return Format{ .ctx = Type.init(allocator) };
+            pub fn init(allocator: std.mem.Allocator, prepend_count: bool) Format {
+                return Format{ .ctx = Type.init(allocator, prepend_count) };
             }
 
             pub inline fn appendLineSeparator(this: *Format) anyerror!void {
@@ -673,7 +673,7 @@ pub const Chunk = struct {
             // For bun.js, we store the number of mappings and how many bytes the final list is at the beginning of the array
             if (prepend_count) {
                 map.offset = 16;
-                map.data.append([16]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }) catch unreachable;
+                map.data.append(&[16]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }) catch unreachable;
             }
 
             return map;
@@ -799,7 +799,7 @@ pub const Chunk = struct {
                             b.prev_state.generated_line += 1;
                             b.prev_state.generated_column = 0;
                             b.generated_column = 0;
-                            b.source_map.appendLineSeparator();
+                            b.source_map.appendLineSeparator() catch unreachable;
 
                             // This new line doesn't have a mapping yet
                             b.line_starts_with_mapping = false;
@@ -832,7 +832,7 @@ pub const Chunk = struct {
             }
 
             pub fn appendMappingWithoutRemapping(b: *ThisBuilder, current_state: SourceMapState) void {
-                try b.source_map.append(current_state, b.prev_state);
+                b.source_map.append(current_state, b.prev_state) catch unreachable;
                 b.prev_state = current_state;
                 b.has_prev_state = true;
             }

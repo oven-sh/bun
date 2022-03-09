@@ -234,6 +234,54 @@ You can override the public directory by passing `--public-dir="path-to-folder"`
 
 If no directory is specified and `./public/` doesn’t exist, bun will try `./static/`. If `./static/` does not exist, but won’t serve from a public directory. If you pass `--public-dir=./` bun will serve from the current directory, but it will check the current directory last instead of first.
 
+### Caveats of using an exsting React app:
+- If you use [CRA's absolute imports](https://create-react-app.dev/docs/importing-a-component/#absolute-imports) add a `compilerOptions.paths` key to map them to their folders, `include` doesn't cut it, e.g.:
+```
+{
+  "compilerOptions": {
+    "baseUrl": "src",
+    "paths": {
+      "components/*": ["./src/components/*"]
+    }
+  },
+  "include": ["src"]
+}
+```
+[See this for more info on the paths key](https://code.visualstudio.com/docs/languages/jsconfig).
+
+- Add a script tag referincing `src/index.js` (or `src/index.tsx`) in `public/index.html` before the closing `</body>` tag:
+```
+    <script src="/src/index.js" async type="module"></script>
+```
+
+- Replace `%PUBLIC_URL%` references in `index.html` for nothing.
+
+- `.env` files aren't supported for CRA apps yet. A workaround is to add a `bunfig.toml` file with the variables and then run bun with `bun -c bunfig.toml` instead. Here's a script to convert `.env.development` to `bunfig.toml`:
+```
+// put this in bundotenv.js and run it with node bundotenv.js
+let fs = require('fs');
+let path = require('path');
+let content = fs.readFileSync(
+  path.join(process.cwd(), '.env.development'),
+  'utf8'
+);
+let define = content
+    .split('\n')
+    .filter((item) => !item.startsWith('#'))
+    .map((item) => {
+      let [key, value] = item.split('=').map((item) => item.trim());
+      return `"process.env.${key}" = "'${value}'"`;
+    })
+    .join('\n');
+fs.writeFileSync(
+  path.join(process.cwd(), 'bunfig.toml'),
+  `[define]\n${define}`,
+  'utf8'
+);
+```
+
+- CSS modules aren't supported so far.
+
 ## Using bun with TypeScript
 
 TypeScript just works. There’s nothing to configure and nothing extra to install. If you import a `.ts` or `.tsx` file, bun will transpile it into JavaScript. bun also transpiles `node_modules` containing `.ts` or `.tsx` files. This is powered by bun’s TypeScript transpiler, so it’s fast.

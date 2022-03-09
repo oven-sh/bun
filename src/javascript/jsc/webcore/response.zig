@@ -38,7 +38,7 @@ const JSGlobalObject = JSC.JSGlobalObject;
 
 const VirtualMachine = @import("../javascript.zig").VirtualMachine;
 const Task = @import("../javascript.zig").Task;
-
+const JSPrinter = @import("../../../js_printer.zig");
 const picohttp = @import("picohttp");
 
 pub const Response = struct {
@@ -90,36 +90,43 @@ pub const Response = struct {
     pub const Props = struct {};
 
     pub fn writeFormat(this: *const Response, formatter: *JSC.Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
-        try formatter.writeIndent(@TypeOf(writer), writer);
+        const Writer = @TypeOf(writer);
+        try formatter.writeIndent(Writer, writer);
         try writer.print("Response ({}) {{\n", .{bun.fmt.size(this.body.len)});
         {
             formatter.indent += 1;
             defer formatter.indent -|= 1;
 
-            try formatter.writeIndent(@TypeOf(writer), writer);
+            try formatter.writeIndent(Writer, writer);
             try writer.writeAll("ok: ");
-            formatter.printAs(.Boolean, @TypeOf(writer), writer, JSC.JSValue.jsBoolean(this.isOK()), .BooleanObject, enable_ansi_colors);
+            formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.isOK()), .BooleanObject, enable_ansi_colors);
+            formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
 
             try this.body.writeFormat(formatter, writer, enable_ansi_colors);
+
+            formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
 
-            try formatter.writeIndent(@TypeOf(writer), writer);
+            try formatter.writeIndent(Writer, writer);
             try writer.writeAll("url: \"");
             try writer.print(comptime Output.prettyFmt("<r><b>{s}<r>", enable_ansi_colors), .{this.url});
-            try writer.writeAll("\"\n");
+            try writer.writeAll("\"");
+            formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+            try writer.writeAll("\n");
 
-            try formatter.writeIndent(@TypeOf(writer), writer);
-            try writer.writeAll("statusText: \"");
-            try writer.writeAll(this.status_text);
-            try writer.writeAll("\"\n");
+            try formatter.writeIndent(Writer, writer);
+            try writer.writeAll("statusText: ");
+            try JSPrinter.writeJSONString(this.status_text, Writer, writer, false);
+            formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+            try writer.writeAll("\n");
 
-            try formatter.writeIndent(@TypeOf(writer), writer);
+            try formatter.writeIndent(Writer, writer);
             try writer.writeAll("redirected: ");
-            formatter.printAs(.Boolean, @TypeOf(writer), writer, JSC.JSValue.jsBoolean(this.redirected), .BooleanObject, enable_ansi_colors);
+            formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.redirected), .BooleanObject, enable_ansi_colors);
         }
         try writer.writeAll("\n");
-        try formatter.writeIndent(@TypeOf(writer), writer);
+        try formatter.writeIndent(Writer, writer);
         try writer.writeAll("}");
     }
 
@@ -1381,14 +1388,14 @@ pub const Headers = struct {
         return result;
     }
 
-    pub fn writeFormat(this: *const Headers, formatter: *JSC.Formatter, writer: anytype, comptime _: bool) !void {
+    pub fn writeFormat(this: *const Headers, formatter: *JSC.Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         if (this.entries.len == 0) {
             try writer.writeAll("Headers (0 KB) {}");
             return;
         }
 
         try writer.print("Headers ({}) {{\n", .{bun.fmt.size(this.buf.items.len)});
-
+        const Writer = @TypeOf(writer);
         {
             var slice = this.entries.slice();
             const names = slice.items(.name);
@@ -1398,16 +1405,15 @@ pub const Headers = struct {
 
             for (names) |name, i| {
                 if (i > 0) {
+                    formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
                     writer.writeAll("\n") catch unreachable;
                 }
 
                 const value = values[i];
-                formatter.writeIndent(@TypeOf(writer), writer) catch unreachable;
-                writer.writeAll("\"") catch unreachable;
-                writer.writeAll(this.asStr(name)) catch unreachable;
-                writer.writeAll("\": \"") catch unreachable;
-                writer.writeAll(this.asStr(value)) catch unreachable;
-                writer.writeAll("\"") catch unreachable;
+                formatter.writeIndent(Writer, writer) catch unreachable;
+                try JSPrinter.writeJSONString(this.asStr(name), Writer, writer, false);
+                writer.writeAll(": ") catch unreachable;
+                try JSPrinter.writeJSONString(this.asStr(value), Writer, writer, false);
             }
         }
 
@@ -1462,21 +1468,24 @@ pub const Body = struct {
     ptr_allocator: ?std.mem.Allocator = null,
 
     pub fn writeFormat(this: *const Body, formatter: *JSC.Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
-        try formatter.writeIndent(@TypeOf(writer), writer);
+        const Writer = @TypeOf(writer);
+
+        try formatter.writeIndent(Writer, writer);
         try writer.writeAll("bodyUsed: ");
-        formatter.printAs(.Boolean, @TypeOf(writer), writer, JSC.JSValue.jsBoolean(!(this.value == .Unconsumed or this.value == .Empty)), .BooleanObject, enable_ansi_colors);
+        formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(!(this.value == .Unconsumed or this.value == .Empty)), .BooleanObject, enable_ansi_colors);
+        try formatter.printComma(Writer, writer, enable_ansi_colors);
         try writer.writeAll("\n");
 
         if (this.init.headers) |*headers| {
-            try formatter.writeIndent(@TypeOf(writer), writer);
+            try formatter.writeIndent(Writer, writer);
             try writer.writeAll("headers: ");
             try headers.writeFormat(formatter, writer, comptime enable_ansi_colors);
             try writer.writeAll("\n");
         }
 
-        try formatter.writeIndent(@TypeOf(writer), writer);
+        try formatter.writeIndent(Writer, writer);
         try writer.writeAll("status: ");
-        formatter.printAs(.Double, @TypeOf(writer), writer, JSC.JSValue.jsNumber(this.init.status_code), .NumberObject, enable_ansi_colors);
+        formatter.printAs(.Double, Writer, writer, JSC.JSValue.jsNumber(this.init.status_code), .NumberObject, enable_ansi_colors);
     }
 
     pub fn deinit(this: *Body, allocator: std.mem.Allocator) void {

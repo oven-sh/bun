@@ -1,14 +1,14 @@
-const _global = @import("global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
-const FileDescriptorType = _global.FileDescriptorType;
-const C = _global.C;
+const bun = @import("global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const FileDescriptorType = bun.FileDescriptorType;
+const C = bun.C;
 const Ref = @import("./ast/base.zig").Ref;
 
 const std = @import("std");
@@ -367,7 +367,7 @@ pub const Linker = struct {
                                 else => {},
                                 .react_refresh => {
                                     linker.tagged_resolutions.react_refresh = _resolved_import;
-                                    linker.tagged_resolutions.react_refresh.?.path_pair.primary = linker.tagged_resolutions.react_refresh.?.path().?.dupeAlloc(_global.default_allocator) catch unreachable;
+                                    linker.tagged_resolutions.react_refresh.?.path_pair.primary = linker.tagged_resolutions.react_refresh.?.path().?.dupeAlloc(bun.default_allocator) catch unreachable;
                                 },
                             }
 

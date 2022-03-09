@@ -227,6 +227,110 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_onl
     return bytes;
 }
 
+pub fn writeJSONString(text: []const u8, comptime Writer: type, writer: Writer, comptime ascii_only: bool) !void {
+    try writer.writeAll("\"");
+    var i: usize = 0;
+    var n: usize = text.len;
+    while (i < n) {
+        const width = strings.wtf8ByteSequenceLength(text[i]);
+        const c = strings.decodeWTF8RuneT(text.ptr[i .. i + 4][0..4], width, i32, 0);
+        if (canPrintWithoutEscape(i32, c, ascii_only)) {
+            const remain = text[i + @as(usize, width) ..];
+            if (strings.indexOfNeedsEscape(remain)) |j| {
+                try writer.writeAll(text[i .. i + j + @as(usize, width)]);
+                i += j + @as(usize, width);
+                continue;
+            } else {
+                try writer.writeAll(text[i..]);
+                i = n;
+                break;
+            }
+        }
+        switch (c) {
+            // Special-case the bell character since it may cause dumping this file to
+            // the terminal to make a sound, which is undesirable. Note that we can't
+            // use an octal literal to print this shorter since octal literals are not
+            // allowed in strict mode (or in template strings).
+            0x07 => {
+                try writer.writeAll("\\x07");
+                i += 1;
+            },
+            0x08 => {
+                try writer.writeAll("\\b");
+                i += 1;
+            },
+            0x0C => {
+                try writer.writeAll("\\f");
+                i += 1;
+            },
+            '\n' => {
+                try writer.writeAll("\\n");
+                i += 1;
+            },
+            std.ascii.control_code.CR => {
+                try writer.writeAll("\\r");
+                i += 1;
+            },
+            // \v
+            std.ascii.control_code.VT => {
+                try writer.writeAll("\\v");
+                i += 1;
+            },
+            // "\\"
+            '\\' => {
+                try writer.writeAll("\\\\");
+                i += 1;
+            },
+            '"' => {
+                try writer.writeAll("\\\"");
+                i += 1;
+            },
+
+            '\t' => {
+                try writer.writeAll("\\t");
+                i += 1;
+            },
+
+            else => {
+                i += @as(usize, width);
+
+                if (c < 0xFFFF) {
+                    const k = @intCast(usize, c);
+
+                    try writer.writeAll(&[_]u8{
+                        '\\',
+                        'u',
+                        hex_chars[(k >> 12) & 0xF],
+                        hex_chars[(k >> 8) & 0xF],
+                        hex_chars[(k >> 4) & 0xF],
+                        hex_chars[k & 0xF],
+                    });
+                } else {
+                    const k = c - 0x10000;
+                    const lo = @intCast(usize, first_high_surrogate + ((k >> 10) & 0x3FF));
+                    const hi = @intCast(usize, first_low_surrogate + (k & 0x3FF));
+
+                    try writer.writeAll(&[_]u8{
+                        '\\',
+                        'u',
+                        hex_chars[lo >> 12],
+                        hex_chars[(lo >> 8) & 15],
+                        hex_chars[(lo >> 4) & 15],
+                        hex_chars[lo & 15],
+                        '\\',
+                        'u',
+                        hex_chars[hi >> 12],
+                        hex_chars[(hi >> 8) & 15],
+                        hex_chars[(hi >> 4) & 15],
+                        hex_chars[hi & 15],
+                    });
+                }
+            },
+        }
+    }
+    try writer.writeAll("\"");
+}
+
 test "quoteForJSON" {
     var allocator = default_allocator;
     try std.testing.expectEqualStrings("\"I don't need any quotes.\"", try quoteForJSON("I don't need any quotes.", allocator, false));

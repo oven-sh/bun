@@ -297,15 +297,15 @@ fn NewLexer_(
                         switch (c2) {
                             // https://mathiasbynens.be/notes/javascript-escapes#single
                             'b' => {
-                                buf.append(8) catch unreachable;
+                                buf.append(0x08) catch unreachable;
                                 continue;
                             },
                             'f' => {
-                                buf.append(9) catch unreachable;
+                                buf.append(0x0C) catch unreachable;
                                 continue;
                             },
                             'n' => {
-                                buf.append(10) catch unreachable;
+                                buf.append(0x0A) catch unreachable;
                                 continue;
                             },
                             'v' => {
@@ -315,15 +315,15 @@ fn NewLexer_(
                                 //     lexer.end = start + iter.i - width2;
                                 //     try lexer.syntaxError();
                                 // }
-                                buf.append(11) catch unreachable;
+                                buf.append(0x0B) catch unreachable;
                                 continue;
                             },
                             't' => {
-                                buf.append(12) catch unreachable;
+                                buf.append(0x09) catch unreachable;
                                 continue;
                             },
                             'r' => {
-                                buf.append(13) catch unreachable;
+                                buf.append(0x0D) catch unreachable;
                                 continue;
                             },
 

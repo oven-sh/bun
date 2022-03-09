@@ -1546,7 +1546,7 @@ pub const BundleOptions = struct {
 
             if (!opts.routes.single_page_app_routing and should_try_to_find_a_index_html_file) {
                 attempt: {
-                    var abs_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+                    var abs_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                     // If it's not in static-dir/index.html, check if it's in top level dir/index.html
                     var parts = [_]string{"index.html"};
                     var full_path = resolve_path.joinAbsStringBuf(fs.top_level_dir, &abs_buf, &parts, .auto);

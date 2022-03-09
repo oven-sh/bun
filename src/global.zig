@@ -19,7 +19,7 @@ pub const fmt = struct {
     pub usingnamespace std.fmt;
 
     pub const SizeFormatter = struct {
-        value: f64 = 0.0,
+        value: usize = 0,
         pub fn format(self: SizeFormatter, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
             const math = std.math;
             const value = self.value;
@@ -39,10 +39,11 @@ pub const fmt = struct {
                 else => unreachable,
             };
 
-            try fmt.formatFloatDecimal(new_value, .{ .precision = if (new_value > 10.0 or new_value < -10.0) 2 else 0 }, writer);
-
             if (suffix == ' ') {
+                try fmt.formatFloatDecimal(new_value / 1000.0, .{ .precision = 2 }, writer);
                 return writer.writeAll(" KB");
+            } else {
+                try fmt.formatFloatDecimal(new_value, .{ .precision = if (std.math.approxEqAbs(f64, new_value, @trunc(new_value), 0.100)) @as(usize, 0) else @as(usize, 2) }, writer);
             }
 
             const buf = switch (1000) {
@@ -56,10 +57,10 @@ pub const fmt = struct {
 
     pub fn size(value: anytype) SizeFormatter {
         return switch (@TypeOf(value)) {
-            .f64, .f32, .f128 => SizeFormatter{
-                .value = @floatCast(f64, value),
+            f64, f32, f128 => SizeFormatter{
+                .value = @floatToInt(u64, value),
             },
-            else => SizeFormatter{ .value = @intToFloat(f64, value) },
+            else => SizeFormatter{ .value = @intCast(u64, value) },
         };
     }
 };

@@ -1,5 +1,6 @@
 const std = @import("std");
 const Api = @import("../../../api/schema.zig").Api;
+const bun = @import("../../../global.zig");
 const RequestContext = @import("../../../http.zig").RequestContext;
 const MimeType = @import("../../../http.zig").MimeType;
 const ZigURL = @import("../../../query_string_map.zig").URL;
@@ -84,12 +85,13 @@ pub const Response = struct {
     body: Body,
     url: string = "",
     status_text: string = "",
+    redirected: bool = false,
 
     pub const Props = struct {};
 
     pub fn writeFormat(this: *const Response, formatter: *JSC.Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         try formatter.writeIndent(@TypeOf(writer), writer);
-        try writer.writeAll("Response {\n");
+        try writer.print("Response ({}) {{\n", .{bun.fmt.size(this.body.len)});
         {
             formatter.indent += 1;
             defer formatter.indent -|= 1;
@@ -110,7 +112,11 @@ pub const Response = struct {
             try formatter.writeIndent(@TypeOf(writer), writer);
             try writer.writeAll("statusText: \"");
             try writer.writeAll(this.status_text);
-            try writer.writeAll("\"");
+            try writer.writeAll("\"\n");
+
+            try formatter.writeIndent(@TypeOf(writer), writer);
+            try writer.writeAll("redirected: ");
+            formatter.printAs(.Boolean, @TypeOf(writer), writer, JSC.JSValue.jsBoolean(this.redirected), .BooleanObject, enable_ansi_colors);
         }
         try writer.writeAll("\n");
         try formatter.writeIndent(@TypeOf(writer), writer);
@@ -646,6 +652,7 @@ pub const Fetch = struct {
                 .allocator = allocator,
                 .url = allocator.dupe(u8, this.http.url.href) catch unreachable,
                 .status_text = allocator.dupe(u8, http_response.status) catch unreachable,
+                .redirected = this.http.redirect_count > 0,
                 .body = .{
                     .init = .{
                         .headers = response_headers,
@@ -1375,14 +1382,12 @@ pub const Headers = struct {
     }
 
     pub fn writeFormat(this: *const Headers, formatter: *JSC.Formatter, writer: anytype, comptime _: bool) !void {
-        try formatter.writeIndent(@TypeOf(writer), writer);
-
         if (this.entries.len == 0) {
-            try writer.writeAll("Headers (0 kB) {}");
+            try writer.writeAll("Headers (0 KB) {}");
             return;
         }
 
-        try writer.print("Headers ({}) {{\n", .{std.fmt.fmtIntSizeDec(this.buf.items.len)});
+        try writer.print("Headers ({}) {{\n", .{bun.fmt.size(this.buf.items.len)});
 
         {
             var slice = this.entries.slice();
@@ -1463,6 +1468,8 @@ pub const Body = struct {
         try writer.writeAll("\n");
 
         if (this.init.headers) |*headers| {
+            try formatter.writeIndent(@TypeOf(writer), writer);
+            try writer.writeAll("headers: ");
             try headers.writeFormat(formatter, writer, comptime enable_ansi_colors);
             try writer.writeAll("\n");
         }

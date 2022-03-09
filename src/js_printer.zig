@@ -915,19 +915,12 @@ pub fn NewPrinter(
         pub fn bestQuoteCharForString(_: *Printer, str: anytype, allow_backtick_: bool) u8 {
             if (comptime is_json) return '"';
 
-            const allow_backtick = allow_backtick_;
+            const costs: QuoteCost = if (allow_backtick_)
 
             var single_cost: usize = 0;
             var double_cost: usize = 0;
             var backtick_cost: usize = 0;
             var char: u8 = 0;
-            var i: usize = 0;
-            while (i < str.len) {
-                switch (str[i]) {
-                    '\'' => {
-                        single_cost += 1;
-                    },
-                    '"' => {
                         double_cost += 1;
                     },
                     '`' => {
@@ -935,8 +928,6 @@ pub fn NewPrinter(
                     },
                     '\r', '\n' => {
                         if (allow_backtick) {
-                            return '`';
-                        }
                     },
                     '\\' => {
                         i += 1;
@@ -944,9 +935,6 @@ pub fn NewPrinter(
                     '$' => {
                         if (i + 1 < str.len and str[i + 1] == '{') {
                             backtick_cost += 1;
-                        }
-                    },
-                    else => {},
                 }
                 i += 1;
             }
@@ -1121,16 +1109,9 @@ pub fn NewPrinter(
                     '@',
                     '#',
                     '%',
-                    '^',
-                    '&',
                     '*',
                     '+',
-                    '=',
-                    ' ',
-                    => {
-                        e.print(@intCast(u8, c));
                     },
-
                     // Special-case the bell character since it may cause dumping this file to
                     // the terminal to make a sound, which is undesirable. Note that we can't
                     // use an octal literal to print this shorter since octal literals are not
@@ -1140,9 +1121,17 @@ pub fn NewPrinter(
                     },
                     0x08 => {
                         e.print("\\b");
+                        else
+                            e.print("\\f");
                     },
                     0x0C => {
                         e.print("\\f");
+                    },
+                    '\t' => {
+                        if (quote == '`')
+                            e.print("\t")
+                        else
+                            e.print("\\t");
                     },
                     '\n' => {
                         if (quote == '`') {
@@ -1151,12 +1140,17 @@ pub fn NewPrinter(
                             e.print("\\n");
                         }
                     },
+                    // we never print \r un-escaped
                     std.ascii.control_code.CR => {
                         e.print("\\r");
                     },
                     // \v
                     std.ascii.control_code.VT => {
-                        e.print("\\v");
+                        if (quote == '`') {
+                            e.print(std.ascii.control_code.VT);
+                        } else {
+                            e.print("\\v");
+                        }
                     },
                     // "\\"
                     '\\' => {
@@ -1203,6 +1197,23 @@ pub fn NewPrinter(
 
                     else => {
                         switch (c) {
+                            first_ascii...last_ascii => {
+                                    const remain = text[i..];
+                                    if (remain.len > 1 and remain[0] < last_ascii and remain[0] > first_ascii) {
+                                        if (strings.@"nextUTF16NonASCIIOr$`\\"([]const u16, remain)) |count| {
+                                            i += count;
+                                            var ptr = e.writer.reserve(count) catch unreachable;
+                                            strings.copyU16IntoU8(to_copy, []const u16, remain[0..count]);
+                                            e.writer.advance(count);
+
+                                            continue :outer;
+                                        }
+
+                                        {
+                                            const count = @truncate(u32, remain.len);
+                                            var ptr = e.writer.reserve(count) catch unreachable;
+                                            var to_copy = ptr[0..count];
+                                            strings.copyU16IntoU8(to_copy, []const u16, remain);
                             first_high_surrogate...last_high_surrogate => {
 
                                 // Is there a next character?
@@ -1214,7 +1225,7 @@ pub fn NewPrinter(
                                         i += 1;
 
                                         // Escape this character if UTF-8 isn't allowed
-                                        if (ascii_only) {
+                                        if (ascii_only_always_on_unless_minifying) {
                                             var ptr = e.writer.reserve(12) catch unreachable;
                                             ptr[0..12].* = [_]u8{
                                                 '\\', 'u', hex_chars[c >> 12],  hex_chars[(c >> 8) & 15],  hex_chars[(c >> 4) & 15],  hex_chars[c & 15],
@@ -3899,7 +3910,7 @@ pub fn NewPrinter(
                         p.printSymbol(default_name.ref.?);
                         p.print(" = ");
 
-                        if (!bun) {
+                        if (!is_bun_platform) {
                             p.print("(");
                             p.printSymbol(s.namespace_ref);
                             p.print(" && \"default\" in ");
@@ -3933,7 +3944,7 @@ pub fn NewPrinter(
             }
         }
         pub fn printLoadFromBundle(p: *Printer, import_record_index: u32) void {
-            if (bun) {
+            if (is_bun_platform) {
                 const record = p.import_records[import_record_index];
                 p.print("module.require(\"");
                 p.print(record.path.text);
@@ -4347,7 +4358,10 @@ pub fn NewPrinter(
             var source_map_builder: SourceMap.Chunk.Builder = undefined;
 
             if (comptime generate_source_map) {
-                source_map_builder = SourceMap.Chunk.Builder{ .source_map = MutableString.initEmpty(allocator) };
+                source_map_builder = SourceMap.Chunk.Builder{
+                    .source_map = SourceMap.Chunk.Builder.SourceMapper.init(allocator, is_bun_platform),
+                    .cover_lines_without_mappings = true,
+                };
                 source_map_builder.line_offset_tables = SourceMap.LineOffsetTable.generate(allocator, source.contents, @intCast(i32, tree.approximate_newline_count));
             }
 

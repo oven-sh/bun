@@ -12,18 +12,18 @@ const resolve_path = @import("./resolver/resolve_path.zig");
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 const URL = @import("./query_string_map.zig").URL;
 const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
-const _global = @import("global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const FileDescriptorType = _global.FileDescriptorType;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
-const C = _global.C;
-const StoredFileDescriptorType = _global.StoredFileDescriptorType;
+const bun = @import("global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const FileDescriptorType = bun.FileDescriptorType;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const C = bun.C;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const JSC = @import("javascript_core");
 const Runtime = @import("./runtime.zig").Runtime;
 const Analytics = @import("./analytics/analytics_thread.zig");
@@ -291,63 +291,63 @@ pub const ExternalModules = struct {
         "zlib",
     };
 
-    pub const NodeBuiltinsMap = ComptimeStringMap(bool, .{
-        .{ "_http_agent", true },
-        .{ "_http_client", true },
-        .{ "_http_common", true },
-        .{ "_http_incoming", true },
-        .{ "_http_outgoing", true },
-        .{ "_http_server", true },
-        .{ "_stream_duplex", true },
-        .{ "_stream_passthrough", true },
-        .{ "_stream_readable", true },
-        .{ "_stream_transform", true },
-        .{ "_stream_wrap", true },
-        .{ "_stream_writable", true },
-        .{ "_tls_common", true },
-        .{ "_tls_wrap", true },
-        .{ "assert", true },
-        .{ "async_hooks", true },
-        .{ "buffer", true },
-        .{ "child_process", true },
-        .{ "cluster", true },
-        .{ "console", true },
-        .{ "constants", true },
-        .{ "crypto", true },
-        .{ "dgram", true },
-        .{ "diagnostics_channel", true },
-        .{ "dns", true },
-        .{ "domain", true },
-        .{ "events", true },
-        .{ "fs", true },
-        .{ "http", true },
-        .{ "http2", true },
-        .{ "https", true },
-        .{ "inspector", true },
-        .{ "module", true },
-        .{ "net", true },
-        .{ "os", true },
-        .{ "path", true },
-        .{ "perf_hooks", true },
-        .{ "process", true },
-        .{ "punycode", true },
-        .{ "querystring", true },
-        .{ "readline", true },
-        .{ "repl", true },
-        .{ "stream", true },
-        .{ "string_decoder", true },
-        .{ "sys", true },
-        .{ "timers", true },
-        .{ "tls", true },
-        .{ "trace_events", true },
-        .{ "tty", true },
-        .{ "url", true },
-        .{ "util", true },
-        .{ "v8", true },
-        .{ "vm", true },
-        .{ "wasi", true },
-        .{ "worker_threads", true },
-        .{ "zlib", true },
+    pub const NodeBuiltinsMap = ComptimeStringMap(void, .{
+        .{ "_http_agent", void{} },
+        .{ "_http_client", void{} },
+        .{ "_http_common", void{} },
+        .{ "_http_incoming", void{} },
+        .{ "_http_outgoing", void{} },
+        .{ "_http_server", void{} },
+        .{ "_stream_duplex", void{} },
+        .{ "_stream_passthrough", void{} },
+        .{ "_stream_readable", void{} },
+        .{ "_stream_transform", void{} },
+        .{ "_stream_wrap", void{} },
+        .{ "_stream_writable", void{} },
+        .{ "_tls_common", void{} },
+        .{ "_tls_wrap", void{} },
+        .{ "assert", void{} },
+        .{ "async_hooks", void{} },
+        .{ "buffer", void{} },
+        .{ "child_process", void{} },
+        .{ "cluster", void{} },
+        .{ "console", void{} },
+        .{ "constants", void{} },
+        .{ "crypto", void{} },
+        .{ "dgram", void{} },
+        .{ "diagnostics_channel", void{} },
+        .{ "dns", void{} },
+        .{ "domain", void{} },
+        .{ "events", void{} },
+        .{ "fs", void{} },
+        .{ "http", void{} },
+        .{ "http2", void{} },
+        .{ "https", void{} },
+        .{ "inspector", void{} },
+        .{ "module", void{} },
+        .{ "net", void{} },
+        .{ "os", void{} },
+        .{ "path", void{} },
+        .{ "perf_hooks", void{} },
+        .{ "process", void{} },
+        .{ "punycode", void{} },
+        .{ "querystring", void{} },
+        .{ "readline", void{} },
+        .{ "repl", void{} },
+        .{ "stream", void{} },
+        .{ "string_decoder", void{} },
+        .{ "sys", void{} },
+        .{ "timers", void{} },
+        .{ "tls", void{} },
+        .{ "trace_events", void{} },
+        .{ "tty", void{} },
+        .{ "url", void{} },
+        .{ "util", void{} },
+        .{ "v8", void{} },
+        .{ "vm", void{} },
+        .{ "wasi", void{} },
+        .{ "worker_threads", void{} },
+        .{ "zlib", void{} },
     });
 };
 

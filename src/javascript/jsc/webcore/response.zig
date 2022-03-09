@@ -60,10 +60,10 @@ pub const Response = struct {
             },
         },
         .{
-            // .@"url" = .{
-            //     .@"get" = getURL,
-            //     .ro = true,
-            // },
+            .@"url" = .{
+                .@"get" = getURL,
+                .ro = true,
+            },
 
             .@"ok" = .{
                 .@"get" = getOK,
@@ -73,14 +73,74 @@ pub const Response = struct {
                 .@"get" = getStatus,
                 .ro = true,
             },
+            .@"statusText" = .{
+                .@"get" = getStatusText,
+                .ro = true,
+            },
         },
     );
 
     allocator: std.mem.Allocator,
     body: Body,
+    url: string = "",
     status_text: string = "",
 
     pub const Props = struct {};
+
+    pub fn writeFormat(this: *const Response, formatter: *JSC.Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+        try formatter.writeIndent(@TypeOf(writer), writer);
+        try writer.writeAll("Response {\n");
+        {
+            formatter.indent += 1;
+            defer formatter.indent -|= 1;
+
+            try formatter.writeIndent(@TypeOf(writer), writer);
+            try writer.writeAll("ok: ");
+            formatter.printAs(.Boolean, @TypeOf(writer), writer, JSC.JSValue.jsBoolean(this.isOK()), .BooleanObject, enable_ansi_colors);
+            try writer.writeAll("\n");
+
+            try this.body.writeFormat(formatter, writer, enable_ansi_colors);
+            try writer.writeAll("\n");
+
+            try formatter.writeIndent(@TypeOf(writer), writer);
+            try writer.writeAll("url: \"");
+            try writer.print(comptime Output.prettyFmt("<r><b>{s}<r>", enable_ansi_colors), .{this.url});
+            try writer.writeAll("\"\n");
+
+            try formatter.writeIndent(@TypeOf(writer), writer);
+            try writer.writeAll("statusText: \"");
+            try writer.writeAll(this.status_text);
+        }
+        try writer.writeAll("\n");
+        try formatter.writeIndent(@TypeOf(writer), writer);
+        try writer.writeAll("}");
+    }
+
+    pub fn isOK(this: *const Response) bool {
+        return this.body.init.status_code == 304 or (this.body.init.status_code >= 200 and this.body.init.status_code <= 299);
+    }
+
+    pub fn getURL(
+        this: *Response,
+        ctx: js.JSContextRef,
+        _: js.JSValueRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
+        return ZigString.init(this.url).withEncoding().toValueGC(ctx.ptr()).asObjectRef();
+    }
+
+    pub fn getStatusText(
+        this: *Response,
+        ctx: js.JSContextRef,
+        _: js.JSValueRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
+        return ZigString.init(this.status_text).withEncoding().toValueGC(ctx.ptr()).asObjectRef();
+    }
 
     pub fn getOK(
         this: *Response,
@@ -90,7 +150,7 @@ pub const Response = struct {
         _: js.ExceptionRef,
     ) js.JSValueRef {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/ok
-        return js.JSValueMakeBoolean(ctx, this.body.init.status_code == 304 or (this.body.init.status_code >= 200 and this.body.init.status_code <= 299));
+        return js.JSValueMakeBoolean(ctx, this.isOK());
     }
 
     pub fn getText(
@@ -293,7 +353,18 @@ pub const Response = struct {
         this: *Response,
     ) void {
         this.body.deinit(this.allocator);
-        this.allocator.destroy(this);
+
+        var allocator = this.allocator;
+
+        if (this.status_text.len > 0) {
+            allocator.free(this.status_text);
+        }
+
+        if (this.url.len > 0) {
+            allocator.free(this.url);
+        }
+
+        allocator.destroy(this);
     }
 
     pub fn mimeType(response: *const Response, request_ctx: *const RequestContext) string {
@@ -360,6 +431,7 @@ pub const Response = struct {
         response.* = Response{
             .body = body,
             .allocator = getAllocator(ctx),
+            .url = "",
         };
         return Response.Class.make(
             ctx,
@@ -571,6 +643,7 @@ pub const Fetch = struct {
 
             response.* = Response{
                 .allocator = allocator,
+                .url = allocator.dupe(u8, this.http.url.href) catch unreachable,
                 .status_text = allocator.dupe(u8, http_response.status) catch unreachable,
                 .body = .{
                     .init = .{
@@ -635,7 +708,7 @@ pub const Fetch = struct {
             var batch = NetworkThread.Batch{};
             node.data.http.schedule(allocator, &batch);
             NetworkThread.global.pool.schedule(batch);
-
+            VirtualMachine.vm.active_tasks +|= 1;
             return node;
         }
 
@@ -1067,6 +1140,10 @@ pub const Headers = struct {
             .@"finalize" = .{
                 .rfn = JS.finalize,
             },
+            .toJSON = .{
+                .rfn = toJSON,
+                .name = "toJSON",
+            },
         },
         .{},
     );
@@ -1262,6 +1339,77 @@ pub const Headers = struct {
         return ptr;
     }
 
+    pub fn toJSON(
+        this: *Headers,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        _: []const js.JSValueRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        const slice = this.entries.slice();
+        const keys = slice.items(.name);
+        const values = slice.items(.value);
+        const StackFallback = std.heap.StackFallbackAllocator(32 * 2 * @sizeOf(ZigString));
+        var stack = StackFallback{
+            .buffer = undefined,
+            .fallback_allocator = default_allocator,
+            .fixed_buffer_allocator = undefined,
+        };
+        var allocator = stack.get();
+        var key_strings_ = allocator.alloc(ZigString, keys.len * 2) catch unreachable;
+        var key_strings = key_strings_[0..keys.len];
+        var value_strings = key_strings_[keys.len..];
+
+        for (keys) |key, i| {
+            key_strings[i] = ZigString.init(this.asStr(key));
+            key_strings[i].detectEncoding();
+            value_strings[i] = ZigString.init(this.asStr(values[i]));
+            value_strings[i].detectEncoding();
+        }
+
+        var result = JSValue.fromEntries(ctx.ptr(), key_strings.ptr, value_strings.ptr, keys.len, true).asObjectRef();
+        allocator.free(key_strings_);
+        return result;
+    }
+
+    pub fn writeFormat(this: *const Headers, formatter: *JSC.Formatter, writer: anytype, comptime _: bool) !void {
+        try formatter.writeIndent(@TypeOf(writer), writer);
+
+        if (this.entries.len == 0) {
+            try writer.writeAll("Headers (0 kB) {}");
+            return;
+        }
+
+        try writer.print("Headers ({}) {{\n", .{std.fmt.fmtIntSizeDec(this.buf.items.len)});
+
+        {
+            var slice = this.entries.slice();
+            const names = slice.items(.name);
+            const values = slice.items(.value);
+            formatter.indent += 1;
+            defer formatter.indent -|= 1;
+
+            for (names) |name, i| {
+                if (i > 0) {
+                    writer.writeAll("\n") catch unreachable;
+                }
+
+                const value = values[i];
+                formatter.writeIndent(@TypeOf(writer), writer) catch unreachable;
+                writer.writeAll("\"") catch unreachable;
+                writer.writeAll(this.asStr(name)) catch unreachable;
+                writer.writeAll("\": \"") catch unreachable;
+                writer.writeAll(this.asStr(value)) catch unreachable;
+                writer.writeAll("\"") catch unreachable;
+            }
+        }
+
+        try writer.writeAll("\n");
+        try formatter.writeIndent(@TypeOf(writer), writer);
+        try writer.writeAll("}");
+    }
+
     fn appendNumber(this: *Headers, num: f64) Api.StringPointer {
         var ptr = Api.StringPointer{ .offset = this.used, .length = @truncate(
             u32,
@@ -1306,6 +1454,22 @@ pub const Body = struct {
     ptr: ?[*]u8 = null,
     len: usize = 0,
     ptr_allocator: ?std.mem.Allocator = null,
+
+    pub fn writeFormat(this: *const Body, formatter: *JSC.Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+        try formatter.writeIndent(@TypeOf(writer), writer);
+        try writer.writeAll("bodyUsed: ");
+        formatter.printAs(.Boolean, @TypeOf(writer), writer, JSC.JSValue.jsBoolean(!(this.value == .Unconsumed or this.value == .Empty)), .BooleanObject, enable_ansi_colors);
+        try writer.writeAll("\n");
+
+        if (this.init.headers) |*headers| {
+            try headers.writeFormat(formatter, writer, comptime enable_ansi_colors);
+            try writer.writeAll("\n");
+        }
+
+        try formatter.writeIndent(@TypeOf(writer), writer);
+        try writer.writeAll("status: ");
+        formatter.printAs(.Double, @TypeOf(writer), writer, JSC.JSValue.jsNumber(this.init.status_code), .NumberObject, enable_ansi_colors);
+    }
 
     pub fn deinit(this: *Body, allocator: std.mem.Allocator) void {
         this.ptr_allocator = null;

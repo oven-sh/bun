@@ -862,7 +862,7 @@ pub const ZigConsoleClient = struct {
         add_newline: bool,
         flush: bool,
     ) void {
-        var fmt: Formatter = undefined;
+        var fmt: ZigConsoleClient.Formatter = undefined;
         defer {
             if (fmt.map_node) |node| {
                 node.data = fmt.map;
@@ -872,8 +872,8 @@ pub const ZigConsoleClient = struct {
         }
 
         if (len == 1) {
-            fmt = Formatter{ .remaining_values = &[_]JSValue{} };
-            const tag = Formatter.Tag.get(vals[0], global);
+            fmt = ZigConsoleClient.Formatter{ .remaining_values = &[_]JSValue{}, .globalThis = global };
+            const tag = ZigConsoleClient.Formatter.Tag.get(vals[0], global);
 
             var unbuffered_writer = if (comptime Writer != RawWriter)
                 writer.context.unbuffered_writer.context.writer()
@@ -945,8 +945,8 @@ pub const ZigConsoleClient = struct {
         }
 
         var this_value: JSValue = vals[0];
-        fmt = Formatter{ .remaining_values = vals[0..len][1..] };
-        var tag: Formatter.Tag.Result = undefined;
+        fmt = ZigConsoleClient.Formatter{ .remaining_values = vals[0..len][1..], .globalThis = global };
+        var tag: ZigConsoleClient.Formatter.Tag.Result = undefined;
 
         var any = false;
         if (enable_colors) {
@@ -959,7 +959,7 @@ pub const ZigConsoleClient = struct {
                 }
                 any = true;
 
-                tag = Formatter.Tag.get(this_value, global);
+                tag = ZigConsoleClient.Formatter.Tag.get(this_value, global);
                 if (tag.tag == .String and fmt.remaining_values.len > 0) {
                     tag.tag = .StringPossiblyFormatted;
                 }
@@ -981,7 +981,7 @@ pub const ZigConsoleClient = struct {
                     _ = writer.write(" ") catch 0;
                 }
                 any = true;
-                tag = Formatter.Tag.get(this_value, global);
+                tag = ZigConsoleClient.Formatter.Tag.get(this_value, global);
                 if (tag.tag == .String and fmt.remaining_values.len > 0) {
                     tag.tag = .StringPossiblyFormatted;
                 }
@@ -1003,9 +1003,11 @@ pub const ZigConsoleClient = struct {
         map: Visited.Map = undefined,
         map_node: ?*Visited.Pool.Node = null,
         hide_native: bool = false,
+        globalThis: *JSGlobalObject,
+        indent: u32 = 0,
 
         pub const ZigFormatter = struct {
-            formatter: *Formatter,
+            formatter: *ZigConsoleClient.Formatter,
             global: *JSGlobalObject,
             value: JSValue,
 
@@ -1015,13 +1017,13 @@ pub const ZigConsoleClient = struct {
                 defer {
                     self.formatter.remaining_values = &[_]JSValue{};
                 }
-
+                self.formatter.globalThis = self.global;
                 self.formatter.format(
                     Tag.get(self.value, self.global),
                     @TypeOf(writer),
                     writer,
                     self.value,
-                    self.global,
+                    self.formatter.globalThis,
                     false,
                 );
             }
@@ -1203,7 +1205,7 @@ pub const ZigConsoleClient = struct {
         threadlocal var name_buf: [512]u8 = undefined;
 
         fn writeWithFormatting(
-            this: *Formatter,
+            this: *ZigConsoleClient.Formatter,
             comptime Writer: type,
             writer_: Writer,
             comptime Slice: type,
@@ -1240,10 +1242,10 @@ pub const ZigConsoleClient = struct {
                         const next_value = this.remaining_values[0];
                         this.remaining_values = this.remaining_values[1..];
                         switch (token) {
-                            Tag.String => this.printAs(Tag.String, Writer, writer_, next_value, globalThis, next_value.jsType(), enable_ansi_colors),
-                            Tag.Double => this.printAs(Tag.Double, Writer, writer_, next_value, globalThis, next_value.jsType(), enable_ansi_colors),
-                            Tag.Object => this.printAs(Tag.Object, Writer, writer_, next_value, globalThis, next_value.jsType(), enable_ansi_colors),
-                            Tag.Integer => this.printAs(Tag.Integer, Writer, writer_, next_value, globalThis, next_value.jsType(), enable_ansi_colors),
+                            Tag.String => this.printAs(Tag.String, Writer, writer_, next_value, next_value.jsType(), enable_ansi_colors),
+                            Tag.Double => this.printAs(Tag.Double, Writer, writer_, next_value, next_value.jsType(), enable_ansi_colors),
+                            Tag.Object => this.printAs(Tag.Object, Writer, writer_, next_value, next_value.jsType(), enable_ansi_colors),
+                            Tag.Integer => this.printAs(Tag.Integer, Writer, writer_, next_value, next_value.jsType(), enable_ansi_colors),
 
                             // undefined is overloaded to mean the '%o" field
                             Tag.Undefined => this.format(Tag.get(next_value, globalThis), Writer, writer_, next_value, globalThis, enable_ansi_colors),
@@ -1279,13 +1281,27 @@ pub const ZigConsoleClient = struct {
             };
         }
 
+        pub fn writeIndent(
+            this: *ZigConsoleClient.Formatter,
+            comptime Writer: type,
+            writer: Writer,
+        ) !void {
+            const indent = @minimum(this.indent, 8);
+            var buf = [_]u8{' '} ** 32;
+            var total_remain: usize = indent;
+            while (total_remain > 0) {
+                const written = @minimum(16, total_remain);
+                try writer.writeAll(buf[0 .. written * 2]);
+                total_remain -|= written;
+            }
+        }
+
         pub fn printAs(
-            this: *Formatter,
-            comptime Format: Formatter.Tag,
+            this: *ZigConsoleClient.Formatter,
+            comptime Format: ZigConsoleClient.Formatter.Tag,
             comptime Writer: type,
             writer_: Writer,
             value: JSValue,
-            globalThis: *JSGlobalObject,
             jsType: JSValue.JSType,
             comptime enable_ansi_colors: bool,
         ) void {
@@ -1308,11 +1324,11 @@ pub const ZigConsoleClient = struct {
             switch (comptime Format) {
                 .StringPossiblyFormatted => {
                     var str = ZigString.init("");
-                    value.toZigString(&str, globalThis);
+                    value.toZigString(&str, this.globalThis);
 
                     if (!str.is16Bit()) {
                         const slice = str.slice();
-                        this.writeWithFormatting(Writer, writer_, @TypeOf(slice), slice, globalThis, enable_ansi_colors);
+                        this.writeWithFormatting(Writer, writer_, @TypeOf(slice), slice, this.globalThis, enable_ansi_colors);
                     } else {
                         // TODO: UTF16
                         writer.print("{}", .{str});
@@ -1320,7 +1336,7 @@ pub const ZigConsoleClient = struct {
                 },
                 .String => {
                     var str = ZigString.init("");
-                    value.toZigString(&str, globalThis);
+                    value.toZigString(&str, this.globalThis);
                     if (jsType == .RegExpObject) {
                         writer.print(comptime Output.prettyFmt("<r><red>", enable_ansi_colors), .{});
                     }
@@ -1356,7 +1372,7 @@ pub const ZigConsoleClient = struct {
                 },
                 .Class => {
                     var printable = ZigString.init(&name_buf);
-                    value.getClassName(globalThis, &printable);
+                    value.getClassName(this.globalThis, &printable);
                     if (printable.len == 0) {
                         writer.print(comptime Output.prettyFmt("[class]", enable_ansi_colors), .{});
                     } else {
@@ -1365,7 +1381,7 @@ pub const ZigConsoleClient = struct {
                 },
                 .Function => {
                     var printable = ZigString.init(&name_buf);
-                    value.getNameProperty(globalThis, &printable);
+                    value.getNameProperty(this.globalThis, &printable);
 
                     if (printable.len == 0) {
                         writer.print(comptime Output.prettyFmt("<cyan>[Function]<r>", enable_ansi_colors), .{});
@@ -1374,7 +1390,7 @@ pub const ZigConsoleClient = struct {
                     }
                 },
                 .Array => {
-                    const len = value.getLengthOfArray(globalThis);
+                    const len = value.getLengthOfArray(this.globalThis);
                     if (len == 0) {
                         writer.writeAll("[]");
                         return;
@@ -1388,8 +1404,8 @@ pub const ZigConsoleClient = struct {
                             writer.writeAll(", ");
                         }
 
-                        const element = JSValue.fromRef(CAPI.JSObjectGetPropertyAtIndex(globalThis.ref(), ref, i, null));
-                        const tag = Tag.get(element, globalThis);
+                        const element = JSValue.fromRef(CAPI.JSObjectGetPropertyAtIndex(this.globalThis.ref(), ref, i, null));
+                        const tag = Tag.get(element, this.globalThis);
 
                         if (tag.cell.isStringLike()) {
                             if (comptime enable_ansi_colors) {
@@ -1398,7 +1414,7 @@ pub const ZigConsoleClient = struct {
                             writer.writeAll("\"");
                         }
 
-                        this.format(tag, Writer, writer_, element, globalThis, enable_ansi_colors);
+                        this.format(tag, Writer, writer_, element, this.globalThis, enable_ansi_colors);
 
                         if (tag.cell.isStringLike()) {
                             writer.writeAll("\"");
@@ -1424,6 +1440,20 @@ pub const ZigConsoleClient = struct {
                                 resolve_error.msg.writeFormat(writer_, enable_ansi_colors) catch {};
                                 return;
                             },
+                            .Response => {
+                                var response = priv_data.as(JSC.WebCore.Response);
+                                response.writeFormat(this, writer_, enable_ansi_colors) catch {};
+                                return;
+                            },
+                            .Headers => {
+                                var obj = priv_data.as(JSC.WebCore.Headers);
+                                obj.writeFormat(this, writer_, enable_ansi_colors) catch {};
+                                return;
+                            },
+                            .Request => {
+                                this.printAs(.JSON, Writer, writer_, value, .Object, enable_ansi_colors);
+                                return;
+                            },
                             else => {},
                         }
                     }
@@ -1436,7 +1466,7 @@ pub const ZigConsoleClient = struct {
                 .Promise => {
                     writer.writeAll("Promise { " ++ comptime Output.prettyFmt("<r><cyan>", enable_ansi_colors));
 
-                    switch (JSPromise.status(@ptrCast(*JSPromise, value.asObjectRef().?), globalThis.vm())) {
+                    switch (JSPromise.status(@ptrCast(*JSPromise, value.asObjectRef().?), this.globalThis.vm())) {
                         JSPromise.Status.Pending => {
                             writer.writeAll("<pending>");
                         },
@@ -1458,13 +1488,13 @@ pub const ZigConsoleClient = struct {
                     }
                 },
                 .GlobalObject => {
-                    writer.writeAll(comptime Output.prettyFmt("<cyan>[globalThis]<r>", enable_ansi_colors));
+                    writer.writeAll(comptime Output.prettyFmt("<cyan>[this.globalThis]<r>", enable_ansi_colors));
                 },
                 .Map => {},
                 .Set => {},
                 .JSON => {
                     var str = ZigString.init("");
-                    value.jsonStringify(globalThis, 0, &str);
+                    value.jsonStringify(this.globalThis, this.indent, &str);
                     if (jsType == JSValue.JSType.JSDate) {
                         // in the code for printing dates, it never exceeds this amount
                         var iso_string_buf: [36]u8 = undefined;
@@ -1482,13 +1512,13 @@ pub const ZigConsoleClient = struct {
                 },
                 .Object => {
                     var object = value.asObjectRef();
-                    var array = CAPI.JSObjectCopyPropertyNames(globalThis.ref(), object);
+                    var array = CAPI.JSObjectCopyPropertyNames(this.globalThis.ref(), object);
                     defer CAPI.JSPropertyNameArrayRelease(array);
                     const count_ = CAPI.JSPropertyNameArrayGetCount(array);
                     var i: usize = 0;
 
                     var name_str = ZigString.init("");
-                    value.getPrototype(globalThis).getNameProperty(globalThis, &name_str);
+                    value.getPrototype(this.globalThis).getNameProperty(this.globalThis, &name_str);
 
                     if (name_str.len > 0 and !strings.eqlComptime(name_str.slice(), "Object")) {
                         writer.print("{} ", .{name_str});
@@ -1506,8 +1536,8 @@ pub const ZigConsoleClient = struct {
                         defer CAPI.JSStringRelease(property_name_ref);
                         var prop = CAPI.JSStringGetCharacters8Ptr(property_name_ref)[0..CAPI.JSStringGetLength(property_name_ref)];
 
-                        var property_value = CAPI.JSObjectGetProperty(globalThis.ref(), object, property_name_ref, null);
-                        const tag = Tag.get(JSValue.fromRef(property_value), globalThis);
+                        var property_value = CAPI.JSObjectGetProperty(this.globalThis.ref(), object, property_name_ref, null);
+                        const tag = Tag.get(JSValue.fromRef(property_value), this.globalThis);
 
                         if (tag.cell.isHidden()) continue;
 
@@ -1523,7 +1553,7 @@ pub const ZigConsoleClient = struct {
                             writer.writeAll("\"");
                         }
 
-                        this.format(tag, Writer, writer_, JSValue.fromRef(property_value), globalThis, enable_ansi_colors);
+                        this.format(tag, Writer, writer_, JSValue.fromRef(property_value), this.globalThis, enable_ansi_colors);
 
                         if (tag.cell.isStringLike()) {
                             writer.writeAll("\"");
@@ -1540,7 +1570,7 @@ pub const ZigConsoleClient = struct {
                     writer.writeAll(" }");
                 },
                 .TypedArray => {
-                    const len = value.getLengthOfArray(globalThis);
+                    const len = value.getLengthOfArray(this.globalThis);
                     if (len == 0) {
                         writer.writeAll("[]");
                         return;
@@ -1548,7 +1578,7 @@ pub const ZigConsoleClient = struct {
 
                     writer.writeAll("[ ");
                     var i: u32 = 0;
-                    var buffer = JSC.Buffer.fromJS(globalThis, value, null).?;
+                    var buffer = JSC.Buffer.fromJS(this.globalThis, value, null).?;
                     const slice = buffer.slice();
                     while (i < len) : (i += 1) {
                         if (i > 0) {
@@ -1564,39 +1594,42 @@ pub const ZigConsoleClient = struct {
             }
         }
 
-        pub fn format(this: *Formatter, result: Tag.Result, comptime Writer: type, writer: Writer, value: JSValue, globalThis: *JSGlobalObject, comptime enable_ansi_colors: bool) void {
+        pub fn format(this: *ZigConsoleClient.Formatter, result: Tag.Result, comptime Writer: type, writer: Writer, value: JSValue, globalThis: *JSGlobalObject, comptime enable_ansi_colors: bool) void {
             if (comptime is_bindgen) {
                 return;
             }
+            var prevGlobalThis = this.globalThis;
+            defer this.globalThis = prevGlobalThis;
+            this.globalThis = globalThis;
 
-            // This looks incredibly redudant. We make the Formatter.Tag a
+            // This looks incredibly redudant. We make the ZigConsoleClient.Formatter.Tag a
             // comptime var so we have to repeat it here. The rationale there is
             // it _should_ limit the stack usage because each version of the
             // function will be relatively small
             return switch (result.tag) {
-                .StringPossiblyFormatted => this.printAs(.StringPossiblyFormatted, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
-                .String => this.printAs(.String, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
-                .Undefined => this.printAs(.Undefined, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
-                .Double => this.printAs(.Double, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
-                .Integer => this.printAs(.Integer, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
-                .Null => this.printAs(.Null, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
-                .Boolean => this.printAs(.Boolean, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
-                .Array => this.printAs(.Array, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
-                .Object => this.printAs(.Object, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
-                .Function => this.printAs(.Function, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
-                .Class => this.printAs(.Class, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
-                .Error => this.printAs(.Error, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
-                .TypedArray => this.printAs(.TypedArray, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
-                .Map => this.printAs(.Map, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
-                .Set => this.printAs(.Set, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
-                .Symbol => this.printAs(.Symbol, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
-                .BigInt => this.printAs(.BigInt, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
-                .GlobalObject => this.printAs(.GlobalObject, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
-                .Private => this.printAs(.Private, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
-                .Promise => this.printAs(.Promise, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
-                .JSON => this.printAs(.JSON, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
-                .NativeCode => this.printAs(.NativeCode, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
-                .ArrayBuffer => this.printAs(.ArrayBuffer, Writer, writer, value, globalThis, result.cell, enable_ansi_colors),
+                .StringPossiblyFormatted => this.printAs(.StringPossiblyFormatted, Writer, writer, value, result.cell, enable_ansi_colors),
+                .String => this.printAs(.String, Writer, writer, value, result.cell, enable_ansi_colors),
+                .Undefined => this.printAs(.Undefined, Writer, writer, value, result.cell, enable_ansi_colors),
+                .Double => this.printAs(.Double, Writer, writer, value, result.cell, enable_ansi_colors),
+                .Integer => this.printAs(.Integer, Writer, writer, value, result.cell, enable_ansi_colors),
+                .Null => this.printAs(.Null, Writer, writer, value, result.cell, enable_ansi_colors),
+                .Boolean => this.printAs(.Boolean, Writer, writer, value, result.cell, enable_ansi_colors),
+                .Array => this.printAs(.Array, Writer, writer, value, result.cell, enable_ansi_colors),
+                .Object => this.printAs(.Object, Writer, writer, value, result.cell, enable_ansi_colors),
+                .Function => this.printAs(.Function, Writer, writer, value, result.cell, enable_ansi_colors),
+                .Class => this.printAs(.Class, Writer, writer, value, result.cell, enable_ansi_colors),
+                .Error => this.printAs(.Error, Writer, writer, value, result.cell, enable_ansi_colors),
+                .TypedArray => this.printAs(.TypedArray, Writer, writer, value, result.cell, enable_ansi_colors),
+                .Map => this.printAs(.Map, Writer, writer, value, result.cell, enable_ansi_colors),
+                .Set => this.printAs(.Set, Writer, writer, value, result.cell, enable_ansi_colors),
+                .Symbol => this.printAs(.Symbol, Writer, writer, value, result.cell, enable_ansi_colors),
+                .BigInt => this.printAs(.BigInt, Writer, writer, value, result.cell, enable_ansi_colors),
+                .GlobalObject => this.printAs(.GlobalObject, Writer, writer, value, result.cell, enable_ansi_colors),
+                .Private => this.printAs(.Private, Writer, writer, value, result.cell, enable_ansi_colors),
+                .Promise => this.printAs(.Promise, Writer, writer, value, result.cell, enable_ansi_colors),
+                .JSON => this.printAs(.JSON, Writer, writer, value, result.cell, enable_ansi_colors),
+                .NativeCode => this.printAs(.NativeCode, Writer, writer, value, result.cell, enable_ansi_colors),
+                .ArrayBuffer => this.printAs(.ArrayBuffer, Writer, writer, value, result.cell, enable_ansi_colors),
             };
         }
     };
@@ -1909,6 +1942,7 @@ comptime {
 
 const Bun = @import("../javascript.zig").Bun;
 pub const BunTimer = Bun.Timer;
+pub const Formatter = ZigConsoleClient.Formatter;
 
 comptime {
     if (!is_bindgen) {

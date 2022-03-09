@@ -1828,7 +1828,7 @@ pub const JSValue = enum(i64) {
         return switch (Number) {
             f64 => @call(.{ .modifier = .always_inline }, jsNumberFromDouble, .{number}),
             u8 => @call(.{ .modifier = .always_inline }, jsNumberFromChar, .{number}),
-            u16 => @call(.{ .modifier = .always_inline }, jsNumberFromU16, .{number}),
+            u16 => @call(.{ .modifier = .always_inline }, jsNumberFromInt32, .{@intCast(i32, number)}),
             i32 => @call(.{ .modifier = .always_inline }, jsNumberFromInt32, .{@truncate(i32, number)}),
             c_int, i64 => if (number > std.math.maxInt(i32))
                 jsNumberFromInt64(@truncate(i64, number))

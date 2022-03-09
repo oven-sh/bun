@@ -368,8 +368,8 @@ pub const Expect = struct {
         const left = JSValue.fromRef(arguments[0]);
         const right = JSValue.fromRef(this.value);
         if (!left.isSameValue(right, ctx.ptr())) {
-            var lhs_formatter: JSC.ZigConsoleClient.Formatter = JSC.ZigConsoleClient.Formatter{};
-            var rhs_formatter: JSC.ZigConsoleClient.Formatter = JSC.ZigConsoleClient.Formatter{};
+            var lhs_formatter: JSC.ZigConsoleClient.Formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = ctx.ptr() };
+            var rhs_formatter: JSC.ZigConsoleClient.Formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = ctx.ptr() };
 
             JSC.JSError(
                 getAllocator(ctx),

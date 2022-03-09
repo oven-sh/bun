@@ -1,14 +1,14 @@
 const options = @import("./options.zig");
-const _global = @import("global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
-const C = _global.C;
+const bun = @import("global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const C = bun.C;
 const std = @import("std");
 const resolve_path = @import("./resolver/resolve_path.zig");
 const Fs = @import("./fs.zig");
@@ -28,7 +28,7 @@ pub const ErrorCSS = struct {
 
     pub inline fn sourceContent() string {
         if (comptime Environment.isDebug) {
-            var out_buffer: [_global.MAX_PATH_BYTES]u8 = undefined;
+            var out_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
             var dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
             var paths = [_]string{ dirname, BUN_ROOT, ErrorCSSPathDev };
             const file = std.fs.cwd().openFile(
@@ -52,7 +52,7 @@ pub const ErrorJS = struct {
 
     pub inline fn sourceContent() string {
         if (comptime Environment.isDebug) {
-            var out_buffer: [_global.MAX_PATH_BYTES]u8 = undefined;
+            var out_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
             var dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
             var paths = [_]string{ dirname, BUN_ROOT, ErrorJSPath };
             const file = std.fs.cwd().openFile(
@@ -229,7 +229,7 @@ pub const Runtime = struct {
     const bytecodeCacheFilename = std.fmt.comptimePrint("__runtime.{s}", .{version_hash});
     var bytecodeCacheFetcher = Fs.BytecodeCacheFetcher{};
 
-    pub fn byteCodeCacheFile(fs: *Fs.FileSystem.RealFS) ?_global.StoredFileDescriptorType {
+    pub fn byteCodeCacheFile(fs: *Fs.FileSystem.RealFS) ?bun.StoredFileDescriptorType {
         return bytecodeCacheFetcher.fetch(bytecodeCacheFilename, fs);
     }
 

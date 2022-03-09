@@ -1,14 +1,14 @@
 const std = @import("std");
-const _global = @import("../src/global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
-const C = _global.C;
+const bun = @import("../src/global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const C = bun.C;
 const clap = @import("../src/deps/zig-clap/clap.zig");
 
 const URL = @import("../src/query_string_map.zig").URL;
@@ -60,8 +60,8 @@ const MethodNames = std.ComptimeStringMap(Method, .{
     .{ "head", Method.HEAD },
 });
 
-var file_path_buf: [_global.MAX_PATH_BYTES + 1]u8 = undefined;
-var cwd_buf: [_global.MAX_PATH_BYTES + 1]u8 = undefined;
+var file_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+var cwd_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
 
 pub const Arguments = struct {
     url: URL,

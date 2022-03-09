@@ -1,13 +1,13 @@
 pub const Shimmer = @import("./shimmer.zig").Shimmer;
 const std = @import("std");
-const _global = @import("../../../global.zig");
-const string = _global.string;
-const Output = _global.Output;
+const bun = @import("../../../global.zig");
+const string = bun.string;
+const Output = bun.Output;
 const hasRef = std.meta.trait.hasField("ref");
 const C_API = @import("../../../jsc.zig").C;
 const StringPointer = @import("../../../api/schema.zig").Api.StringPointer;
 const Exports = @import("./exports.zig");
-const strings = _global.strings;
+const strings = bun.strings;
 const ErrorableZigString = Exports.ErrorableZigString;
 const ErrorableResolvedSource = Exports.ErrorableResolvedSource;
 const ZigException = Exports.ZigException;
@@ -95,7 +95,7 @@ pub const ZigString = extern struct {
         len: u32,
         allocated: bool = false,
 
-        pub const empty = Slice{ .allocator = _global.default_allocator, .ptr = undefined, .len = 0, .allocated = false };
+        pub const empty = Slice{ .allocator = bun.default_allocator, .ptr = undefined, .len = 0, .allocated = false };
 
         pub fn slice(this: Slice) []const u8 {
             return this.ptr[0..this.len];
@@ -197,7 +197,7 @@ pub const ZigString = extern struct {
     }
 
     pub inline fn deinitGlobal(this: ZigString) void {
-        _global.default_allocator.free(this.slice());
+        bun.default_allocator.free(this.slice());
     }
 
     pub inline fn mark(this: *ZigString) void {
@@ -251,7 +251,7 @@ pub const ZigString = extern struct {
         };
     }
 
-    pub fn sliceZBuf(this: ZigString, buf: *[_global.MAX_PATH_BYTES]u8) ![:0]const u8 {
+    pub fn sliceZBuf(this: ZigString, buf: *[bun.MAX_PATH_BYTES]u8) ![:0]const u8 {
         return try std.fmt.bufPrintZ(buf, "{}", .{this});
     }
 

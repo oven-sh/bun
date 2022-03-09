@@ -13,10 +13,10 @@ const testing = std.testing;
 const Allocator = std.mem.Allocator;
 const resolve_path = @import("../../resolver/resolve_path.zig");
 const JSC = @import("../../jsc.zig");
-const _global = @import("../../global.zig");
-const string = _global.string;
-const strings = _global.strings;
-const default_allocator = _global.default_allocator;
+const bun = @import("../../global.zig");
+const string = bun.string;
+const strings = bun.strings;
+const default_allocator = bun.default_allocator;
 
 pub const bindgen = true;
 

@@ -1,13 +1,13 @@
-const _global = @import("../global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
-const C = _global.C;
+const bun = @import("../global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const C = bun.C;
 const std = @import("std");
 
 const lex = @import("../js_lexer.zig");
@@ -30,8 +30,8 @@ const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
-var path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
-var path_buf2: [_global.MAX_PATH_BYTES]u8 = undefined;
+var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
 const NpmArgs = struct {
     // https://github.com/npm/rfcs/blob/main/implemented/0021-reduce-lifecycle-script-environment.md#detailed-explanation
     pub const package_name: string = "npm_package_name";

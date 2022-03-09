@@ -2,14 +2,14 @@
 // for interacting with the filesystem from JavaScript.
 // The top-level functions assume the arguments are already validated
 const std = @import("std");
-const _global = @import("../../../global.zig");
-const strings = _global.strings;
-const string = _global.string;
+const bun = @import("../../../global.zig");
+const strings = bun.strings;
+const string = bun.string;
 const AsyncIO = @import("io");
 const JSC = @import("../../../jsc.zig");
 const PathString = JSC.PathString;
-const Environment = _global.Environment;
-const C = _global.C;
+const Environment = bun.Environment;
+const C = bun.C;
 const Flavor = JSC.Node.Flavor;
 const system = std.os.system;
 const Maybe = JSC.Node.Maybe;
@@ -2417,7 +2417,7 @@ pub const NodeFS = struct {
     /// We want to avoid allocating a new path buffer for every error message so that JSC can clone + GC it.
     /// That means a stack-allocated buffer won't suffice. Instead, we re-use
     /// the heap allocated buffer on the NodefS struct
-    sync_error_buf: [_global.MAX_PATH_BYTES]u8 = undefined,
+    sync_error_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
 
     pub const ReturnType = Return;
 
@@ -2506,8 +2506,8 @@ pub const NodeFS = struct {
 
         switch (comptime flavor) {
             .sync => {
-                var src_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
-                var dest_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+                var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 var src = args.src.sliceZ(&src_buf);
                 var dest = args.dest.sliceZ(&dest_buf);
 
@@ -2776,7 +2776,7 @@ pub const NodeFS = struct {
         return Maybe(Return.Lchown).todo;
     }
     pub fn link(this: *NodeFS, args: Arguments.Link, comptime flavor: Flavor) Maybe(Return.Link) {
-        var new_path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+        var new_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const from = args.old_path.sliceZ(&this.sync_error_buf);
         const to = args.new_path.sliceZ(&new_path_buf);
 
@@ -2846,7 +2846,7 @@ pub const NodeFS = struct {
         switch (comptime flavor) {
             // The sync version does no allocation except when returning the path
             .sync => {
-                var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 const path = args.path.sliceZWithForceCopy(&buf, true);
                 const len = @truncate(u16, path.len);
 
@@ -2942,7 +2942,7 @@ pub const NodeFS = struct {
                                 var display_path: []const u8 = "";
                                 if (first_match != std.math.maxInt(u16)) {
                                     // TODO: this leaks memory
-                                    display_path = _global.default_allocator.dupe(u8, display_path[0..first_match]) catch unreachable;
+                                    display_path = bun.default_allocator.dupe(u8, display_path[0..first_match]) catch unreachable;
                                 }
                                 return Option{ .result = display_path };
                             },
@@ -2957,7 +2957,7 @@ pub const NodeFS = struct {
                         var display_path = args.path.slice();
                         if (first_match != std.math.maxInt(u16)) {
                             // TODO: this leaks memory
-                            display_path = _global.default_allocator.dupe(u8, display_path[0..first_match]) catch unreachable;
+                            display_path = bun.default_allocator.dupe(u8, display_path[0..first_match]) catch unreachable;
                         }
                         return Option{ .result = display_path };
                     },
@@ -2990,7 +2990,7 @@ pub const NodeFS = struct {
         _ = this;
         _ = flavor;
         return .{
-            .result = PathString.init(_global.default_allocator.dupe(u8, std.mem.span(rc.?)) catch unreachable),
+            .result = PathString.init(bun.default_allocator.dupe(u8, std.mem.span(rc.?)) catch unreachable),
         };
     }
     pub fn open(this: *NodeFS, args: Arguments.Open, comptime flavor: Flavor) Maybe(Return.Open) {
@@ -3198,7 +3198,7 @@ pub const NodeFS = struct {
                     _ = Syscall.close(fd);
                 }
 
-                var entries = std.ArrayList(ExpectedType).init(_global.default_allocator);
+                var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
                 var dir = std.fs.Dir{ .fd = fd };
                 var iterator = DirIterator.iterate(dir);
                 var entry = iterator.next();
@@ -3207,13 +3207,13 @@ pub const NodeFS = struct {
                         for (entries.items) |*item| {
                             switch (comptime ExpectedType) {
                                 DirEnt => {
-                                    _global.default_allocator.free(item.name.slice());
+                                    bun.default_allocator.free(item.name.slice());
                                 },
                                 Buffer => {
                                     item.destroy();
                                 },
                                 PathString => {
-                                    _global.default_allocator.free(item.slice());
+                                    bun.default_allocator.free(item.slice());
                                 },
                                 else => unreachable,
                             }
@@ -3230,17 +3230,17 @@ pub const NodeFS = struct {
                     switch (comptime ExpectedType) {
                         DirEnt => {
                             entries.append(.{
-                                .name = PathString.init(_global.default_allocator.dupe(u8, current.name.slice()) catch unreachable),
+                                .name = PathString.init(bun.default_allocator.dupe(u8, current.name.slice()) catch unreachable),
                                 .kind = current.kind,
                             }) catch unreachable;
                         },
                         Buffer => {
                             const slice = current.name.slice();
-                            entries.append(Buffer.fromString(slice, _global.default_allocator) catch unreachable) catch unreachable;
+                            entries.append(Buffer.fromString(slice, bun.default_allocator) catch unreachable) catch unreachable;
                         },
                         PathString => {
                             entries.append(
-                                PathString.init(_global.default_allocator.dupe(u8, current.name.slice()) catch unreachable),
+                                PathString.init(bun.default_allocator.dupe(u8, current.name.slice()) catch unreachable),
                             ) catch unreachable;
                         },
                         else => unreachable,
@@ -3291,7 +3291,7 @@ pub const NodeFS = struct {
                 };
 
                 const size = @intCast(u64, @maximum(stat_.size, 0));
-                var buf = std.ArrayList(u8).init(_global.default_allocator);
+                var buf = std.ArrayList(u8).init(bun.default_allocator);
                 buf.ensureTotalCapacity(size + 16) catch unreachable;
                 buf.expandToCapacity();
                 var total: usize = 0;
@@ -3320,7 +3320,7 @@ pub const NodeFS = struct {
                 return switch (args.encoding) {
                     .buffer => .{
                         .result = .{
-                            .buffer = Buffer.fromBytes(buf.items, _global.default_allocator, .Uint8Array),
+                            .buffer = Buffer.fromBytes(buf.items, bun.default_allocator, .Uint8Array),
                         },
                     },
                     else => .{
@@ -3393,7 +3393,7 @@ pub const NodeFS = struct {
     }
 
     pub fn readlink(this: *NodeFS, args: Arguments.Readlink, comptime flavor: Flavor) Maybe(Return.Readlink) {
-        var outbuf: [_global.MAX_PATH_BYTES]u8 = undefined;
+        var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var inbuf = &this.sync_error_buf;
         switch (comptime flavor) {
             .sync => {
@@ -3409,10 +3409,10 @@ pub const NodeFS = struct {
                 return .{
                     .result = switch (args.encoding) {
                         .buffer => .{
-                            .buffer = Buffer.fromString(outbuf[0..len], _global.default_allocator) catch unreachable,
+                            .buffer = Buffer.fromString(outbuf[0..len], bun.default_allocator) catch unreachable,
                         },
                         else => .{
-                            .string = _global.default_allocator.dupe(u8, outbuf[0..len]) catch unreachable,
+                            .string = bun.default_allocator.dupe(u8, outbuf[0..len]) catch unreachable,
                         },
                     },
                 };
@@ -3426,7 +3426,7 @@ pub const NodeFS = struct {
         return Maybe(Return.Readlink).todo;
     }
     pub fn realpath(this: *NodeFS, args: Arguments.Realpath, comptime flavor: Flavor) Maybe(Return.Realpath) {
-        var outbuf: [_global.MAX_PATH_BYTES]u8 = undefined;
+        var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var inbuf = &this.sync_error_buf;
         if (comptime Environment.allow_assert) std.debug.assert(FileSystem.instance_loaded);
 
@@ -3466,10 +3466,10 @@ pub const NodeFS = struct {
                 return .{
                     .result = switch (args.encoding) {
                         .buffer => .{
-                            .buffer = Buffer.fromString(buf, _global.default_allocator) catch unreachable,
+                            .buffer = Buffer.fromString(buf, bun.default_allocator) catch unreachable,
                         },
                         else => .{
-                            .string = _global.default_allocator.dupe(u8, buf) catch unreachable,
+                            .string = bun.default_allocator.dupe(u8, buf) catch unreachable,
                         },
                     },
                 };
@@ -3491,7 +3491,7 @@ pub const NodeFS = struct {
     // }
     pub fn rename(this: *NodeFS, args: Arguments.Rename, comptime flavor: Flavor) Maybe(Return.Rename) {
         var from_buf = &this.sync_error_buf;
-        var to_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+        var to_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
         switch (comptime flavor) {
             .sync => {
@@ -3550,7 +3550,7 @@ pub const NodeFS = struct {
     }
 
     pub fn symlink(this: *NodeFS, args: Arguments.Symlink, comptime flavor: Flavor) Maybe(Return.Symlink) {
-        var to_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+        var to_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
         switch (comptime flavor) {
             .sync => {
@@ -3684,7 +3684,7 @@ pub const NodeFS = struct {
         _ = args;
         _ = this;
         _ = flavor;
-        var stream = _global.default_allocator.create(JSC.Node.Stream) catch unreachable;
+        var stream = bun.default_allocator.create(JSC.Node.Stream) catch unreachable;
         stream.* = JSC.Node.Stream{
             .sink = .{
                 .readable = JSC.Node.Readable{
@@ -3695,10 +3695,10 @@ pub const NodeFS = struct {
             .sink_type = .readable,
             .content = undefined,
             .content_type = undefined,
-            .allocator = _global.default_allocator,
+            .allocator = bun.default_allocator,
         };
 
-        args.file.copyToStream(args.flags, args.autoClose, args.mode, _global.default_allocator, stream) catch unreachable;
+        args.file.copyToStream(args.flags, args.autoClose, args.mode, bun.default_allocator, stream) catch unreachable;
         args.copyToState(&stream.sink.readable.state);
         return Maybe(Return.CreateReadStream){ .result = stream };
     }
@@ -3706,7 +3706,7 @@ pub const NodeFS = struct {
         _ = args;
         _ = this;
         _ = flavor;
-        var stream = _global.default_allocator.create(JSC.Node.Stream) catch unreachable;
+        var stream = bun.default_allocator.create(JSC.Node.Stream) catch unreachable;
         stream.* = JSC.Node.Stream{
             .sink = .{
                 .writable = JSC.Node.Writable{
@@ -3717,9 +3717,9 @@ pub const NodeFS = struct {
             .sink_type = .writable,
             .content = undefined,
             .content_type = undefined,
-            .allocator = _global.default_allocator,
+            .allocator = bun.default_allocator,
         };
-        args.file.copyToStream(args.flags, args.autoClose, args.mode, _global.default_allocator, stream) catch unreachable;
+        args.file.copyToStream(args.flags, args.autoClose, args.mode, bun.default_allocator, stream) catch unreachable;
         args.copyToState(&stream.sink.writable.state);
         return Maybe(Return.CreateWriteStream){ .result = stream };
     }

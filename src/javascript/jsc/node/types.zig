@@ -1,13 +1,13 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const _global = @import("../../../global.zig");
-const strings = _global.strings;
-const string = _global.string;
+const bun = @import("../../../global.zig");
+const strings = bun.strings;
+const string = bun.string;
 const AsyncIO = @import("io");
 const JSC = @import("../../../jsc.zig");
 const PathString = JSC.PathString;
-const Environment = _global.Environment;
-const C = _global.C;
+const Environment = bun.Environment;
+const C = bun.C;
 const Syscall = @import("./syscall.zig");
 const os = std.os;
 const Buffer = JSC.MarkedArrayBuffer;
@@ -16,11 +16,11 @@ const logger = @import("../../../logger.zig");
 const Fs = @import("../../../fs.zig");
 const Shimmer = @import("../bindings/shimmer.zig").Shimmer;
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
-const meta = _global.meta;
+const meta = bun.meta;
 /// Time in seconds. Not nanos!
 pub const TimeLike = c_int;
 pub const Mode = if (Environment.isLinux) u32 else std.os.mode_t;
-const heap_allocator = _global.default_allocator;
+const heap_allocator = bun.default_allocator;
 pub fn DeclEnum(comptime T: type) type {
     const fieldInfos = std.meta.declarations(T);
     var enumFields: [fieldInfos.len]std.builtin.TypeInfo.EnumField = undefined;
@@ -133,7 +133,7 @@ pub const StringOrBuffer = union(Tag) {
     }
 
     pub export fn external_string_finalizer(_: ?*anyopaque, _: JSC.C.JSStringRef, buffer: *anyopaque, byteLength: usize) void {
-        _global.default_allocator.free(@ptrCast([*]const u8, buffer)[0..byteLength]);
+        bun.default_allocator.free(@ptrCast([*]const u8, buffer)[0..byteLength]);
     }
 
     pub fn toJS(this: StringOrBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
@@ -250,7 +250,7 @@ pub const PathLike = union(Tag) {
         };
     }
 
-    pub fn sliceZWithForceCopy(this: PathLike, buf: *[_global.MAX_PATH_BYTES]u8, comptime force: bool) [:0]const u8 {
+    pub fn sliceZWithForceCopy(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8, comptime force: bool) [:0]const u8 {
         var sliced = this.slice();
 
         if (sliced.len == 0) return "";
@@ -267,7 +267,7 @@ pub const PathLike = union(Tag) {
         return buf[0..sliced.len :0];
     }
 
-    pub inline fn sliceZ(this: PathLike, buf: *[_global.MAX_PATH_BYTES]u8) [:0]const u8 {
+    pub inline fn sliceZ(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8) [:0]const u8 {
         return sliceZWithForceCopy(this, buf, false);
     }
 
@@ -345,11 +345,11 @@ pub const Valid = struct {
                 JSC.throwInvalidArguments("Invalid path string: can't be empty", .{}, ctx, exception);
                 return false;
             },
-            1..._global.MAX_PATH_BYTES => return true,
+            1...bun.MAX_PATH_BYTES => return true,
             else => {
                 // TODO: should this be an EINVAL?
                 JSC.throwInvalidArguments(
-                    comptime std.fmt.comptimePrint("Invalid path string: path is too long (max: {d})", .{_global.MAX_PATH_BYTES}),
+                    comptime std.fmt.comptimePrint("Invalid path string: path is too long (max: {d})", .{bun.MAX_PATH_BYTES}),
                     .{},
                     ctx,
                     exception,
@@ -373,14 +373,14 @@ pub const Valid = struct {
 
                 // TODO: should this be an EINVAL?
                 JSC.throwInvalidArguments(
-                    comptime std.fmt.comptimePrint("Invalid path buffer: path is too long (max: {d})", .{_global.MAX_PATH_BYTES}),
+                    comptime std.fmt.comptimePrint("Invalid path buffer: path is too long (max: {d})", .{bun.MAX_PATH_BYTES}),
                     .{},
                     ctx,
                     exception,
                 );
                 return false;
             },
-            1..._global.MAX_PATH_BYTES => return true,
+            1...bun.MAX_PATH_BYTES => return true,
         }
 
         unreachable;
@@ -389,7 +389,7 @@ pub const Valid = struct {
 
 pub const ArgumentsSlice = struct {
     remaining: []const JSC.JSValue,
-    arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(_global.default_allocator),
+    arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator),
     all: []const JSC.JSValue,
 
     pub fn init(arguments: []const JSC.JSValue) ArgumentsSlice {
@@ -814,13 +814,13 @@ fn StatsLike(comptime name: string, comptime T: type) type {
         }
 
         pub fn toJS(this: Stats, ctx: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-            var _this = _global.default_allocator.create(Stats) catch unreachable;
+            var _this = bun.default_allocator.create(Stats) catch unreachable;
             _this.* = this;
             return Class.make(ctx, _this);
         }
 
         pub fn finalize(this: *Stats) void {
-            _global.default_allocator.destroy(this);
+            bun.default_allocator.destroy(this);
         }
     };
 }
@@ -962,8 +962,8 @@ pub const DirEnt = struct {
     });
 
     pub fn finalize(this: *DirEnt) void {
-        _global.default_allocator.free(this.name.slice());
-        _global.default_allocator.destroy(this);
+        bun.default_allocator.free(this.name.slice());
+        bun.default_allocator.destroy(this);
     }
 };
 
@@ -1047,11 +1047,11 @@ pub const Emitter = struct {
             listeners: Map = Map.initFill(Listener.List{}),
 
             pub fn addListener(this: *EventEmitter, ctx: JSC.C.JSContextRef, event: EventType, listener: Emitter.Listener) !void {
-                try this.listeners.getPtr(event).append(_global.default_allocator, ctx, listener);
+                try this.listeners.getPtr(event).append(bun.default_allocator, ctx, listener);
             }
 
             pub fn prependListener(this: *EventEmitter, ctx: JSC.C.JSContextRef, event: EventType, listener: Emitter.Listener) !void {
-                try this.listeners.getPtr(event).prepend(_global.default_allocator, ctx, listener);
+                try this.listeners.getPtr(event).prepend(bun.default_allocator, ctx, listener);
             }
 
             pub fn emit(this: *EventEmitter, event: EventType, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) void {
@@ -2198,7 +2198,7 @@ pub const Path = struct {
         var arena = std.heap.ArenaAllocator.init(heap_allocator);
         var arena_allocator = arena.allocator();
         defer arena.deinit();
-        var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var to_join = allocator.alloc(string, args_len) catch unreachable;
         var possibly_utf16 = false;
         for (args_ptr[0..args_len]) |arg, i| {
@@ -2231,7 +2231,7 @@ pub const Path = struct {
         var zig_str: JSC.ZigString = args_ptr[0].getZigString(globalThis);
         if (zig_str.len == 0) return JSC.ZigString.init("").toValue(globalThis);
 
-        var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var str_slice = zig_str.toSlice(heap_allocator);
         defer str_slice.deinit();
         var str = str_slice.slice();
@@ -2322,7 +2322,7 @@ pub const Path = struct {
             heap_allocator,
         );
         var allocator = stack_fallback_allocator.get();
-        var out_buf: [_global.MAX_PATH_BYTES * 2]u8 = undefined;
+        var out_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
 
         var parts = allocator.alloc(string, args_len) catch unreachable;
         defer allocator.free(parts);
@@ -2447,7 +2447,7 @@ pub const Process = struct {
     }
 
     pub fn getCwd(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        var buffer: [_global.MAX_PATH_BYTES]u8 = undefined;
+        var buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
         switch (Syscall.getcwd(&buffer)) {
             .err => |err| {
                 return err.toJSC(globalObject);
@@ -2467,7 +2467,7 @@ pub const Process = struct {
             return JSC.toInvalidArguments("path is required", .{}, globalObject.ref());
         }
 
-        var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const slice = to.sliceZBuf(&buf) catch {
             return JSC.toInvalidArguments("Invalid path", .{}, globalObject.ref());
         };
@@ -2500,14 +2500,14 @@ pub const Process = struct {
         std.os.exit(@truncate(u8, @intCast(u32, @maximum(code, 0))));
     }
 
-    pub export const Bun__version: [:0]const u8 = "v" ++ _global.Global.package_json_version;
-    pub export const Bun__versions_mimalloc: [:0]const u8 = _global.Global.versions.mimalloc;
-    pub export const Bun__versions_webkit: [:0]const u8 = _global.Global.versions.webkit;
-    pub export const Bun__versions_libarchive: [:0]const u8 = _global.Global.versions.libarchive;
-    pub export const Bun__versions_picohttpparser: [:0]const u8 = _global.Global.versions.picohttpparser;
-    pub export const Bun__versions_boringssl: [:0]const u8 = _global.Global.versions.boringssl;
-    pub export const Bun__versions_zlib: [:0]const u8 = _global.Global.versions.zlib;
-    pub export const Bun__versions_zig: [:0]const u8 = _global.Global.versions.zig;
+    pub export const Bun__version: [:0]const u8 = "v" ++ bun.Global.package_json_version;
+    pub export const Bun__versions_mimalloc: [:0]const u8 = bun.Global.versions.mimalloc;
+    pub export const Bun__versions_webkit: [:0]const u8 = bun.Global.versions.webkit;
+    pub export const Bun__versions_libarchive: [:0]const u8 = bun.Global.versions.libarchive;
+    pub export const Bun__versions_picohttpparser: [:0]const u8 = bun.Global.versions.picohttpparser;
+    pub export const Bun__versions_boringssl: [:0]const u8 = bun.Global.versions.boringssl;
+    pub export const Bun__versions_zlib: [:0]const u8 = bun.Global.versions.zlib;
+    pub export const Bun__versions_zig: [:0]const u8 = bun.Global.versions.zig;
 };
 
 comptime {

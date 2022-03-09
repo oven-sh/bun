@@ -1,28 +1,28 @@
 const std = @import("std");
-const _global = @import("global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const StoredFileDescriptorType = _global.StoredFileDescriptorType;
-const FileDescriptorType = _global.FileDescriptorType;
-const FeatureFlags = _global.FeatureFlags;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
-const C = _global.C;
+const bun = @import("global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const FileDescriptorType = bun.FileDescriptorType;
+const FeatureFlags = bun.FeatureFlags;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const C = bun.C;
 const sync = @import("sync.zig");
 const Mutex = @import("./lock.zig").Lock;
 const Semaphore = sync.Semaphore;
 const Fs = @This();
 const path_handler = @import("./resolver/resolve_path.zig");
-const PathString = _global.PathString;
+const PathString = bun.PathString;
 const allocators = @import("./allocators.zig");
 const hash_map = @import("hash_map.zig");
 
-pub const MAX_PATH_BYTES = _global.MAX_PATH_BYTES;
-pub const PathBuffer = [_global.MAX_PATH_BYTES]u8;
+pub const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
+pub const PathBuffer = [bun.MAX_PATH_BYTES]u8;
 
 // pub const FilesystemImplementation = @import("fs_impl.zig");
 
@@ -83,7 +83,7 @@ pub const FileSystem = struct {
     top_level_dir: string = "/",
 
     // used on subsequent updates
-    top_level_dir_buf: [_global.MAX_PATH_BYTES]u8 = undefined,
+    top_level_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
 
     fs: Implementation,
 
@@ -103,7 +103,7 @@ pub const FileSystem = struct {
     }
 
     pub fn getFdPath(this: *const FileSystem, fd: FileDescriptorType) ![]const u8 {
-        var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var dir = try std.os.getFdPath(fd, &buf);
         return try this.dirname_store.append([]u8, dir);
     }
@@ -512,7 +512,7 @@ pub const FileSystem = struct {
         file_limit: usize = 32,
         file_quota: usize = 32,
 
-        pub var tmpdir_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+        pub var tmpdir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
         const PLATFORM_TMP_DIR: string = switch (@import("builtin").target.os.tag) {
             .windows => "TMPDIR",
@@ -947,7 +947,7 @@ pub const FileSystem = struct {
         pub fn kind(fs: *RealFS, _dir: string, base: string, existing_fd: StoredFileDescriptorType) !Entry.Cache {
             var dir = _dir;
             var combo = [2]string{ dir, base };
-            var outpath: [_global.MAX_PATH_BYTES]u8 = undefined;
+            var outpath: [bun.MAX_PATH_BYTES]u8 = undefined;
             var entry_path = path_handler.joinAbsStringBuf(fs.cwd, &outpath, &combo, .auto);
 
             outpath[entry_path.len + 1] = 0;

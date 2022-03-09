@@ -1,13 +1,13 @@
-const _global = @import("../global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
-const C = _global.C;
+const bun = @import("../global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const C = bun.C;
 const std = @import("std");
 
 const lex = @import("../js_lexer.zig");
@@ -75,7 +75,7 @@ pub const InstallCompletionsCommand = struct {
 
         var completions_dir: string = "";
         var output_dir: std.fs.Dir = found: {
-            var cwd_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+            var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             var cwd = std.os.getcwd(&cwd_buf) catch {
                 Output.prettyErrorln("<r><red>error<r>: Could not get current working directory", .{});
                 Output.flush();
@@ -285,9 +285,9 @@ pub const InstallCompletionsCommand = struct {
 
         // Check if they need to load the zsh completions file into their .zshrc
         if (shell == .zsh) {
-            var completions_absolute_path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+            var completions_absolute_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             var completions_path = std.os.getFdPath(output_file.handle, &completions_absolute_path_buf) catch unreachable;
-            var zshrc_filepath: [_global.MAX_PATH_BYTES]u8 = undefined;
+            var zshrc_filepath: [bun.MAX_PATH_BYTES]u8 = undefined;
             const needs_to_tell_them_to_add_completions_file = brk: {
                 var dot_zshrc: std.fs.File = zshrc: {
                     first: {

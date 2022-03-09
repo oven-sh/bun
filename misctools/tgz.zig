@@ -1,16 +1,16 @@
 const std = @import("std");
 
 const path_handler = @import("../src/resolver/resolve_path.zig");
-const _global = @import("../src/global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
-const C = _global.C;
+const bun = @import("../src/global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const C = bun.C;
 
 const Archive = @import("../src/libarchive/libarchive.zig").Archive;
 const Zlib = @import("../src/zlib.zig");
@@ -38,7 +38,7 @@ pub fn main() anyerror!void {
         std.os.abort();
     }
 
-    var tarball_path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+    var tarball_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     var basename = std.fs.path.basename(std.mem.span(args[args.len - 1]));
     while (RecognizedExtensions.has(std.fs.path.extension(basename))) {
         basename = basename[0 .. basename.len - std.fs.path.extension(basename).len];

@@ -5,8 +5,8 @@ const http = @import("../../../http.zig");
 const JavaScript = @import("../javascript.zig");
 const QueryStringMap = @import("../../../query_string_map.zig").QueryStringMap;
 const CombinedScanner = @import("../../../query_string_map.zig").CombinedScanner;
-const _global = @import("../../../global.zig");
-const string = _global.string;
+const bun = @import("../../../global.zig");
+const string = bun.string;
 const JSC = @import("../../../jsc.zig");
 const js = JSC.C;
 const WebCore = @import("../webcore/response.zig");
@@ -366,7 +366,7 @@ pub fn createQueryObject(ctx: js.JSContextRef, map: *QueryStringMap, _: js.Excep
     return value.asRef();
 }
 
-threadlocal var entry_point_tempbuf: [_global.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var entry_point_tempbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
 pub fn getScriptSrcString(
     comptime Writer: type,
     writer: Writer,

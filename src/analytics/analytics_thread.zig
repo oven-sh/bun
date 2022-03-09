@@ -1,14 +1,14 @@
-const _global = @import("../global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
-const FeatureFlags = _global.FeatureFlags;
-const C = _global.C;
+const bun = @import("../global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const FeatureFlags = bun.FeatureFlags;
+const C = bun.C;
 
 const sync = @import("../sync.zig");
 const std = @import("std");
@@ -292,7 +292,7 @@ pub const GenerateHeader = struct {
             _ = forOS();
             const release = std.mem.span(&linux_os_name.release);
             var sliced_string = Semver.SlicedString.init(release, release);
-            var result = Semver.Version.parse(sliced_string, _global.default_allocator);
+            var result = Semver.Version.parse(sliced_string, bun.default_allocator);
             // we only care about major, minor, patch so we don't care about the string
             return result.version;
         }

@@ -1,14 +1,14 @@
 const picohttp = @import("picohttp");
-const _global = @import("./global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const FeatureFlags = _global.FeatureFlags;
-const stringZ = _global.stringZ;
-const C = _global.C;
+const bun = @import("./global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const FeatureFlags = bun.FeatureFlags;
+const stringZ = bun.stringZ;
+const C = bun.C;
 const std = @import("std");
 const URL = @import("./query_string_map.zig").URL;
 const Method = @import("./http/method.zig").Method;
@@ -399,7 +399,7 @@ pub const AsyncHTTP = struct {
 
     pub fn sendSync(this: *AsyncHTTP, comptime _: bool) anyerror!picohttp.Response {
         if (this.callback_ctx == null) {
-            var ctx = try _global.default_allocator.create(SingleHTTPChannel);
+            var ctx = try bun.default_allocator.create(SingleHTTPChannel);
             ctx.* = SingleHTTPChannel.init();
             this.callback_ctx = ctx;
         } else {
@@ -410,7 +410,7 @@ pub const AsyncHTTP = struct {
         this.callback = sendSyncCallback;
 
         var batch = NetworkThread.Batch{};
-        this.schedule(_global.default_allocator, &batch);
+        this.schedule(bun.default_allocator, &batch);
         NetworkThread.global.pool.schedule(batch);
         while (true) {
             var data = @ptrCast(*SingleHTTPChannel, @alignCast(@alignOf(*SingleHTTPChannel), this.callback_ctx.?));

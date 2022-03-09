@@ -10,9 +10,9 @@ const default_allocator = @import("../../../global.zig").default_allocator;
 const JSC = @import("../../../jsc.zig");
 const SystemError = JSC.SystemError;
 const darwin = os.darwin;
-const _global = @import("../../../global.zig");
-const MAX_PATH_BYTES = _global.MAX_PATH_BYTES;
-const fd_t = _global.FileDescriptorType;
+const bun = @import("../../../global.zig");
+const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
+const fd_t = bun.FileDescriptorType;
 const C = @import("../../../global.zig").C;
 const linux = os.linux;
 const Maybe = JSC.Node.Maybe;
@@ -78,12 +78,12 @@ else
 
 const mem = std.mem;
 
-pub fn getcwd(buf: *[_global.MAX_PATH_BYTES]u8) Maybe([]const u8) {
+pub fn getcwd(buf: *[bun.MAX_PATH_BYTES]u8) Maybe([]const u8) {
     const Result = Maybe([]const u8);
     buf[0] = 0;
-    const rc = std.c.getcwd(buf, _global.MAX_PATH_BYTES);
+    const rc = std.c.getcwd(buf, bun.MAX_PATH_BYTES);
     return if (rc != null)
-        Result{ .result = std.mem.sliceTo(rc.?[0.._global.MAX_PATH_BYTES], 0) }
+        Result{ .result = std.mem.sliceTo(rc.?[0..bun.MAX_PATH_BYTES], 0) }
     else
         Result.errnoSys(0, .getcwd).?;
 }

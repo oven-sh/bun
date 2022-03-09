@@ -10,7 +10,7 @@ const C = @import("../c.zig");
 const Fs = @import("../fs.zig");
 const stringZ = @import("../global.zig").stringZ;
 const Resolution = @import("./resolution.zig").Resolution;
-const _global = @import("../global.zig");
+const bun = @import("../global.zig");
 /// Normalized `bin` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
 /// Can be a:
 /// - file path (relative to the package root)
@@ -149,7 +149,7 @@ pub const Bin = extern struct {
         dir_iterator: ?std.fs.Dir.Iterator = null,
         package_name: String,
         package_installed_node_modules: std.fs.Dir = std.fs.Dir{ .fd = std.math.maxInt(std.os.fd_t) },
-        buf: [_global.MAX_PATH_BYTES]u8 = undefined,
+        buf: [bun.MAX_PATH_BYTES]u8 = undefined,
         string_buffer: []const u8,
         extern_string_buf: []const ExternalString,
 
@@ -263,8 +263,8 @@ pub const Bin = extern struct {
         // That way, if you move your node_modules folder around, the symlinks in .bin still work
         // If we used absolute paths for the symlinks, you'd end up with broken symlinks
         pub fn link(this: *Linker, link_global: bool) void {
-            var target_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
-            var dest_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+            var target_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             var from_remain: []u8 = &target_buf;
             var remain: []u8 = &dest_buf;
 

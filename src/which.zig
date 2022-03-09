@@ -1,6 +1,6 @@
 const std = @import("std");
-const _global = @import("./global.zig");
-fn isValid(buf: *[_global.MAX_PATH_BYTES]u8, segment: []const u8, bin: []const u8) ?u16 {
+const bun = @import("./global.zig");
+fn isValid(buf: *[bun.MAX_PATH_BYTES]u8, segment: []const u8, bin: []const u8) ?u16 {
     std.mem.copy(u8, buf, segment);
     buf[segment.len] = std.fs.path.sep;
     std.mem.copy(u8, buf[segment.len + 1 ..], bin);
@@ -14,7 +14,7 @@ fn isValid(buf: *[_global.MAX_PATH_BYTES]u8, segment: []const u8, bin: []const u
 
 // Like /usr/bin/which but without needing to exec a child process
 // Remember to resolve the symlink if necessary
-pub fn which(buf: *[_global.MAX_PATH_BYTES]u8, path: []const u8, cwd: []const u8, bin: []const u8) ?[:0]const u8 {
+pub fn which(buf: *[bun.MAX_PATH_BYTES]u8, path: []const u8, cwd: []const u8, bin: []const u8) ?[:0]const u8 {
     if (isValid(buf, std.mem.trimRight(u8, cwd, std.fs.path.sep_str), bin)) |len| {
         return buf[0..len :0];
     }
@@ -30,7 +30,7 @@ pub fn which(buf: *[_global.MAX_PATH_BYTES]u8, path: []const u8, cwd: []const u8
 }
 
 test "which" {
-    var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     var realpath = std.os.getenv("PATH") orelse unreachable;
     var whichbin = which(&buf, realpath, try std.process.getCwdAlloc(std.heap.c_allocator), "which");
     try std.testing.expectEqualStrings(whichbin orelse return std.debug.assert(false), "/usr/bin/which");

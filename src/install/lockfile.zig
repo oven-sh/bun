@@ -1,13 +1,13 @@
-const _global = @import("../global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
-const C = _global.C;
+const bun = @import("../global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const C = bun.C;
 const std = @import("std");
 
 const JSLexer = @import("../js_lexer.zig");
@@ -30,13 +30,12 @@ const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
-const NewBunQueue = @import("../bun_queue.zig").NewBunQueue;
 const HeaderBuilder = @import("http").HeaderBuilder;
 const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
 const Lock = @import("../lock.zig").Lock;
-var path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
-var path_buf2: [_global.MAX_PATH_BYTES]u8 = undefined;
+var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
 const URL = @import("../query_string_map.zig").URL;
 const AsyncHTTP = @import("http").AsyncHTTP;
 const HTTPChannel = @import("http").HTTPChannel;
@@ -222,13 +221,13 @@ pub const Tree = struct {
         package_ids: []const PackageID,
         names: []const String,
         tree_id: Id = 0,
-        path_buf: [_global.MAX_PATH_BYTES]u8 = undefined,
+        path_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
         path_buf_len: usize = 0,
         last_parent: Id = invalid_id,
         string_buf: string,
 
         // max number of node_modules folders
-        depth_stack: [(_global.MAX_PATH_BYTES / "node_modules".len) + 1]Id = undefined,
+        depth_stack: [(bun.MAX_PATH_BYTES / "node_modules".len) + 1]Id = undefined,
 
         pub fn init(
             trees: []const Tree,
@@ -842,8 +841,8 @@ pub const Printer = struct {
 
     pub const Format = enum { yarn };
 
-    var lockfile_path_buf1: [_global.MAX_PATH_BYTES]u8 = undefined;
-    var lockfile_path_buf2: [_global.MAX_PATH_BYTES]u8 = undefined;
+    var lockfile_path_buf1: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var lockfile_path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
 
     pub fn print(
         allocator: std.mem.Allocator,
@@ -2282,7 +2281,7 @@ pub const Package = extern struct {
 
                         // If it's a folder, pessimistically assume we will need a maximum path
                         if (Dependency.Version.Tag.infer(value) == .folder) {
-                            string_builder.cap += _global.MAX_PATH_BYTES;
+                            string_builder.cap += bun.MAX_PATH_BYTES;
                         }
                     }
                     total_dependencies_count += @truncate(u32, dependencies_q.expr.data.e_object.properties.len);
@@ -2911,7 +2910,7 @@ pub const Serializer = struct {
 
         load_workspace: {
             const workspace_path_len = reader.readIntLittle(u64) catch break :load_workspace;
-            if (workspace_path_len > 0 and workspace_path_len < _global.MAX_PATH_BYTES) {
+            if (workspace_path_len > 0 and workspace_path_len < bun.MAX_PATH_BYTES) {
                 var workspace_path = try allocator.alloc(u8, workspace_path_len);
                 const len = reader.readAll(workspace_path) catch break :load_workspace;
                 lockfile.workspace_path = workspace_path[0..len];

@@ -1,13 +1,13 @@
-const _global = @import("../global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
-const C = _global.C;
+const bun = @import("../global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const C = bun.C;
 const std = @import("std");
 
 const lex = @import("../js_lexer.zig");
@@ -31,9 +31,9 @@ const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
-var path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
-var path_buf2: [_global.MAX_PATH_BYTES]u8 = undefined;
-const PathString = _global.PathString;
+var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+const PathString = bun.PathString;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
 
 const JSC = @import("javascript_core");
@@ -103,15 +103,15 @@ const Scanner = struct {
     exclusion_names: []const []const u8 = &.{},
     filter_names: []const []const u8 = &.{},
     dirs_to_scan: Fifo,
-    results: std.ArrayList(_global.PathString),
+    results: std.ArrayList(bun.PathString),
     fs: *FileSystem,
-    open_dir_buf: [_global.MAX_PATH_BYTES]u8 = undefined,
-    scan_dir_buf: [_global.MAX_PATH_BYTES]u8 = undefined,
+    open_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
+    scan_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
     options: *options.BundleOptions,
     has_iterated: bool = false,
 
     const ScanEntry = struct {
-        relative_dir: _global.StoredFileDescriptorType,
+        relative_dir: bun.StoredFileDescriptorType,
         dir_path: string,
         name: strings.StringOrTinyString,
     };
@@ -127,7 +127,7 @@ const Scanner = struct {
         var root = this.readDirWithName(path, null) catch |err| {
             if (err == error.NotDir) {
                 if (this.isTestFile(path)) {
-                    this.results.append(_global.PathString.init(this.fs.filename_store.append(@TypeOf(path), path) catch unreachable)) catch unreachable;
+                    this.results.append(bun.PathString.init(this.fs.filename_store.append(@TypeOf(path), path) catch unreachable)) catch unreachable;
                 }
             }
 
@@ -190,7 +190,7 @@ const Scanner = struct {
         return this.couldBeTestFile(name) and this.doesAbsolutePathMatchFilter(name);
     }
 
-    pub fn next(this: *Scanner, entry: *FileSystem.Entry, fd: _global.StoredFileDescriptorType) void {
+    pub fn next(this: *Scanner, entry: *FileSystem.Entry, fd: bun.StoredFileDescriptorType) void {
         const name = entry.base_lowercase();
         this.has_iterated = true;
         switch (entry.kind(&this.fs.fs)) {
@@ -220,7 +220,7 @@ const Scanner = struct {
 
                 if (!this.doesAbsolutePathMatchFilter(path)) return;
 
-                entry.abs_path = _global.PathString.init(this.fs.filename_store.append(@TypeOf(path), path) catch unreachable);
+                entry.abs_path = bun.PathString.init(this.fs.filename_store.append(@TypeOf(path), path) catch unreachable);
                 this.results.append(entry.abs_path) catch unreachable;
             },
         }

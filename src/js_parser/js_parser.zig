@@ -12,16 +12,16 @@ pub const RuntimeFeatures = _runtime.Runtime.Features;
 pub const RuntimeNames = _runtime.Runtime.Names;
 pub const fs = @import("../fs.zig");
 const _hash_map = @import("../hash_map.zig");
-const _global = @import("../global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
-const C = _global.C;
+const bun = @import("../global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const C = bun.C;
 const G = js_ast.G;
 const Define = @import("../defines.zig").Define;
 const DefineData = @import("../defines.zig").DefineData;
@@ -3117,7 +3117,7 @@ fn NewParser_(
         fn_or_arrow_data_visit: FnOrArrowDataVisit = FnOrArrowDataVisit{},
         fn_only_data_visit: FnOnlyDataVisit = FnOnlyDataVisit{},
         allocated_names: List(string) = .{},
-        // allocated_names: ListManaged(string) = ListManaged(string).init(_global.default_allocator),
+        // allocated_names: ListManaged(string) = ListManaged(string).init(bun.default_allocator),
         // allocated_names_pool: ?*AllocatedNamesPool.Node = null,
         latest_arrow_arg_loc: logger.Loc = logger.Loc.Empty,
         forbid_suffix_after_as_loc: logger.Loc = logger.Loc.Empty,
@@ -13324,7 +13324,7 @@ fn NewParser_(
             // functions which have simple parameter lists and which are not defined in
             // strict mode code."
             if (opts.is_unique_formal_parameters or strict_loc != null or !has_simple_args or p.isStrictMode()) {
-                duplicate_args_check = StringVoidMap.get(_global.default_allocator);
+                duplicate_args_check = StringVoidMap.get(bun.default_allocator);
             }
 
             var i: usize = 0;

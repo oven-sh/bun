@@ -1,13 +1,13 @@
-const _global = @import("../global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
-const C = _global.C;
+const bun = @import("../global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const C = bun.C;
 const std = @import("std");
 
 const lex = @import("../js_lexer.zig");
@@ -120,10 +120,10 @@ pub const UpgradeCheckerThread = struct {
 pub const UpgradeCommand = struct {
     pub const timeout: u32 = 30000;
     const default_github_headers: string = "Acceptapplication/vnd.github.v3+json";
-    var github_repository_url_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
-    var current_executable_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
-    var unzip_path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
-    var tmpdir_path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+    var github_repository_url_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var current_executable_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var unzip_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var tmpdir_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
     pub fn getLatestVersion(
         allocator: std.mem.Allocator,

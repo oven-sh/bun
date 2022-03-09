@@ -7,12 +7,12 @@ const Global = @import("../global.zig").Global;
 const Output = @import("../global.zig").Output;
 const Fs = @import("../fs.zig");
 const Path = @import("../resolver/resolve_path.zig");
-const _global = @import("../global.zig");
+const bun = @import("../global.zig");
 pub const PackageManagerCommand = struct {
     pub fn printHelp(_: std.mem.Allocator) void {}
     pub fn printHash(ctx: Command.Context, lockfile_: []const u8) !void {
         @setCold(true);
-        var lockfile_buffer: [_global.MAX_PATH_BYTES]u8 = undefined;
+        var lockfile_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
         @memcpy(&lockfile_buffer, lockfile_.ptr, lockfile_.len);
         lockfile_buffer[lockfile_.len] = 0;
         var lockfile = lockfile_buffer[0..lockfile_.len :0];
@@ -140,7 +140,7 @@ pub const PackageManagerCommand = struct {
             _ = try pm.lockfile.hasMetaHashChanged(true);
             Global.exit(0);
         } else if (strings.eqlComptime(first, "cache")) {
-            var dir: [_global.MAX_PATH_BYTES]u8 = undefined;
+            var dir: [bun.MAX_PATH_BYTES]u8 = undefined;
             var fd = pm.getCacheDirectory();
             var outpath = std.os.getFdPath(fd.fd, &dir) catch |err| {
                 Output.prettyErrorln("{s} getting cache directory", .{@errorName(err)});

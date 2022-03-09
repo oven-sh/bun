@@ -1,15 +1,15 @@
-const _global = @import("global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
-const StoredFileDescriptorType = _global.StoredFileDescriptorType;
-const FeatureFlags = _global.FeatureFlags;
-const C = _global.C;
+const bun = @import("global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const FeatureFlags = bun.FeatureFlags;
+const C = bun.C;
 const std = @import("std");
 const lex = @import("js_lexer.zig");
 const logger = @import("logger.zig");
@@ -46,7 +46,6 @@ const isPackagePath = _resolver.isPackagePath;
 const Css = @import("css_scanner.zig");
 const DotEnv = @import("./env_loader.zig");
 const Lock = @import("./lock.zig").Lock;
-const NewBunQueue = @import("./bun_queue.zig").NewBunQueue;
 const NodeFallbackModules = @import("./node_fallbacks.zig");
 const CacheEntry = @import("./cache.zig").FsCacheEntry;
 const Analytics = @import("./analytics/analytics_thread.zig");
@@ -411,11 +410,11 @@ pub const Bundler = struct {
             // So it is not fast! Unless it's already cached.
             var paths = [_]string{std.mem.trimLeft(u8, this.options.entry_points[0], "./")};
             if (std.mem.indexOfScalar(u8, paths[0], '.') == null) {
-                var pages_dir_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+                var pages_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 var entry = this.fs.absBuf(&paths, &pages_dir_buf);
 
                 if (std.fs.path.extension(entry).len == 0) {
-                    _global.constStrToU8(entry).ptr[entry.len] = '/';
+                    bun.constStrToU8(entry).ptr[entry.len] = '/';
 
                     // Only throw if they actually passed in a route config and the directory failed to load
                     var dir_info_ = this.resolver.readDirInfo(entry) catch return;
@@ -1503,7 +1502,7 @@ pub const Bundler = struct {
         };
         const json_parse_string = "parse";
         var json_ast_symbols_list = std.mem.span(&json_ast_symbols);
-        threadlocal var override_file_path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+        threadlocal var override_file_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
         pub fn appendToModuleList(
             this: *GenerateNodeModuleBundle,
@@ -2936,9 +2935,9 @@ pub const Bundler = struct {
     }
 
     // This is public so it can be used by the HTTP handler when matching against public dir.
-    pub threadlocal var tmp_buildfile_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var tmp_buildfile_buf2: [_global.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var tmp_buildfile_buf3: [_global.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var tmp_buildfile_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var tmp_buildfile_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var tmp_buildfile_buf3: [bun.MAX_PATH_BYTES]u8 = undefined;
 
     // We try to be mostly stateless when serving
     // This means we need a slightly different resolver setup

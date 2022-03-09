@@ -1,16 +1,16 @@
-const _global = @import("../global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const FeatureFlags = _global.FeatureFlags;
-const PathString = _global.PathString;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
-const StoredFileDescriptorType = _global.StoredFileDescriptorType;
-const C = _global.C;
+const bun = @import("../global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const FeatureFlags = bun.FeatureFlags;
+const PathString = bun.PathString;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const C = bun.C;
 const ast = @import("../import_record.zig");
 const logger = @import("../logger.zig");
 const options = @import("../options.zig");
@@ -32,7 +32,7 @@ const ResolvePath = @import("./resolve_path.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const Mutex = @import("../lock.zig").Lock;
 const StringBoolMap = std.StringHashMap(bool);
-const FileDescriptorType = _global.FileDescriptorType;
+const FileDescriptorType = bun.FileDescriptorType;
 
 const allocators = @import("../allocators.zig");
 const Msg = logger.Msg;
@@ -56,8 +56,8 @@ pub const TemporaryBuffer = struct {
     pub threadlocal var ExtensionPathBuf: [512]u8 = undefined;
     pub threadlocal var TSConfigMatchStarBuf: [512]u8 = undefined;
     pub threadlocal var TSConfigMatchPathBuf: [512]u8 = undefined;
-    pub threadlocal var TSConfigMatchFullBuf: [_global.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var TSConfigMatchFullBuf2: [_global.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var TSConfigMatchFullBuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var TSConfigMatchFullBuf2: [bun.MAX_PATH_BYTES]u8 = undefined;
 };
 
 pub const PathPair = struct {
@@ -209,21 +209,21 @@ pub const DirEntryResolveQueueItem = struct {
 
 threadlocal var _dir_entry_paths_to_resolve: [256]DirEntryResolveQueueItem = undefined;
 threadlocal var _open_dirs: [256]std.fs.Dir = undefined;
-threadlocal var resolve_without_remapping_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
-threadlocal var index_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
-threadlocal var dir_info_uncached_filename_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
-threadlocal var node_bin_path: [_global.MAX_PATH_BYTES]u8 = undefined;
-threadlocal var dir_info_uncached_path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
-threadlocal var tsconfig_base_url_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
-threadlocal var relative_abs_path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
-threadlocal var load_as_file_or_directory_via_tsconfig_base_path: [_global.MAX_PATH_BYTES]u8 = undefined;
-threadlocal var node_modules_check_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
-threadlocal var field_abs_path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
-threadlocal var tsconfig_path_abs_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
-threadlocal var check_browser_map_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
-threadlocal var remap_path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
-threadlocal var load_as_file_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
-threadlocal var remap_path_trailing_slash: [_global.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var resolve_without_remapping_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var index_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var dir_info_uncached_filename_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var node_bin_path: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var dir_info_uncached_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var tsconfig_base_url_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var relative_abs_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var load_as_file_or_directory_via_tsconfig_base_path: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var node_modules_check_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var field_abs_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var tsconfig_path_abs_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var check_browser_map_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var remap_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var load_as_file_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var remap_path_trailing_slash: [bun.MAX_PATH_BYTES]u8 = undefined;
 
 pub const DebugLogs = struct {
     what: string = "",
@@ -508,7 +508,7 @@ pub const Resolver = struct {
         pkg.loadFrameworkWithPreference(pair, json, r.allocator, load_defines, preference);
         const dir = pkg.source.path.sourceDir();
 
-        var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
         pair.framework.resolved_dir = pkg.source.path.sourceDir();
 
@@ -672,7 +672,7 @@ pub const Resolver = struct {
         return result;
     }
 
-    const ModuleTypeMap = _global.ComptimeStringMap(options.ModuleType, .{
+    const ModuleTypeMap = bun.ComptimeStringMap(options.ModuleType, .{
         .{ ".mjs", options.ModuleType.esm },
         .{ ".mts", options.ModuleType.esm },
         .{ ".cjs", options.ModuleType.cjs },
@@ -715,7 +715,7 @@ pub const Resolver = struct {
                         }
                     } else if (dir.abs_real_path.len > 0) {
                         var parts = [_]string{ dir.abs_real_path, query.entry.base() };
-                        var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+                        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
                         var out = r.fs.absBuf(&parts, &buf);
 
@@ -1160,8 +1160,8 @@ pub const Resolver = struct {
     }
 
     threadlocal var esm_subpath_buf: [512]u8 = undefined;
-    threadlocal var esm_absolute_package_path: [_global.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var esm_absolute_package_path_joined: [_global.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var esm_absolute_package_path: [bun.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var esm_absolute_package_path_joined: [bun.MAX_PATH_BYTES]u8 = undefined;
     pub fn loadNodeModules(r: *ThisResolver, import_path: string, kind: ast.ImportKind, _dir_info: *DirInfo) ?MatchResult {
         var dir_info = _dir_info;
         if (r.debug_logs) |*debug| {
@@ -1813,7 +1813,7 @@ pub const Resolver = struct {
         extension_order: []const string,
         map: BrowserMap,
 
-        pub threadlocal var abs_to_rel_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+        pub threadlocal var abs_to_rel_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
         pub const Kind = enum { PackagePath, AbsolutePath };
 

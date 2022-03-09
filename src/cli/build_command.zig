@@ -1,14 +1,14 @@
-const _global = @import("../global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const FeatureFlags = _global.FeatureFlags;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
-const C = _global.C;
+const bun = @import("../global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const C = bun.C;
 const std = @import("std");
 
 const lex = @import("../js_lexer.zig");
@@ -28,7 +28,7 @@ const Command = @import("../cli.zig").Command;
 const bundler = @import("../bundler.zig");
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const fs = @import("../fs.zig");
-const constStrToU8 = _global.constStrToU8;
+const constStrToU8 = bun.constStrToU8;
 
 pub const BuildCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
@@ -89,7 +89,7 @@ pub const BuildCommand = struct {
                 // So don't do that unless we actually need to.
                 // const do_we_need_to_close = !FeatureFlags.store_file_descriptors or (@intCast(usize, root_dir.fd) + open_file_limit) < result.output_files.len;
 
-                var filepath_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+                var filepath_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 filepath_buf[0] = '.';
                 filepath_buf[1] = '/';
 

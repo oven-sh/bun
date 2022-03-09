@@ -5,7 +5,7 @@ const Environment = @import("./env.zig");
 const Wyhash = std.hash.Wyhash;
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const constStrToU8 = @import("./global.zig").constStrToU8;
-const _global = @import("./global.zig");
+const bun = @import("./global.zig");
 pub fn isSliceInBuffer(slice: anytype, buffer: anytype) bool {
     return (@ptrToInt(&buffer) <= @ptrToInt(slice.ptr) and (@ptrToInt(slice.ptr) + slice.len) <= (@ptrToInt(buffer) + buffer.len));
 }
@@ -343,7 +343,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             return try self.doAppend(AppendType, _value);
         }
 
-        threadlocal var lowercase_append_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+        threadlocal var lowercase_append_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         pub fn appendLowerCase(self: *Self, comptime AppendType: type, _value: AppendType) ![]const u8 {
             self.mutex.lock();
             defer self.mutex.unlock();

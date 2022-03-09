@@ -7,16 +7,16 @@ const json_parser = @import("json_parser.zig");
 const js_printer = @import("js_printer.zig");
 const js_ast = @import("js_ast.zig");
 const linker = @import("linker.zig");
-const _global = @import("global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
-const C = _global.C;
+const bun = @import("global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const C = bun.C;
 const panicky = @import("panic_handler.zig");
 const cli = @import("cli.zig");
 pub const MainPanicHandler = panicky.NewPanicHandler(std.builtin.default_panic);
@@ -30,7 +30,6 @@ pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace) nore
 }
 
 const CrashReporter = @import("crash_reporter");
-
 
 pub fn PLCrashReportHandler() void {
     Report.fatal(null, null);

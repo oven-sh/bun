@@ -1,14 +1,14 @@
-const _global = @import("../global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const StoredFileDescriptorType = _global.StoredFileDescriptorType;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
-const C = _global.C;
+const bun = @import("../global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const C = bun.C;
 const Api = @import("../api/schema.zig").Api;
 const std = @import("std");
 const options = @import("../options.zig");
@@ -1073,7 +1073,7 @@ pub const ESModule = struct {
         "%5C",
     };
 
-    threadlocal var resolved_path_buf_percent: [_global.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var resolved_path_buf_percent: [bun.MAX_PATH_BYTES]u8 = undefined;
     pub fn resolve(r: *const ESModule, package_url: string, subpath: string, exports: ExportsMap.Entry) Resolution {
         var result = r.resolveExports(package_url, subpath, exports);
 
@@ -1243,8 +1243,8 @@ pub const ESModule = struct {
         };
     }
 
-    threadlocal var resolve_target_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var resolve_target_buf2: [_global.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var resolve_target_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var resolve_target_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
     fn resolveTarget(
         r: *const ESModule,
         package_url: string,
@@ -1509,8 +1509,8 @@ pub const ESModule = struct {
         }
     }
 
-    threadlocal var resolve_target_reverse_prefix_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var resolve_target_reverse_prefix_buf2: [_global.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var resolve_target_reverse_prefix_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var resolve_target_reverse_prefix_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
 
     fn resolveTargetReverse(
         r: *const ESModule,

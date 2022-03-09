@@ -1,14 +1,14 @@
 const logger = @import("../logger.zig");
 const std = @import("std");
-const _global = @import("../global.zig");
-const string = _global.string;
+const bun = @import("../global.zig");
+const string = bun.string;
 const Fs = @import("../fs.zig");
 const js_ast = @import("../js_ast.zig");
 const Bundler = @import("../bundler.zig").Bundler;
-const strings = _global.strings;
+const strings = bun.strings;
 pub const FallbackEntryPoint = struct {
     code_buffer: [8096]u8 = undefined,
-    path_buffer: [_global.MAX_PATH_BYTES]u8 = undefined,
+    path_buffer: [bun.MAX_PATH_BYTES]u8 = undefined,
     source: logger.Source = undefined,
     built_code: string = "",
 
@@ -74,7 +74,7 @@ pub const FallbackEntryPoint = struct {
 
 pub const ClientEntryPoint = struct {
     code_buffer: [8096]u8 = undefined,
-    path_buffer: [_global.MAX_PATH_BYTES]u8 = undefined,
+    path_buffer: [bun.MAX_PATH_BYTES]u8 = undefined,
     source: logger.Source = undefined,
 
     pub fn isEntryPointPath(extname: string) bool {
@@ -157,8 +157,8 @@ pub const ClientEntryPoint = struct {
 };
 
 pub const ServerEntryPoint = struct {
-    code_buffer: [_global.MAX_PATH_BYTES * 2 + 500]u8 = undefined,
-    output_code_buffer: [_global.MAX_PATH_BYTES * 8 + 500]u8 = undefined,
+    code_buffer: [bun.MAX_PATH_BYTES * 2 + 500]u8 = undefined,
+    output_code_buffer: [bun.MAX_PATH_BYTES * 8 + 500]u8 = undefined,
     source: logger.Source = undefined,
 
     pub fn generate(
@@ -209,8 +209,8 @@ pub const ServerEntryPoint = struct {
 // protected. This is mostly a workaround for being unable to call ESM exported
 // functions from C++. When that is resolved, we should remove this.
 pub const MacroEntryPoint = struct {
-    code_buffer: [_global.MAX_PATH_BYTES * 2 + 500]u8 = undefined,
-    output_code_buffer: [_global.MAX_PATH_BYTES * 8 + 500]u8 = undefined,
+    code_buffer: [bun.MAX_PATH_BYTES * 2 + 500]u8 = undefined,
+    output_code_buffer: [bun.MAX_PATH_BYTES * 8 + 500]u8 = undefined,
     source: logger.Source = undefined,
 
     pub fn generateID(entry_path: string, function_name: string, buf: []u8, len: *u32) i32 {

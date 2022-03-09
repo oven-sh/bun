@@ -1,15 +1,15 @@
 pub const js = @import("../../jsc.zig").C;
 const std = @import("std");
-const _global = @import("../../global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
-const C = _global.C;
+const bun = @import("../../global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const C = bun.C;
 const JavaScript = @import("./javascript.zig");
 const ResolveError = JavaScript.ResolveError;
 const BuildError = JavaScript.BuildError;
@@ -156,9 +156,9 @@ pub const To = struct {
                     var zig_strings: []ZigString = if (value.len < 32)
                         &zig_strings_buf
                     else
-                        (_global.default_allocator.alloc(ZigString, value.len) catch unreachable);
+                        (bun.default_allocator.alloc(ZigString, value.len) catch unreachable);
                     defer if (zig_strings.ptr != &zig_strings_buf)
-                        _global.default_allocator.free(zig_strings);
+                        bun.default_allocator.free(zig_strings);
 
                     for (value) |path_string, i| {
                         if (comptime Type == []const PathString) {
@@ -173,12 +173,12 @@ pub const To = struct {
                     if (clone) {
                         for (value) |path_string| {
                             if (comptime Type == []const PathString) {
-                                _global.default_allocator.free(path_string.slice());
+                                bun.default_allocator.free(path_string.slice());
                             } else {
-                                _global.default_allocator.free(path_string);
+                                bun.default_allocator.free(path_string);
                             }
                         }
-                        _global.default_allocator.free(value);
+                        bun.default_allocator.free(value);
                     }
 
                     return array;
@@ -227,8 +227,8 @@ pub const To = struct {
                         }
 
                         {
-                            var array = _global.default_allocator.alloc(JSC.C.JSValueRef, value.len) catch unreachable;
-                            defer _global.default_allocator.free(array);
+                            var array = bun.default_allocator.alloc(JSC.C.JSValueRef, value.len) catch unreachable;
+                            defer bun.default_allocator.free(array);
                             var i: usize = 0;
                             while (i < value.len and exception.* == null) : (i += 1) {
                                 array[i] = if (comptime Child == JSC.C.JSValueRef)
@@ -271,7 +271,7 @@ pub const To = struct {
                             }
 
                             if (comptime !@hasDecl(Type, "toJS")) {
-                                var val = _global.default_allocator.create(Type) catch unreachable;
+                                var val = bun.default_allocator.create(Type) catch unreachable;
                                 val.* = value;
                                 return Type.Class.make(context, val);
                             }
@@ -841,6 +841,7 @@ pub const ClassOptions = struct {
 
 // work around a comptime bug
 
+const _to_json: stringZ = "toJSON";
 pub fn NewClass(
     comptime ZigType: type,
     comptime options: ClassOptions,
@@ -1611,7 +1612,7 @@ pub fn NewClass(
 const JSValue = JSC.JSValue;
 const ZigString = JSC.ZigString;
 
-pub const PathString = _global.PathString;
+pub const PathString = bun.PathString;
 
 threadlocal var error_args: [1]js.JSValueRef = undefined;
 pub fn JSError(
@@ -1725,7 +1726,7 @@ pub const ArrayBuffer = extern struct {
             this.ptr,
             this.byte_len,
             MarkedArrayBuffer_deallocator,
-            @intToPtr(*anyopaque, @ptrToInt(&_global.default_allocator)),
+            @intToPtr(*anyopaque, @ptrToInt(&bun.default_allocator)),
             exception,
         ));
     }

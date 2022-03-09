@@ -1,17 +1,17 @@
 const Fs = @import("./fs.zig");
 const std = @import("std");
-const _global = @import("global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const stringZ = _global.stringZ;
-const StoredFileDescriptorType = _global.StoredFileDescriptorType;
-const FeatureFlags = _global.FeatureFlags;
-const default_allocator = _global.default_allocator;
-const C = _global.C;
+const bun = @import("global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const stringZ = bun.stringZ;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const FeatureFlags = bun.FeatureFlags;
+const default_allocator = bun.default_allocator;
+const C = bun.C;
 const c = std.c;
 const options = @import("./options.zig");
 const IndexType = @import("./allocators.zig").IndexType;
@@ -78,7 +78,7 @@ pub const INotify = struct {
     pub var inotify_fd: EventListIndex = 0;
     pub var loaded_inotify = false;
 
-    const EventListBuffer = [@sizeOf([128]INotifyEvent) + (128 * _global.MAX_PATH_BYTES)]u8;
+    const EventListBuffer = [@sizeOf([128]INotifyEvent) + (128 * bun.MAX_PATH_BYTES)]u8;
     var eventlist: EventListBuffer = undefined;
     var eventlist_ptrs: [128]*const INotifyEvent = undefined;
 
@@ -603,7 +603,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 );
             } else if (comptime Environment.isLinux) {
                 // var file_path_to_use_ = std.mem.trimRight(u8, file_path_, "/");
-                // var buf: [_global.MAX_PATH_BYTES+1]u8 = undefined;
+                // var buf: [bun.MAX_PATH_BYTES+1]u8 = undefined;
                 // std.mem.copy(u8, &buf, file_path_to_use_);
                 // buf[file_path_to_use_.len] = 0;
                 var buf = file_path_.ptr;
@@ -687,7 +687,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 );
             } else if (Environment.isLinux) {
                 var file_path_to_use_ = std.mem.trimRight(u8, file_path_, "/");
-                var buf: [_global.MAX_PATH_BYTES + 1]u8 = undefined;
+                var buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
                 std.mem.copy(u8, &buf, file_path_to_use_);
                 buf[file_path_to_use_.len] = 0;
                 var slice: [:0]u8 = buf[0..file_path_to_use_.len :0];

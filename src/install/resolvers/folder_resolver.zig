@@ -12,7 +12,7 @@ const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const strings = @import("strings");
 const Resolution = @import("../resolution.zig").Resolution;
 const String = @import("../semver.zig").String;
-const _global = @import("../../global.zig");
+const bun = @import("../../global.zig");
 pub const FolderResolution = union(Tag) {
     package_id: PackageID,
     new_package_id: PackageID,
@@ -51,11 +51,11 @@ pub const FolderResolution = union(Tag) {
 
         // We consider it valid if there is a package.json in the folder
         const normalized = std.mem.trimRight(u8, normalize(non_normalized_path), std.fs.path.sep_str);
-        var joined: [_global.MAX_PATH_BYTES]u8 = undefined;
+        var joined: [bun.MAX_PATH_BYTES]u8 = undefined;
         var abs: string = "";
         var rel: string = "";
         if (strings.startsWithChar(normalized, '.')) {
-            var tempcat: [_global.MAX_PATH_BYTES]u8 = undefined;
+            var tempcat: [bun.MAX_PATH_BYTES]u8 = undefined;
 
             std.mem.copy(u8, &tempcat, normalized);
             tempcat[normalized.len] = std.fs.path.sep;

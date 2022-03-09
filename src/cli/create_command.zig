@@ -1,14 +1,14 @@
-const _global = @import("../global.zig");
-const string = _global.string;
-const constStrToU8 = _global.constStrToU8;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
-const C = _global.C;
+const bun = @import("../global.zig");
+const string = bun.string;
+const constStrToU8 = bun.constStrToU8;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const C = bun.C;
 const std = @import("std");
 
 const lex = @import("../js_lexer.zig");
@@ -42,7 +42,7 @@ const clap = @import("clap");
 const Lock = @import("../lock.zig").Lock;
 const Headers = @import("http").Headers;
 const CopyFile = @import("../copy_file.zig");
-var bun_path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+var bun_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 const Futex = @import("../futex.zig");
 const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMap;
 
@@ -245,7 +245,7 @@ const CreateOptions = struct {
 };
 
 const BUN_CREATE_DIR = ".bun-create";
-var home_dir_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+var home_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 pub const CreateCommand = struct {
     pub fn exec(ctx: Command.Context, _: []const []const u8) !void {
         @setCold(true);
@@ -869,10 +869,10 @@ pub const CreateCommand = struct {
                 var needs_bun_macros_prop = needs_bun_prop;
 
                 if (needs_bun_macros_prop) {
-                    if (package_json_expr.asProperty("bun")) |bun| {
+                    if (package_json_expr.asProperty("bun")) |bun_| {
                         needs_bun_prop = false;
-                        bun_prop = bun.expr;
-                        if (bun.expr.asProperty("macros")) |macros_q| {
+                        bun_prop = bun_.expr;
+                        if (bun_.expr.asProperty("macros")) |macros_q| {
                             bun_macros_prop = macros_q.expr;
                             needs_bun_macros_prop = false;
                             if (macros_q.expr.asProperty("react-relay")) |react_relay_q| {
@@ -1645,8 +1645,8 @@ pub const CreateCommand = struct {
         Output.flush();
 
         if (create_options.open) {
-            if (which(&bun_path_buf, PATH, destination, "bun")) |bun| {
-                var argv = [_]string{std.mem.span(bun)};
+            if (which(&bun_path_buf, PATH, destination, "bun")) |bin| {
+                var argv = [_]string{std.mem.span(bin)};
                 var child = try std.ChildProcess.init(&argv, ctx.allocator);
                 child.cwd = destination;
                 child.stdin_behavior = .Inherit;

@@ -1,17 +1,17 @@
 // const c = @import("./c.zig");
 const std = @import("std");
-const _global = @import("global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const FeatureFlags = _global.FeatureFlags;
-const stringZ = _global.stringZ;
-const StoredFileDescriptorType = _global.StoredFileDescriptorType;
-const default_allocator = _global.default_allocator;
-const C = _global.C;
+const bun = @import("global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const FeatureFlags = bun.FeatureFlags;
+const stringZ = bun.stringZ;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const default_allocator = bun.default_allocator;
+const C = bun.C;
 const Api = @import("./api/schema.zig").Api;
 const ApiReader = @import("./api/schema.zig").Reader;
 const ApiWriter = @import("./api/schema.zig").Writer;
@@ -784,7 +784,7 @@ pub const RequestContext = struct {
     };
 
     threadlocal var file_chunk_buf: [chunk_preamble_len + 2]u8 = undefined;
-    threadlocal var symlink_buffer: [_global.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var symlink_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
     threadlocal var weak_etag_buffer: [100]u8 = undefined;
     threadlocal var strong_etag_buffer: [100]u8 = undefined;
     threadlocal var weak_etag_tmp_buffer: [100]u8 = undefined;
@@ -811,7 +811,7 @@ pub const RequestContext = struct {
                 var buf: string = "";
 
                 if (node_modules_bundle.code_string == null) {
-                    buf = try node_modules_bundle.readCodeAsStringSlow(_global.default_allocator);
+                    buf = try node_modules_bundle.readCodeAsStringSlow(bun.default_allocator);
                 } else {
                     buf = node_modules_bundle.code_string.?.str;
                 }
@@ -1795,7 +1795,7 @@ pub const RequestContext = struct {
             // Output.prettyErrorln("<r><green>101<r><d> Hot Module Reloading connected.<r>", .{});
             // Output.flush();
             Analytics.Features.hot_module_reloading = true;
-            var build_file_path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+            var build_file_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
             var cmd: Api.WebsocketCommand = undefined;
             var msg: Api.WebsocketMessage = .{
@@ -1804,7 +1804,7 @@ pub const RequestContext = struct {
             };
             var cmd_reader: ApiReader = undefined;
             {
-                var byte_buf: [32 + _global.MAX_PATH_BYTES]u8 = undefined;
+                var byte_buf: [32 + bun.MAX_PATH_BYTES]u8 = undefined;
                 var fbs = std.io.fixedBufferStream(&byte_buf);
                 var writer = ByteApiWriter.init(&fbs);
 
@@ -1890,7 +1890,7 @@ pub const RequestContext = struct {
                                     }
                                     // save because WebSocket's buffer is 8096
                                     // max file path is 4096
-                                    var path_buf = _global.constStrToU8(file_path);
+                                    var path_buf = bun.constStrToU8(file_path);
                                     path_buf.ptr[path_buf.len] = 0;
                                     var file_path_z: [:0]u8 = path_buf.ptr[0..path_buf.len :0];
                                     const file = std.fs.openFileAbsoluteZ(file_path_z, .{ .mode = .read_only }) catch |err| {
@@ -2627,8 +2627,8 @@ pub const RequestContext = struct {
                 }
 
                 if (strings.eqlComptime(id, "node_modules.server.bun")) {
-                    if (vm.node_modules) |bun| {
-                        if (bun.code_string) |code| {
+                    if (vm.node_modules) |_bun| {
+                        if (_bun.code_string) |code| {
                             break :brk Blob{ .ptr = code.str.ptr, .len = code.str.len };
                         }
                     }
@@ -2642,8 +2642,8 @@ pub const RequestContext = struct {
                 }
 
                 if (strings.eqlComptime(id, "node_modules.server.bun")) {
-                    if (vm.node_modules) |bun| {
-                        if (bun.code_string) |code| {
+                    if (vm.node_modules) |_bun| {
+                        if (_bun.code_string) |code| {
                             break :brk Blob{ .ptr = code.str.ptr, .len = code.str.len };
                         }
                     }
@@ -2907,7 +2907,7 @@ pub const RequestContext = struct {
 
                     if (Server.editor) |editor| {
                         if (editor != .none) {
-                            editor.open(Server.editor_path, path.text, line, column, _global.default_allocator) catch |err| {
+                            editor.open(Server.editor_path, path.text, line, column, bun.default_allocator) catch |err| {
                                 if (editor != .other) {
                                     Output.prettyErrorln("Error {s} opening in {s}", .{ @errorName(err), @tagName(editor) });
                                 }
@@ -3200,7 +3200,7 @@ pub const Server = struct {
 
         var opened = try tmpdir.openFile(basename, .{});
         defer opened.close();
-        var path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+        var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         try editor_.open(
             Server.editor_path,
             try std.os.getFdPath(opened.handle, &path_buf),
@@ -3211,7 +3211,7 @@ pub const Server = struct {
     }
 
     pub fn detectEditor(env: *DotEnv.Loader) void {
-        var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
         var out: string = "";
         // first: choose from user preference
@@ -3290,7 +3290,7 @@ pub const Server = struct {
         }
     }
 
-    var _on_file_update_path_buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+    var _on_file_update_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     fn _onFileUpdate(
         ctx: *Server,
         events: []watcher.WatchEvent,
@@ -3410,7 +3410,7 @@ pub const Server = struct {
 
                             const loader = (ctx.bundler.options.loaders.get(Fs.PathName.init(changed_name).ext) orelse .file);
                             if (loader.isJavaScriptLikeOrJSON() or loader == .css) {
-                                var path_string: _global.PathString = undefined;
+                                var path_string: bun.PathString = undefined;
                                 var file_hash: Watcher.HashType = last_file_hash;
                                 const abs_path: string = brk: {
                                     if (dir_ent.entries.get(changed_name)) |file_ent| {

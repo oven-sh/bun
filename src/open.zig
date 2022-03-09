@@ -1,13 +1,13 @@
-const _global = @import("./global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
-const C = _global.C;
+const bun = @import("./global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const C = bun.C;
 const std = @import("std");
 const DotEnv = @import("env_loader.zig");
 const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
@@ -90,7 +90,7 @@ pub const Editor = enum(u8) {
     }
 
     const which = @import("./which.zig").which;
-    pub fn byPATH(env: *DotEnv.Loader, buf: *[_global.MAX_PATH_BYTES]u8, cwd: string, out: *[]const u8) ?Editor {
+    pub fn byPATH(env: *DotEnv.Loader, buf: *[bun.MAX_PATH_BYTES]u8, cwd: string, out: *[]const u8) ?Editor {
         const PATH = env.get("PATH") orelse return null;
 
         inline for (default_preference_list) |editor| {
@@ -105,7 +105,7 @@ pub const Editor = enum(u8) {
         return null;
     }
 
-    pub fn byPATHForEditor(env: *DotEnv.Loader, editor: Editor, buf: *[_global.MAX_PATH_BYTES]u8, cwd: string, out: *[]const u8) bool {
+    pub fn byPATHForEditor(env: *DotEnv.Loader, editor: Editor, buf: *[bun.MAX_PATH_BYTES]u8, cwd: string, out: *[]const u8) bool {
         const PATH = env.get("PATH") orelse return false;
 
         if (bin_name.get(editor)) |path| {
@@ -136,7 +136,7 @@ pub const Editor = enum(u8) {
         return false;
     }
 
-    pub fn byFallback(env: *DotEnv.Loader, buf: *[_global.MAX_PATH_BYTES]u8, cwd: string, out: *[]const u8) ?Editor {
+    pub fn byFallback(env: *DotEnv.Loader, buf: *[bun.MAX_PATH_BYTES]u8, cwd: string, out: *[]const u8) ?Editor {
         inline for (default_preference_list) |editor| {
             if (byPATHForEditor(env, editor, buf, cwd, out)) {
                 return editor;
@@ -221,7 +221,7 @@ pub const Editor = enum(u8) {
         column: ?string,
         allocator: std.mem.Allocator,
     ) !void {
-        var file_path_buf: [_global.MAX_PATH_BYTES + 1024]u8 = undefined;
+        var file_path_buf: [bun.MAX_PATH_BYTES + 1024]u8 = undefined;
         var file_path_buf_stream = std.io.fixedBufferStream(&file_path_buf);
         var file_path_buf_writer = file_path_buf_stream.writer();
         var args_buf: [10]string = undefined;

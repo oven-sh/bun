@@ -1,15 +1,15 @@
 const std = @import("std");
-const _global = @import("./global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
+const bun = @import("./global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
 const URL = @import("./query_string_map.zig").URL;
-const C = _global.C;
+const C = bun.C;
 const options = @import("./options.zig");
 const logger = @import("./logger.zig");
 const js_ast = @import("./js_ast.zig");
@@ -169,7 +169,7 @@ pub const Bunfig = struct {
             }
 
             if (comptime cmd.isNPMRelated()) {
-                if (json.get("install")) |bun| {
+                if (json.get("install")) |_bun| {
                     var install: *Api.BunInstall = this.ctx.install orelse brk: {
                         var install_ = try this.allocator.create(Api.BunInstall);
                         install_.* = std.mem.zeroes(Api.BunInstall);
@@ -177,11 +177,11 @@ pub const Bunfig = struct {
                         break :brk install_;
                     };
 
-                    if (bun.get("registry")) |registry| {
+                    if (_bun.get("registry")) |registry| {
                         install.default_registry = try this.parseRegistry(registry);
                     }
 
-                    if (bun.get("scopes")) |scopes| {
+                    if (_bun.get("scopes")) |scopes| {
                         var registry_map = install.scoped orelse std.mem.zeroes(Api.NpmRegistryMap);
                         try this.expect(scopes, .e_object);
                         const count = scopes.data.e_object.properties.len + registry_map.registries.len;
@@ -224,19 +224,19 @@ pub const Bunfig = struct {
                         install.scoped = registry_map;
                     }
 
-                    if (bun.get("dryRun")) |dry_run| {
+                    if (_bun.get("dryRun")) |dry_run| {
                         if (dry_run.asBool()) |value| {
                             install.dry_run = value;
                         }
                     }
 
-                    if (bun.get("production")) |production| {
+                    if (_bun.get("production")) |production| {
                         if (production.asBool()) |value| {
                             install.production = value;
                         }
                     }
 
-                    if (bun.get("lockfile")) |lockfile_expr| {
+                    if (_bun.get("lockfile")) |lockfile_expr| {
                         if (lockfile_expr.get("print")) |lockfile| {
                             try this.expect(lockfile, .e_string);
                             if (lockfile.asString(this.allocator)) |value| {
@@ -269,41 +269,41 @@ pub const Bunfig = struct {
                         }
                     }
 
-                    if (bun.get("optional")) |optional| {
+                    if (_bun.get("optional")) |optional| {
                         if (optional.asBool()) |value| {
                             install.save_optional = value;
                         }
                     }
 
-                    if (bun.get("peer")) |optional| {
+                    if (_bun.get("peer")) |optional| {
                         if (optional.asBool()) |value| {
                             install.save_peer = value;
                         }
                     }
 
-                    if (bun.get("dev")) |optional| {
+                    if (_bun.get("dev")) |optional| {
                         if (optional.asBool()) |value| {
                             install.save_dev = value;
                         }
                     }
 
-                    if (bun.get("globalDir")) |dir| {
+                    if (_bun.get("globalDir")) |dir| {
                         if (dir.asString(allocator)) |value| {
                             install.global_dir = value;
                         }
                     }
 
-                    if (bun.get("globalBinDir")) |dir| {
+                    if (_bun.get("globalBinDir")) |dir| {
                         if (dir.asString(allocator)) |value| {
                             install.global_bin_dir = value;
                         }
                     }
 
-                    if (bun.get("logLevel")) |expr| {
+                    if (_bun.get("logLevel")) |expr| {
                         try this.loadLogLevel(expr);
                     }
 
-                    if (bun.get("cache")) |cache| {
+                    if (_bun.get("cache")) |cache| {
                         load: {
                             if (cache.asBool()) |value| {
                                 if (!value) {
@@ -343,25 +343,25 @@ pub const Bunfig = struct {
                 }
             }
 
-            if (json.get("bundle")) |bun| {
+            if (json.get("bundle")) |_bun| {
                 if (comptime cmd == .DevCommand or cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand or cmd == .BunCommand) {
-                    if (bun.get("saveTo")) |file| {
+                    if (_bun.get("saveTo")) |file| {
                         try this.expect(file, .e_string);
                         this.bunfig.node_modules_bundle_path = try file.data.e_string.string(allocator);
                     }
 
-                    if (bun.get("outdir")) |dir| {
+                    if (_bun.get("outdir")) |dir| {
                         try this.expect(dir, .e_string);
                         this.bunfig.output_dir = try dir.data.e_string.string(allocator);
                     }
                 }
 
                 if (comptime cmd == .BunCommand) {
-                    if (bun.get("logLevel")) |expr2| {
+                    if (_bun.get("logLevel")) |expr2| {
                         try this.loadLogLevel(expr2);
                     }
 
-                    if (bun.get("entryPoints")) |entryPoints| {
+                    if (_bun.get("entryPoints")) |entryPoints| {
                         try this.expect(entryPoints, .e_array);
                         const items = entryPoints.data.e_array.items.slice();
                         var names = try this.allocator.alloc(string, items.len);
@@ -372,7 +372,7 @@ pub const Bunfig = struct {
                         this.bunfig.entry_points = names;
                     }
 
-                    if (bun.get("packages")) |expr| {
+                    if (_bun.get("packages")) |expr| {
                         try this.expect(expr, .e_object);
                         var valid_count: usize = 0;
                         Analytics.Features.always_bundle = true;

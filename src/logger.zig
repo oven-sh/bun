@@ -2,16 +2,16 @@ const std = @import("std");
 const Api = @import("./api/schema.zig").Api;
 const js = @import("javascript_core");
 const ImportKind = @import("./import_record.zig").ImportKind;
-const _global = @import("./global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
-const C = _global.C;
+const bun = @import("./global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const C = bun.C;
 const JSC = @import("javascript_core");
 const fs = @import("fs.zig");
 const unicode = std.unicode;
@@ -43,7 +43,7 @@ pub const Kind = enum(i8) {
         };
     }
 
-    pub inline fn string(self: Kind) _global.string {
+    pub inline fn string(self: Kind) bun.string {
         return switch (self) {
             .err => "error",
             .warn => "warn",

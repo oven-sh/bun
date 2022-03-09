@@ -2,18 +2,18 @@ const std = @import("std");
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const StaticExport = @import("./bindings/static_export.zig");
 const c_char = StaticExport.c_char;
-const _global = @import("../../global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
-const StoredFileDescriptorType = _global.StoredFileDescriptorType;
+const bun = @import("../../global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Arena = @import("../../mimalloc_arena.zig").Arena;
-const C = _global.C;
+const C = bun.C;
 const NetworkThread = @import("http").NetworkThread;
 
 pub fn zigCast(comptime Destination: type, value: anytype) *Destination {
@@ -658,7 +658,7 @@ pub const Bun = struct {
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const path = getFilePath(ctx, arguments, &buf, exception) orelse return null;
         buf[path.len] = 0;
 
@@ -675,7 +675,7 @@ pub const Bun = struct {
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const path = getFilePath(ctx, arguments, &buf, exception) orelse return null;
         buf[path.len] = 0;
 
@@ -737,7 +737,7 @@ pub const Bun = struct {
         return Node.NodeFSBindings.make(
             ctx,
             VirtualMachine.vm.node_fs orelse brk: {
-                VirtualMachine.vm.node_fs = _global.default_allocator.create(Node.NodeFS) catch unreachable;
+                VirtualMachine.vm.node_fs = bun.default_allocator.create(Node.NodeFS) catch unreachable;
                 VirtualMachine.vm.node_fs.?.* = Node.NodeFS{ .async_io = undefined };
                 break :brk VirtualMachine.vm.node_fs.?;
             },
@@ -800,7 +800,7 @@ pub const Bun = struct {
         return out.toValueGC(ctx.ptr()).asObjectRef();
     }
 
-    var public_path_temp_str: [_global.MAX_PATH_BYTES]u8 = undefined;
+    var public_path_temp_str: [bun.MAX_PATH_BYTES]u8 = undefined;
 
     pub fn getPublicPathJS(
         _: void,
@@ -832,7 +832,7 @@ pub const Bun = struct {
     //     if (arguments.len == 0) return ZigString.Empty.toValue(ctx.ptr()).asObjectRef();
     //     var zig_str: ZigString = ZigString.Empty;
     //     JSValue.toZigString(JSValue.fromRef(arguments[0]), &zig_str, ctx.ptr());
-    //     var buf: [_global.MAX_PATH_BYTES]u8 = undefined;
+    //     var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     //     var stack = std.heap.stackFallback(32 * @sizeOf(string), VirtualMachine.vm.allocator);
     //     var allocator = stack.get();
     //     var parts = allocator.alloc(string, arguments.len) catch {};
@@ -1449,7 +1449,7 @@ pub const Bun = struct {
             const StackFallback = std.heap.StackFallbackAllocator(32 * 2 * @sizeOf(ZigString));
             var stack = StackFallback{
                 .buffer = undefined,
-                .fallback_allocator = _global.default_allocator,
+                .fallback_allocator = bun.default_allocator,
                 .fixed_buffer_allocator = undefined,
             };
             var allocator = stack.get();

@@ -2,16 +2,16 @@ const std = @import("std");
 const logger = @import("logger.zig");
 const JSXRuntime = @import("options.zig").JSX.Runtime;
 const Runtime = @import("runtime.zig").Runtime;
-const _global = @import("global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
-const C = _global.C;
+const bun = @import("global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const C = bun.C;
 const Ref = @import("ast/base.zig").Ref;
 const RefHashCtx = @import("ast/base.zig").RefHashCtx;
 const ObjectPool = @import("./pool.zig").ObjectPool;
@@ -26,7 +26,7 @@ const StringHashMap = _hash_map.StringHashMap;
 const AutoHashMap = _hash_map.AutoHashMap;
 const StringHashMapUnmanaged = _hash_map.StringHashMapUnmanaged;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
-const ComptimeStringMap = _global.ComptimeStringMap;
+const ComptimeStringMap = bun.ComptimeStringMap;
 pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
     var max_size = 0;
     var max_align = 1;
@@ -1674,7 +1674,7 @@ pub const E = struct {
         // A version of this where `utf8` and `value` are stored in a packed union, with len as a single u32 was attempted.
         // It did not improve benchmarks. Neither did converting this from a heap-allocated type to a stack-allocated type.
         value: []const u16 = &.{},
-        utf8: _global.string = &([_]u8{}),
+        utf8: bun.string = &([_]u8{}),
         prefer_template: bool = false,
 
         pub var empty = String{};
@@ -1723,7 +1723,7 @@ pub const E = struct {
                             return strings.utf16EqlString(other.value, s.utf8);
                         }
                     },
-                    _global.string => {
+                    bun.string => {
                         return strings.eql(s.utf8, other);
                     },
                     []u16, []const u16 => {
@@ -1742,7 +1742,7 @@ pub const E = struct {
                             return std.mem.eql(u16, other.value, s.value);
                         }
                     },
-                    _global.string => {
+                    bun.string => {
                         return strings.utf16EqlString(s.value, other);
                     },
                     []u16, []const u16 => {
@@ -1762,7 +1762,7 @@ pub const E = struct {
                 strings.eqlComptimeUTF16(s.value, value);
         }
 
-        pub fn string(s: *const String, allocator: std.mem.Allocator) !_global.string {
+        pub fn string(s: *const String, allocator: std.mem.Allocator) !bun.string {
             if (s.isUTF8()) {
                 return s.utf8;
             } else {

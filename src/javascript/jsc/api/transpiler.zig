@@ -5,8 +5,8 @@ const http = @import("../../../http.zig");
 const JavaScript = @import("../javascript.zig");
 const QueryStringMap = @import("../../../query_string_map.zig").QueryStringMap;
 const CombinedScanner = @import("../../../query_string_map.zig").CombinedScanner;
-const _global = @import("../../../global.zig");
-const string = _global.string;
+const bun = @import("../../../global.zig");
+const string = bun.string;
 const JSC = @import("../../../jsc.zig");
 const js = JSC.C;
 const WebCore = @import("../webcore/response.zig");
@@ -100,7 +100,7 @@ const TranspilerOptions = struct {
 };
 
 // Mimalloc gets unstable if we try to move this to a different thread
-// threadlocal var transform_buffer: _global.MutableString = undefined;
+// threadlocal var transform_buffer: bun.MutableString = undefined;
 // threadlocal var transform_buffer_loaded: bool = false;
 
 // This is going to be hard to not leak
@@ -120,7 +120,7 @@ pub const TransformTask = struct {
     pub const AsyncTransformEventLoopTask = AsyncTransformTask.EventLoopTask;
 
     pub fn create(transpiler: *Transpiler, protected_input_value: JSC.C.JSValueRef, globalThis: *JSGlobalObject, input_code: ZigString, loader: Loader) !*AsyncTransformTask {
-        var transform_task = try _global.default_allocator.create(TransformTask);
+        var transform_task = try bun.default_allocator.create(TransformTask);
         transform_task.* = .{
             .input_code = input_code,
             .protected_input_value = if (protected_input_value != null) JSC.JSValue.fromRef(protected_input_value) else @intToEnum(JSC.JSValue, 0),
@@ -128,23 +128,23 @@ pub const TransformTask = struct {
             .global = globalThis,
             .macro_map = transpiler.transpiler_options.macro_map,
             .tsconfig = transpiler.transpiler_options.tsconfig,
-            .log = logger.Log.init(_global.default_allocator),
+            .log = logger.Log.init(bun.default_allocator),
             .loader = loader,
         };
         transform_task.bundler = transpiler.bundler;
         transform_task.bundler.linker.resolver = &transform_task.bundler.resolver;
 
         transform_task.bundler.setLog(&transform_task.log);
-        transform_task.bundler.setAllocator(_global.default_allocator);
-        return try AsyncTransformTask.createOnJSThread(_global.default_allocator, globalThis, transform_task);
+        transform_task.bundler.setAllocator(bun.default_allocator);
+        return try AsyncTransformTask.createOnJSThread(bun.default_allocator, globalThis, transform_task);
     }
 
     pub fn run(this: *TransformTask) void {
         const name = this.loader.stdinName();
         const source = logger.Source.initPathString(name, this.input_code.slice());
 
-        JSAst.Stmt.Data.Store.create(_global.default_allocator);
-        JSAst.Expr.Data.Store.create(_global.default_allocator);
+        JSAst.Stmt.Data.Store.create(bun.default_allocator);
+        JSAst.Expr.Data.Store.create(bun.default_allocator);
 
         var arena = Mimalloc.Arena.init() catch unreachable;
 
@@ -221,7 +221,7 @@ pub const TransformTask = struct {
                     if (!this.log.hasAny()) {
                         break :brk JSC.JSValue.fromRef(JSC.BuildError.create(
                             this.global,
-                            _global.default_allocator,
+                            bun.default_allocator,
                             logger.Msg{
                                 .data = logger.Data{ .text = std.mem.span(@errorName(err)) },
                             },
@@ -229,7 +229,7 @@ pub const TransformTask = struct {
                     }
                 }
 
-                break :brk this.log.toJS(this.global, _global.default_allocator, "Transform failed");
+                break :brk this.log.toJS(this.global, bun.default_allocator, "Transform failed");
             };
 
             promise.reject(this.global, error_value);
@@ -250,7 +250,7 @@ pub const TransformTask = struct {
 
     pub fn deinit(this: *TransformTask) void {
         var should_cleanup = false;
-        defer if (should_cleanup) _global.Global.mimalloc_cleanup(false);
+        defer if (should_cleanup) bun.Global.mimalloc_cleanup(false);
 
         this.log.deinit();
         if (this.input_code.isGloballyAllocated()) {
@@ -262,7 +262,7 @@ pub const TransformTask = struct {
             this.output_code.deinitGlobal();
         }
 
-        _global.default_allocator.destroy(this);
+        bun.default_allocator.destroy(this);
     }
 };
 
@@ -589,8 +589,8 @@ pub fn finalize(
         this.buffer_writer.?.buffer.deinit();
     }
 
-    // _global.default_allocator.free(this.transpiler_options.tsconfig_buf);
-    // _global.default_allocator.free(this.transpiler_options.macros_buf);
+    // bun.default_allocator.free(this.transpiler_options.tsconfig_buf);
+    // bun.default_allocator.free(this.transpiler_options.macros_buf);
     this.arena.deinit();
 }
 
@@ -852,7 +852,7 @@ pub fn transformSync(
     buffer_writer.reset();
     var printer = JSPrinter.BufferPrinter.init(buffer_writer);
     _ = this.bundler.print(parse_result, @TypeOf(&printer), &printer, .esm_ascii) catch |err| {
-        JSC.JSError(_global.default_allocator, "Failed to print code: {s}", .{@errorName(err)}, ctx, exception);
+        JSC.JSError(bun.default_allocator, "Failed to print code: {s}", .{@errorName(err)}, ctx, exception);
 
         return null;
     };

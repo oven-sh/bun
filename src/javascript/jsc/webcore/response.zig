@@ -110,6 +110,7 @@ pub const Response = struct {
             try formatter.writeIndent(@TypeOf(writer), writer);
             try writer.writeAll("statusText: \"");
             try writer.writeAll(this.status_text);
+            try writer.writeAll("\"");
         }
         try writer.writeAll("\n");
         try formatter.writeIndent(@TypeOf(writer), writer);

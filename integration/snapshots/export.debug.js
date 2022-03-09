@@ -28,3 +28,5 @@ export function test() {
   console.assert(powerLevel.description === "9001", "Symbol is not exported correctly");
   return testDone(import.meta.url);
 }
+
+//# sourceMappingURL=http://localhost:8080/export.js.map

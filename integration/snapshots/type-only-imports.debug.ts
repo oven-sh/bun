@@ -5,3 +5,5 @@ export function test() {
   console.assert(baconator);
   return testDone(import.meta.url);
 }
+
+//# sourceMappingURL=http://localhost:8080/type-only-imports.ts.map

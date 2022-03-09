@@ -45,3 +45,5 @@ line7 trailing newline that \${terminates} the string literal
   }, null, 2)}`);
   testDone(import.meta.url);
 }
+
+//# sourceMappingURL=http://localhost:8080/jsx-spacing.jsx.map

@@ -21,3 +21,5 @@ export function test() {
   console.assert(React.isValidElement(bacon2));
   return testDone(import.meta.url);
 }
+
+//# sourceMappingURL=http://localhost:8080/multiple-imports.js.map

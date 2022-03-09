@@ -51,3 +51,5 @@ export {
   $$hmr_SpreadWithTheKey as SpreadWithTheKey,
   $$hmr_test as test
 };
+
+//# sourceMappingURL=http://localhost:8080/spread_with_key.tsx.map

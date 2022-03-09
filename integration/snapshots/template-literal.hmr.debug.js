@@ -60,3 +60,5 @@ hmr._update = function(exports) {
 export {
   $$hmr_test as test
 };
+
+//# sourceMappingURL=http://localhost:8080/template-literal.js.map

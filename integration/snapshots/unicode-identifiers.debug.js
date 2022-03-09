@@ -12,3 +12,5 @@ export function test() {
   console.assert(ε === 0.000001);
   return testDone(import.meta.url);
 }
+
+//# sourceMappingURL=http://localhost:8080/unicode-identifiers.js.map

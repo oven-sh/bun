@@ -96,3 +96,5 @@ export {
   $$hmr_re_btou as re_btou,
   $$hmr_test as test
 };
+
+//# sourceMappingURL=http://localhost:8080/latin1-chars-in-regexp.js.map

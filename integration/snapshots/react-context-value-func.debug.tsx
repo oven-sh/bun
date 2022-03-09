@@ -34,3 +34,5 @@ export function test() {
   const foo = jsx(TestComponent, {}, undefined, false, undefined, this);
   return testDone(import.meta.url);
 }
+
+//# sourceMappingURL=http://localhost:8080/react-context-value-func.tsx.map

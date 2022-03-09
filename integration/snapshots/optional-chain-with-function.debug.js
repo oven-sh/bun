@@ -11,3 +11,5 @@ export function test() {
   }
   return testDone(import.meta.url);
 }
+
+//# sourceMappingURL=http://localhost:8080/optional-chain-with-function.js.map

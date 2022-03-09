@@ -25,3 +25,5 @@ export function test() {
   }, undefined, false, undefined, this)));
   return testDone(import.meta.url);
 }
+
+//# sourceMappingURL=http://localhost:8080/spread_with_key.tsx.map

@@ -459,3 +459,5 @@ export function test() {
   console.assert(correctEncodedObj.every((v, i) => v === encodedObj[i]));
   return testDone(import.meta.url);
 }
+
+//# sourceMappingURL=http://localhost:8080/string-escapes.js.map

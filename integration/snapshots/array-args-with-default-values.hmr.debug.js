@@ -48,3 +48,5 @@ hmr._update = function(exports) {
 export {
   $$hmr_test as test
 };
+
+//# sourceMappingURL=http://localhost:8080/array-args-with-default-values.js.map

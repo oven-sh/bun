@@ -7,3 +7,5 @@ export function test() {
   }
   testDone(import.meta.url);
 }
+
+//# sourceMappingURL=http://localhost:8080/number-literal-bug.js.map

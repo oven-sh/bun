@@ -36,3 +36,5 @@ hmr._update = function(exports) {
 export {
   $$hmr_test as test
 };
+
+//# sourceMappingURL=http://localhost:8080/optional-chain-with-function.js.map

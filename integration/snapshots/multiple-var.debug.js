@@ -7,3 +7,5 @@ export function test() {
   console.assert(foo === false, "foo should be false");
   return testDone(import.meta.url);
 }
+
+//# sourceMappingURL=http://localhost:8080/multiple-var.js.map

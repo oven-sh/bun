@@ -23,3 +23,5 @@ export function test() {
   console.assert(ran);
   testDone(import.meta.url);
 }
+
+//# sourceMappingURL=http://localhost:8080/array-args-with-default-values.js.map

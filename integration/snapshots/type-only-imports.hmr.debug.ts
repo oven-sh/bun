@@ -33,3 +33,5 @@ export {
   $$hmr_SilentSymbolCollisionsAreOkayInTypeScript as SilentSymbolCollisionsAreOkayInTypeScript,
   $$hmr_test as test
 };
+
+//# sourceMappingURL=http://localhost:8080/type-only-imports.ts.map

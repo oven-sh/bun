@@ -35,3 +35,5 @@ export function test() {
   console.assert(templateLiteralWhichDefinesAFunction.includes("true"), "Expected fooFunction to include 'true'");
   return testDone(import.meta.url);
 }
+
+//# sourceMappingURL=http://localhost:8080/template-literal.js.map

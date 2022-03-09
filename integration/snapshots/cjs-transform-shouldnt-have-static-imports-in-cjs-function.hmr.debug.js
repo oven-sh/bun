@@ -42,3 +42,5 @@ export {
   $$hmr_foo as foo,
   $$hmr_bar as bar
 };
+
+//# sourceMappingURL=http://localhost:8080/cjs-transform-shouldnt-have-static-imports-in-cjs-function.js.map

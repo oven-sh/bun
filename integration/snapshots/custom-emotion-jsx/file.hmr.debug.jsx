@@ -48,3 +48,5 @@ export {
   $$hmr_Foo as Foo,
   $$hmr_test as test
 };
+
+//# sourceMappingURL=http://localhost:8080/custom-emotion-jsx/file.jsx.map

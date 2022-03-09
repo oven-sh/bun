@@ -7,3 +7,5 @@ export function test() {
 
 }
 
+
+//# sourceMappingURL=http://localhost:8080/bundled-entry-point.js.map

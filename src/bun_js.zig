@@ -109,9 +109,11 @@ pub const Run = struct {
             Output.flush();
         }
 
+        this.vm.tick();
+
         {
             var i: usize = 0;
-            while (this.vm.*.event_loop.pending_tasks_count.loadUnchecked() > 0 or this.vm.timer.active > 0) {
+            while (this.vm.*.event_loop.pending_tasks_count.loadUnchecked() > 0 or this.vm.active_tasks > 0) {
                 this.vm.tick();
                 i +%= 1;
 

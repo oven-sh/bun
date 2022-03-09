@@ -1264,6 +1264,7 @@ pub const Bun = struct {
                 }
                 VirtualMachine.vm.allocator.destroy(this);
                 VirtualMachine.vm.timer.active -|= 1;
+                VirtualMachine.vm.active_tasks -|= 1;
             }
         };
 
@@ -1281,6 +1282,7 @@ pub const Bun = struct {
             var task = try Timeout.TimeoutTask.createOnJSThread(VirtualMachine.vm.allocator, globalThis, timeout);
             VirtualMachine.vm.timer.timeouts.put(VirtualMachine.vm.allocator, id, timeout) catch unreachable;
             VirtualMachine.vm.timer.active +|= 1;
+            VirtualMachine.vm.active_tasks +|= 1;
             task.schedule();
         }
 
@@ -1606,6 +1608,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
                 .globalThis = globalThis,
             };
             js.JSValueProtect(globalThis.ref(), this.promise.asObjectRef());
+            VirtualMachine.vm.active_tasks +|= 1;
             return this;
         }
 
@@ -1804,6 +1807,7 @@ pub const VirtualMachine = struct {
     argv: []const []const u8 = &[_][]const u8{"bun"},
 
     origin_timer: std.time.Timer = undefined,
+    active_tasks: usize = 0,
 
     macro_event_loop: EventLoop = EventLoop{},
     regular_event_loop: EventLoop = EventLoop{},
@@ -1823,11 +1827,13 @@ pub const VirtualMachine = struct {
         concurrent_tasks: Queue = undefined,
         concurrent_lock: Lock = Lock.init(),
         global: *JSGlobalObject = undefined,
+        virtual_machine: *VirtualMachine = undefined,
         pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
 
         pub fn tickWithCount(this: *EventLoop) u32 {
             var finished: u32 = 0;
             var global = this.global;
+            var vm_ = this.virtual_machine;
             while (this.tasks.readItem()) |task| {
                 switch (task.tag()) {
                     .Microtask => {
@@ -1839,12 +1845,14 @@ pub const VirtualMachine = struct {
                         var fetch_task: *Fetch.FetchTasklet = task.get(Fetch.FetchTasklet).?;
                         fetch_task.onDone();
                         finished += 1;
+                        vm_.active_tasks -|= 1;
                     },
                     @field(Task.Tag, @typeName(AsyncTransformTask)) => {
                         var transform_task: *AsyncTransformTask = task.get(AsyncTransformTask).?;
                         transform_task.*.runFromJS();
                         transform_task.deinit();
                         finished += 1;
+                        vm_.active_tasks -|= 1;
                     },
                     @field(Task.Tag, @typeName(BunTimerTimeoutTask)) => {
                         var transform_task: *BunTimerTimeoutTask = task.get(BunTimerTimeoutTask).?;
@@ -1937,6 +1945,7 @@ pub const VirtualMachine = struct {
             this.has_enabled_macro_mode = true;
             this.macro_event_loop.tasks = EventLoop.Queue.init(default_allocator);
             this.macro_event_loop.global = this.global;
+            this.macro_event_loop.virtual_machine = this;
             this.macro_event_loop.concurrent_tasks = EventLoop.Queue.init(default_allocator);
         }
 
@@ -2009,7 +2018,9 @@ pub const VirtualMachine = struct {
             .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
         };
 
-        VirtualMachine.vm.regular_event_loop.tasks = EventLoop.Queue.init(default_allocator);
+        VirtualMachine.vm.regular_event_loop.tasks = EventLoop.Queue.init(
+            default_allocator,
+        );
         VirtualMachine.vm.regular_event_loop.concurrent_tasks = EventLoop.Queue.init(default_allocator);
         VirtualMachine.vm.event_loop = &VirtualMachine.vm.regular_event_loop;
 
@@ -2034,6 +2045,7 @@ pub const VirtualMachine = struct {
             vm.console,
         );
         VirtualMachine.vm.regular_event_loop.global = VirtualMachine.vm.global;
+        VirtualMachine.vm.regular_event_loop.virtual_machine = VirtualMachine.vm;
         VirtualMachine.vm_loaded = true;
 
         if (source_code_printer == null) {

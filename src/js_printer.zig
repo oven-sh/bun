@@ -9,20 +9,20 @@ const runtime = @import("runtime.zig");
 const Lock = @import("./lock.zig").Lock;
 const Api = @import("./api/schema.zig").Api;
 const fs = @import("fs.zig");
-const _global = @import("global.zig");
-const string = _global.string;
-const Output = _global.Output;
-const Global = _global.Global;
-const Environment = _global.Environment;
-const strings = _global.strings;
-const MutableString = _global.MutableString;
-const stringZ = _global.stringZ;
-const default_allocator = _global.default_allocator;
-const C = _global.C;
+const bun = @import("global.zig");
+const string = bun.string;
+const Output = bun.Output;
+const Global = bun.Global;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
+const stringZ = bun.stringZ;
+const default_allocator = bun.default_allocator;
+const C = bun.C;
 const Ref = @import("ast/base.zig").Ref;
-const StoredFileDescriptorType = _global.StoredFileDescriptorType;
-const FeatureFlags = _global.FeatureFlags;
-const FileDescriptorType = _global.FileDescriptorType;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const FeatureFlags = bun.FeatureFlags;
+const FileDescriptorType = bun.FileDescriptorType;
 
 const expect = std.testing.expect;
 const ImportKind = importRecord.ImportKind;
@@ -53,7 +53,7 @@ const first_low_surrogate = 0xDC00;
 const last_low_surrogate = 0xDFFF;
 const CodepointIterator = @import("./string_immutable.zig").UnsignedCodepointIterator;
 const assert = std.debug.assert;
-
+const ascii_only_always_on_unless_minifying = true;
 threadlocal var imported_module_ids_list: std.ArrayList(u32) = undefined;
 threadlocal var imported_module_ids_list_unset: bool = true;
 const ImportRecord = importRecord.ImportRecord;
@@ -505,7 +505,7 @@ pub fn NewPrinter(
     comptime Writer: type,
     comptime Linker: type,
     comptime rewrite_esm_to_cjs: bool,
-    comptime bun: bool,
+    comptime is_bun_platform: bool,
     comptime is_inside_bundle: bool,
     comptime is_json: bool,
     comptime generate_source_map: bool,
@@ -1066,7 +1066,7 @@ pub fn NewPrinter(
 
             // e(text.len) catch unreachable;
 
-            while (i < n) {
+            outer: while (i < n) {
                 const CodeUnitType = u32;
 
                 const c: CodeUnitType = text[i];
@@ -1086,32 +1086,6 @@ pub fn NewPrinter(
                         }
                     },
 
-                    '/',
-                    'a'...'z',
-                    'A'...'Z',
-                    '0'...'9',
-                    '_',
-                    '-',
-                    '(',
-                    '[',
-                    '{',
-                    '<',
-                    '>',
-                    ')',
-                    ']',
-                    '}',
-                    ',',
-                    ':',
-                    ';',
-                    '.',
-                    '?',
-                    '!',
-                    '@',
-                    '#',
-                    '%',
-                    '*',
-                    '+',
-                    },
                     // Special-case the bell character since it may cause dumping this file to
                     // the terminal to make a sound, which is undesirable. Note that we can't
                     // use an octal literal to print this shorter since octal literals are not
@@ -1120,12 +1094,16 @@ pub fn NewPrinter(
                         e.print("\\x07");
                     },
                     0x08 => {
-                        e.print("\\b");
+                        if (quote == '`')
+                            e.print(0x08)
                         else
                             e.print("\\f");
                     },
                     0x0C => {
-                        e.print("\\f");
+                        if (quote == '`')
+                            e.print(0x000C)
+                        else
+                            e.print("\\f");
                     },
                     '\t' => {
                         if (quote == '`')
@@ -1198,11 +1176,20 @@ pub fn NewPrinter(
                     else => {
                         switch (c) {
                             first_ascii...last_ascii => {
+                                e.print(@intCast(u8, c));
+
+                                // Fast path for printing long UTF-16 template literals
+                                // this only applies to template literal strings
+                                // but we print a template literal if there is a \n or a \r
+                                // which is often if the string is long and UTF-16
+                                if (comptime quote == '`') {
                                     const remain = text[i..];
                                     if (remain.len > 1 and remain[0] < last_ascii and remain[0] > first_ascii) {
                                         if (strings.@"nextUTF16NonASCIIOr$`\\"([]const u16, remain)) |count| {
                                             i += count;
                                             var ptr = e.writer.reserve(count) catch unreachable;
+                                            var to_copy = ptr[0..count];
+
                                             strings.copyU16IntoU8(to_copy, []const u16, remain[0..count]);
                                             e.writer.advance(count);
 
@@ -1214,6 +1201,12 @@ pub fn NewPrinter(
                                             var ptr = e.writer.reserve(count) catch unreachable;
                                             var to_copy = ptr[0..count];
                                             strings.copyU16IntoU8(to_copy, []const u16, remain);
+                                            e.writer.advance(count);
+                                            i += count;
+                                        }
+                                    }
+                                }
+                            },
                             first_high_surrogate...last_high_surrogate => {
 
                                 // Is there a next character?
@@ -1258,8 +1251,7 @@ pub fn NewPrinter(
                                 e.writer.advance(6);
                             },
                             else => {
-                                // this extra branch should get compiled
-                                if (ascii_only) {
+                                if (ascii_only_always_on_unless_minifying) {
                                     if (c > 0xFF) {
                                         var ptr = e.writer.reserve(6) catch unreachable;
                                         // Write an unpaired high surrogate
@@ -4381,12 +4373,12 @@ pub fn NewPrinter(
 
 pub fn NewWriter(
     comptime ContextType: type,
-    writeByte: fn (ctx: *ContextType, char: u8) anyerror!usize,
-    writeAllFn: fn (ctx: *ContextType, buf: anytype) anyerror!usize,
-    getLastByte: fn (ctx: *const ContextType) u8,
-    getLastLastByte: fn (ctx: *const ContextType) u8,
-    reserveNext: fn (ctx: *ContextType, count: u32) anyerror![*]u8,
-    advanceBy: fn (ctx: *ContextType, count: u32) void,
+    comptime writeByte: fn (ctx: *ContextType, char: u8) anyerror!usize,
+    comptime writeAllFn: fn (ctx: *ContextType, buf: anytype) anyerror!usize,
+    comptime getLastByte: fn (ctx: *const ContextType) u8,
+    comptime getLastLastByte: fn (ctx: *const ContextType) u8,
+    comptime reserveNext: fn (ctx: *ContextType, count: u32) anyerror![*]u8,
+    comptime advanceBy: fn (ctx: *ContextType, count: u32) void,
 ) type {
     return struct {
         const Self = @This();

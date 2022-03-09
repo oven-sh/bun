@@ -730,14 +730,18 @@ pub inline fn copyU16IntoU8(output_: []u8, comptime InputType: type, input_: Inp
         std.debug.assert(input.len <= output.len);
     }
 
-    while (input.len >= 4) {
-        output[0] = @intCast(u8, input[0]);
-        output[1] = @intCast(u8, input[1]);
-        output[2] = @intCast(u8, input[2]);
-        output[3] = @intCast(u8, input[3]);
+    // on X64, this is 4
+    // on WASM, this is 2
+    const machine_word_length = comptime @sizeOf(usize) / @sizeOf(u16);
 
-        output = output[4..];
-        input = input[4..];
+    while (input.len >= machine_word_length) {
+        comptime var machine_word_i: usize = 0;
+        inline while (machine_word_i > machine_word_length) : (machine_word_i += 1) {
+            output[machine_word_i] = @intCast(u8, input[machine_word_i]);
+        }
+
+        output = output[machine_word_length..];
+        input = input[machine_word_length..];
     }
 
     for (input) |c, i| {
@@ -1370,8 +1374,10 @@ pub const AsciiVectorIntU16 = std.meta.Int(.unsigned, ascii_u16_vector_size);
 pub const max_16_ascii = @splat(ascii_vector_size, @as(u8, 127));
 pub const min_16_ascii = @splat(ascii_vector_size, @as(u8, 0x20));
 pub const max_u16_ascii = @splat(ascii_u16_vector_size, @as(u16, 127));
+pub const min_u16_ascii = @splat(ascii_u16_vector_size, @as(u16, 0x20));
 pub const AsciiVector = std.meta.Vector(ascii_vector_size, u8);
 pub const AsciiVectorU1 = std.meta.Vector(ascii_vector_size, u1);
+pub const AsciiVectorU16U1 = std.meta.Vector(ascii_u16_vector_size, u1);
 pub const AsciiU16Vector = std.meta.Vector(ascii_u16_vector_size, u16);
 pub const max_4_ascii = @splat(4, @as(u8, 127));
 pub fn isAllASCII(slice: []const u8) bool {
@@ -1676,41 +1682,93 @@ pub fn containsAnyBesidesChar(bytes: []const u8, char: u8) bool {
 }
 
 pub fn firstNonASCII16(comptime Slice: type, slice: Slice) ?u32 {
+    return firstNonASCII16CheckMin(Slice, slice, false);
+}
+
+pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime check_min: bool) ?u32 {
     var remaining = slice;
 
     if (comptime Environment.isAarch64 or Environment.isX64) {
-        while (remaining.len >= 64) {
-            comptime var count: usize = 0;
-            inline while (count < 8) : (count += 1) {
-                const vec: AsciiU16Vector = remaining[(comptime count * ascii_u16_vector_size)..][0..ascii_u16_vector_size].*;
-                const cmp = vec > max_u16_ascii;
+        while (remaining.len >= ascii_u16_vector_size) {
+            const vec: AsciiU16Vector = remaining[0..ascii_u16_vector_size].*;
+
+            if (comptime check_min) {
+                const cmp = vec > max_u16_ascii or vec < min_16_ascii;
                 const bitmask = @ptrCast(*const u16, &cmp).*;
                 const first = @ctz(u16, bitmask);
                 if (first < ascii_u16_vector_size) {
-                    return @intCast(u32, (comptime count * ascii_u16_vector_size) +
-                        @as(u32, first) +
+                    return @intCast(u32, @as(u32, first) +
                         @intCast(u32, slice.len - remaining.len));
                 }
             }
-            remaining = remaining[comptime ascii_u16_vector_size * count..];
-        }
 
+            if (comptime !check_min) {
+                const cmp = vec > max_u16_ascii;
+                const bitmask = @ptrCast(*const u16, &cmp).*;
+                const first = @ctz(u16, bitmask);
+
+                if (first < ascii_u16_vector_size) {
+                    return @intCast(u32, @as(u32, first) +
+                        @intCast(u32, slice.len - remaining.len));
+                }
+            }
+
+            remaining = remaining[ascii_u16_vector_size..];
+        }
+    }
+
+    if (comptime check_min) {
+        for (remaining) |char, i| {
+            if (char > 127 or char < 0x20) {
+                return @truncate(u32, i + (slice.len - remaining.len));
+            }
+        }
+    } else {
+        for (remaining) |char, i| {
+            if (char > 127) {
+                return @truncate(u32, i + (slice.len - remaining.len));
+            }
+        }
+    }
+
+    return null;
+}
+
+/// Fast path for printing template literal strings 
+pub fn @"nextUTF16NonASCIIOr$`\\"(
+    comptime Slice: type,
+    slice: Slice,
+) ?u32 {
+    var remaining = slice;
+
+    if (comptime Environment.isAarch64 or Environment.isX64) {
         while (remaining.len >= ascii_u16_vector_size) {
             const vec: AsciiU16Vector = remaining[0..ascii_u16_vector_size].*;
-            const cmp = vec > max_u16_ascii;
-            const bitmask = @ptrCast(*const u16, &cmp).*;
-            const first = @ctz(u16, bitmask);
+
+            const cmp = @bitCast(AsciiVectorU16U1, (vec > max_u16_ascii)) |
+                @bitCast(AsciiVectorU16U1, (vec < min_u16_ascii)) |
+                @bitCast(AsciiVectorU16U1, (vec == @splat(ascii_u16_vector_size, @as(u16, '$')))) |
+                @bitCast(AsciiVectorU16U1, (vec == @splat(ascii_u16_vector_size, @as(u16, '`')))) |
+                @bitCast(AsciiVectorU16U1, (vec == @splat(ascii_u16_vector_size, @as(u16, '\\'))));
+
+            const bitmask = @ptrCast(*const u8, &cmp).*;
+            const first = @ctz(u8, bitmask);
             if (first < ascii_u16_vector_size) {
                 return @intCast(u32, @as(u32, first) +
                     @intCast(u32, slice.len - remaining.len));
             }
+
             remaining = remaining[ascii_u16_vector_size..];
         }
     }
 
     for (remaining) |char, i| {
-        if (char > 127) {
-            return @truncate(u32, i + (slice.len - remaining.len));
+        switch (char) {
+            '$', '`', '\\', 0...0x20 - 1, 128...std.math.maxInt(u16) => {
+                return @truncate(u32, i + (slice.len - remaining.len));
+            },
+
+            else => {},
         }
     }
 

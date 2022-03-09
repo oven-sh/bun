@@ -1835,7 +1835,6 @@ fn NewLexer_(
         }
 
         pub fn init(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) !LexerType {
-            try tables.initJSXEntityMap();
             var empty_string_literal: JavascriptString = &emptyJavaScriptString;
             var lex = LexerType{
                 .log = log,
@@ -2308,7 +2307,7 @@ fn NewLexer_(
             return decoded.items;
         }
 
-        inline fn maybeDecodeJSXEntity(lexer: *LexerType, text: string, cursor: *strings.CodepointIterator.Cursor) void {
+        fn maybeDecodeJSXEntity(lexer: *LexerType, text: string, cursor: *strings.CodepointIterator.Cursor) void {
             lexer.assertNotJSON();
 
             if (strings.indexOfChar(text[cursor.width + cursor.i ..], ';')) |length| {

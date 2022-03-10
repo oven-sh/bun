@@ -3050,22 +3050,42 @@ pub const VirtualMachine = struct {
                 const func = frame.function_name.slice();
                 if (file.len == 0 and func.len == 0) continue;
 
-                try writer.print(
-                    comptime Output.prettyFmt(
-                        "<r>      <d>at <r>{any} <d>(<r>{any}<d>)<r>\n",
-                        allow_ansi_colors,
-                    ),
-                    .{
-                        frame.nameFormatter(
+                const has_name = std.fmt.count("{any}", .{frame.nameFormatter(
+                    false,
+                )}) > 0;
+
+                if (has_name) {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r>      <d>at <r>{any}<d> (<r>{any}<d>)<r>\n",
                             allow_ansi_colors,
                         ),
-                        frame.sourceURLFormatter(
-                            dir,
-                            origin,
+                        .{
+                            frame.nameFormatter(
+                                allow_ansi_colors,
+                            ),
+                            frame.sourceURLFormatter(
+                                dir,
+                                origin,
+                                allow_ansi_colors,
+                            ),
+                        },
+                    );
+                } else {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r>      <d>at <r>{any}\n",
                             allow_ansi_colors,
                         ),
-                    },
-                );
+                        .{
+                            frame.sourceURLFormatter(
+                                dir,
+                                origin,
+                                allow_ansi_colors,
+                            ),
+                        },
+                    );
+                }
             }
         }
     }
@@ -3158,7 +3178,11 @@ pub const VirtualMachine = struct {
             ) catch unreachable;
         }
 
-        const name = exception.name;
+        var name = exception.name;
+        if (strings.eqlComptime(exception.name.slice(), "Error")) {
+            name = ZigString.init("error");
+        }
+
         const message = exception.message;
         var did_print_name = false;
         if (source_lines.next()) |source| {
@@ -3177,7 +3201,7 @@ pub const VirtualMachine = struct {
                 ) catch unreachable;
 
                 if (name.len > 0 and message.len > 0) {
-                    writer.print(comptime Output.prettyFmt(" <r><red><b>{}<r><d>:<r> <b>{}<r>\n", allow_ansi_color), .{
+                    writer.print(comptime Output.prettyFmt(" <r><red>{}<r><d>:<r> <b>{}<r>\n", allow_ansi_color), .{
                         name,
                         message,
                     }) catch unreachable;
@@ -3232,7 +3256,7 @@ pub const VirtualMachine = struct {
                 }
 
                 if (name.len > 0 and message.len > 0) {
-                    writer.print(comptime Output.prettyFmt(" <r><red><b>{s}<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{
+                    writer.print(comptime Output.prettyFmt(" <r><red>{s}<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{
                         name,
                         message,
                     }) catch unreachable;
@@ -3246,14 +3270,14 @@ pub const VirtualMachine = struct {
 
         if (!did_print_name) {
             if (name.len > 0 and message.len > 0) {
-                writer.print(comptime Output.prettyFmt("<r><red><b>{s}<r><d>:<r> <b>{s}<r>\n", true), .{
+                writer.print(comptime Output.prettyFmt("<r><red>{s}<r><d>:<r> <b>{s}<r>\n", true), .{
                     name,
                     message,
                 }) catch unreachable;
             } else if (name.len > 0) {
-                writer.print(comptime Output.prettyFmt("<r><b>{s}<r>\n", true), .{name}) catch unreachable;
+                writer.print(comptime Output.prettyFmt("<r>{s}<r>\n", true), .{name}) catch unreachable;
             } else if (message.len > 0) {
-                writer.print(comptime Output.prettyFmt("<r><b>{s}<r>\n", true), .{name}) catch unreachable;
+                writer.print(comptime Output.prettyFmt("<r>{s}<r>\n", true), .{name}) catch unreachable;
             }
         }
 

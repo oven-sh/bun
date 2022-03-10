@@ -354,6 +354,7 @@ pub const color_map = ComptimeStringMap(string, .{
     &.{ "blue", ED ++ "34m" },
     &.{ "b", ED ++ "1m" },
     &.{ "d", ED ++ "2m" },
+    &.{ "i", ED ++ "3m" },
     &.{ "cyan", ED ++ "36m" },
     &.{ "green", ED ++ "32m" },
     &.{ "magenta", ED ++ "35m" },

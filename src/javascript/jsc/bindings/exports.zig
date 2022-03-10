@@ -511,6 +511,11 @@ pub const ZigStackFrame = extern struct {
 
         root_path: string = "",
         pub fn format(this: SourceURLFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            if (this.enable_color) {
+                try writer.writeAll(Output.prettyFmt("<r><cyan>", true));
+            }
+
+            var source_slice = this.source_url.slice();
             if (this.origin) |origin| {
                 try writer.writeAll(origin.displayProtocol());
                 try writer.writeAll("://");
@@ -518,20 +523,47 @@ pub const ZigStackFrame = extern struct {
                 try writer.writeAll(":");
                 try writer.writeAll(origin.port);
                 try writer.writeAll("/blob:");
-            }
 
-            var source_slice = this.source_url.slice();
-            if (strings.startsWith(source_slice, this.root_path)) {
-                source_slice = source_slice[this.root_path.len..];
+                if (strings.startsWith(source_slice, this.root_path)) {
+                    source_slice = source_slice[this.root_path.len..];
+                }
             }
 
             try writer.writeAll(source_slice);
+
+            if (this.enable_color) {
+                if (this.position.line > -1) {
+                    try writer.writeAll(comptime Output.prettyFmt("<r>", true));
+                } else {
+                    try writer.writeAll(comptime Output.prettyFmt("<r>", true));
+                }
+            }
+
             if (this.position.line > -1 and this.position.column_start > -1) {
-                try std.fmt.format(writer, ":{d}:{d}", .{ this.position.line + 1, this.position.column_start });
+                if (this.enable_color) {
+                    try std.fmt.format(
+                        writer,
+                        // :
+                        comptime Output.prettyFmt("<d>:<r><yellow>{d}<r><d>:<yellow>{d}<r>", true),
+                        .{ this.position.line + 1, this.position.column_start },
+                    );
+                } else {
+                    try std.fmt.format(writer, ":{d}:{d}", .{ this.position.line + 1, this.position.column_start });
+                }
             } else if (this.position.line > -1) {
-                try std.fmt.format(writer, ":{d}", .{
-                    this.position.line + 1,
-                });
+                if (this.enable_color) {
+                    try std.fmt.format(
+                        writer,
+                        comptime Output.prettyFmt("<d>:<r><yellow>{d}<r>", true),
+                        .{
+                            this.position.line + 1,
+                        },
+                    );
+                } else {
+                    try std.fmt.format(writer, ":{d}", .{
+                        this.position.line + 1,
+                    });
+                }
             }
         }
     };
@@ -549,13 +581,15 @@ pub const ZigStackFrame = extern struct {
                     try writer.writeAll("(eval)");
                 },
                 .Module => {
-                    try writer.writeAll("(esm)");
+                    // try writer.writeAll("(esm)");
                 },
                 .Function => {
                     if (name.len > 0) {
-                        try std.fmt.format(writer, "{s}", .{name});
-                    } else {
-                        try writer.writeAll("(anonymous)");
+                        if (this.enable_color) {
+                            try std.fmt.format(writer, comptime Output.prettyFmt("<r><b><i>{s}<r>", true), .{name});
+                        } else {
+                            try std.fmt.format(writer, "{s}", .{name});
+                        }
                     }
                 },
                 .Global => {

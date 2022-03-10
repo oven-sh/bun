@@ -1668,7 +1668,7 @@ pub fn firstNonASCII16(comptime Slice: type, slice: Slice) ?u32 {
 pub fn indexOfLineNumber(text: []const u8, line: u32, comptime line_range_count: usize) ?[line_range_count + 1]u32 {
     var ranges = std.mem.zeroes([line_range_count + 1]u32);
     var remaining = text;
-    if (remaining.len == 0 or line == 0) return 0;
+    if (remaining.len == 0 or line == 0) return null;
 
     var iter = CodepointIterator.init(text);
     var cursor = CodepointIterator.Cursor{};
@@ -1706,13 +1706,18 @@ pub fn indexOfLineNumber(text: []const u8, line: u32, comptime line_range_count:
 }
 
 /// Get N lines from the start of the text
-pub fn getLinesInText(text: []const u8, line: u32, comptime line_range_count: usize) [line_range_count][]const u8 {
-    const ranges = indexOfLineNumber(text, line, line_range_count) orelse return std.mem.zeroes([line_range_count][]const u8);
+pub fn getLinesInText(text: []const u8, line: u32, comptime line_range_count: usize) ?[line_range_count][]const u8 {
+    const ranges = indexOfLineNumber(text, line, line_range_count) orelse return null;
     var results = std.mem.zeroes([line_range_count][]const u8);
     var i: usize = 0;
+    var any_exist = false;
     while (i < line_range_count) : (i += 1) {
         results[i] = text[ranges[i]..ranges[i + 1]];
+        any_exist = any_exist or results[i].len > 0;
     }
+
+    if (!any_exist)
+        return null;
     return results;
 }
 

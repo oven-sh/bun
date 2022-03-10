@@ -77,11 +77,11 @@ pub const Mapping = struct {
 
         var count = generated.len;
         var index: usize = 0;
-        while (index > 0) {
+        while (count > 0) {
             var step = count / 2;
             var i: usize = index + step;
             const mapping = generated[i];
-            if (mapping.lines < line or (mapping.line == line and mapping.columns <= column)) {
+            if (mapping.lines < line or (mapping.lines == line and mapping.columns <= column)) {
                 index = i + 1;
                 count -|= step + 1;
             } else {
@@ -112,7 +112,7 @@ pub const Mapping = struct {
         var generated = LineColumnOffset{ .lines = 0, .columns = 0 };
         var original = LineColumnOffset{ .lines = 0, .columns = 0 };
         var source_index: i32 = 0;
-
+        var needs_sort = false;
         var remain = bytes;
         while (remain.len > 0) {
             if (remain[0] == ';') {
@@ -136,30 +136,35 @@ pub const Mapping = struct {
                 }
             }
 
-            // Read the original source
-            const source_index_delta = decodeVLQ(remain, 0);
-            if (source_index_delta.start == 0) {
-                return .{
-                    .fail = .{
-                        .msg = "Invalid source index delta",
-                        .err = error.InvalidSourceIndexDelta,
-                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
-                    },
-                };
-            }
-            source_index += source_index_delta.value;
+            // Read the generated column
+            const generated_column_delta = decodeVLQ(remain, 0);
 
-            if (source_index < 0 or source_index < sources_count) {
+            if (generated_column_delta.start == 0) {
                 return .{
                     .fail = .{
-                        .msg = "Invalid source index value",
-                        .err = error.InvalidSourceIndexValue,
-                        .value = source_index,
+                        .msg = "Missing generated column value",
+                        .err = error.MissingGeneratedColumnValue,
+                        .value = generated.columns,
                         .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
                     },
                 };
             }
-            remain = remain[source_index_delta.start..];
+
+            needs_sort = needs_sort or generated_column_delta.value < 0;
+
+            generated.columns += generated_column_delta.value;
+            if (generated.columns < 0) {
+                return .{
+                    .fail = .{
+                        .msg = "Invalid generated column value",
+                        .err = error.InvalidGeneratedColumnValue,
+                        .value = generated.columns,
+                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
+                    },
+                };
+            }
+
+            remain = remain[generated_column_delta.start..];
 
             // According to the specification, it's valid for a mapping to have 1,
             // 4, or 5 variable-length fields. Having one field means there's no
@@ -178,6 +183,31 @@ pub const Mapping = struct {
                 },
                 else => {},
             }
+
+            // Read the original source
+            const source_index_delta = decodeVLQ(remain, 0);
+            if (source_index_delta.start == 0) {
+                return .{
+                    .fail = .{
+                        .msg = "Invalid source index delta",
+                        .err = error.InvalidSourceIndexDelta,
+                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
+                    },
+                };
+            }
+            source_index += source_index_delta.value;
+
+            if (source_index < 0 or source_index > sources_count) {
+                return .{
+                    .fail = .{
+                        .msg = "Invalid source index value",
+                        .err = error.InvalidSourceIndexValue,
+                        .value = source_index,
+                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
+                    },
+                };
+            }
+            remain = remain[source_index_delta.start..];
 
             // // "AAAA" is extremely common
             // if (remain.len > 5 and remain[4] == ';' and strings.eqlComptimeIgnoreLen(remain[0..4], "AAAA")) {
@@ -211,7 +241,7 @@ pub const Mapping = struct {
 
             // Read the original column
             const original_column_delta = decodeVLQ(remain, 0);
-            if (original_column_delta.value == 0) {
+            if (original_column_delta.start == 0) {
                 return .{
                     .fail = .{
                         .msg = "Missing original column value",
@@ -235,69 +265,24 @@ pub const Mapping = struct {
             }
             remain = remain[original_column_delta.start..];
 
-            // Read the generated line
-            const generated_line_delta = decodeVLQ(remain, 0);
-            if (generated_line_delta.start == 0) {
-                return .{
-                    .fail = .{
-                        .msg = "Missing generated line",
-                        .err = error.MissingGeneratedLine,
-                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
-                    },
-                };
-            }
-
-            generated.lines += generated_line_delta.value;
-
-            if (generated.lines < 0) {
-                return .{
-                    .fail = .{
-                        .msg = "Invalid generated line value",
-                        .err = error.InvalidGeneratedLineValue,
-                        .value = generated.lines,
-                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
-                    },
-                };
-            }
-
-            remain = remain[generated_line_delta.start..];
-
-            // Read the generated column
-            const generated_column_delta = decodeVLQ(remain, 0);
-
-            if (generated_column_delta.start == 0) {
-                return .{
-                    .fail = .{
-                        .msg = "Missing generated column value",
-                        .err = error.MissingGeneratedColumnValue,
-                        .value = generated.columns,
-                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
-                    },
-                };
-            }
-
-            generated.columns += generated_column_delta.value;
-            if (generated.columns < 0) {
-                return .{
-                    .fail = .{
-                        .msg = "Invalid generated column value",
-                        .err = error.InvalidGeneratedColumnValue,
-                        .value = generated.columns,
-                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
-                    },
-                };
-            }
-
-            remain = remain[generated_column_delta.start..];
-
-            // Ignore the optional name index
             if (remain.len > 0) {
-                const name_index = decodeVLQ(remain, 0);
-                if (name_index.start > 0) {
-                    remain = remain[name_index.start..];
+                switch (remain[0]) {
+                    ',' => {
+                        remain = remain[1..];
+                    },
+                    ';' => {},
+                    else => |c| {
+                        return .{
+                            .fail = .{
+                                .msg = "Invalid character after mapping",
+                                .err = error.InvalidSourceMap,
+                                .value = @intCast(i32, c),
+                                .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
+                            },
+                        };
+                    },
                 }
             }
-
             mapping.append(allocator, .{
                 .generated = generated,
                 .original = original,
@@ -571,7 +556,7 @@ pub fn decodeVLQ(encoded: []const u8, start: usize) VLQResult {
         // Stop if there's no continuation bit
         if ((index & 32) == 0) {
             return VLQResult{
-                .start = i + start,
+                .start = start + comptime (i + 1),
                 .value = if ((vlq & 1) == 0)
                     @intCast(i32, vlq >> 1)
                 else
@@ -741,7 +726,7 @@ pub const LineOffsetTable = struct {
                 },
             }
 
-            remaining = remaining[cp_len..];
+            remaining = remaining[@minimum(cp_len, remaining.len)..];
         }
 
         // Mark the start of the next line

@@ -3963,15 +3963,8 @@ pub fn NewPrinter(
             }
         }
         pub fn printLoadFromBundle(p: *Printer, import_record_index: u32) void {
-            if (is_bun_platform) {
-                const record = p.import_records[import_record_index];
-                p.print("module.require(\"");
-                p.print(record.path.text);
-                p.print("\")");
-            } else {
-                p.printLoadFromBundleWithoutCall(import_record_index);
-                p.print("()");
-            }
+            p.printLoadFromBundleWithoutCall(import_record_index);
+            p.print("()");
         }
 
         inline fn printDisabledImport(p: *Printer) void {
@@ -4380,6 +4373,7 @@ pub fn NewPrinter(
                 source_map_builder = SourceMap.Chunk.Builder{
                     .source_map = SourceMap.Chunk.Builder.SourceMapper.init(allocator, is_bun_platform),
                     .cover_lines_without_mappings = true,
+                    .prepend_count = is_bun_platform,
                 };
                 source_map_builder.line_offset_tables = SourceMap.LineOffsetTable.generate(allocator, source.contents, @intCast(i32, tree.approximate_newline_count));
             }
@@ -4646,6 +4640,10 @@ pub const BufferWriter = struct {
     append_null_byte: bool = false,
     approximate_newline_count: usize = 0,
 
+    pub fn getWritten(this: *BufferWriter) []u8 {
+        return this.buffer.list.items;
+    }
+
     pub fn init(allocator: std.mem.Allocator) !BufferWriter {
         return BufferWriter{
             .buffer = MutableString.init(
@@ -4769,7 +4767,8 @@ pub fn printAst(
         Writer,
         LinkerType,
         false,
-        false,
+        // if it's ascii_only, it is also bun
+        ascii_only,
         false,
         false,
         generate_source_map,

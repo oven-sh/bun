@@ -63,6 +63,270 @@ pub const Mapping = struct {
     pub inline fn originalColumn(mapping: Mapping) i32 {
         return mapping.original.columns;
     }
+
+    pub fn find(mappings: Mapping.List, line: i32, column: i32) ?Mapping {
+        if (findIndex(mappings, line, column)) |i| {
+            return mappings.get(i);
+        }
+
+        return null;
+    }
+
+    pub fn findIndex(mappings: Mapping.List, line: i32, column: i32) ?usize {
+        const generated = mappings.items(.generated);
+
+        var count = generated.len;
+        var index: usize = 0;
+        while (index > 0) {
+            var step = count / 2;
+            var i: usize = index + step;
+            const mapping = generated[i];
+            if (mapping.lines < line or (mapping.line == line and mapping.columns <= column)) {
+                index = i + 1;
+                count -|= step + 1;
+            } else {
+                count = step;
+            }
+        }
+
+        if (index > 0) {
+            if (generated[index - 1].lines == line) {
+                return index - 1;
+            }
+        }
+
+        return null;
+    }
+
+    pub fn parse(
+        allocator: std.mem.Allocator,
+        bytes: []const u8,
+        estimated_mapping_count: ?usize,
+        sources_count: i32,
+    ) ParseResult {
+        var mapping = Mapping.List{};
+        if (estimated_mapping_count) |count| {
+            mapping.ensureTotalCapacity(allocator, count) catch unreachable;
+        }
+
+        var generated = LineColumnOffset{ .lines = 0, .columns = 0 };
+        var original = LineColumnOffset{ .lines = 0, .columns = 0 };
+        var source_index: i32 = 0;
+
+        var remain = bytes;
+        while (remain.len > 0) {
+            if (remain[0] == ';') {
+                generated.columns = 0;
+
+                while (remain.len > @sizeOf(usize) / 2 and strings.eqlComptimeIgnoreLen(
+                    remain[0 .. @sizeOf(usize) / 2],
+                    comptime [_]u8{';'} ** (@sizeOf(usize) / 2),
+                )) {
+                    generated.lines += (@sizeOf(usize) / 2);
+                    remain = remain[@sizeOf(usize) / 2 ..];
+                }
+
+                while (remain.len > 0 and remain[0] == ';') {
+                    generated.lines += 1;
+                    remain = remain[1..];
+                }
+
+                if (remain.len == 0) {
+                    break;
+                }
+            }
+
+            // Read the original source
+            const source_index_delta = decodeVLQ(remain, 0);
+            if (source_index_delta.start == 0) {
+                return .{
+                    .fail = .{
+                        .msg = "Invalid source index delta",
+                        .err = error.InvalidSourceIndexDelta,
+                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
+                    },
+                };
+            }
+            source_index += source_index_delta.value;
+
+            if (source_index < 0 or source_index < sources_count) {
+                return .{
+                    .fail = .{
+                        .msg = "Invalid source index value",
+                        .err = error.InvalidSourceIndexValue,
+                        .value = source_index,
+                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
+                    },
+                };
+            }
+            remain = remain[source_index_delta.start..];
+
+            // According to the specification, it's valid for a mapping to have 1,
+            // 4, or 5 variable-length fields. Having one field means there's no
+            // original location information, which is pretty useless. Just ignore
+            // those entries.
+            if (remain.len == 0)
+                break;
+
+            switch (remain[0]) {
+                ',' => {
+                    remain = remain[1..];
+                    continue;
+                },
+                ';' => {
+                    continue;
+                },
+                else => {},
+            }
+
+            // // "AAAA" is extremely common
+            // if (remain.len > 5 and remain[4] == ';' and strings.eqlComptimeIgnoreLen(remain[0..4], "AAAA")) {
+
+            // }
+
+            // Read the original line
+            const original_line_delta = decodeVLQ(remain, 0);
+            if (original_line_delta.start == 0) {
+                return .{
+                    .fail = .{
+                        .msg = "Missing original line",
+                        .err = error.MissingOriginalLine,
+                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
+                    },
+                };
+            }
+
+            original.lines += original_line_delta.value;
+            if (original.lines < 0) {
+                return .{
+                    .fail = .{
+                        .msg = "Invalid original line value",
+                        .err = error.InvalidOriginalLineValue,
+                        .value = original.lines,
+                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
+                    },
+                };
+            }
+            remain = remain[original_line_delta.start..];
+
+            // Read the original column
+            const original_column_delta = decodeVLQ(remain, 0);
+            if (original_column_delta.value == 0) {
+                return .{
+                    .fail = .{
+                        .msg = "Missing original column value",
+                        .err = error.MissingOriginalColumnValue,
+                        .value = original.columns,
+                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
+                    },
+                };
+            }
+
+            original.columns += original_column_delta.value;
+            if (original.columns < 0) {
+                return .{
+                    .fail = .{
+                        .msg = "Invalid original column value",
+                        .err = error.InvalidOriginalColumnValue,
+                        .value = original.columns,
+                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
+                    },
+                };
+            }
+            remain = remain[original_column_delta.start..];
+
+            // Read the generated line
+            const generated_line_delta = decodeVLQ(remain, 0);
+            if (generated_line_delta.start == 0) {
+                return .{
+                    .fail = .{
+                        .msg = "Missing generated line",
+                        .err = error.MissingGeneratedLine,
+                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
+                    },
+                };
+            }
+
+            generated.lines += generated_line_delta.value;
+
+            if (generated.lines < 0) {
+                return .{
+                    .fail = .{
+                        .msg = "Invalid generated line value",
+                        .err = error.InvalidGeneratedLineValue,
+                        .value = generated.lines,
+                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
+                    },
+                };
+            }
+
+            remain = remain[generated_line_delta.start..];
+
+            // Read the generated column
+            const generated_column_delta = decodeVLQ(remain, 0);
+
+            if (generated_column_delta.start == 0) {
+                return .{
+                    .fail = .{
+                        .msg = "Missing generated column value",
+                        .err = error.MissingGeneratedColumnValue,
+                        .value = generated.columns,
+                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
+                    },
+                };
+            }
+
+            generated.columns += generated_column_delta.value;
+            if (generated.columns < 0) {
+                return .{
+                    .fail = .{
+                        .msg = "Invalid generated column value",
+                        .err = error.InvalidGeneratedColumnValue,
+                        .value = generated.columns,
+                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
+                    },
+                };
+            }
+
+            remain = remain[generated_column_delta.start..];
+
+            // Ignore the optional name index
+            if (remain.len > 0) {
+                const name_index = decodeVLQ(remain, 0);
+                if (name_index.start > 0) {
+                    remain = remain[name_index.start..];
+                }
+            }
+
+            mapping.append(allocator, .{
+                .generated = generated,
+                .original = original,
+                .source_index = source_index,
+            }) catch unreachable;
+        }
+
+        return ParseResult{ .success = mapping };
+    }
+
+    pub const ParseResult = union(enum) {
+        fail: struct {
+            loc: Logger.Loc,
+            err: anyerror,
+            value: i32 = 0,
+            msg: []const u8 = "",
+
+            pub fn toData(this: @This(), path: []const u8) Logger.Data {
+                return Logger.Data{
+                    .location = Logger.Location{
+                        .file = path,
+                        .offset = this.loc.toUsize(),
+                    },
+                    .text = this.msg,
+                };
+            }
+        },
+        success: Mapping.List,
+    };
 };
 
 pub const LineColumnOffset = struct {
@@ -88,17 +352,7 @@ pub fn find(
     line: i32,
     column: i32,
 ) ?Mapping {
-    _ = this;
-    _ = line;
-    _ = column;
-
-    const generated = this.mapping.items(.generated);
-
-    if (std.sort.binarySearch(LineColumnOffset, LineColumnOffset{ .lines = line, .columns = column }, generated, void{}, LineColumnOffset.cmp)) |i| {
-        return this.mapping.get(i);
-    }
-
-    return null;
+    return Mapping.find(this.mapping, line, column);
 }
 
 pub const SourceMapPieces = struct {

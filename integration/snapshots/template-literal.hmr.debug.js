@@ -19,7 +19,7 @@ var hmr = new FastHMR(2201713056, "template-literal.js", FastRefresh), exports =
 `;
   const fooNoBracesUT16 = css`
   before
-  🙃
+  \uD83D\uDE43
   after
 `;
   const fooUTF8 = css`
@@ -30,13 +30,13 @@ var hmr = new FastHMR(2201713056, "template-literal.js", FastRefresh), exports =
 `;
   const fooUTF16 = css`
     before
-    🙃 ${true}
+    \uD83D\uDE43 ${true}
     after
 
 `;
   const templateLiteralWhichDefinesAFunction = ((...args) => args[args.length - 1]().toString())`
     before
-    🙃 ${() => true}
+    \uD83D\uDE43 ${() => true}
     after
 
 `;

@@ -1,13 +1,13 @@
 import {
 __HMRClient as Bun
-} from "http://localhost:8080/bun:wrap";
+} from "http://localhost:3000/bun:wrap";
 import {
 __FastRefreshModule as FastHMR
-} from "http://localhost:8080/bun:wrap";
+} from "http://localhost:3000/bun:wrap";
 import {
 __FastRefreshRuntime as FastRefresh
-} from "http://localhost:8080/bun:wrap";
-Bun.activate(false);
+} from "http://localhost:3000/bun:wrap";
+Bun.activate(true);
 
 var hmr = new FastHMR(2201713056, "template-literal.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
@@ -19,7 +19,7 @@ var hmr = new FastHMR(2201713056, "template-literal.js", FastRefresh), exports =
 `;
   const fooNoBracesUT16 = css`
   before
-  🙃
+  \uD83D\uDE43
   after
 `;
   const fooUTF8 = css`
@@ -30,13 +30,13 @@ var hmr = new FastHMR(2201713056, "template-literal.js", FastRefresh), exports =
 `;
   const fooUTF16 = css`
     before
-    🙃 ${true}
+    \uD83D\uDE43 ${true}
     after
 
 `;
   const templateLiteralWhichDefinesAFunction = ((...args) => args[args.length - 1]().toString())`
     before
-    🙃 ${() => true}
+    \uD83D\uDE43 ${() => true}
     after
 
 `;
@@ -60,3 +60,5 @@ hmr._update = function(exports) {
 export {
   $$hmr_test as test
 };
+
+//# sourceMappingURL=http://localhost:3000/template-literal.js.map

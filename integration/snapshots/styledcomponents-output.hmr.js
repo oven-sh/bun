@@ -1,26 +1,26 @@
 import {
 __FastRefreshRuntime as FastRefresh
-} from "http://localhost:8080/bun:wrap";
+} from "http://localhost:3000/bun:wrap";
 import {
 __require as require
-} from "http://localhost:8080/bun:wrap";
+} from "http://localhost:3000/bun:wrap";
 import {
 __HMRClient as Bun
-} from "http://localhost:8080/bun:wrap";
+} from "http://localhost:3000/bun:wrap";
 import {
 __FastRefreshModule as FastHMR
-} from "http://localhost:8080/bun:wrap";
-import * as $2f488e5b from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
+} from "http://localhost:3000/bun:wrap";
+import * as $2f488e5b from "http://localhost:3000/node_modules/react/jsx-dev-runtime.js";
 var JSX = require($2f488e5b);
 var jsx = require(JSX).jsxDEV;
 
-import * as $d4051a2e from "http://localhost:8080/node_modules/styled-components/dist/styled-components.browser.esm.js";
+import * as $d4051a2e from "http://localhost:3000/node_modules/styled-components/dist/styled-components.browser.esm.js";
 var { default: styled} = require($d4051a2e);
-import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
+import * as $bbcd215f from "http://localhost:3000/node_modules/react/index.js";
 var { default: React} = require($bbcd215f);
-import * as $5b3cea55 from "http://localhost:8080/node_modules/react-dom/index.js";
+import * as $5b3cea55 from "http://localhost:3000/node_modules/react-dom/index.js";
 var { default: ReactDOM} = require($5b3cea55);
-Bun.activate(false);
+Bun.activate(true);
 
 var hmr = new FastHMR(1290604342, "styledcomponents-output.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
@@ -83,3 +83,5 @@ hmr._update = function(exports) {
 export {
   $$hmr_test as test
 };
+
+//# sourceMappingURL=http://localhost:3000/styledcomponents-output.js.map

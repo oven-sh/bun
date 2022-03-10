@@ -1,17 +1,17 @@
 import {
 __require as require
-} from "http://localhost:8080/bun:wrap";
+} from "http://localhost:3000/bun:wrap";
 import {
 __HMRClient as Bun
-} from "http://localhost:8080/bun:wrap";
+} from "http://localhost:3000/bun:wrap";
 import {
 __FastRefreshModule as FastHMR
-} from "http://localhost:8080/bun:wrap";
+} from "http://localhost:3000/bun:wrap";
 import {
 __FastRefreshRuntime as FastRefresh
-} from "http://localhost:8080/bun:wrap";
-import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
-Bun.activate(false);
+} from "http://localhost:3000/bun:wrap";
+import * as $bbcd215f from "http://localhost:3000/node_modules/react/index.js";
+Bun.activate(true);
 
 var hmr = new FastHMR(3012834585, "bundled-entry-point.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
@@ -30,3 +30,5 @@ hmr._update = function(exports) {
 export {
   $$hmr_test as test
 };
+
+//# sourceMappingURL=http://localhost:3000/bundled-entry-point.js.map

@@ -1,23 +1,23 @@
 import {
 __FastRefreshRuntime as FastRefresh
-} from "http://localhost:8080/bun:wrap";
+} from "http://localhost:3000/bun:wrap";
 import {
 __require as require
-} from "http://localhost:8080/bun:wrap";
+} from "http://localhost:3000/bun:wrap";
 import {
 __HMRClient as Bun
-} from "http://localhost:8080/bun:wrap";
+} from "http://localhost:3000/bun:wrap";
 import {
 __FastRefreshModule as FastHMR
-} from "http://localhost:8080/bun:wrap";
-import * as $2f488e5b from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
+} from "http://localhost:3000/bun:wrap";
+import * as $2f488e5b from "http://localhost:3000/node_modules/react/jsx-dev-runtime.js";
 var JSX = require($2f488e5b);
-import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
+import * as $bbcd215f from "http://localhost:3000/node_modules/react/index.js";
 var JSXClassic = require($bbcd215f);
 var jsx = require(JSX).jsxDEV, jsxEl = require(JSXClassic).createElement;
 
 var { default: React} = require($bbcd215f);
-Bun.activate(false);
+Bun.activate(true);
 
 var hmr = new FastHMR(2717584935, "spread_with_key.tsx", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
@@ -51,3 +51,5 @@ export {
   $$hmr_SpreadWithTheKey as SpreadWithTheKey,
   $$hmr_test as test
 };
+
+//# sourceMappingURL=http://localhost:3000/spread_with_key.tsx.map

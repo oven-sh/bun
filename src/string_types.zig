@@ -3,12 +3,12 @@ pub const string = []const u8;
 pub const stringZ = [:0]const u8;
 pub const stringMutable = []u8;
 pub const CodePoint = i32;
-const _global = @import("./global.zig");
+const bun = @import("./global.zig");
 // macOS sets file path limit to 1024
 // Since a pointer on x64 is 64 bits and only 46 bits are used
 // We can safely store the entire path slice in a single u64.
 pub const PathString = packed struct {
-    const PathIntLen = std.math.IntFittingRange(0, _global.MAX_PATH_BYTES);
+    const PathIntLen = std.math.IntFittingRange(0, bun.MAX_PATH_BYTES);
     pub const use_small_path_string = @bitSizeOf(usize) - @bitSizeOf(PathIntLen) >= 53;
     pub const PathInt = if (use_small_path_string) PathIntLen else usize;
     pub const PointerIntType = if (use_small_path_string) u53 else usize;
@@ -63,7 +63,7 @@ pub const PathString = packed struct {
 
     pub const empty = @This(){ .ptr = 0, .len = 0 };
     comptime {
-        if (!_global.Environment.isWasm) {
+        if (!bun.Environment.isWasm) {
             if (use_small_path_string and @bitSizeOf(@This()) != 64) {
                 @compileError("PathString must be 64 bits");
             } else if (!use_small_path_string and @bitSizeOf(@This()) != 128) {

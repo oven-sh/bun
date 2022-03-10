@@ -237,10 +237,10 @@ void JSC__JSValue__jsonStringify(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg
 unsigned char JSC__JSValue__jsType(JSC__JSValue JSValue0)
 {
     JSC::JSValue jsValue = JSC::JSValue::decode(JSValue0);
-    if (!jsValue.isCell())
-        return 0;
+    if (JSC::JSCell* cell = jsValue.asCell())
+        return cell->type();
 
-    return jsValue.asCell()->type();
+    return 0;
 }
 
 void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC__JSGlobalObject* global, ZigString* arg1)
@@ -1539,6 +1539,46 @@ JSC__JSValue JSC__JSValue__getIfPropertyExistsImpl(JSC__JSValue JSValue0,
     auto propertyName = JSC::PropertyName(
         JSC::Identifier::fromString(vm, reinterpret_cast<const LChar*>(arg1), (int)arg2));
     return JSC::JSValue::encode(object->getIfPropertyExists(globalObject, propertyName));
+}
+
+void JSC__JSValue__getSymbolDescription(JSC__JSValue symbolValue_, JSC__JSGlobalObject* arg1, ZigString* arg2)
+
+{
+    JSC::JSValue symbolValue = JSC::JSValue::decode(symbolValue_);
+
+    if (!symbolValue.isSymbol())
+        return;
+
+    JSC::Symbol* symbol = JSC::asSymbol(symbolValue);
+    JSC::VM& vm = arg1->vm();
+    WTF::String string = symbol->description();
+
+    *arg2 = Zig::toZigString(string);
+}
+
+JSC__JSValue JSC__JSValue__symbolFor(JSC__JSGlobalObject* globalObject, ZigString* arg2)
+{
+
+    JSC::VM& vm = globalObject->vm();
+    WTF::String string = Zig::toString(*arg2);
+    return JSC::JSValue::encode(JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey(string)));
+}
+
+bool JSC__JSValue__symbolKeyFor(JSC__JSValue symbolValue_, JSC__JSGlobalObject* arg1, ZigString* arg2)
+{
+    JSC::JSValue symbolValue = JSC::JSValue::decode(symbolValue_);
+    JSC::VM& vm = arg1->vm();
+
+    if (!symbolValue.isSymbol())
+        return false;
+
+    JSC::PrivateName privateName = JSC::asSymbol(symbolValue)->privateName();
+    SymbolImpl& uid = privateName.uid();
+    if (!uid.symbolRegistry())
+        return false;
+
+    *arg2 = Zig::toZigString(JSC::jsString(vm, &uid), arg1);
+    return true;
 }
 
 bool JSC__JSValue__toBoolean(JSC__JSValue JSValue0)

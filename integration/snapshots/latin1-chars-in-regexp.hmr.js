@@ -1,13 +1,13 @@
 import {
 __HMRClient as Bun
-} from "http://localhost:8080/bun:wrap";
+} from "http://localhost:3000/bun:wrap";
 import {
 __FastRefreshModule as FastHMR
-} from "http://localhost:8080/bun:wrap";
+} from "http://localhost:3000/bun:wrap";
 import {
 __FastRefreshRuntime as FastRefresh
-} from "http://localhost:8080/bun:wrap";
-Bun.activate(false);
+} from "http://localhost:3000/bun:wrap";
+Bun.activate(true);
 
 var hmr = new FastHMR(1430071586, "latin1-chars-in-regexp.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
@@ -96,3 +96,5 @@ export {
   $$hmr_re_btou as re_btou,
   $$hmr_test as test
 };
+
+//# sourceMappingURL=http://localhost:3000/latin1-chars-in-regexp.js.map

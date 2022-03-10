@@ -1,13 +1,13 @@
 import {
 __HMRClient as Bun
-} from "http://localhost:8080/bun:wrap";
+} from "http://localhost:3000/bun:wrap";
 import {
 __FastRefreshModule as FastHMR
-} from "http://localhost:8080/bun:wrap";
+} from "http://localhost:3000/bun:wrap";
 import {
 __FastRefreshRuntime as FastRefresh
-} from "http://localhost:8080/bun:wrap";
-Bun.activate(false);
+} from "http://localhost:3000/bun:wrap";
+Bun.activate(true);
 
 var hmr = new FastHMR(726376257, "code-simplification-neql-define.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
@@ -53,3 +53,5 @@ export {
   $$hmr_$f332019d as $f332019d,
   $$hmr_test as test
 };
+
+//# sourceMappingURL=http://localhost:3000/code-simplification-neql-define.js.map

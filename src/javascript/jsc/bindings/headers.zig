@@ -295,6 +295,7 @@ pub extern fn JSC__JSValue__getLengthOfArray(JSValue0: JSC__JSValue, arg1: [*c]J
 pub extern fn JSC__JSValue__getNameProperty(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]ZigString) void;
 pub extern fn JSC__JSValue__getPrototype(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__getReadableStreamState(JSValue0: JSC__JSValue, arg1: [*c]JSC__VM) [*c]Bun__Readable;
+pub extern fn JSC__JSValue__getSymbolDescription(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]ZigString) void;
 pub extern fn JSC__JSValue__getWritableStreamState(JSValue0: JSC__JSValue, arg1: [*c]JSC__VM) [*c]Bun__Writable;
 pub extern fn JSC__JSValue__isAggregateError(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject) bool;
 pub extern fn JSC__JSValue__isAnyInt(JSValue0: JSC__JSValue) bool;
@@ -337,6 +338,8 @@ pub extern fn JSC__JSValue__jsTDZValue(...) JSC__JSValue;
 pub extern fn JSC__JSValue__jsType(JSValue0: JSC__JSValue) u8;
 pub extern fn JSC__JSValue__jsUndefined(...) JSC__JSValue;
 pub extern fn JSC__JSValue__putRecord(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]ZigString, arg3: [*c]ZigString, arg4: usize) void;
+pub extern fn JSC__JSValue__symbolFor(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]ZigString) JSC__JSValue;
+pub extern fn JSC__JSValue__symbolKeyFor(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]ZigString) bool;
 pub extern fn JSC__JSValue__toBoolean(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__toInt32(JSValue0: JSC__JSValue) i32;
 pub extern fn JSC__JSValue__toObject(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;

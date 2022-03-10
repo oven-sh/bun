@@ -5,7 +5,7 @@ pub fn main() anyerror!void {
     var paths = [_][]const u8{ std.mem.span(headers_zig_file_src.file), "../../src/javascript/jsc/bindings/headers.zig" };
     const headers_zig_file = try std.fs.path.resolve(std.heap.c_allocator, &paths);
     std.debug.print("Writing to {s}", .{headers_zig_file});
-    var headers_zig: std.fs.File = try std.fs.openFileAbsolute(headers_zig_file, .{ .write = true });
+    var headers_zig: std.fs.File = try std.fs.openFileAbsolute(headers_zig_file, .{ .mode = .read_write });
     var contents = try headers_zig.readToEndAlloc(std.heap.page_allocator, headers_zig.getEndPos() catch unreachable);
     const last_extern_i = std.mem.lastIndexOf(u8, contents, "pub extern fn") orelse @panic("Expected contents");
     const last_newline = std.mem.indexOf(u8, contents[last_extern_i..], "\n") orelse @panic("Expected newline");

@@ -28,6 +28,7 @@ const Microtask = JSC.Microtask;
 const JSPrivateDataPtr = @import("../base.zig").JSPrivateDataPtr;
 const Backtrace = @import("../../../deps/backtrace.zig");
 const JSPrinter = @import("../../../js_printer.zig");
+const JSLexer = @import("../../../js_lexer.zig");
 pub const ZigGlobalObject = extern struct {
     pub const shim = Shimmer("Zig", "GlobalObject", @This());
     bytes: shim.Bytes,
@@ -641,7 +642,7 @@ pub const ZigException = extern struct {
 
     pub const Holder = extern struct {
         const frame_count = 24;
-        const source_lines_count = 6;
+        pub const source_lines_count = 6;
         source_line_numbers: [source_lines_count]i32,
         source_lines: [source_lines_count]ZigString,
         frames: [frame_count]ZigStackFrame,
@@ -1073,6 +1074,8 @@ pub const ZigConsoleClient = struct {
             NativeCode,
             ArrayBuffer,
 
+            JSX,
+
             pub inline fn canHaveCircularReferences(tag: Tag) bool {
                 return tag == .Array or tag == .Object or tag == .Map or tag == .Set;
             }
@@ -1103,15 +1106,24 @@ pub const ZigConsoleClient = struct {
                     return .{
                         .tag = .Boolean,
                     };
+                } else if (value.isSymbol()) {
+                    return .{
+                        .tag = .Symbol,
+                        .cell = .Symbol,
+                    };
                 }
 
                 const js_type = value.jsType();
 
-                if (js_type.isHidden()) return .{ .tag = .NativeCode };
+                if (js_type.isHidden()) return .{
+                    .tag = .NativeCode,
+                    .cell = js_type,
+                };
 
                 if (CAPI.JSObjectGetPrivate(value.asObjectRef()) != null)
                     return .{
                         .tag = .Private,
+                        .cell = js_type,
                     };
 
                 // If we check an Object has a method table and it does not
@@ -1125,17 +1137,32 @@ pub const ZigConsoleClient = struct {
                     if (CAPI.JSValueIsObjectOfClass(globalThis.ref(), value.asObjectRef(), JSC.Bun.EnvironmentVariables.Class.get().?[0])) {
                         return .{
                             .tag = .Object,
+                            .cell = js_type,
                         };
                     }
                     return .{
                         .tag = .Class,
+                        .cell = js_type,
                     };
                 }
 
                 if (callable) {
                     return .{
                         .tag = .Function,
+                        .cell = js_type,
                     };
+                }
+
+                // Is this a react element?
+                if (js_type.isObject()) {
+                    if (value.get(globalThis, "$$typeof")) |typeof_symbol| {
+                        var reactElement = ZigString.init("react.element");
+                        var react_fragment = ZigString.init("react.fragment");
+
+                        if (JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &reactElement), globalThis) or JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &react_fragment), globalThis)) {
+                            return .{ .tag = .JSX, .cell = js_type };
+                        }
+                    }
                 }
 
                 return .{
@@ -1311,9 +1338,7 @@ pub const ZigConsoleClient = struct {
                     const value = JSC.JSObject.getIndex(nextValue, globalObject, 1);
                     this.formatter.writeIndent(Writer, this.writer) catch unreachable;
                     const key_tag = Tag.get(key, globalObject);
-                    if (key_tag.tag == Tag.String) {
-                        this.writer.writeAll("\"") catch unreachable;
-                    }
+
                     this.formatter.format(
                         key_tag,
                         Writer,
@@ -1322,15 +1347,8 @@ pub const ZigConsoleClient = struct {
                         this.formatter.globalThis,
                         enable_ansi_colors,
                     );
-                    if (key_tag.tag == Tag.String) {
-                        this.writer.writeAll("\": ") catch unreachable;
-                    } else {
-                        this.writer.writeAll(": ") catch unreachable;
-                    }
+                    this.writer.writeAll(": ") catch unreachable;
                     const value_tag = Tag.get(value, globalObject);
-                    if (value_tag.tag == Tag.String) {
-                        this.writer.writeAll("\"") catch unreachable;
-                    }
                     this.formatter.format(
                         value_tag,
                         Writer,
@@ -1339,9 +1357,6 @@ pub const ZigConsoleClient = struct {
                         this.formatter.globalThis,
                         enable_ansi_colors,
                     );
-                    if (value_tag.tag == Tag.String) {
-                        this.writer.writeAll("\"") catch unreachable;
-                    }
                     this.formatter.printComma(Writer, this.writer, enable_ansi_colors) catch unreachable;
                     this.writer.writeAll("\n") catch unreachable;
                 }
@@ -1457,6 +1472,19 @@ pub const ZigConsoleClient = struct {
                 },
                 .Null => {
                     writer.print(comptime Output.prettyFmt("<r><yellow>null<r>", enable_ansi_colors), .{});
+                },
+                .Symbol => {
+                    var description = value.getDescription(this.globalThis);
+
+                    if (description.len > 0) {
+                        var slice = description.toSlice(default_allocator);
+                        defer if (slice.allocated) slice.deinit();
+                        writer.print(comptime Output.prettyFmt("<r><cyan>Symbol<r><d>(<green>{}<r><d>)<r>", enable_ansi_colors), .{
+                            JSPrinter.formatJSONString(slice.slice()),
+                        });
+                    } else {
+                        writer.print(comptime Output.prettyFmt("<r><cyan>Symbol<r>", enable_ansi_colors), .{});
+                    }
                 },
                 .Error => {
                     JS.VirtualMachine.vm.printErrorlikeObject(
@@ -1598,6 +1626,7 @@ pub const ZigConsoleClient = struct {
                     if (length == 0) {
                         return writer.writeAll("Map {}");
                     }
+
                     writer.print("Map({d}) {{\n", .{length});
                     {
                         this.indent += 1;
@@ -1654,63 +1683,299 @@ pub const ZigConsoleClient = struct {
 
                     writer.print("{}", .{str});
                 },
+                .JSX => {
+                    writer.writeAll(comptime Output.prettyFmt("<r>", enable_ansi_colors));
+
+                    writer.writeAll("<");
+
+                    var needs_space = false;
+                    var tag_name_str = ZigString.init("");
+
+                    var tag_name_slice: ZigString.Slice = ZigString.Slice.empty;
+                    var is_tag_kind_primitive = false;
+
+                    defer if (tag_name_slice.allocated) tag_name_slice.deinit();
+
+                    if (value.get(this.globalThis, "type")) |type_value| {
+                        const _tag = Tag.get(type_value, this.globalThis);
+
+                        if (_tag.cell == .Symbol) {} else if (_tag.cell.isStringLike()) {
+                            type_value.toZigString(&tag_name_str, this.globalThis);
+                            is_tag_kind_primitive = true;
+                        } else if (_tag.cell.isObject() or type_value.isCallable(this.globalThis.vm())) {
+                            type_value.getNameProperty(this.globalThis, &tag_name_str);
+                            if (tag_name_str.len == 0) {
+                                tag_name_str = ZigString.init("NoName");
+                            }
+                        } else {
+                            type_value.toZigString(&tag_name_str, this.globalThis);
+                        }
+
+                        tag_name_slice = tag_name_str.toSlice(default_allocator);
+                        needs_space = true;
+                    } else {
+                        tag_name_slice = ZigString.init("unknown").toSlice(default_allocator);
+
+                        needs_space = true;
+                    }
+
+                    if (!is_tag_kind_primitive)
+                        writer.writeAll(comptime Output.prettyFmt("<cyan>", enable_ansi_colors))
+                    else
+                        writer.writeAll(comptime Output.prettyFmt("<green>", enable_ansi_colors));
+                    writer.writeAll(tag_name_slice.slice());
+                    if (enable_ansi_colors) writer.writeAll(comptime Output.prettyFmt("<r>", enable_ansi_colors));
+
+                    if (value.get(this.globalThis, "key")) |key_value| {
+                        if (!key_value.isUndefinedOrNull()) {
+                            if (needs_space)
+                                writer.writeAll(" key=")
+                            else
+                                writer.writeAll("key=");
+
+                            const old_quote_strings = this.quote_strings;
+                            this.quote_strings = true;
+                            defer this.quote_strings = old_quote_strings;
+
+                            this.format(Tag.get(key_value, this.globalThis), Writer, writer_, key_value, this.globalThis, enable_ansi_colors);
+
+                            needs_space = true;
+                        }
+                    }
+
+                    if (value.get(this.globalThis, "props")) |props| {
+                        const prev_quote_strings = this.quote_strings;
+                        this.quote_strings = true;
+                        defer this.quote_strings = prev_quote_strings;
+                        var array = CAPI.JSObjectCopyPropertyNames(this.globalThis.ref(), props.asObjectRef());
+                        defer CAPI.JSPropertyNameArrayRelease(array);
+                        const count_ = CAPI.JSPropertyNameArrayGetCount(array);
+                        var children_prop = props.get(this.globalThis, "children");
+                        if (count_ > 0) {
+                            {
+                                var i: usize = 0;
+                                this.indent += 1;
+                                defer this.indent -|= 1;
+                                const count_without_children = count_ - @as(usize, @boolToInt(children_prop != null));
+
+                                while (i < count_) : (i += 1) {
+                                    var property_name_ref = CAPI.JSPropertyNameArrayGetNameAtIndex(array, i);
+                                    var prop = CAPI.JSStringGetCharacters8Ptr(property_name_ref)[0..CAPI.JSStringGetLength(property_name_ref)];
+                                    if (strings.eqlComptime(prop, "children")) {
+                                        CAPI.JSStringRelease(property_name_ref);
+                                        continue;
+                                    }
+
+                                    defer CAPI.JSStringRelease(property_name_ref);
+
+                                    var property_value = CAPI.JSObjectGetProperty(this.globalThis.ref(), props.asObjectRef(), property_name_ref, null);
+                                    const tag = Tag.get(JSValue.fromRef(property_value), this.globalThis);
+
+                                    if (tag.cell.isHidden()) continue;
+
+                                    if (needs_space) writer.writeAll(" ");
+                                    needs_space = false;
+
+                                    writer.print(
+                                        comptime Output.prettyFmt("<r><blue>{s}<d>=<r>", enable_ansi_colors),
+                                        .{prop[0..@minimum(prop.len, 128)]},
+                                    );
+
+                                    if (tag.cell.isStringLike()) {
+                                        if (comptime enable_ansi_colors) {
+                                            writer.writeAll(comptime Output.prettyFmt("<r><green>", true));
+                                        }
+                                    }
+
+                                    this.format(tag, Writer, writer_, JSValue.fromRef(property_value), this.globalThis, enable_ansi_colors);
+
+                                    if (tag.cell.isStringLike()) {
+                                        if (comptime enable_ansi_colors) {
+                                            writer.writeAll(comptime Output.prettyFmt("<r>", true));
+                                        }
+                                    }
+
+                                    if (
+                                    // count_without_children is necessary to prevent printing an extra newline
+                                    // if there are children and one prop and the child prop is the last prop
+                                    i + 1 < count_without_children and
+                                        // 3 is arbitrary but basically
+                                        //  <input type="text" value="foo" />
+                                        //  ^ should be one line
+                                        // <input type="text" value="foo" bar="true" baz={false} />
+                                        //  ^ should be multiple lines
+                                        i > 3)
+                                    {
+                                        writer.writeAll("\n");
+                                        this.writeIndent(Writer, writer_) catch unreachable;
+                                    } else if (i + 1 < count_without_children) {
+                                        writer.writeAll(" ");
+                                    }
+                                }
+                            }
+
+                            if (children_prop) |children| {
+                                const tag = Tag.get(children, this.globalThis);
+
+                                const print_children = switch (tag.tag) {
+                                    .String, .JSX, .Array => true,
+                                    else => false,
+                                };
+
+                                if (print_children) {
+                                    print_children: {
+                                        switch (tag.tag) {
+                                            .String => {
+                                                var children_slice = children.toSlice(this.globalThis, default_allocator);
+                                                defer if (children_slice.allocated) children_slice.deinit();
+                                                if (children_slice.len == 0) break :print_children;
+                                                if (comptime enable_ansi_colors) writer.writeAll(comptime Output.prettyFmt("<r>", true));
+
+                                                writer.writeAll(">");
+                                                if (children_slice.len < 128) {
+                                                    writer.writeAll(children_slice.slice());
+                                                } else {
+                                                    this.indent += 1;
+                                                    writer.writeAll("\n");
+                                                    this.writeIndent(Writer, writer_) catch unreachable;
+                                                    this.indent -|= 1;
+                                                    writer.writeAll(children_slice.slice());
+                                                    writer.writeAll("\n");
+                                                    this.writeIndent(Writer, writer_) catch unreachable;
+                                                }
+                                            },
+                                            .JSX => {
+                                                writer.writeAll(">\n");
+
+                                                {
+                                                    this.indent += 1;
+                                                    this.writeIndent(Writer, writer_) catch unreachable;
+                                                    defer this.indent -|= 1;
+                                                    this.format(Tag.get(children, this.globalThis), Writer, writer_, children, this.globalThis, enable_ansi_colors);
+                                                }
+
+                                                writer.writeAll("\n");
+                                                this.writeIndent(Writer, writer_) catch unreachable;
+                                            },
+                                            .Array => {
+                                                const length = children.getLengthOfArray(this.globalThis);
+                                                if (length == 0) break :print_children;
+                                                writer.writeAll(">\n");
+
+                                                {
+                                                    this.indent += 1;
+                                                    this.writeIndent(Writer, writer_) catch unreachable;
+                                                    const _prev_quote_strings = this.quote_strings;
+                                                    this.quote_strings = false;
+                                                    defer this.quote_strings = _prev_quote_strings;
+
+                                                    defer this.indent -|= 1;
+
+                                                    var j: usize = 0;
+                                                    while (j < length) : (j += 1) {
+                                                        const child = JSC.JSObject.getIndex(children, this.globalThis, @intCast(u32, j));
+                                                        this.format(Tag.get(child, this.globalThis), Writer, writer_, child, this.globalThis, enable_ansi_colors);
+                                                        if (j + 1 < length) {
+                                                            writer.writeAll("\n");
+                                                            this.writeIndent(Writer, writer_) catch unreachable;
+                                                        }
+                                                    }
+                                                }
+
+                                                writer.writeAll("\n");
+                                                this.writeIndent(Writer, writer_) catch unreachable;
+                                            },
+                                            else => unreachable,
+                                        }
+
+                                        writer.writeAll("</");
+                                        if (!is_tag_kind_primitive)
+                                            writer.writeAll(comptime Output.prettyFmt("<r><cyan>", enable_ansi_colors))
+                                        else
+                                            writer.writeAll(comptime Output.prettyFmt("<r><green>", enable_ansi_colors));
+                                        writer.writeAll(tag_name_slice.slice());
+                                        if (enable_ansi_colors) writer.writeAll(comptime Output.prettyFmt("<r>", enable_ansi_colors));
+                                        writer.writeAll(">");
+                                    }
+
+                                    return;
+                                }
+                            }
+                        }
+                    }
+
+                    writer.writeAll(" />");
+                },
                 .Object => {
                     var object = value.asObjectRef();
-                    var array = CAPI.JSObjectCopyPropertyNames(this.globalThis.ref(), object);
-                    defer CAPI.JSPropertyNameArrayRelease(array);
-                    const count_ = CAPI.JSPropertyNameArrayGetCount(array);
-                    var i: usize = 0;
 
-                    const prev_quote_strings = this.quote_strings;
-                    this.quote_strings = true;
-                    defer this.quote_strings = prev_quote_strings;
+                    {
+                        var array = CAPI.JSObjectCopyPropertyNames(this.globalThis.ref(), object);
+                        defer CAPI.JSPropertyNameArrayRelease(array);
+                        const count_ = CAPI.JSPropertyNameArrayGetCount(array);
+                        var i: usize = 0;
 
-                    var name_str = ZigString.init("");
-                    value.getPrototype(this.globalThis).getNameProperty(this.globalThis, &name_str);
+                        const prev_quote_strings = this.quote_strings;
+                        this.quote_strings = true;
+                        defer this.quote_strings = prev_quote_strings;
 
-                    if (name_str.len > 0 and !strings.eqlComptime(name_str.slice(), "Object")) {
-                        writer.print("{} ", .{name_str});
-                    }
+                        var name_str = ZigString.init("");
+                        value.getPrototype(this.globalThis).getNameProperty(this.globalThis, &name_str);
 
-                    if (count_ == 0) {
-                        writer.writeAll("{ }");
-                        return;
-                    }
-
-                    writer.writeAll("{ ");
-
-                    while (i < count_) : (i += 1) {
-                        var property_name_ref = CAPI.JSPropertyNameArrayGetNameAtIndex(array, i);
-                        defer CAPI.JSStringRelease(property_name_ref);
-                        var prop = CAPI.JSStringGetCharacters8Ptr(property_name_ref)[0..CAPI.JSStringGetLength(property_name_ref)];
-
-                        var property_value = CAPI.JSObjectGetProperty(this.globalThis.ref(), object, property_name_ref, null);
-                        const tag = Tag.get(JSValue.fromRef(property_value), this.globalThis);
-
-                        if (tag.cell.isHidden()) continue;
-
-                        writer.print(
-                            comptime Output.prettyFmt("{s}<d>:<r> ", enable_ansi_colors),
-                            .{prop[0..@minimum(prop.len, 128)]},
-                        );
-
-                        if (tag.cell.isStringLike()) {
-                            if (comptime enable_ansi_colors) {
-                                writer.writeAll(comptime Output.prettyFmt("<r><green>", true));
-                            }
+                        if (name_str.len > 0 and !strings.eqlComptime(name_str.slice(), "Object")) {
+                            writer.print("{} ", .{name_str});
                         }
 
-                        this.format(tag, Writer, writer_, JSValue.fromRef(property_value), this.globalThis, enable_ansi_colors);
-
-                        if (tag.cell.isStringLike()) {
-                            if (comptime enable_ansi_colors) {
-                                writer.writeAll(comptime Output.prettyFmt("<r>", true));
-                            }
+                        if (count_ == 0) {
+                            writer.writeAll("{ }");
+                            return;
                         }
 
-                        if (i + 1 < count_) {
-                            this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
-                            writer.writeAll(" ");
+                        writer.writeAll("{ ");
+
+                        while (i < count_) : (i += 1) {
+                            var property_name_ref = CAPI.JSPropertyNameArrayGetNameAtIndex(array, i);
+                            defer CAPI.JSStringRelease(property_name_ref);
+                            var prop = CAPI.JSStringGetCharacters8Ptr(property_name_ref)[0..CAPI.JSStringGetLength(property_name_ref)];
+
+                            var property_value = CAPI.JSObjectGetProperty(this.globalThis.ref(), object, property_name_ref, null);
+                            const tag = Tag.get(JSValue.fromRef(property_value), this.globalThis);
+
+                            if (tag.cell.isHidden()) continue;
+
+                            const key = prop[0..@minimum(prop.len, 128)];
+
+                            // TODO: make this one pass?
+                            if (JSLexer.isLatin1Identifier(@TypeOf(key), key)) {
+                                writer.print(
+                                    comptime Output.prettyFmt("{s}<d>:<r> ", enable_ansi_colors),
+                                    .{key},
+                                );
+                            } else {
+                                writer.print(
+                                    comptime Output.prettyFmt("{s}<d>:<r> ", enable_ansi_colors),
+                                    .{JSPrinter.formatJSONString(key)},
+                                );
+                            }
+
+                            if (tag.cell.isStringLike()) {
+                                if (comptime enable_ansi_colors) {
+                                    writer.writeAll(comptime Output.prettyFmt("<r><green>", true));
+                                }
+                            }
+
+                            this.format(tag, Writer, writer_, JSValue.fromRef(property_value), this.globalThis, enable_ansi_colors);
+
+                            if (tag.cell.isStringLike()) {
+                                if (comptime enable_ansi_colors) {
+                                    writer.writeAll(comptime Output.prettyFmt("<r>", true));
+                                }
+                            }
+
+                            if (i + 1 < count_) {
+                                this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                                writer.writeAll(" ");
+                            }
                         }
                     }
 
@@ -1778,6 +2043,7 @@ pub const ZigConsoleClient = struct {
                 .JSON => this.printAs(.JSON, Writer, writer, value, result.cell, enable_ansi_colors),
                 .NativeCode => this.printAs(.NativeCode, Writer, writer, value, result.cell, enable_ansi_colors),
                 .ArrayBuffer => this.printAs(.ArrayBuffer, Writer, writer, value, result.cell, enable_ansi_colors),
+                .JSX => this.printAs(.JSX, Writer, writer, value, result.cell, enable_ansi_colors),
             };
         }
     };

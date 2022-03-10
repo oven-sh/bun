@@ -1701,6 +1701,13 @@ pub const JSValue = enum(i64) {
             };
         }
 
+        pub fn isFunction(this: JSType) bool {
+            return switch (this) {
+                .FunctionExecutable, .InternalFunction => true,
+                else => false,
+            };
+        }
+
         pub fn toC(this: JSType) C_API.JSTypedArrayType {
             return switch (this) {
                 .Int8Array => .kJSTypedArrayTypeInt8Array,
@@ -2089,6 +2096,24 @@ pub const JSValue = enum(i64) {
         return cppFn("getIfPropertyExistsImpl", .{ this, global, ptr, len });
     }
 
+    pub fn getSymbolDescription(this: JSValue, global: *JSGlobalObject, str: *ZigString) void {
+        cppFn("getSymbolDescription", .{ this, global, str });
+    }
+
+    pub fn symbolFor(global: *JSGlobalObject, str: *ZigString) JSValue {
+        return cppFn("symbolFor", .{ global, str });
+    }
+
+    pub fn symbolKeyFor(this: JSValue, global: *JSGlobalObject, str: *ZigString) bool {
+        return cppFn("symbolKeyFor", .{ this, global, str });
+    }
+
+    pub fn getDescription(this: JSValue, global: *JSGlobalObject) ZigString {
+        var zig_str = ZigString.init("");
+        getSymbolDescription(this, global, &zig_str);
+        return zig_str;
+    }
+
     pub fn get(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
         const value = getIfPropertyExistsImpl(this, global, property.ptr, @intCast(u32, property.len));
         return if (@enumToInt(value) != 0) value else return null;
@@ -2211,7 +2236,7 @@ pub const JSValue = enum(i64) {
         return @intToPtr(*anyopaque, @bitCast(u64, @enumToInt(this)));
     }
 
-    pub const Extern = [_][]const u8{ "createInternalPromise", "asInternalPromise", "asArrayBuffer_", "getReadableStreamState", "getWritableStreamState", "fromEntries", "createTypeError", "createRangeError", "createObject2", "getIfPropertyExistsImpl", "jsType", "jsonStringify", "kind_", "isTerminationException", "isSameValue", "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
+    pub const Extern = [_][]const u8{ "symbolKeyFor", "symbolFor", "getSymbolDescription", "createInternalPromise", "asInternalPromise", "asArrayBuffer_", "getReadableStreamState", "getWritableStreamState", "fromEntries", "createTypeError", "createRangeError", "createObject2", "getIfPropertyExistsImpl", "jsType", "jsonStringify", "kind_", "isTerminationException", "isSameValue", "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
 };
 
 extern "c" fn Microtask__run(*Microtask, *JSGlobalObject) void;

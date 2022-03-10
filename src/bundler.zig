@@ -2752,6 +2752,15 @@ pub const Bundler = struct {
         this_parse: ParseOptions,
         client_entry_point_: anytype,
     ) ?ParseResult {
+        return parseMaybeReturnFileOnly(bundler, this_parse, client_entry_point_, false);
+    }
+
+    pub fn parseMaybeReturnFileOnly(
+        bundler: *ThisBundler,
+        this_parse: ParseOptions,
+        client_entry_point_: anytype,
+        comptime return_file_only: bool,
+    ) ?ParseResult {
         var allocator = this_parse.allocator;
         const dirname_fd = this_parse.dirname_fd;
         const file_descriptor = this_parse.file_descriptor;
@@ -2801,6 +2810,10 @@ pub const Bundler = struct {
             input_fd = entry.fd;
             break :brk logger.Source.initRecycledFile(Fs.File{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
         };
+
+        if (comptime return_file_only) {
+            return ParseResult{ .source = source, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };
+        }
 
         if (loader != .wasm and source.contents.len == 0 and source.contents.len < 33 and std.mem.trim(u8, source.contents, "\n\r ").len == 0) {
             return ParseResult{ .source = source, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };

@@ -1081,30 +1081,8 @@ pub fn copyLatin1IntoUTF8(buf_: []u8, comptime Type: type, latin1_: Type) Encode
     var latin1 = latin1_;
     while (buf.len > 0 and latin1.len > 0) {
         var read: usize = 0;
-        var break_outer = false;
 
-        outer: while (latin1.len >= 128 and buf.len >= 128) {
-            comptime var count: usize = 0;
-            inline while (count < 8) : (count += 1) {
-                const vec: AsciiVector = latin1[(comptime count * ascii_vector_size)..][0..ascii_vector_size].*;
-                const cmp = vec > max_16_ascii;
-                const bitmask = @ptrCast(*const u16, &cmp).*;
-                const first = @ctz(u16, bitmask);
-                if (first < 16) {
-                    latin1 = latin1[(comptime count * ascii_vector_size)..];
-                    buf = buf[(comptime count * ascii_vector_size)..];
-                    break_outer = true;
-                    break :outer;
-                }
-                buf[(comptime count * ascii_vector_size)..][0..8].* = @bitCast([ascii_vector_size]u8, vec)[0..8].*;
-                buf[(comptime count * ascii_vector_size)..][8..ascii_vector_size].* = @bitCast([ascii_vector_size]u8, vec)[8..ascii_vector_size].*;
-            }
-
-            latin1 = latin1[(comptime count * ascii_vector_size)..];
-            buf = buf[(comptime count * ascii_vector_size)..];
-        }
-
-        while (latin1.len > ascii_vector_size and !break_outer) {
+        while (latin1.len > ascii_vector_size) {
             const vec: AsciiVector = latin1[0..ascii_vector_size].*;
             const cmp = vec > max_16_ascii;
             const bitmask = @ptrCast(*const u16, &cmp).*;
@@ -1683,6 +1661,59 @@ pub fn containsAnyBesidesChar(bytes: []const u8, char: u8) bool {
 
 pub fn firstNonASCII16(comptime Slice: type, slice: Slice) ?u32 {
     return firstNonASCII16CheckMin(Slice, slice, false);
+}
+
+/// Get the line number and the byte offsets of `line_range_count` above the desired line number
+/// The final element is the end index of the desired line
+pub fn indexOfLineNumber(text: []const u8, line: u32, comptime line_range_count: usize) ?[line_range_count + 1]u32 {
+    var ranges = std.mem.zeroes([line_range_count + 1]u32);
+    var remaining = text;
+    if (remaining.len == 0 or line == 0) return 0;
+
+    var iter = CodepointIterator.init(text);
+    var cursor = CodepointIterator.Cursor{};
+    var count: u32 = 0;
+
+    while (iter.next(&cursor)) {
+        switch (cursor.c) {
+            '\n', '\r' => {
+                if (cursor.c == '\r' and text[cursor.i..].len > 0 and text[cursor.i + 1] == '\n') {
+                    cursor.i += 1;
+                }
+
+                if (comptime line_range_count > 1) {
+                    comptime var i: usize = 0;
+                    inline while (i < line_range_count) : (i += 1) {
+                        std.mem.swap(u32, &ranges[i], &ranges[i + 1]);
+                    }
+                } else {
+                    ranges[0] = ranges[1];
+                }
+
+                ranges[line_range_count] = cursor.i;
+
+                if (count == line) {
+                    return ranges;
+                }
+
+                count += 1;
+            },
+            else => {},
+        }
+    }
+
+    return null;
+}
+
+/// Get N lines from the start of the text
+pub fn getLinesInText(text: []const u8, line: u32, comptime line_range_count: usize) [line_range_count][]const u8 {
+    const ranges = indexOfLineNumber(text, line, line_range_count) orelse return std.mem.zeroes([line_range_count][]const u8);
+    var results = std.mem.zeroes([line_range_count][]const u8);
+    var i: usize = 0;
+    while (i < line_range_count) : (i += 1) {
+        results[i] = text[ranges[i]..ranges[i + 1]];
+    }
+    return results;
 }
 
 pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime check_min: bool) ?u32 {

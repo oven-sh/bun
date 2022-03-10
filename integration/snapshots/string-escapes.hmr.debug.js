@@ -21,7 +21,7 @@ var hmr = new FastHMR(2482749838, "string-escapes.js", FastRefresh), exports = h
 (hmr._load = function() {
   var tab = "\t";
   var f = "";
-  var f = "₇";
+  var f = "\u2087";
   var obj = {
     "\r\n": "\r\n",
     "\n": "\n",
@@ -31,16 +31,16 @@ var hmr = new FastHMR(2482749838, "string-escapes.js", FastRefresh), exports = h
     "\u2028": "\u2028",
     "\u2029": "\u2029",
     "\0": "\0\xA0null byte",
-    "😊": "😊",
-    "😃": "😃",
-    "🕵🏽‍♂️": "🕵🏽‍♂️",
-    "㋡": "㋡",
-    "☺": "☺",
-    シ: "シ",
-    "👋": "👋",
+    "\uD83D\uDE0A": "\uD83D\uDE0A",
+    "\uD83D\uDE03": "\uD83D\uDE03",
+    "\uD83D\uDD75\uD83C\uDFFD\u200D\u2642\uFE0F": "\uD83D\uDD75\uD83C\uDFFD\u200D\u2642\uFE0F",
+    "\u32E1": "\u32E1",
+    "\u263A": "\u263A",
+    シ: "\u30B7",
+    "\uD83D\uDC4B": "\uD83D\uDC4B",
     f,
-    "☹": "☹",
-    "☻": "☻",
+    "\u2639": "\u2639",
+    "\u263B": "\u263B",
     children: 123
   };
   const encoder = new TextEncoder;
@@ -332,7 +332,7 @@ var hmr = new FastHMR(2482749838, "string-escapes.js", FastRefresh), exports = h
   ];
   var jsxVariants = jsx(JSXFrag, {
     children: [
-      '"\\r\\n": "\\r\\n", "\\n": "\\n", "\\t": "\\t", "\\f": "\\f", "\\v": "\\v", "\\u2028": "\\u2028", "\\u2029": "\\u2029", "😊": "😊", "😃": "😃", "🕵🏽‍♂️": "🕵🏽‍♂️", "㋡": "㋡", "☺": "☺", シ: "シ", "👋": "👋", f: f, "☹": "☹", "☻": "☻", children: 123,',
+      '"\\r\\n": "\\r\\n", "\\n": "\\n", "\\t": "\\t", "\\f": "\\f", "\\v": "\\v", "\\u2028": "\\u2028", "\\u2029": "\\u2029", "\uD83D\uDE0A": "\uD83D\uDE0A", "\uD83D\uDE03": "\uD83D\uDE03", "\uD83D\uDD75\uD83C\uDFFD\u200D\u2642\uFE0F": "\uD83D\uDD75\uD83C\uDFFD\u200D\u2642\uFE0F", "\u32E1": "\u32E1", "\u263A": "\u263A", \u30B7: "\u30B7", "\uD83D\uDC4B": "\uD83D\uDC4B", f: f, "\u2639": "\u2639", "\u263B": "\u263B", children: 123,',
       jsx("div", {
         data: "\r\n"
       }, undefined, false, undefined, this),
@@ -355,31 +355,31 @@ var hmr = new FastHMR(2482749838, "string-escapes.js", FastRefresh), exports = h
         data: "\\u2029"
       }, undefined, false, undefined, this),
       jsx("div", {
-        data: "😊"
+        data: "\uD83D\uDE0A"
       }, undefined, false, undefined, this),
       jsx("div", {
-        data: "😃"
+        data: "\uD83D\uDE03"
       }, undefined, false, undefined, this),
       jsx("div", {
-        data: "🕵🏽‍♂️"
+        data: "\uD83D\uDD75\uD83C\uDFFD\u200D\u2642\uFE0F"
       }, undefined, false, undefined, this),
       jsx("div", {
-        data: "㋡"
+        data: "\u32E1"
       }, undefined, false, undefined, this),
       jsx("div", {
-        data: "☺"
+        data: "\u263A"
       }, undefined, false, undefined, this),
       jsx("div", {
-        data: "シ"
+        data: "\u30B7"
       }, undefined, false, undefined, this),
       jsx("div", {
-        data: "👋"
+        data: "\uD83D\uDC4B"
       }, undefined, false, undefined, this),
       jsx("div", {
-        data: "☹"
+        data: "\u2639"
       }, undefined, false, undefined, this),
       jsx("div", {
-        data: "☻"
+        data: "\u263B"
       }, undefined, false, undefined, this),
       jsx("div", {
         data: "123"
@@ -412,41 +412,41 @@ var hmr = new FastHMR(2482749838, "string-escapes.js", FastRefresh), exports = h
       jsx("div", {
         children: "\u2029"
       }, undefined, false, undefined, this),
-      jsx("div", {}, "😊", false, undefined, this),
+      jsx("div", {}, "\uD83D\uDE0A", false, undefined, this),
       jsx("div", {
-        children: "😊"
+        children: "\uD83D\uDE0A"
       }, undefined, false, undefined, this),
-      jsx("div", {}, "😃", false, undefined, this),
+      jsx("div", {}, "\uD83D\uDE03", false, undefined, this),
       jsx("div", {
-        children: "😃"
+        children: "\uD83D\uDE03"
       }, undefined, false, undefined, this),
-      jsx("div", {}, "🕵🏽‍♂️", false, undefined, this),
+      jsx("div", {}, "\uD83D\uDD75\uD83C\uDFFD\u200D\u2642\uFE0F", false, undefined, this),
       jsx("div", {
-        children: "🕵🏽‍♂️"
+        children: "\uD83D\uDD75\uD83C\uDFFD\u200D\u2642\uFE0F"
       }, undefined, false, undefined, this),
-      jsx("div", {}, "㋡", false, undefined, this),
+      jsx("div", {}, "\u32E1", false, undefined, this),
       jsx("div", {
-        children: "㋡"
+        children: "\u32E1"
       }, undefined, false, undefined, this),
-      jsx("div", {}, "☺", false, undefined, this),
+      jsx("div", {}, "\u263A", false, undefined, this),
       jsx("div", {
-        children: "☺"
+        children: "\u263A"
       }, undefined, false, undefined, this),
-      jsx("div", {}, "シ", false, undefined, this),
+      jsx("div", {}, "\u30B7", false, undefined, this),
       jsx("div", {
-        children: "シ"
+        children: "\u30B7"
       }, undefined, false, undefined, this),
-      jsx("div", {}, "👋", false, undefined, this),
+      jsx("div", {}, "\uD83D\uDC4B", false, undefined, this),
       jsx("div", {
-        children: "👋"
+        children: "\uD83D\uDC4B"
       }, undefined, false, undefined, this),
-      jsx("div", {}, "☹", false, undefined, this),
+      jsx("div", {}, "\u2639", false, undefined, this),
       jsx("div", {
-        children: "☹"
+        children: "\u2639"
       }, undefined, false, undefined, this),
-      jsx("div", {}, "☻", false, undefined, this),
+      jsx("div", {}, "\u263B", false, undefined, this),
       jsx("div", {
-        children: "☻"
+        children: "\u263B"
       }, undefined, false, undefined, this),
       jsx("div", {}, "123", false, undefined, this),
       jsx("div", {

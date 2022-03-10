@@ -482,8 +482,6 @@ pub fn getCStruct(comptime T: type) ?NamedStruct {
 }
 
 pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comptime fname: []const u8) type {
-    const all_decls = comptime std.meta.declarations(first_import) ++ std.meta.declarations(second_import);
-
     return struct {
         source_file: []const u8 = fname,
         gen: C_Generator = undefined,
@@ -533,15 +531,11 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
 
         pub fn processStaticExport(comptime _: Self, _: anytype, gen: *C_Generator, comptime static_export: StaticExport) void {
             const fn_meta = comptime @typeInfo(static_export.Type).Fn;
-            const DeclData = static_export.Decl().data;
+            const DeclData = @typeInfo(@TypeOf(@field(static_export.Parent, static_export.local_name)));
 
             gen.gen_func(
                 comptime static_export.symbol_name,
-                comptime switch (DeclData) {
-                    .Fn => |Fn| Fn,
-                    .Var => |Var| @typeInfo(Var).Fn,
-                    else => unreachable,
-                },
+                DeclData.Fn,
                 comptime fn_meta,
                 comptime std.mem.zeroes([]const []const u8),
                 false,
@@ -552,12 +546,14 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
             comptime _: Self,
             _: anytype,
             gen: *C_Generator,
-            comptime _: type,
-            comptime Decl: std.builtin.TypeInfo.Declaration,
+            comptime ParentType: type,
+            comptime _: std.builtin.TypeInfo.Declaration,
             comptime name: []const u8,
             comptime prefix: []const u8,
         ) void {
-            switch (comptime Decl.data) {
+            const DeclData = @typeInfo(@TypeOf(@field(ParentType, name)));
+
+            switch (comptime DeclData) {
                 .Type => |Type| {
                     switch (@typeInfo(Type)) {
                         .Enum => |Enum| {
@@ -587,7 +583,7 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                     gen.gen_func(
                         comptime prefix ++ "__" ++ name,
                         comptime func,
-                        comptime @typeInfo(func.fn_type).Fn,
+                        comptime func,
                         comptime &.{},
                         comptime ENABLE_REWRITE_RETURN and @typeInfo(func.return_type) == .Struct,
                     );
@@ -677,16 +673,20 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
             var to_get_sizes: usize = 0;
 
             const exclude_from_cpp = comptime [_][]const u8{ "ZigString", "ZigException" };
-            inline for (all_decls) |_decls| {
-                if (comptime _decls.is_pub) {
-                    switch (_decls.data) {
-                        .Type => |Type| {
-                            @setEvalBranchQuota(99999);
-                            const TypeTypeInfo: std.builtin.TypeInfo = @typeInfo(Type);
+            const TypesToCheck = [_]type{ first_import, second_import };
+            inline for (TypesToCheck) |BaseType| {
+                const all_decls = comptime std.meta.declarations(BaseType);
+                inline for (all_decls) |_decls| {
+                    if (comptime _decls.is_pub) {
+                        @setEvalBranchQuota(99999);
+                        const Type = @field(BaseType, _decls.name);
+                        if (@TypeOf(Type) == type) {
+                            const TypeTypeInfo: std.builtin.TypeInfo = @typeInfo(@field(BaseType, _decls.name));
                             const is_container_type = switch (TypeTypeInfo) {
                                 .Opaque, .Struct, .Enum => true,
                                 else => false,
                             };
+
                             if (is_container_type and (@hasDecl(Type, "Extern") or @hasDecl(Type, "Export"))) {
                                 const identifier = comptime std.fmt.comptimePrint("{s}_{s}", .{ Type.shim.name, Type.shim.namespace });
                                 if (!bufset.contains(identifier)) {
@@ -783,8 +783,7 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                                     }
                                 }
                             }
-                        },
-                        else => {},
+                        }
                     }
                 }
             }

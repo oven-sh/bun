@@ -373,7 +373,7 @@ pub const Expect = struct {
 
             JSC.JSError(
                 getAllocator(ctx),
-                "test failed\n\tExpected: {}\n\tReceived: {}",
+                "Expected: {}\n\tReceived: {}",
                 .{
                     left.toFmt(ctx.ptr(), &lhs_formatter),
                     right.toFmt(ctx.ptr(), &rhs_formatter),

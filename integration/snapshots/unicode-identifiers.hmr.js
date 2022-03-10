@@ -1,13 +1,13 @@
 import {
 __HMRClient as Bun
-} from "http://localhost:8080/bun:wrap";
+} from "http://localhost:3000/bun:wrap";
 import {
 __FastRefreshModule as FastHMR
-} from "http://localhost:8080/bun:wrap";
+} from "http://localhost:3000/bun:wrap";
 import {
 __FastRefreshRuntime as FastRefresh
-} from "http://localhost:8080/bun:wrap";
-Bun.activate(false);
+} from "http://localhost:3000/bun:wrap";
+Bun.activate(true);
 
 var hmr = new FastHMR(1398361736, "unicode-identifiers.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
@@ -38,3 +38,5 @@ export {
   $$hmr_d3_radians as d3_radians,
   $$hmr_test as test
 };
+
+//# sourceMappingURL=http://localhost:3000/unicode-identifiers.js.map

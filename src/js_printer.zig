@@ -227,6 +227,18 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_onl
     return bytes;
 }
 
+const JSONFormatter = struct {
+    input: []const u8,
+
+    pub fn format(self: JSONFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writeJSONString(self.input, @TypeOf(writer), writer, false);
+    }
+};
+
+pub fn formatJSONString(text: []const u8) JSONFormatter {
+    return JSONFormatter{ .input = text };
+}
+
 pub fn writeJSONString(text: []const u8, comptime Writer: type, writer: Writer, comptime ascii_only: bool) !void {
     try writer.writeAll("\"");
     var i: usize = 0;
@@ -912,15 +924,20 @@ pub fn NewPrinter(
             }
         }
 
-        pub fn bestQuoteCharForString(_: *Printer, str: anytype, allow_backtick_: bool) u8 {
+        pub fn bestQuoteCharForString(_: *Printer, str: anytype, allow_backtick: bool) u8 {
             if (comptime is_json) return '"';
-
-            const costs: QuoteCost = if (allow_backtick_)
 
             var single_cost: usize = 0;
             var double_cost: usize = 0;
             var backtick_cost: usize = 0;
             var char: u8 = 0;
+            var i: usize = 0;
+            while (i < str.len) {
+                switch (str[i]) {
+                    '\'' => {
+                        single_cost += 1;
+                    },
+                    '"' => {
                         double_cost += 1;
                     },
                     '`' => {
@@ -928,6 +945,8 @@ pub fn NewPrinter(
                     },
                     '\r', '\n' => {
                         if (allow_backtick) {
+                            return '`';
+                        }
                     },
                     '\\' => {
                         i += 1;
@@ -935,6 +954,9 @@ pub fn NewPrinter(
                     '$' => {
                         if (i + 1 < str.len and str[i + 1] == '{') {
                             backtick_cost += 1;
+                        }
+                    },
+                    else => {},
                 }
                 i += 1;
             }
@@ -1184,19 +1206,24 @@ pub fn NewPrinter(
                                 // which is often if the string is long and UTF-16
                                 if (comptime quote == '`') {
                                     const remain = text[i..];
-                                    if (remain.len > 1 and remain[0] < last_ascii and remain[0] > first_ascii) {
-                                        if (strings.@"nextUTF16NonASCIIOr$`\\"([]const u16, remain)) |count| {
-                                            i += count;
-                                            var ptr = e.writer.reserve(count) catch unreachable;
-                                            var to_copy = ptr[0..count];
+                                    if (remain.len > 1 and remain[0] < last_ascii and remain[0] > first_ascii and
+                                        remain[0] != '$' and
+                                        remain[0] != '\\' and
+                                        remain[0] != '`')
+                                    {
+                                        if (strings.@"nextUTF16NonASCIIOr$`\\"([]const u16, remain)) |count_| {
+                                            if (count_ == 0)
+                                                unreachable; // conditional above checks this
 
-                                            strings.copyU16IntoU8(to_copy, []const u16, remain[0..count]);
-                                            e.writer.advance(count);
+                                            const len = count_ - 1;
+                                            i += len;
+                                            var ptr = e.writer.reserve(len) catch unreachable;
+                                            var to_copy = ptr[0..len];
 
+                                            strings.copyU16IntoU8(to_copy, []const u16, remain[0..len]);
+                                            e.writer.advance(len);
                                             continue :outer;
-                                        }
-
-                                        {
+                                        } else {
                                             const count = @truncate(u32, remain.len);
                                             var ptr = e.writer.reserve(count) catch unreachable;
                                             var to_copy = ptr[0..count];

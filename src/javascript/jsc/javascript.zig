@@ -19,6 +19,7 @@ const NetworkThread = @import("http").NetworkThread;
 pub fn zigCast(comptime Destination: type, value: anytype) *Destination {
     return @ptrCast(*Destination, @alignCast(@alignOf(*Destination), value));
 }
+const Allocator = std.mem.Allocator;
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const Fs = @import("../../fs.zig");
 const Resolver = @import("../../resolver/resolver.zig");
@@ -1705,6 +1706,7 @@ pub const Task = TaggedPointerUnion(.{
 });
 
 const SourceMap = @import("../../sourcemap/sourcemap.zig");
+const MappingList = SourceMap.Mapping.List;
 
 pub const SavedSourceMap = struct {
     // For bun.js, we store the number of mappings and how many bytes the final list is at the beginning of the array
@@ -1718,26 +1720,65 @@ pub const SavedSourceMap = struct {
         }
 
         pub inline fn len(this: SavedMappings) usize {
-            return @bitCast(u64, this.data[0..8]);
+            return @bitCast(u64, this.data[0..8].*);
         }
 
-        pub fn deinit(this: SavedMappings) []u8 {
+        pub fn deinit(this: SavedMappings) void {
             default_allocator.free(this.data[0..this.len()]);
+        }
+
+        pub fn toMapping(this: SavedMappings, allocator: Allocator, path: string) anyerror!MappingList {
+            const result = SourceMap.Mapping.parse(
+                allocator,
+                this.data[16..this.len()],
+                @bitCast(usize, this.data[8..16].*),
+                1,
+            );
+            switch (result) {
+                .fail => |fail| {
+                    if (Output.enable_ansi_colors_stderr) {
+                        try fail.toData(path).writeFormat(
+                            Output.errorWriter(),
+                            logger.Kind.warn,
+                            true,
+                            false,
+                        );
+                    } else {
+                        try fail.toData(path).writeFormat(
+                            Output.errorWriter(),
+                            logger.Kind.warn,
+                            false,
+                            false,
+                        );
+                    }
+
+                    return fail.err;
+                },
+                .success => |success| {
+                    return success;
+                },
+            }
         }
     };
 
-    pub const Value = TaggedPointerUnion(.{ SourceMap, SavedMappings });
+    pub const Value = TaggedPointerUnion(.{ MappingList, SavedMappings });
     pub const HashTable = std.HashMap(u64, *anyopaque, IdentityContext(u64), 80);
 
     map: HashTable,
+
+    pub fn onSourceMapChunk(this: *SavedSourceMap, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
+        try this.putMappings(source, chunk.buffer);
+    }
+
+    pub const SourceMapHandler = js_printer.SourceMapHandler.For(SavedSourceMap, onSourceMapChunk);
 
     pub fn putMappings(this: *SavedSourceMap, source: logger.Source, mappings: MutableString) !void {
         var entry = try this.map.getOrPut(std.hash.Wyhash.hash(0, source.path.text));
         if (entry.found_existing) {
             var value = Value.from(entry.value_ptr.*);
-            if (value.get(SourceMap)) |source_map_| {
-                var source_map: *SourceMap = source_map_;
-                source_map.deinit();
+            if (value.get(MappingList)) |source_map_| {
+                var source_map: *MappingList = source_map_;
+                source_map.deinit(default_allocator);
             } else if (value.get(SavedMappings)) |saved_mappings| {
                 var saved = SavedMappings{ .data = @ptrCast([*]u8, saved_mappings) };
 
@@ -1745,21 +1786,38 @@ pub const SavedSourceMap = struct {
             }
         }
 
-        entry.value_ptr.* = Value.init(@ptrCast(*SavedMappings, mappings.list.items.ptr)).ptr();
+        entry.value_ptr.* = Value.init(bun.cast(*SavedMappings, mappings.list.items.ptr)).ptr();
     }
 
-    pub fn get(this: *SavedSourceMap, allocator: std.mem.Allocator, path: string) ?*SourceMap {
+    pub fn get(this: *SavedSourceMap, path: string) ?MappingList {
         var mapping = this.map.getEntry(std.hash.Wyhash.hash(0, path)) orelse return null;
         switch (Value.from(mapping.value_ptr.*).tag()) {
-            SourceMap => {
-                return Value.from(mapping).as(SourceMap);
+            (@field(Value.Tag, @typeName(MappingList))) => {
+                return Value.from(mapping.value_ptr.*).as(MappingList).*;
             },
-            SavedMappings => {
-                _ = allocator;
-                return null;
+            Value.Tag.SavedMappings => {
+                var saved = SavedMappings{ .data = @ptrCast([*]u8, Value.from(mapping.value_ptr.*).as(MappingList)) };
+                defer saved.deinit();
+                var result = default_allocator.create(MappingList) catch unreachable;
+                result.* = saved.toMapping(default_allocator, path) catch {
+                    _ = this.map.remove(mapping.key_ptr.*);
+                    return null;
+                };
+                mapping.value_ptr.* = Value.init(result).ptr();
+                return result.*;
             },
             else => return null,
         }
+    }
+
+    pub fn resolveMapping(
+        this: *SavedSourceMap,
+        path: []const u8,
+        line: i32,
+        column: i32,
+    ) ?SourceMap.Mapping {
+        var mappings = this.get(path) orelse return null;
+        return SourceMap.Mapping.find(mappings, line, column);
     }
 };
 
@@ -2085,6 +2143,7 @@ pub const VirtualMachine = struct {
         _specifier: string,
         _: string,
         log: *logger.Log,
+        comptime disable_transpilying: bool,
     ) !ResolvedSource {
         std.debug.assert(VirtualMachine.vm_loaded);
         var jsc_vm = vm;
@@ -2117,6 +2176,15 @@ pub const VirtualMachine = struct {
             // so it consistently handles bundled imports
             // we can't take the shortcut of just directly importing the file, sadly.
         } else if (strings.eqlComptime(_specifier, main_file_name)) {
+            if (comptime disable_transpilying) {
+                return ResolvedSource{
+                    .allocator = null,
+                    .source_code = ZigString.init(jsc_vm.entry_point.source.contents),
+                    .specifier = ZigString.init(std.mem.span(main_file_name)),
+                    .source_url = ZigString.init(std.mem.span(main_file_name)),
+                    .hash = 0,
+                };
+            }
             defer jsc_vm.transpiled_count += 1;
 
             var bundler = &jsc_vm.bundler;
@@ -2160,11 +2228,12 @@ pub const VirtualMachine = struct {
             printer.ctx.reset();
             {
                 defer source_code_printer.?.* = printer;
-                written = try jsc_vm.bundler.print(
+                written = try jsc_vm.bundler.printWithSourceMap(
                     parse_result,
                     @TypeOf(&printer),
                     &printer,
                     .esm_ascii,
+                    SavedSourceMap.SourceMapHandler.init(&jsc_vm.source_mappings),
                 );
             }
 
@@ -2182,14 +2251,16 @@ pub const VirtualMachine = struct {
         } else if (_specifier.len > js_ast.Macro.namespaceWithColon.len and
             strings.eqlComptimeIgnoreLen(_specifier[0..js_ast.Macro.namespaceWithColon.len], js_ast.Macro.namespaceWithColon))
         {
-            if (jsc_vm.macro_entry_points.get(MacroEntryPoint.generateIDFromSpecifier(_specifier))) |entry| {
-                return ResolvedSource{
-                    .allocator = null,
-                    .source_code = ZigString.init(entry.source.contents),
-                    .specifier = ZigString.init(_specifier),
-                    .source_url = ZigString.init(_specifier),
-                    .hash = 0,
-                };
+            if (comptime !disable_transpilying) {
+                if (jsc_vm.macro_entry_points.get(MacroEntryPoint.generateIDFromSpecifier(_specifier))) |entry| {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(entry.source.contents),
+                        .specifier = ZigString.init(_specifier),
+                        .source_url = ZigString.init(_specifier),
+                        .hash = 0,
+                    };
+                }
             }
         } else if (strings.eqlComptime(_specifier, "node:fs")) {
             return ResolvedSource{
@@ -2275,12 +2346,23 @@ pub const VirtualMachine = struct {
                     }
                 }
 
-                var parse_result = jsc_vm.bundler.parse(
+                var parse_result = jsc_vm.bundler.parseMaybeReturnFileOnly(
                     parse_options,
                     null,
+                    disable_transpilying,
                 ) orelse {
                     return error.ParseError;
                 };
+
+                if (comptime disable_transpilying) {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(parse_result.source.contents),
+                        .specifier = ZigString.init(specifier),
+                        .source_url = ZigString.init(path.text),
+                        .hash = 0,
+                    };
+                }
 
                 const start_count = jsc_vm.bundler.linker.import_counter;
                 // We _must_ link because:
@@ -2302,11 +2384,12 @@ pub const VirtualMachine = struct {
                 printer.ctx.reset();
                 {
                     defer source_code_printer.?.* = printer;
-                    written = try jsc_vm.bundler.print(
+                    written = try jsc_vm.bundler.printWithSourceMap(
                         parse_result,
                         @TypeOf(&printer),
                         &printer,
                         .esm_ascii,
+                        SavedSourceMap.SourceMapHandler.init(&jsc_vm.source_mappings),
                     );
                 }
 
@@ -2565,7 +2648,7 @@ pub const VirtualMachine = struct {
     pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) void {
         var log = logger.Log.init(vm.bundler.allocator);
         const spec = specifier.slice();
-        const result = _fetch(global, spec, source.slice(), &log) catch |err| {
+        const result = _fetch(global, spec, source.slice(), &log, false) catch |err| {
             processFetchLog(global, specifier, source, &log, ret, err);
             return;
         };
@@ -2987,14 +3070,71 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, exception_list: ?*ExceptionList, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool) !void {
-        var exception_holder = ZigException.Holder.init();
-        var exception = exception_holder.zigException();
-        error_instance.toZigException(vm.global, exception);
+    fn remapZigException(
+        this: *VirtualMachine,
+        exception: *ZigException,
+        error_instance: JSValue,
+        exception_list: ?*ExceptionList,
+    ) !void {
+        error_instance.toZigException(this.global, exception);
         if (exception_list) |list| {
             try exception.addToErrorList(list);
         }
 
+        var frames: []JSC.ZigStackFrame = exception.stack.frames_ptr[0..exception.stack.frames_len];
+        if (frames.len == 0) return;
+
+        var top = &frames[0];
+        if (this.source_mappings.resolveMapping(
+            top.source_url.slice(),
+            @maximum(top.position.line, 0),
+            @maximum(top.position.column_stop, 0),
+        )) |mapping| {
+            var log = logger.Log.init(default_allocator);
+            var original_source = _fetch(this.global, top.source_url.slice(), "", &log, true) catch return;
+            const code = original_source.source_code.slice();
+            top.position.line = mapping.original.lines;
+            top.position.column_start = mapping.original.columns;
+            top.position.expression_start = mapping.original.columns;
+            if (strings.getLinesInText(
+                code,
+                @intCast(u32, top.position.line),
+                JSC.ZigException.Holder.source_lines_count,
+            )) |lines| {
+                var source_lines = exception.stack.source_lines_ptr[0..JSC.ZigException.Holder.source_lines_count];
+                var source_line_numbers = exception.stack.source_lines_numbers[0..JSC.ZigException.Holder.source_lines_count];
+                std.mem.set(ZigString, source_lines, ZigString.Empty);
+                std.mem.set(i32, source_line_numbers, 0);
+
+                var lines_ = lines[0..@minimum(lines.len, source_lines.len)];
+                for (lines_) |line, j| {
+                    source_lines[(lines_.len - 1) - j] = ZigString.init(line);
+                    source_line_numbers[j] = top.position.line - @intCast(i32, j) + 1;
+                }
+
+                exception.stack.source_lines_len = @intCast(u8, lines_.len);
+            }
+        }
+
+        if (frames.len > 1) {
+            for (frames[1..]) |*frame| {
+                if (frame.position.isInvalid()) continue;
+                if (this.source_mappings.resolveMapping(
+                    frame.source_url.slice(),
+                    @maximum(frame.position.line, 0),
+                    @maximum(frame.position.column_start, 0),
+                )) |mapping| {
+                    frame.position.line = mapping.original.lines;
+                    frame.position.column_start = mapping.original.columns;
+                }
+            }
+        }
+    }
+
+    pub fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, exception_list: ?*ExceptionList, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool) !void {
+        var exception_holder = ZigException.Holder.init();
+        var exception = exception_holder.zigException();
+        try this.remapZigException(exception, error_instance, exception_list);
         this.had_errors = true;
 
         var line_numbers = exception.stack.source_lines_numbers[0..exception.stack.source_lines_len];

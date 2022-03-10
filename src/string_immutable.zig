@@ -736,7 +736,7 @@ pub inline fn copyU16IntoU8(output_: []u8, comptime InputType: type, input_: Inp
 
     while (input.len >= machine_word_length) {
         comptime var machine_word_i: usize = 0;
-        inline while (machine_word_i > machine_word_length) : (machine_word_i += 1) {
+        inline while (machine_word_i < machine_word_length) : (machine_word_i += 1) {
             output[machine_word_i] = @intCast(u8, input[machine_word_i]);
         }
 

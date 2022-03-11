@@ -101,6 +101,8 @@ pub const GlobalClasses = [_]type{
     WebCore.TextEncoder.Constructor.Class,
     WebCore.TextDecoder.Constructor.Class,
 
+    JSC.Cloudflare.HTMLRewriter.Class,
+
     // The last item in this array becomes "process.env"
     Bun.EnvironmentVariables.Class,
 };

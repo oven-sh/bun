@@ -14,6 +14,7 @@ const ZigException = Exports.ZigException;
 const ZigStackTrace = Exports.ZigStackTrace;
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
+const JSC = @import("../../../jsc.zig");
 pub const JSObject = extern struct {
     pub const shim = Shimmer("JSC", "JSObject", @This());
     bytes: shim.Bytes,
@@ -1820,6 +1821,10 @@ pub const JSValue = enum(i64) {
 
     pub fn putRecord(value: JSValue, global: *JSGlobalObject, key: *ZigString, values: [*]ZigString, values_len: usize) void {
         return cppFn("putRecord", .{ value, global, key, values, values_len });
+    }
+
+    pub fn as(value: JSValue, comptime ZigType: type) ?*ZigType {
+        return JSC.GetJSPrivateData(ZigType, value.asObjectRef());
     }
 
     /// Create an object with exactly two properties

@@ -1857,6 +1857,9 @@ const Transpiler = @import("./api/transpiler.zig");
 const TextEncoder = WebCore.TextEncoder;
 const TextDecoder = WebCore.TextDecoder;
 const TimeoutTask = JSC.BunTimer.Timeout.TimeoutTask;
+const HTMLRewriter = JSC.Cloudflare.HTMLRewriter;
+const Element = JSC.Cloudflare.Element;
+
 pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     ResolveError,
     BuildError,
@@ -1881,6 +1884,8 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     TextEncoder,
     TextDecoder,
     TimeoutTask,
+    HTMLRewriter,
+    Element,
 });
 
 pub inline fn GetJSPrivateData(comptime Type: type, ref: js.JSObjectRef) ?*Type {

@@ -12,6 +12,19 @@ pub inline fn containsChar(self: string, char: u8) bool {
 pub inline fn contains(self: string, str: string) bool {
     return std.mem.indexOf(u8, self, str) != null;
 }
+pub inline fn containsComptime(self: string, comptime str: string) bool {
+    var remain = self;
+    const Int = std.meta.Int(.unsigned, str.len * 8);
+
+    while (remain.len >= comptime str.len) {
+        if (@bitCast(Int, remain.ptr[0..str.len].*) == @bitCast(Int, str.ptr[0..str.len].*)) {
+            return true;
+        }
+        remain = remain[str.len..];
+    }
+
+    return false;
+}
 pub const includes = contains;
 
 pub inline fn containsAny(in: anytype, target: string) bool {

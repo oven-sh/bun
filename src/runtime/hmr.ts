@@ -475,6 +475,7 @@ if (typeof window !== "undefined") {
     loaders = {
       css: new CSSLoader(),
     };
+    assetPrefixPath: string = "";
 
     sessionId: number;
 
@@ -1224,6 +1225,7 @@ if (typeof window !== "undefined") {
           this.epoch = welcome.epoch;
           this.javascriptReloader = welcome.javascriptReloader;
           this.cwd = welcome.cwd;
+          this.assetPrefixPath = welcome.assetPrefix;
 
           switch (this.javascriptReloader) {
             case API.Reloader.fast_refresh: {

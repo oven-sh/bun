@@ -12,8 +12,14 @@ import type {
   StackFrame,
   WebsocketMessageBuildFailure,
 } from "../../src/api/schema";
+import {
+  messagesToMarkdown,
+  problemsToMarkdown,
+  withBunInfo,
+} from "./markdown";
+import { fetchMappings, remapPosition, sourceMappings } from "./sourcemap";
 
-enum StackFrameScope {
+export enum StackFrameScope {
   Eval = 1,
   Module = 2,
   Function = 3,
@@ -22,7 +28,7 @@ enum StackFrameScope {
   Constructor = 6,
 }
 
-enum JSErrorCode {
+export enum JSErrorCode {
   Error = 0,
   EvalError = 1,
   RangeError = 2,
@@ -90,20 +96,55 @@ const errorTags = [
   <ErrorTag type={ErrorTagType.hmr}></ErrorTag>,
 ];
 
-const normalizedFilename = (filename: string, cwd: string): string => {
+function getAssetPrefixPath() {
+  return globalThis["__BUN_HMR"]?.assetPrefixPath || "";
+}
+
+export const normalizedFilename = (filename: string, cwd: string): string => {
+  if (filename.startsWith("http://") || filename.startsWith("https://")) {
+    const url = new URL(filename, globalThis.location.href);
+    if (url.origin === globalThis.location.origin) {
+      filename = url.pathname;
+    }
+  }
+
+  var blobI = filename.indexOf("/blob:");
+  if (blobI > -1) {
+    filename = filename.substring(blobI + "/blob:".length);
+  }
+
+  const assetPrefixPath = getAssetPrefixPath();
+
   if (cwd && filename.startsWith(cwd)) {
-    return filename.substring(cwd.length);
+    filename = filename.substring(cwd.length);
+
+    if (assetPrefixPath.length > 0 && filename.startsWith(assetPrefixPath)) {
+      return filename.substring(assetPrefixPath.length);
+    }
+  }
+
+  if (assetPrefixPath.length > 0 && filename.startsWith(assetPrefixPath)) {
+    return filename.substring(assetPrefixPath.length);
   }
 
   return filename;
 };
 
-const blobFileURL = (
-  filename: string,
+function hasColumnOrLine(filename: string) {
+  return /:\d+/.test(filename);
+}
+
+function appendLineColumnIfNeeded(
+  base: string,
   line?: number,
   column?: number
-): string => {
-  var base = `/blob:${filename}`;
+) {
+  if (hasColumnOrLine(base)) return base;
+
+  return appendLineColumn(base, line, column);
+}
+
+function appendLineColumn(base: string, line?: number, column?: number) {
   if (Number.isFinite(line)) {
     base += `:${line}`;
 
@@ -112,7 +153,35 @@ const blobFileURL = (
     }
   }
 
-  return new URL(base, location.href).href;
+  return base;
+}
+
+const blobFileURL = (
+  filename: string,
+  line?: number,
+  column?: number
+): string => {
+  var base = `/blob:${filename}`;
+
+  base = appendLineColumnIfNeeded(base, line, column);
+
+  return new URL(base, globalThis.location.href).href;
+};
+
+const maybeBlobFileURL = (
+  filename: string,
+  line?: number,
+  column?: number
+): string => {
+  if (filename.includes(".bun")) {
+    return blobFileURL(filename, line, column);
+  }
+
+  if (filename.includes("blob:")) {
+    return appendLineColumnIfNeeded(filename, line, column);
+  }
+
+  return srcFileURL(filename, line, column);
 };
 
 const openWithoutFlashOfNewTab = (event: MouseEvent) => {
@@ -151,21 +220,22 @@ const openWithoutFlashOfNewTab = (event: MouseEvent) => {
   return false;
 };
 
-const srcFileURL = (filename: string, line: number, column: number): string => {
+const srcFileURL = (
+  filename: string,
+  line?: number,
+  column?: number
+): string => {
+  if (filename.startsWith("http://") || filename.startsWith("https://"))
+    return appendLineColumnIfNeeded(filename);
+
   if (filename.endsWith(".bun")) {
-    return new URL("/" + filename, location.href).href;
+    return new URL("/" + filename, globalThis.location.href).href;
   }
 
   var base = `/src:${filename}`;
-  if (Number.isFinite(line) && line > -1) {
-    base = base + `:${line}`;
+  base = appendLineColumnIfNeeded(base, line, column);
 
-    if (Number.isFinite(column) && column > -1) {
-      base = base + `:${column}`;
-    }
-  }
-
-  return new URL(base, location.href).href;
+  return new URL(base, globalThis.location.href).href;
 };
 
 class FancyTypeError {
@@ -240,121 +310,14 @@ class FancyTypeError {
 
 var onClose = dismissError;
 
-const clientURL = (filename) => {
-  return `/${filename.replace(/^(\/)?/g, "")}`;
+export const clientURL = (filename) => {
+  if (filename.includes(".bun")) {
+    return `/${filename.replace(/^(\/)?/g, "")}`;
+  }
+
+  // Since bun has source maps now, we assume that it will we are dealing with a src url
+  return srcFileURL(filename);
 };
-
-function bunInfoToMarkdown(_info) {
-  if (!_info) return;
-  const info = { ..._info, platform: { ..._info.platform } };
-
-  var operatingSystemVersion = info.platform.version;
-
-  if (info.platform.os.toLowerCase() === "macos") {
-    const [major, minor, patch] = operatingSystemVersion.split(".");
-    switch (major) {
-      case "22": {
-        operatingSystemVersion = `13.${minor}.${patch}`;
-        break;
-      }
-      case "21": {
-        operatingSystemVersion = `12.${minor}.${patch}`;
-        break;
-      }
-      case "20": {
-        operatingSystemVersion = `11.${minor}.${patch}`;
-        break;
-      }
-
-      case "19": {
-        operatingSystemVersion = `10.15.${patch}`;
-        break;
-      }
-
-      case "18": {
-        operatingSystemVersion = `10.14.${patch}`;
-        break;
-      }
-
-      case "17": {
-        operatingSystemVersion = `10.13.${patch}`;
-        break;
-      }
-
-      case "16": {
-        operatingSystemVersion = `10.12.${patch}`;
-        break;
-      }
-
-      case "15": {
-        operatingSystemVersion = `10.11.${patch}`;
-        break;
-      }
-    }
-    info.platform.os = "macOS";
-  }
-
-  if (info.platform.arch === "arm" && info.platform.os === "macOS") {
-    info.platform.arch = "Apple Silicon";
-  } else if (info.platform.arch === "arm") {
-    info.platform.arch = "aarch64";
-  }
-
-  var base = `Info:
-> bun v${info.bun_version}
-`;
-
-  if (info.framework && info.framework_version) {
-    base += `> framework: ${info.framework}@${info.framework_version}`;
-  } else if (info.framework) {
-    base += `> framework: ${info.framework}`;
-  }
-
-  base =
-    base.trim() +
-    `
-> ${info.platform.os} ${operatingSystemVersion} (${info.platform.arch})
-> User-Agent: ${navigator.userAgent}
-> Pathname: ${location.pathname}
-`;
-
-  return base;
-}
-
-var bunInfoMemoized;
-function getBunInfo() {
-  if (bunInfoMemoized) return bunInfoMemoized;
-  if ("sessionStorage" in globalThis) {
-    try {
-      const bunInfoMemoizedString = sessionStorage.getItem("__bunInfo");
-      if (bunInfoMemoizedString) {
-        bunInfoMemoized = JSON.parse(bunInfoMemoized);
-        return bunInfoMemoized;
-      }
-    } catch (exception) {}
-  }
-  const controller = new AbortController();
-  const timeout = 1000;
-  const id = setTimeout(() => controller.abort(), timeout);
-  return fetch("/bun:info", {
-    signal: controller.signal,
-    headers: {
-      Accept: "application/json",
-    },
-  })
-    .then((resp) => resp.json())
-    .then((bunInfo) => {
-      clearTimeout(id);
-      bunInfoMemoized = bunInfo;
-      if ("sessionStorage" in globalThis) {
-        try {
-          sessionStorage.setItem("__bunInfo", JSON.stringify(bunInfo));
-        } catch (exception) {}
-      }
-
-      return bunInfo;
-    });
-}
 
 const IndentationContext = createContext(0);
 
@@ -539,7 +502,7 @@ const SourceLines = ({
     const { line, text } = _sourceLines[i];
     const classes = {
       empty: text.trim().length === 0,
-      highlight: highlight + +!isClient === line || _sourceLines.length === 1,
+      highlight: highlight === line,
     };
     if (classes.highlight) highlightI = i;
     const _text = classes.empty ? "" : text.substring(dedent);
@@ -569,20 +532,7 @@ const SourceLines = ({
             classes.empty ? "BunError-SourceLine-text--empty" : ""
           } ${classes.highlight ? "BunError-SourceLine-text--highlight" : ""}`}
         >
-          {classes.highlight ? (
-            <>
-              {_text.substring(0, highlightColumnStart - dedent)}
-              <span id="BunError-SourceLine-text-highlightExpression">
-                {_text.substring(
-                  highlightColumnStart - dedent,
-                  highlightColumnEnd - dedent
-                )}
-              </span>
-              {_text.substring(highlightColumnEnd - dedent)}
-            </>
-          ) : (
-            _text
-          )}
+          {_text}
         </div>
       </div>
     );
@@ -644,7 +594,7 @@ const BuildErrorStackTrace = ({ location }: { location: Location }) => {
   );
 };
 
-const StackFrameIdentifier = ({
+export const StackFrameIdentifier = ({
   functionName,
   scope,
   markdown = false,
@@ -800,7 +750,7 @@ const NativeStackTrace = ({
   const { file = "", position } = frames[0];
   const { cwd } = useContext(ErrorGroupContext);
   const filename = normalizedFilename(file, cwd);
-  const urlBuilder = isClient ? clientURL : blobFileURL;
+  const urlBuilder = isClient ? clientURL : maybeBlobFileURL;
   // const [isFocused, setFocused] = React.useState(false);
   const ref = React.useRef<HTMLDivElement>();
   const buildURL = React.useCallback(
@@ -867,7 +817,7 @@ const NativeStackTrace = ({
           {children}
         </SourceLines>
       )}
-      {sourceLines.length === 0 && isClient && (
+      {sourceLines.length === 0 && (
         <AsyncSourceLines
           highlight={position.line}
           sourceLines={sourceLines}
@@ -875,7 +825,7 @@ const NativeStackTrace = ({
           highlightColumnStart={position.column_start}
           buildURL={buildURL}
           highlightColumnEnd={position.column_stop}
-          isClient
+          isClient={isClient}
         >
           {children}
         </AsyncSourceLines>
@@ -884,18 +834,6 @@ const NativeStackTrace = ({
         <NativeStackFrames urlBuilder={urlBuilder} frames={frames} />
       )}
     </div>
-  );
-};
-
-const divet = <span className="BunError-divet">^</span>;
-const DivetRange = ({ start, stop }) => {
-  const length = Math.max(stop - start, 0);
-  if (length === 0) return null;
-  return (
-    <span
-      className="BunError-DivetRange"
-      style={{ width: `${length - 1}ch` }}
-    ></span>
   );
 };
 
@@ -1175,19 +1113,6 @@ const OverlayMessageContainer = ({
   );
 };
 
-function problemsToMarkdown(problems: Problems) {
-  var markdown = "";
-  if (problems?.build?.msgs?.length) {
-    markdown += messagesToMarkdown(problems.build.msgs);
-  }
-
-  if (problems?.exceptions?.length) {
-    markdown += exceptionsToMarkdown(problems.exceptions);
-  }
-
-  return markdown;
-}
-
 // we can ignore the synchronous copy to clipboard API...I think
 function copyToClipboard(input: string | Promise<string>) {
   if (!input) return;
@@ -1198,231 +1123,6 @@ function copyToClipboard(input: string | Promise<string>) {
 
   return navigator.clipboard.writeText(input).then(() => {});
 }
-
-function messagesToMarkdown(messages: Message[]): string {
-  return messages
-    .map(messageToMarkdown)
-    .map((a) => a.trim())
-    .join("\n");
-}
-
-function exceptionsToMarkdown(exceptions: JSExceptionType[]): string {
-  return exceptions
-    .map(exceptionToMarkdown)
-    .map((a) => a.trim())
-    .join("\n");
-}
-
-function exceptionToMarkdown(exception: JSException): string {
-  const { name, message, stack } = exception;
-
-  let markdown = "";
-
-  if (name === "Error" || name === "RangeError" || name === "TypeError") {
-    markdown += `**${message}**\n`;
-  } else {
-    markdown += `**${name}**\n ${message}\n`;
-  }
-
-  if (stack.frames.length > 0) {
-    var frames = stack.frames;
-    if (stack.source_lines.length > 0) {
-      const {
-        file = "",
-        function_name = "",
-        position: {
-          line = -1,
-          column_start: column = -1,
-          column_stop: columnEnd = column,
-        } = {
-          line: -1,
-          column_start: -1,
-          column_stop: -1,
-        },
-        scope = 0,
-      } = stack.frames[0];
-
-      if (file) {
-        if (function_name.length > 0) {
-          markdown += `In \`${function_name}\` – ${file}`;
-        } else if (scope > 0 && scope < StackFrameScope.Constructor + 1) {
-          markdown += `${StackFrameIdentifier({
-            functionName: function_name,
-            scope,
-            markdown: true,
-          })} ${file}`;
-        } else {
-          markdown += `In ${file}`;
-        }
-
-        if (line > -1) {
-          markdown += `:${line}`;
-          if (column > -1) {
-            markdown += `:${column}`;
-          }
-        }
-
-        if (stack.source_lines.length > 0) {
-          // TODO: include loader
-          const extnameI = file.lastIndexOf(".");
-          const extname = extnameI > -1 ? file.slice(extnameI + 1) : "";
-
-          markdown += "\n```";
-          markdown += extname;
-          markdown += "\n";
-          stack.source_lines.forEach((sourceLine) => {
-            markdown += sourceLine.text + "\n";
-            if (sourceLine.line === line && stack.source_lines.length > 1) {
-              markdown +=
-                ("/* " + "^".repeat(Math.max(columnEnd - column, 1))).padStart(
-                  Math.max(column + 2, 0)
-                ) + " happened here */\n";
-            }
-          });
-          markdown += "\n```";
-        }
-      }
-    }
-
-    if (frames.length > 0) {
-      markdown += "\nStack trace:\n";
-      var padding = 0;
-      for (let frame of frames) {
-        const {
-          function_name = "",
-          position: { line = -1, column_start: column = -1 } = {
-            line: -1,
-            column_start: -1,
-          },
-          scope = 0,
-        } = frame;
-        padding = Math.max(
-          padding,
-          StackFrameIdentifier({
-            scope,
-            functionName: function_name,
-            markdown: true,
-          }).length
-        );
-      }
-
-      markdown += "```js\n";
-
-      for (let frame of frames) {
-        const {
-          file = "",
-          function_name = "",
-          position: { line = -1, column_start: column = -1 } = {
-            line: -1,
-            column_start: -1,
-          },
-          scope = 0,
-        } = frame;
-
-        markdown += `
-${StackFrameIdentifier({
-  scope,
-  functionName: function_name,
-  markdown: true,
-}).padEnd(padding, " ")}`;
-
-        if (file) {
-          markdown += ` ${file}`;
-          if (line > -1) {
-            markdown += `:${line}`;
-            if (column > -1) {
-              markdown += `:${column}`;
-            }
-          }
-        }
-      }
-
-      markdown += "\n```\n";
-    }
-  }
-
-  return markdown;
-}
-
-function messageToMarkdown(message: Message): string {
-  var tag = "Error";
-  if (message.on.build) {
-    tag = "BuildError";
-  }
-  var lines = (message.data.text ?? "").split("\n");
-
-  var markdown = "";
-  if (message?.on?.resolve) {
-    markdown += `**ResolveError**: "${message.on.resolve}" failed to resolve\n`;
-  } else {
-    var firstLine = lines[0];
-    lines = lines.slice(1);
-    if (firstLine.length > 120) {
-      const words = firstLine.split(" ");
-      var end = 0;
-      for (let i = 0; i < words.length; i++) {
-        if (end + words[i].length >= 120) {
-          firstLine = words.slice(0, i).join(" ");
-          lines.unshift(words.slice(i).join(" "));
-          break;
-        }
-      }
-    }
-
-    markdown += `**${tag}**${firstLine.length > 0 ? ": " + firstLine : ""}\n`;
-  }
-
-  if (message.data?.location?.file) {
-    markdown += `In ${normalizedFilename(message.data.location.file, thisCwd)}`;
-    if (message.data.location.line > -1) {
-      markdown += `:${message.data.location.line}`;
-      if (message.data.location.column > -1) {
-        markdown += `:${message.data.location.column}`;
-      }
-    }
-
-    if (message.data.location.line_text.length) {
-      const extnameI = message.data.location.file.lastIndexOf(".");
-      const extname =
-        extnameI > -1 ? message.data.location.file.slice(extnameI + 1) : "";
-
-      markdown +=
-        "\n```" + extname + "\n" + message.data.location.line_text + "\n```\n";
-    } else {
-      markdown += "\n";
-    }
-
-    if (lines.length > 0) {
-      markdown += lines.join("\n");
-    }
-  }
-
-  return markdown;
-}
-
-const withBunInfo = (text) => {
-  const bunInfo = getBunInfo();
-
-  const trimmed = text.trim();
-
-  if (bunInfo && "then" in bunInfo) {
-    return bunInfo.then(
-      (info) => {
-        const markdown = bunInfoToMarkdown(info).trim();
-        return trimmed + "\n" + markdown + "\n";
-      },
-      () => trimmed + "\n"
-    );
-  }
-
-  if (bunInfo) {
-    const markdown = bunInfoToMarkdown(bunInfo).trim();
-
-    return trimmed + "\n" + markdown + "\n";
-  }
-
-  return trimmed + "\n";
-};
 
 const Footer = ({ toMarkdown, data }) => (
   <div className="BunError-footer">
@@ -1468,7 +1168,7 @@ const BuildFailureMessageContainer = ({
     </div>
   );
 };
-var thisCwd = "";
+export var thisCwd = "";
 const ErrorGroupContext = createContext<{ cwd: string }>(null);
 var reactRoot;
 
@@ -1513,8 +1213,15 @@ export function renderFallbackError(fallback: FallbackMessageContainer) {
 }
 
 import { parse as getStackTrace } from "./stack-trace-parser";
+var runtimeErrorController: AbortController;
+var pending = [];
 
+var onIdle = globalThis.requestIdleCallback || ((cb) => setTimeout(cb, 32));
+function clearSourceMappings() {
+  sourceMappings.clear();
+}
 export function renderRuntimeError(error: Error) {
+  runtimeErrorController = new AbortController();
   if (typeof error === "string") {
     error = {
       name: "Error",
@@ -1580,6 +1287,7 @@ export function renderRuntimeError(error: Error) {
       }
     }
   }
+  const signal = runtimeErrorController.signal;
 
   const fallback: FallbackMessageContainer = {
     message: error.message,
@@ -1595,11 +1303,86 @@ export function renderRuntimeError(error: Error) {
       exceptions: [exception],
     },
   };
-  return renderWithFunc(() => (
-    <ErrorGroupContext.Provider value={fallback}>
-      <OverlayMessageContainer isClient {...fallback} />
-    </ErrorGroupContext.Provider>
-  ));
+
+  var stopThis = { stopped: false };
+  pending.push(stopThis);
+
+  const BunError = () => {
+    return (
+      <ErrorGroupContext.Provider value={fallback}>
+        <OverlayMessageContainer isClient {...fallback} />
+      </ErrorGroupContext.Provider>
+    );
+  };
+
+  // Remap the sourcemaps
+  // But! If we've already fetched the source mappings in this page load before
+  // Rely on the cached ones
+  // and don't fetch them again
+  const framePromises = exception.stack.frames
+    .map((frame, i) => {
+      if (stopThis.stopped) return null;
+      return [
+        fetchMappings(normalizedFilename(frame.file, thisCwd), signal),
+        i,
+      ];
+    })
+    .map((result) => {
+      if (!result) return;
+      const [mappings, frameIndex] = result;
+      if (mappings?.then) {
+        return mappings.then((mappings) => {
+          if (!mappings || stopThis.stopped) {
+            return null;
+          }
+          var frame = exception.stack.frames[frameIndex];
+
+          const { line, column_start } = frame.position;
+          const remapped = remapPosition(mappings, line, column_start);
+          if (!remapped) return null;
+          frame.position.line_start = frame.position.line = remapped[0];
+          frame.position.column_stop =
+            frame.position.expression_stop =
+            frame.position.expression_start =
+            frame.position.column_start =
+              remapped[1];
+        }, console.error);
+      } else {
+        var frame = exception.stack.frames[frameIndex];
+        const { line, column_start } = frame.position;
+        const remapped = remapPosition(mappings, line, column_start);
+        if (!remapped) return null;
+        frame.position.line_start = frame.position.line = remapped[0];
+        frame.position.column_stop =
+          frame.position.expression_stop =
+          frame.position.expression_start =
+          frame.position.column_start =
+            remapped[1];
+      }
+    });
+
+  var anyPromises = false;
+  for (let i = 0; i < framePromises.length; i++) {
+    if (framePromises[i] && framePromises[i].then) {
+      anyPromises = true;
+      break;
+    }
+  }
+
+  if (anyPromises) {
+    Promise.allSettled(framePromises).finally(() => {
+      if (stopThis.stopped || signal.aborted) return;
+      onIdle(clearSourceMappings);
+      return renderWithFunc(() => {
+        return <BunError />;
+      });
+    });
+  } else {
+    onIdle(clearSourceMappings);
+    renderWithFunc(() => {
+      return <BunError />;
+    });
+  }
 }
 
 export function dismissError() {
@@ -1608,6 +1391,12 @@ export function dismissError() {
     const root = document.getElementById("__bun__error-root");
     if (root) root.remove();
     reactRoot = null;
+    if (runtimeErrorController) {
+      runtimeErrorController.abort();
+      runtimeErrorController = null;
+    }
+
+    while (pending.length > 0) pending.shift().stopThis = true;
   }
 }
 

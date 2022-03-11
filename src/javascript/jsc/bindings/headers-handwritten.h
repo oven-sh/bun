@@ -68,6 +68,7 @@ typedef struct ZigStackFrame {
     ZigString source_url;
     ZigStackFramePosition position;
     ZigStackFrameCode code_type;
+    bool remapped;
 } ZigStackFrame;
 
 typedef struct ZigStackTrace {
@@ -90,6 +91,7 @@ typedef struct ZigException {
     ZigString message;
     ZigStackTrace stack;
     void* exception;
+    bool remapped;
 } ZigException;
 
 typedef uint8_t JSErrorCode;

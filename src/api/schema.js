@@ -2667,6 +2667,7 @@ function decodeWebsocketMessageWelcome(bb) {
   result["epoch"] = bb.readUint32();
   result["javascriptReloader"] = Reloader[bb.readByte()];
   result["cwd"] = bb.readString();
+  result["assetPrefix"] = bb.readString();
   return result;
 }
 
@@ -2695,6 +2696,13 @@ function encodeWebsocketMessageWelcome(message, bb) {
     bb.writeString(value);
   } else {
     throw new Error('Missing required field "cwd"');
+  }
+
+  var value = message["assetPrefix"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error('Missing required field "assetPrefix"');
   }
 }
 

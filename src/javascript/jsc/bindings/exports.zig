@@ -389,7 +389,12 @@ pub const ZigStackTrace = extern struct {
     frames_ptr: [*c]ZigStackFrame,
     frames_len: u8,
 
-    pub fn toAPI(this: *const ZigStackTrace, allocator: std.mem.Allocator) !Api.StackTrace {
+    pub fn toAPI(
+        this: *const ZigStackTrace,
+        allocator: std.mem.Allocator,
+        root_path: string,
+        origin: ?*const ZigURL,
+    ) !Api.StackTrace {
         var stack_trace: Api.StackTrace = std.mem.zeroes(Api.StackTrace);
         {
             var source_lines_iter = this.sourceLineIterator();
@@ -424,7 +429,11 @@ pub const ZigStackTrace = extern struct {
                 stack_trace.frames = stack_frames;
 
                 for (_frames) |frame, i| {
-                    stack_frames[i] = try frame.toAPI(allocator);
+                    stack_frames[i] = try frame.toAPI(
+                        root_path,
+                        origin,
+                        allocator,
+                    );
                 }
             }
         }
@@ -480,18 +489,24 @@ pub const ZigStackFrame = extern struct {
     position: ZigStackFramePosition,
     code_type: ZigStackFrameCode,
 
-    pub fn toAPI(this: *const ZigStackFrame, allocator: std.mem.Allocator) !Api.StackFrame {
+    /// This informs formatters whether to display as a blob URL or not
+    remapped: bool = false,
+
+    pub fn toAPI(this: *const ZigStackFrame, root_path: string, origin: ?*const ZigURL, allocator: std.mem.Allocator) !Api.StackFrame {
         var frame: Api.StackFrame = std.mem.zeroes(Api.StackFrame);
         if (this.function_name.len > 0) {
             frame.function_name = try allocator.dupe(u8, this.function_name.slice());
         }
 
         if (this.source_url.len > 0) {
-            frame.file = try allocator.dupe(u8, this.source_url.slice());
+            frame.file = try std.fmt.allocPrint(allocator, "{any}", .{this.sourceURLFormatter(root_path, origin, true, false)});
         }
 
         frame.position.source_offset = this.position.source_offset;
-        frame.position.line = this.position.line;
+
+        // For remapped code, we add 1 to the line number
+        frame.position.line = this.position.line + @as(i32, @boolToInt(this.remapped));
+
         frame.position.line_start = this.position.line_start;
         frame.position.line_stop = this.position.line_stop;
         frame.position.column_start = this.position.column_start;
@@ -508,7 +523,8 @@ pub const ZigStackFrame = extern struct {
         position: ZigStackFramePosition,
         enable_color: bool,
         origin: ?*const ZigURL,
-
+        exclude_line_column: bool = false,
+        remapped: bool = false,
         root_path: string = "",
         pub fn format(this: SourceURLFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             if (this.enable_color) {
@@ -516,16 +532,19 @@ pub const ZigStackFrame = extern struct {
             }
 
             var source_slice = this.source_url.slice();
-            if (this.origin) |origin| {
-                try writer.writeAll(origin.displayProtocol());
-                try writer.writeAll("://");
-                try writer.writeAll(origin.displayHostname());
-                try writer.writeAll(":");
-                try writer.writeAll(origin.port);
-                try writer.writeAll("/blob:");
 
-                if (strings.startsWith(source_slice, this.root_path)) {
-                    source_slice = source_slice[this.root_path.len..];
+            if (!this.remapped) {
+                if (this.origin) |origin| {
+                    try writer.writeAll(origin.displayProtocol());
+                    try writer.writeAll("://");
+                    try writer.writeAll(origin.displayHostname());
+                    try writer.writeAll(":");
+                    try writer.writeAll(origin.port);
+                    try writer.writeAll("/blob:");
+
+                    if (strings.startsWith(source_slice, this.root_path)) {
+                        source_slice = source_slice[this.root_path.len..];
+                    }
                 }
             }
 
@@ -539,30 +558,32 @@ pub const ZigStackFrame = extern struct {
                 }
             }
 
-            if (this.position.line > -1 and this.position.column_start > -1) {
-                if (this.enable_color) {
-                    try std.fmt.format(
-                        writer,
-                        // :
-                        comptime Output.prettyFmt("<d>:<r><yellow>{d}<r><d>:<yellow>{d}<r>", true),
-                        .{ this.position.line + 1, this.position.column_start },
-                    );
-                } else {
-                    try std.fmt.format(writer, ":{d}:{d}", .{ this.position.line + 1, this.position.column_start });
-                }
-            } else if (this.position.line > -1) {
-                if (this.enable_color) {
-                    try std.fmt.format(
-                        writer,
-                        comptime Output.prettyFmt("<d>:<r><yellow>{d}<r>", true),
-                        .{
+            if (!this.exclude_line_column) {
+                if (this.position.line > -1 and this.position.column_start > -1) {
+                    if (this.enable_color) {
+                        try std.fmt.format(
+                            writer,
+                            // :
+                            comptime Output.prettyFmt("<d>:<r><yellow>{d}<r><d>:<yellow>{d}<r>", true),
+                            .{ this.position.line + 1, this.position.column_start },
+                        );
+                    } else {
+                        try std.fmt.format(writer, ":{d}:{d}", .{ this.position.line + 1, this.position.column_start });
+                    }
+                } else if (this.position.line > -1) {
+                    if (this.enable_color) {
+                        try std.fmt.format(
+                            writer,
+                            comptime Output.prettyFmt("<d>:<r><yellow>{d}<r>", true),
+                            .{
+                                this.position.line + 1,
+                            },
+                        );
+                    } else {
+                        try std.fmt.format(writer, ":{d}", .{
                             this.position.line + 1,
-                        },
-                    );
-                } else {
-                    try std.fmt.format(writer, ":{d}", .{
-                        this.position.line + 1,
-                    });
+                        });
+                    }
                 }
             }
         }
@@ -621,8 +642,16 @@ pub const ZigStackFrame = extern struct {
         return NameFormatter{ .function_name = this.function_name, .code_type = this.code_type, .enable_color = enable_color };
     }
 
-    pub fn sourceURLFormatter(this: *const ZigStackFrame, root_path: string, origin: ?*const ZigURL, comptime enable_color: bool) SourceURLFormatter {
-        return SourceURLFormatter{ .source_url = this.source_url, .origin = origin, .root_path = root_path, .position = this.position, .enable_color = enable_color };
+    pub fn sourceURLFormatter(this: *const ZigStackFrame, root_path: string, origin: ?*const ZigURL, exclude_line_column: bool, comptime enable_color: bool) SourceURLFormatter {
+        return SourceURLFormatter{
+            .source_url = this.source_url,
+            .exclude_line_column = exclude_line_column,
+            .origin = origin,
+            .root_path = root_path,
+            .position = this.position,
+            .enable_color = enable_color,
+            .remapped = this.remapped,
+        };
     }
 };
 
@@ -669,6 +698,8 @@ pub const ZigException = extern struct {
     stack: ZigStackTrace,
 
     exception: ?*anyopaque,
+
+    remapped: bool = false,
 
     pub const shim = Shimmer("Zig", "Exception", @This());
     pub const name = "ZigException";
@@ -736,7 +767,12 @@ pub const ZigException = extern struct {
         return shim.cppFn("fromException", .{exception});
     }
 
-    pub fn addToErrorList(this: *ZigException, error_list: *std.ArrayList(Api.JsException)) !void {
+    pub fn addToErrorList(
+        this: *ZigException,
+        error_list: *std.ArrayList(Api.JsException),
+        root_path: string,
+        origin: ?*const ZigURL,
+    ) !void {
         const _name: string = @field(this, "name").slice();
         const message: string = @field(this, "message").slice();
 
@@ -757,7 +793,7 @@ pub const ZigException = extern struct {
         }
 
         if (this.stack.frames_len > 0) {
-            api_exception.stack = try this.stack.toAPI(error_list.allocator);
+            api_exception.stack = try this.stack.toAPI(error_list.allocator, root_path, origin);
             is_empty = false;
         }
 

@@ -46,7 +46,10 @@ fn _disabledAssert(_: bool) void {
 }
 
 const assert = if (Environment.allow_assert) std.debug.assert else _disabledAssert;
-
+const ExprListLoc = struct {
+    list: ExprNodeList,
+    loc: logger.Loc,
+};
 pub const LocRef = js_ast.LocRef;
 pub const S = js_ast.S;
 pub const B = js_ast.B;
@@ -172,6 +175,87 @@ const TransposeState = struct {
     is_await_target: bool = false,
     is_then_catch_target: bool = false,
     loc: logger.Loc,
+};
+
+const JSXTag = struct {
+    pub const TagType = enum { fragment, tag };
+    pub const Data = union(TagType) {
+        fragment: u8,
+        tag: Expr,
+
+        pub fn asExpr(d: *const Data) ?ExprNodeIndex {
+            switch (d.*) {
+                .tag => |tag| {
+                    return tag;
+                },
+                else => {
+                    return null;
+                },
+            }
+        }
+    };
+    data: Data,
+    range: logger.Range,
+    name: string = "",
+
+    pub fn parse(comptime P: type, p: *P) anyerror!JSXTag {
+        const loc = p.lexer.loc();
+
+        // A missing tag is a fragment
+        if (p.lexer.token == .t_greater_than) {
+            return JSXTag{
+                .range = logger.Range{ .loc = loc, .len = 0 },
+                .data = Data{ .fragment = 1 },
+                .name = "",
+            };
+        }
+
+        // The tag is an identifier
+        var name = p.lexer.identifier;
+        var tag_range = p.lexer.range();
+        try p.lexer.expectInsideJSXElement(.t_identifier);
+
+        // Certain identifiers are strings
+        // <div
+        // <button
+        // <Hello-:Button
+        if (strings.containsComptime(name, "-:") or (p.lexer.token != .t_dot and name[0] >= 'a' and name[0] <= 'z')) {
+            return JSXTag{
+                .data = Data{ .tag = p.e(E.String{
+                    .utf8 = name,
+                }, loc) },
+                .range = tag_range,
+            };
+        }
+
+        // Otherwise, this is an identifier
+        // <Button>
+        var tag = p.e(E.Identifier{ .ref = try p.storeNameInRef(name) }, loc);
+
+        // Parse a member expression chain
+        // <Button.Red>
+        while (p.lexer.token == .t_dot) {
+            try p.lexer.nextInsideJSXElement();
+            const member_range = p.lexer.range();
+            const member = p.lexer.identifier;
+            try p.lexer.expectInsideJSXElement(.t_identifier);
+
+            if (strings.indexOfChar(member, '-')) |index| {
+                try p.log.addError(p.source, logger.Loc{ .start = member_range.loc.start + @intCast(i32, index) }, "Unexpected \"-\"");
+                return error.SyntaxError;
+            }
+
+            var _name = try p.allocator.alloc(u8, name.len + 1 + member.len);
+            std.mem.copy(u8, _name, name);
+            _name[name.len] = '.';
+            std.mem.copy(u8, _name[name.len + 1 .. _name.len], member);
+            name = _name;
+            tag_range.len = member_range.loc.start + member_range.len - tag_range.loc.start;
+            tag = p.e(E.Dot{ .target = tag, .name = member, .name_loc = member_range.loc }, loc);
+        }
+
+        return JSXTag{ .data = Data{ .tag = tag }, .range = tag_range, .name = name };
+    }
 };
 
 pub const TypeScript = struct {
@@ -757,6 +841,7 @@ pub const ImportScanner = struct {
                                                     .extends = class.class.extends,
                                                     .body_loc = class.class.body_loc,
                                                     .properties = class.class.properties,
+                                                    .close_brace_loc = class.class.close_brace_loc,
                                                 }, stmt.loc),
                                             };
 
@@ -5974,7 +6059,7 @@ fn NewParser_(
                                     }
 
                                     if (stmt.data.s_function.func.name) |name| {
-                                        defaultName = js_ast.LocRef{ .loc = defaultLoc, .ref = name.ref };
+                                        defaultName = js_ast.LocRef{ .loc = name.loc, .ref = name.ref };
                                     } else {
                                         defaultName = try p.createDefaultName(defaultLoc);
                                     }
@@ -6009,12 +6094,12 @@ fn NewParser_(
 
                                         .s_function => |func_container| {
                                             if (func_container.func.name) |name| {
-                                                break :default_name_getter LocRef{ .loc = defaultLoc, .ref = name.ref };
+                                                break :default_name_getter LocRef{ .loc = name.loc, .ref = name.ref };
                                             } else {}
                                         },
                                         .s_class => |class| {
                                             if (class.class.class_name) |name| {
-                                                break :default_name_getter LocRef{ .loc = defaultLoc, .ref = name.ref };
+                                                break :default_name_getter LocRef{ .loc = name.loc, .ref = name.ref };
                                             } else {}
                                         },
                                         else => {},
@@ -7272,7 +7357,7 @@ fn NewParser_(
                 try p.lexer.expect(.t_string_literal);
                 try p.lexer.expect(.t_close_paren);
                 const args = try ExprNodeList.one(p.allocator, path);
-                value.data = .{ .e_call = Expr.Data.Store.All.append(E.Call, E.Call{ .target = value, .args = args }) };
+                value.data = .{ .e_call = Expr.Data.Store.All.append(E.Call, E.Call{ .target = value, .close_paren_loc = p.lexer.loc(), .args = args }) };
             } else {
                 // "import Foo = Bar"
                 // "import Foo = Bar.Baz"
@@ -9522,12 +9607,13 @@ fn NewParser_(
 
             p.allow_in = old_allow_in;
             p.allow_private_identifiers = old_allow_private_identifiers;
-
+            const close_brace_loc = p.lexer.loc();
             try p.lexer.expect(.t_close_brace);
 
             return G.Class{
                 .class_name = name,
                 .extends = extends,
+                .close_brace_loc = close_brace_loc,
                 .ts_decorators = ExprNodeList.init(class_opts.ts_decorators),
                 .class_keyword = class_keyword,
                 .body_loc = body_loc,
@@ -9603,7 +9689,7 @@ fn NewParser_(
             return expr;
         }
 
-        pub fn parseCallArgs(p: *P) anyerror!ExprNodeList {
+        pub fn parseCallArgs(p: *P) anyerror!ExprListLoc {
             // Allow "in" inside call arguments
             const old_allow_in = p.allow_in;
             p.allow_in = true;
@@ -9629,9 +9715,9 @@ fn NewParser_(
                 }
                 try p.lexer.next();
             }
-
+            const close_paren_loc = p.lexer.loc();
             try p.lexer.expect(.t_close_paren);
-            return ExprNodeList.fromList(args);
+            return ExprListLoc{ .list = ExprNodeList.fromList(args), .loc = close_paren_loc };
         }
 
         pub fn parseSuffix(p: *P, _left: Expr, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
@@ -9684,8 +9770,8 @@ fn NewParser_(
                                 else => {},
                             }
 
-                            var name = p.lexer.identifier;
-                            var name_loc = p.lexer.loc();
+                            const name = p.lexer.identifier;
+                            const name_loc = p.lexer.loc();
                             try p.lexer.next();
                             const ref = p.storeNameInRef(name) catch unreachable;
                             left = p.e(E.Index{
@@ -9705,8 +9791,8 @@ fn NewParser_(
                                 try p.lexer.expect(.t_identifier);
                             }
 
-                            var name = p.lexer.identifier;
-                            var name_loc = p.lexer.loc();
+                            const name = p.lexer.identifier;
+                            const name_loc = p.lexer.loc();
                             try p.lexer.next();
 
                             left = p.e(E.Dot{ .target = left, .name = name, .name_loc = name_loc, .optional_chain = old_optional_chain }, left.loc);
@@ -9751,9 +9837,11 @@ fn NewParser_(
                                     return left;
                                 }
 
+                                const list_loc = try p.parseCallArgs();
                                 left = p.e(E.Call{
                                     .target = left,
-                                    .args = try p.parseCallArgs(),
+                                    .args = list_loc.list,
+                                    .close_paren_loc = list_loc.loc,
                                     .optional_chain = optional_start,
                                 }, left.loc);
                             },
@@ -9773,10 +9861,13 @@ fn NewParser_(
                                     return left;
                                 }
 
-                                left = p.e(
-                                    E.Call{ .target = left, .args = try p.parseCallArgs(), .optional_chain = optional_start },
-                                    left.loc,
-                                );
+                                const list_loc = try p.parseCallArgs();
+                                left = p.e(E.Call{
+                                    .target = left,
+                                    .args = list_loc.list,
+                                    .close_paren_loc = list_loc.loc,
+                                    .optional_chain = optional_start,
+                                }, left.loc);
                             },
                             else => {
                                 if (p.lexer.token == .t_private_identifier and p.allow_private_identifiers) {
@@ -9878,10 +9969,12 @@ fn NewParser_(
                             return left;
                         }
 
+                        const list_loc = try p.parseCallArgs();
                         left = p.e(
                             E.Call{
                                 .target = left,
-                                .args = try p.parseCallArgs(),
+                                .args = list_loc.list,
+                                .close_paren_loc = list_loc.loc,
                                 .optional_chain = old_optional_chain,
                             },
                             left.loc,
@@ -10832,13 +10925,17 @@ fn NewParser_(
                         }
                     }
 
+                    var close_parens_loc = logger.Loc.Empty;
                     if (p.lexer.token == .t_open_paren) {
-                        args = try p.parseCallArgs();
+                        const call_args = try p.parseCallArgs();
+                        args = call_args.list;
+                        close_parens_loc = call_args.loc;
                     }
 
                     return p.e(E.New{
                         .target = target,
                         .args = args,
+                        .close_parens_loc = close_parens_loc,
                     }, loc);
                 },
                 .t_open_bracket => {
@@ -10898,6 +10995,7 @@ fn NewParser_(
                         is_single_line = false;
                     }
 
+                    const close_bracket_loc = p.lexer.loc();
                     try p.lexer.expect(.t_close_bracket);
                     p.allow_in = old_allow_in;
 
@@ -10915,6 +11013,7 @@ fn NewParser_(
                         .items = ExprNodeList.fromList(items),
                         .comma_after_spread = comma_after_spread.toNullable(),
                         .is_single_line = is_single_line,
+                        .close_bracket_loc = close_bracket_loc,
                     }, loc);
                 },
                 .t_open_brace => {
@@ -10967,6 +11066,7 @@ fn NewParser_(
                         is_single_line = false;
                     }
 
+                    const close_brace_loc = p.lexer.loc();
                     try p.lexer.expect(.t_close_brace);
                     p.allow_in = old_allow_in;
 
@@ -10987,6 +11087,7 @@ fn NewParser_(
                         else
                             null,
                         .is_single_line = is_single_line,
+                        .close_brace_loc = close_brace_loc,
                     }, loc);
                 },
                 .t_less_than => {
@@ -11172,87 +11273,6 @@ fn NewParser_(
             return p.e(E.Import{ .expr = value, .leading_interior_comments = comments, .import_record_index = 0 }, loc);
         }
 
-        const JSXTag = struct {
-            pub const TagType = enum { fragment, tag };
-            pub const Data = union(TagType) {
-                fragment: u8,
-                tag: Expr,
-
-                pub fn asExpr(d: *const Data) ?ExprNodeIndex {
-                    switch (d.*) {
-                        .tag => |tag| {
-                            return tag;
-                        },
-                        else => {
-                            return null;
-                        },
-                    }
-                }
-            };
-            data: Data,
-            range: logger.Range,
-            name: string = "",
-
-            pub fn parse(p: *P) anyerror!JSXTag {
-                const loc = p.lexer.loc();
-
-                // A missing tag is a fragment
-                if (p.lexer.token == .t_greater_than) {
-                    return JSXTag{
-                        .range = logger.Range{ .loc = loc, .len = 0 },
-                        .data = Data{ .fragment = 1 },
-                        .name = "",
-                    };
-                }
-
-                // The tag is an identifier
-                var name = p.lexer.identifier;
-                var tag_range = p.lexer.range();
-                try p.lexer.expectInsideJSXElement(.t_identifier);
-
-                // Certain identifiers are strings
-                // <div
-                // <button
-                // <Hello-:Button
-                if (strings.contains(name, "-:") or (p.lexer.token != .t_dot and name[0] >= 'a' and name[0] <= 'z')) {
-                    return JSXTag{
-                        .data = Data{ .tag = p.e(E.String{
-                            .utf8 = name,
-                        }, loc) },
-                        .range = tag_range,
-                    };
-                }
-
-                // Otherwise, this is an identifier
-                // <Button>
-                var tag = p.e(E.Identifier{ .ref = try p.storeNameInRef(name) }, loc);
-
-                // Parse a member expression chain
-                // <Button.Red>
-                while (p.lexer.token == .t_dot) {
-                    try p.lexer.nextInsideJSXElement();
-                    const member_range = p.lexer.range();
-                    const member = p.lexer.identifier;
-                    try p.lexer.expectInsideJSXElement(.t_identifier);
-
-                    if (strings.indexOfChar(member, '-')) |index| {
-                        try p.log.addError(p.source, logger.Loc{ .start = member_range.loc.start + @intCast(i32, index) }, "Unexpected \"-\"");
-                        return error.SyntaxError;
-                    }
-
-                    var _name = try p.allocator.alloc(u8, name.len + 1 + member.len);
-                    std.mem.copy(u8, _name, name);
-                    _name[name.len] = '.';
-                    std.mem.copy(u8, _name[name.len + 1 .. _name.len], member);
-                    name = _name;
-                    tag_range.len = member_range.loc.start + member_range.len - tag_range.loc.start;
-                    tag = p.e(E.Dot{ .target = tag, .name = member, .name_loc = member_range.loc }, loc);
-                }
-
-                return JSXTag{ .data = Data{ .tag = tag }, .range = tag_range, .name = name };
-            }
-        };
-
         fn parseJSXPropValueIdentifier(p: *P, previous_string_with_backslash_loc: *logger.Loc) !Expr {
             // Use NextInsideJSXElement() not Next() so we can parse a JSX-style string literal
             try p.lexer.nextInsideJSXElement();
@@ -11276,7 +11296,7 @@ fn NewParser_(
                 p.needs_jsx_import = true;
             }
 
-            var tag = try JSXTag.parse(p);
+            var tag = try JSXTag.parse(P, p);
 
             // The tag may have TypeScript type arguments: "<Foo<T>/>"
             if (is_typescript_enabled) {
@@ -11439,8 +11459,11 @@ fn NewParser_(
 
             // A slash here is a self-closing element
             if (p.lexer.token == .t_slash) {
+                const close_tag_loc = p.lexer.loc();
                 // Use NextInsideJSXElement() not Next() so we can parse ">>" as ">"
+
                 try p.lexer.nextInsideJSXElement();
+
                 if (p.lexer.token != .t_greater_than) {
                     try p.lexer.expected(.t_greater_than);
                 }
@@ -11450,6 +11473,7 @@ fn NewParser_(
                     .properties = properties,
                     .key = key_prop,
                     .flags = flags,
+                    .close_tag_loc = close_tag_loc,
                 }, loc);
             }
 
@@ -11498,7 +11522,8 @@ fn NewParser_(
 
                         // This is the closing element
                         try p.lexer.nextInsideJSXElement();
-                        const end_tag = try JSXTag.parse(p);
+                        const end_tag = try JSXTag.parse(P, p);
+
                         if (!strings.eql(end_tag.name, tag.name)) {
                             try p.log.addRangeErrorFmt(p.source, end_tag.range, p.allocator, "Expected closing tag </{s}> to match opening tag <{s}>", .{
                                 end_tag.name,
@@ -11517,6 +11542,7 @@ fn NewParser_(
                             .properties = properties,
                             .key = key_prop,
                             .flags = flags,
+                            .close_tag_loc = end_tag.range.loc,
                         }, loc);
                     },
                     else => {
@@ -12061,6 +12087,7 @@ fn NewParser_(
                                         .args = ExprNodeList.init(args[0..i]),
                                         // Enable tree shaking
                                         .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
+                                        .close_paren_loc = e_.close_tag_loc,
                                     }, expr.loc);
                                 },
                                 // function jsxDEV(type, config, maybeKey, source, self) {
@@ -12121,7 +12148,7 @@ fn NewParser_(
                                                 .value = p.e(E.Array{
                                                     .items = e_.children,
                                                     .is_single_line = e_.children.len < 2,
-                                                }, expr.loc),
+                                                }, e_.close_tag_loc),
                                             }) catch unreachable;
                                         },
                                     }
@@ -12201,6 +12228,7 @@ fn NewParser_(
                                         // Enable tree shaking
                                         .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
                                         .was_jsx_element = true,
+                                        .close_paren_loc = e_.close_tag_loc,
                                     }, expr.loc);
                                 },
                                 else => unreachable,
@@ -16177,6 +16205,7 @@ fn NewParser_(
                             },
                             logger.Loc.Empty,
                         ),
+                        .close_parens_loc = logger.Loc.Empty,
                     }, logger.Loc.Empty),
                 };
                 first_decl[1] = G.Decl{

@@ -501,6 +501,7 @@ struct WebsocketMessageWelcome {
   uint32 epoch;
   Reloader javascriptReloader;
   string cwd;
+  string assetPrefix;
 }
 
 struct WebsocketMessageFileChangeNotification {

@@ -1818,6 +1818,7 @@ pub const RequestContext = struct {
                 }
 
                 const welcome_message = Api.WebsocketMessageWelcome{
+                    .asset_prefix = handler.ctx.bundler.options.routes.asset_prefix_path,
                     .epoch = WebsocketHandler.toTimestamp(
                         @intCast(u64, (handler.ctx.timer.started.timestamp.tv_sec * std.time.ns_per_s)) + @intCast(u64, handler.ctx.timer.started.timestamp.tv_nsec),
                     ),
@@ -2251,7 +2252,12 @@ pub const RequestContext = struct {
                         }
                         if (this.rctx.has_called_done) return;
                         this.buffer.reset();
-                        this.buffer = try chunk.printSourceMapContents(source, this.buffer, false);
+                        this.buffer = try chunk.printSourceMapContents(
+                            source,
+                            this.buffer,
+                            this.rctx.header("Mappings-Only") == null,
+                            false,
+                        );
                         defer {
                             this.buffer.reset();
                             SocketPrinterInternal.buffer.?.* = this.buffer;
@@ -2893,6 +2899,11 @@ pub const RequestContext = struct {
             }
         }
 
+        if (ctx.bundler.options.routes.asset_prefix_path.len > 0 and
+            strings.hasPrefix(input_path, ctx.bundler.options.routes.asset_prefix_path))
+        {
+            input_path = input_path[ctx.bundler.options.routes.asset_prefix_path.len..];
+        }
         if (input_path.len == 0) return ctx.sendNotFound();
 
         const pathname = Fs.PathName.init(input_path);

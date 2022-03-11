@@ -2575,12 +2575,16 @@ pub const Api = struct {
         /// cwd
         cwd: []const u8,
 
+        /// assetPrefix
+        asset_prefix: []const u8,
+
         pub fn decode(reader: anytype) anyerror!WebsocketMessageWelcome {
             var this = std.mem.zeroes(WebsocketMessageWelcome);
 
             this.epoch = try reader.readValue(u32);
             this.javascript_reloader = try reader.readValue(Reloader);
             this.cwd = try reader.readValue([]const u8);
+            this.asset_prefix = try reader.readValue([]const u8);
             return this;
         }
 
@@ -2588,6 +2592,7 @@ pub const Api = struct {
             try writer.writeInt(this.epoch);
             try writer.writeEnum(this.javascript_reloader);
             try writer.writeValue(@TypeOf(this.cwd), this.cwd);
+            try writer.writeValue(@TypeOf(this.asset_prefix), this.asset_prefix);
         }
     };
 

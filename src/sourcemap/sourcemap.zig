@@ -681,12 +681,13 @@ pub const LineOffsetTable = struct {
                         if (strings.indexOfNewlineOrNonASCIICheckStart(remaining, @as(u32, len_), false)) |j| {
                             column += @intCast(i32, j);
                             remaining = remaining[j..];
-                            continue;
                         } else {
                             // if there are no more lines, we are done!
                             column += @intCast(i32, remaining.len);
                             remaining = remaining[remaining.len..];
                         }
+
+                        continue;
                     },
                     else => {},
                 }
@@ -726,7 +727,7 @@ pub const LineOffsetTable = struct {
                 },
             }
 
-            remaining = remaining[@minimum(cp_len, remaining.len)..];
+            remaining = remaining[cp_len..];
         }
 
         // Mark the start of the next line
@@ -834,6 +835,7 @@ pub const Chunk = struct {
         chunk: Chunk,
         source: Logger.Source,
         mutable: MutableString,
+        include_sources_contents: bool,
         comptime ascii_only: bool,
     ) !MutableString {
         var output = mutable;
@@ -851,14 +853,17 @@ pub const Chunk = struct {
         }
 
         output.growIfNeeded(
-            filename.len + 2 + source.contents.len + chunk.buffer.list.items.len + 32 + 39 + 29 + 22 + 20,
+            filename.len + 2 + (source.contents.len * @as(usize, @boolToInt(include_sources_contents))) + chunk.buffer.list.items.len + 32 + 39 + 29 + 22 + 20,
         ) catch unreachable;
         try output.append("{\n  \"version\":3,\n  \"sources\": [");
 
         output = try JSPrinter.quoteForJSON(filename, output, ascii_only);
 
-        try output.append("],\n  \"sourcesContent\": [");
-        output = try JSPrinter.quoteForJSON(source.contents, output, ascii_only);
+        if (include_sources_contents) {
+            try output.append("],\n  \"sourcesContent\": [");
+            output = try JSPrinter.quoteForJSON(source.contents, output, ascii_only);
+        }
+
         try output.append("],\n  \"mappings\": ");
         output = try JSPrinter.quoteForJSON(chunk.buffer.list.items, output, ascii_only);
         try output.append(", \"names\": []\n}");
@@ -1009,7 +1014,7 @@ pub const Chunk = struct {
                                 i = j;
                                 continue;
                             } else {
-                                b.generated_column += @intCast(i32, slice[i..].len);
+                                b.generated_column += @intCast(i32, slice[i..].len) + 1;
                                 i = n;
                                 break;
                             }
@@ -1017,7 +1022,7 @@ pub const Chunk = struct {
                         '\r', '\n', 0x2028, 0x2029 => {
                             // windows newline
                             if (c == '\r') {
-                                const newline_check = b.last_generated_update + i;
+                                const newline_check = b.last_generated_update + i + 1;
                                 if (newline_check < output.len and output[newline_check] == '\n') {
                                     continue;
                                 }
@@ -1077,10 +1082,12 @@ pub const Chunk = struct {
             }
 
             pub fn addSourceMapping(b: *ThisBuilder, loc: Logger.Loc, output: []const u8) void {
+                if (
                 // exclude generated code from source
-                if (b.prev_loc.eql(loc) or loc.start == Logger.Loc.Empty.start) {
+                b.prev_loc.eql(loc) or
+                    // don't insert mappings for same location twice
+                    loc.start == Logger.Loc.Empty.start)
                     return;
-                }
 
                 b.prev_loc = loc;
                 const list = b.line_offset_tables;
@@ -1112,7 +1119,7 @@ pub const Chunk = struct {
                     .generated_column = b.generated_column,
                     .source_index = b.prev_state.source_index,
                     .original_line = original_line,
-                    .original_column = b.prev_state.original_column,
+                    .original_column = original_column,
                 });
 
                 // This line now has a mapping on it, so don't insert another one

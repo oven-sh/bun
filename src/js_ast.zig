@@ -631,6 +631,7 @@ pub const G = struct {
         class_name: ?LocRef = null,
         extends: ?ExprNodeIndex = null,
         body_loc: logger.Loc = logger.Loc.Empty,
+        close_brace_loc: logger.Loc = logger.Loc.Empty,
         properties: []Property = &([_]Property{}),
     };
 
@@ -1058,6 +1059,7 @@ pub const E = struct {
         is_single_line: bool = false,
         is_parenthesized: bool = false,
         was_originally_macro: bool = false,
+        close_bracket_loc: logger.Loc = logger.Loc.Empty,
 
         pub fn push(this: *Array, allocator: std.mem.Allocator, item: Expr) !void {
             try this.items.push(allocator, item);
@@ -1113,6 +1115,8 @@ pub const E = struct {
         // True if there is a comment containing "@__PURE__" or "#__PURE__" preceding
         // this call expression. See the comment inside ECall for more details.
         can_be_unwrapped_if_unused: bool = false,
+
+        close_parens_loc: logger.Loc,
     };
     pub const NewTarget = struct {
         range: logger.Range,
@@ -1125,6 +1129,7 @@ pub const E = struct {
         args: ExprNodeList = ExprNodeList{},
         optional_chain: ?OptionalChain = null,
         is_direct_eval: bool = false,
+        close_paren_loc: logger.Loc = logger.Loc.Empty,
 
         // True if there is a comment containing "@__PURE__" or "#__PURE__" preceding
         // this call expression. This is an annotation used for tree shaking, and
@@ -1292,6 +1297,8 @@ pub const E = struct {
 
         flags: Flags.JSXElement = Flags.JSXElement{},
 
+        close_tag_loc: logger.Loc = logger.Loc.Empty,
+
         pub const SpecialProp = enum {
             __self, // old react transform used this as a prop
             __source,
@@ -1360,6 +1367,7 @@ pub const E = struct {
         is_single_line: bool = false,
         is_parenthesized: bool = false,
         was_originally_macro: bool = false,
+        close_brace_loc: logger.Loc = logger.Loc.Empty,
 
         pub const Rope = struct {
             head: Expr,

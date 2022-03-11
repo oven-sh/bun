@@ -913,6 +913,8 @@ pub fn NewPrinter(
             p.needs_semicolon = false;
             p.options.unindent();
             p.printIndent();
+            if (class.close_brace_loc.start > class.body_loc.start)
+                p.addSourceMapping(class.close_brace_loc);
             p.print("}");
         }
 
@@ -1483,6 +1485,10 @@ pub fn NewPrinter(
                             }
                         }
 
+                        if (e.close_parens_loc.start > expr.loc.start) {
+                            p.addSourceMapping(e.close_parens_loc);
+                        }
+
                         p.print(")");
                     }
 
@@ -1539,7 +1545,9 @@ pub fn NewPrinter(
                             p.printExpr(arg, .comma, ExprFlag.None());
                         }
                     }
-
+                    if (e.close_paren_loc.start > expr.loc.start) {
+                        p.addSourceMapping(e.close_paren_loc);
+                    }
                     p.print(")");
                     if (wrap) {
                         p.print(")");
@@ -1815,6 +1823,7 @@ pub fn NewPrinter(
                     p.print("class");
                     if (e.class_name) |name| {
                         p.maybePrintSpace();
+                        p.addSourceMapping(name.loc);
                         p.printSymbol(name.ref orelse Global.panic("internal error: expected E.Class's name symbol to have a ref\n{s}", .{e}));
                         p.maybePrintSpace();
                     }
@@ -1857,6 +1866,10 @@ pub fn NewPrinter(
                         }
                     }
 
+                    if (e.close_bracket_loc.start > expr.loc.start) {
+                        p.addSourceMapping(e.close_bracket_loc);
+                    }
+
                     p.print("]");
                 },
                 .e_object => |e| {
@@ -1895,6 +1908,9 @@ pub fn NewPrinter(
                         } else {
                             p.printSpace();
                         }
+                    }
+                    if (e.close_brace_loc.start > expr.loc.start) {
+                        p.addSourceMapping(e.close_brace_loc);
                     }
                     p.print("}");
                     if (wrap) {
@@ -2682,8 +2698,9 @@ pub fn NewPrinter(
 
                                 switch (property.key.data) {
                                     .e_string => |str| {
+                                        p.addSourceMapping(property.key.loc);
+
                                         if (str.isUTF8()) {
-                                            p.addSourceMapping(property.key.loc);
                                             p.printSpaceBeforeIdentifier();
                                             // Example case:
                                             //      const Menu = React.memo(function Menu({
@@ -2708,7 +2725,6 @@ pub fn NewPrinter(
                                                 p.printQuotedUTF8(str.utf8, false);
                                             }
                                         } else if (p.canPrintIdentifierUTF16(str.value)) {
-                                            p.addSourceMapping(property.key.loc);
                                             p.printSpaceBeforeIdentifier();
                                             p.printIdentifierUTF16(str.value) catch unreachable;
 
@@ -2787,6 +2803,7 @@ pub fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     const name = s.func.name orelse Global.panic("Internal error: expected func to have a name ref\n{s}", .{s});
                     const nameRef = name.ref orelse Global.panic("Internal error: expected func to have a name\n{s}", .{s});
+
                     if (s.func.flags.contains(.is_export)) {
                         if (!rewrite_esm_to_cjs) {
                             p.print("export ");

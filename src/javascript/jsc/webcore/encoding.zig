@@ -486,8 +486,7 @@ pub const TextDecoder = struct {
                         }
                     }
                 }
-
-                return str.toValueGC(ctx.ptr()).asObjectRef();
+                return str.toValue(ctx.ptr()).asObjectRef();
             },
 
             EncodingLabel.@"UTF-16LE" => {

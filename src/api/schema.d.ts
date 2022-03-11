@@ -616,6 +616,7 @@ export interface WebsocketMessageWelcome {
   epoch: uint32;
   javascriptReloader: Reloader;
   cwd: string;
+  assetPrefix: string;
 }
 
 export interface WebsocketMessageFileChangeNotification {

@@ -2921,7 +2921,7 @@ pub const VirtualMachine = struct {
                     }
 
                     if (exception_list) |list| {
-                        zig_exception.addToErrorList(list) catch {};
+                        zig_exception.addToErrorList(list, this.bundler.fs.top_level_dir, &this.origin) catch {};
                     }
                 }
             }
@@ -3067,6 +3067,7 @@ pub const VirtualMachine = struct {
                             frame.sourceURLFormatter(
                                 dir,
                                 origin,
+                                false,
                                 allow_ansi_colors,
                             ),
                         },
@@ -3081,6 +3082,7 @@ pub const VirtualMachine = struct {
                             frame.sourceURLFormatter(
                                 dir,
                                 origin,
+                                false,
                                 allow_ansi_colors,
                             ),
                         },
@@ -3095,10 +3097,13 @@ pub const VirtualMachine = struct {
         exception: *ZigException,
         error_instance: JSValue,
         exception_list: ?*ExceptionList,
-    ) !void {
+    ) void {
         error_instance.toZigException(this.global, exception);
-        if (exception_list) |list| {
-            try exception.addToErrorList(list);
+        // defer this so that it copies correctly
+        defer {
+            if (exception_list) |list| {
+                exception.addToErrorList(list, this.bundler.fs.top_level_dir, &this.origin) catch unreachable;
+            }
         }
 
         var frames: []JSC.ZigStackFrame = exception.stack.frames_ptr[0..exception.stack.frames_len];
@@ -3108,14 +3113,22 @@ pub const VirtualMachine = struct {
         if (this.source_mappings.resolveMapping(
             top.source_url.slice(),
             @maximum(top.position.line, 0),
-            @maximum(top.position.column_stop, 0),
+            @maximum(top.position.column_start, 0),
         )) |mapping| {
             var log = logger.Log.init(default_allocator);
             var original_source = _fetch(this.global, top.source_url.slice(), "", &log, true) catch return;
             const code = original_source.source_code.slice();
             top.position.line = mapping.original.lines;
+            top.position.line_start = mapping.original.lines;
+            top.position.line_stop = mapping.original.lines + 1;
             top.position.column_start = mapping.original.columns;
+            top.position.column_stop = mapping.original.columns + 1;
+            exception.remapped = true;
+            top.remapped = true;
+            // This expression range is no longer accurate
             top.position.expression_start = mapping.original.columns;
+            top.position.expression_stop = mapping.original.columns + 1;
+
             if (strings.getLinesInText(
                 code,
                 @intCast(u32, top.position.line),
@@ -3133,6 +3146,13 @@ pub const VirtualMachine = struct {
                 }
 
                 exception.stack.source_lines_len = @intCast(u8, lines_.len);
+
+                top.position.column_stop = @intCast(i32, source_lines[lines_.len - 1].len);
+                top.position.line_stop = top.position.column_stop;
+
+                // This expression range is no longer accurate
+                top.position.expression_start = mapping.original.columns;
+                top.position.expression_stop = top.position.column_stop;
             }
         }
 
@@ -3145,6 +3165,7 @@ pub const VirtualMachine = struct {
                     @maximum(frame.position.column_start, 0),
                 )) |mapping| {
                     frame.position.line = mapping.original.lines;
+                    frame.remapped = true;
                     frame.position.column_start = mapping.original.columns;
                 }
             }
@@ -3154,7 +3175,7 @@ pub const VirtualMachine = struct {
     pub fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, exception_list: ?*ExceptionList, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool) !void {
         var exception_holder = ZigException.Holder.init();
         var exception = exception_holder.zigException();
-        try this.remapZigException(exception, error_instance, exception_list);
+        this.remapZigException(exception, error_instance, exception_list);
         this.had_errors = true;
 
         var line_numbers = exception.stack.source_lines_numbers[0..exception.stack.source_lines_len];
@@ -3217,7 +3238,7 @@ pub const VirtualMachine = struct {
                 writer.writeByteNTimes(' ', pad) catch unreachable;
                 const top = exception.stack.frames()[0];
                 var remainder = std.mem.trim(u8, source.text, "\n");
-                if (@intCast(usize, top.position.column_stop) > remainder.len) {
+                if (@intCast(usize, top.position.column_stop) > remainder.len or (top.position.column_stop - top.position.column_start) <= 0) {
                     writer.print(
                         comptime Output.prettyFmt(
                             "<r><d>{d} |<r> {s}\n",

@@ -12,6 +12,8 @@ export class StackFrame implements StackFrameType {
   position: StackFramePosition;
   scope: StackFrameScope;
   lineText: string = "";
+  remapped: boolean = false;
+
   constructor({
     functionName: function_name = "",
     fileName: file = "",

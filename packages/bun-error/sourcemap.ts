@@ -233,7 +233,7 @@ export function remapPosition(
   const index = indexOfMapping(decodedMappings, line, column);
   if (index === -1) return null;
 
-  return [decodedMappings[index + 3], decodedMappings[index + 4]];
+  return [decodedMappings[index + 3] + 1, decodedMappings[index + 4]];
 }
 
 async function fetchRemoteSourceMap(file: string, signal) {
@@ -255,6 +255,7 @@ async function fetchRemoteSourceMap(file: string, signal) {
 export var sourceMappings = new Map();
 
 export function fetchMappings(file, signal) {
+  if (file.includes(".bun")) return null;
   if (sourceMappings.has(file)) {
     return sourceMappings.get(file);
   }
@@ -265,6 +266,48 @@ export function fetchMappings(file, signal) {
     sourceMappings.set(file, data);
     return data;
   });
+}
+
+// this batches duplicate requests
+export function fetchAllMappings(files, signal) {
+  var results = new Array(files.length);
+  var map = new Map();
+  for (var i = 0; i < files.length; i++) {
+    const existing = map.get(files[i]);
+    if (existing) {
+      existing.push(i);
+    } else map.set(files[i], [i]);
+  }
+
+  for (const [file, indices] of [...map.entries()]) {
+    const mapped = fetchMappings(file, signal);
+    if (mapped.then) {
+      var resolvers = [];
+      for (let i = 0; i < indices.length; i++) {
+        results[indices[i]] = new Promise((resolve, reject) => {
+          resolvers[i] = (res) => resolve(res ? [res, i] : null);
+        });
+      }
+
+      mapped.finally((a) => {
+        for (let resolve of resolvers) {
+          try {
+            resolve(a);
+          } catch {
+          } finally {
+          }
+        }
+        resolvers.length = 0;
+        resolvers = null;
+      });
+    } else {
+      for (let i = 0; i < indices.length; i++) {
+        results[indices[i]] = mapped ? [mapped, indices[i]] : null;
+      }
+    }
+  }
+
+  return results;
 }
 
 function indexOfMapping(mappings: Int32Array, line: number, column: number) {

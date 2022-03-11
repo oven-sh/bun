@@ -17,7 +17,12 @@ import {
   problemsToMarkdown,
   withBunInfo,
 } from "./markdown";
-import { fetchMappings, remapPosition, sourceMappings } from "./sourcemap";
+import {
+  fetchAllMappings,
+  fetchMappings,
+  remapPosition,
+  sourceMappings,
+} from "./sourcemap";
 
 export enum StackFrameScope {
   Eval = 1,
@@ -1319,13 +1324,15 @@ export function renderRuntimeError(error: Error) {
   // But! If we've already fetched the source mappings in this page load before
   // Rely on the cached ones
   // and don't fetch them again
-  const framePromises = exception.stack.frames
+  const framePromises = fetchAllMappings(
+    exception.stack.frames.map((frame) =>
+      normalizedFilename(frame.file, thisCwd)
+    ),
+    signal
+  )
     .map((frame, i) => {
       if (stopThis.stopped) return null;
-      return [
-        fetchMappings(normalizedFilename(frame.file, thisCwd), signal),
-        i,
-      ];
+      return [frame, i];
     })
     .map((result) => {
       if (!result) return;

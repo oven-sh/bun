@@ -1829,11 +1829,12 @@ pub const MarkedArrayBuffer = struct {
     pub const toJS = toJSObjectRef;
 };
 
-export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, ctx_: *anyopaque) void {
-    var ctx = @ptrCast(*MarkedArrayBuffer, @alignCast(@alignOf(*MarkedArrayBuffer), ctx_));
-
-    if (comptime Environment.allow_assert) std.debug.assert(ctx.buffer.ptr == @ptrCast([*]u8, bytes_));
-    ctx.destroy();
+export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) void {
+    const mimalloc = @import("../../allocators/mimalloc.zig");
+    // zig's memory allocator interface won't work here
+    // mimalloc knows the size of things
+    // but we don't
+    mimalloc.mi_free(bytes_);
 }
 
 pub fn castObj(obj: js.JSObjectRef, comptime Type: type) *Type {

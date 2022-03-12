@@ -59,6 +59,11 @@ pub const Response = struct {
                 .rfn = getArrayBuffer,
                 .ts = d.ts{},
             },
+
+            .@"clone" = .{
+                .rfn = doClone,
+                .ts = d.ts{},
+            },
         },
         .{
             .@"url" = .{
@@ -76,6 +81,10 @@ pub const Response = struct {
             },
             .@"statusText" = .{
                 .@"get" = getStatusText,
+                .ro = true,
+            },
+            .@"headers" = .{
+                .@"get" = getHeaders,
                 .ro = true,
             },
         },
@@ -209,6 +218,7 @@ pub const Response = struct {
         this.cloneInto(new_response, allocator);
         return new_response;
     }
+
     pub fn getText(
         this: *Response,
         ctx: js.JSContextRef,
@@ -217,6 +227,7 @@ pub const Response = struct {
         _: []const js.JSValueRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
+
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/text
         defer this.body.value = .Empty;
         return JSPromise.resolvedPromiseValue(
@@ -260,6 +271,7 @@ pub const Response = struct {
                     .ArrayBuffer => |buffer| {
                         break :brk ZigString.init(buffer.ptr[buffer.offset..buffer.byte_len]).toValue(ctx.ptr());
                     },
+                    else => unreachable,
                 }
             }),
         ).asRef();
@@ -315,6 +327,7 @@ pub const Response = struct {
                         zig_string = ZigString.init(buffer.ptr[buffer.offset..buffer.byte_len]);
                         break :brk zig_string.toJSStringRef();
                     },
+                    else => unreachable,
                 }
             },
         ) orelse {
@@ -388,6 +401,7 @@ pub const Response = struct {
                                 exception,
                             );
                         },
+                        else => unreachable,
                     }
                 }),
             ),
@@ -1662,16 +1676,26 @@ pub const Body = struct {
             return result;
         }
     };
+
+    pub const PendingValue = struct {
+        promise: ?JSValue = null,
+        global: *JSGlobalObject,
+        task: ?*anyopaque = null,
+    };
+
     pub const Value = union(Tag) {
         ArrayBuffer: ArrayBuffer,
         String: string,
         Empty: u0,
         Unconsumed: u0,
+        Locked: PendingValue,
+
         pub const Tag = enum {
             ArrayBuffer,
             String,
             Empty,
             Unconsumed,
+            Locked,
         };
 
         pub fn length(value: *const Value) usize {
@@ -1693,6 +1717,13 @@ pub const Body = struct {
         return Body{ .init = Init{
             .headers = null,
             .status_code = 404,
+        }, .value = .{ .Empty = 0 } };
+    }
+
+    pub fn @"200"(_: js.JSContextRef) Body {
+        return Body{ .init = Init{
+            .headers = null,
+            .status_code = 200,
         }, .value = .{ .Empty = 0 } };
     }
 
@@ -1751,6 +1782,7 @@ pub const Body = struct {
                 body.value = Value{
                     .String = std.fmt.allocPrint(default_allocator, "{}", .{zig_str}) catch unreachable,
                 };
+                body.ptr_allocator = default_allocator;
                 // body.ptr = body.
                 // body.len = body.value.String.len;str.characters8()[0..len] };
 

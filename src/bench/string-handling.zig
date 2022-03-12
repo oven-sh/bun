@@ -8,7 +8,8 @@ pub fn main() anyerror!void {
     const amount = try std.fmt.parseInt(usize, args[args.len - 1], 10);
     var file = try std.fs.cwd().openFile(filepath, .{ .mode = .read_only });
     var contents = try file.readToEndAlloc(std.heap.c_allocator, std.math.maxInt(usize));
-
+    var list = try std.ArrayList(u8).initCapacity(std.heap.c_allocator, contents.len);
+    var duped = list.items.ptr[0..contents.len];
     {
         var timer = try std.time.Timer.start();
         var index: usize = std.math.maxInt(usize);
@@ -16,16 +17,13 @@ pub fn main() anyerror!void {
         var i: usize = 0;
         while (j < amount) : (j += 1) {
             i = 0;
-            if (strings.indexOf(contents, find)) |k| {
-                i += k;
-                index = k;
-            }
+            strings.copy(duped, contents);
         }
 
         if (index == std.math.maxInt(usize)) {
-            std.debug.print("<vec 32>  [{d} byte file] {s} NOT found in {}\n", .{ contents.len, find, std.fmt.fmtDuration(timer.read()) });
+            std.debug.print("manual        [{d} byte file] {s} NOT found in {}\n", .{ contents.len, find, std.fmt.fmtDuration(timer.read()) });
         } else {
-            std.debug.print("<vec 32>  [{d} byte file] {s} found at {d} in {}\n", .{ contents.len, find, index, std.fmt.fmtDuration(timer.read()) });
+            std.debug.print("manual        [{d} byte file] {s} found at {d} in {}\n", .{ contents.len, find, index, std.fmt.fmtDuration(timer.read()) });
         }
     }
 
@@ -36,16 +34,13 @@ pub fn main() anyerror!void {
         var i: usize = 0;
         while (j < amount) : (j += 1) {
             i = 0;
-            if (strings.indexOf16(contents, find)) |k| {
-                i += k;
-                index = k;
-            }
+            @memcpy(duped.ptr, contents.ptr, contents.len);
         }
 
         if (index == std.math.maxInt(usize)) {
-            std.debug.print("<vec 16>  [{d} byte file] {s} NOT found in {}\n", .{ contents.len, find, std.fmt.fmtDuration(timer.read()) });
+            std.debug.print("memcpy      [{d} byte file] {s} NOT found in {}\n", .{ contents.len, find, std.fmt.fmtDuration(timer.read()) });
         } else {
-            std.debug.print("<vec 16>  [{d} byte file] {s} found at {d} in {}\n", .{ contents.len, find, index, std.fmt.fmtDuration(timer.read()) });
+            std.debug.print("memcpy      [{d} byte file] {s} found at {d} in {}\n", .{ contents.len, find, index, std.fmt.fmtDuration(timer.read()) });
         }
     }
 
@@ -56,16 +51,14 @@ pub fn main() anyerror!void {
         var i: usize = 0;
         while (j < amount) : (j += 1) {
             i = 0;
-            if (std.mem.indexOf(u8, contents, find)) |k| {
-                i += k;
-                index = k;
-            }
+            list.clearRetainingCapacity();
+            list.appendSliceAssumeCapacity(contents);
         }
 
         if (index == std.math.maxInt(usize)) {
-            std.debug.print("<std>     [{d} byte file] {s} NOT found in {}\n", .{ contents.len, find, std.fmt.fmtDuration(timer.read()) });
+            std.debug.print("ArrayList  [{d} byte file] {s} NOT found in {}\n", .{ contents.len, find, std.fmt.fmtDuration(timer.read()) });
         } else {
-            std.debug.print("<std>     [{d} byte file] {s} found at {d} in {}\n", .{ contents.len, find, index, std.fmt.fmtDuration(timer.read()) });
+            std.debug.print("ArrayList  [{d} byte file] {s} found at {d} in {}\n", .{ contents.len, find, index, std.fmt.fmtDuration(timer.read()) });
         }
     }
 }

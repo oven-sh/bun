@@ -167,6 +167,43 @@ pub const Response = struct {
         return js.JSValueMakeBoolean(ctx, this.isOK());
     }
 
+    pub fn getHeaders(
+        this: *Response,
+        ctx: js.JSContextRef,
+        _: js.JSValueRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        // https://developer.mozilla.org/en-US/docs/Web/API/Response/ok
+        if (this.body.init.headers == null) {
+            this.body.init.headers = Headers.empty(this.allocator);
+        }
+
+        return Headers.Class.make(ctx, &this.body.init.headers.?);
+    }
+
+    pub fn doClone(
+        this: *Response,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        _: []const js.JSValueRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        var cloned = this.clone(getAllocator(ctx));
+        return Response.Class.make(ctx, cloned);
+    }
+
+    pub fn cloneInto(this: *const Response, new_response: *Response, allocator: std.mem.Allocator) void {
+        new_response.* = Response{
+            .allocator = allocator,
+            .body = this.body.clone(allocator),
+            .url = allocator.dupe(u8, this.url) catch unreachable,
+            .status_text = allocator.dupe(u8, this.status_text) catch unreachable,
+            .redirected = this.redirected,
+        };
+    }
+
     pub fn clone(this: *const Response, allocator: std.mem.Allocator) *Response {
         var new_response = allocator.create(Response) catch unreachable;
         this.cloneInto(new_response, allocator);

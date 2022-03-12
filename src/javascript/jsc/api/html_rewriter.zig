@@ -706,7 +706,7 @@ pub fn getterWrap(comptime Container: type, comptime name: string) GetterType(Co
             exception: js.ExceptionRef,
         ) js.JSObjectRef {
             const result: JSValue = @call(.{}, @field(Container, name), .{ this, ctx.ptr() });
-            if (result.isError()) {
+            if (!result.isUndefinedOrNull() and result.isError()) {
                 exception.* = result.asObjectRef();
                 return null;
             }
@@ -850,6 +850,11 @@ pub const TextChunk = struct {
 pub const DocType = struct {
     doctype: ?*LOLHTML.DocType = null,
 
+    pub fn finalize(this: *DocType) void {
+        this.doctype = null;
+        bun.default_allocator.destroy(this);
+    }
+
     pub const Class = NewClass(
         DocType,
         .{
@@ -904,6 +909,11 @@ pub const DocType = struct {
 pub const DocEnd = struct {
     doc_end: ?*LOLHTML.DocEnd,
 
+    pub fn finalize(this: *DocEnd) void {
+        this.doc_end = null;
+        bun.default_allocator.destroy(this);
+    }
+
     pub const Class = NewClass(
         DocEnd,
         .{ .name = "DocEnd" },
@@ -944,6 +954,11 @@ pub const DocEnd = struct {
 
 pub const Comment = struct {
     comment: ?*LOLHTML.Comment = null,
+
+    pub fn finalize(this: *Comment) void {
+        this.comment = null;
+        bun.default_allocator.destroy(this);
+    }
 
     pub const Class = NewClass(
         Comment,
@@ -1057,6 +1072,11 @@ pub const Comment = struct {
 
 pub const EndTag = struct {
     end_tag: ?*LOLHTML.EndTag,
+
+    pub fn finalize(this: *EndTag) void {
+        this.end_tag = null;
+        bun.default_allocator.destroy(this);
+    }
 
     pub const Handler = struct {
         callback: ?JSC.JSValue,
@@ -1176,6 +1196,68 @@ pub const EndTag = struct {
 pub const AttributeIterator = struct {
     iterator: ?*LOLHTML.Attribute.Iterator = null,
 
+    const attribute_iterator_path: string = "file:///bun-vfs/lolhtml/AttributeIterator.js";
+    const attribute_iterator_code: string =
+        \\"use strict";
+        \\
+        \\class AttributeIterator {
+        \\  constructor(internal) {
+        \\    this.#iterator = internal;
+        \\  }
+        \\
+        \\  #iterator;
+        \\  
+        \\  [Symbol.iterator]() {
+        \\     return this;
+        \\  }
+        \\  
+        \\  next() {
+        \\     if (this.#iterator === null) 
+        \\          return {done: true};
+        \\     var value = this.#iterator.next();
+        \\     if (!value) {
+        \\         this.#iterator = null;
+        \\         return {done: true};
+        \\     }
+        \\     return {done: false, value: value};
+        \\  }
+        \\}
+        \\
+        \\return new AttributeIterator(internal1);
+    ;
+    threadlocal var attribute_iterator_class: JSC.C.JSObjectRef = undefined;
+    threadlocal var attribute_iterator_loaded: bool = false;
+
+    pub fn getAttributeIteratorJSClass(global: *JSGlobalObject) JSValue {
+        if (attribute_iterator_loaded)
+            return JSC.JSValue.fromRef(attribute_iterator_class);
+        attribute_iterator_loaded = true;
+        var exception_ptr: ?[*]JSC.JSValueRef = null;
+        var name = JSC.C.JSStringCreateStatic("AttributeIteratorGetter", "AttributeIteratorGetter".len);
+        var param_name = JSC.C.JSStringCreateStatic("internal1", "internal1".len);
+        var attribute_iterator_class_ = JSC.C.JSObjectMakeFunction(
+            global.ref(),
+            name,
+            1,
+            &[_]JSC.C.JSStringRef{param_name},
+            JSC.C.JSStringCreateStatic(attribute_iterator_code.ptr, attribute_iterator_code.len),
+            JSC.C.JSStringCreateStatic(attribute_iterator_path.ptr, attribute_iterator_path.len),
+            0,
+            exception_ptr,
+        );
+        JSC.C.JSValueProtect(global.ref(), attribute_iterator_class_);
+        attribute_iterator_class = attribute_iterator_class_;
+        return JSC.JSValue.fromRef(attribute_iterator_class);
+    }
+
+    pub fn finalize(this: *AttributeIterator) void {
+        if (this.iterator) |iter| {
+            iter.deinit();
+            this.iterator = null;
+        }
+        bun.default_allocator.destroy(this);
+    }
+
     pub const Class = NewClass(
         AttributeIterator,
         .{ .name = "AttributeIterator" },
@@ -1194,39 +1276,36 @@ pub const AttributeIterator = struct {
         globalObject: *JSGlobalObject,
     ) JSValue {
         if (this.iterator == null) {
-            return JSC.JSValue.createObject2(
-                globalObject,
-                &value_,
-                &done_,
-                JSC.JSValue.jsUndefined(),
-                JSC.JSValue.jsBoolean(true),
-            );
+            return JSC.JSValue.jsNull();
         }
 
         var attribute = this.iterator.?.next() orelse {
             this.iterator.?.deinit();
             this.iterator = null;
-            return JSC.JSValue.createObject2(
-                globalObject,
-                &value_,
-                &done_,
-                JSC.JSValue.jsUndefined(),
-                JSC.JSValue.jsBoolean(true),
-            );
+            return JSC.JSValue.jsNull();
         };
+
+        // TODO: don't clone here
+        const value = attribute.value();
+        const name = attribute.name();
+        defer name.deinit();
+        defer value.deinit();
 
         var strs = [2]ZigString{
-            htmlStringValue(attribute.name().slice(), globalObject),
-            htmlStringValue(attribute.value().slice(), globalObject),
+            ZigString.init(name.slice()),
+            ZigString.init(value.slice()),
         };
 
-        return JSC.JSValue.createObject2(
+        var valid_strs: []ZigString = strs[0..2];
+
+        var array = JSC.JSValue.createStringArray(
             globalObject,
-            &value_,
-            &done_,
-            JSC.JSValue.createStringArray(globalObject, &strs, 2, false),
-            JSC.JSValue.jsBoolean(false),
+            valid_strs.ptr,
+            valid_strs.len,
+            true,
         );
+
+        return array;
     }
 };
 pub const Element = struct {
@@ -1287,8 +1366,16 @@ pub const Element = struct {
             .namespaceURI = .{
                 .get = getterWrap(Element, "getNamespaceURI"),
             },
+            .attributes = .{
+                .get = getterWrap(Element, "getAttributes"),
+            },
         },
     );
+
+    pub fn finalize(this: *Element) void {
+        this.element = null;
+        bun.default_allocator.destroy(this);
+    }
 
     pub fn onEndTag(
         this: *Element,
@@ -1512,5 +1599,27 @@ pub const Element = struct {
             return JSValue.jsUndefined();
 
         return ZigString.init(std.mem.span(this.element.?.namespaceURI())).toValue(globalObject);
+    }
+
+    pub fn getAttributes(this: *Element, globalObject: *JSGlobalObject) JSValue {
+        if (this.element == null)
+            return JSValue.jsUndefined();
+
+        var iter = this.element.?.attributes() orelse return throwLOLHTMLError(globalObject);
+        var attr_iter = bun.default_allocator.create(AttributeIterator) catch unreachable;
+        attr_iter.* = .{ .iterator = iter };
+        var attr = AttributeIterator.Class.make(globalObject.ref(), attr_iter);
+        JSC.C.JSValueProtect(globalObject.ref(), attr);
+        defer JSC.C.JSValueUnprotect(globalObject.ref(), attr);
+        return JSC.JSValue.fromRef(
+            JSC.C.JSObjectCallAsFunction(
+                globalObject.ref(),
+                AttributeIterator.getAttributeIteratorJSClass(globalObject).asObjectRef(),
+                null,
+                1,
+                @ptrCast([*]JSC.C.JSObjectRef, &attr),
+                null,
+            ),
+        );
     }
 };

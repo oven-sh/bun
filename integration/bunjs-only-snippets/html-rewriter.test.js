@@ -17,6 +17,34 @@ describe("HTMLRewriter", () => {
     expect(await output.text()).toBe("<div><blink>it worked!</blink></div>");
   });
 
+  it("supports attribute iterator", async () => {
+    var rewriter = new HTMLRewriter();
+    var expected = [
+      ["first", ""],
+      ["second", "alrihgt"],
+      ["third", "123"],
+      ["fourth", "5"],
+      ["fifth", "helloooo"],
+    ];
+    rewriter.on("div", {
+      element(element2) {
+        for (let attr of element2.attributes) {
+          const stack = expected.shift();
+          expect(stack[0]).toBe(attr[0]);
+          expect(stack[1]).toBe(attr[1]);
+        }
+      },
+    });
+    var input = new Response(
+      '<div first second="alrihgt" third="123" fourth=5 fifth=helloooo>hello</div>'
+    );
+    var output = rewriter.transform(input);
+    expect(await output.text()).toBe(
+      '<div first second="alrihgt" third="123" fourth=5 fifth=helloooo>hello</div>'
+    );
+    expect(expected.length).toBe(0);
+  });
+
   it("handles element specific mutations", async () => {
     // prepend/append
     let res = new HTMLRewriter()

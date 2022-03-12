@@ -420,6 +420,14 @@ pub const ArgumentsSlice = struct {
 
         return this.remaining[0];
     }
+
+    pub fn nextEat(this: *ArgumentsSlice) ?JSC.JSValue {
+        if (this.remaining.len == 0) {
+            return null;
+        }
+        defer this.eat();
+        return this.remaining[0];
+    }
 };
 
 pub fn fileDescriptorFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?FileDescriptor {

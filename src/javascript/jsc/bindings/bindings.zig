@@ -280,6 +280,14 @@ pub const ZigString = extern struct {
         return shim.cppFn("toExternalValue", .{ this, global });
     }
 
+    pub fn toExternalValueWithCallback(
+        this: *const ZigString,
+        global: *JSGlobalObject,
+        callback: fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.C) void,
+    ) JSValue {
+        return shim.cppFn("toExternalValueWithCallback", .{ this, global, callback });
+    }
+
     pub fn to16BitValue(this: *const ZigString, global: *JSGlobalObject) JSValue {
         return shim.cppFn("to16BitValue", .{ this, global });
     }
@@ -316,6 +324,7 @@ pub const ZigString = extern struct {
         "toValueGC",
         "toErrorInstance",
         "toExternalU16",
+        "toExternalValueWithCallback",
     };
 };
 
@@ -1573,12 +1582,12 @@ pub const String = extern struct {
     };
 };
 
-pub const JSValue = enum(i64) {
+pub const JSValue = enum(u64) {
     _,
 
     pub const shim = Shimmer("JSC", "JSValue", @This());
     pub const is_pointer = false;
-    pub const Type = i64;
+    pub const Type = u64;
     const cppFn = shim.cppFn;
 
     pub const include = "<JavaScriptCore/JSValue.h>";
@@ -1836,22 +1845,18 @@ pub const JSValue = enum(i64) {
         return cppFn("getErrorsProperty", .{ this, globalObject });
     }
 
-    pub fn jsNumberWithType(comptime Number: type, number: Type) JSValue {
-        return switch (Number) {
-            f64 => @call(.{ .modifier = .always_inline }, jsNumberFromDouble, .{number}),
-            u8 => @call(.{ .modifier = .always_inline }, jsNumberFromChar, .{number}),
-            u16 => @call(.{ .modifier = .always_inline }, jsNumberFromInt32, .{@intCast(i32, number)}),
-            i32 => @call(.{ .modifier = .always_inline }, jsNumberFromInt32, .{@truncate(i32, number)}),
-            c_int, i64 => if (number > std.math.maxInt(i32))
-                jsNumberFromInt64(@truncate(i64, number))
-            else
-                jsNumberFromInt32(@intCast(i32, number)),
-
-            c_uint, u32 => if (number < std.math.maxInt(i32))
-                jsNumberFromInt32(@intCast(i32, number))
-            else
-                jsNumberFromUint64(@intCast(u64, number)),
-
+    pub fn jsNumberWithType(comptime Number: type, number: Number) JSValue {
+        return switch (comptime Number) {
+            JSValue => number,
+            f64 => jsNumberFromDouble(number),
+            u8 => jsNumberFromChar(number),
+            u16 => jsNumberFromInt32(@intCast(i32, number)),
+            i32 => jsNumberFromInt32(@intCast(i32, number)),
+            c_int => jsNumberFromInt32(@intCast(i32, number)),
+            i64 => jsNumberFromInt64(@intCast(i64, number)),
+            c_uint => jsNumberFromUint64(@intCast(u64, number)),
+            u64 => jsNumberFromUint64(@intCast(u64, number)),
+            u32 => jsNumberFromInt32(@intCast(i32, number)),
             else => @compileError("Type transformation missing for number of type: " ++ @typeName(Number)),
         };
     }
@@ -2226,11 +2231,11 @@ pub const JSValue = enum(i64) {
     }
 
     pub inline fn asRef(this: JSValue) C_API.JSValueRef {
-        return @intToPtr(C_API.JSValueRef, @bitCast(usize, @enumToInt(this)));
+        return @intToPtr(C_API.JSValueRef, @intCast(usize, @enumToInt(this)));
     }
 
     pub inline fn fromRef(this: C_API.JSValueRef) JSValue {
-        return @intToEnum(JSValue, @bitCast(i64, @ptrToInt(this)));
+        return @intToEnum(JSValue, @ptrToInt(this));
     }
 
     pub inline fn asObjectRef(this: JSValue) C_API.JSObjectRef {
@@ -2238,7 +2243,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub inline fn asVoid(this: JSValue) *anyopaque {
-        return @intToPtr(*anyopaque, @bitCast(u64, @enumToInt(this)));
+        return @intToPtr(*anyopaque, @enumToInt(this));
     }
 
     pub const Extern = [_][]const u8{ "symbolKeyFor", "symbolFor", "getSymbolDescription", "createInternalPromise", "asInternalPromise", "asArrayBuffer_", "getReadableStreamState", "getWritableStreamState", "fromEntries", "createTypeError", "createRangeError", "createObject2", "getIfPropertyExistsImpl", "jsType", "jsonStringify", "kind_", "isTerminationException", "isSameValue", "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };

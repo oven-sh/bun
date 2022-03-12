@@ -1104,7 +1104,7 @@ pub const ZigConsoleClient = struct {
         // For detecting circular references
         pub const Visited = struct {
             const ObjectPool = @import("../../../pool.zig").ObjectPool;
-            pub const Map = std.AutoHashMap(i64, void);
+            pub const Map = std.AutoHashMap(JSValue.Type, void);
             pub const Pool = ObjectPool(
                 Map,
                 struct {

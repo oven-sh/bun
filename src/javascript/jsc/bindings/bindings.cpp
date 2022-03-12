@@ -784,6 +784,22 @@ void JSC__JSValue__toZigString(JSC__JSValue JSValue0, ZigString* arg1, JSC__JSGl
     arg1->len = str.length();
 }
 
+JSC__JSValue ZigString__toExternalValueWithCallback(const ZigString* arg0, JSC__JSGlobalObject* arg1, void (*ArgFn2)(void* arg2, void* arg0, size_t arg1))
+{
+
+    ZigString str
+        = *arg0;
+    if (Zig::isTaggedUTF16Ptr(str.ptr)) {
+        return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
+            arg1->vm(),
+            WTF::String(ExternalStringImpl::create(reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len, ArgFn2)))));
+    } else {
+        return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
+            arg1->vm(),
+            WTF::String(ExternalStringImpl::create(reinterpret_cast<const LChar*>(Zig::untag(str.ptr)), str.len, ArgFn2)))));
+    }
+}
+
 JSC__JSValue ZigString__toErrorInstance(const ZigString* str, JSC__JSGlobalObject* globalObject)
 {
     return JSC::JSValue::encode(Zig::getErrorInstance(str, globalObject));

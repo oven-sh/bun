@@ -29,3 +29,6 @@
 	path = src/deps/libbacktrace
 	url = https://github.com/ianlancetaylor/libbacktrace
 	ignore = dirty
+[submodule "src/deps/lol-html"]
+	path = src/deps/lol-html
+	url = https://github.com/cloudflare/lol-html

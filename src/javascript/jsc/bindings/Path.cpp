@@ -39,7 +39,7 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
     auto clientData = Bun::clientData(vm); \
     auto isWindows = thisObject->get(globalObject, clientData->builtinNames().isWindowsPrivateName()); \
     JSC::JSValue result = JSC::JSValue::decode( \
-        ZigFunction(globalObject, isWindows.asBoolean(), arguments.data(), argCount) \
+        ZigFunction(globalObject, isWindows.asBoolean(), reinterpret_cast<JSC__JSValue*>(arguments.data()), argCount) \
     ); \
     JSC::JSObject *obj = result.getObject(); \
     if (UNLIKELY(obj != nullptr && obj->isErrorInstance())) { \

@@ -1301,7 +1301,7 @@ pub const Bun = struct {
             Timer.set(id, globalThis, callback, countdown, false) catch
                 return JSValue.jsUndefined();
 
-            return JSValue.jsNumber(@intCast(i32, id));
+            return JSValue.jsNumberWithType(i32, id);
         }
         pub fn setInterval(
             globalThis: *JSGlobalObject,
@@ -1315,7 +1315,7 @@ pub const Bun = struct {
             Timer.set(id, globalThis, callback, countdown, true) catch
                 return JSValue.jsUndefined();
 
-            return JSValue.jsNumber(@intCast(i32, id));
+            return JSValue.jsNumberWithType(i32, id);
         }
 
         pub fn clearTimer(id: JSValue, _: *JSGlobalObject) void {

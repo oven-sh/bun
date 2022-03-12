@@ -41,6 +41,7 @@
     "src/deps/boringssl": true,
     "src/deps/openssl": true,
     "src/deps/zlib": true,
+    "src/deps/lol-html": true,
     "integration/snippets/package-json-exports/_node_modules_copy": true
   },
   "C_Cpp.files.exclude": {

@@ -266,6 +266,7 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MIMALLOC_FILE_PATH) \
 		$(BUN_DEPS_OUT_DIR)/libarchive.a \
 		$(BUN_DEPS_OUT_DIR)/libssl.a \
 		$(BUN_DEPS_OUT_DIR)/picohttpparser.o \
+		$(BUN_DEPS_OUT_DIR)/liblolhtml.a
 
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) $(BUN_DEPS_OUT_DIR)/libcrypto.boring.a
 
@@ -311,6 +312,9 @@ bun:
 
 
 vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace
+
+lolhtml:
+	cd $(BUN_DEPS_DIR)/lol-html/ && cd $(BUN_DEPS_DIR)/lol-html/c-api && cargo build --release && cp target/release/liblolhtml.a $(BUN_DEPS_OUT_DIR)
 
 boringssl-build:
 	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) -GNinja .. && ninja 

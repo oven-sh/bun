@@ -10,6 +10,12 @@ pub const WebCore = @import("./javascript/jsc/webcore.zig");
 pub const Cloudflare = struct {
     pub const HTMLRewriter = @import("./javascript/jsc/api/html_rewriter.zig").HTMLRewriter;
     pub const Element = @import("./javascript/jsc/api/html_rewriter.zig").Element;
+    pub const Comment = @import("./javascript/jsc/api/html_rewriter.zig").Comment;
+    pub const TextChunk = @import("./javascript/jsc/api/html_rewriter.zig").TextChunk;
+    pub const DocType = @import("./javascript/jsc/api/html_rewriter.zig").DocType;
+    pub const DocEnd = @import("./javascript/jsc/api/html_rewriter.zig").DocEnd;
+    pub const EndTag = @import("./javascript/jsc/api/html_rewriter.zig").EndTag;
+    pub const AttributeIterator = @import("./javascript/jsc/api/html_rewriter.zig").AttributeIterator;
 };
 pub const Jest = @import("./javascript/jsc/test/jest.zig");
 pub const API = struct {

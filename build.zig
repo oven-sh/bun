@@ -79,6 +79,11 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
         .path = pkgPath("src/io/io_stub.zig"),
     };
 
+    var lol_html: std.build.Pkg = .{
+        .name = "lolhtml",
+        .path = pkgPath("src/deps/lol-html.zig"),
+    };
+
     var io = if (target.isDarwin())
         io_darwin
     else if (target.isLinux())
@@ -156,6 +161,7 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
     step.addPackage(javascript_core);
     step.addPackage(crash_reporter);
     step.addPackage(datetime);
+    step.addPackage(lol_html);
 }
 var output_dir: []const u8 = "";
 fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
@@ -512,6 +518,7 @@ pub fn linkObjectFiles(b: *std.build.Builder, obj: *std.build.LibExeObjStep, tar
         .{ "libWTF.a", "libWTF.a" },
         .{ "libbmalloc.a", "libbmalloc.a" },
         .{ "libbacktrace.a", "libbacktrace.a" },
+        .{ "liblolhtml.a", "liblolhtml.a" },
     });
 
     for (dirs_to_search.slice()) |deps_path| {

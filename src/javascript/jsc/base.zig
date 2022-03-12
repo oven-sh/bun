@@ -1859,6 +1859,12 @@ const TextDecoder = WebCore.TextDecoder;
 const TimeoutTask = JSC.BunTimer.Timeout.TimeoutTask;
 const HTMLRewriter = JSC.Cloudflare.HTMLRewriter;
 const Element = JSC.Cloudflare.Element;
+const Comment = JSC.Cloudflare.Comment;
+const TextChunk = JSC.Cloudflare.TextChunk;
+const DocType = JSC.Cloudflare.DocType;
+const EndTag = JSC.Cloudflare.EndTag;
+const DocEnd = JSC.Cloudflare.DocEnd;
+const AttributeIterator = JSC.Cloudflare.AttributeIterator;
 
 pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     ResolveError,
@@ -1886,6 +1892,12 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     TimeoutTask,
     HTMLRewriter,
     Element,
+    Comment,
+    TextChunk,
+    DocType,
+    EndTag,
+    DocEnd,
+    AttributeIterator,
 });
 
 pub inline fn GetJSPrivateData(comptime Type: type, ref: js.JSObjectRef) ?*Type {

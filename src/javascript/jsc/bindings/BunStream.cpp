@@ -74,7 +74,7 @@ static WritableEvent getWritableEvent(const WTF::String& eventName)
         } \
      } \
     JSC::JSValue result = JSC::JSValue::decode( \
-        ZigFunction(thisObject->state, globalObject, arguments.data(), argCount) \
+        ZigFunction(thisObject->state, globalObject, reinterpret_cast<JSC__JSValue*>(arguments.data()), argCount) \
     ); \
     JSC::JSObject *obj = result.getObject(); \
     if (UNLIKELY(obj != nullptr && obj->isErrorInstance())) { \

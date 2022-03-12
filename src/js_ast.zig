@@ -7780,9 +7780,7 @@ pub const Macro = struct {
 
                                         return Expr.init(E.String, E.String.empty, this.caller.loc);
                                     },
-                                    .Empty => {
-                                        return Expr.init(E.String, E.String.empty, this.caller.loc);
-                                    },
+
                                     .String => |str| {
                                         var zig_string = JSC.ZigString.init(str);
 
@@ -7801,6 +7799,9 @@ pub const Macro = struct {
                                             E.String{ .utf8 = JSC.ZigString.init(buffer.slice()).toBase64DataURL(this.allocator) catch unreachable },
                                             this.caller.loc,
                                         );
+                                    },
+                                    else => {
+                                        return Expr.init(E.String, E.String.empty, this.caller.loc);
                                     },
                                 }
                             }

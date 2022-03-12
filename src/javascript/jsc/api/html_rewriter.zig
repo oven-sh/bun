@@ -208,72 +208,18 @@ pub const HTMLRewriter = struct {
 
     pub fn transform(this: *HTMLRewriter, global: *JSGlobalObject, response: *Response) JSValue {
         var input = response.body.slice();
-        var result = bun.default_allocator.create(Response) catch unreachable;
 
         if (input.len == 0) {
+            var result = bun.default_allocator.create(Response) catch unreachable;
+
             response.cloneInto(result, getAllocator(global.ref()));
             this.finalizeWithoutDestroy();
             return JSValue.fromRef(Response.Class.make(global.ref(), result));
         }
 
-        var sink = bun.default_allocator.create(BufferOutputSink) catch unreachable;
-        sink.* = BufferOutputSink{
-            .bytes = bun.MutableString.initEmpty(bun.default_allocator),
-            .global = global,
-            .context = this.context,
-            .rewriter = undefined,
-        };
+        var new_context = this.context;
         this.context = .{};
-
-        sink.rewriter = this.builder.build(
-            .UTF8,
-            .{
-                .preallocated_parsing_buffer_size = input.len,
-                .max_allowed_memory_usage = std.math.maxInt(u32),
-            },
-            false,
-            BufferOutputSink,
-            sink,
-            BufferOutputSink.write,
-            BufferOutputSink.done,
-        ) catch {
-            this.finalizeWithoutDestroy();
-            sink.deinit();
-            bun.default_allocator.destroy(sink);
-            bun.default_allocator.destroy(result);
-
-            return throwLOLHTMLError(global);
-        };
-
-        sink.rewriter.write(input) catch {
-            sink.deinit();
-            bun.default_allocator.destroy(sink);
-
-            return throwLOLHTMLError(global);
-        };
-
-        sink.rewriter.end() catch {
-            sink.deinit();
-            bun.default_allocator.destroy(sink);
-
-            return throwLOLHTMLError(global);
-        };
-        sink.rewriter.deinit();
-
-        result.body = JSC.WebCore.Body.@"200"(global.ref());
-        result.body.init = response.body.init.clone(bun.default_allocator);
-        result.body.value = .{
-            .String = sink.bytes.toOwnedSlice(),
-        };
-
-        if (result.body.init.headers) |*headers| {
-            headers.putHeaderNumber("content-length", @truncate(u32, result.body.value.String.len), false);
-        }
-
-        response.body.deinit(response.allocator);
-        response.body = JSC.WebCore.Body.@"200"(global.ref());
-
-        return JSValue.fromRef(Response.Class.make(global.ref(), result));
+        return BufferOutputSink.init(new_context, global, response, this.builder);
     }
 
     pub const BufferOutputSink = struct {
@@ -281,9 +227,106 @@ pub const HTMLRewriter = struct {
         bytes: bun.MutableString,
         rewriter: *LOLHTML.HTMLRewriter,
         context: LOLHTMLContext,
+        response: *Response,
+
+        pub fn init(context: LOLHTMLContext, global: *JSGlobalObject, original: *Response, builder: *LOLHTML.HTMLRewriter.Builder) JSValue {
+            var result = bun.default_allocator.create(Response) catch unreachable;
+
+            var sink = bun.default_allocator.create(BufferOutputSink) catch unreachable;
+            sink.* = BufferOutputSink{
+                .global = global,
+                .bytes = bun.MutableString.initEmpty(bun.default_allocator),
+                .rewriter = undefined,
+                .context = context,
+                .response = result,
+            };
+
+            for (sink.context.document_handlers.items) |doc| {
+                doc.ctx = sink;
+            }
+            for (sink.context.element_handlers.items) |doc| {
+                doc.ctx = sink;
+            }
+
+            sink.rewriter = builder.build(
+                .UTF8,
+                .{
+                    .preallocated_parsing_buffer_size = original.body.value.length(),
+                    .max_allowed_memory_usage = std.math.maxInt(u32),
+                },
+                false,
+                BufferOutputSink,
+                sink,
+                BufferOutputSink.write,
+                BufferOutputSink.done,
+            ) catch {
+                sink.deinit();
+                bun.default_allocator.destroy(result);
+
+                return throwLOLHTMLError(global);
+            };
+
+            result.* = Response{
+                .allocator = bun.default_allocator,
+                .body = .{
+                    .init = .{
+                        .status_code = 200,
+                        .headers = null,
+                    },
+                    .value = .{
+                        .Locked = .{
+                            .global = global,
+                            .task = sink,
+                        },
+                    },
+                },
+            };
+
+            sink.rewriter.write(original.body.slice()) catch {
+                sink.deinit();
+                bun.default_allocator.destroy(result);
+
+                return throwLOLHTMLError(global);
+            };
+
+            // Hold off on cloning until we're actually done.
+            result.body.init = original.body.init.clone(bun.default_allocator);
+            result.url = bun.default_allocator.dupe(u8, original.url) catch unreachable;
+            result.status_text = bun.default_allocator.dupe(u8, original.status_text) catch unreachable;
+
+            sink.rewriter.end() catch {
+                result.finalize();
+                sink.response = undefined;
+                sink.deinit();
+
+                return throwLOLHTMLError(global);
+            };
+
+            return JSC.JSValue.fromRef(
+                Response.Class.make(sink.global.ref(), sink.response),
+            );
+        }
+
+        pub const Sync = enum { suspended, pending, done };
 
         pub fn done(this: *BufferOutputSink) void {
-            _ = this;
+            var prev_value = this.response.body.value;
+            this.response.body.value = .{
+                .String = this.bytes.toOwnedSlice(),
+            };
+
+            this.response.body.ptr = bun.constStrToU8(this.response.body.slice()).ptr;
+            this.response.body.len = this.response.body.value.length();
+            this.response.body.ptr_allocator = bun.default_allocator;
+            if (prev_value.Locked.promise) |promise| {
+                prev_value.Locked.promise = null;
+                promise.asInternalPromise().?.resolve(this.global, JSC.JSValue.fromRef(
+                    Response.Class.make(
+                        this.global.ref(),
+                        this.response,
+                    ),
+                ));
+            }
         }
 
         pub fn write(this: *BufferOutputSink, bytes: []const u8) void {
@@ -296,10 +339,6 @@ pub const HTMLRewriter = struct {
             this.context.deinit(bun.default_allocator);
         }
     };
-
-    pub const Processor = struct {
-        selectors: std.ArrayList(*LOLHTML.HTMLSelector),
-    };
 };
 
 const DocumentHandler = struct {
@@ -309,6 +348,7 @@ const DocumentHandler = struct {
     onEndCallback: ?JSValue = null,
     thisObject: JSValue,
     global: *JSGlobalObject,
+    ctx: ?*HTMLRewriter.BufferOutputSink = null,
 
     pub const onDocType = HandlerCallback(
         DocumentHandler,
@@ -435,9 +475,7 @@ fn HandlerCallback(
             var zig_element = bun.default_allocator.create(ZigType) catch unreachable;
             @field(zig_element, field_name) = value;
             // At the end of this scope, the value is no longer valid
-            defer {
-                @field(zig_element, field_name) = null;
-            }
+
             var args = [1]JSC.C.JSObjectRef{
                 ZigType.Class.make(this.global.ref(), zig_element),
             };
@@ -451,11 +489,37 @@ fn HandlerCallback(
                 1,
                 &args,
             );
+            var promise_: ?*JSC.JSInternalPromise = null;
+            while (!result.isUndefinedOrNull()) {
+                if (result.isError() or result.isAggregateError(this.global)) {
+                    @field(zig_element, field_name) = null;
+                    return true;
+                }
 
-            if (result.isError() or result.isAggregateError(this.global)) {
-                return true;
+                var promise = promise_ orelse JSC.JSInternalPromise.resolvedPromise(this.global, result);
+                promise_ = promise;
+
+                switch (promise.status(this.global.vm())) {
+                    JSC.JSPromise.Status.Pending => {
+                        while (promise.status(this.global.vm()) == .Pending) {
+                            JavaScript.VirtualMachine.vm.tick();
+                        }
+                        result = promise.result(this.global.vm());
+                    },
+                    JSC.JSPromise.Status.Rejected => {
+                        JavaScript.VirtualMachine.vm.defaultErrorHandler(promise.result(this.global.vm()), null);
+                        @field(zig_element, field_name) = null;
+                        return false;
+                    },
+                    JSC.JSPromise.Status.Fulfilled => {
+                        result = promise.result(this.global.vm());
+                        break;
+                    },
+                }
+
+                break;
             }
-
+            @field(zig_element, field_name) = null;
             return false;
         }
     }.callback;
@@ -467,6 +531,7 @@ const ElementHandler = struct {
     onTextCallback: ?JSValue = null,
     thisObject: JSValue,
     global: *JSGlobalObject,
+    ctx: ?*HTMLRewriter.BufferOutputSink = null,
 
     pub fn init(global: *JSGlobalObject, thisObject: JSValue, exception: JSC.C.ExceptionRef) ElementHandler {
         var handler = ElementHandler{
@@ -496,9 +561,9 @@ const ElementHandler = struct {
             handler.onElementCallback = val;
         }
 
-        if (thisObject.get(global, "comment")) |val| {
+        if (thisObject.get(global, "comments")) |val| {
             if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
-                JSC.throwInvalidArguments("comment must be a function", .{}, global.ref(), exception);
+                JSC.throwInvalidArguments("comments must be a function", .{}, global.ref(), exception);
                 return undefined;
             }
             JSC.C.JSValueProtect(global.ref(), val.asObjectRef());
@@ -537,13 +602,15 @@ const ElementHandler = struct {
         JSC.C.JSValueUnprotect(this.global.ref(), this.thisObject.asObjectRef());
     }
 
-    pub const onElement = HandlerCallback(
-        ElementHandler,
-        Element,
-        LOLHTML.Element,
-        "element",
-        "onElementCallback",
-    );
+    pub fn onElement(this: *ElementHandler, value: *LOLHTML.Element) bool {
+        return HandlerCallback(
+            ElementHandler,
+            Element,
+            LOLHTML.Element,
+            "element",
+            "onElementCallback",
+        )(this, value);
+    }
 
     pub const onComment = HandlerCallback(
         ElementHandler,
@@ -682,10 +749,30 @@ pub fn wrap(comptime Container: type, comptime name: string) MethodType(Containe
                 }
             }
 
-            const result: JSValue = @call(.{}, @field(Container, name), args);
+            var result: JSValue = @call(.{}, @field(Container, name), args);
             if (result.isError()) {
                 exception.* = result.asObjectRef();
                 return null;
+            }
+
+            JavaScript.VirtualMachine.vm.tick();
+
+            var promise = JSC.JSInternalPromise.resolvedPromise(ctx.ptr(), result);
+
+            switch (promise.status(ctx.ptr().vm())) {
+                JSC.JSPromise.Status.Pending => {
+                    while (promise.status(ctx.ptr().vm()) == .Pending) {
+                        JavaScript.VirtualMachine.vm.tick();
+                    }
+                    result = promise.result(ctx.ptr().vm());
+                },
+                JSC.JSPromise.Status.Rejected => {
+                    result = promise.result(ctx.ptr().vm());
+                    exception.* = result.asObjectRef();
+                },
+                JSC.JSPromise.Status.Fulfilled => {
+                    result = promise.result(ctx.ptr().vm());
+                },
             }
 
             return result.asObjectRef();

@@ -167,6 +167,11 @@ pub const Response = struct {
         return js.JSValueMakeBoolean(ctx, this.isOK());
     }
 
+    pub fn clone(this: *const Response, allocator: std.mem.Allocator) *Response {
+        var new_response = allocator.create(Response) catch unreachable;
+        this.cloneInto(new_response, allocator);
+        return new_response;
+    }
     pub fn getText(
         this: *Response,
         ctx: js.JSContextRef,
@@ -406,7 +411,7 @@ pub const Response = struct {
 
                 return MimeType.html.value;
             },
-            .Unconsumed, .ArrayBuffer => {
+            else => {
                 return "application/octet-stream";
             },
         }
@@ -421,7 +426,7 @@ pub const Response = struct {
         const body: Body = brk: {
             switch (arguments.len) {
                 0 => {
-                    break :brk Body.@"404"(ctx);
+                    break :brk Body.@"200"(ctx);
                 },
                 1 => {
                     break :brk Body.extract(ctx, arguments[0], exception);
@@ -887,6 +892,17 @@ pub const Headers = struct {
         headers.entries.deinit(headers.allocator);
     }
 
+    pub fn empty(allocator: std.mem.Allocator) Headers {
+        var headers: Headers = undefined;
+        return Headers{
+            .entries = @TypeOf(headers.entries){},
+            .buf = @TypeOf(headers.buf){},
+            .used = 0,
+            .allocator = allocator,
+            .guard = Guard.none,
+        };
+    }
+
     // https://developer.mozilla.org/en-US/docs/Web/API/Headers#methods
     pub const JS = struct {
 
@@ -930,7 +946,7 @@ pub const Headers = struct {
                 return js.JSValueMakeUndefined(ctx);
             }
 
-            this.putHeader(arguments[0], arguments[1], false);
+            this.putHeaderFromJS(arguments[0], arguments[1], false);
             return js.JSValueMakeUndefined(ctx);
         }
 
@@ -947,7 +963,7 @@ pub const Headers = struct {
                 return js.JSValueMakeUndefined(ctx);
             }
 
-            this.putHeader(arguments[0], arguments[1], true);
+            this.putHeaderFromJS(arguments[0], arguments[1], true);
             return js.JSValueMakeUndefined(ctx);
         }
         pub fn delete(
@@ -1096,13 +1112,7 @@ pub const Headers = struct {
                     .guard = Guard.none,
                 };
             } else {
-                headers.* = Headers{
-                    .entries = @TypeOf(headers.entries){},
-                    .buf = @TypeOf(headers.buf){},
-                    .used = 0,
-                    .allocator = getAllocator(ctx),
-                    .guard = Guard.none,
-                };
+                headers.* = Headers.empty(getAllocator(ctx));
             }
 
             return Headers.Class.make(ctx, headers);
@@ -1223,7 +1233,19 @@ pub const Headers = struct {
 
     threadlocal var header_kv_buf: [4096]u8 = undefined;
 
-    pub fn putHeader(headers: *Headers, key_: js.JSStringRef, value_: js.JSStringRef, comptime append: bool) void {
+    pub fn putHeader(headers: *Headers, key_: []const u8, value_: []const u8, comptime append: bool) void {
+        const key = strings.copyLowercase(strings.trim(key_, " \n\r"), &header_kv_buf);
+        const value = strings.copyLowercase(strings.trim(value_, " \n\r"), header_kv_buf[key.len..]);
+        return headers.putHeaderNormalized(key, value, append);
+    }
+
+    pub fn putHeaderNumber(headers: *Headers, key_: []const u8, value_: u32, comptime append: bool) void {
+        const key = strings.copyLowercase(strings.trim(key_, " \n\r"), &header_kv_buf);
+        const value = std.fmt.bufPrint(header_kv_buf[key.len..], "{d}", .{value_}) catch unreachable;
+        return headers.putHeaderNormalized(key, value, append);
+    }
+
+    pub fn putHeaderFromJS(headers: *Headers, key_: js.JSStringRef, value_: js.JSStringRef, comptime append: bool) void {
         const key_len = js.JSStringGetUTF8CString(key_, &header_kv_buf, header_kv_buf.len) - 1;
         // TODO: make this one pass instead of two
         var key = strings.trim(header_kv_buf[0..key_len], " \n\r");
@@ -1233,6 +1255,10 @@ pub const Headers = struct {
         const value_len = js.JSStringGetUTF8CString(value_, remainder.ptr, remainder.len) - 1;
         var value = strings.trim(remainder[0..value_len], " \n\r");
 
+        headers.putHeaderNormalized(key, value, append);
+    }
+
+    pub fn putHeaderNormalized(headers: *Headers, key: []const u8, value: []const u8, comptime append: bool) void {
         if (headers.getHeaderIndex(key)) |header_i| {
             const existing_value = headers.entries.items(.value)[header_i];
 
@@ -1467,6 +1493,45 @@ pub const Body = struct {
     len: usize = 0,
     ptr_allocator: ?std.mem.Allocator = null,
 
+    pub fn slice(this: *const Body) []const u8 {
+        return switch (this.value) {
+            .String => this.value.String,
+            .ArrayBuffer => this.value.ArrayBuffer.slice(),
+            else => "",
+        };
+    }
+
+    pub fn clone(this: Body, allocator: std.mem.Allocator) Body {
+        var value: Value = .{ .Empty = 0 };
+        var ptr: ?[*]u8 = null;
+        var len: usize = 0;
+        switch (this.value) {
+            .ArrayBuffer => |buffer| {
+                value = .{
+                    .ArrayBuffer = ArrayBuffer.fromBytes(allocator.dupe(u8, buffer.slice()) catch unreachable, buffer.typed_array_type),
+                };
+                len = buffer.len;
+                ptr = value.ArrayBuffer.ptr;
+            },
+            .String => |str| {
+                value = .{
+                    .String = allocator.dupe(u8, str) catch unreachable,
+                };
+                len = str.len;
+                ptr = bun.constStrToU8(value.String).ptr;
+            },
+            else => {},
+        }
+
+        return Body{
+            .init = this.init.clone(allocator),
+            .value = value,
+            .ptr_allocator = if (len > 0) allocator else null,
+            .ptr = ptr,
+            .len = len,
+        };
+    }
+
     pub fn writeFormat(this: *const Body, formatter: *JSC.Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
 
@@ -1507,6 +1572,19 @@ pub const Body = struct {
     pub const Init = struct {
         headers: ?Headers,
         status_code: u16,
+
+        pub fn clone(this: Init, allocator: std.mem.Allocator) Init {
+            var that = this;
+            var headers = this.headers;
+            if (headers) |*head| {
+                headers.?.allocator = allocator;
+                var new_headers: Headers = undefined;
+                head.clone(&new_headers) catch unreachable;
+                that.headers = new_headers;
+            }
+
+            return that;
+        }
 
         pub fn init(_: std.mem.Allocator, ctx: js.JSContextRef, init_ref: js.JSValueRef) !?Init {
             var result = Init{ .headers = null, .status_code = 0 };

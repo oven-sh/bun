@@ -1,4 +1,4 @@
-import { it, describe } from "bun:test";
+import { it, describe, expect } from "bun:test";
 import fs from "fs";
 
 describe("fetch", () => {
@@ -19,4 +19,19 @@ describe("fetch", () => {
       }
     });
   }
+});
+
+describe("Response", () => {
+  it("clone", async () => {
+    var body = new Response("<div>hello</div>", {
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+      },
+    });
+    var clone = body.clone();
+    body.headers.set("content-type", "text/plain");
+    expect(clone.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(body.headers.get("content-type")).toBe("text/plain");
+    expect(await clone.text()).toBe("<div>hello</div>");
+  });
 });

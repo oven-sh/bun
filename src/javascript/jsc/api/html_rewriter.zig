@@ -66,6 +66,7 @@ pub const HTMLRewriter = struct {
         .{ .name = "HTMLRewriter" },
         .{
             .constructor = constructor,
+            .finalize = finalize,
             .on = .{
                 .rfn = wrap(HTMLRewriter, "on"),
             },
@@ -197,7 +198,7 @@ pub const HTMLRewriter = struct {
         return JSValue.fromRef(thisObject);
     }
 
-    pub fn finalize(this: *HTMLRewriter) JSValue {
+    pub fn finalize(this: *HTMLRewriter) void {
         this.finalizeWithoutDestroy();
         bun.default_allocator.destroy(this);
     }
@@ -251,7 +252,7 @@ pub const HTMLRewriter = struct {
             sink.rewriter = builder.build(
                 .UTF8,
                 .{
-                    .preallocated_parsing_buffer_size = original.body.value.length(),
+                    .preallocated_parsing_buffer_size = original.body.len(),
                     .max_allowed_memory_usage = std.math.maxInt(u32),
                 },
                 false,
@@ -311,13 +312,11 @@ pub const HTMLRewriter = struct {
 
         pub fn done(this: *BufferOutputSink) void {
             var prev_value = this.response.body.value;
+            var bytes = this.bytes.toOwnedSliceLeaky();
             this.response.body.value = .{
-                .String = this.bytes.toOwnedSlice(),
+                .Blob = JSC.WebCore.Blob.init(bytes, this.bytes.allocator, this.global),
             };
 
-            this.response.body.ptr = bun.constStrToU8(this.response.body.slice()).ptr;
-            this.response.body.len = this.response.body.value.length();
-            this.response.body.ptr_allocator = bun.default_allocator;
             if (prev_value.Locked.promise) |promise| {
                 prev_value.Locked.promise = null;
                 promise.asInternalPromise().?.resolve(this.global, JSC.JSValue.fromRef(
@@ -860,6 +859,7 @@ pub const TextChunk = struct {
             .remove = .{
                 .rfn = wrap(TextChunk, "remove"),
             },
+            .finalize = finalize,
         },
         .{
             .removed = .{
@@ -932,6 +932,11 @@ pub const TextChunk = struct {
     pub fn removed(this: *TextChunk, _: *JSGlobalObject) JSValue {
         return JSC.JSValue.jsBoolean(this.text_chunk.?.isRemoved());
     }
+
+    pub fn finalize(this: *TextChunk) void {
+        this.text_chunk = null;
+        bun.default_allocator.destroy(this);
+    }
 };
 
 pub const DocType = struct {
@@ -947,7 +952,9 @@ pub const DocType = struct {
         .{
             .name = "DocType",
         },
-        .{},
+        .{
+            .finalize = finalize,
+        },
         .{
             .name = .{
                 .get = getterWrap(DocType, "name"),
@@ -1005,6 +1012,7 @@ pub const DocEnd = struct {
         DocEnd,
         .{ .name = "DocEnd" },
         .{
+            .finalize = finalize,
             .append = .{
                 .rfn = wrap(DocEnd, "append"),
             },
@@ -1065,6 +1073,7 @@ pub const Comment = struct {
             .remove = .{
                 .rfn = wrap(Comment, "remove"),
             },
+            .finalize = finalize,
         },
         .{
             .removed = .{
@@ -1194,6 +1203,7 @@ pub const EndTag = struct {
             .remove = .{
                 .rfn = wrap(EndTag, "remove"),
             },
+            .finalize = finalize,
         },
         .{
             .name = .{
@@ -1352,6 +1362,7 @@ pub const AttributeIterator = struct {
             .next = .{
                 .rfn = wrap(AttributeIterator, "next"),
             },
+            .finalize = finalize,
         },
         .{},
     );
@@ -1441,6 +1452,7 @@ pub const Element = struct {
             .onEndTag = .{
                 .rfn = wrap(Element, "onEndTag"),
             },
+            .finalize = finalize,
         },
         .{
             .tagName = .{

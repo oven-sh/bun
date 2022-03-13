@@ -1,6 +1,31 @@
 import { describe, it, expect } from "bun:test";
 
+var setTimeoutAsync = (fn, delay) => {
+  return new Promise((resolve, reject) => {
+    setTimeout(() => {
+      try {
+        resolve(fn());
+      } catch (e) {
+        reject(e);
+      }
+    }, delay);
+  });
+};
+
 describe("HTMLRewriter", () => {
+  it("HTMLRewriter: async replacement", async () => {
+    const res = new HTMLRewriter()
+      .on("div", {
+        async element(element) {
+          await setTimeoutAsync(() => {
+            element.setInnerContent("<span>replace</span>", { html: true });
+          }, 5);
+        },
+      })
+      .transform(new Response("<div>example.com</div>"));
+    expect(await res.text()).toBe("<div><span>replace</span></div>");
+  });
+
   it("exists globally", async () => {
     expect(typeof HTMLRewriter).toBe("function");
     expect(typeof HTMLRewriter.constructor).toBe("function");
@@ -131,26 +156,21 @@ describe("HTMLRewriter", () => {
     remove: "<p></p>",
   };
 
-  const commentPropertiesMacro = async (t, func) => {
+  const commentPropertiesMacro = async (func) => {
     const res = func(new HTMLRewriter(), (comment) => {
       expect(comment.removed).toBe(false);
       expect(comment.text).toBe("test");
       comment.text = "new";
+      expect(comment.text).toBe("new");
     }).transform(new Response("<p><!--test--></p>"));
-    t.is(await res.text(), "<p><!--new--></p>");
+    expect(await res.text()).toBe("<p><!--new--></p>");
   };
-  test(
-    "HTMLRewriter: handles comment properties",
-    commentPropertiesMacro,
-    (rw, comments) => rw.on("p", { comments })
-  );
-  test(
-    "HTMLRewriter: handles comment mutations",
-    mutationsMacro,
-    (rw, comments) => rw.on("p", { comments }),
-    commentsMutationsInput,
-    commentsMutationsExpected
-  );
+
+  it("HTMLRewriter: handles comment properties", () =>
+    commentPropertiesMacro((rw, comments) => {
+      rw.on("p", { comments });
+      return rw;
+    }));
 
   it("selector tests", async () => {
     const checkSelector = async (selector, input, expected) => {

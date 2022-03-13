@@ -201,12 +201,13 @@ pub const Response = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        // https://developer.mozilla.org/en-US/docs/Web/API/Response/ok
         if (this.body.init.headers == null) {
-            this.body.init.headers = Headers.empty(this.allocator);
+            var headers = getAllocator(ctx).create(Headers) catch unreachable;
+            headers.* = Headers.empty(getAllocator(ctx));
+            this.body.init.headers = headers;
         }
 
-        return Headers.Class.make(ctx, &this.body.init.headers.?);
+        return Headers.Class.make(ctx, this.body.init.headers.?);
     }
 
     pub fn doClone(
@@ -533,7 +534,8 @@ pub const Fetch = struct {
             response_headers.guard = .immutable;
             var response = allocator.create(Response) catch unreachable;
             var duped = allocator.dupe(u8, this.http.response_buffer.toOwnedSlice()) catch unreachable;
-
+            var headers = allocator.create(Headers) catch unreachable;
+            headers.* = response_headers;
             response.* = Response{
                 .allocator = allocator,
                 .url = allocator.dupe(u8, this.http.url.href) catch unreachable,
@@ -541,7 +543,7 @@ pub const Fetch = struct {
                 .redirected = this.http.redirect_count > 0,
                 .body = .{
                     .init = .{
-                        .headers = response_headers,
+                        .headers = headers,
                         .status_code = @truncate(u16, http_response.status_code),
                     },
                     .value = .{
@@ -2049,7 +2051,7 @@ pub const Body = struct {
         try formatter.printComma(Writer, writer, enable_ansi_colors);
         try writer.writeAll("\n");
 
-        if (this.init.headers) |*headers| {
+        if (this.init.headers) |headers| {
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll("headers: ");
             try headers.writeFormat(formatter, writer, comptime enable_ansi_colors);
@@ -2062,7 +2064,7 @@ pub const Body = struct {
     }
 
     pub fn deinit(this: *Body, _: std.mem.Allocator) void {
-        if (this.init.headers) |*headers| {
+        if (this.init.headers) |headers| {
             headers.deinit();
         }
 
@@ -2070,24 +2072,24 @@ pub const Body = struct {
     }
 
     pub const Init = struct {
-        headers: ?Headers,
+        headers: ?*Headers = null,
         status_code: u16,
         method: Method = Method.GET,
 
         pub fn clone(this: Init, allocator: std.mem.Allocator) Init {
             var that = this;
             var headers = this.headers;
-            if (headers) |*head| {
+            if (headers) |head| {
                 headers.?.allocator = allocator;
-                var new_headers: Headers = undefined;
-                head.clone(&new_headers) catch unreachable;
+                var new_headers = allocator.create(Headers) catch unreachable;
+                head.clone(new_headers) catch unreachable;
                 that.headers = new_headers;
             }
 
             return that;
         }
 
-        pub fn init(_: std.mem.Allocator, ctx: js.JSContextRef, init_ref: js.JSValueRef) !?Init {
+        pub fn init(allocator: std.mem.Allocator, ctx: js.JSContextRef, init_ref: js.JSValueRef) !?Init {
             var result = Init{ .headers = null, .status_code = 0 };
             var array = js.JSObjectCopyPropertyNames(ctx, init_ref);
             defer js.JSPropertyNameArrayRelease(array);
@@ -2103,7 +2105,10 @@ pub const Body = struct {
                             if (js.JSObjectGetProperty(ctx, init_ref, property_name_ref, null)) |header_prop| {
                                 switch (js.JSValueGetType(ctx, header_prop)) {
                                     js.JSType.kJSTypeObject => {
-                                        result.headers = try Headers.JS.headersInit(ctx, header_prop);
+                                        if (try Headers.JS.headersInit(ctx, header_prop)) |headers| {
+                                            result.headers = try allocator.create(Headers);
+                                            result.headers.?.* = headers;
+                                        }
                                     },
                                     else => {},
                                 }
@@ -2526,11 +2531,7 @@ pub const Request = struct {
                 request.url = JSC.JSValue.fromRef(arguments[0]).getZigString(ctx.ptr());
 
                 if (Body.Init.init(getAllocator(ctx), ctx, arguments[1]) catch null) |req_init| {
-                    request.headers = getAllocator(ctx).create(Headers) catch unreachable;
-                    if (req_init.headers) |headers_| {
-                        request.headers.?.* = headers_;
-                    }
-
+                    request.headers = req_init.headers;
                     request.method = req_init.method;
                 }
 
@@ -2810,13 +2811,13 @@ pub const FetchEvent = struct {
         defer this.pending_promise = null;
         var needs_mime_type = true;
         var content_length: ?usize = null;
-        if (response.body.init.headers) |*headers| {
+        if (response.body.init.headers) |headers| {
             this.request_context.clearHeaders() catch {};
             var i: usize = 0;
             while (i < headers.entries.len) : (i += 1) {
                 var header = headers.entries.get(i);
                 const name = headers.asStr(header.name);
-                if (strings.eqlComptime(name, "content-type")) {
+                if (strings.eqlComptime(name, "content-type") and headers.asStr(header.value).len > 0) {
                     needs_mime_type = false;
                 }
 

@@ -1,4 +1,5 @@
 #include "BunClientData.h"
+#include "GCDefferalContext.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "root.h"
@@ -42,7 +43,6 @@
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>
-
 extern "C" {
 
 JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
@@ -237,10 +237,18 @@ void JSC__JSValue__jsonStringify(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg
 unsigned char JSC__JSValue__jsType(JSC__JSValue JSValue0)
 {
     JSC::JSValue jsValue = JSC::JSValue::decode(JSValue0);
-    if (JSC::JSCell* cell = jsValue.asCell())
-        return cell->type();
+    // if the value is NOT a cell
+    // asCell will return an invalid pointer rather than a nullptr
+    if (jsValue.isCell())
+        return jsValue.asCell()->type();
 
     return 0;
+}
+
+JSC__JSValue JSC__JSValue__parseJSON(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
+{
+    JSC::JSValue jsValue = JSC::JSValue::decode(JSValue0);
+    return JSC::JSValue::encode(JSC::JSONParse(arg1, jsValue.toWTFString(arg1)));
 }
 
 void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC__JSGlobalObject* global, ZigString* arg1)
@@ -2145,6 +2153,14 @@ JSC__VM* JSC__VM__create(unsigned char HeapType0)
 void JSC__VM__holdAPILock(JSC__VM* arg0, void* ctx, void (*callback)(void* arg0))
 {
     JSC::JSLockHolder locker(arg0);
+    callback(ctx);
+}
+
+void JSC__VM__deferGC(JSC__VM* vm, void* ctx, void (*callback)(void* arg0))
+{
+    JSC::GCDeferralContext deferralContext(reinterpret_cast<JSC__VM&>(vm));
+    JSC::DisallowGC disallowGC;
+
     callback(ctx);
 }
 

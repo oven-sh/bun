@@ -41,7 +41,7 @@ const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 
 pub fn isPackagePath(path: string) bool {
     // this could probably be flattened into something more optimized
-    return path[0] != '/' and !strings.startsWith(path, "./") and !strings.startsWith(path, "../") and !strings.eql(path, ".") and !strings.eql(path, "..");
+    return path.len > 0 and path[0] != '/' and !strings.startsWith(path, "./") and !strings.startsWith(path, "../") and !strings.eql(path, ".") and !strings.eql(path, "..");
 }
 
 pub const SideEffectsData = struct {

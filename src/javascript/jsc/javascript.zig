@@ -102,6 +102,7 @@ pub const GlobalClasses = [_]type{
     WebCore.TextDecoder.Constructor.Class,
 
     JSC.Cloudflare.HTMLRewriter.Class,
+    WebCore.Blob.Class,
 
     // The last item in this array becomes "process.env"
     Bun.EnvironmentVariables.Class,
@@ -1951,16 +1952,19 @@ pub const VirtualMachine = struct {
             }
         }
         pub fn tick(this: *EventLoop) void {
-            this.tickConcurrent();
+            while (true) {
+                this.tickConcurrent();
+                while (this.tickWithCount() > 0) {}
+                this.tickConcurrent();
 
-            while (this.tickWithCount() > 0) {}
+                if (this.tickWithCount() == 0) break;
+            }
         }
 
         pub fn waitForTasks(this: *EventLoop) void {
-            this.tickConcurrent();
-
+            this.tick();
             while (this.pending_tasks_count.load(.Monotonic) > 0) {
-                while (this.tickWithCount() > 0) {}
+                this.tick();
             }
         }
 
@@ -3429,7 +3433,7 @@ pub const EventListenerMixin = struct {
 
         fetch_event.* = FetchEvent{
             .request_context = request_context,
-            .request = Request{ .request_context = request_context },
+            .request = try Request.fromRequestContext(request_context),
             .onPromiseRejectionCtx = @as(*anyopaque, ctx),
             .onPromiseRejectionHandler = FetchEventRejectionHandler.onRejection,
         };

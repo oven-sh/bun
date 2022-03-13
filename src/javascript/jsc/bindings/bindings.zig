@@ -88,6 +88,18 @@ pub const ZigString = extern struct {
     ptr: [*]const u8,
     len: usize,
 
+    pub fn clone(this: ZigString, allocator: std.mem.Allocator) !ZigString {
+        var sliced = this.toSlice(allocator);
+        if (!sliced.allocated) {
+            var str = ZigString.init(try allocator.dupe(u8, sliced.slice()));
+            str.mark();
+            str.markUTF8();
+            return str;
+        }
+
+        return this;
+    }
+
     pub const shim = Shimmer("", "ZigString", @This());
 
     pub const Slice = struct {
@@ -106,7 +118,7 @@ pub const ZigString = extern struct {
             return @intToPtr([*]u8, @ptrToInt(this.ptr))[0..this.len];
         }
 
-        pub fn deinit(this: *Slice) void {
+        pub fn deinit(this: *const Slice) void {
             if (!this.allocated) {
                 return;
             }
@@ -261,7 +273,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn trimmedSlice(this: *const ZigString) []const u8 {
-        return std.mem.trim(u8, this.ptr[0..@minimum(this.len, std.math.maxInt(u32))], " \r\n");
+        return strings.trim(this.ptr[0..@minimum(this.len, std.math.maxInt(u32))], " \r\n");
     }
 
     pub fn toValueAuto(this: *const ZigString, global: *JSGlobalObject) JSValue {
@@ -1603,6 +1615,7 @@ pub const JSValue = enum(u64) {
 
         GetterSetter,
         CustomGetterSetter,
+        /// For 32-bit architectures, this wraps a 64-bit JSValue
         APIValueWrapper,
 
         NativeExecutable,
@@ -1822,6 +1835,16 @@ pub const JSValue = enum(u64) {
         this: JSValue,
     ) JSType {
         return cppFn("jsType", .{this});
+    }
+
+    pub fn jsTypeLoose(
+        this: JSValue,
+    ) JSType {
+        if (this.isNumber()) {
+            return JSType.NumberObject;
+        }
+
+        return this.jsType();
     }
 
     pub fn createEmptyObject(global: *JSGlobalObject, len: usize) JSValue {
@@ -2230,6 +2253,13 @@ pub const JSValue = enum(u64) {
         });
     }
 
+    pub fn parseJSON(this: JSValue, globalObject: *JSGlobalObject) JSValue {
+        return cppFn("parseJSON", .{
+            this,
+            globalObject,
+        });
+    }
+
     pub inline fn asRef(this: JSValue) C_API.JSValueRef {
         return @intToPtr(C_API.JSValueRef, @intCast(usize, @enumToInt(this)));
     }
@@ -2246,7 +2276,7 @@ pub const JSValue = enum(u64) {
         return @intToPtr(*anyopaque, @enumToInt(this));
     }
 
-    pub const Extern = [_][]const u8{ "symbolKeyFor", "symbolFor", "getSymbolDescription", "createInternalPromise", "asInternalPromise", "asArrayBuffer_", "getReadableStreamState", "getWritableStreamState", "fromEntries", "createTypeError", "createRangeError", "createObject2", "getIfPropertyExistsImpl", "jsType", "jsonStringify", "kind_", "isTerminationException", "isSameValue", "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
+    pub const Extern = [_][]const u8{ "parseJSON", "symbolKeyFor", "symbolFor", "getSymbolDescription", "createInternalPromise", "asInternalPromise", "asArrayBuffer_", "getReadableStreamState", "getWritableStreamState", "fromEntries", "createTypeError", "createRangeError", "createObject2", "getIfPropertyExistsImpl", "jsType", "jsonStringify", "kind_", "isTerminationException", "isSameValue", "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isUndefined", "isNull", "isUndefinedOrNull", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
 };
 
 extern "c" fn Microtask__run(*Microtask, *JSGlobalObject) void;
@@ -2386,6 +2416,10 @@ pub const VM = extern struct {
         cppFn("holdAPILock", .{ this, ctx, callback });
     }
 
+    pub fn deferGC(this: *VM, ctx: ?*anyopaque, callback: fn (ctx: ?*anyopaque) callconv(.C) void) void {
+        cppFn("deferGC", .{ this, ctx, callback });
+    }
+
     pub fn deleteAllCode(
         vm: *VM,
         global_object: *JSGlobalObject,
@@ -2459,7 +2493,7 @@ pub const VM = extern struct {
         });
     }
 
-    pub const Extern = [_][]const u8{ "holdAPILock", "runGC", "generateHeapSnapshot", "isJITEnabled", "deleteAllCode", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
+    pub const Extern = [_][]const u8{ "deferGC", "holdAPILock", "runGC", "generateHeapSnapshot", "isJITEnabled", "deleteAllCode", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
 };
 
 pub const ThrowScope = extern struct {

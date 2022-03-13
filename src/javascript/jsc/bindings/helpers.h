@@ -111,7 +111,7 @@ static bool isTaggedExternalPtr(const unsigned char* ptr)
 static const WTF::String toString(ZigString str)
 {
     if (str.len == 0 || str.ptr == nullptr) {
-        return WTF::Stzring();
+        return WTF::String();
     }
     if (UNLIKELY(isTaggedUTF8Ptr(str.ptr))) {
         return WTF::String::fromUTF8(untag(str.ptr), str.len);

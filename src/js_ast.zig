@@ -27,6 +27,7 @@ const AutoHashMap = _hash_map.AutoHashMap;
 const StringHashMapUnmanaged = _hash_map.StringHashMapUnmanaged;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
 const ComptimeStringMap = bun.ComptimeStringMap;
+const JSPrinter = @import("./js_printer.zig");
 pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
     var max_size = 0;
     var max_align = 1;
@@ -2192,6 +2193,57 @@ pub const Stmt = struct {
 pub const Expr = struct {
     loc: logger.Loc,
     data: Data,
+
+    pub fn fromBlob(
+        blob: *const JSC.WebCore.Blob,
+        allocator: std.mem.Allocator,
+        mime_type_: ?HTTP.MimeType,
+        log: *logger.Log,
+        loc: logger.Loc,
+    ) !Expr {
+        var bytes = blob.sharedView();
+
+        const mime_type = mime_type_ orelse HTTP.MimeType.init(blob.content_type);
+
+        if (mime_type.category == .json) {
+            var source = logger.Source.initPathString("fetch.json", bytes);
+            var out_expr = JSONParser.ParseJSONForMacro(&source, log, allocator) catch {
+                return error.MacroFailed;
+            };
+            out_expr.loc = loc;
+
+            switch (out_expr.data) {
+                .e_object => {
+                    out_expr.data.e_object.was_originally_macro = true;
+                },
+                .e_array => {
+                    out_expr.data.e_array.was_originally_macro = true;
+                },
+                else => {},
+            }
+
+            return out_expr;
+        }
+
+        if (mime_type.category.isTextLike()) {
+            var output = MutableString.initEmpty(allocator);
+            output = try JSPrinter.quoteForJSON(bytes, output, true);
+            var list = output.toOwnedSlice();
+            // remove the quotes
+            if (list.len > 0) {
+                list = list[1 .. list.len - 1];
+            }
+            return Expr.init(E.String, E.String{ .utf8 = list }, loc);
+        }
+
+        return Expr.init(
+            E.String,
+            E.String{
+                .utf8 = try JSC.ZigString.init(bytes).toBase64DataURL(allocator),
+            },
+            loc,
+        );
+    }
 
     pub inline fn initIdentifier(ref: Ref, loc: logger.Loc) Expr {
         return Expr{
@@ -7713,98 +7765,60 @@ pub const Macro = struct {
                             if (_entry.found_existing) {
                                 return _entry.value_ptr.*;
                             }
+                            var private_data = JSCBase.JSPrivateDataPtr.from(JSC.C.JSObjectGetPrivate(value.asObjectRef()).?);
+                            var blob_: ?JSC.WebCore.Blob = null;
+                            var mime_type: ?HTTP.MimeType = null;
 
-                            if (JSCBase.GetJSPrivateData(JSNode, value.asObjectRef())) |node| {
-                                _entry.value_ptr.* = node.toExpr();
-                                node.visited = true;
-                                node.updateSymbolsMap(Visitor, this.visitor);
-                                return _entry.value_ptr.*;
+                            switch (private_data.tag()) {
+                                .JSNode => {
+                                    var node = private_data.as(JSNode);
+                                    _entry.value_ptr.* = node.toExpr();
+                                    node.visited = true;
+                                    node.updateSymbolsMap(Visitor, this.visitor);
+                                    return _entry.value_ptr.*;
+                                },
+                                .ResolveError, .BuildError => {
+                                    this.macro.vm.defaultErrorHandler(value, null);
+                                    return error.MacroFailed;
+                                },
+                                .Request => {
+                                    var req: *JSC.WebCore.Request = private_data.as(JSC.WebCore.Request);
+                                    blob_ = req.body.use();
+                                    mime_type = HTTP.MimeType.init(req.mimeType());
+                                },
+                                .Response => {
+                                    var res: *JSC.WebCore.Response = private_data.as(JSC.WebCore.Response);
+                                    blob_ = res.body.use();
+                                    mime_type =
+                                        HTTP.MimeType.init(res.mimeType(null));
+                                },
+                                .Blob => {
+                                    var blob = private_data.as(JSC.WebCore.Blob);
+                                    blob_ = blob.*;
+                                    blob.* = JSC.WebCore.Blob.initEmpty(blob.globalThis);
+                                },
+                                else => {},
                             }
 
-                            if (JSCBase.GetJSPrivateData(JSC.BuildError, value.asObjectRef()) != null) {
-                                this.macro.vm.defaultErrorHandler(value, null);
-                                return error.MacroFailed;
-                            }
-
-                            if (JSCBase.GetJSPrivateData(JSC.ResolveError, value.asObjectRef()) != null) {
-                                this.macro.vm.defaultErrorHandler(value, null);
-                                return error.MacroFailed;
-                            }
-
-                            // alright this is insane
-                            if (JSCBase.GetJSPrivateData(JSC.WebCore.Response, value.asObjectRef())) |response| {
-                                switch (response.body.value) {
-                                    .Unconsumed => {
-                                        if (response.body.len > 0) {
-                                            var mime_type = HTTP.MimeType.other;
-                                            if (response.body.init.headers) |headers| {
-                                                if (headers.getHeaderIndex("content-type")) |content_type| {
-                                                    mime_type = HTTP.MimeType.init(headers.asStr(headers.entries.get(content_type).value));
-                                                }
-                                            }
-
-                                            if (response.body.ptr) |_ptr| {
-                                                var zig_string = JSC.ZigString.init(_ptr[0..response.body.len]);
-
-                                                if (mime_type.category == .json) {
-                                                    var source = logger.Source.initPathString("fetch.json", zig_string.slice());
-                                                    var out_expr = JSONParser.ParseJSONForMacro(&source, this.log, this.allocator) catch {
-                                                        return error.MacroFailed;
-                                                    };
-                                                    switch (out_expr.data) {
-                                                        .e_object => {
-                                                            out_expr.data.e_object.was_originally_macro = true;
-                                                        },
-                                                        .e_array => {
-                                                            out_expr.data.e_array.was_originally_macro = true;
-                                                        },
-                                                        else => {},
-                                                    }
-
-                                                    return out_expr;
-                                                }
-
-                                                if (mime_type.category.isTextLike()) {
-                                                    zig_string.detectEncoding();
-                                                    const utf8 = if (zig_string.is16Bit())
-                                                        zig_string.toSlice(this.allocator).slice()
-                                                    else
-                                                        zig_string.slice();
-
-                                                    return Expr.init(E.String, E.String{ .utf8 = utf8 }, this.caller.loc);
-                                                }
-
-                                                return Expr.init(E.String, E.String{ .utf8 = zig_string.toBase64DataURL(this.allocator) catch unreachable }, this.caller.loc);
-                                            }
-                                        }
-
-                                        return Expr.init(E.String, E.String.empty, this.caller.loc);
-                                    },
-
-                                    .String => |str| {
-                                        var zig_string = JSC.ZigString.init(str);
-
-                                        zig_string.detectEncoding();
-                                        if (zig_string.is16Bit()) {
-                                            var slice = zig_string.toSlice(this.allocator);
-                                            if (response.body.ptr_allocator) |allocator| response.body.deinit(allocator);
-                                            return Expr.init(E.String, E.String{ .utf8 = slice.slice() }, this.caller.loc);
-                                        }
-
-                                        return Expr.init(E.String, E.String{ .utf8 = zig_string.slice() }, this.caller.loc);
-                                    },
-                                    .ArrayBuffer => |buffer| {
-                                        return Expr.init(
-                                            E.String,
-                                            E.String{ .utf8 = JSC.ZigString.init(buffer.slice()).toBase64DataURL(this.allocator) catch unreachable },
-                                            this.caller.loc,
-                                        );
-                                    },
-                                    else => {
-                                        return Expr.init(E.String, E.String.empty, this.caller.loc);
-                                    },
+                            if (blob_) |*blob| {
+                                const out_expr = Expr.fromBlob(
+                                    blob,
+                                    this.allocator,
+                                    mime_type,
+                                    this.log,
+                                    this.caller.loc,
+                                ) catch {
+                                    blob.deinit();
+                                    return error.MacroFailed;
+                                };
+                                if (out_expr.data == .e_string) {
+                                    blob.deinit();
                                 }
+
+                                return out_expr;
                             }
+
+                            return Expr.init(E.String, E.String.empty, this.caller.loc);
                         },
 
                         .Boolean => {

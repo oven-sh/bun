@@ -338,6 +338,7 @@ pub extern fn JSC__JSValue__jsonStringify(JSValue0: JSC__JSValue, arg1: [*c]JSC_
 pub extern fn JSC__JSValue__jsTDZValue(...) JSC__JSValue;
 pub extern fn JSC__JSValue__jsType(JSValue0: JSC__JSValue) u8;
 pub extern fn JSC__JSValue__jsUndefined(...) JSC__JSValue;
+pub extern fn JSC__JSValue__parseJSON(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__putRecord(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]ZigString, arg3: [*c]ZigString, arg4: usize) void;
 pub extern fn JSC__JSValue__symbolFor(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]ZigString) JSC__JSValue;
 pub extern fn JSC__JSValue__symbolKeyFor(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]ZigString) bool;
@@ -360,6 +361,7 @@ pub extern fn JSC__Exception__getStackTrace(arg0: [*c]JSC__Exception, arg1: [*c]
 pub extern fn JSC__Exception__value(arg0: [*c]JSC__Exception) JSC__JSValue;
 pub extern fn JSC__VM__clearExecutionTimeLimit(arg0: [*c]JSC__VM) void;
 pub extern fn JSC__VM__create(HeapType0: u8) [*c]JSC__VM;
+pub extern fn JSC__VM__deferGC(arg0: [*c]JSC__VM, arg1: ?*anyopaque, ArgFn2: ?fn (?*anyopaque) callconv(.C) void) void;
 pub extern fn JSC__VM__deinit(arg0: [*c]JSC__VM, arg1: [*c]JSC__JSGlobalObject) void;
 pub extern fn JSC__VM__deleteAllCode(arg0: [*c]JSC__VM, arg1: [*c]JSC__JSGlobalObject) void;
 pub extern fn JSC__VM__drainMicrotasks(arg0: [*c]JSC__VM) void;

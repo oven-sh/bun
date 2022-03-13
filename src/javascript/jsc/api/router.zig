@@ -28,10 +28,15 @@ const To = Base.To;
 const Request = WebCore.Request;
 const d = Base.d;
 const FetchEvent = WebCore.FetchEvent;
-
+const URLPath = @import("../../../http/url_path.zig");
+const URL = @import("../../../query_string_map.zig").URL;
 route: *const FilesystemRouter.Match,
+route_holder: FilesystemRouter.Match = undefined,
+needs_deinit: bool = false,
 query_string_map: ?QueryStringMap = null,
 param_map: ?QueryStringMap = null,
+params_list_holder: FilesystemRouter.Param.List = .{},
+
 script_src: ?string = null,
 script_src_buf: [1024]u8 = undefined,
 
@@ -65,42 +70,101 @@ pub fn match(
         return null;
     }
 
-    if (js.JSValueIsObjectOfClass(ctx, arguments[0], FetchEvent.Class.get().*)) {
+    if (FetchEvent.Class.loaded and js.JSValueIsObjectOfClass(ctx, arguments[0], FetchEvent.Class.get().*)) {
         return matchFetchEvent(ctx, To.Zig.ptr(FetchEvent, arguments[0]), exception);
     }
 
-    // if (js.JSValueIsString(ctx, arguments[0])) {
-    //     return matchPathName(ctx, arguments[0], exception);
-    // }
-
-    if (js.JSValueIsObjectOfClass(ctx, arguments[0], Request.Class.get().*)) {
-        return matchRequest(ctx, To.Zig.ptr(Request, arguments[0]), exception);
+    var router = JavaScript.VirtualMachine.vm.bundler.router orelse {
+        JSError(getAllocator(ctx), "Bun.match needs a framework configured with routes", .{}, ctx, exception);
+        return null;
+    };
+    var arg = JSC.JSValue.fromRef(arguments[0]);
+    var path_: ?ZigString.Slice = null;
+    var pathname: string = "";
+    defer {
+        if (path_) |path| {
+            path.deinit();
+        }
     }
 
-    return null;
+    if (arg.isString()) {
+        var path_string = arg.getZigString(ctx.ptr());
+        path_ = path_string.toSlice(bun.default_allocator);
+        var url = URL.parse(path_.?.slice());
+        pathname = url.pathname;
+    } else if (arg.as(Request)) |req| {
+        var path_string = req.url;
+        path_ = path_string.toSlice(bun.default_allocator);
+        var url = URL.parse(path_.?.slice());
+        pathname = url.pathname;
+    }
+
+    if (path_ == null) {
+        JSError(getAllocator(ctx), "Expected string, FetchEvent, or Request", .{}, ctx, exception);
+        return null;
+    }
+
+    const url_path = URLPath.parse(path_.?.slice()) catch {
+        JSError(getAllocator(ctx), "Could not parse URL path", .{}, ctx, exception);
+        return null;
+    };
+
+    var match_params_fallback = std.heap.stackFallback(1024, bun.default_allocator);
+    var match_params_allocator = match_params_fallback.get();
+    var match_params = FilesystemRouter.Param.List{};
+    match_params.ensureTotalCapacity(match_params_allocator, 16) catch unreachable;
+    var prev_allocator = router.routes.allocator;
+    router.routes.allocator = match_params_allocator;
+    defer router.routes.allocator = prev_allocator;
+    if (router.routes.matchPage("", url_path, &match_params)) |matched| {
+        var match_ = matched;
+        var params_list = match_.params.clone(bun.default_allocator) catch unreachable;
+        var instance = getAllocator(ctx).create(Router) catch unreachable;
+
+        instance.* = Router{
+            .route_holder = match_,
+            .route = undefined,
+        };
+        instance.params_list_holder = params_list;
+        instance.route = &instance.route_holder;
+        instance.route_holder.params = &instance.params_list_holder;
+        instance.script_src_buf_writer = ScriptSrcStream{ .pos = 0, .buffer = std.mem.span(&instance.script_src_buf) };
+
+        return Instance.make(ctx, instance);
+    }
+    //    router.routes.matchPage
+
+    return JSC.JSValue.jsNull().asObjectRef();
 }
 
 fn matchRequest(
     ctx: js.JSContextRef,
     request: *const Request,
-    exception: js.ExceptionRef,
+    _: js.ExceptionRef,
 ) js.JSObjectRef {
-    return createRouteObject(ctx, request.request_context, exception);
+    return createRouteObject(ctx, request.request_context);
 }
 
 fn matchFetchEvent(
     ctx: js.JSContextRef,
     fetch_event: *const FetchEvent,
-    exception: js.ExceptionRef,
+    _: js.ExceptionRef,
 ) js.JSObjectRef {
-    return createRouteObject(ctx, fetch_event.request_context, exception);
+    return createRouteObject(ctx, fetch_event.request_context);
 }
 
-fn createRouteObject(ctx: js.JSContextRef, req: *const http.RequestContext, _: js.ExceptionRef) js.JSValueRef {
+fn createRouteObject(ctx: js.JSContextRef, req: *const http.RequestContext) js.JSValueRef {
     const route = &(req.matched_route orelse {
         return js.JSValueMakeNull(ctx);
     });
 
+    return createRouteObjectFromMatch(ctx, route);
+}
+
+fn createRouteObjectFromMatch(
+    ctx: js.JSContextRef,
+    route: *const FilesystemRouter.Match,
+) js.JSValueRef {
     var router = getAllocator(ctx).create(Router) catch unreachable;
     router.* = Router{
         .route = route,
@@ -275,6 +339,13 @@ pub fn finalize(
 ) void {
     if (this.query_string_map) |*map| {
         map.deinit();
+    }
+
+    if (this.needs_deinit) {
+        this.params_list_holder.deinit(bun.default_allocator);
+        this.params_list_holder = .{};
+        this.needs_deinit = false;
+        bun.default_allocator.destroy(this);
     }
 }
 

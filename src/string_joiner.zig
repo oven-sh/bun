@@ -21,27 +21,35 @@ const Joinable = struct {
 
 last_byte: u8 = 0,
 len: usize = 0,
+use_pool: bool = true,
+node_allocator: std.mem.Allocator = undefined,
 
 head: ?*Joinable.Pool.Node = null,
 tail: ?*Joinable.Pool.Node = null,
 
 pub fn done(this: *Joiner, allocator: std.mem.Allocator) ![]u8 {
-    var slice = try allocator.alloc(u8, this.cap);
+    if (this.head == null) {
+        var out: []u8 = &[_]u8{};
+        return out;
+    }
+
+    var slice = try allocator.alloc(u8, this.len);
     var remaining = slice;
     var el_ = this.head;
     while (el_) |join| {
-        const to_join = join.data.slice[join.offset..];
+        const to_join = join.data.slice[join.data.offset..];
         @memcpy(remaining.ptr, to_join.ptr, to_join.len);
 
-        remaining = remaining[to_join.len..];
+        remaining = remaining[@minimum(remaining.len, to_join.len)..];
 
         var prev = join;
         el_ = join.next;
         if (prev.data.needs_deinit) {
-            prev.data.allocator.free(join.data.slice);
+            prev.data.allocator.free(prev.data.slice);
             prev.data = Joinable{};
         }
-        prev.release();
+
+        if (this.use_pool) prev.release();
     }
 
     return slice[0 .. slice.len - remaining.len];
@@ -60,12 +68,19 @@ pub fn append(this: *Joiner, slice: string, offset: u32, allocator: ?std.mem.All
     const data = slice[offset..];
     this.len += @truncate(u32, data.len);
 
-    var new_tail = Joinable.Pool.get(default_allocator);
-    new_tail.data = Joinable{
-        .offset = offset,
-        .allocator = allocator orelse undefined,
-        .needs_deinit = allocator != null,
-        .slice = slice,
+    var new_tail = if (this.use_pool)
+        Joinable.Pool.get(default_allocator)
+    else
+        (this.node_allocator.create(Joinable.Pool.Node) catch unreachable);
+
+    new_tail.* = .{
+        .allocator = default_allocator,
+        .data = Joinable{
+            .offset = @truncate(u31, offset),
+            .allocator = allocator orelse undefined,
+            .needs_deinit = allocator != null,
+            .slice = slice,
+        },
     };
 
     var tail = this.tail orelse {

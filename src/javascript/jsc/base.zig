@@ -1720,6 +1720,17 @@ pub const ArrayBuffer = extern struct {
     }
 
     pub fn toJS(this: ArrayBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.JSValue {
+        if (this.typed_array_type == .ArrayBuffer) {
+            return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(
+                ctx,
+                this.ptr,
+                this.byte_len,
+                MarkedArrayBuffer_deallocator,
+                @intToPtr(*anyopaque, @ptrToInt(&bun.default_allocator)),
+                exception,
+            ));
+        }
+
         return JSC.JSValue.fromRef(JSC.C.JSObjectMakeTypedArrayWithBytesNoCopy(
             ctx,
             this.typed_array_type.toC(),
@@ -1865,39 +1876,41 @@ const DocType = JSC.Cloudflare.DocType;
 const EndTag = JSC.Cloudflare.EndTag;
 const DocEnd = JSC.Cloudflare.DocEnd;
 const AttributeIterator = JSC.Cloudflare.AttributeIterator;
+const Blob = JSC.WebCore.Blob;
 
 pub const JSPrivateDataPtr = TaggedPointerUnion(.{
-    ResolveError,
-    BuildError,
-    Response,
-    Request,
-    FetchEvent,
-    Headers,
+    AttributeIterator,
+    BigIntStats,
+    Blob,
     Body,
-    Router,
+    BuildError,
+    Comment,
+    DescribeScope,
+    DirEnt,
+    DocEnd,
+    DocType,
+    Element,
+    EndTag,
+    Expect,
+    ExpectPrototype,
+    FetchEvent,
+    FetchTaskletContext,
+    Headers,
+    HTMLRewriter,
     JSNode,
     LazyPropertiesObject,
     ModuleNamespace,
-    FetchTaskletContext,
-    DescribeScope,
-    Expect,
-    ExpectPrototype,
     NodeFS,
+    Request,
+    ResolveError,
+    Response,
+    Router,
     Stats,
-    BigIntStats,
-    DirEnt,
-    Transpiler,
-    TextEncoder,
-    TextDecoder,
-    TimeoutTask,
-    HTMLRewriter,
-    Element,
-    Comment,
     TextChunk,
-    DocType,
-    EndTag,
-    DocEnd,
-    AttributeIterator,
+    TextDecoder,
+    TextEncoder,
+    TimeoutTask,
+    Transpiler,
 });
 
 pub inline fn GetJSPrivateData(comptime Type: type, ref: js.JSObjectRef) ?*Type {

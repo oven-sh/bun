@@ -685,17 +685,20 @@ pub const TestScope = struct {
                 this.promise = null;
             }
 
-            while (this.promise.?.status(vm.global.vm()) == JSC.JSPromise.Status.Pending) {
+            var status = JSC.JSPromise.Status.Pending;
+            var vm_ptr = vm.global.vm();
+            while (this.promise != null and status == JSC.JSPromise.Status.Pending) : (status = this.promise.?.status(vm_ptr)) {
                 vm.tick();
             }
-            switch (this.promise.?.status(vm.global.vm())) {
+            switch (status) {
                 .Rejected => {
                     vm.defaultErrorHandler(this.promise.?.result(vm.global.vm()), null);
                     return .{ .fail = this.counter.actual };
                 },
                 else => {
-                    // don't care about the result
-                    _ = this.promise.?.result(vm.global.vm());
+                    if (this.promise != null)
+                        // don't care about the result
+                        _ = this.promise.?.result(vm.global.vm());
                 },
             }
         }
@@ -849,8 +852,11 @@ pub const DescribeScope = struct {
         var i: TestRunner.Test.ID = 0;
 
         while (i < end) {
+            // the test array could resize in the middle of this loop
             this.current_test_id = i;
-            const result = TestScope.run(&tests[i]);
+            var test_ = tests[i];
+            const result = TestScope.run(&test_);
+            tests[i] = test_;
             // invalidate it
             this.current_test_id = std.math.maxInt(TestRunner.Test.ID);
 

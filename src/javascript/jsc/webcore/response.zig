@@ -40,7 +40,7 @@ const VirtualMachine = @import("../javascript.zig").VirtualMachine;
 const Task = @import("../javascript.zig").Task;
 const JSPrinter = @import("../../../js_printer.zig");
 const picohttp = @import("picohttp");
-
+const StringJoiner = @import("../../../string_joiner.zig");
 pub const Response = struct {
     pub const Class = NewClass(
         Response,
@@ -48,15 +48,19 @@ pub const Response = struct {
         .{
             .@"constructor" = constructor,
             .@"text" = .{
-                .rfn = getText,
+                .rfn = Response.getText,
                 .ts = d.ts{},
             },
             .@"json" = .{
-                .rfn = getJson,
+                .rfn = Response.getJSON,
                 .ts = d.ts{},
             },
             .@"arrayBuffer" = .{
-                .rfn = getArrayBuffer,
+                .rfn = Response.getArrayBuffer,
+                .ts = d.ts{},
+            },
+            .@"blob" = .{
+                .rfn = Response.getBlob,
                 .ts = d.ts{},
             },
 
@@ -87,6 +91,10 @@ pub const Response = struct {
                 .@"get" = getHeaders,
                 .ro = true,
             },
+            .@"bodyUsed" = .{
+                .@"get" = getBodyUsed,
+                .ro = true,
+            },
         },
     );
 
@@ -101,7 +109,7 @@ pub const Response = struct {
     pub fn writeFormat(this: *const Response, formatter: *JSC.Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
         try formatter.writeIndent(Writer, writer);
-        try writer.print("Response ({}) {{\n", .{bun.fmt.size(this.body.len)});
+        try writer.print("Response ({}) {{\n", .{bun.fmt.size(this.body.len())});
         {
             formatter.indent += 1;
             defer formatter.indent -|= 1;
@@ -152,6 +160,16 @@ pub const Response = struct {
     ) js.JSValueRef {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
         return ZigString.init(this.url).withEncoding().toValueGC(ctx.ptr()).asObjectRef();
+    }
+
+    pub fn getBodyUsed(
+        this: *Response,
+        _: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        return JSC.JSValue.jsBoolean(this.body.value == .Used).asRef();
     }
 
     pub fn getStatusText(
@@ -219,194 +237,7 @@ pub const Response = struct {
         return new_response;
     }
 
-    pub fn getText(
-        this: *Response,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        _: []const js.JSValueRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-
-        // https://developer.mozilla.org/en-US/docs/Web/API/Response/text
-        defer this.body.value = .Empty;
-        return JSPromise.resolvedPromiseValue(
-            ctx.ptr(),
-            (brk: {
-                switch (this.body.value) {
-                    .Unconsumed => {
-                        if (this.body.len > 0) {
-                            if (this.body.ptr) |_ptr| {
-                                var zig_string = ZigString.init(_ptr[0..this.body.len]);
-                                zig_string.detectEncoding();
-                                if (zig_string.is16Bit()) {
-                                    var value = zig_string.to16BitValue(ctx.ptr());
-                                    this.body.ptr_allocator.?.free(_ptr[0..this.body.len]);
-                                    this.body.ptr_allocator = null;
-                                    this.body.ptr = null;
-                                    break :brk value;
-                                }
-
-                                break :brk zig_string.toValue(ctx.ptr());
-                            }
-                        }
-
-                        break :brk ZigString.init("").toValue(ctx.ptr());
-                    },
-                    .Empty => {
-                        break :brk ZigString.init("").toValue(ctx.ptr());
-                    },
-                    .String => |str| {
-                        var zig_string = ZigString.init(str);
-
-                        zig_string.detectEncoding();
-                        if (zig_string.is16Bit()) {
-                            var value = zig_string.to16BitValue(ctx.ptr());
-                            if (this.body.ptr_allocator) |allocator| this.body.deinit(allocator);
-                            break :brk value;
-                        }
-
-                        break :brk zig_string.toValue(ctx.ptr());
-                    },
-                    .ArrayBuffer => |buffer| {
-                        break :brk ZigString.init(buffer.ptr[buffer.offset..buffer.byte_len]).toValue(ctx.ptr());
-                    },
-                    else => unreachable,
-                }
-            }),
-        ).asRef();
-    }
-
-    var temp_error_buffer: [4096]u8 = undefined;
-    var error_arg_list: [1]js.JSObjectRef = undefined;
-    pub fn getJson(
-        this: *Response,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        _: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) js.JSValueRef {
-        var zig_string = ZigString.init("");
-        var deallocate = false;
-        defer {
-            if (deallocate) {
-                if (this.body.value == .Unconsumed) {
-                    this.body.ptr_allocator.?.free(this.body.ptr.?[0..this.body.len]);
-                    this.body.ptr_allocator = null;
-                    this.body.ptr = null;
-                    this.body.len = 0;
-                }
-            }
-
-            this.body.value = .Empty;
-        }
-
-        var json_value = (js.JSValueMakeFromJSONString(
-            ctx,
-            brk: {
-                switch (this.body.value) {
-                    .Unconsumed => {
-                        if (this.body.ptr) |_ptr| {
-                            zig_string = ZigString.init(_ptr[0..this.body.len]);
-                            deallocate = true;
-
-                            break :brk zig_string.toJSStringRef();
-                        }
-
-                        break :brk zig_string.toJSStringRef();
-                    },
-                    .Empty => {
-                        break :brk zig_string.toJSStringRef();
-                    },
-                    .String => |str| {
-                        zig_string = ZigString.init(str);
-                        break :brk zig_string.toJSStringRef();
-                    },
-                    .ArrayBuffer => |buffer| {
-                        zig_string = ZigString.init(buffer.ptr[buffer.offset..buffer.byte_len]);
-                        break :brk zig_string.toJSStringRef();
-                    },
-                    else => unreachable,
-                }
-            },
-        ) orelse {
-            var out = std.fmt.bufPrint(&temp_error_buffer, "Invalid JSON\n\n \"{s}\"", .{zig_string.slice()[0..std.math.min(zig_string.len, 4000)]}) catch unreachable;
-            error_arg_list[0] = ZigString.init(out).toValueGC(ctx.ptr()).asRef();
-            return JSPromise.rejectedPromiseValue(
-                ctx.ptr(),
-                JSValue.fromRef(
-                    js.JSObjectMakeError(
-                        ctx,
-                        1,
-                        &error_arg_list,
-                        exception,
-                    ),
-                ),
-            ).asRef();
-        });
-
-        return JSPromise.resolvedPromiseValue(
-            ctx.ptr(),
-            JSValue.fromRef(json_value),
-        ).asRef();
-    }
-    pub fn getArrayBuffer(
-        this: *Response,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        _: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) js.JSValueRef {
-        defer this.body.value = .Empty;
-        return JSPromise.resolvedPromiseValue(
-            ctx.ptr(),
-            JSValue.fromRef(
-                (brk: {
-                    switch (this.body.value) {
-                        .Unconsumed => {
-                            if (this.body.ptr) |_ptr| {
-                                break :brk JSC.MarkedArrayBuffer.fromBytes(_ptr[0..this.body.len], default_allocator, .ArrayBuffer).toJSObjectRef(ctx, exception);
-                            }
-                            break :brk js.JSObjectMakeTypedArray(
-                                ctx,
-                                js.JSTypedArrayType.kJSTypedArrayTypeArrayBuffer,
-                                0,
-                                exception,
-                            );
-                        },
-                        .Empty => {
-                            break :brk js.JSObjectMakeTypedArray(ctx, js.JSTypedArrayType.kJSTypedArrayTypeArrayBuffer, 0, exception);
-                        },
-                        .String => |str| {
-                            break :brk js.JSObjectMakeTypedArrayWithBytesNoCopy(
-                                ctx,
-                                js.JSTypedArrayType.kJSTypedArrayTypeArrayBuffer,
-                                @intToPtr([*]u8, @ptrToInt(str.ptr)),
-                                str.len,
-                                null,
-                                null,
-                                exception,
-                            );
-                        },
-                        .ArrayBuffer => |buffer| {
-                            break :brk js.JSObjectMakeTypedArrayWithBytesNoCopy(
-                                ctx,
-                                js.JSTypedArrayType.kJSTypedArrayTypeArrayBuffer,
-                                buffer.ptr,
-                                buffer.byte_len,
-                                null,
-                                null,
-                                exception,
-                            );
-                        },
-                        else => unreachable,
-                    }
-                }),
-            ),
-        ).asRef();
-    }
+    pub usingnamespace BlobInterface(@This());
 
     pub fn getStatus(
         this: *Response,
@@ -437,7 +268,7 @@ pub const Response = struct {
         allocator.destroy(this);
     }
 
-    pub fn mimeType(response: *const Response, request_ctx: *const RequestContext) string {
+    pub fn mimeType(response: *const Response, request_ctx_: ?*const RequestContext) string {
         if (response.body.init.headers) |headers| {
             // Remember, we always lowercase it
             // hopefully doesn't matter here tho
@@ -446,25 +277,21 @@ pub const Response = struct {
             }
         }
 
-        if (request_ctx.url.extname.len > 0) {
-            return MimeType.byExtension(request_ctx.url.extname).value;
+        if (request_ctx_) |request_ctx| {
+            if (request_ctx.url.extname.len > 0) {
+                return MimeType.byExtension(request_ctx.url.extname).value;
+            }
         }
 
         switch (response.body.value) {
-            .Empty => {
-                return "text/plain";
-            },
-            .String => |body| {
-                // poor man's mimetype sniffing
-                if (body.len > 0 and (body[0] == '{' or body[0] == '[')) {
-                    return MimeType.json.value;
+            .Blob => |blob| {
+                if (blob.content_type.len > 0) {
+                    return blob.content_type;
                 }
 
-                return MimeType.html.value;
+                return MimeType.other.value;
             },
-            else => {
-                return "application/octet-stream";
-            },
+            .Used, .Locked, .Empty => return MimeType.other.value,
         }
     }
 
@@ -492,10 +319,6 @@ pub const Response = struct {
             }
             unreachable;
         };
-
-        // if (exception != null) {
-        //     return null;
-        // }
 
         var response = getAllocator(ctx).create(Response) catch unreachable;
         response.* = Response{
@@ -722,11 +545,8 @@ pub const Fetch = struct {
                         .status_code = @truncate(u16, http_response.status_code),
                     },
                     .value = .{
-                        .Unconsumed = 0,
+                        .Blob = Blob.init(duped, allocator, this.global_this),
                     },
-                    .ptr = duped.ptr,
-                    .len = duped.len,
-                    .ptr_allocator = allocator,
                 },
             };
             return JSValue.fromRef(Response.Class.make(@ptrCast(js.JSContextRef, this.global_this), response));
@@ -805,90 +625,76 @@ pub const Fetch = struct {
             return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
         }
 
-        if (!js.JSValueIsString(ctx, arguments[0])) {
+        var headers: ?Headers = null;
+        var body: MutableString = MutableString.initEmpty(bun.default_allocator);
+        var method = Method.GET;
+        var args = JSC.Node.ArgumentsSlice.from(arguments);
+        var url: ZigURL = undefined;
+        var first_arg = args.nextEat().?;
+        if (first_arg.isString()) {
+            var url_zig_str = ZigString.init("");
+            JSValue.fromRef(arguments[0]).toZigString(&url_zig_str, globalThis);
+            var url_str = url_zig_str.slice();
+
+            if (url_str.len == 0) {
+                const fetch_error = fetch_error_blank_url;
+                return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
+            }
+
+            if (url_str[0] == '/') {
+                url_str = strings.append(getAllocator(ctx), VirtualMachine.vm.bundler.options.origin.origin, url_str) catch unreachable;
+            } else {
+                url_str = getAllocator(ctx).dupe(u8, url_str) catch unreachable;
+            }
+
+            NetworkThread.init() catch @panic("Failed to start network thread");
+            url = ZigURL.parse(url_str);
+
+            if (arguments.len >= 2 and js.JSValueIsObject(ctx, arguments[1])) {
+                var options = JSValue.fromRef(arguments[1]);
+                if (options.get(ctx.ptr(), "method")) |method_| {
+                    var slice_ = method_.toSlice(ctx.ptr(), getAllocator(ctx));
+                    defer slice_.deinit();
+                    method = Method.which(slice_.slice()) orelse .GET;
+                }
+
+                if (options.get(ctx.ptr(), "headers")) |headers_| {
+                    var headers2: Headers = undefined;
+                    if (headers_.as(Headers)) |headers__| {
+                        headers__.clone(&headers2) catch unreachable;
+                        headers = headers2;
+                    } else if (Headers.JS.headersInit(ctx, headers_.asObjectRef()) catch null) |headers__| {
+                        headers__.clone(&headers2) catch unreachable;
+                        headers = headers2;
+                    }
+                }
+
+                if (options.get(ctx.ptr(), "body")) |body__| {
+                    if (Blob.fromJS(ctx.ptr(), body__)) |new_blob| {
+                        body = MutableString{ .list = new_blob.asArrayList(), .allocator = bun.default_allocator };
+                    } else |_| {}
+                }
+            }
+        } else if (Request.Class.loaded and first_arg.as(Request) != null) {
+            var request = first_arg.as(Request).?;
+            url = ZigURL.parse(request.url.slice());
+            method = request.method;
+            if (request.headers) |head| {
+                headers = head.*;
+            }
+            var blob = request.body.use();
+            body = MutableString{
+                .list = blob.asArrayList(),
+                .allocator = blob.allocator orelse bun.default_allocator,
+            };
+        } else {
             const fetch_error = fetch_type_error_strings.get(js.JSValueGetType(ctx, arguments[0]));
             return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
         }
 
-        var url_zig_str = ZigString.init("");
-        JSValue.fromRef(arguments[0]).toZigString(&url_zig_str, globalThis);
-        var url_str = url_zig_str.slice();
-
-        if (url_str.len == 0) {
-            const fetch_error = fetch_error_blank_url;
-            return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
-        }
-
-        if (url_str[0] == '/') {
-            url_str = strings.append(getAllocator(ctx), VirtualMachine.vm.bundler.options.origin.origin, url_str) catch unreachable;
-        } else {
-            url_str = getAllocator(ctx).dupe(u8, url_str) catch unreachable;
-        }
-
-        NetworkThread.init() catch @panic("Failed to start network thread");
-        const url = ZigURL.parse(url_str);
-
         if (url.origin.len > 0 and strings.eql(url.origin, VirtualMachine.vm.bundler.options.origin.origin)) {
             const fetch_error = fetch_error_cant_fetch_same_origin;
             return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
-        }
-
-        var headers: ?Headers = null;
-        var body: string = "";
-        var method = Method.GET;
-
-        if (arguments.len >= 2 and js.JSValueIsObject(ctx, arguments[1])) {
-            var array = js.JSObjectCopyPropertyNames(ctx, arguments[1]);
-            defer js.JSPropertyNameArrayRelease(array);
-            const count = js.JSPropertyNameArrayGetCount(array);
-            var i: usize = 0;
-            while (i < count) : (i += 1) {
-                var property_name_ref = js.JSPropertyNameArrayGetNameAtIndex(array, i);
-                switch (js.JSStringGetLength(property_name_ref)) {
-                    "headers".len => {
-                        if (js.JSStringIsEqualToUTF8CString(property_name_ref, "headers")) {
-                            if (js.JSObjectGetProperty(ctx, arguments[1], property_name_ref, null)) |value| {
-                                if (GetJSPrivateData(Headers, value)) |headers_ptr| {
-                                    headers = headers_ptr.*;
-                                } else if (Headers.JS.headersInit(ctx, value) catch null) |headers_| {
-                                    headers = headers_;
-                                }
-                            }
-                        }
-                    },
-                    "body".len => {
-                        if (js.JSStringIsEqualToUTF8CString(property_name_ref, "body")) {
-                            if (js.JSObjectGetProperty(ctx, arguments[1], property_name_ref, null)) |value| {
-                                var body_ = Body.extractBody(ctx, value, false, null, exception);
-                                if (exception.* != null) return js.JSValueMakeNull(ctx);
-                                switch (body_.value) {
-                                    .ArrayBuffer => |arraybuffer| {
-                                        body = arraybuffer.ptr[0..arraybuffer.byte_len];
-                                    },
-                                    .String => |str| {
-                                        body = str;
-                                    },
-                                    else => {},
-                                }
-                            }
-                        }
-                    },
-                    "method".len => {
-                        if (js.JSStringIsEqualToUTF8CString(property_name_ref, "method")) {
-                            if (js.JSObjectGetProperty(ctx, arguments[1], property_name_ref, null)) |value| {
-                                var string_ref = js.JSValueToStringCopy(ctx, value, exception);
-
-                                if (exception.* != null) return js.JSValueMakeNull(ctx);
-                                defer js.JSStringRelease(string_ref);
-                                var method_name_buf: [16]u8 = undefined;
-                                var method_name = method_name_buf[0..js.JSStringGetUTF8CString(string_ref, &method_name_buf, method_name_buf.len)];
-                                method = Method.which(method_name) orelse method;
-                            }
-                        }
-                    },
-                    else => {},
-                }
-            }
         }
 
         var header_entries: Headers.Entries = .{};
@@ -904,6 +710,13 @@ pub const Fetch = struct {
         js.JSValueProtect(ctx, resolve);
         js.JSValueProtect(ctx, reject);
 
+        var request_body: ?*MutableString = null;
+        if (body.list.items.len > 0) {
+            var mutable = bun.default_allocator.create(MutableString) catch unreachable;
+            mutable.* = body;
+            request_body = mutable;
+        }
+
         // var resolve = FetchTasklet.FetchResolver.Class.make(ctx: js.JSContextRef, ptr: *ZigType)
         var queued = FetchTasklet.queue(
             default_allocator,
@@ -912,10 +725,10 @@ pub const Fetch = struct {
             url,
             header_entries,
             header_buf,
-            null,
+            request_body,
             std.time.ns_per_hour,
         ) catch unreachable;
-        queued.data.this_object = js.JSObjectMake(ctx, null, JSPrivateDataPtr.init(&queued.data.context).ptr());
+        queued.data.this_object = js.JSObjectMake(ctx, null, JSPrivateDataPtr.from(&queued.data.context).ptr());
         js.JSValueProtect(ctx, queued.data.this_object);
 
         var promise = js.JSObjectMakeDeferredPromise(ctx, &resolve, &reject, exception);
@@ -1326,7 +1139,7 @@ pub const Headers = struct {
                 headers.entries.items(.value)[header_i] = Api.StringPointer{ .offset = headers.used, .length = end - 1 };
                 headers.used += end;
                 // Can we get away with just overwriting in-place?
-            } else if (existing_value.length < value.len) {
+            } else if (existing_value.length > value.len) {
                 std.mem.copy(u8, headers.asStr(existing_value), value);
                 headers.entries.items(.value)[header_i].length = @truncate(u32, value.len);
                 headers.asStr(headers.entries.items(.value)[header_i]).ptr[value.len] = 0;
@@ -1523,7 +1336,7 @@ pub const Headers = struct {
         }) catch unreachable;
     }
 
-    pub fn clone(this: *Headers, to: *Headers) !void {
+    pub fn clone(this: *const Headers, to: *Headers) !void {
         to.* = Headers{
             .entries = try this.entries.clone(this.allocator),
             .buf = try @TypeOf(this.buf).initCapacity(this.allocator, this.buf.items.len),
@@ -1536,50 +1349,694 @@ pub const Headers = struct {
     }
 };
 
-// https://developer.mozilla.org/en-US/docs/Web/API/Body
-pub const Body = struct {
-    init: Init,
-    value: Value,
+pub const Blob = struct {
+    size: usize = 0,
     ptr: ?[*]u8 = null,
-    len: usize = 0,
+    cap: usize = 0,
     ptr_allocator: ?std.mem.Allocator = null,
+    allocator: ?std.mem.Allocator = null,
 
-    pub fn slice(this: *const Body) []const u8 {
-        return switch (this.value) {
-            .String => this.value.String,
-            .ArrayBuffer => this.value.ArrayBuffer.slice(),
-            else => "",
+    content_type: string = "",
+    content_type_allocated: bool = false,
+    detached: bool = false,
+
+    globalThis: *JSGlobalObject,
+
+    pub fn asArrayList(this: *const Blob) std.ArrayListUnmanaged(u8) {
+        if (this.ptr == null or this.size == 0)
+            return .{};
+
+        return .{
+            .items = this.ptr.?[0..this.size],
+            .capacity = this.cap,
         };
     }
 
-    pub fn clone(this: Body, allocator: std.mem.Allocator) Body {
-        var value: Value = .{ .Empty = 0 };
-        var ptr: ?[*]u8 = null;
-        var len: usize = 0;
-        switch (this.value) {
-            .ArrayBuffer => |buffer| {
-                value = .{
-                    .ArrayBuffer = ArrayBuffer.fromBytes(allocator.dupe(u8, buffer.slice()) catch unreachable, buffer.typed_array_type),
-                };
-                len = buffer.len;
-                ptr = value.ArrayBuffer.ptr;
+    pub const Class = NewClass(
+        Blob,
+        .{ .name = "Blob" },
+        .{
+            .constructor = constructor,
+            .finalize = finalize,
+            .text = .{
+                .rfn = getText,
             },
-            .String => |str| {
-                value = .{
-                    .String = allocator.dupe(u8, str) catch unreachable,
-                };
-                len = str.len;
-                ptr = bun.constStrToU8(value.String).ptr;
+            .json = .{
+                .rfn = getJSON,
             },
-            else => {},
+            .arrayBuffer = .{
+                .rfn = getArrayBuffer,
+            },
+            .slice = .{
+                .rfn = getSlice,
+            },
+        },
+        .{
+            .@"type" = .{
+                .get = getType,
+                .set = setType,
+            },
+            .@"size" = .{
+                .get = getSize,
+                .ro = true,
+            },
+        },
+    );
+
+    fn promisified(
+        value: JSC.JSValue,
+        global: *JSGlobalObject,
+    ) JSC.JSValue {
+        return JSC.JSPromise.resolvedPromiseValue(global, value);
+    }
+
+    pub fn getText(
+        this: *Blob,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        _: []const js.JSValueRef,
+        _: js.ExceptionRef,
+    ) JSC.C.JSObjectRef {
+        return promisified(this.toString(ctx.ptr(), .clone), ctx.ptr()).asObjectRef();
+    }
+
+    pub fn getTextTransfer(
+        this: *Blob,
+        ctx: js.JSContextRef,
+    ) JSC.C.JSObjectRef {
+        return promisified(this.toString(ctx.ptr(), .transfer), ctx.ptr()).asObjectRef();
+    }
+
+    pub fn getJSON(
+        this: *Blob,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        _: []const js.JSValueRef,
+        _: js.ExceptionRef,
+    ) JSC.C.JSObjectRef {
+        return promisified(this.toJSON(ctx.ptr()), ctx.ptr()).asObjectRef();
+    }
+
+    pub fn getArrayBufferTransfer(
+        this: *Blob,
+        ctx: js.JSContextRef,
+    ) JSC.C.JSObjectRef {
+        return promisified(this.toArrayBuffer(ctx.ptr(), .transfer), ctx.ptr()).asObjectRef();
+    }
+
+    pub fn getArrayBuffer(
+        this: *Blob,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        _: []const js.JSValueRef,
+        _: js.ExceptionRef,
+    ) JSC.C.JSObjectRef {
+        return promisified(this.toArrayBuffer(ctx.ptr(), .clone), ctx.ptr()).asObjectRef();
+    }
+
+    /// https://w3c.github.io/FileAPI/#slice-method-algo
+    /// The slice() method returns a new Blob object with bytes ranging from the
+    /// optional start parameter up to but not including the optional end
+    /// parameter, and with a type attribute that is the value of the optional
+    /// contentType parameter. It must act as follows:
+    pub fn getSlice(
+        this: *Blob,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        args: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) JSC.C.JSObjectRef {
+        if (this.size == 0) {
+            return constructor(ctx, null, &[_]js.JSValueRef{}, exception);
+        }
+        // If the optional start parameter is not used as a parameter when making this call, let relativeStart be 0.
+        var relativeStart: i32 = 0;
+
+        // If the optional end parameter is not used as a parameter when making this call, let relativeEnd be size.
+        var relativeEnd: i32 = @intCast(i32, this.size);
+
+        var args_iter = JSC.Node.ArgumentsSlice.from(args);
+        if (args_iter.nextEat()) |start_| {
+            const start = start_.toInt32();
+            if (start < 0) {
+                // If the optional start parameter is negative, let relativeStart be start + size.
+                relativeStart = @intCast(i32, @maximum(start + @intCast(i32, this.size), 0));
+            } else {
+                // Otherwise, let relativeStart be start.
+                relativeStart = @minimum(@intCast(i32, start), @intCast(i32, this.size));
+            }
         }
 
+        if (args_iter.nextEat()) |end_| {
+            const end = end_.toInt32();
+            // If end is negative, let relativeEnd be max((size + end), 0).
+            if (end < 0) {
+                // If the optional start parameter is negative, let relativeStart be start + size.
+                relativeEnd = @intCast(i32, @maximum(end + @intCast(i32, this.size), 0));
+            } else {
+                // Otherwise, let relativeStart be start.
+                relativeEnd = @minimum(@intCast(i32, end), @intCast(i32, this.size));
+            }
+        }
+
+        var content_type: string = "";
+        if (args_iter.nextEat()) |content_type_| {
+            if (content_type_.isString()) {
+                var zig_str = content_type_.getZigString(ctx.ptr());
+                if (!zig_str.is16Bit()) {
+                    var slice = zig_str.trimmedSlice();
+                    var content_type_buf = getAllocator(ctx).alloc(u8, slice.len) catch unreachable;
+                    content_type = strings.copyLowercase(slice, content_type_buf);
+                }
+            }
+        }
+
+        const len = @intCast(u32, @maximum(relativeEnd - relativeStart, 0));
+
+        var blob = Blob.init(
+            getAllocator(ctx).dupe(u8, this.sharedView()[@intCast(usize, relativeStart)..][0..len]) catch unreachable,
+            getAllocator(ctx),
+            ctx.ptr(),
+        );
+        blob.content_type = content_type;
+        blob.content_type_allocated = content_type.len > 0;
+
+        var blob_ = getAllocator(ctx).create(Blob) catch unreachable;
+        blob_.* = blob;
+        blob_.allocator = getAllocator(ctx);
+        return Blob.Class.make(ctx, blob_);
+    }
+
+    pub fn getType(
+        this: *Blob,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        return ZigString.init(this.content_type).toValue(ctx.ptr()).asObjectRef();
+    }
+
+    pub fn setType(
+        this: *Blob,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        value: js.JSValueRef,
+        _: js.ExceptionRef,
+    ) bool {
+        var zig_str = JSValue.fromRef(value).getZigString(ctx.ptr());
+        if (zig_str.is16Bit())
+            return false;
+
+        var slice = zig_str.trimmedSlice();
+        if (strings.eql(slice, this.content_type))
+            return true;
+
+        const prev_content_type = this.content_type;
+        defer if (this.content_type_allocated) bun.default_allocator.free(prev_content_type);
+        var content_type_buf = getAllocator(ctx).alloc(u8, slice.len) catch unreachable;
+        this.content_type = strings.copyLowercase(slice, content_type_buf);
+        this.content_type_allocated = true;
+        return true;
+    }
+
+    pub fn getSize(
+        this: *Blob,
+        _: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        return JSValue.jsNumber(@truncate(u32, this.size)).asRef();
+    }
+
+    pub fn constructor(
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        args: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSObjectRef {
+        var blob: Blob = undefined;
+        switch (args.len) {
+            0 => {
+                var empty: []u8 = &[_]u8{};
+                blob = Blob.init(empty, getAllocator(ctx), ctx.ptr());
+            },
+            else => {
+                blob = fromJS(ctx.ptr(), JSValue.fromRef(args[0])) catch {
+                    JSC.JSError(getAllocator(ctx), "out of memory :(", .{}, ctx, exception);
+                    return null;
+                };
+
+                if (args.len > 1) {
+                    var options = JSValue.fromRef(args[1]);
+                    if (options.isCell()) {
+                        // type, the ASCII-encoded string in lower case
+                        // representing the media type of the Blob.
+                        // Normative conditions for this member are provided
+                        // in the § 3.1 Constructors.
+                        if (options.get(ctx.ptr(), "type")) |content_type| {
+                            if (content_type.isString()) {
+                                var content_type_str = content_type.getZigString(ctx.ptr());
+                                if (!content_type_str.is16Bit()) {
+                                    var slice = content_type_str.trimmedSlice();
+                                    var content_type_buf = getAllocator(ctx).alloc(u8, slice.len) catch unreachable;
+                                    blob.content_type = strings.copyLowercase(slice, content_type_buf);
+                                    blob.content_type_allocated = true;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (blob.content_type.len == 0) {
+                    blob.content_type = "";
+                }
+            },
+        }
+
+        var blob_ = getAllocator(ctx).create(Blob) catch unreachable;
+        blob_.* = blob;
+        blob_.allocator = getAllocator(ctx);
+        return Blob.Class.make(ctx, blob_);
+    }
+
+    pub fn finalize(this: *Blob) void {
+        this.deinit();
+    }
+
+    pub fn init(bytes: []u8, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) Blob {
+        return Blob{
+            .size = bytes.len,
+            .ptr = bytes.ptr,
+            .cap = bytes.len,
+            .ptr_allocator = allocator,
+            .allocator = null,
+            .content_type = "",
+            .detached = false,
+            .globalThis = globalThis,
+        };
+    }
+
+    pub fn initEmpty(globalThis: *JSGlobalObject) Blob {
+        return Blob{
+            .size = 0,
+            .ptr = undefined,
+            .cap = 0,
+            .ptr_allocator = null,
+            .allocator = null,
+            .content_type = "",
+            .detached = false,
+            .globalThis = globalThis,
+        };
+    }
+
+    pub fn detach(this: *Blob) void {
+        var blob = this.*;
+        if (blob.ptr_allocator) |alloc| {
+            alloc.free(blob.sharedView());
+            this.ptr_allocator = null;
+            this.ptr = null;
+            this.size = 0;
+            this.cap = 0;
+        }
+
+        this.detached = true;
+    }
+
+    pub fn dupe(this: *const Blob, allocator: std.mem.Allocator) !Blob {
+        var data = try allocator.dupe(u8, this.sharedView());
+        return Blob{
+            .size = data.len,
+            .ptr = data.ptr,
+            .cap = data.len,
+            .ptr_allocator = allocator,
+            .allocator = allocator,
+            .content_type = this.content_type,
+            .detached = false,
+            .globalThis = this.globalThis,
+        };
+    }
+
+    pub fn deinit(this: *Blob) void {
+        var blob = this.*;
+
+        if (this.allocator) |alloc| {
+            this.allocator = null;
+            alloc.destroy(this);
+        }
+
+        blob.detach();
+    }
+
+    pub fn sharedView(this: *const Blob) []const u8 {
+        if (this.size == 0 or this.ptr == null) return "";
+        return this.ptr.?[0..this.size];
+    }
+
+    pub const Lifetime = enum {
+        clone,
+        transfer,
+        share,
+    };
+
+    pub fn toString(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) JSValue {
+        var view_ = this.sharedView();
+
+        if (view_.len == 0)
+            return ZigString.Empty.toValue(global);
+
+        // TODO: use the index to make this one pass instead of two passes
+        var buf = view_;
+        if (!strings.isAllASCII(buf)) {
+            var external = (strings.toUTF16Alloc(bun.default_allocator, buf, false) catch null) orelse &[_]u16{};
+            return ZigString.toExternalU16(external.ptr, external.len, global);
+        }
+
+        switch (comptime lifetime) {
+            .clone => {
+                return ZigString.init(buf).toValueGC(global);
+            },
+            .transfer => {
+                this.detached = true;
+                this.ptr_allocator = null;
+                this.ptr = null;
+                this.size = 0;
+                this.cap = 0;
+                return ZigString.init(buf).toExternalValue(global);
+            },
+            .share => {
+                return ZigString.init(buf).toValue(global);
+            },
+        }
+    }
+
+    pub fn toJSON(this: *Blob, global: *JSGlobalObject) JSValue {
+        var view_ = this.sharedView();
+
+        if (view_.len == 0)
+            return ZigString.Empty.toValue(global);
+
+        // TODO: use the index to make this one pass instead of two passes
+        var buf = view_;
+        if (!strings.isAllASCII(buf)) {
+            var external = (strings.toUTF16Alloc(bun.default_allocator, buf, false) catch null) orelse &[_]u16{};
+            defer bun.default_allocator.free(external);
+            return ZigString.toExternalU16(external.ptr, external.len, global).parseJSON(global);
+        }
+
+        return ZigString.init(buf).toValue(global).parseJSON(global);
+    }
+    pub fn toArrayBuffer(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) JSValue {
+        var view_ = this.sharedView();
+
+        if (view_.len == 0)
+            return JSC.ArrayBuffer.fromBytes(&[_]u8{}, .ArrayBuffer).toJS(global.ref(), null);
+
+        switch (comptime lifetime) {
+            .clone => {
+                var clone = bun.default_allocator.alloc(u8, view_.len) catch unreachable;
+                @memcpy(clone.ptr, view_.ptr, view_.len);
+
+                return JSC.ArrayBuffer.fromBytes(clone, .ArrayBuffer).toJS(global.ref(), null);
+            },
+            .share => {
+                return JSC.ArrayBuffer.fromBytes(view_.ptr, .ArrayBuffer).toJS(global.ref(), null);
+            },
+            .transfer => {
+                this.detached = true;
+                this.ptr_allocator = null;
+                this.ptr = null;
+                this.size = 0;
+                this.cap = 0;
+                return JSC.ArrayBuffer.fromBytes(bun.constStrToU8(view_), .ArrayBuffer).toJS(global.ref(), null);
+            },
+        }
+    }
+
+    pub fn fromJS(global: *JSGlobalObject, arg: JSValue) anyerror!Blob {
+        const DeferCtx = struct {
+            args: std.meta.ArgsTuple(@TypeOf(Blob.fromJSWithoutDeferGC)),
+            ret: anyerror!Blob = undefined,
+
+            pub fn run(ctx: ?*anyopaque) callconv(.C) void {
+                var that = bun.cast(*@This(), ctx.?);
+                that.ret = @call(.{}, Blob.fromJSWithoutDeferGC, that.args);
+            }
+        };
+        var ctx = DeferCtx{
+            .args = .{ global, arg },
+            .ret = undefined,
+        };
+        JSC.VirtualMachine.vm.global.vm().deferGC(&ctx, DeferCtx.run);
+        return ctx.ret;
+    }
+
+    fn fromJSWithoutDeferGC(global: *JSGlobalObject, arg: JSValue) anyerror!Blob {
+        var current = arg;
+        if (current.isUndefinedOrNull()) {
+            return Blob{ .globalThis = global };
+        }
+
+        // Fast path: one item, we don't need to join
+        switch (current.jsTypeLoose()) {
+            .Cell,
+            .NumberObject,
+            JSC.JSValue.JSType.String,
+            JSC.JSValue.JSType.StringObject,
+            JSC.JSValue.JSType.DerivedStringObject,
+            => {
+                var sliced = current.toSlice(global, bun.default_allocator);
+                if (!sliced.allocated) {
+                    sliced.ptr = @ptrCast([*]const u8, (try bun.default_allocator.dupe(u8, sliced.slice())).ptr);
+                    sliced.allocated = true;
+                }
+
+                return Blob{
+                    .size = sliced.len,
+                    .ptr = bun.constStrToU8(sliced.ptr[0..sliced.len]).ptr,
+                    .cap = sliced.len,
+                    .ptr_allocator = bun.default_allocator,
+                    .allocator = null,
+                    .globalThis = global,
+                };
+            },
+
+            JSC.JSValue.JSType.ArrayBuffer,
+            JSC.JSValue.JSType.Int8Array,
+            JSC.JSValue.JSType.Uint8Array,
+            JSC.JSValue.JSType.Uint8ClampedArray,
+            JSC.JSValue.JSType.Int16Array,
+            JSC.JSValue.JSType.Uint16Array,
+            JSC.JSValue.JSType.Int32Array,
+            JSC.JSValue.JSType.Uint32Array,
+            JSC.JSValue.JSType.Float32Array,
+            JSC.JSValue.JSType.Float64Array,
+            JSC.JSValue.JSType.BigInt64Array,
+            JSC.JSValue.JSType.BigUint64Array,
+            JSC.JSValue.JSType.DataView,
+            => {
+                var buf = try bun.default_allocator.dupe(u8, current.asArrayBuffer(global).?.slice());
+                return Blob{
+                    .size = buf.len,
+                    .ptr = buf.ptr,
+                    .cap = buf.len,
+                    .ptr_allocator = bun.default_allocator,
+                    .allocator = null,
+                    .globalThis = global,
+                };
+            },
+
+            else => {
+                if (JSC.C.JSObjectGetPrivate(current.asObjectRef())) |priv| {
+                    var data = JSC.JSPrivateDataPtr.from(priv);
+                    switch (data.tag()) {
+                        .Blob => {
+                            var blob: *Blob = data.as(Blob);
+                            return try blob.dupe(bun.default_allocator);
+                        },
+
+                        else => return Blob.initEmpty(global),
+                    }
+                }
+            },
+        }
+
+        var stack_allocator = std.heap.stackFallback(1024, bun.default_allocator);
+        var stack_mem_all = stack_allocator.get();
+        var stack: std.ArrayList(JSValue) = std.ArrayList(JSValue).init(stack_mem_all);
+        var joiner = StringJoiner{ .use_pool = false, .node_allocator = stack_mem_all };
+
+        defer if (stack_allocator.fixed_buffer_allocator.end_index >= 1024) stack.deinit();
+
+        while (true) {
+            switch (current.jsTypeLoose()) {
+                .NumberObject,
+                JSC.JSValue.JSType.String,
+                JSC.JSValue.JSType.StringObject,
+                JSC.JSValue.JSType.DerivedStringObject,
+                => {
+                    var sliced = current.toSlice(global, bun.default_allocator);
+                    joiner.append(
+                        sliced.slice(),
+                        0,
+                        if (sliced.allocated) sliced.allocator else null,
+                    );
+                },
+
+                .Array, .DerivedArray => {
+                    var iter = JSC.JSArrayIterator.init(current, global);
+                    try stack.ensureUnusedCapacity(iter.len);
+                    var any_arrays = false;
+                    while (iter.next()) |item| {
+                        if (item.isUndefinedOrNull()) continue;
+
+                        // When it's a string or ArrayBuffer inside an array, we can avoid the extra push/pop
+                        // we only really want this for nested arrays
+                        // However, we must preserve the order
+                        // That means if there are any arrays
+                        // we have to restart the loop
+                        if (!any_arrays) {
+                            switch (item.jsTypeLoose()) {
+                                .NumberObject,
+                                .Cell,
+                                JSC.JSValue.JSType.String,
+                                JSC.JSValue.JSType.StringObject,
+                                JSC.JSValue.JSType.DerivedStringObject,
+                                => {
+                                    var sliced = item.toSlice(global, bun.default_allocator);
+                                    joiner.append(
+                                        sliced.slice(),
+                                        0,
+                                        if (sliced.allocated) sliced.allocator else null,
+                                    );
+                                    continue;
+                                },
+                                JSC.JSValue.JSType.ArrayBuffer,
+                                JSC.JSValue.JSType.Int8Array,
+                                JSC.JSValue.JSType.Uint8Array,
+                                JSC.JSValue.JSType.Uint8ClampedArray,
+                                JSC.JSValue.JSType.Int16Array,
+                                JSC.JSValue.JSType.Uint16Array,
+                                JSC.JSValue.JSType.Int32Array,
+                                JSC.JSValue.JSType.Uint32Array,
+                                JSC.JSValue.JSType.Float32Array,
+                                JSC.JSValue.JSType.Float64Array,
+                                JSC.JSValue.JSType.BigInt64Array,
+                                JSC.JSValue.JSType.BigUint64Array,
+                                JSC.JSValue.JSType.DataView,
+                                => {
+                                    var buf = item.asArrayBuffer(global).?;
+                                    joiner.append(buf.slice(), 0, null);
+                                    continue;
+                                },
+                                .Array, .DerivedArray => {
+                                    any_arrays = true;
+                                    break;
+                                },
+                                else => {
+                                    if (JSC.C.JSObjectGetPrivate(item.asObjectRef())) |priv| {
+                                        var data = JSC.JSPrivateDataPtr.from(priv);
+                                        switch (data.tag()) {
+                                            .Blob => {
+                                                var blob: *Blob = data.as(Blob);
+                                                joiner.append(blob.sharedView(), 0, null);
+                                                continue;
+                                            },
+                                            else => {},
+                                        }
+                                    }
+                                },
+                            }
+                        }
+
+                        stack.appendAssumeCapacity(item);
+                    }
+                },
+
+                JSC.JSValue.JSType.ArrayBuffer,
+                JSC.JSValue.JSType.Int8Array,
+                JSC.JSValue.JSType.Uint8Array,
+                JSC.JSValue.JSType.Uint8ClampedArray,
+                JSC.JSValue.JSType.Int16Array,
+                JSC.JSValue.JSType.Uint16Array,
+                JSC.JSValue.JSType.Int32Array,
+                JSC.JSValue.JSType.Uint32Array,
+                JSC.JSValue.JSType.Float32Array,
+                JSC.JSValue.JSType.Float64Array,
+                JSC.JSValue.JSType.BigInt64Array,
+                JSC.JSValue.JSType.BigUint64Array,
+                JSC.JSValue.JSType.DataView,
+                => {
+                    var buf = current.asArrayBuffer(global).?;
+                    joiner.append(buf.slice(), 0, null);
+                },
+
+                else => {
+                    outer: {
+                        if (JSC.C.JSObjectGetPrivate(current.asObjectRef())) |priv| {
+                            var data = JSC.JSPrivateDataPtr.from(priv);
+                            switch (data.tag()) {
+                                .Blob => {
+                                    var blob: *Blob = data.as(Blob);
+                                    joiner.append(blob.sharedView(), 0, null);
+                                    break :outer;
+                                },
+                                else => {},
+                            }
+                        }
+
+                        var sliced = current.toSlice(global, bun.default_allocator);
+                        joiner.append(
+                            sliced.slice(),
+                            0,
+                            if (sliced.allocated) sliced.allocator else null,
+                        );
+                    }
+                },
+            }
+
+            current = stack.popOrNull() orelse break;
+        }
+
+        var joined = try joiner.done(bun.default_allocator);
+        return Blob{
+            .ptr_allocator = bun.default_allocator,
+            .allocator = null,
+            .size = joined.len,
+            .ptr = joined.ptr,
+            .cap = joined.len,
+            .globalThis = global,
+        };
+    }
+};
+
+// https://developer.mozilla.org/en-US/docs/Web/API/Body
+pub const Body = struct {
+    init: Init = Init{ .headers = null, .status_code = 200 },
+    value: Value = Value.empty,
+
+    pub inline fn len(this: *const Body) usize {
+        return this.slice().len;
+    }
+
+    pub fn slice(this: *const Body) []const u8 {
+        return this.value.slice();
+    }
+
+    pub fn use(this: *Body) Blob {
+        return this.value.use();
+    }
+
+    pub fn clone(this: Body, allocator: std.mem.Allocator) Body {
         return Body{
             .init = this.init.clone(allocator),
-            .value = value,
-            .ptr_allocator = if (len > 0) allocator else null,
-            .ptr = ptr,
-            .len = len,
+            .value = this.value.clone(allocator) catch Value.empty,
         };
     }
 
@@ -1588,7 +2045,7 @@ pub const Body = struct {
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll("bodyUsed: ");
-        formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(!(this.value == .Unconsumed or this.value == .Empty)), .BooleanObject, enable_ansi_colors);
+        formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.value == .Used), .BooleanObject, enable_ansi_colors);
         try formatter.printComma(Writer, writer, enable_ansi_colors);
         try writer.writeAll("\n");
 
@@ -1604,25 +2061,18 @@ pub const Body = struct {
         formatter.printAs(.Double, Writer, writer, JSC.JSValue.jsNumber(this.init.status_code), .NumberObject, enable_ansi_colors);
     }
 
-    pub fn deinit(this: *Body, allocator: std.mem.Allocator) void {
-        this.ptr_allocator = null;
+    pub fn deinit(this: *Body, _: std.mem.Allocator) void {
         if (this.init.headers) |*headers| {
             headers.deinit();
         }
 
-        switch (this.value) {
-            .ArrayBuffer => {},
-            .String => |str| {
-                allocator.free(str);
-            },
-            .Empty => {},
-            else => {},
-        }
+        this.value.deinit();
     }
 
     pub const Init = struct {
         headers: ?Headers,
         status_code: u16,
+        method: Method = Method.GET,
 
         pub fn clone(this: Init, allocator: std.mem.Allocator) Init {
             var that = this;
@@ -1642,6 +2092,7 @@ pub const Body = struct {
             var array = js.JSObjectCopyPropertyNames(ctx, init_ref);
             defer js.JSPropertyNameArrayRelease(array);
             const count = js.JSPropertyNameArrayGetCount(array);
+
             var i: usize = 0;
             while (i < count) : (i += 1) {
                 var property_name_ref = js.JSPropertyNameArrayGetNameAtIndex(array, i);
@@ -1668,6 +2119,13 @@ pub const Body = struct {
                             result.status_code = @truncate(u16, @floatToInt(u64, number));
                         }
                     },
+                    "method".len => {
+                        if (js.JSStringIsEqualToUTF8CString(property_name_ref, "method")) {
+                            result.method = Method.which(
+                                JSC.JSValue.fromRef(init_ref).get(ctx.ptr(), "method").?.getZigString(ctx.ptr()).slice(),
+                            ) orelse Method.GET;
+                        }
+                    },
                     else => {},
                 }
             }
@@ -1681,50 +2139,83 @@ pub const Body = struct {
         promise: ?JSValue = null,
         global: *JSGlobalObject,
         task: ?*anyopaque = null,
+        deinit: bool = false,
     };
 
     pub const Value = union(Tag) {
-        ArrayBuffer: ArrayBuffer,
-        String: string,
-        Empty: u0,
-        Unconsumed: u0,
+        Blob: Blob,
         Locked: PendingValue,
+        Used: void,
+        Empty: void,
 
         pub const Tag = enum {
-            ArrayBuffer,
-            String,
-            Empty,
-            Unconsumed,
+            Blob,
             Locked,
+            Used,
+            Empty,
         };
 
-        pub fn length(value: *const Value) usize {
-            switch (value.*) {
-                .ArrayBuffer => |buf| {
-                    return buf.ptr[buf.offset..buf.byte_len].len;
-                },
-                .String => |str| {
-                    return str.len;
+        pub const empty = Value{ .Empty = .{} };
+        pub fn slice(this: Value) []const u8 {
+            return switch (this) {
+                .Blob => this.Blob.sharedView(),
+                else => "",
+            };
+        }
+
+        pub fn use(this: *Value) Blob {
+            switch (this.*) {
+                .Blob => {
+                    var new_blob = this.Blob;
+                    this.* = .{ .Used = .{} };
+                    return new_blob;
                 },
                 else => {
-                    return 0;
+                    return Blob.initEmpty(undefined);
                 },
             }
+        }
+
+        pub fn deinit(this: *Value) void {
+            const tag = @as(Tag, this.*);
+            if (tag == .Locked) {
+                this.Locked.deinit = true;
+                return;
+            }
+
+            if (tag == .Blob) {
+                this.Blob.deinit();
+                this.* = Value.empty;
+            }
+        }
+
+        pub fn clone(this: Value, allocator: std.mem.Allocator) !Value {
+            if (this == .Blob) {
+                return Value{ .Blob = try this.Blob.dupe(allocator) };
+            }
+
+            return Value{ .Empty = .{} };
         }
     };
 
     pub fn @"404"(_: js.JSContextRef) Body {
-        return Body{ .init = Init{
-            .headers = null,
-            .status_code = 404,
-        }, .value = .{ .Empty = 0 } };
+        return Body{
+            .init = Init{
+                .headers = null,
+                .status_code = 404,
+            },
+            .value = Value.empty,
+        };
     }
 
     pub fn @"200"(_: js.JSContextRef) Body {
-        return Body{ .init = Init{
-            .headers = null,
-            .status_code = 200,
-        }, .value = .{ .Empty = 0 } };
+        return Body{
+            .init = Init{
+                .headers = null,
+                .status_code = 200,
+            },
+            .value = Value.empty,
+        };
     }
 
     pub fn extract(ctx: js.JSContextRef, body_ref: js.JSObjectRef, exception: js.ExceptionRef) Body {
@@ -1755,74 +2246,26 @@ pub const Body = struct {
         init_ref: js.JSValueRef,
         exception: js.ExceptionRef,
     ) Body {
-        var body = Body{ .init = Init{ .headers = null, .status_code = 200 }, .value = .{ .Empty = 0 } };
+        var body = Body{
+            .init = Init{ .headers = null, .status_code = 200 },
+        };
         const value = JSC.JSValue.fromRef(body_ref);
-        switch (value.jsType()) {
-            JSC.JSValue.JSType.String,
-            JSC.JSValue.JSType.StringObject,
-            JSC.JSValue.JSType.DerivedStringObject,
-            => {
-                var allocator = getAllocator(ctx);
+        var allocator = getAllocator(ctx);
 
-                if (comptime has_init) {
-                    if (Init.init(allocator, ctx, init_ref.?)) |maybeInit| {
-                        if (maybeInit) |init_| {
-                            body.init = init_;
-                        }
-                    } else |_| {}
+        if (comptime has_init) {
+            if (Init.init(allocator, ctx, init_ref.?)) |maybeInit| {
+                if (maybeInit) |init_| {
+                    body.init = init_;
                 }
-                var zig_str = JSC.ZigString.init("");
-                value.toZigString(&zig_str, ctx.ptr());
-
-                if (zig_str.len == 0) {
-                    body.value = .{ .String = "" };
-                    return body;
-                }
-
-                body.value = Value{
-                    .String = std.fmt.allocPrint(default_allocator, "{}", .{zig_str}) catch unreachable,
-                };
-                body.ptr_allocator = default_allocator;
-                // body.ptr = body.
-                // body.len = body.value.String.len;str.characters8()[0..len] };
-
-                return body;
-            },
-
-            JSC.JSValue.JSType.ArrayBuffer,
-            JSC.JSValue.JSType.Int8Array,
-            JSC.JSValue.JSType.Uint8Array,
-            JSC.JSValue.JSType.Uint8ClampedArray,
-            JSC.JSValue.JSType.Int16Array,
-            JSC.JSValue.JSType.Uint16Array,
-            JSC.JSValue.JSType.Int32Array,
-            JSC.JSValue.JSType.Uint32Array,
-            JSC.JSValue.JSType.Float32Array,
-            JSC.JSValue.JSType.Float64Array,
-            JSC.JSValue.JSType.BigInt64Array,
-            JSC.JSValue.JSType.BigUint64Array,
-            JSC.JSValue.JSType.DataView,
-            => {
-                var allocator = getAllocator(ctx);
-
-                if (comptime has_init) {
-                    if (Init.init(allocator, ctx, init_ref.?)) |maybeInit| {
-                        if (maybeInit) |init_| {
-                            body.init = init_;
-                        }
-                    } else |_| {}
-                }
-                body.value = Value{ .ArrayBuffer = value.asArrayBuffer(ctx.ptr()).? };
-                body.ptr = body.value.ArrayBuffer.ptr[body.value.ArrayBuffer.offset..body.value.ArrayBuffer.byte_len].ptr;
-                body.len = body.value.ArrayBuffer.ptr[body.value.ArrayBuffer.offset..body.value.ArrayBuffer.byte_len].len;
-                return body;
-            },
-            else => {},
+            } else |_| {}
         }
 
-        if (exception == null) {
-            JSError(getAllocator(ctx), "Body must be a string or a TypedArray (for now)", .{}, ctx, exception);
-        }
+        body.value = .{
+            .Blob = Blob.fromJS(ctx.ptr(), value) catch {
+                JSC.JSError(allocator, "Out of memory", .{}, ctx, exception);
+                return body;
+            },
+        };
 
         return body;
     }
@@ -1830,9 +2273,44 @@ pub const Body = struct {
 
 // https://developer.mozilla.org/en-US/docs/Web/API/Request
 pub const Request = struct {
-    request_context: *RequestContext,
-    url_string_ref: js.JSStringRef = null,
-    headers: ?Headers = null,
+    url: ZigString = ZigString.Empty,
+    headers: ?*Headers = null,
+    body: Body.Value = Body.Value{ .Empty = .{} },
+    method: Method = Method.GET,
+
+    pub fn fromRequestContext(ctx: *RequestContext) !Request {
+        var headers_ = bun.default_allocator.create(Headers) catch unreachable;
+        var req = Request{
+            .url = ZigString.init(std.mem.span(ctx.getFullURL())),
+            .body = Body.Value.empty,
+            .method = ctx.method,
+            .headers = headers_,
+        };
+        headers_.* = Headers.fromRequestCtx(bun.default_allocator, ctx) catch unreachable;
+        req.url.mark();
+        return req;
+    }
+
+    pub fn mimeType(this: *const Request) string {
+        if (this.headers) |headers| {
+            // Remember, we always lowercase it
+            // hopefully doesn't matter here tho
+            if (headers.getHeaderIndex("content-type")) |content_type| {
+                return headers.asStr(headers.entries.items(.value)[content_type]);
+            }
+        }
+
+        switch (this.body) {
+            .Blob => |blob| {
+                if (blob.content_type.len > 0) {
+                    return blob.content_type;
+                }
+
+                return MimeType.other.value;
+            },
+            .Used, .Locked, .Empty => return MimeType.other.value,
+        }
+    }
 
     pub const Class = NewClass(
         Request,
@@ -1840,7 +2318,17 @@ pub const Request = struct {
             .name = "Request",
             .read_only = true,
         },
-        .{},
+        .{ .finalize = finalize, .constructor = constructor, .text = .{
+            .rfn = Request.getText,
+        }, .json = .{
+            .rfn = Request.getJSON,
+        }, .arrayBuffer = .{
+            .rfn = Request.getArrayBuffer,
+        }, .blob = .{
+            .rfn = Request.getBlob,
+        }, .clone = .{
+            .rfn = Request.doClone,
+        } },
         .{
             .@"cache" = .{
                 .@"get" = getCache,
@@ -1886,6 +2374,10 @@ pub const Request = struct {
                 .@"get" = getUrl,
                 .@"ro" = true,
             },
+            .@"bodyUsed" = .{
+                .@"get" = getBodyUsed,
+                .@"ro" = true,
+            },
         },
     );
 
@@ -1924,10 +2416,12 @@ pub const Request = struct {
         _: js.ExceptionRef,
     ) js.JSValueRef {
         if (this.headers == null) {
-            this.headers = Headers.fromRequestCtx(getAllocator(ctx), this.request_context) catch unreachable;
+            var headers = getAllocator(ctx).create(Headers) catch unreachable;
+            headers.* = Headers.empty(getAllocator(ctx));
+            this.headers = headers;
         }
 
-        return Headers.Class.make(ctx, &this.headers.?);
+        return Headers.Class.make(ctx, this.headers.?);
     }
     pub fn getIntegrity(
         _: *Request,
@@ -1945,7 +2439,7 @@ pub const Request = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        const string_contents: string = switch (this.request_context.method) {
+        const string_contents: string = switch (this.method) {
             .GET => Properties.UTF8.GET,
             .HEAD => Properties.UTF8.HEAD,
             .PATCH => Properties.UTF8.PATCH,
@@ -1955,7 +2449,7 @@ pub const Request = struct {
             else => "",
         };
 
-        return ZigString.init(string_contents).toValueGC(ctx.ptr()).asRef();
+        return ZigString.init(string_contents).toValue(ctx.ptr()).asRef();
     }
 
     pub fn getMode(
@@ -1965,8 +2459,13 @@ pub const Request = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(Properties.UTF8.navigate).toValueGC(ctx.ptr()).asRef();
+        return ZigString.init(Properties.UTF8.navigate).toValue(ctx.ptr()).asRef();
     }
+
+    pub fn finalize(this: *Request) void {
+        bun.default_allocator.destroy(this);
+    }
+
     pub fn getRedirect(
         _: *Request,
         ctx: js.JSContextRef,
@@ -1983,11 +2482,13 @@ pub const Request = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        if (this.request_context.header("Referrer")) |referrer| {
-            return ZigString.init(referrer).toValueGC(ctx.ptr()).asRef();
-        } else {
-            return ZigString.init("").toValueGC(ctx.ptr()).asRef();
+        if (this.headers) |headers| {
+            if (headers.getHeaderIndex("referrer")) |i| {
+                return ZigString.init(headers.asStr(headers.entries.get(i).value)).toValueGC(ctx.ptr()).asObjectRef();
+            }
         }
+
+        return ZigString.init("").toValueGC(ctx.ptr()).asRef();
     }
     pub fn getReferrerPolicy(
         _: *Request,
@@ -2005,13 +2506,145 @@ pub const Request = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        if (this.url_string_ref == null) {
-            this.url_string_ref = js.JSStringCreateWithUTF8CString(this.request_context.getFullURL());
+        return this.url.toValueGC(ctx.ptr()).asObjectRef();
+    }
+
+    pub fn constructor(
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        _: js.ExceptionRef,
+    ) js.JSObjectRef {
+        var request = Request{};
+
+        switch (arguments.len) {
+            0 => {},
+            1 => {
+                request.url = JSC.JSValue.fromRef(arguments[0]).getZigString(ctx.ptr());
+            },
+            else => {
+                request.url = JSC.JSValue.fromRef(arguments[0]).getZigString(ctx.ptr());
+
+                if (Body.Init.init(getAllocator(ctx), ctx, arguments[1]) catch null) |req_init| {
+                    request.headers = getAllocator(ctx).create(Headers) catch unreachable;
+                    if (req_init.headers) |headers_| {
+                        request.headers.?.* = headers_;
+                    }
+
+                    request.method = req_init.method;
+                }
+
+                if (JSC.JSValue.fromRef(arguments[1]).get(ctx.ptr(), "body")) |body_| {
+                    if (Blob.fromJS(ctx.ptr(), body_) catch null) |blob| {
+                        request.body = Body.Value{ .Blob = blob };
+                    }
+                }
+            },
         }
 
-        return js.JSValueMakeString(ctx, this.url_string_ref);
+        var request_ = getAllocator(ctx).create(Request) catch unreachable;
+        request_.* = request;
+        return Request.Class.make(
+            ctx,
+            request_,
+        );
+    }
+
+    pub fn getBodyUsed(
+        this: *Request,
+        _: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        return JSC.JSValue.jsBoolean(this.body == .Used).asRef();
+    }
+
+    pub usingnamespace BlobInterface(@This());
+
+    pub fn doClone(
+        this: *Request,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        _: []const js.JSValueRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        var cloned = this.clone(getAllocator(ctx));
+        return Request.Class.make(ctx, cloned);
+    }
+
+    pub fn cloneInto(this: *const Request, req: *Request, allocator: std.mem.Allocator) void {
+        req.* = Request{
+            .body = this.body.clone(allocator) catch unreachable,
+            .url = ZigString.init(allocator.dupe(u8, this.url.slice()) catch unreachable),
+        };
+        if (this.headers) |head| {
+            var new_headers = allocator.create(Headers) catch unreachable;
+            head.clone(new_headers) catch unreachable;
+            req.headers = new_headers;
+        }
+    }
+
+    pub fn clone(this: *const Request, allocator: std.mem.Allocator) *Request {
+        var req = allocator.create(Request) catch unreachable;
+        this.cloneInto(req, allocator);
+        return req;
     }
 };
+
+fn BlobInterface(comptime Type: type) type {
+    return struct {
+        pub fn getText(
+            this: *Type,
+            ctx: js.JSContextRef,
+            _: js.JSObjectRef,
+            _: js.JSObjectRef,
+            _: []const js.JSValueRef,
+            _: js.ExceptionRef,
+        ) js.JSValueRef {
+            var blob = this.body.use();
+            return blob.getTextTransfer(ctx);
+        }
+
+        pub fn getJSON(
+            this: *Type,
+            ctx: js.JSContextRef,
+            _: js.JSObjectRef,
+            _: js.JSObjectRef,
+            _: []const js.JSValueRef,
+            exception: js.ExceptionRef,
+        ) js.JSValueRef {
+            var blob = this.body.use();
+            return blob.getJSON(ctx, null, null, &.{}, exception);
+        }
+        pub fn getArrayBuffer(
+            this: *Type,
+            ctx: js.JSContextRef,
+            _: js.JSObjectRef,
+            _: js.JSObjectRef,
+            _: []const js.JSValueRef,
+            _: js.ExceptionRef,
+        ) js.JSValueRef {
+            var blob = this.body.use();
+            return blob.getArrayBufferTransfer(ctx);
+        }
+
+        pub fn getBlob(
+            this: *Type,
+            ctx: js.JSContextRef,
+            _: js.JSObjectRef,
+            _: js.JSObjectRef,
+            _: []const js.JSValueRef,
+            _: js.ExceptionRef,
+        ) js.JSValueRef {
+            var blob = this.body.use();
+            var ptr = getAllocator(ctx).create(Blob) catch unreachable;
+            ptr.* = blob;
+            return JSC.JSPromise.resolvedPromiseValue(ctx.ptr(), JSValue.fromRef(Blob.Class.make(ctx, ptr))).asObjectRef();
+        }
+    };
+}
 
 // https://github.com/WebKit/WebKit/blob/main/Source/WebCore/workers/service/FetchEvent.h
 pub const FetchEvent = struct {
@@ -2083,7 +2716,12 @@ pub const FetchEvent = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return Request.Class.make(ctx, &this.request);
+        var req = getAllocator(ctx).create(Request) catch unreachable;
+        req.* = Request.fromRequestContext(this.request_context) catch unreachable;
+        return Request.Class.make(
+            ctx,
+            req,
+        );
     }
 
     // https://developer.mozilla.org/en-US/docs/Web/API/FetchEvent/respondWith
@@ -2114,7 +2752,7 @@ pub const FetchEvent = struct {
         if (this.pending_promise) |promise| {
             var status = promise.status(globalThis.vm());
 
-            if (status == .Pending) {
+            while (status == .Pending) {
                 VirtualMachine.vm.tick();
                 status = promise.status(globalThis.vm());
             }
@@ -2198,7 +2836,10 @@ pub const FetchEvent = struct {
             this.request_context.appendHeader("Content-Type", response.mimeType(this.request_context));
         }
 
-        const content_length_ = content_length orelse response.body.value.length();
+        var blob = response.body.value.use();
+        // defer blob.deinit();
+
+        const content_length_ = content_length orelse blob.size;
 
         if (content_length_ == 0) {
             this.request_context.sendNoContent() catch return js.JSValueMakeUndefined(ctx);
@@ -2206,46 +2847,19 @@ pub const FetchEvent = struct {
         }
 
         if (FeatureFlags.strong_etags_for_built_files) {
-            switch (response.body.value) {
-                .ArrayBuffer => |buf| {
-                    const did_send = this.request_context.writeETag(buf.ptr[buf.offset..buf.byte_len]) catch false;
-                    if (did_send) return js.JSValueMakeUndefined(ctx);
-                },
-                .String => |str| {
-                    const did_send = this.request_context.writeETag(str) catch false;
-                    if (did_send) {
-                        // defer getAllocator(ctx).destroy(str.ptr);
-                        return js.JSValueMakeUndefined(ctx);
-                    }
-                },
-                else => unreachable,
+            const did_send = this.request_context.writeETag(blob.sharedView()) catch false;
+            if (did_send) {
+                // defer getAllocator(ctx).destroy(str.ptr);
+                return js.JSValueMakeUndefined(ctx);
             }
         }
 
         defer this.request_context.done();
-        defer {
-            if (response.body.ptr_allocator) |alloc| {
-                if (response.body.ptr) |ptr| {
-                    alloc.free(ptr[0..response.body.len]);
-                }
-
-                response.body.ptr_allocator = null;
-            }
-        }
 
         this.request_context.writeStatusSlow(response.body.init.status_code) catch return js.JSValueMakeUndefined(ctx);
         this.request_context.prepareToSendBody(content_length_, false) catch return js.JSValueMakeUndefined(ctx);
 
-        switch (response.body.value) {
-            .ArrayBuffer => |buf| {
-                this.request_context.writeBodyBuf(buf.ptr[buf.offset..buf.byte_len]) catch return js.JSValueMakeUndefined(ctx);
-            },
-            .String => |str| {
-                // defer getAllocator(ctx).destroy(str.ptr);
-                this.request_context.writeBodyBuf(str) catch return js.JSValueMakeUndefined(ctx);
-            },
-            else => unreachable,
-        }
+        this.request_context.writeBodyBuf(blob.sharedView()) catch return js.JSValueMakeUndefined(ctx);
 
         return js.JSValueMakeUndefined(ctx);
     }

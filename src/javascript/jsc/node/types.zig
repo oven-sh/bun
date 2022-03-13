@@ -391,6 +391,7 @@ pub const ArgumentsSlice = struct {
     remaining: []const JSC.JSValue,
     arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator),
     all: []const JSC.JSValue,
+    threw: bool = false,
 
     pub fn from(arguments: []const JSC.JSValueRef) ArgumentsSlice {
         return init(@ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);

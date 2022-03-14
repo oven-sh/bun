@@ -155,7 +155,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
             }
             var base_store = @fieldParentPtr(WithBase, "store", _self);
             if (_self.overflow.ptrs[0] == &base_store.head) {
-                default_allocator.destroy(_self);
+                default_allocator.destroy(base_store);
             }
             _self = undefined;
         }

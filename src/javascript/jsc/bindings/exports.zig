@@ -234,15 +234,24 @@ pub const ResolvedSource = extern struct {
     };
 };
 
+const Mimalloc = @import("../../../allocators/mimalloc.zig");
+
 export fn ZigString__free(ptr: [*]const u8, len: usize, allocator_: ?*anyopaque) void {
     var allocator: std.mem.Allocator = @ptrCast(*std.mem.Allocator, @alignCast(@alignOf(*std.mem.Allocator), allocator_ orelse return)).*;
-
+    if (comptime Environment.allow_assert) {
+        std.debug.assert(Mimalloc.mi_check_owned(ptr));
+    }
     var str = ptr[0..len];
+
     allocator.free(str);
 }
 
 export fn ZigString__free_global(ptr: [*]const u8, len: usize) void {
     var str = ptr[0..len];
+    if (comptime Environment.allow_assert) {
+        std.debug.assert(Mimalloc.mi_check_owned(ptr));
+    }
+
     default_allocator.free(str);
 }
 
@@ -907,18 +916,50 @@ pub const ZigConsoleClient = struct {
         var writer = buffered_writer.writer();
 
         const Writer = @TypeOf(writer);
-        format(
-            level,
-            global,
-            vals,
-            len,
-            @TypeOf(buffered_writer.unbuffered_writer.context),
-            Writer,
-            writer,
-            enable_colors,
-            true,
-            true,
-        );
+        if (len > 0)
+            format(
+                level,
+                global,
+                vals,
+                len,
+                @TypeOf(buffered_writer.unbuffered_writer.context),
+                Writer,
+                writer,
+                enable_colors,
+                true,
+                true,
+            )
+        else if (message_type != .Trace)
+            writer.writeAll("undefined\n") catch unreachable;
+
+        if (message_type == .Trace) {
+            writeTrace(Writer, writer, global);
+            buffered_writer.flush() catch unreachable;
+        }
+    }
+
+    pub fn writeTrace(comptime Writer: type, writer: Writer, global: *JSGlobalObject) void {
+        var holder = ZigException.Holder.init();
+
+        var exception = holder.zigException();
+        var err = ZigString.init("trace output").toErrorInstance(global);
+        err.toZigException(global, exception);
+        JS.VirtualMachine.vm.remapZigException(exception, err, null);
+
+        if (Output.enable_ansi_colors_stderr)
+            JS.VirtualMachine.printStackTrace(
+                Writer,
+                writer,
+                exception.stack,
+                true,
+            ) catch unreachable
+        else
+            JS.VirtualMachine.printStackTrace(
+                Writer,
+                writer,
+                exception.stack,
+                false,
+            ) catch unreachable;
     }
 
     pub fn format(
@@ -1639,9 +1680,9 @@ pub const ZigConsoleClient = struct {
                                 response.writeFormat(this, writer_, enable_ansi_colors) catch {};
                                 return;
                             },
-                            .Headers => {
-                                var obj = priv_data.as(JSC.WebCore.Headers);
-                                obj.writeFormat(this, writer_, enable_ansi_colors) catch {};
+                            @field(JSPrivateDataPtr.Tag, @typeName(JSC.WebCore.Headers.RefCountedHeaders)) => {
+                                var obj = priv_data.as(JSC.WebCore.Headers.RefCountedHeaders);
+                                obj.leak().writeFormat(this, writer_, enable_ansi_colors) catch {};
                                 return;
                             },
                             .Request => {

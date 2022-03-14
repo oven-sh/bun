@@ -297,7 +297,10 @@ fn _wait(self: *ThreadPool, _is_waking: bool, comptime sleep_on_idle: bool) erro
                     // 10 microseconds * 400 == 4ms
                     if (idle_network_ticks > 40) {
                         idle_network_ticks = 0;
-                        HTTP.cleanup(true);
+                        // force(true) causes an assertion failure
+                        // judging from reading mimalloc's code,
+                        // it should only be used when the thread is about to shutdown
+                        HTTP.cleanup(false);
                         self.idle_event.wait();
                     }
                 }

@@ -47,6 +47,7 @@ pub const Response = struct {
         .{ .name = "Response" },
         .{
             .@"constructor" = constructor,
+            .@"finalize" = finalize,
             .@"text" = .{
                 .rfn = Response.getText,
                 .ts = d.ts{},
@@ -202,12 +203,10 @@ pub const Response = struct {
         _: js.ExceptionRef,
     ) js.JSValueRef {
         if (this.body.init.headers == null) {
-            var headers = getAllocator(ctx).create(Headers) catch unreachable;
-            headers.* = Headers.empty(getAllocator(ctx));
-            this.body.init.headers = headers;
+            this.body.init.headers = Headers.RefCountedHeaders.init(Headers.empty(getAllocator(ctx)), getAllocator(ctx)) catch unreachable;
         }
 
-        return Headers.Class.make(ctx, this.body.init.headers.?);
+        return Headers.Class.make(ctx, this.body.init.headers.?.getRef());
     }
 
     pub fn doClone(
@@ -270,7 +269,9 @@ pub const Response = struct {
     }
 
     pub fn mimeType(response: *const Response, request_ctx_: ?*const RequestContext) string {
-        if (response.body.init.headers) |headers| {
+        if (response.body.init.headers) |headers_ref| {
+            var headers = headers_ref.get();
+            defer headers_ref.deref();
             // Remember, we always lowercase it
             // hopefully doesn't matter here tho
             if (headers.getHeaderIndex("content-type")) |content_type| {
@@ -429,6 +430,8 @@ pub const Fetch = struct {
         reject: js.JSObjectRef = null,
         context: FetchTaskletContext = undefined,
 
+        blob_store: ?*Blob.Store = null,
+
         const Pool = ObjectPool(FetchTasklet, init, true, 32);
         const BodyPool = ObjectPool(MutableString, MutableString.init2048, true, 8);
         pub const FetchTaskletContext = struct {
@@ -516,6 +519,9 @@ pub const Fetch = struct {
         };
 
         pub fn onReject(this: *FetchTasklet) JSValue {
+            if (this.blob_store) |store| {
+                store.deref();
+            }
             const fetch_error = std.fmt.allocPrint(
                 default_allocator,
                 "fetch() failed – {s}\nurl: \"{s}\"",
@@ -530,12 +536,11 @@ pub const Fetch = struct {
         pub fn onResolve(this: *FetchTasklet) JSValue {
             var allocator = default_allocator;
             var http_response = this.http.response.?;
-            var response_headers = Headers.fromPicoHeaders(allocator, http_response.headers) catch unreachable;
-            response_headers.guard = .immutable;
             var response = allocator.create(Response) catch unreachable;
             var duped = allocator.dupe(u8, this.http.response_buffer.toOwnedSlice()) catch unreachable;
-            var headers = allocator.create(Headers) catch unreachable;
-            headers.* = response_headers;
+            if (this.blob_store) |store| {
+                store.deref();
+            }
             response.* = Response{
                 .allocator = allocator,
                 .url = allocator.dupe(u8, this.http.url.href) catch unreachable,
@@ -543,7 +548,10 @@ pub const Fetch = struct {
                 .redirected = this.http.redirect_count > 0,
                 .body = .{
                     .init = .{
-                        .headers = headers,
+                        .headers = Headers.RefCountedHeaders.init(
+                            Headers.fromPicoHeaders(allocator, http_response.headers) catch unreachable,
+                            allocator,
+                        ) catch unreachable,
                         .status_code = @truncate(u16, http_response.status_code),
                     },
                     .value = .{
@@ -562,11 +570,13 @@ pub const Fetch = struct {
             headers_buf: string,
             request_body: ?*MutableString,
             timeout: usize,
+            request_body_store: ?*Blob.Store,
         ) !*FetchTasklet.Pool.Node {
             var linked_list = FetchTasklet.Pool.get(allocator);
             linked_list.data.javascript_vm = VirtualMachine.vm;
             linked_list.data.empty_request_body = MutableString.init(allocator, 0) catch unreachable;
             linked_list.data.pooled_body = BodyPool.get(allocator);
+            linked_list.data.blob_store = request_body_store;
             linked_list.data.http = try HTTPClient.AsyncHTTP.init(
                 allocator,
                 method,
@@ -592,8 +602,9 @@ pub const Fetch = struct {
             headers_buf: string,
             request_body: ?*MutableString,
             timeout: usize,
+            request_body_store: ?*Blob.Store,
         ) !*FetchTasklet.Pool.Node {
-            var node = try get(allocator, method, url, headers, headers_buf, request_body, timeout);
+            var node = try get(allocator, method, url, headers, headers_buf, request_body, timeout, request_body_store);
             node.data.promise = JSInternalPromise.create(global);
 
             node.data.global_this = global;
@@ -633,6 +644,7 @@ pub const Fetch = struct {
         var args = JSC.Node.ArgumentsSlice.from(arguments);
         var url: ZigURL = undefined;
         var first_arg = args.nextEat().?;
+        var blob_store: ?*Blob.Store = null;
         if (first_arg.isString()) {
             var url_zig_str = ZigString.init("");
             JSValue.fromRef(arguments[0]).toZigString(&url_zig_str, globalThis);
@@ -662,8 +674,8 @@ pub const Fetch = struct {
 
                 if (options.get(ctx.ptr(), "headers")) |headers_| {
                     var headers2: Headers = undefined;
-                    if (headers_.as(Headers)) |headers__| {
-                        headers__.clone(&headers2) catch unreachable;
+                    if (headers_.as(Headers.RefCountedHeaders)) |headers__| {
+                        headers__.leak().clone(&headers2) catch unreachable;
                         headers = headers2;
                     } else if (Headers.JS.headersInit(ctx, headers_.asObjectRef()) catch null) |headers__| {
                         headers__.clone(&headers2) catch unreachable;
@@ -672,23 +684,39 @@ pub const Fetch = struct {
                 }
 
                 if (options.get(ctx.ptr(), "body")) |body__| {
-                    if (Blob.fromJS(ctx.ptr(), body__)) |new_blob| {
-                        body = MutableString{ .list = new_blob.asArrayList(), .allocator = bun.default_allocator };
+                    if (Blob.fromJS(ctx.ptr(), body__, true)) |new_blob| {
+                        body = MutableString{
+                            .list = std.ArrayListUnmanaged(u8){
+                                .items = bun.constStrToU8(new_blob.sharedView()),
+                                .capacity = new_blob.size,
+                            },
+                            .allocator = bun.default_allocator,
+                        };
+                        blob_store = new_blob.store;
+                        // transfer is unnecessary here because this is a new slice
+                        //new_blob.transfer();
                     } else |_| {}
                 }
             }
         } else if (Request.Class.loaded and first_arg.as(Request) != null) {
             var request = first_arg.as(Request).?;
-            url = ZigURL.parse(request.url.slice());
+            url = ZigURL.parse(request.url.dupe(getAllocator(ctx)) catch unreachable);
             method = request.method;
             if (request.headers) |head| {
-                headers = head.*;
+                var for_clone: Headers = undefined;
+                head.leak().clone(&for_clone) catch unreachable;
+                headers = for_clone;
             }
             var blob = request.body.use();
+            // TODO: make RequestBody _NOT_ a MutableString
             body = MutableString{
-                .list = blob.asArrayList(),
+                .list = std.ArrayListUnmanaged(u8){
+                    .items = bun.constStrToU8(blob.sharedView()),
+                    .capacity = bun.constStrToU8(blob.sharedView()).len,
+                },
                 .allocator = blob.allocator orelse bun.default_allocator,
             };
+            blob_store = blob.store;
         } else {
             const fetch_error = fetch_type_error_strings.get(js.JSValueGetType(ctx, arguments[0]));
             return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
@@ -729,6 +757,7 @@ pub const Fetch = struct {
             header_buf,
             request_body,
             std.time.ns_per_hour,
+            blob_store,
         ) catch unreachable;
         queued.data.this_object = js.JSObjectMake(ctx, null, JSPrivateDataPtr.from(&queued.data.context).ptr());
         js.JSValueProtect(ctx, queued.data.this_object);
@@ -750,6 +779,8 @@ pub const Headers = struct {
     allocator: std.mem.Allocator,
     used: u32 = 0,
     guard: Guard = Guard.none,
+
+    pub const RefCountedHeaders = bun.RefCount(Headers, true);
 
     pub fn deinit(
         headers: *Headers,
@@ -774,24 +805,25 @@ pub const Headers = struct {
 
         // https://developer.mozilla.org/en-US/docs/Web/API/Headers/get
         pub fn get(
-            this: *Headers,
+            ref: *RefCountedHeaders,
             ctx: js.JSContextRef,
             _: js.JSObjectRef,
             _: js.JSObjectRef,
             arguments: []const js.JSValueRef,
             _: js.ExceptionRef,
         ) js.JSValueRef {
+            var this = ref.leak();
             if (arguments.len == 0 or !js.JSValueIsString(ctx, arguments[0]) or js.JSStringIsEqual(arguments[0], Properties.Refs.empty_string)) {
                 return js.JSValueMakeNull(ctx);
             }
 
-            const key_len = js.JSStringGetUTF8CString(arguments[0], &header_kv_buf, header_kv_buf.len);
-            const key = header_kv_buf[0 .. key_len - 1];
-            if (this.getHeaderIndex(key)) |index| {
-                var str = this.asStr(this.entries.items(.value)[index]);
-                var ref = js.JSStringCreateWithUTF8CString(str.ptr);
-                defer js.JSStringRelease(ref);
-                return js.JSValueMakeString(ctx, ref);
+            const key = ZigString.from(arguments[0], ctx);
+            if (key.is16Bit())
+                return js.JSValueMakeNull(ctx);
+
+            if (this.getHeaderIndex(key.slice())) |index| {
+                return ZigString.init(this.asStr(this.entries.items(.value)[index]))
+                    .toValue(ctx.ptr()).asObjectRef();
             } else {
                 return js.JSValueMakeNull(ctx);
             }
@@ -801,13 +833,14 @@ pub const Headers = struct {
         // > The difference between set() and Headers.append is that if the specified header already exists and accepts multiple values
         // > set() overwrites the existing value with the new one, whereas Headers.append appends the new value to the end of the set of values.
         pub fn set(
-            this: *Headers,
+            ref: *RefCountedHeaders,
             ctx: js.JSContextRef,
             _: js.JSObjectRef,
             _: js.JSObjectRef,
             arguments: []const js.JSValueRef,
             _: js.ExceptionRef,
         ) js.JSValueRef {
+            var this = ref.leak();
             if (this.guard == .request or arguments.len < 2 or !js.JSValueIsString(ctx, arguments[0]) or js.JSStringIsEqual(arguments[0], Properties.Refs.empty_string) or !js.JSValueIsString(ctx, arguments[1])) {
                 return js.JSValueMakeUndefined(ctx);
             }
@@ -818,13 +851,14 @@ pub const Headers = struct {
 
         // https://developer.mozilla.org/en-US/docs/Web/API/Headers/append
         pub fn append(
-            this: *Headers,
+            ref: *RefCountedHeaders,
             ctx: js.JSContextRef,
             _: js.JSObjectRef,
             _: js.JSObjectRef,
             arguments: []const js.JSValueRef,
             _: js.ExceptionRef,
         ) js.JSValueRef {
+            var this = ref.leak();
             if (this.guard == .request or arguments.len < 2 or !js.JSValueIsString(ctx, arguments[0]) or js.JSStringIsEqual(arguments[0], Properties.Refs.empty_string) or !js.JSValueIsString(ctx, arguments[1])) {
                 return js.JSValueMakeUndefined(ctx);
             }
@@ -833,13 +867,14 @@ pub const Headers = struct {
             return js.JSValueMakeUndefined(ctx);
         }
         pub fn delete(
-            this: *Headers,
+            ref: *RefCountedHeaders,
             ctx: js.JSContextRef,
             _: js.JSObjectRef,
             _: js.JSObjectRef,
             arguments: []const js.JSValueRef,
             _: js.ExceptionRef,
         ) js.JSValueRef {
+            var this = ref.leak();
             if (this.guard == .request or arguments.len < 1 or !js.JSValueIsString(ctx, arguments[0]) or js.JSStringIsEqual(arguments[0], Properties.Refs.empty_string)) {
                 return js.JSValueMakeUndefined(ctx);
             }
@@ -854,7 +889,7 @@ pub const Headers = struct {
             return js.JSValueMakeUndefined(ctx);
         }
         pub fn entries(
-            _: *Headers,
+            _: *RefCountedHeaders,
             ctx: js.JSContextRef,
             _: js.JSObjectRef,
             _: js.JSObjectRef,
@@ -865,7 +900,7 @@ pub const Headers = struct {
             return js.JSValueMakeNull(ctx);
         }
         pub fn keys(
-            _: *Headers,
+            _: *RefCountedHeaders,
             ctx: js.JSContextRef,
             _: js.JSObjectRef,
             _: js.JSObjectRef,
@@ -876,7 +911,7 @@ pub const Headers = struct {
             return js.JSValueMakeNull(ctx);
         }
         pub fn values(
-            _: *Headers,
+            _: *RefCountedHeaders,
             ctx: js.JSContextRef,
             _: js.JSObjectRef,
             _: js.JSObjectRef,
@@ -965,33 +1000,43 @@ pub const Headers = struct {
             arguments: []const js.JSValueRef,
             _: js.ExceptionRef,
         ) js.JSObjectRef {
-            var headers = getAllocator(ctx).create(Headers) catch unreachable;
+            var headers = getAllocator(ctx).create(RefCountedHeaders) catch unreachable;
             if (arguments.len > 0 and js.JSValueIsObjectOfClass(ctx, arguments[0], Headers.Class.get().*)) {
-                var other = castObj(arguments[0], Headers);
-                other.clone(headers) catch unreachable;
+                var other = castObj(arguments[0], RefCountedHeaders).leak();
+                other.clone(&headers.value) catch unreachable;
+                headers.count = 1;
+                headers.allocator = getAllocator(ctx);
             } else if (arguments.len == 1 and js.JSValueIsObject(ctx, arguments[0])) {
-                headers.* = (JS.headersInit(ctx, arguments[0]) catch unreachable) orelse Headers{
-                    .entries = @TypeOf(headers.entries){},
-                    .buf = @TypeOf(headers.buf){},
-                    .used = 0,
+                headers.* = .{
+                    .value = (JS.headersInit(ctx, arguments[0]) catch unreachable) orelse Headers{
+                        .entries = .{},
+                        .buf = .{},
+                        .used = 0,
+                        .allocator = getAllocator(ctx),
+                        .guard = Guard.none,
+                    },
                     .allocator = getAllocator(ctx),
-                    .guard = Guard.none,
+                    .count = 1,
                 };
             } else {
-                headers.* = Headers.empty(getAllocator(ctx));
+                headers.* = .{
+                    .value = Headers.empty(getAllocator(ctx)),
+                    .allocator = getAllocator(ctx),
+                    .count = 1,
+                };
             }
 
             return Headers.Class.make(ctx, headers);
         }
 
         pub fn finalize(
-            this: *Headers,
+            this: *RefCountedHeaders,
         ) void {
-            this.deinit();
+            this.deref();
         }
     };
     pub const Class = NewClass(
-        Headers,
+        RefCountedHeaders,
         .{
             .name = "Headers",
             .read_only = true,
@@ -1247,13 +1292,14 @@ pub const Headers = struct {
     }
 
     pub fn toJSON(
-        this: *Headers,
+        ref: *RefCountedHeaders,
         ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSObjectRef,
         _: []const js.JSValueRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
+        var this = ref.leak();
         const slice = this.entries.slice();
         const keys = slice.items(.name);
         const values = slice.items(.value);
@@ -1352,27 +1398,92 @@ pub const Headers = struct {
 };
 
 pub const Blob = struct {
-    size: usize = 0,
-    ptr: ?[*]u8 = null,
-    cap: usize = 0,
-    ptr_allocator: ?std.mem.Allocator = null,
+    size: u32 = 0,
+    offset: u32 = 0,
     allocator: ?std.mem.Allocator = null,
-
+    store: ?*Store = null,
     content_type: string = "",
     content_type_allocated: bool = false,
-    detached: bool = false,
 
     globalThis: *JSGlobalObject,
 
-    pub fn asArrayList(this: *const Blob) std.ArrayListUnmanaged(u8) {
-        if (this.ptr == null or this.size == 0)
-            return .{};
+    pub const Store = struct {
+        ptr: [*]u8 = undefined,
+        len: u32 = 0,
+        ref_count: u32 = 0,
+        cap: u32 = 0,
+        allocator: std.mem.Allocator,
 
-        return .{
-            .items = this.ptr.?[0..this.size],
-            .capacity = this.cap,
-        };
-    }
+        pub inline fn ref(this: *Store) void {
+            this.ref_count += 1;
+        }
+
+        pub fn init(bytes: []u8, allocator: std.mem.Allocator) !*Store {
+            var store = try allocator.create(Store);
+            store.* = .{
+                .ptr = bytes.ptr,
+                .len = @truncate(u32, bytes.len),
+                .ref_count = 1,
+                .cap = @truncate(u32, bytes.len),
+                .allocator = allocator,
+            };
+            return store;
+        }
+
+        pub fn external(_: ?*anyopaque, ptr: ?*anyopaque, _: usize) callconv(.C) void {
+            if (ptr == null) return;
+            var this = bun.cast(*Store, ptr);
+            this.deref();
+        }
+
+        pub fn fromArrayList(list: std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator) !*Store {
+            var store = try allocator.create(Store);
+            store.* = .{
+                .ptr = list.items.ptr,
+                .len = @truncate(u32, list.items.len),
+                .ref_count = 1,
+                .cap = @truncate(u32, list.capacity),
+                .allocator = allocator,
+            };
+            return store;
+        }
+
+        pub fn leakSlice(this: *const Store) []const u8 {
+            return this.ptr[0..this.len];
+        }
+
+        pub fn slice(this: *Store) []u8 {
+            this.ref_count += 1;
+            return this.leakSlice();
+        }
+
+        pub fn isOnlyOneRef(this: *const Store) bool {
+            return this.ref_count <= 1;
+        }
+
+        pub fn deref(this: *Store) void {
+            this.ref_count -= 1;
+            if (this.ref_count == 0) {
+                var allocated_slice = this.ptr[0..this.cap];
+                var allocator = this.allocator;
+                allocator.free(allocated_slice);
+                allocator.destroy(this);
+            }
+        }
+
+        pub fn asArrayList(this: *Store) std.ArrayListUnmanaged(u8) {
+            this.ref_count += 1;
+
+            return this.asArrayListLeak();
+        }
+
+        pub fn asArrayListLeak(this: *const Store) std.ArrayListUnmanaged(u8) {
+            return .{
+                .items = this.ptr[0..this.len],
+                .capacity = this.cap,
+            };
+        }
+    };
 
     pub const Class = NewClass(
         Blob,
@@ -1519,11 +1630,9 @@ pub const Blob = struct {
 
         const len = @intCast(u32, @maximum(relativeEnd - relativeStart, 0));
 
-        var blob = Blob.init(
-            getAllocator(ctx).dupe(u8, this.sharedView()[@intCast(usize, relativeStart)..][0..len]) catch unreachable,
-            getAllocator(ctx),
-            ctx.ptr(),
-        );
+        var blob = this.dupe();
+        blob.offset = @intCast(u32, relativeStart);
+        blob.size = len;
         blob.content_type = content_type;
         blob.content_type_allocated = content_type.len > 0;
 
@@ -1590,7 +1699,7 @@ pub const Blob = struct {
                 blob = Blob.init(empty, getAllocator(ctx), ctx.ptr());
             },
             else => {
-                blob = fromJS(ctx.ptr(), JSValue.fromRef(args[0])) catch {
+                blob = fromJS(ctx.ptr(), JSValue.fromRef(args[0]), false) catch {
                     JSC.JSError(getAllocator(ctx), "out of memory :(", .{}, ctx, exception);
                     return null;
                 };
@@ -1634,13 +1743,10 @@ pub const Blob = struct {
 
     pub fn init(bytes: []u8, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) Blob {
         return Blob{
-            .size = bytes.len,
-            .ptr = bytes.ptr,
-            .cap = bytes.len,
-            .ptr_allocator = allocator,
+            .size = @truncate(u32, bytes.len),
+            .store = Blob.Store.init(bytes, allocator) catch unreachable,
             .allocator = null,
             .content_type = "",
-            .detached = false,
             .globalThis = globalThis,
         };
     }
@@ -1648,39 +1754,38 @@ pub const Blob = struct {
     pub fn initEmpty(globalThis: *JSGlobalObject) Blob {
         return Blob{
             .size = 0,
-            .ptr = undefined,
-            .cap = 0,
-            .ptr_allocator = null,
+            .store = null,
             .allocator = null,
             .content_type = "",
-            .detached = false,
             .globalThis = globalThis,
         };
     }
 
-    pub fn detach(this: *Blob) void {
-        var blob = this.*;
-        if (blob.ptr_allocator) |alloc| {
-            alloc.free(blob.sharedView());
-            this.ptr_allocator = null;
-            this.ptr = null;
-            this.size = 0;
-            this.cap = 0;
-        }
-
-        this.detached = true;
+    // Transferring doesn't change the reference count
+    // It is a move
+    inline fn transfer(this: *Blob) void {
+        this.store = null;
     }
 
-    pub fn dupe(this: *const Blob, allocator: std.mem.Allocator) !Blob {
-        var data = try allocator.dupe(u8, this.sharedView());
+    pub fn detach(this: *Blob) void {
+        if (this.store) |store| {
+            store.deref();
+            this.store = null;
+        }
+    }
+
+    /// This does not duplicate
+    /// This creates a new view
+    /// and increment the reference count
+    pub fn dupe(this: *const Blob) Blob {
+        if (this.store) |store| {
+            store.ref();
+        }
+
         return Blob{
-            .size = data.len,
-            .ptr = data.ptr,
-            .cap = data.len,
-            .ptr_allocator = allocator,
-            .allocator = allocator,
+            .store = this.store,
+            .size = this.size,
             .content_type = this.content_type,
-            .detached = false,
             .globalThis = this.globalThis,
         };
     }
@@ -1697,8 +1802,13 @@ pub const Blob = struct {
     }
 
     pub fn sharedView(this: *const Blob) []const u8 {
-        if (this.size == 0 or this.ptr == null) return "";
-        return this.ptr.?[0..this.size];
+        if (this.size == 0 or this.store == null) return "";
+        return this.store.?.leakSlice()[this.offset..][0..this.size];
+    }
+
+    pub fn view(this: *const Blob) []const u8 {
+        if (this.size == 0 or this.store == null) return "";
+        return this.store.?.slice()[this.offset..][0..this.size];
     }
 
     pub const Lifetime = enum {
@@ -1708,7 +1818,8 @@ pub const Blob = struct {
     };
 
     pub fn toString(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) JSValue {
-        var view_ = this.sharedView();
+        var view_: []const u8 =
+            this.sharedView();
 
         if (view_.len == 0)
             return ZigString.Empty.toValue(global);
@@ -1717,6 +1828,10 @@ pub const Blob = struct {
         var buf = view_;
         if (!strings.isAllASCII(buf)) {
             var external = (strings.toUTF16Alloc(bun.default_allocator, buf, false) catch null) orelse &[_]u16{};
+            if (lifetime == .transfer) {
+                this.detach();
+            }
+
             return ZigString.toExternalU16(external.ptr, external.len, global);
         }
 
@@ -1725,15 +1840,13 @@ pub const Blob = struct {
                 return ZigString.init(buf).toValueGC(global);
             },
             .transfer => {
-                this.detached = true;
-                this.ptr_allocator = null;
-                this.ptr = null;
-                this.size = 0;
-                this.cap = 0;
-                return ZigString.init(buf).toExternalValue(global);
+                var store = this.store.?;
+                this.transfer();
+                return ZigString.init(buf).external(global, store, Store.external);
             },
             .share => {
-                return ZigString.init(buf).toValue(global);
+                this.store.?.ref();
+                return ZigString.init(buf).external(global, this.store.?, Store.external);
             },
         }
     }
@@ -1752,7 +1865,11 @@ pub const Blob = struct {
             return ZigString.toExternalU16(external.ptr, external.len, global).parseJSON(global);
         }
 
-        return ZigString.init(buf).toValue(global).parseJSON(global);
+        return ZigString.init(buf).external(
+            global,
+            this.store.?,
+            Store.external,
+        ).parseJSON(global);
     }
     pub fn toArrayBuffer(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) JSValue {
         var view_ = this.sharedView();
@@ -1768,38 +1885,69 @@ pub const Blob = struct {
                 return JSC.ArrayBuffer.fromBytes(clone, .ArrayBuffer).toJS(global.ref(), null);
             },
             .share => {
-                return JSC.ArrayBuffer.fromBytes(view_.ptr, .ArrayBuffer).toJS(global.ref(), null);
+                this.store.?.ref();
+                return JSC.ArrayBuffer.fromBytes(bun.constStrToU8(view_), .ArrayBuffer).toJSWithContext(
+                    global.ref(),
+                    this.store.?,
+                    JSC.BlobArrayBuffer_deallocator,
+                    null,
+                );
             },
             .transfer => {
-                this.detached = true;
-                this.ptr_allocator = null;
-                this.ptr = null;
-                this.size = 0;
-                this.cap = 0;
-                return JSC.ArrayBuffer.fromBytes(bun.constStrToU8(view_), .ArrayBuffer).toJS(global.ref(), null);
+                var store = this.store.?;
+                this.transfer();
+                return JSC.ArrayBuffer.fromBytes(bun.constStrToU8(view_), .ArrayBuffer).toJSWithContext(
+                    global.ref(),
+                    store,
+                    JSC.BlobArrayBuffer_deallocator,
+                    null,
+                );
             },
         }
     }
 
-    pub fn fromJS(global: *JSGlobalObject, arg: JSValue) anyerror!Blob {
+    pub inline fn fromJS(global: *JSGlobalObject, arg: JSValue, comptime move: bool) anyerror!Blob {
+        if (comptime move) {
+            return fromJSMove(global, arg);
+        } else {
+            return fromJSClone(global, arg);
+        }
+    }
+
+    pub inline fn fromJSMove(global: *JSGlobalObject, arg: JSValue) anyerror!Blob {
+        return fromJSWithoutDeferGC(global, arg, true);
+    }
+
+    pub inline fn fromJSClone(global: *JSGlobalObject, arg: JSValue) anyerror!Blob {
+        return fromJSWithoutDeferGC(global, arg, false);
+    }
+
+    fn fromJSMovable(global: *JSGlobalObject, arg: JSValue, comptime move: bool) anyerror!Blob {
+        const FromJSFunction = if (comptime move)
+            fromJSMove
+        else
+            fromJSClone;
         const DeferCtx = struct {
-            args: std.meta.ArgsTuple(@TypeOf(Blob.fromJSWithoutDeferGC)),
+            args: std.meta.ArgsTuple(@TypeOf(FromJSFunction)),
             ret: anyerror!Blob = undefined,
 
             pub fn run(ctx: ?*anyopaque) callconv(.C) void {
                 var that = bun.cast(*@This(), ctx.?);
-                that.ret = @call(.{}, Blob.fromJSWithoutDeferGC, that.args);
+                that.ret = @call(.{}, FromJSFunction, that.args);
             }
         };
         var ctx = DeferCtx{
-            .args = .{ global, arg },
+            .args = .{
+                global,
+                arg,
+            },
             .ret = undefined,
         };
         JSC.VirtualMachine.vm.global.vm().deferGC(&ctx, DeferCtx.run);
         return ctx.ret;
     }
 
-    fn fromJSWithoutDeferGC(global: *JSGlobalObject, arg: JSValue) anyerror!Blob {
+    fn fromJSWithoutDeferGC(global: *JSGlobalObject, arg: JSValue, comptime move: bool) anyerror!Blob {
         var current = arg;
         if (current.isUndefinedOrNull()) {
             return Blob{ .globalThis = global };
@@ -1814,19 +1962,13 @@ pub const Blob = struct {
             JSC.JSValue.JSType.DerivedStringObject,
             => {
                 var sliced = current.toSlice(global, bun.default_allocator);
+
                 if (!sliced.allocated) {
                     sliced.ptr = @ptrCast([*]const u8, (try bun.default_allocator.dupe(u8, sliced.slice())).ptr);
                     sliced.allocated = true;
                 }
 
-                return Blob{
-                    .size = sliced.len,
-                    .ptr = bun.constStrToU8(sliced.ptr[0..sliced.len]).ptr,
-                    .cap = sliced.len,
-                    .ptr_allocator = bun.default_allocator,
-                    .allocator = null,
-                    .globalThis = global,
-                };
+                return Blob.init(bun.constStrToU8(sliced.slice()), bun.default_allocator, global);
             },
 
             JSC.JSValue.JSType.ArrayBuffer,
@@ -1844,14 +1986,7 @@ pub const Blob = struct {
             JSC.JSValue.JSType.DataView,
             => {
                 var buf = try bun.default_allocator.dupe(u8, current.asArrayBuffer(global).?.slice());
-                return Blob{
-                    .size = buf.len,
-                    .ptr = buf.ptr,
-                    .cap = buf.len,
-                    .ptr_allocator = bun.default_allocator,
-                    .allocator = null,
-                    .globalThis = global,
-                };
+                return Blob.init(buf, bun.default_allocator, global);
             },
 
             else => {
@@ -1860,7 +1995,13 @@ pub const Blob = struct {
                     switch (data.tag()) {
                         .Blob => {
                             var blob: *Blob = data.as(Blob);
-                            return try blob.dupe(bun.default_allocator);
+                            if (comptime move) {
+                                var _blob = blob.*;
+                                blob.transfer();
+                                return _blob;
+                            } else {
+                                return blob.dupe();
+                            }
                         },
 
                         else => return Blob.initEmpty(global),
@@ -2007,14 +2148,7 @@ pub const Blob = struct {
         }
 
         var joined = try joiner.done(bun.default_allocator);
-        return Blob{
-            .ptr_allocator = bun.default_allocator,
-            .allocator = null,
-            .size = joined.len,
-            .ptr = joined.ptr,
-            .cap = joined.len,
-            .globalThis = global,
-        };
+        return Blob.init(joined, bun.default_allocator, global);
     }
 };
 
@@ -2038,7 +2172,7 @@ pub const Body = struct {
     pub fn clone(this: Body, allocator: std.mem.Allocator) Body {
         return Body{
             .init = this.init.clone(allocator),
-            .value = this.value.clone(allocator) catch Value.empty,
+            .value = this.value.clone(allocator),
         };
     }
 
@@ -2054,7 +2188,7 @@ pub const Body = struct {
         if (this.init.headers) |headers| {
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll("headers: ");
-            try headers.writeFormat(formatter, writer, comptime enable_ansi_colors);
+            try headers.leak().writeFormat(formatter, writer, comptime enable_ansi_colors);
             try writer.writeAll("\n");
         }
 
@@ -2065,14 +2199,14 @@ pub const Body = struct {
 
     pub fn deinit(this: *Body, _: std.mem.Allocator) void {
         if (this.init.headers) |headers| {
-            headers.deinit();
+            headers.deref();
         }
 
         this.value.deinit();
     }
 
     pub const Init = struct {
-        headers: ?*Headers = null,
+        headers: ?*Headers.RefCountedHeaders = null,
         status_code: u16,
         method: Method = Method.GET,
 
@@ -2080,9 +2214,11 @@ pub const Body = struct {
             var that = this;
             var headers = this.headers;
             if (headers) |head| {
-                headers.?.allocator = allocator;
-                var new_headers = allocator.create(Headers) catch unreachable;
-                head.clone(new_headers) catch unreachable;
+                headers.?.value.allocator = allocator;
+                var new_headers = allocator.create(Headers.RefCountedHeaders) catch unreachable;
+                new_headers.allocator = allocator;
+                new_headers.count = 1;
+                head.leak().clone(&new_headers.value) catch unreachable;
                 that.headers = new_headers;
             }
 
@@ -2106,8 +2242,7 @@ pub const Body = struct {
                                 switch (js.JSValueGetType(ctx, header_prop)) {
                                     js.JSType.kJSTypeObject => {
                                         if (try Headers.JS.headersInit(ctx, header_prop)) |headers| {
-                                            result.headers = try allocator.create(Headers);
-                                            result.headers.?.* = headers;
+                                            result.headers = try Headers.RefCountedHeaders.init(headers, allocator);
                                         }
                                     },
                                     else => {},
@@ -2194,9 +2329,9 @@ pub const Body = struct {
             }
         }
 
-        pub fn clone(this: Value, allocator: std.mem.Allocator) !Value {
+        pub fn clone(this: Value, _: std.mem.Allocator) Value {
             if (this == .Blob) {
-                return Value{ .Blob = try this.Blob.dupe(allocator) };
+                return Value{ .Blob = this.Blob.dupe() };
             }
 
             return Value{ .Empty = .{} };
@@ -2266,7 +2401,7 @@ pub const Body = struct {
         }
 
         body.value = .{
-            .Blob = Blob.fromJS(ctx.ptr(), value) catch {
+            .Blob = Blob.fromJS(ctx.ptr(), value, true) catch {
                 JSC.JSError(allocator, "Out of memory", .{}, ctx, exception);
                 return body;
             },
@@ -2279,25 +2414,25 @@ pub const Body = struct {
 // https://developer.mozilla.org/en-US/docs/Web/API/Request
 pub const Request = struct {
     url: ZigString = ZigString.Empty,
-    headers: ?*Headers = null,
+    headers: ?*Headers.RefCountedHeaders = null,
     body: Body.Value = Body.Value{ .Empty = .{} },
     method: Method = Method.GET,
 
     pub fn fromRequestContext(ctx: *RequestContext) !Request {
-        var headers_ = bun.default_allocator.create(Headers) catch unreachable;
         var req = Request{
             .url = ZigString.init(std.mem.span(ctx.getFullURL())),
             .body = Body.Value.empty,
             .method = ctx.method,
-            .headers = headers_,
+            .headers = try Headers.RefCountedHeaders.init(Headers.fromRequestCtx(bun.default_allocator, ctx) catch unreachable, bun.default_allocator),
         };
-        headers_.* = Headers.fromRequestCtx(bun.default_allocator, ctx) catch unreachable;
         req.url.mark();
         return req;
     }
 
     pub fn mimeType(this: *const Request) string {
-        if (this.headers) |headers| {
+        if (this.headers) |headers_ref| {
+            var headers = headers_ref.get();
+            defer headers_ref.deref();
             // Remember, we always lowercase it
             // hopefully doesn't matter here tho
             if (headers.getHeaderIndex("content-type")) |content_type| {
@@ -2413,21 +2548,7 @@ pub const Request = struct {
     ) js.JSValueRef {
         return js.JSValueMakeString(ctx, ZigString.init("").toValueGC(ctx.ptr()).asRef());
     }
-    pub fn getHeaders(
-        this: *Request,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        if (this.headers == null) {
-            var headers = getAllocator(ctx).create(Headers) catch unreachable;
-            headers.* = Headers.empty(getAllocator(ctx));
-            this.headers = headers;
-        }
 
-        return Headers.Class.make(ctx, this.headers.?);
-    }
     pub fn getIntegrity(
         _: *Request,
         ctx: js.JSContextRef,
@@ -2468,6 +2589,10 @@ pub const Request = struct {
     }
 
     pub fn finalize(this: *Request) void {
+        if (this.headers) |headers| {
+            headers.deref();
+        }
+
         bun.default_allocator.destroy(this);
     }
 
@@ -2487,7 +2612,8 @@ pub const Request = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        if (this.headers) |headers| {
+        if (this.headers) |headers_ref| {
+            var headers = headers_ref.leak();
             if (headers.getHeaderIndex("referrer")) |i| {
                 return ZigString.init(headers.asStr(headers.entries.get(i).value)).toValueGC(ctx.ptr()).asObjectRef();
             }
@@ -2536,7 +2662,7 @@ pub const Request = struct {
                 }
 
                 if (JSC.JSValue.fromRef(arguments[1]).get(ctx.ptr(), "body")) |body_| {
-                    if (Blob.fromJS(ctx.ptr(), body_) catch null) |blob| {
+                    if (Blob.fromJS(ctx.ptr(), body_, true) catch null) |blob| {
                         request.body = Body.Value{ .Blob = blob };
                     }
                 }
@@ -2575,14 +2701,28 @@ pub const Request = struct {
         return Request.Class.make(ctx, cloned);
     }
 
+    pub fn getHeaders(
+        this: *Request,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        if (this.headers == null) {
+            this.headers = Headers.RefCountedHeaders.init(Headers.empty(bun.default_allocator), bun.default_allocator) catch unreachable;
+        }
+
+        return Headers.Class.make(ctx, this.headers.?.getRef());
+    }
+
     pub fn cloneInto(this: *const Request, req: *Request, allocator: std.mem.Allocator) void {
         req.* = Request{
-            .body = this.body.clone(allocator) catch unreachable,
+            .body = this.body.clone(allocator),
             .url = ZigString.init(allocator.dupe(u8, this.url.slice()) catch unreachable),
         };
         if (this.headers) |head| {
-            var new_headers = allocator.create(Headers) catch unreachable;
-            head.clone(new_headers) catch unreachable;
+            var new_headers = Headers.RefCountedHeaders.init(undefined, allocator) catch unreachable;
+            head.leak().clone(&new_headers.value) catch unreachable;
             req.headers = new_headers;
         }
     }
@@ -2642,6 +2782,7 @@ fn BlobInterface(comptime Type: type) type {
             var blob = this.body.use();
             var ptr = getAllocator(ctx).create(Blob) catch unreachable;
             ptr.* = blob;
+            blob.allocator = getAllocator(ctx);
             return JSC.JSPromise.resolvedPromiseValue(ctx.ptr(), JSValue.fromRef(Blob.Class.make(ctx, ptr))).asObjectRef();
         }
     };
@@ -2751,14 +2892,9 @@ pub const FetchEvent = struct {
         }
 
         if (this.pending_promise) |promise| {
-            var status = promise.status(globalThis.vm());
+            VirtualMachine.vm.event_loop.waitForPromise(promise);
 
-            while (status == .Pending) {
-                VirtualMachine.vm.tick();
-                status = promise.status(globalThis.vm());
-            }
-
-            switch (status) {
+            switch (promise.status(ctx.ptr().vm())) {
                 .Fulfilled => {},
                 else => {
                     this.rejected = true;
@@ -2811,7 +2947,9 @@ pub const FetchEvent = struct {
         defer this.pending_promise = null;
         var needs_mime_type = true;
         var content_length: ?usize = null;
-        if (response.body.init.headers) |headers| {
+        if (response.body.init.headers) |headers_ref| {
+            var headers = headers_ref.get();
+            defer headers_ref.deref();
             this.request_context.clearHeaders() catch {};
             var i: usize = 0;
             while (i < headers.entries.len) : (i += 1) {
@@ -2823,6 +2961,15 @@ pub const FetchEvent = struct {
 
                 if (strings.eqlComptime(name, "content-length")) {
                     content_length = std.fmt.parseInt(usize, headers.asStr(header.value), 10) catch null;
+                    continue;
+                }
+
+                // Some headers need to be managed by bun
+                if (strings.eqlComptime(name, "transfer-encoding") or
+                    strings.eqlComptime(name, "content-encoding") or
+                    strings.eqlComptime(name, "strict-transport-security") or
+                    strings.eqlComptime(name, "content-security-policy"))
+                {
                     continue;
                 }
 
@@ -2838,7 +2985,7 @@ pub const FetchEvent = struct {
         }
 
         var blob = response.body.value.use();
-        // defer blob.deinit();
+        defer blob.deinit();
 
         const content_length_ = content_length orelse blob.size;
 

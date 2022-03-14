@@ -21,7 +21,7 @@ const Response = WebCore.Response;
 const Request = WebCore.Request;
 const Router = @import("./api/router.zig");
 const FetchEvent = WebCore.FetchEvent;
-const Headers = WebCore.Headers;
+const Headers = WebCore.Headers.RefCountedHeaders;
 
 const Body = WebCore.Body;
 const TaggedPointerTypes = @import("../../tagged_pointer.zig");
@@ -1742,6 +1742,35 @@ pub const ArrayBuffer = extern struct {
         ));
     }
 
+    pub fn toJSWithContext(
+        this: ArrayBuffer,
+        ctx: JSC.C.JSContextRef,
+        deallocator: *anyopaque,
+        callback: JSC.C.JSTypedArrayBytesDeallocator,
+        exception: JSC.C.ExceptionRef,
+    ) JSC.JSValue {
+        if (this.typed_array_type == .ArrayBuffer) {
+            return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(
+                ctx,
+                this.ptr,
+                this.byte_len,
+                callback,
+                deallocator,
+                exception,
+            ));
+        }
+
+        return JSC.JSValue.fromRef(JSC.C.JSObjectMakeTypedArrayWithBytesNoCopy(
+            ctx,
+            this.typed_array_type.toC(),
+            this.ptr,
+            this.byte_len,
+            callback,
+            deallocator,
+            exception,
+        ));
+    }
+
     pub const fromArrayBuffer = fromTypedArray;
 
     pub inline fn slice(this: *const @This()) []u8 {
@@ -1749,15 +1778,15 @@ pub const ArrayBuffer = extern struct {
     }
 
     pub inline fn asU16(this: *const @This()) []u16 {
-        const sliced = this.slice();
-        const len = if (sliced.len > 0) sliced.len / 2 else 0;
-        return @ptrCast([*]u16, @alignCast(@alignOf(@TypeOf(this.ptr)), this.ptr))[0..len];
+        return std.mem.bytesAsSlice(u16, @alignCast(@alignOf([*]u16), this.ptr[this.offset..this.byte_len]));
+    }
+
+    pub inline fn asU16Unaligned(this: *const @This()) []align(1) u16 {
+        return std.mem.bytesAsSlice(u16, @alignCast(@alignOf([*]align(1) u16), this.ptr[this.offset..this.byte_len]));
     }
 
     pub inline fn asU32(this: *const @This()) []u32 {
-        const sliced = this.slice();
-        const len = if (sliced.len > 0) sliced.len / 4 else 0;
-        return @ptrCast([*]u32, @alignCast(@alignOf(@TypeOf(this.ptr)), this.ptr))[0..len];
+        return std.mem.bytesAsSlice(u32, @alignCast(@alignOf([*]u32), this.ptr)[this.offset..this.byte_len]);
     }
 };
 
@@ -1846,6 +1875,13 @@ export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) void 
     // mimalloc knows the size of things
     // but we don't
     mimalloc.mi_free(bytes_);
+
+pub export fn BlobArrayBuffer_deallocator(_: *anyopaque, blob: *anyopaque) void {
+    // zig's memory allocator interface won't work here
+    // mimalloc knows the size of things
+    // but we don't
+    var store = bun.cast(*JSC.WebCore.Blob.Store, blob);
+    store.deref();
 }
 
 pub fn castObj(obj: js.JSObjectRef, comptime Type: type) *Type {

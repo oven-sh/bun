@@ -232,7 +232,6 @@ pub const HTMLRewriter = struct {
 
         pub fn init(context: LOLHTMLContext, global: *JSGlobalObject, original: *Response, builder: *LOLHTML.HTMLRewriter.Builder) JSValue {
             var result = bun.default_allocator.create(Response) catch unreachable;
-
             var sink = bun.default_allocator.create(BufferOutputSink) catch unreachable;
             sink.* = BufferOutputSink{
                 .global = global,
@@ -282,16 +281,23 @@ pub const HTMLRewriter = struct {
                     },
                 },
             };
+            {
+                var input = original.body.value.use();
 
-            sink.rewriter.write(original.body.slice()) catch {
-                sink.deinit();
-                bun.default_allocator.destroy(result);
+                defer input.detach();
+                sink.rewriter.write(input.sharedView()) catch {
+                    sink.deinit();
+                    bun.default_allocator.destroy(result);
 
-                return throwLOLHTMLError(global);
-            };
+                    return throwLOLHTMLError(global);
+                };
+            }
 
             // Hold off on cloning until we're actually done.
-            result.body.init = original.body.init.clone(bun.default_allocator);
+            result.body.init.headers = original.body.init.headers;
+            result.body.init.method = original.body.init.method;
+            result.body.init.status_code = original.body.init.status_code;
+
             result.url = bun.default_allocator.dupe(u8, original.url) catch unreachable;
             result.status_text = bun.default_allocator.dupe(u8, original.status_text) catch unreachable;
 
@@ -474,7 +480,6 @@ fn HandlerCallback(
             var zig_element = bun.default_allocator.create(ZigType) catch unreachable;
             @field(zig_element, field_name) = value;
             // At the end of this scope, the value is no longer valid
-
             var args = [1]JSC.C.JSObjectRef{
                 ZigType.Class.make(this.global.ref(), zig_element),
             };
@@ -497,14 +502,10 @@ fn HandlerCallback(
 
                 var promise = promise_ orelse JSC.JSInternalPromise.resolvedPromise(this.global, result);
                 promise_ = promise;
+                JavaScript.VirtualMachine.vm.event_loop.waitForPromise(promise);
 
                 switch (promise.status(this.global.vm())) {
-                    JSC.JSPromise.Status.Pending => {
-                        while (promise.status(this.global.vm()) == .Pending) {
-                            JavaScript.VirtualMachine.vm.tick();
-                        }
-                        result = promise.result(this.global.vm());
-                    },
+                    JSC.JSPromise.Status.Pending => unreachable,
                     JSC.JSPromise.Status.Rejected => {
                         JavaScript.VirtualMachine.vm.defaultErrorHandler(promise.result(this.global.vm()), null);
                         @field(zig_element, field_name) = null;

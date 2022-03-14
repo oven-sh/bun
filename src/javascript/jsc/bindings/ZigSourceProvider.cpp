@@ -35,7 +35,8 @@ Ref<SourceProvider> SourceProvider::create(ResolvedSource resolvedSource)
     if (allocator) {
         Ref<WTF::ExternalStringImpl> stringImpl_ = WTF::ExternalStringImpl::create(
             resolvedSource.source_code.ptr, resolvedSource.source_code.len,
-            [allocator](WTF::ExternalStringImpl* str, void* ptr, unsigned int len) {
+            nullptr,
+            [allocator](void* str, void* ptr, unsigned int len) {
                 ZigString__free((const unsigned char*)ptr, len, allocator);
             });
         return adoptRef(*new SourceProvider(

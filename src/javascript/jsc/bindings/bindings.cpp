@@ -740,7 +740,7 @@ JSC__JSValue ZigString__to16BitValue(const ZigString* arg0, JSC__JSGlobalObject*
     return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(arg1->vm(), str)));
 }
 
-void free_global_string(WTF::ExternalStringImpl* str, void* ptr, unsigned len)
+void free_global_string(void* str, void* ptr, unsigned len)
 {
     ZigString__free_global(reinterpret_cast<const unsigned char*>(ptr), len);
 }
@@ -749,7 +749,7 @@ JSC__JSValue ZigString__toExternalU16(const uint16_t* arg0, size_t len, JSC__JSG
 {
     return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
         global->vm(),
-        ExternalStringImpl::create(reinterpret_cast<const UChar*>(arg0), len, free_global_string))));
+        ExternalStringImpl::create(reinterpret_cast<const UChar*>(arg0), len, nullptr, free_global_string))));
 }
 // This must be a globally allocated string
 JSC__JSValue ZigString__toExternalValue(const ZigString* arg0, JSC__JSGlobalObject* arg1)
@@ -758,12 +758,12 @@ JSC__JSValue ZigString__toExternalValue(const ZigString* arg0, JSC__JSGlobalObje
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
         return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
             arg1->vm(),
-            ExternalStringImpl::create(reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len, free_global_string))));
+            ExternalStringImpl::create(reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len, nullptr, free_global_string))));
     }
 
     return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
         arg1->vm(),
-        ExternalStringImpl::create(Zig::untag(str.ptr), str.len, free_global_string))));
+        ExternalStringImpl::create(Zig::untag(str.ptr), str.len, nullptr, free_global_string))));
 }
 
 JSC__JSValue ZigString__toValueGC(const ZigString* arg0, JSC__JSGlobalObject* arg1)
@@ -792,6 +792,21 @@ void JSC__JSValue__toZigString(JSC__JSValue JSValue0, ZigString* arg1, JSC__JSGl
     arg1->len = str.length();
 }
 
+JSC__JSValue ZigString__external(const ZigString* arg0, JSC__JSGlobalObject* arg1, void* arg2, void (*ArgFn3)(void* arg0, void* arg1, size_t arg2))
+{
+    ZigString str
+        = *arg0;
+    if (Zig::isTaggedUTF16Ptr(str.ptr)) {
+        return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
+            arg1->vm(),
+            WTF::String(ExternalStringImpl::create(reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len, arg2, ArgFn3)))));
+    } else {
+        return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
+            arg1->vm(),
+            WTF::String(ExternalStringImpl::create(reinterpret_cast<const LChar*>(Zig::untag(str.ptr)), str.len, arg2, ArgFn3)))));
+    }
+}
+
 JSC__JSValue ZigString__toExternalValueWithCallback(const ZigString* arg0, JSC__JSGlobalObject* arg1, void (*ArgFn2)(void* arg2, void* arg0, size_t arg1))
 {
 
@@ -800,11 +815,11 @@ JSC__JSValue ZigString__toExternalValueWithCallback(const ZigString* arg0, JSC__
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
         return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
             arg1->vm(),
-            WTF::String(ExternalStringImpl::create(reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len, ArgFn2)))));
+            WTF::String(ExternalStringImpl::create(reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len, nullptr, ArgFn2)))));
     } else {
         return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
             arg1->vm(),
-            WTF::String(ExternalStringImpl::create(reinterpret_cast<const LChar*>(Zig::untag(str.ptr)), str.len, ArgFn2)))));
+            WTF::String(ExternalStringImpl::create(reinterpret_cast<const LChar*>(Zig::untag(str.ptr)), str.len, nullptr, ArgFn2)))));
     }
 }
 

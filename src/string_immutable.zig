@@ -709,6 +709,31 @@ pub inline fn copyU8IntoU16(output_: []u16, input_: []const u8) void {
     }
 }
 
+pub inline fn appendUTF8MachineWordToUTF16MachineWordUnaligned(comptime alignment: u21, output: *align(alignment) [@sizeOf(usize) / 2]u16, input: *const [@sizeOf(usize) / 2]u8) void {
+    comptime var i: usize = 0;
+    inline while (i < @sizeOf(usize) / 2) : (i += 1) {
+        output[i] = input[i];
+    }
+}
+
+pub fn copyU8IntoU16WithAlignment(comptime alignment: u21, output_: []align(alignment) u16, input_: []const u8) void {
+    var output = output_;
+    var input = input_;
+    const word = @sizeOf(usize) / 2;
+    if (comptime Environment.allow_assert) {
+        std.debug.assert(input.len <= output.len);
+    }
+    while (input.len >= word) {
+        appendUTF8MachineWordToUTF16MachineWordUnaligned(alignment, output[0..word], input[0..word]);
+        output = output[word..];
+        input = input[word..];
+    }
+
+    for (input) |c, i| {
+        output[i] = c;
+    }
+}
+
 // pub inline fn copy(output_: []u8, input_: []const u8) void {
 //     var output = output_;
 //     var input = input_;

@@ -93,10 +93,10 @@ pub const GlobalClasses = [_]type{
     Bun.Class,
     Fetch.Class,
     js_ast.Macro.JSNode.BunJSXCallbackFunction,
-    Performance.Class,
+    WebCore.Performance.Class,
 
-    Crypto.Class,
-    Crypto.Prototype,
+    WebCore.Crypto.Class,
+    WebCore.Crypto.Prototype,
 
     WebCore.TextEncoder.Constructor.Class,
     WebCore.TextDecoder.Constructor.Class,
@@ -107,88 +107,9 @@ pub const GlobalClasses = [_]type{
     // The last item in this array becomes "process.env"
     Bun.EnvironmentVariables.Class,
 };
-const UUID = @import("./uuid.zig");
 const Blob = @import("../../blob.zig");
 pub const Buffer = MarkedArrayBuffer;
 const Lock = @import("../../lock.zig").Lock;
-
-pub const Crypto = struct {
-    pub const Class = NewClass(void, .{ .name = "crypto" }, .{
-        .getRandomValues = .{
-            .rfn = getRandomValues,
-        },
-        .randomUUID = .{
-            .rfn = randomUUID,
-        },
-    }, .{});
-    pub const Prototype = NewClass(
-        void,
-        .{ .name = "Crypto" },
-        .{
-            .call = .{
-                .rfn = call,
-            },
-        },
-        .{},
-    );
-
-    pub fn getRandomValues(
-        // this
-        _: void,
-        ctx: js.JSContextRef,
-        // function
-        _: js.JSObjectRef,
-        // thisObject
-        _: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) js.JSValueRef {
-        if (arguments.len == 0) {
-            JSError(getAllocator(ctx), "Expected typed array but received nothing", .{}, ctx, exception);
-            return JSValue.jsUndefined().asObjectRef();
-        }
-        var array_buffer = MarkedArrayBuffer.fromJS(ctx.ptr(), JSValue.fromRef(arguments[0]), exception) orelse {
-            JSError(getAllocator(ctx), "Expected typed array", .{}, ctx, exception);
-            return JSValue.jsUndefined().asObjectRef();
-        };
-        var slice = array_buffer.slice();
-        if (slice.len > 0)
-            std.crypto.random.bytes(slice);
-
-        return arguments[0];
-    }
-
-    pub fn call(
-        // this
-        _: void,
-        _: js.JSContextRef,
-        // function
-        _: js.JSObjectRef,
-        // thisObject
-        _: js.JSObjectRef,
-        _: []const js.JSValueRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return JSValue.jsUndefined().asObjectRef();
-    }
-
-    pub fn randomUUID(
-        // this
-        _: void,
-        ctx: js.JSContextRef,
-        // function
-        _: js.JSObjectRef,
-        // thisObject
-        _: js.JSObjectRef,
-        _: []const js.JSValueRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        var uuid = UUID.init();
-        var out: [128]u8 = undefined;
-        var str = std.fmt.bufPrint(&out, "{s}", .{uuid}) catch unreachable;
-        return ZigString.init(str).toValueGC(ctx.ptr()).asObjectRef();
-    }
-};
 
 pub const Bun = struct {
     threadlocal var css_imports_list_strings: [512]ZigString = undefined;
@@ -865,9 +786,7 @@ pub const Bun = struct {
                 .rfn = Router.match,
                 .ts = Router.match_type_definition,
             },
-            .__debug__doSegfault = .{
-                .rfn = Bun.__debug__doSegfault,
-            },
+
             .sleepSync = .{
                 .rfn = sleepSync,
             },
@@ -999,6 +918,9 @@ pub const Bun = struct {
                 .get = getTOMLObject,
                 .ts = d.ts{ .name = "TOML", .@"return" = "TOML.prototype" },
             },
+            .unsafe = .{
+                .get = getUnsafe,
+            },
         },
     );
 
@@ -1022,19 +944,68 @@ pub const Bun = struct {
         return js.JSObjectMake(ctx, TOML.Class.get().?[0], null);
     }
 
-    // For testing the segfault handler
-    pub fn __debug__doSegfault(
+    pub fn getUnsafe(
         _: void,
         ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        _: []const js.JSValueRef,
+        _: js.JSValueRef,
+        _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        _ = ctx;
-        const Reporter = @import("../../report.zig");
-        Reporter.globalError(error.SegfaultTest);
+        return js.JSObjectMake(ctx, Unsafe.Class.get().?[0], null);
     }
+
+    pub const Unsafe = struct {
+        pub const Class = NewClass(
+            void,
+            .{ .name = "Unsafe", .read_only = true },
+            .{
+                .segfault = .{
+                    .rfn = __debug__doSegfault,
+                },
+                .arrayBufferToString = .{
+                    .rfn = arrayBufferToString,
+                },
+            },
+            .{},
+        );
+
+        // For testing the segfault handler
+        pub fn __debug__doSegfault(
+            _: void,
+            ctx: js.JSContextRef,
+            _: js.JSObjectRef,
+            _: js.JSObjectRef,
+            _: []const js.JSValueRef,
+            _: js.ExceptionRef,
+        ) js.JSValueRef {
+            _ = ctx;
+            const Reporter = @import("../../report.zig");
+            Reporter.globalError(error.SegfaultTest);
+        }
+
+        pub fn arrayBufferToString(
+            _: void,
+            ctx: js.JSContextRef,
+            _: js.JSObjectRef,
+            _: js.JSObjectRef,
+            args: []const js.JSValueRef,
+            exception: js.ExceptionRef,
+        ) js.JSValueRef {
+            const array_buffer = JSC.ArrayBuffer.fromTypedArray(ctx, JSC.JSValue.fromRef(args[0]), exception);
+            switch (array_buffer.typed_array_type) {
+                .Uint16Array, .Int16Array => {
+                    var zig_str = ZigString.init("");
+                    zig_str.ptr = @ptrCast([*]const u8, @alignCast(@alignOf([*]align(1) const u16), array_buffer.ptr));
+                    zig_str.len = array_buffer.len;
+                    zig_str.markUTF16();
+                    return ZigString.toValue(&zig_str, ctx.ptr()).asObjectRef();
+                },
+                else => {
+                    return ZigString.init(array_buffer.slice()).toValue(ctx.ptr()).asObjectRef();
+                },
+            }
+        }
+    };
 
     // pub const Lockfile = struct {
     //     const BunLockfile = @import("../../install/install.zig").Lockfile;
@@ -1551,42 +1522,6 @@ pub fn OpaqueWrap(comptime Context: type, comptime Function: fn (this: *Context)
     }.callback;
 }
 
-pub const Performance = struct {
-    pub const Class = NewClass(
-        void,
-        .{
-            .name = "performance",
-            .read_only = true,
-        },
-        .{
-            .now = .{
-                .rfn = Performance.now,
-            },
-        },
-        .{},
-    );
-
-    pub fn now(
-        _: void,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        _: []const js.JSValueRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return js.JSValueMakeNumber(
-            ctx,
-            @floatCast(
-                f64,
-                @intToFloat(
-                    f128,
-                    VirtualMachine.vm.origin_timer.read(),
-                ) / std.time.ns_per_ms,
-            ),
-        );
-    }
-};
-
 const bun_file_import_path = "/node_modules.server.bun";
 
 const FetchTasklet = Fetch.FetchTasklet;
@@ -1958,6 +1893,18 @@ pub const VirtualMachine = struct {
                 this.tickConcurrent();
 
                 if (this.tickWithCount() == 0) break;
+            }
+        }
+
+        pub fn waitForPromise(this: *EventLoop, promise: *JSC.JSInternalPromise) void {
+            var _vm = this.global.vm();
+            switch (promise.status(_vm)) {
+                JSC.JSPromise.Status.Pending => {
+                    while (promise.status(_vm) == .Pending) {
+                        this.tick();
+                    }
+                },
+                else => {},
             }
         }
 
@@ -3098,7 +3045,7 @@ pub const VirtualMachine = struct {
         }
     }
 
-    fn remapZigException(
+    pub fn remapZigException(
         this: *VirtualMachine,
         exception: *ZigException,
         error_instance: JSValue,
@@ -3442,9 +3389,12 @@ pub const EventListenerMixin = struct {
         for (listeners.items) |listener_ref| {
             fetch_args[0] = FetchEvent.Class.make(vm.global.ref(), fetch_event);
 
+            vm.tick();
             var result = js.JSObjectCallAsFunctionReturnValue(vm.global.ref(), listener_ref, null, 1, &fetch_args);
-            var promise = JSPromise.resolvedPromise(vm.global, result);
-            vm.waitForTasks();
+            vm.tick();
+            var promise = JSInternalPromise.resolvedPromise(vm.global, result);
+
+            vm.event_loop.waitForPromise(promise);
 
             if (fetch_event.rejected) return;
 

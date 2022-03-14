@@ -169,6 +169,10 @@ pub const ZigString = extern struct {
         return ZigString{ .ptr = slice_.ptr, .len = slice_.len };
     }
 
+    pub fn from(slice_: JSC.C.JSValueRef, ctx: JSC.C.JSContextRef) ZigString {
+        return JSC.JSValue.fromRef(slice_).getZigString(ctx.ptr());
+    }
+
     pub fn toBase64DataURL(this: ZigString, allocator: std.mem.Allocator) ![]const u8 {
         const slice_ = this.slice();
         const size = std.base64.standard.Encoder.calcSize(slice_.len);
@@ -242,6 +246,10 @@ pub const ZigString = extern struct {
         return untagged(this.ptr)[0..@minimum(this.len, std.math.maxInt(u32))];
     }
 
+    pub fn dupe(this: ZigString, allocator: std.mem.Allocator) ![]const u8 {
+        return try allocator.dupe(u8, this.slice());
+    }
+
     pub fn toSlice(this: ZigString, allocator: std.mem.Allocator) Slice {
         if (this.len == 0)
             return Slice{ .ptr = "", .len = 0, .allocator = allocator, .allocated = false };
@@ -300,6 +308,15 @@ pub const ZigString = extern struct {
         return shim.cppFn("toExternalValueWithCallback", .{ this, global, callback });
     }
 
+    pub fn external(
+        this: *const ZigString,
+        global: *JSGlobalObject,
+        ctx: ?*anyopaque,
+        callback: fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.C) void,
+    ) JSValue {
+        return shim.cppFn("external", .{ this, global, ctx, callback });
+    }
+
     pub fn to16BitValue(this: *const ZigString, global: *JSGlobalObject) JSValue {
         return shim.cppFn("to16BitValue", .{ this, global });
     }
@@ -329,15 +346,7 @@ pub const ZigString = extern struct {
         return shim.cppFn("toErrorInstance", .{ this, global });
     }
 
-    pub const Extern = [_][]const u8{
-        "toValue",
-        "toExternalValue",
-        "to16BitValue",
-        "toValueGC",
-        "toErrorInstance",
-        "toExternalU16",
-        "toExternalValueWithCallback",
-    };
+    pub const Extern = [_][]const u8{ "toValue", "toExternalValue", "to16BitValue", "toValueGC", "toErrorInstance", "toExternalU16", "toExternalValueWithCallback", "external" };
 };
 
 pub const SystemError = extern struct {

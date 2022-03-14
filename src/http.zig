@@ -83,6 +83,16 @@ const SOCKET_FLAGS: u32 = if (Environment.isLinux)
 else
     os.SOCK.CLOEXEC;
 
+fn disableSIGPIPESoClosingTheTabDoesntCrash(conn: anytype) void {
+    if (comptime !Environment.isMac) return;
+    std.os.setsockopt(
+        conn.client.socket.fd,
+        std.os.SOL.SOCKET,
+        std.os.SO.NOSIGPIPE,
+        &std.mem.toBytes(@as(c_int, 1)),
+    ) catch {};
+}
+
 pub const RequestContext = struct {
     request: Request,
     method: Method,
@@ -3636,6 +3646,8 @@ pub const Server = struct {
             var conn = listener.accept(.{ .close_on_exec = true }) catch
                 continue;
 
+            disableSIGPIPESoClosingTheTabDoesntCrash(conn);
+
             // We want to bind to the network socket as quickly as possible so that opening the URL works
             // We use a secondary loop so that we avoid the extra branch in a hot code path
             Analytics.Features.fast_refresh = server.bundler.options.jsx.supports_fast_refresh;
@@ -3652,6 +3664,8 @@ pub const Server = struct {
             defer Output.flush();
             var conn = listener.accept(.{ .close_on_exec = true }) catch
                 continue;
+
+            disableSIGPIPESoClosingTheTabDoesntCrash(conn);
 
             server.handleConnection(&conn, comptime features);
         }

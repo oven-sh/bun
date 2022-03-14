@@ -141,7 +141,14 @@ const CAllocator = struct {
     ) void {
         _ = buf_align;
         _ = return_address;
-        mimalloc.mi_free(buf.ptr);
+        // mi_free_size internally just asserts the size
+        // so it's faster if we don't pass that value through
+        // but its good to have that assertion
+        if (comptime Environment.allow_assert) {
+            mimalloc.mi_free_size(buf.ptr, buf.len);
+        } else {
+            mimalloc.mi_free(buf.ptr);
+        }
     }
 };
 

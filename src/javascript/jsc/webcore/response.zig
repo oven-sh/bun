@@ -269,6 +269,10 @@ pub const Response = struct {
     }
 
     pub fn mimeType(response: *const Response, request_ctx_: ?*const RequestContext) string {
+        return mimeTypeWithDefault(response, MimeType.other, request_ctx_);
+    }
+
+    pub fn mimeTypeWithDefault(response: *const Response, default: MimeType, request_ctx_: ?*const RequestContext) string {
         if (response.body.init.headers) |headers_ref| {
             var headers = headers_ref.get();
             defer headers_ref.deref();
@@ -291,9 +295,9 @@ pub const Response = struct {
                     return blob.content_type;
                 }
 
-                return MimeType.other.value;
+                return default.value;
             },
-            .Used, .Locked, .Empty => return MimeType.other.value,
+            .Used, .Locked, .Empty => return default.value,
         }
     }
 
@@ -1263,6 +1267,7 @@ pub const Headers = struct {
 
         if (Environment.allow_assert) std.debug.assert(this.buf.items.len >= ptr.offset + ptr.length);
         var slice = this.buf.items[ptr.offset..][0..ptr.length];
+
         switch (comptime StringType) {
             js.JSStringRef => {
                 ptr.length = @truncate(u32, js.JSStringGetUTF8CString(str, slice.ptr, slice.len) - 1);
@@ -1392,6 +1397,7 @@ pub const Headers = struct {
             .allocator = this.allocator,
             .guard = Guard.none,
         };
+
         to.buf.expandToCapacity();
         std.mem.copy(u8, to.buf.items, this.buf.items);
     }
@@ -1840,10 +1846,15 @@ pub const Blob = struct {
                 return ZigString.init(buf).toValueGC(global);
             },
             .transfer => {
-                var store = this.store.?;
-                this.transfer();
-                return ZigString.init(buf).external(global, store, Store.external);
+                var out = ZigString.init(buf).toValueGC(global);
+                this.detach();
+                return out;
             },
+            // .transfer => {
+            //     var store = this.store.?;
+            //     this.transfer();
+            //     return ZigString.init(buf).external(global, store, Store.external);
+            // },
             .share => {
                 this.store.?.ref();
                 return ZigString.init(buf).external(global, this.store.?, Store.external);
@@ -2200,6 +2211,7 @@ pub const Body = struct {
     pub fn deinit(this: *Body, _: std.mem.Allocator) void {
         if (this.init.headers) |headers| {
             headers.deref();
+            this.init.headers = null;
         }
 
         this.value.deinit();
@@ -2591,6 +2603,7 @@ pub const Request = struct {
     pub fn finalize(this: *Request) void {
         if (this.headers) |headers| {
             headers.deref();
+            this.headers = null;
         }
 
         bun.default_allocator.destroy(this);
@@ -2792,7 +2805,7 @@ fn BlobInterface(comptime Type: type) type {
 pub const FetchEvent = struct {
     started_waiting_at: u64 = 0,
     response: ?*Response = null,
-    request_context: *RequestContext,
+    request_context: ?*RequestContext = null,
     request: Request,
     pending_promise: ?*JSInternalPromise = null,
 
@@ -2819,6 +2832,7 @@ pub const FetchEvent = struct {
                 },
             },
             .@"waitUntil" = waitUntil,
+            .finalize = finalize,
         },
         .{
             .@"client" = .{
@@ -2840,6 +2854,12 @@ pub const FetchEvent = struct {
         },
     );
 
+    pub fn finalize(
+        this: *FetchEvent,
+    ) void {
+        VirtualMachine.vm.allocator.destroy(this);
+    }
+
     pub fn getClient(
         _: *FetchEvent,
         ctx: js.JSContextRef,
@@ -2858,8 +2878,9 @@ pub const FetchEvent = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        var req = getAllocator(ctx).create(Request) catch unreachable;
-        req.* = Request.fromRequestContext(this.request_context) catch unreachable;
+        var req = bun.default_allocator.create(Request) catch unreachable;
+        req.* = this.request;
+
         return Request.Class.make(
             ctx,
             req,
@@ -2875,13 +2896,14 @@ pub const FetchEvent = struct {
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        if (this.request_context.has_called_done) return js.JSValueMakeUndefined(ctx);
+        var request_context = this.request_context orelse return js.JSValueMakeUndefined(ctx);
+        if (request_context.has_called_done) return js.JSValueMakeUndefined(ctx);
         var globalThis = ctx.ptr();
 
         // A Response or a Promise that resolves to a Response. Otherwise, a network error is returned to Fetch.
         if (arguments.len == 0 or !Response.Class.loaded or !js.JSValueIsObject(ctx, arguments[0])) {
             JSError(getAllocator(ctx), "event.respondWith() must be a Response or a Promise<Response>.", .{}, ctx, exception);
-            this.request_context.sendInternalError(error.respondWithWasEmpty) catch {};
+            request_context.sendInternalError(error.respondWithWasEmpty) catch {};
             return js.JSValueMakeUndefined(ctx);
         }
 
@@ -2931,12 +2953,12 @@ pub const FetchEvent = struct {
 
         defer {
             if (!VirtualMachine.vm.had_errors) {
-                Output.printElapsed(@intToFloat(f64, (this.request_context.timer.lap())) / std.time.ns_per_ms);
+                Output.printElapsed(@intToFloat(f64, (request_context.timer.lap())) / std.time.ns_per_ms);
 
                 Output.prettyError(
                     " <b>{s}<r><d> - <b>{d}<r> <d>transpiled, <d><b>{d}<r> <d>imports<r>\n",
                     .{
-                        this.request_context.matched_route.?.name,
+                        request_context.matched_route.?.name,
                         VirtualMachine.vm.transpiled_count,
                         VirtualMachine.vm.resolved_count,
                     },
@@ -2950,7 +2972,7 @@ pub const FetchEvent = struct {
         if (response.body.init.headers) |headers_ref| {
             var headers = headers_ref.get();
             defer headers_ref.deref();
-            this.request_context.clearHeaders() catch {};
+            request_context.clearHeaders() catch {};
             var i: usize = 0;
             while (i < headers.entries.len) : (i += 1) {
                 var header = headers.entries.get(i);
@@ -2973,7 +2995,7 @@ pub const FetchEvent = struct {
                     continue;
                 }
 
-                this.request_context.appendHeaderSlow(
+                request_context.appendHeaderSlow(
                     name,
                     headers.asStr(header.value),
                 ) catch unreachable;
@@ -2981,7 +3003,7 @@ pub const FetchEvent = struct {
         }
 
         if (needs_mime_type) {
-            this.request_context.appendHeader("Content-Type", response.mimeType(this.request_context));
+            request_context.appendHeader("Content-Type", response.mimeTypeWithDefault(MimeType.html, request_context));
         }
 
         var blob = response.body.value.use();
@@ -2990,24 +3012,24 @@ pub const FetchEvent = struct {
         const content_length_ = content_length orelse blob.size;
 
         if (content_length_ == 0) {
-            this.request_context.sendNoContent() catch return js.JSValueMakeUndefined(ctx);
+            request_context.sendNoContent() catch return js.JSValueMakeUndefined(ctx);
             return js.JSValueMakeUndefined(ctx);
         }
 
         if (FeatureFlags.strong_etags_for_built_files) {
-            const did_send = this.request_context.writeETag(blob.sharedView()) catch false;
+            const did_send = request_context.writeETag(blob.sharedView()) catch false;
             if (did_send) {
                 // defer getAllocator(ctx).destroy(str.ptr);
                 return js.JSValueMakeUndefined(ctx);
             }
         }
 
-        defer this.request_context.done();
+        defer request_context.done();
 
-        this.request_context.writeStatusSlow(response.body.init.status_code) catch return js.JSValueMakeUndefined(ctx);
-        this.request_context.prepareToSendBody(content_length_, false) catch return js.JSValueMakeUndefined(ctx);
+        request_context.writeStatusSlow(response.body.init.status_code) catch return js.JSValueMakeUndefined(ctx);
+        request_context.prepareToSendBody(content_length_, false) catch return js.JSValueMakeUndefined(ctx);
 
-        this.request_context.writeBodyBuf(blob.sharedView()) catch return js.JSValueMakeUndefined(ctx);
+        request_context.writeBodyBuf(blob.sharedView()) catch return js.JSValueMakeUndefined(ctx);
 
         return js.JSValueMakeUndefined(ctx);
     }

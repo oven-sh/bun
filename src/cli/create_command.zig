@@ -107,7 +107,9 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
     const npm_args = 2 * @intCast(usize, @boolToInt(npm_client != null));
     const total = count + npm_args;
     var argv = allocator.alloc(string, total) catch return;
-    defer allocator.free(argv);
+    var proc: *std.ChildProcess = undefined;
+    defer proc.deinit();
+    defer if (argv.len > 32) allocator.free(argv);
 
     if (npm_client) |client| {
         argv[0] = client.bin;
@@ -143,8 +145,7 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
     Output.disableBuffering();
     defer Output.enableBuffering();
 
-    var proc = std.ChildProcess.init(argv, allocator) catch return;
-    defer proc.deinit();
+    proc = std.ChildProcess.init(argv, allocator) catch return;
     proc.stdin_behavior = .Inherit;
     proc.stdout_behavior = .Inherit;
     proc.stderr_behavior = .Inherit;

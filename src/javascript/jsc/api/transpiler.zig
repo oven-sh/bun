@@ -546,6 +546,7 @@ pub fn constructor(
     };
 
     bundler.configureLinkerWithAutoJSX(false);
+    bundler.options.env.behavior = .disable;
     bundler.configureDefines() catch |err| {
         if ((log.warnings + log.errors) > 0) {
             var out_exception = log.toJS(ctx.ptr(), getAllocator(ctx), "Failed to load define");

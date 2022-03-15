@@ -1322,11 +1322,13 @@ pub const BundleOptions = struct {
                 // If we're doing SSR, we want all the URLs to be the same as what it would be in the browser
                 // If we're not doing SSR, we want all the import paths to be absolute
                 opts.import_path_format = if (opts.import_path_format == .absolute_url) .absolute_url else .absolute_path;
+                opts.env.behavior = .load_all;
             },
             else => {},
         }
 
         const is_generating_bundle = (transform.generate_node_module_bundle orelse false);
+
         // if (!(transform.generate_node_module_bundle orelse false)) {
         if (node_modules_bundle_existing) |node_mods| {
             opts.node_modules_bundle = node_mods;
@@ -1437,12 +1439,17 @@ pub const BundleOptions = struct {
             opts.main_fields = transform.main_fields;
         }
 
+        if (opts.framework == null and is_generating_bundle)
+            opts.env.behavior = .load_all;
+
         opts.external = ExternalModules.init(allocator, &fs.fs, fs.top_level_dir, transform.external, log, opts.platform);
         opts.out_extensions = opts.platform.outExtensions(allocator);
 
         if (transform.serve orelse false) {
             opts.preserve_extensions = true;
             opts.append_package_version_in_query_string = true;
+            if (opts.framework == null)
+                opts.env.behavior = .load_all;
 
             opts.sourcemap = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode.external);
 

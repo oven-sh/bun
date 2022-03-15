@@ -2783,8 +2783,6 @@ pub const VirtualMachine = struct {
     }
 
     pub fn defaultErrorHandler(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
-        this.last_error_jsvalue = result;
-
         if (result.isException(this.global.vm())) {
             var exception = @ptrCast(*Exception, result.asVoid());
 

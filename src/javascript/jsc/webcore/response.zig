@@ -781,7 +781,6 @@ pub const Headers = struct {
     entries: Headers.Entries,
     buf: std.ArrayListUnmanaged(u8),
     allocator: std.mem.Allocator,
-    used: u32 = 0,
     guard: Guard = Guard.none,
 
     pub const RefCountedHeaders = bun.RefCount(Headers, true);
@@ -798,7 +797,6 @@ pub const Headers = struct {
         return Headers{
             .entries = @TypeOf(headers.entries){},
             .buf = @TypeOf(headers.buf){},
-            .used = 0,
             .allocator = allocator,
             .guard = Guard.none,
         };
@@ -863,7 +861,7 @@ pub const Headers = struct {
             _: js.ExceptionRef,
         ) js.JSValueRef {
             var this = ref.leak();
-            if (this.guard == .request or arguments.len < 2 or !js.JSValueIsString(ctx, arguments[0]) or js.JSStringIsEqual(arguments[0], Properties.Refs.empty_string) or !js.JSValueIsString(ctx, arguments[1])) {
+            if (js.JSStringIsEqual(arguments[0], Properties.Refs.empty_string) or !js.JSValueIsString(ctx, arguments[1])) {
                 return js.JSValueMakeUndefined(ctx);
             }
 
@@ -878,16 +876,14 @@ pub const Headers = struct {
             arguments: []const js.JSValueRef,
             _: js.ExceptionRef,
         ) js.JSValueRef {
-            var this = ref.leak();
-            if (this.guard == .request or arguments.len < 1 or !js.JSValueIsString(ctx, arguments[0]) or js.JSStringIsEqual(arguments[0], Properties.Refs.empty_string)) {
-                return js.JSValueMakeUndefined(ctx);
-            }
+            var this: *Headers = ref.leak();
 
             const key_len = js.JSStringGetUTF8CString(arguments[0], &header_kv_buf, header_kv_buf.len) - 1;
             const key = header_kv_buf[0..key_len];
+            var entries_ = &this.entries;
 
             if (this.getHeaderIndex(key)) |header_i| {
-                this.entries.orderedRemove(header_i);
+                entries_.orderedRemove(header_i);
             }
 
             return js.JSValueMakeUndefined(ctx);
@@ -1015,7 +1011,6 @@ pub const Headers = struct {
                     .value = (JS.headersInit(ctx, arguments[0]) catch unreachable) orelse Headers{
                         .entries = .{},
                         .buf = .{},
-                        .used = 0,
                         .allocator = getAllocator(ctx),
                         .guard = Guard.none,
                     },
@@ -1179,18 +1174,14 @@ pub const Headers = struct {
 
             if (append) {
                 const end = @truncate(u32, value.len + existing_value.length + 2);
+                const offset = headers.buf.items.len;
                 headers.buf.ensureUnusedCapacity(headers.allocator, end) catch unreachable;
-                headers.buf.expandToCapacity();
-                var new_end = headers.buf.items[headers.used..][0 .. end - 1];
-                const existing_buf = headers.asStr(existing_value);
-                std.mem.copy(u8, existing_buf, new_end);
-                new_end[existing_buf.len] = ',';
-                std.mem.copy(u8, new_end[existing_buf.len + 1 ..], value);
-                new_end.ptr[end - 1] = 0;
-                headers.entries.items(.value)[header_i] = Api.StringPointer{ .offset = headers.used, .length = end - 1 };
-                headers.used += end;
+                headers.buf.appendSliceAssumeCapacity(headers.asStr(existing_value));
+                headers.buf.appendSliceAssumeCapacity(", ");
+                headers.buf.appendSliceAssumeCapacity(value);
+                headers.entries.items(.value)[header_i] = Api.StringPointer{ .offset = @truncate(u32, offset), .length = @truncate(u32, headers.buf.items.len - offset) };
                 // Can we get away with just overwriting in-place?
-            } else if (existing_value.length > value.len) {
+            } else if (existing_value.length >= value.len) {
                 std.mem.copy(u8, headers.asStr(existing_value), value);
                 headers.entries.items(.value)[header_i].length = @truncate(u32, value.len);
                 headers.asStr(headers.entries.items(.value)[header_i]).ptr[value.len] = 0;
@@ -1198,7 +1189,6 @@ pub const Headers = struct {
                 // We assume that these header objects are going to be kind of short-lived.
             } else {
                 headers.buf.ensureUnusedCapacity(headers.allocator, value.len + 1) catch unreachable;
-                headers.buf.expandToCapacity();
                 headers.entries.items(.value)[header_i] = headers.appendString(string, value, false, true, true);
             }
         } else {
@@ -1225,7 +1215,7 @@ pub const Headers = struct {
         comptime append_null: bool,
     ) void {
         headers.buf.ensureUnusedCapacity(headers.allocator, key.len + value.len + 2) catch unreachable;
-        headers.buf.expandToCapacity();
+
         headers.entries.append(
             headers.allocator,
             .{
@@ -1255,7 +1245,7 @@ pub const Headers = struct {
         comptime needs_normalize: bool,
         comptime append_null: bool,
     ) Api.StringPointer {
-        var ptr = Api.StringPointer{ .offset = this.used, .length = 0 };
+        var ptr = Api.StringPointer{ .offset = @truncate(u32, this.buf.items.len), .length = 0 };
         ptr.length = @truncate(
             u32,
             switch (comptime StringType) {
@@ -1264,9 +1254,10 @@ pub const Headers = struct {
             },
         );
         if (Environment.allow_assert) std.debug.assert(ptr.length > 0);
-
-        if (Environment.allow_assert) std.debug.assert(this.buf.items.len >= ptr.offset + ptr.length);
-        var slice = this.buf.items[ptr.offset..][0..ptr.length];
+        this.buf.ensureUnusedCapacity(this.allocator, ptr.length + @as(u32, @boolToInt(append_null))) catch unreachable;
+        var slice = this.buf.items;
+        slice.len += ptr.length;
+        slice = slice[ptr.offset..][0..ptr.length];
 
         switch (comptime StringType) {
             js.JSStringRef => {
@@ -1288,11 +1279,10 @@ pub const Headers = struct {
         }
         if (comptime append_null) {
             slice.ptr[slice.len] = 0;
-            this.used += 1;
         }
 
         ptr.length = @truncate(u32, slice.len);
-        this.used += @truncate(u32, ptr.length);
+        this.buf.items.len += slice.len;
         return ptr;
     }
 
@@ -1366,15 +1356,15 @@ pub const Headers = struct {
     }
 
     fn appendNumber(this: *Headers, num: f64) Api.StringPointer {
-        var ptr = Api.StringPointer{ .offset = this.used, .length = @truncate(
+        var ptr = Api.StringPointer{ .offset = @truncate(u32, this.buf.items.len), .length = @truncate(
             u32,
             std.fmt.count("{d}", .{num}),
         ) };
-        std.debug.assert(this.buf.items.len >= ptr.offset + ptr.length);
+        this.buf.ensureUnusedCapacity(this.allocator, ptr.length + 1) catch unreachable;
+        this.buf.items.len += ptr.length;
         var slice = this.buf.items[ptr.offset..][0..ptr.length];
         var buf = std.fmt.bufPrint(slice, "{d}", .{num}) catch &[_]u8{};
         ptr.length = @truncate(u32, buf.len);
-        this.used += ptr.length;
         return ptr;
     }
 
@@ -1393,7 +1383,6 @@ pub const Headers = struct {
         to.* = Headers{
             .entries = try this.entries.clone(this.allocator),
             .buf = try @TypeOf(this.buf).initCapacity(this.allocator, this.buf.items.len),
-            .used = this.used,
             .allocator = this.allocator,
             .guard = Guard.none,
         };
@@ -3047,71 +3036,3 @@ pub const FetchEvent = struct {
         return js.JSValueMakeUndefined(ctx);
     }
 };
-
-// pub const ReadableStream = struct {
-//     pub const Class = NewClass(
-//         ReadableStream,
-//         .{
-//             .name = "ReadableStream",
-//         },
-//         .{},
-//         .{
-
-//         },
-//     );
-// };
-
-// pub const TextEncoder = struct {
-//     pub const Class = NewClass(
-//         TextEncoder,
-//         .{
-//             .name = "TextEncoder",
-//         },
-//         .{
-//             .encoding = .{
-//                 .@"get" = getEncoding,
-//                 .ro = true,
-//             },
-//         },
-//         .{
-//             .encode = .{
-//                 .rfn = encode,
-//             },
-//             .constructor = .{
-//                 .rfn = constructor,
-//             },
-//             .encodeInto = .{
-//                 .rfn = encodeInto,
-//             },
-//         },
-//     );
-
-//     const encoding_str = "utf-8";
-//     pub fn getEncoding(
-//         this: *TextEncoder,
-//         ctx: js.JSContextRef,
-//         thisObject: js.JSObjectRef,
-//         prop: js.JSStringRef,
-//         exception: js.ExceptionRef,
-//     ) js.JSValueRef {
-//         return ZigString.init(encoding_str).toValue(ctx).asRef()
-//     }
-// };
-
-// pub const TextDecoder = struct {
-//     pub const Class = NewClass(
-//         TextDecoder,
-//         .{
-//             .name = "TextDecoder",
-//         },
-//         .{},
-//         .{
-//             .decode = .{},
-//             .constructor = .{},
-//         },
-//     );
-// };
-
-test "" {
-    std.testing.refAllDecls(Api);
-}

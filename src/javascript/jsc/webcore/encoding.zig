@@ -415,6 +415,125 @@ pub const TextDecoder = struct {
     }
     const Vector16 = std.meta.Vector(16, u16);
     const max_16_ascii: Vector16 = @splat(16, @as(u16, 127));
+
+    fn decodeUTF16WithAlignment(
+        _: *TextDecoder,
+        comptime Slice: type,
+        slice: Slice,
+        ctx: js.JSContextRef,
+    ) JSC.C.JSValueRef {
+        var i: usize = 0;
+
+        while (i < slice.len) {
+            while (i + strings.ascii_u16_vector_size <= slice.len) {
+                const vec: strings.AsciiU16Vector = slice[i..][0..strings.ascii_u16_vector_size].*;
+                if ((@reduce(
+                    .Or,
+                    @bitCast(
+                        strings.AsciiVectorU16U1,
+                        vec > strings.max_u16_ascii,
+                    ) | @bitCast(
+                        strings.AsciiVectorU16U1,
+                        vec < strings.min_u16_ascii,
+                    ),
+                ) == 0)) {
+                    break;
+                }
+                i += strings.ascii_u16_vector_size;
+            }
+            while (i < slice.len and slice[i] <= 127) {
+                i += 1;
+            }
+            break;
+        }
+
+        // is this actually a UTF-16 string that is just ascii?
+        // we can still allocate as UTF-16 and just copy the bytes
+        if (i == slice.len) {
+            if (comptime Slice == []u16) {
+                return JSC.C.JSValueMakeString(ctx, JSC.C.JSStringCreateWithCharacters(slice.ptr, slice.len));
+            } else {
+                var str = ZigString.init("");
+                str.ptr = @ptrCast([*]u8, slice.ptr);
+                str.len = slice.len;
+                str.markUTF16();
+                return str.toValueGC(ctx.ptr()).asObjectRef();
+            }
+        }
+
+        var buffer = std.ArrayListAlignedUnmanaged(u16, @alignOf(@TypeOf(slice.ptr))){};
+        buffer.ensureTotalCapacity(default_allocator, slice.len) catch unreachable;
+        buffer.items.len = i;
+        defer buffer.deinit(
+            default_allocator,
+        );
+
+        if (comptime Slice == []u16) {
+            @memcpy(
+                std.mem.sliceAsBytes(buffer.items).ptr,
+                std.mem.sliceAsBytes(slice).ptr,
+                std.mem.sliceAsBytes(slice[0..i]).len,
+            );
+        } else {
+            for (slice[0..i]) |ch, j| {
+                buffer.items[j] = ch;
+            }
+        }
+
+        const first_high_surrogate = 0xD800;
+        const last_high_surrogate = 0xDBFF;
+        const first_low_surrogate = 0xDC00;
+        const last_low_surrogate = 0xDFFF;
+
+        var remainder = slice[i..];
+        while (remainder.len > 0) {
+            switch (remainder[0]) {
+                0...127 => {
+                    var count: usize = 1;
+                    while (remainder.len > count and remainder[count] <= 127) : (count += 1) {}
+                    buffer.ensureUnusedCapacity(default_allocator, count) catch unreachable;
+                    const prev = buffer.items.len;
+                    buffer.items.len += count;
+                    for (remainder[0..count]) |char, j| {
+                        buffer.items[prev + j] = char;
+                    }
+                    remainder = remainder[count..];
+                },
+                first_high_surrogate...last_high_surrogate => |first| {
+                    if (remainder.len > 1) {
+                        if (remainder[1] >= first_low_surrogate and remainder[1] <= last_low_surrogate) {
+                            buffer.ensureUnusedCapacity(default_allocator, 2) catch unreachable;
+                            buffer.items.ptr[buffer.items.len] = first;
+                            buffer.items.ptr[buffer.items.len + 1] = remainder[1];
+                            buffer.items.len += 2;
+                            remainder = remainder[2..];
+                            continue;
+                        }
+                    }
+                    buffer.ensureUnusedCapacity(default_allocator, 1) catch unreachable;
+                    buffer.items.ptr[buffer.items.len] = strings.unicode_replacement;
+                    buffer.items.len += 1;
+                    remainder = remainder[1..];
+                    continue;
+                },
+
+                // Is this an unpaired low surrogate or four-digit hex escape?
+                else => {
+                    buffer.ensureUnusedCapacity(default_allocator, 1) catch unreachable;
+                    buffer.items.ptr[buffer.items.len] = strings.unicode_replacement;
+                    buffer.items.len += 1;
+                    remainder = remainder[1..];
+                },
+            }
+        }
+
+        var out = ZigString.init("");
+        out.ptr = @ptrCast([*]u8, buffer.items.ptr);
+        out.len = buffer.items.len;
+        out.markUTF16();
+        return out.toValueGC(ctx.ptr()).asObjectRef();
+    }
+
     pub fn decode(
         this: *TextDecoder,
         ctx: js.JSContextRef,
@@ -437,6 +556,9 @@ pub const TextDecoder = struct {
         if (array_buffer.len == 0) {
             return ZigString.Empty.toValue(ctx.ptr()).asObjectRef();
         }
+
+        JSC.C.JSValueProtect(ctx, args[0]);
+        defer JSC.C.JSValueUnprotect(ctx, args[0]);
 
         switch (this.encoding) {
             EncodingLabel.@"latin1" => {
@@ -486,96 +608,16 @@ pub const TextDecoder = struct {
                         }
                     }
                 }
-                return str.toValue(ctx.ptr()).asObjectRef();
+
+                return str.toValueGC(ctx.ptr()).asObjectRef();
             },
 
             EncodingLabel.@"UTF-16LE" => {
-                var slice = array_buffer.asU16();
-                var i: usize = 0;
-
-                while (i < slice.len) {
-                    while (i + 16 <= slice.len) {
-                        const vec: Vector16 = slice[i..][0..16].*;
-                        if ((@reduce(.Or, vec > max_16_ascii))) {
-                            break;
-                        }
-                        i += 16;
-                    }
-                    while (i < slice.len and slice[i] <= 127) {
-                        i += 1;
-                    }
-                    break;
+                if (std.mem.isAligned(@ptrToInt(array_buffer.ptr) + @as(usize, array_buffer.offset), @alignOf([*]u16))) {
+                    return this.decodeUTF16WithAlignment([]u16, array_buffer.asU16(), ctx);
                 }
 
-                // is this actually a UTF-16 string that is just ascii?
-                // we can still allocate as UTF-16 and just copy the bytes
-                if (i == slice.len) {
-                    return JSC.C.JSValueMakeString(ctx, JSC.C.JSStringCreateWithCharacters(slice.ptr, slice.len));
-                }
-
-                var buffer = std.ArrayListAlignedUnmanaged(u16, 1){};
-                buffer.ensureTotalCapacity(default_allocator, slice.len) catch unreachable;
-                buffer.items.len = i;
-                defer buffer.deinit(
-                    default_allocator,
-                );
-
-                for (slice[0..i]) |char, j| {
-                    buffer.items[j] = char;
-                }
-
-                const first_high_surrogate = 0xD800;
-                const last_high_surrogate = 0xDBFF;
-                const first_low_surrogate = 0xDC00;
-                const last_low_surrogate = 0xDFFF;
-
-                var remainder = slice[i..];
-                while (remainder.len > 0) {
-                    switch (remainder[0]) {
-                        0...127 => {
-                            var count: usize = 1;
-                            while (remainder.len > count and remainder[count] <= 127) : (count += 1) {}
-                            buffer.ensureUnusedCapacity(default_allocator, count) catch unreachable;
-                            const prev = buffer.items.len;
-                            buffer.items.len += count;
-                            for (remainder[0..count]) |char, j| {
-                                buffer.items[prev + j] = char;
-                            }
-                            remainder = remainder[count..];
-                        },
-                        first_high_surrogate...last_high_surrogate => |first| {
-                            if (remainder.len > 1) {
-                                if (remainder[1] >= first_low_surrogate and remainder[1] <= last_low_surrogate) {
-                                    buffer.ensureUnusedCapacity(default_allocator, 2) catch unreachable;
-                                    buffer.items.ptr[buffer.items.len] = first;
-                                    buffer.items.ptr[buffer.items.len + 1] = remainder[1];
-                                    buffer.items.len += 2;
-                                    remainder = remainder[2..];
-                                    continue;
-                                }
-                            }
-                            buffer.ensureUnusedCapacity(default_allocator, 1) catch unreachable;
-                            buffer.items.ptr[buffer.items.len] = strings.unicode_replacement;
-                            buffer.items.len += 1;
-                            remainder = remainder[1..];
-                            continue;
-                        },
-
-                        // Is this an unpaired low surrogate or four-digit hex escape?
-                        else => {
-                            buffer.ensureUnusedCapacity(default_allocator, 1) catch unreachable;
-                            buffer.items.ptr[buffer.items.len] = strings.unicode_replacement;
-                            buffer.items.len += 1;
-                            remainder = remainder[1..];
-                        },
-                    }
-                }
-
-                var out = ZigString.init("");
-                out.ptr = @ptrCast([*]u8, buffer.items.ptr);
-                out.len = buffer.items.len;
-                out.markUTF16();
-                return out.toValueGC(ctx.ptr()).asObjectRef();
+                return this.decodeUTF16WithAlignment([]align(1) u16, array_buffer.asU16Unaligned(), ctx);
             },
             else => {
                 JSC.throwInvalidArguments("TextDecoder.decode set to unsupported encoding", .{}, ctx, exception);

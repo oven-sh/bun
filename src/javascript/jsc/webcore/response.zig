@@ -428,11 +428,12 @@ pub const Fetch = struct {
         global_this: *JSGlobalObject = undefined,
 
         empty_request_body: MutableString = undefined,
-        pooled_body: *BodyPool.Node = undefined,
+        // pooled_body: *BodyPool.Node = undefined,
         this_object: js.JSObjectRef = null,
         resolve: js.JSObjectRef = null,
         reject: js.JSObjectRef = null,
         context: FetchTaskletContext = undefined,
+        response_buffer: MutableString = undefined,
 
         blob_store: ?*Blob.Store = null,
 
@@ -483,9 +484,9 @@ pub const Fetch = struct {
             this.javascript_vm = undefined;
             this.promise = undefined;
             this.status = Status.pending;
-            var pooled = this.pooled_body;
-            BodyPool.release(pooled);
-            this.pooled_body = undefined;
+            // var pooled = this.pooled_body;
+            // BodyPool.release(pooled);
+            // this.pooled_body = undefined;
             this.http = undefined;
             this.this_object = null;
             this.resolve = null;
@@ -541,7 +542,6 @@ pub const Fetch = struct {
             var allocator = default_allocator;
             var http_response = this.http.response.?;
             var response = allocator.create(Response) catch unreachable;
-            var duped = allocator.dupe(u8, this.http.response_buffer.toOwnedSlice()) catch unreachable;
             if (this.blob_store) |store| {
                 store.deref();
             }
@@ -559,7 +559,7 @@ pub const Fetch = struct {
                         .status_code = @truncate(u16, http_response.status_code),
                     },
                     .value = .{
-                        .Blob = Blob.init(duped, allocator, this.global_this),
+                        .Blob = Blob.init(this.http.response_buffer.toOwnedSliceLeaky(), allocator, this.global_this),
                     },
                 },
             };
@@ -579,15 +579,16 @@ pub const Fetch = struct {
             var linked_list = FetchTasklet.Pool.get(allocator);
             linked_list.data.javascript_vm = VirtualMachine.vm;
             linked_list.data.empty_request_body = MutableString.init(allocator, 0) catch unreachable;
-            linked_list.data.pooled_body = BodyPool.get(allocator);
+            // linked_list.data.pooled_body = BodyPool.get(allocator);
             linked_list.data.blob_store = request_body_store;
+            linked_list.data.response_buffer = MutableString.initEmpty(allocator);
             linked_list.data.http = try HTTPClient.AsyncHTTP.init(
                 allocator,
                 method,
                 url,
                 headers,
                 headers_buf,
-                &linked_list.data.pooled_body.data,
+                &linked_list.data.response_buffer,
                 request_body orelse &linked_list.data.empty_request_body,
 
                 timeout,
@@ -973,7 +974,7 @@ pub const Headers = struct {
             };
             errdefer headers.deinit();
             try headers.entries.ensureTotalCapacity(allocator, real_header_count);
-            headers.buf.expandToCapacity();
+
             while (j < total_header_count) : (j += 1) {
                 var key_ref = js.JSPropertyNameArrayGetNameAtIndex(header_keys, j);
                 var value_ref = js.JSObjectGetProperty(ctx, header_prop, key_ref, null);
@@ -1008,7 +1009,7 @@ pub const Headers = struct {
                 headers.allocator = getAllocator(ctx);
             } else if (arguments.len == 1 and js.JSValueIsObject(ctx, arguments[0])) {
                 headers.* = .{
-                    .value = (JS.headersInit(ctx, arguments[0]) catch unreachable) orelse Headers{
+                    .value = (JS.headersInit(ctx, arguments[0]) catch null) orelse Headers{
                         .entries = .{},
                         .buf = .{},
                         .allocator = getAllocator(ctx),
@@ -1835,15 +1836,10 @@ pub const Blob = struct {
                 return ZigString.init(buf).toValueGC(global);
             },
             .transfer => {
-                var out = ZigString.init(buf).toValueGC(global);
-                this.detach();
-                return out;
+                var store = this.store.?;
+                this.transfer();
+                return ZigString.init(buf).external(global, store, Store.external);
             },
-            // .transfer => {
-            //     var store = this.store.?;
-            //     this.transfer();
-            //     return ZigString.init(buf).external(global, store, Store.external);
-            // },
             .share => {
                 this.store.?.ref();
                 return ZigString.init(buf).external(global, this.store.?, Store.external);
@@ -1865,10 +1861,8 @@ pub const Blob = struct {
             return ZigString.toExternalU16(external.ptr, external.len, global).parseJSON(global);
         }
 
-        return ZigString.init(buf).external(
+        return ZigString.init(buf).toValue(
             global,
-            this.store.?,
-            Store.external,
         ).parseJSON(global);
     }
     pub fn toArrayBuffer(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) JSValue {

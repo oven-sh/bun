@@ -81,45 +81,45 @@ void Zig::ConsoleClient::messageWithTypeAndLevel(MessageType type, MessageLevel 
 }
 void Zig::ConsoleClient::count(JSGlobalObject* globalObject, const String& label)
 {
-    auto ptr = label.characters8();
-    Zig__ConsoleClient__count(this->m_client, globalObject, ptr, label.length());
+    auto input = label.tryGetUtf8().value();
+    Zig__ConsoleClient__count(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length());
 }
 
 void Zig::ConsoleClient::countReset(JSGlobalObject* globalObject, const String& label)
 {
-    auto ptr = label.characters8();
-    Zig__ConsoleClient__countReset(this->m_client, globalObject, ptr, label.length());
+    auto input = label.tryGetUtf8().value();
+    Zig__ConsoleClient__countReset(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length());
 }
 void Zig::ConsoleClient::profile(JSC::JSGlobalObject* globalObject, const String& label)
 {
-    auto ptr = label.characters8();
-    Zig__ConsoleClient__profile(this->m_client, globalObject, ptr, label.length());
+    auto input = label.tryGetUtf8().value();
+    Zig__ConsoleClient__profile(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length());
 }
 void Zig::ConsoleClient::profileEnd(JSC::JSGlobalObject* globalObject, const String& label)
 {
-    auto ptr = label.characters8();
-    Zig__ConsoleClient__profileEnd(this->m_client, globalObject, ptr, label.length());
+    auto input = label.tryGetUtf8().value();
+    Zig__ConsoleClient__profileEnd(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length());
 }
 void Zig::ConsoleClient::takeHeapSnapshot(JSC::JSGlobalObject* globalObject, const String& label)
 {
-    auto ptr = label.characters8();
-    Zig__ConsoleClient__takeHeapSnapshot(this->m_client, globalObject, ptr, label.length());
+    auto input = label.tryGetUtf8().value();
+    Zig__ConsoleClient__takeHeapSnapshot(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length());
 }
 void Zig::ConsoleClient::time(JSGlobalObject* globalObject, const String& label)
 {
-    auto ptr = label.characters8();
-    Zig__ConsoleClient__time(this->m_client, globalObject, ptr, label.length());
+    auto input = label.tryGetUtf8().value();
+    Zig__ConsoleClient__time(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length());
 }
 void Zig::ConsoleClient::timeLog(JSGlobalObject* globalObject, const String& label,
     Ref<ScriptArguments>&& arguments)
 {
-    auto ptr = label.characters8();
-    Zig__ConsoleClient__timeLog(this->m_client, globalObject, ptr, label.length(), arguments.ptr());
+    auto input = label.tryGetUtf8().value();
+    Zig__ConsoleClient__timeLog(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length(), arguments.ptr());
 }
 void Zig::ConsoleClient::timeEnd(JSGlobalObject* globalObject, const String& label)
 {
-    auto ptr = label.characters8();
-    Zig__ConsoleClient__timeEnd(this->m_client, globalObject, ptr, label.length());
+    auto input = label.tryGetUtf8().value();
+    Zig__ConsoleClient__timeEnd(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length());
 }
 void Zig::ConsoleClient::timeStamp(JSGlobalObject* globalObject, Ref<ScriptArguments>&& args)
 {

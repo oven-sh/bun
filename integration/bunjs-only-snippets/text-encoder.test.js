@@ -1,4 +1,7 @@
 import { expect, it, describe } from "bun:test";
+function gcTrace() {
+  Bun.gc(true);
+}
 
 const getByteLength = (str) => {
   // returns the byte length of an utf8 string
@@ -15,17 +18,22 @@ const getByteLength = (str) => {
 describe("TextDecoder", () => {
   it("should decode ascii text", () => {
     const decoder = new TextDecoder("latin1");
+    gcTrace(true);
     expect(decoder.encoding).toBe("windows-1252");
+    gcTrace(true);
     expect(decoder.decode(new Uint8Array([0x41, 0x42, 0x43]))).toBe("ABC");
+    gcTrace(true);
     const result = [72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100, 33];
+    gcTrace(true);
     expect(decoder.decode(Uint8Array.from(result))).toBe(
       String.fromCharCode(...result)
     );
+    gcTrace(true);
   });
 
   it("should decode unicode text", () => {
     const decoder = new TextDecoder();
-
+    gcTrace(true);
     var text = `❤️ Red Heart`;
 
     const bytes = [
@@ -34,35 +42,45 @@ describe("TextDecoder", () => {
     const decoded = decoder.decode(Uint8Array.from(bytes));
     expect(decoder.encoding).toBe("utf-8");
 
+    gcTrace(true);
+
     for (let i = 0; i < text.length; i++) {
       expect(decoded.charCodeAt(i)).toBe(text.charCodeAt(i));
     }
     expect(decoded).toHaveLength(text.length);
+    gcTrace(true);
   });
 
   it("should decode unicode text with multiple consecutive emoji", () => {
     const decoder = new TextDecoder();
     const encoder = new TextEncoder();
-
+    gcTrace(true);
     var text = `❤️❤️❤️❤️❤️❤️ Red Heart`;
 
     text += ` ✨ Sparkles 🔥 Fire 😀 😃 😄 😁 😆 😅 😂 🤣 🥲 ☺️ 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳 😏 😒 😞 😔 😟 😕 🙁 ☹️ 😣 😖 😫 😩 🥺 😢 😭 😤 😠 😡 🤬 🤯 😳 🥵 🥶 😱 😨 😰`;
-
+    gcTrace(true);
     expect(decoder.decode(encoder.encode(text))).toBe(text);
-
+    gcTrace(true);
     const bytes = new Uint8Array(getByteLength(text) * 8);
+    gcTrace(true);
     const amount = encoder.encodeInto(text, bytes);
+    gcTrace(true);
     expect(decoder.decode(bytes.subarray(0, amount.written))).toBe(text);
+    gcTrace(true);
   });
 });
 
 describe("TextEncoder", () => {
   it("should encode latin1 text", () => {
+    gcTrace(true);
     const text = "Hello World!";
     const encoder = new TextEncoder();
+    gcTrace(true);
     const encoded = encoder.encode(text);
+    gcTrace(true);
     expect(encoded instanceof Uint8Array).toBe(true);
     expect(encoded.length).toBe(text.length);
+    gcTrace(true);
     const result = [72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100, 33];
     for (let i = 0; i < result.length; i++) {
       expect(encoded[i]).toBe(result[i]);
@@ -72,9 +90,12 @@ describe("TextEncoder", () => {
   it("should encode long latin1 text", () => {
     const text = "Hello World!".repeat(1000);
     const encoder = new TextEncoder();
+    gcTrace(true);
     const encoded = encoder.encode(text);
+    gcTrace(true);
     expect(encoded instanceof Uint8Array).toBe(true);
     expect(encoded.length).toBe(text.length);
+    gcTrace(true);
     expect(new TextDecoder().decode(encoded)).toBe(text);
   });
 
@@ -82,10 +103,14 @@ describe("TextEncoder", () => {
     var text = "Hello";
     text += " ";
     text += "World!";
+
+    gcTrace(true);
     const encoder = new TextEncoder();
     const encoded = encoder.encode(text);
+    gcTrace(true);
     const into = new Uint8Array(100);
     const out = encoder.encodeInto(text, into);
+    gcTrace(true);
     expect(out.read).toBe(text.length);
     expect(out.written).toBe(encoded.length);
 
@@ -100,12 +125,14 @@ describe("TextEncoder", () => {
 
   it("should encode utf-16 text", () => {
     var text = `❤️ Red Heart
-          ✨ Sparkles
-          🔥 Fire
-      `;
+              ✨ Sparkles
+              🔥 Fire
+          `;
     var encoder = new TextEncoder();
     var decoder = new TextDecoder();
+    gcTrace(true);
     expect(decoder.decode(encoder.encode(text))).toBe(text);
+    gcTrace(true);
   });
 
   // this test is from a web platform test in WebKit
@@ -145,9 +172,16 @@ describe("TextEncoder", () => {
 
     bad.forEach(function (t) {
       it(t.encoding + " - " + t.name, () => {
+        gcTrace(true);
         expect(
           new TextDecoder(t.encoding).decode(new Uint8Array(t.input))
         ).toBe(t.expected);
+        expect(
+          new TextDecoder(t.encoding).decode(
+            new Uint16Array(new Uint8Array(t.input).buffer)
+          )
+        ).toBe(t.expected);
+        gcTrace(true);
       });
       //   test(function () {
       //     assert_throws_js(TypeError, function () {
@@ -160,10 +194,9 @@ describe("TextEncoder", () => {
   });
 
   it("should encode utf-16 rope text", () => {
-    var textReal = `❤️ Red Heart
-        ✨ Sparkles
-        🔥 Fire
-    `;
+    gcTrace(true);
+    var textReal = `❤️ Red Heart ✨ Sparkles 🔥 Fire`;
+
     var a = textReal.split("");
     var text = "";
     for (let j of a) {
@@ -171,21 +204,6 @@ describe("TextEncoder", () => {
     }
 
     var encoder = new TextEncoder();
-
-    var encoded = encoder.encode(text);
-
-    expect(encoded instanceof Uint8Array).toBe(true);
-    const result = [
-      226, 157, 164, 239, 184, 143, 32, 82, 101, 100, 32, 72, 101, 97, 114, 116,
-      10, 32, 32, 32, 32, 32, 32, 32, 32, 226, 156, 168, 32, 83, 112, 97, 114,
-      107, 108, 101, 115, 10, 32, 32, 32, 32, 32, 32, 32, 32, 240, 159, 148,
-      165, 32, 70, 105, 114, 101, 10, 32, 32, 32, 32,
-    ];
-    var len = Math.min(result.length, encoded.length);
-
-    for (let i = 0; i < len; i++) {
-      expect(encoded[i]).toBe(result[i]);
-    }
-    expect(encoded.length).toBe(getByteLength(textReal));
+    expect(new TextDecoder().decode(encoder.encode(text))).toBe(textReal);
   });
 });

@@ -1,57 +1,139 @@
 import { it, describe, expect } from "bun:test";
 import fs from "fs";
 
+function gc() {
+  // console.trace();
+  Bun.gc(true);
+}
+
 describe("fetch", () => {
   const urls = ["https://example.com", "http://example.com"];
   for (let url of urls) {
+    gc();
     it(url, async () => {
+      gc();
       const response = await fetch(url);
+      gc();
       const text = await response.text();
-
-      if (
+      gc();
+      expect(
         fs.readFileSync(
           import.meta.path.substring(0, import.meta.path.lastIndexOf("/")) +
             "/fetch.js.txt",
           "utf8"
-        ) !== text
-      ) {
-        throw new Error("Expected fetch.js.txt to match snapshot");
-      }
+        )
+      ).toBe(text);
     });
   }
 });
 
 function testBlobInterface(blobbyConstructor, hasBlobFn) {
-  it("json", async () => {
-    var response = blobbyConstructor(JSON.stringify({ hello: true }));
-    expect(JSON.stringify(await response.json())).toBe(
-      JSON.stringify({ hello: true })
-    );
-  });
-  it("text", async () => {
-    var response = blobbyConstructor(JSON.stringify({ hello: true }));
-    expect(await response.text()).toBe(JSON.stringify({ hello: true }));
-  });
-  it("arrayBuffer", async () => {
-    var response = blobbyConstructor(JSON.stringify({ hello: true }));
-
-    const bytes = new TextEncoder().encode(JSON.stringify({ hello: true }));
-    const compare = new Uint8Array(await response.arrayBuffer());
-    for (let i = 0; i < compare.length; i++) {
-      expect(compare[i]).toBe(bytes[i]);
-    }
-  });
-  hasBlobFn &&
-    it("blob", async () => {
+  for (let withGC of [false, true]) {
+    it(`json${withGC ? " (with gc) " : ""}`, async () => {
+      if (withGC) gc();
       var response = blobbyConstructor(JSON.stringify({ hello: true }));
-      const size = JSON.stringify({ hello: true }).length;
-      const blobed = await response.blob();
-      expect(blobed instanceof Blob).toBe(true);
-      expect(blobed.size).toBe(size);
-      expect(blobed.type).toBe("");
-      blobed.type = "application/json";
-      expect(blobed.type).toBe("application/json");
+      if (withGC) gc();
+      expect(JSON.stringify(await response.json())).toBe(
+        JSON.stringify({ hello: true })
+      );
+      if (withGC) gc();
     });
+
+    it(`arrayBuffer -> json${withGC ? " (with gc) " : ""}`, async () => {
+      if (withGC) gc();
+      var response = blobbyConstructor(
+        new TextEncoder().encode(JSON.stringify({ hello: true }))
+      );
+      if (withGC) gc();
+      expect(JSON.stringify(await response.json())).toBe(
+        JSON.stringify({ hello: true })
+      );
+      if (withGC) gc();
+    });
+
+    it(`text${withGC ? " (with gc) " : ""}`, async () => {
+      if (withGC) gc();
+      var response = blobbyConstructor(JSON.stringify({ hello: true }));
+      if (withGC) gc();
+      expect(await response.text()).toBe(JSON.stringify({ hello: true }));
+      if (withGC) gc();
+    });
+
+    it(`arrayBuffer -> text${withGC ? " (with gc) " : ""}`, async () => {
+      if (withGC) gc();
+      var response = blobbyConstructor(
+        new TextEncoder().encode(JSON.stringify({ hello: true }))
+      );
+      if (withGC) gc();
+      expect(await response.text()).toBe(JSON.stringify({ hello: true }));
+      if (withGC) gc();
+    });
+
+    it(`arrayBuffer${withGC ? " (with gc) " : ""}`, async () => {
+      if (withGC) gc();
+
+      var response = blobbyConstructor(JSON.stringify({ hello: true }));
+      if (withGC) gc();
+
+      const bytes = new TextEncoder().encode(JSON.stringify({ hello: true }));
+      if (withGC) gc();
+
+      const compare = new Uint8Array(await response.arrayBuffer());
+      if (withGC) gc();
+
+      for (let i = 0; i < compare.length; i++) {
+        if (withGC) gc();
+
+        expect(compare[i]).toBe(bytes[i]);
+        if (withGC) gc();
+      }
+      if (withGC) gc();
+    });
+
+    it(`arrayBuffer -> arrayBuffer${withGC ? " (with gc) " : ""}`, async () => {
+      if (withGC) gc();
+
+      var response = blobbyConstructor(
+        new TextEncoder().encode(JSON.stringify({ hello: true }))
+      );
+      if (withGC) gc();
+
+      const bytes = new TextEncoder().encode(JSON.stringify({ hello: true }));
+      if (withGC) gc();
+
+      const compare = new Uint8Array(await response.arrayBuffer());
+      if (withGC) gc();
+
+      for (let i = 0; i < compare.length; i++) {
+        if (withGC) gc();
+
+        expect(compare[i]).toBe(bytes[i]);
+        if (withGC) gc();
+      }
+      if (withGC) gc();
+    });
+
+    hasBlobFn &&
+      it(`blob${withGC ? " (with gc) " : ""}`, async () => {
+        if (withGC) gc();
+        var response = blobbyConstructor(JSON.stringify({ hello: true }));
+        if (withGC) gc();
+        const size = JSON.stringify({ hello: true }).length;
+        if (withGC) gc();
+        const blobed = await response.blob();
+        if (withGC) gc();
+        expect(blobed instanceof Blob).toBe(true);
+        if (withGC) gc();
+        expect(blobed.size).toBe(size);
+        if (withGC) gc();
+        expect(blobed.type).toBe("");
+        if (withGC) gc();
+        blobed.type = "application/json";
+        if (withGC) gc();
+        expect(blobed.type).toBe("application/json");
+        if (withGC) gc();
+      });
+  }
 }
 
 describe("Blob", () => {
@@ -67,6 +149,7 @@ describe("Blob", () => {
     [Uint8Array.from([1, 2, 3, 4]), "5678", 9],
     [new Blob([Uint8Array.from([1, 2, 3, 4])]), "5678", 9],
   ];
+
   var expected = [
     "123456",
     "123456",
@@ -95,39 +178,83 @@ describe("Blob", () => {
       expect(res).toBe(expected[i]);
     }
   });
+
+  for (let withGC of [false, true]) {
+    it(`Blob.slice() ${withGC ? " with gc" : ""}`, async () => {
+      var parts = ["hello", " ", "world"];
+      if (withGC) gc();
+      var str = parts.join("");
+      if (withGC) gc();
+      var combined = new Blob(parts);
+      if (withGC) gc();
+      for (let part of parts) {
+        if (withGC) gc();
+        expect(
+          await combined
+            .slice(str.indexOf(part), str.indexOf(part) + part.length)
+            .text()
+        ).toBe(part);
+        if (withGC) gc();
+      }
+      if (withGC) gc();
+      for (let part of parts) {
+        if (withGC) gc();
+        expect(
+          await combined
+            .slice(str.indexOf(part), str.indexOf(part) + part.length)
+            .text()
+        ).toBe(part);
+        if (withGC) gc();
+      }
+    });
+  }
 });
 
 describe("Response", () => {
   it("clone", async () => {
+    gc();
     var body = new Response("<div>hello</div>", {
       headers: {
         "content-type": "text/html; charset=utf-8",
       },
     });
+    gc();
     var clone = body.clone();
+    gc();
     body.headers.set("content-type", "text/plain");
+    gc();
     expect(clone.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    gc();
     expect(body.headers.get("content-type")).toBe("text/plain");
+    gc();
     expect(await clone.text()).toBe("<div>hello</div>");
+    gc();
   });
   testBlobInterface((data) => new Response(data), true);
 });
 
 describe("Request", () => {
   it("clone", async () => {
+    gc();
     var body = new Request("https://hello.com", {
       headers: {
         "content-type": "text/html; charset=utf-8",
       },
       body: "<div>hello</div>",
     });
+    gc();
     expect(body.headers.get("content-type")).toBe("text/html; charset=utf-8");
-
+    gc();
     var clone = body.clone();
+    gc();
     body.headers.set("content-type", "text/plain");
+    gc();
     expect(clone.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    gc();
     expect(body.headers.get("content-type")).toBe("text/plain");
+    gc();
     expect(await clone.text()).toBe("<div>hello</div>");
+    gc();
   });
 
   testBlobInterface(
@@ -138,18 +265,31 @@ describe("Request", () => {
 
 describe("Headers", () => {
   it("writes", async () => {
-    var body = new Request("https://hello.com", {
-      headers: {
-        "content-type": "text/html; charset=utf-8",
-      },
-      body: "<div>hello</div>",
+    var headers = new Headers({
+      "content-type": "text/html; charset=utf-8",
     });
-    expect(body.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    gc();
+    expect(headers.get("content-type")).toBe("text/html; charset=utf-8");
+    gc();
+    headers.delete("content-type");
+    gc();
+    expect(headers.get("content-type")).toBe(null);
+    gc();
+    headers.append("content-type", "text/plain");
+    gc();
+    expect(headers.get("content-type")).toBe("text/plain");
+    gc();
+    headers.append("content-type", "text/plain");
+    gc();
+    expect(headers.get("content-type")).toBe("text/plain, text/plain");
+    gc();
+    headers.set("content-type", "text/html; charset=utf-8");
+    gc();
+    expect(headers.get("content-type")).toBe("text/html; charset=utf-8");
 
-    var clone = body.clone();
-    body.headers.set("content-type", "text/plain");
-    expect(clone.headers.get("content-type")).toBe("text/html; charset=utf-8");
-    expect(body.headers.get("content-type")).toBe("text/plain");
-    expect(await clone.text()).toBe("<div>hello</div>");
+    headers.delete("content-type");
+    gc();
+    expect(headers.get("content-type")).toBe(null);
+    gc();
   });
 });

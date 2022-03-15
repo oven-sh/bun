@@ -30,6 +30,7 @@ const DotEnv = @import("env_loader.zig");
 const which = @import("which.zig").which;
 const VirtualMachine = @import("javascript_core").VirtualMachine;
 const JSC = @import("javascript_core");
+const AsyncHTTP = @import("http").AsyncHTTP;
 
 const OpaqueWrap = JSC.OpaqueWrap;
 
@@ -79,6 +80,34 @@ pub const Run = struct {
             Output.flush();
             Global.exit(1);
         };
+
+        AsyncHTTP.max_simultaneous_requests = 255;
+
+        if (run.vm.bundler.env.map.get("BUN_CONFIG_MAX_HTTP_REQUESTS")) |max_http_requests| {
+            load: {
+                AsyncHTTP.max_simultaneous_requests = std.fmt.parseInt(u16, max_http_requests, 10) catch {
+                    run.vm.log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        run.vm.allocator,
+                        "BUN_CONFIG_MAX_HTTP_REQUESTS value \"{s}\" is not a valid integer between 1 and 65535",
+                        .{max_http_requests},
+                    ) catch unreachable;
+                    break :load;
+                };
+
+                if (AsyncHTTP.max_simultaneous_requests == 0) {
+                    run.vm.log.addWarningFmt(
+                        null,
+                        logger.Loc.Empty,
+                        run.vm.allocator,
+                        "BUN_CONFIG_MAX_HTTP_REQUESTS value must be a number between 1 and 65535",
+                        .{},
+                    ) catch unreachable;
+                    AsyncHTTP.max_simultaneous_requests = 255;
+                }
+            }
+        }
 
         var callback = OpaqueWrap(Run, Run.start);
         run.vm.global.vm().holdAPILock(&run, callback);

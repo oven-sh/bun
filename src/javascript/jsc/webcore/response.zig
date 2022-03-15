@@ -816,15 +816,16 @@ pub const Headers = struct {
             _: js.ExceptionRef,
         ) js.JSValueRef {
             var this = ref.leak();
-            if (arguments.len == 0 or !js.JSValueIsString(ctx, arguments[0]) or js.JSStringIsEqual(arguments[0], Properties.Refs.empty_string)) {
+            if (arguments.len == 0 or !js.JSValueIsString(ctx, arguments[0]) or
+                js.JSStringIsEqual(arguments[0], Properties.Refs.empty_string))
+            {
                 return js.JSValueMakeNull(ctx);
             }
 
-            const key = ZigString.from(arguments[0], ctx);
-            if (key.is16Bit())
-                return js.JSValueMakeNull(ctx);
+            const key_slice = ZigString.from(arguments[0], ctx).toSlice(bun.default_allocator);
+            defer key_slice.deinit();
 
-            if (this.getHeaderIndex(key.slice())) |index| {
+            if (this.getHeaderIndex(key_slice.slice())) |index| {
                 return ZigString.init(this.asStr(this.entries.items(.value)[index]))
                     .toValue(ctx.ptr()).asObjectRef();
             } else {
@@ -1381,15 +1382,13 @@ pub const Headers = struct {
     }
 
     pub fn clone(this: *const Headers, to: *Headers) !void {
+        var buf = this.buf;
         to.* = Headers{
             .entries = try this.entries.clone(this.allocator),
-            .buf = try @TypeOf(this.buf).initCapacity(this.allocator, this.buf.items.len),
+            .buf = try buf.clone(this.allocator),
             .allocator = this.allocator,
             .guard = Guard.none,
         };
-
-        to.buf.expandToCapacity();
-        std.mem.copy(u8, to.buf.items, this.buf.items);
     }
 };
 
@@ -1616,11 +1615,11 @@ pub const Blob = struct {
         if (args_iter.nextEat()) |content_type_| {
             if (content_type_.isString()) {
                 var zig_str = content_type_.getZigString(ctx.ptr());
-                if (!zig_str.is16Bit()) {
-                    var slice = zig_str.trimmedSlice();
-                    var content_type_buf = getAllocator(ctx).alloc(u8, slice.len) catch unreachable;
-                    content_type = strings.copyLowercase(slice, content_type_buf);
-                }
+                var slicer = zig_str.toSlice(bun.default_allocator);
+                defer slicer.deinit();
+                var slice = slicer.slice();
+                var content_type_buf = getAllocator(ctx).alloc(u8, slice.len) catch unreachable;
+                content_type = strings.copyLowercase(slice, content_type_buf);
             }
         }
 
@@ -2236,7 +2235,10 @@ pub const Body = struct {
                             if (js.JSObjectGetProperty(ctx, init_ref, property_name_ref, null)) |header_prop| {
                                 switch (js.JSValueGetType(ctx, header_prop)) {
                                     js.JSType.kJSTypeObject => {
-                                        if (try Headers.JS.headersInit(ctx, header_prop)) |headers| {
+                                        if (JSC.JSValue.fromRef(header_prop).as(Headers.RefCountedHeaders)) |headers| {
+                                            result.headers = try Headers.RefCountedHeaders.init(undefined, allocator);
+                                            try headers.leak().clone(&result.headers.?.value);
+                                        } else if (try Headers.JS.headersInit(ctx, header_prop)) |headers| {
                                             result.headers = try Headers.RefCountedHeaders.init(headers, allocator);
                                         }
                                     },

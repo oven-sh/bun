@@ -43,6 +43,7 @@ RUN apt-get update && \
     lld-13 \
     libicu-dev \
     wget \
+    rustc \
     unzip \
     tar \
     golang-go ninja-build pkg-config automake autoconf libtool curl && \

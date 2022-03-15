@@ -29,6 +29,7 @@
 #include <JavaScriptCore/JSMicrotask.h>
 // #include <JavaScriptCore/JSContextInternal.h>
 #include <JavaScriptCore/CatchScope.h>
+#include <JavaScriptCore/DeferredWorkTimer.h>
 #include <JavaScriptCore/JSInternalPromise.h>
 #include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/JSMap.h>
@@ -160,15 +161,16 @@ extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* g
 
         if (JSC::JSMap* oldMap = JSC::jsDynamicCast<JSC::JSMap*>(
                 globalObject->vm(), obj->getDirect(globalObject->vm(), identifier))) {
-            oldMap->clear(globalObject);
-            // vm.finalizeSynchronousJSExecution();
+
+            vm.finalizeSynchronousJSExecution();
 
             obj->putDirect(globalObject->vm(), identifier,
                 map->clone(globalObject, globalObject->vm(), globalObject->mapStructure()));
 
             // vm.deleteAllLinkedCode(JSC::DeleteAllCodeEffort::DeleteAllCodeIfNotCollecting);
             // JSC::Heap::PreventCollectionScope(vm.heap);
-
+            oldMap->clear(globalObject);
+            JSC::gcUnprotect(oldMap);
             // vm.heap.completeAllJITPlans();
 
             // vm.forEachScriptExecutableSpace([&](auto &spaceAndSet) {
@@ -181,48 +183,13 @@ extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* g
             //     }
             //   });
             // });
+
+            // globalObject->vm().heap.deleteAllUnlinkedCodeBlocks(
+            //   JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
         }
-        // globalObject->vm().heap.deleteAllUnlinkedCodeBlocks(
-        //   JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
-        // vm.whenIdle([globalObject, oldMap, map]() {
-        //   auto recordIdentifier = JSC::Identifier::fromString(globalObject->vm(), "module");
-
-        //   JSC::JSModuleRecord *record;
-        //   JSC::JSValue key;
-        //   JSC::JSValue value;
-        //   JSC::JSObject *mod;
-        //   JSC::JSObject *nextObject;
-        //   JSC::forEachInIterable(
-        //     globalObject, oldMap,
-        //     [&](JSC::VM &vm, JSC::JSGlobalObject *globalObject, JSC::JSValue nextValue) {
-        //       nextObject = JSC::jsDynamicCast<JSC::JSObject *>(vm, nextValue);
-        //       key = nextObject->getIndex(globalObject, static_cast<unsigned>(0));
-
-        //       if (!map->has(globalObject, key)) {
-        //         value = nextObject->getIndex(globalObject, static_cast<unsigned>(1));
-        //         mod = JSC::jsDynamicCast<JSC::JSObject *>(vm, value);
-        //         if (mod) {
-        //           record = JSC::jsDynamicCast<JSC::JSModuleRecord *>(
-        //             vm, mod->getDirect(vm, recordIdentifier));
-        //           if (record) {
-        //             auto code = &record->sourceCode();
-        //             if (code) {
-
-        //               Zig::SourceProvider *provider =
-        //                 reinterpret_cast<Zig::SourceProvider *>(code->provider());
-        //               // code->~SourceCode();
-        //               if (provider) { provider->freeSourceCode(); }
-        //             }
-        //           }
-        //         }
-        //       }
-        //     });
-
-        //   oldMap->clear(globalObject);
-        //   }
-        // }
-        // map
     }
+    // map
+    // }
     return true;
 }
 
@@ -317,7 +284,11 @@ JSC_DEFINE_CUSTOM_GETTER(property_lazyProcessGetter,
 
     globalObject->m_process = Zig::Process::create(
         vm, Zig::Process::createStructure(vm, globalObject, globalObject->objectPrototype()));
-
+    // We must either:
+    // - GC it and re-create it
+    // - keep it alive forever
+    // I think it is more correct to keep it alive forever
+    JSC::gcProtect(globalObject->m_process);
     {
         auto jsClass = dot_env_class_ref;
 
@@ -329,6 +300,8 @@ JSC_DEFINE_CUSTOM_GETTER(property_lazyProcessGetter,
         globalObject->m_process->putDirect(vm, JSC::Identifier::fromString(vm, "env"),
             JSC::JSValue(object),
             JSC::PropertyAttribute::DontDelete | 0);
+
+        JSC::gcProtect(JSC::JSValue(object));
     }
 
     return JSC::JSValue::encode(JSC::JSValue(globalObject->m_process));

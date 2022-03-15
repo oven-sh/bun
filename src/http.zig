@@ -34,13 +34,16 @@ const DotEnv = @import("./env_loader.zig");
 const mimalloc = @import("./allocators/mimalloc.zig");
 const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 const Analytics = @import("./analytics/analytics_thread.zig");
-const MiArena = @import("./mimalloc_arena.zig").Arena;
-const Arena = MiArena;
-const ArenaType = Arena;
+const Arena = std.heap.ArenaAllocator;
+const ThreadlocalArena = @import("./mimalloc_arena.zig").Arena;
 const JSON = @import("./json_parser.zig");
 const DateTime = @import("datetime");
 const ThreadPool = @import("thread_pool");
 const SourceMap = @import("./sourcemap/sourcemap.zig");
+const ObjectPool = @import("./pool.zig").ObjectPool;
+const Lock = @import("./lock.zig").Lock;
+const RequestDataPool = ObjectPool([32_000]u8, null, false, 1);
+
 pub fn constStrToU8(s: string) []u8 {
     return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
 }
@@ -99,7 +102,8 @@ pub const RequestContext = struct {
     url: URLPath,
     conn: *tcp.Connection,
     allocator: std.mem.Allocator,
-    arena: *ArenaType,
+    arena: ThreadlocalArena,
+    req_body_node: *RequestDataPool.Node = undefined,
     log: logger.Log,
     bundler: *Bundler,
     keep_alive: bool = true,
@@ -703,7 +707,7 @@ pub const RequestContext = struct {
 
     pub fn init(
         req: Request,
-        arena: *ArenaType,
+        arena: ThreadlocalArena,
         conn: *tcp.Connection,
         bundler_: *Bundler,
         watcher_: *Watcher,
@@ -1163,6 +1167,11 @@ pub const RequestContext = struct {
         conn: tcp.Connection,
         params: Router.Param.List,
 
+        pub fn deinit(this: *JavaScriptHandler) void {
+            this.params.deinit(bun.default_allocator);
+            bun.default_allocator.destroy(this);
+        }
+
         pub var javascript_vm: ?*JavaScript.VirtualMachine = null;
 
         pub const HandlerThread = struct {
@@ -1195,7 +1204,7 @@ pub const RequestContext = struct {
             }
 
             pub fn handleJSErrorFmt(this: *HandlerThread, comptime step: Api.FallbackStep, err: anyerror, comptime fmt: string, args: anytype) !void {
-                var arena = ArenaType.init() catch unreachable;
+                var arena = ThreadlocalArena.init() catch unreachable;
                 var allocator = arena.allocator();
                 defer arena.deinit();
 
@@ -1233,7 +1242,7 @@ pub const RequestContext = struct {
             }
 
             pub fn handleRuntimeJSError(this: *HandlerThread, js_value: JavaScript.JSValue, comptime step: Api.FallbackStep, comptime fmt: string, args: anytype) !void {
-                var arena = ArenaType.init() catch unreachable;
+                var arena = ThreadlocalArena.init() catch unreachable;
                 var allocator = arena.allocator();
                 defer arena.deinit();
                 defer this.log.msgs.clearRetainingCapacity();
@@ -1279,7 +1288,7 @@ pub const RequestContext = struct {
             }
 
             pub fn handleFetchEventError(this: *HandlerThread, err: anyerror, js_value: JavaScript.JSValue, ctx: *RequestContext) !void {
-                var arena = MiArena.init() catch unreachable;
+                var arena = ThreadlocalArena.init() catch unreachable;
                 var allocator = arena.allocator();
                 defer arena.deinit();
 
@@ -1425,11 +1434,11 @@ pub const RequestContext = struct {
             Output.Source.configureThread();
             @import("javascript/jsc/javascript_core_c_api.zig").JSCInitialize();
 
-            js_ast.Stmt.Data.Store.create(std.heap.c_allocator);
-            js_ast.Expr.Data.Store.create(std.heap.c_allocator);
+            js_ast.Stmt.Data.Store.create(bun.default_allocator);
+            js_ast.Expr.Data.Store.create(bun.default_allocator);
 
             var vm: *JavaScript.VirtualMachine = JavaScript.VirtualMachine.init(
-                std.heap.c_allocator,
+                bun.default_allocator,
                 handler.args,
                 null,
                 handler.log,
@@ -1439,7 +1448,7 @@ pub const RequestContext = struct {
                 javascript_disabled = true;
                 return;
             };
-            vm.bundler.options.macro_remap = try handler.client_bundler.options.macro_remap.clone(std.heap.c_allocator);
+            vm.bundler.options.macro_remap = try handler.client_bundler.options.macro_remap.clone(bun.default_allocator);
             vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
 
             vm.is_from_devserver = true;
@@ -1497,7 +1506,7 @@ pub const RequestContext = struct {
             vm.global.vm().holdAPILock(handler, JavaScript.OpaqueWrap(HandlerThread, startJavaScript));
         }
 
-        var __arena: MiArena = undefined;
+        var __arena: ThreadlocalArena = undefined;
 
         pub fn runLoop(vm: *JavaScript.VirtualMachine, thread: *HandlerThread) !void {
             var module_map = JavaScript.ZigGlobalObject.getModuleRegistryMap(vm.global);
@@ -1510,7 +1519,7 @@ pub const RequestContext = struct {
             }
 
             while (true) {
-                __arena = MiArena.init() catch unreachable;
+                __arena = ThreadlocalArena.init() catch unreachable;
                 JavaScript.VirtualMachine.vm.arena = &__arena;
                 JavaScript.VirtualMachine.vm.has_loaded = true;
                 JavaScript.VirtualMachine.vm.tick();
@@ -1533,6 +1542,9 @@ pub const RequestContext = struct {
                 const original_origin = vm.origin;
                 vm.origin = handler.ctx.origin;
                 defer vm.origin = original_origin;
+                handler.ctx.arena = __arena;
+                handler.ctx.allocator = __arena.allocator();
+                var req_body = handler.ctx.req_body_node;
                 JavaScript.EventListenerMixin.emitFetchEvent(
                     vm,
                     &handler.ctx,
@@ -1540,7 +1552,9 @@ pub const RequestContext = struct {
                     thread,
                     HandlerThread.handleFetchEventError,
                 ) catch {};
+                Server.current.releaseRequestDataPoolNode(req_body);
                 JavaScript.VirtualMachine.vm.tick();
+                handler.deinit();
             }
         }
 
@@ -1559,19 +1573,23 @@ pub const RequestContext = struct {
                 );
                 return;
             }
-            var clone = try ctx.allocator.create(JavaScriptHandler);
+
+            var clone = try server.allocator.create(JavaScriptHandler);
             clone.* = JavaScriptHandler{
                 .ctx = ctx.*,
                 .conn = ctx.conn.*,
                 .params = if (params.len > 0)
-                    try params.clone(ctx.allocator)
+                    try params.clone(server.allocator)
                 else
                     Router.Param.List{},
             };
 
             clone.ctx.conn = &clone.conn;
-
             clone.ctx.matched_route.?.params = &clone.params;
+
+            // this is a threadlocal arena
+            clone.ctx.arena.deinit();
+            clone.ctx.allocator = undefined;
 
             if (!has_loaded_channel) {
                 var handler_thread = try server.allocator.create(HandlerThread);
@@ -1657,6 +1675,9 @@ pub const RequestContext = struct {
             clone.websocket = Websocket.Websocket.create(&clone.conn, SOCKET_FLAGS);
             clone.tombstone = false;
 
+            clone.ctx.allocator = undefined;
+            clone.ctx.arena.deinit();
+
             try open_websockets.append(clone);
             return clone;
         }
@@ -1740,9 +1761,11 @@ pub const RequestContext = struct {
         threadlocal var websocket_handler_caches: CacheSet = undefined;
         threadlocal var websocket_printer: JSPrinter.BufferWriter = undefined;
         pub fn handle(self: *WebsocketHandler) void {
+            var req_body = self.ctx.req_body_node;
             defer {
                 js_ast.Stmt.Data.Store.reset();
                 js_ast.Expr.Data.Store.reset();
+                Server.current.releaseRequestDataPoolNode(req_body);
             }
 
             self.builder.printer = JSPrinter.BufferPrinter.init(
@@ -1754,6 +1777,9 @@ pub const RequestContext = struct {
 
         fn _handle(handler: *WebsocketHandler) !void {
             var ctx = &handler.ctx;
+            ctx.arena = ThreadlocalArena.init() catch unreachable;
+            ctx.allocator = ctx.arena.allocator();
+
             var is_socket_closed = false;
             defer {
                 websocket_handler_caches = handler.builder.bundler.resolver.caches;
@@ -1921,7 +1947,7 @@ pub const RequestContext = struct {
                                     break :brk full_build.id;
                                 };
 
-                                var arena = MiArena.init() catch unreachable;
+                                var arena = ThreadlocalArena.init() catch unreachable;
                                 defer arena.deinit();
 
                                 var head = Websocket.WebsocketHeader{
@@ -2917,7 +2943,13 @@ pub const RequestContext = struct {
         if (input_path.len == 0) return ctx.sendNotFound();
 
         const pathname = Fs.PathName.init(input_path);
-        const result = try ctx.buildFile(input_path, pathname.ext);
+        const result = ctx.buildFile(input_path, pathname.ext) catch |err| {
+            if (err == error.ModuleNotFound) {
+                return try ctx.sendNotFound();
+            }
+
+            return err;
+        };
 
         switch (result.file.value) {
             .pending => |resolve_result| {
@@ -3187,12 +3219,36 @@ pub const Server = struct {
     transform_options: Api.TransformOptions,
     javascript_enabled: bool = false,
     fallback_only: bool = false,
+    req_body_release_queue_mutex: Lock = Lock.init(),
+    req_body_release_queue: RequestDataPool.List = RequestDataPool.List{},
+
     websocket_threadpool: ThreadPool = ThreadPool.init(.{
         // on macOS, the max stack size is 65520 bytes,
         // so we ask for 65519
         .stack_size = 65519,
         .max_threads = std.math.maxInt(u32),
     }),
+
+    pub var current: *Server = undefined;
+
+    pub fn releaseRequestDataPoolNode(this: *Server, node: *RequestDataPool.Node) void {
+        this.req_body_release_queue_mutex.lock();
+        defer this.req_body_release_queue_mutex.unlock();
+        node.next = null;
+
+        this.req_body_release_queue.prepend(node);
+    }
+
+    pub fn cleanupRequestData(this: *Server) void {
+        this.req_body_release_queue_mutex.lock();
+        defer this.req_body_release_queue_mutex.unlock();
+        var any = false;
+        while (this.req_body_release_queue.popFirst()) |node| {
+            node.next = null;
+            node.release();
+            any = true;
+        }
+    }
 
     pub var editor: ?Editor = null;
     pub var editor_name: string = "";
@@ -3660,6 +3716,9 @@ pub const Server = struct {
             server.handleConnection(&conn, comptime features);
         }
 
+        server.cleanupRequestData();
+        var counter: usize = 0;
+
         while (true) {
             defer Output.flush();
             var conn = listener.accept(.{ .close_on_exec = true }) catch
@@ -3668,10 +3727,10 @@ pub const Server = struct {
             disableSIGPIPESoClosingTheTabDoesntCrash(conn);
 
             server.handleConnection(&conn, comptime features);
+            counter +%= 1;
+            if (counter % 4 == 0) server.cleanupRequestData();
         }
     }
-
-    threadlocal var req_buf: [32_000]u8 = undefined;
 
     pub const ConnectionFeatures = struct {
         public_folder: PublicFolderPriority = PublicFolderPriority.none,
@@ -3686,9 +3745,10 @@ pub const Server = struct {
 
     threadlocal var req_ctx_: RequestContext = undefined;
     pub fn handleConnection(server: *Server, conn: *tcp.Connection, comptime features: ConnectionFeatures) void {
+        var req_buf_node = RequestDataPool.get(server.allocator);
 
         // https://stackoverflow.com/questions/686217/maximum-on-http-header-values
-        var read_size = conn.client.read(&req_buf, SOCKET_FLAGS) catch {
+        var read_size = conn.client.read(&req_buf_node.data, SOCKET_FLAGS) catch {
             _ = conn.client.write(RequestContext.printStatusLine(400) ++ "\r\n\r\n", SOCKET_FLAGS) catch {};
             return;
         };
@@ -3698,15 +3758,14 @@ pub const Server = struct {
             return;
         }
 
-        var req = picohttp.Request.parse(req_buf[0..read_size], &req_headers_buf) catch |err| {
+        var req = picohttp.Request.parse(req_buf_node.data[0..read_size], &req_headers_buf) catch |err| {
             _ = conn.client.write(RequestContext.printStatusLine(400) ++ "\r\n\r\n", SOCKET_FLAGS) catch {};
             conn.client.deinit();
             Output.printErrorln("ERR: {s}", .{@errorName(err)});
             return;
         };
 
-        var request_arena = server.allocator.create(Arena) catch unreachable;
-        request_arena.* = ArenaType.init() catch unreachable;
+        var request_arena = ThreadlocalArena.init() catch unreachable;
 
         req_ctx_ = RequestContext.init(
             req,
@@ -3720,7 +3779,9 @@ pub const Server = struct {
             conn.client.deinit();
             return;
         };
+
         var req_ctx = &req_ctx_;
+        req_ctx.req_body_node = req_buf_node;
         req_ctx.timer.reset();
 
         const is_navigation_request = req_ctx_.isBrowserNavigation();
@@ -3748,6 +3809,7 @@ pub const Server = struct {
 
         defer {
             if (!req_ctx.controlled) {
+                req_ctx.req_body_node.release();
                 req_ctx.arena.deinit();
             }
         }
@@ -4015,6 +4077,7 @@ pub const Server = struct {
         server.bundler.* = try Bundler.init(allocator, &server.log, options, null, null);
         server.bundler.configureLinker();
         try server.bundler.configureRouter(true);
+        Server.current = server;
 
         if (debug.dump_environment_variables) {
             server.bundler.dumpEnvironmentVariables();

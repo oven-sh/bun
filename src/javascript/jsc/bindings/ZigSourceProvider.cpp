@@ -10,6 +10,8 @@
 #include <wtf/Scope.h>
 #include <wtf/text/StringHash.h>
 
+extern "C" void RefString__free(void*, void*, unsigned);
+
 namespace Zig {
 
 using Base = JSC::SourceProvider;
@@ -25,22 +27,20 @@ using SourceProviderSourceType = JSC::SourceProviderSourceType;
 
 static char* wasmSourceName = "[WebAssembly Source]";
 static size_t wasmSourceName_len = 20;
+
 Ref<SourceProvider> SourceProvider::create(ResolvedSource resolvedSource)
 {
     void* allocator = resolvedSource.allocator;
 
     JSC::SourceProviderSourceType sourceType = JSC::SourceProviderSourceType::Module;
 
-    WTF::StringImpl* stringImpl = nullptr;
     if (allocator) {
         Ref<WTF::ExternalStringImpl> stringImpl_ = WTF::ExternalStringImpl::create(
             resolvedSource.source_code.ptr, resolvedSource.source_code.len,
-            nullptr,
-            [allocator](void* str, void* ptr, unsigned int len) {
-                ZigString__free((const unsigned char*)ptr, len, allocator);
-            });
+            allocator,
+            RefString__free);
         return adoptRef(*new SourceProvider(
-            resolvedSource, reinterpret_cast<WTF::StringImpl*>(stringImpl_.ptr()),
+            resolvedSource, stringImpl_,
             JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(toString(resolvedSource.source_url))),
             toStringNotConst(resolvedSource.source_url), TextPosition(),
             sourceType));
@@ -48,7 +48,7 @@ Ref<SourceProvider> SourceProvider::create(ResolvedSource resolvedSource)
         Ref<WTF::ExternalStringImpl> stringImpl_ = WTF::ExternalStringImpl::createStatic(
             resolvedSource.source_code.ptr, resolvedSource.source_code.len);
         return adoptRef(*new SourceProvider(
-            resolvedSource, reinterpret_cast<WTF::StringImpl*>(stringImpl_.ptr()),
+            resolvedSource, stringImpl_,
             JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(toString(resolvedSource.source_url))),
             toStringNotConst(resolvedSource.source_url), TextPosition(),
             sourceType));

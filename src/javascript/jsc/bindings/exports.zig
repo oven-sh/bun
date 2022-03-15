@@ -246,13 +246,11 @@ export fn ZigString__free(ptr: [*]const u8, len: usize, allocator_: ?*anyopaque)
     allocator.free(str);
 }
 
-export fn ZigString__free_global(ptr: [*]const u8, len: usize) void {
-    var str = ptr[0..len];
+export fn ZigString__free_global(ptr: [*]const u8, _: usize) void {
     if (comptime Environment.allow_assert) {
         std.debug.assert(Mimalloc.mi_check_owned(ptr));
     }
-
-    default_allocator.free(str);
+    Mimalloc.mi_free(@intToPtr(*anyopaque, @ptrToInt(ptr)));
 }
 
 export fn Zig__getAPIGlobals(count: *usize) [*]JSC.C.JSClassRef {

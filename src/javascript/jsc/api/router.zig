@@ -37,11 +37,6 @@ query_string_map: ?QueryStringMap = null,
 param_map: ?QueryStringMap = null,
 params_list_holder: FilesystemRouter.Param.List = .{},
 
-script_src: ?string = null,
-script_src_buf: [1024]u8 = undefined,
-
-script_src_buf_writer: ScriptSrcStream = undefined,
-
 pub fn importRoute(
     this: *Router,
     ctx: js.JSContextRef,
@@ -70,15 +65,25 @@ pub fn match(
         return null;
     }
 
+    var arg: JSC.JSValue = undefined;
+
     if (FetchEvent.Class.loaded and js.JSValueIsObjectOfClass(ctx, arguments[0], FetchEvent.Class.get().*)) {
-        return matchFetchEvent(ctx, To.Zig.ptr(FetchEvent, arguments[0]), exception);
+        var fetch_event = To.Zig.ptr(FetchEvent, arguments[0]);
+        if (fetch_event.request_context != null) {
+            return matchFetchEvent(ctx, fetch_event, exception);
+        }
+
+        // When disconencted, we still have a copy of the request data in here
+        arg = JSC.JSValue.fromRef(fetch_event.getRequest(ctx, null, null, null));
+    } else {
+        arg = JSC.JSValue.fromRef(arguments[0]);
     }
 
     var router = JavaScript.VirtualMachine.vm.bundler.router orelse {
         JSError(getAllocator(ctx), "Bun.match needs a framework configured with routes", .{}, ctx, exception);
         return null;
     };
-    var arg = JSC.JSValue.fromRef(arguments[0]);
+
     var path_: ?ZigString.Slice = null;
     var pathname: string = "";
     defer {
@@ -128,7 +133,6 @@ pub fn match(
         instance.params_list_holder = params_list;
         instance.route = &instance.route_holder;
         instance.route_holder.params = &instance.params_list_holder;
-        instance.script_src_buf_writer = ScriptSrcStream{ .pos = 0, .buffer = std.mem.span(&instance.script_src_buf) };
 
         return Instance.make(ctx, instance);
     }
@@ -150,7 +154,7 @@ fn matchFetchEvent(
     fetch_event: *const FetchEvent,
     _: js.ExceptionRef,
 ) js.JSObjectRef {
-    return createRouteObject(ctx, fetch_event.request_context);
+    return createRouteObject(ctx, fetch_event.request_context.?);
 }
 
 fn createRouteObject(ctx: js.JSContextRef, req: *const http.RequestContext) js.JSValueRef {
@@ -169,7 +173,6 @@ fn createRouteObjectFromMatch(
     router.* = Router{
         .route = route,
     };
-    router.script_src_buf_writer = ScriptSrcStream{ .pos = 0, .buffer = std.mem.span(&router.script_src_buf) };
 
     return Instance.make(ctx, router);
 }
@@ -221,9 +224,7 @@ pub const Instance = NewClass(
         },
     },
     .{
-        .finalize = .{
-            .rfn = finalize,
-        },
+        .finalize = finalize,
         .import = .{
             .rfn = importRoute,
             .ts = d.ts{
@@ -345,8 +346,9 @@ pub fn finalize(
         this.params_list_holder.deinit(bun.default_allocator);
         this.params_list_holder = .{};
         this.needs_deinit = false;
-        bun.default_allocator.destroy(this);
     }
+
+    bun.default_allocator.destroy(this);
 }
 
 pub fn getPathname(
@@ -437,13 +439,13 @@ pub fn createQueryObject(ctx: js.JSContextRef, map: *QueryStringMap, _: js.Excep
     return value.asRef();
 }
 
-threadlocal var entry_point_tempbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
 pub fn getScriptSrcString(
     comptime Writer: type,
     writer: Writer,
     file_path: string,
     client_framework_enabled: bool,
 ) void {
+    var entry_point_tempbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
     // We don't store the framework config including the client parts in the server
     // instead, we just store a boolean saying whether we should generate this whenever the script is requested
     // this is kind of bad. we should consider instead a way to inline the contents of the script.
@@ -454,11 +456,11 @@ pub fn getScriptSrcString(
                 Fs.PathName.init(file_path),
             ),
             VirtualMachine.vm.origin,
-            ScriptSrcStream.Writer,
+            Writer,
             writer,
         );
     } else {
-        JavaScript.Bun.getPublicPath(file_path, VirtualMachine.vm.origin, ScriptSrcStream.Writer, writer);
+        JavaScript.Bun.getPublicPath(file_path, VirtualMachine.vm.origin, Writer, writer);
     }
 }
 
@@ -469,12 +471,12 @@ pub fn getScriptSrc(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    const src = this.script_src orelse brk: {
-        getScriptSrcString(ScriptSrcStream.Writer, this.script_src_buf_writer.writer(), this.route.file_path, this.route.client_framework_enabled);
-        break :brk this.script_src_buf[0..this.script_src_buf_writer.pos];
-    };
+    var script_src_buffer = std.ArrayList(u8).init(bun.default_allocator);
 
-    return ZigString.init(src).toValueGC(ctx.ptr()).asObjectRef();
+    var writer = script_src_buffer.writer();
+    getScriptSrcString(@TypeOf(&writer), &writer, this.route.file_path, this.route.client_framework_enabled);
+
+    return ZigString.init(script_src_buffer.toOwnedSlice()).toExternalValue(ctx.ptr()).asObjectRef();
 }
 
 pub fn getParams(

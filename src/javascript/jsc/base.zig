@@ -22,6 +22,7 @@ const Request = WebCore.Request;
 const Router = @import("./api/router.zig");
 const FetchEvent = WebCore.FetchEvent;
 const Headers = WebCore.Headers.RefCountedHeaders;
+const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 
 const Body = WebCore.Body;
 const TaggedPointerTypes = @import("../../tagged_pointer.zig");
@@ -1869,13 +1870,78 @@ pub const MarkedArrayBuffer = struct {
     pub const toJS = toJSObjectRef;
 };
 
+// expensive heap reference-counted string type
+// only use this for big strings
+// like source code
+// not little ones
+pub const RefString = struct {
+    ptr: [*]const u8 = undefined,
+    len: usize = 0,
+    hash: Hash = 0,
+
+    count: u32 = 0,
+    allocator: std.mem.Allocator,
+
+    ctx: ?*anyopaque = null,
+    onBeforeDeinit: ?Callback = null,
+
+    pub const Hash = u32;
+    pub const Map = std.HashMap(Hash, *JSC.RefString, IdentityContext(Hash), 80);
+
+    pub const Callback = fn (ctx: *anyopaque, str: *RefString) void;
+
+    pub fn computeHash(input: []const u8) u32 {
+        return @truncate(u32, std.hash.Wyhash.hash(0, input));
+    }
+
+    pub fn ref(this: *RefString) void {
+        this.count += 1;
+    }
+
+    pub fn slice(this: *RefString) []const u8 {
+        this.ref();
+
+        return this.leak();
+    }
+
+    pub fn leak(this: RefString) []const u8 {
+        @setRuntimeSafety(false);
+        return this.ptr[0..this.len];
+    }
+
+    pub fn deref(this: *RefString) void {
+        this.count -|= 1;
+
+        if (this.count == 0) {
+            this.deinit();
+        }
+    }
+
+    pub export fn RefString__free(this: *RefString, _: [*]const u8, _: usize) void {
+        this.deref();
+    }
+
+    pub fn deinit(this: *RefString) void {
+        if (this.onBeforeDeinit) |onBeforeDeinit| {
+            onBeforeDeinit(this.ctx.?, this);
+        }
+
+        this.allocator.free(this.leak());
+        this.allocator.destroy(this);
+    }
+};
+
+comptime {
+    std.testing.refAllDecls(RefString);
+}
+
 export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) void {
     const mimalloc = @import("../../allocators/mimalloc.zig");
     // zig's memory allocator interface won't work here
     // mimalloc knows the size of things
     // but we don't
     mimalloc.mi_free(bytes_);
-
+}
 pub export fn BlobArrayBuffer_deallocator(_: *anyopaque, blob: *anyopaque) void {
     // zig's memory allocator interface won't work here
     // mimalloc knows the size of things

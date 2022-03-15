@@ -688,7 +688,10 @@ pub const Bun = struct {
         arguments: []const js.JSValueRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        Global.mimalloc_cleanup(true);
+        // it should only force cleanup on thread exit
+
+        Global.mimalloc_cleanup(false);
+
         return ctx.ptr().vm().runGC(arguments.len > 0 and JSValue.fromRef(arguments[0]).toBoolean()).asRef();
     }
 
@@ -1809,6 +1812,8 @@ pub const VirtualMachine = struct {
     regular_event_loop: EventLoop = EventLoop{},
     event_loop: *EventLoop = undefined,
 
+    ref_strings: JSC.RefString.Map = undefined,
+
     source_mappings: SavedSourceMap = undefined,
 
     pub inline fn eventLoop(this: *VirtualMachine) *EventLoop {
@@ -1889,7 +1894,9 @@ pub const VirtualMachine = struct {
         pub fn tick(this: *EventLoop) void {
             while (true) {
                 this.tickConcurrent();
+
                 while (this.tickWithCount() > 0) {}
+
                 this.tickConcurrent();
 
                 if (this.tickWithCount() == 0) break;
@@ -1897,10 +1904,9 @@ pub const VirtualMachine = struct {
         }
 
         pub fn waitForPromise(this: *EventLoop, promise: *JSC.JSInternalPromise) void {
-            var _vm = this.global.vm();
-            switch (promise.status(_vm)) {
+            switch (promise.status(this.global.vm())) {
                 JSC.JSPromise.Status.Pending => {
-                    while (promise.status(_vm) == .Pending) {
+                    while (promise.status(this.global.vm()) == .Pending) {
                         this.tick();
                     }
                 },
@@ -1937,9 +1943,11 @@ pub const VirtualMachine = struct {
     }
 
     pub fn tick(this: *VirtualMachine) void {
-        this.eventLoop().tickConcurrent();
+        this.eventLoop().tick();
+    }
 
-        while (this.eventLoop().tickWithCount() > 0) {}
+    pub fn waitForPromise(this: *VirtualMachine, promise: *JSC.JSInternalPromise) void {
+        this.eventLoop().waitForPromise(promise);
     }
 
     pub fn waitForTasks(this: *VirtualMachine) void {
@@ -2027,6 +2035,7 @@ pub const VirtualMachine = struct {
             .macros = MacroMap.init(allocator),
             .macro_entry_points = @TypeOf(VirtualMachine.vm.macro_entry_points).init(allocator),
             .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
+            .ref_strings = JSC.RefString.Map.init(allocator),
         };
 
         VirtualMachine.vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -2075,6 +2084,47 @@ pub const VirtualMachine = struct {
     // }
 
     threadlocal var source_code_printer: ?*js_printer.BufferPrinter = null;
+
+    pub fn clearRefString(_: *anyopaque, ref_string: *JSC.RefString) void {
+        _ = VirtualMachine.vm.ref_strings.remove(ref_string.hash);
+    }
+
+    pub fn refCountedResolvedSource(this: *VirtualMachine, code: []const u8, specifier: []const u8, source_url: []const u8, hash_: ?u32) ResolvedSource {
+        var source = this.refCountedString(code, hash_, true);
+
+        return ResolvedSource{
+            .source_code = ZigString.init(source.slice()),
+            .specifier = ZigString.init(specifier),
+            .source_url = ZigString.init(source_url),
+            .hash = source.hash,
+            .allocator = source,
+        };
+    }
+
+    pub fn refCountedString(this: *VirtualMachine, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {
+        const hash = hash_ orelse JSC.RefString.computeHash(input_);
+
+        var entry = this.ref_strings.getOrPut(hash) catch unreachable;
+        if (!entry.found_existing) {
+            const input = if (comptime dupe)
+                (this.allocator.dupe(u8, input_) catch unreachable)
+            else
+                input_;
+
+            var ref = this.allocator.create(JSC.RefString) catch unreachable;
+            ref.* = JSC.RefString{
+                .allocator = this.allocator,
+                .ptr = input.ptr,
+                .len = input.len,
+                .hash = hash,
+                .ctx = this,
+                .onBeforeDeinit = VirtualMachine.clearRefString,
+            };
+            entry.value_ptr.* = ref;
+        }
+
+        return entry.value_ptr.*;
+    }
 
     pub fn preflush(this: *VirtualMachine) void {
         // We flush on the next tick so that if there were any errors you can still see them
@@ -2350,8 +2400,12 @@ pub const VirtualMachine = struct {
                     return error.PrintingErrorWriteFailed;
                 }
 
+                if (jsc_vm.has_loaded) {
+                    return jsc_vm.refCountedResolvedSource(printer.ctx.written, specifier, path.text, null);
+                }
+
                 return ResolvedSource{
-                    .allocator = if (jsc_vm.has_loaded) &jsc_vm.allocator else null,
+                    .allocator = null,
                     .source_code = ZigString.init(jsc_vm.allocator.dupe(u8, printer.ctx.written) catch unreachable),
                     .specifier = ZigString.init(specifier),
                     .source_url = ZigString.init(path.text),
@@ -2590,11 +2644,15 @@ pub const VirtualMachine = struct {
         return slice;
     }
 
-    // This double prints
-    pub fn promiseRejectionTracker(_: *JSGlobalObject, _: *JSPromise, _: JSPromiseRejectionOperation) callconv(.C) JSValue {
-        // VirtualMachine.vm.defaultErrorHandler(promise.result(global.vm()), null);
-        return JSValue.jsUndefined();
-    }
+    // // This double prints
+    // pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, _: JSPromiseRejectionOperation) callconv(.C) JSValue {
+    //     const result = promise.result(global.vm());
+    //     if (@enumToInt(VirtualMachine.vm.last_error_jsvalue) != @enumToInt(result)) {
+    //         VirtualMachine.vm.defaultErrorHandler(result, null);
+    //     }
+
+    //     return JSValue.jsUndefined();
+    // }
 
     const main_file_name: string = "bun:main";
     pub threadlocal var errors_stack: [256]*anyopaque = undefined;
@@ -2725,6 +2783,8 @@ pub const VirtualMachine = struct {
     }
 
     pub fn defaultErrorHandler(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
+        this.last_error_jsvalue = result;
+
         if (result.isException(this.global.vm())) {
             var exception = @ptrCast(*Exception, result.asVoid());
 
@@ -2763,26 +2823,14 @@ pub const VirtualMachine = struct {
             this.has_loaded_node_modules = true;
             promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(std.mem.span(bun_file_import_path)));
 
-            this.tick();
-
-            while (promise.status(this.global.vm()) == JSPromise.Status.Pending) {
-                this.tick();
-            }
-
-            if (promise.status(this.global.vm()) == JSPromise.Status.Rejected) {
+            this.waitForPromise(promise);
+            if (promise.status(this.global.vm()) == .Rejected)
                 return promise;
-            }
-
-            _ = promise.result(this.global.vm());
         }
 
         promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(std.mem.span(main_file_name)));
 
-        this.tick();
-
-        while (promise.status(this.global.vm()) == JSPromise.Status.Pending) {
-            this.tick();
-        }
+        this.waitForPromise(promise);
 
         return promise;
     }
@@ -2988,6 +3036,11 @@ pub const VirtualMachine = struct {
                 return false;
             },
         }
+    }
+
+    pub fn reportUncaughtExceptio(_: *JSGlobalObject, exception: *JSC.Exception) JSValue {
+        VirtualMachine.vm.defaultErrorHandler(exception.value(), null);
+        return JSC.JSValue.jsUndefined();
     }
 
     pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTrace, comptime allow_ansi_colors: bool) !void {
@@ -3359,9 +3412,7 @@ pub const EventListenerMixin = struct {
         comptime onError: fn (ctx: *CtxType, err: anyerror, value: JSValue, request_ctx: *http.RequestContext) anyerror!void,
     ) !void {
         if (comptime JSC.is_bindgen) unreachable;
-        defer {
-            if (request_context.has_called_done) request_context.arena.deinit();
-        }
+
         var listeners = vm.event_listeners.get(EventType.fetch) orelse (return onError(ctx, error.NoListeners, JSValue.jsUndefined(), request_context) catch {});
         if (listeners.items.len == 0) return onError(ctx, error.NoListeners, JSValue.jsUndefined(), request_context) catch {};
         const FetchEventRejectionHandler = struct {
@@ -3370,7 +3421,7 @@ pub const EventListenerMixin = struct {
                     @intToPtr(*CtxType, @ptrToInt(_ctx)),
                     err,
                     value,
-                    fetch_event.request_context,
+                    fetch_event.request_context.?,
                 ) catch {};
             }
         };
@@ -3386,9 +3437,11 @@ pub const EventListenerMixin = struct {
         };
 
         var fetch_args: [1]js.JSObjectRef = undefined;
-        for (listeners.items) |listener_ref| {
-            fetch_args[0] = FetchEvent.Class.make(vm.global.ref(), fetch_event);
+        fetch_args[0] = FetchEvent.Class.make(vm.global.ref(), fetch_event);
+        JSC.C.JSValueProtect(vm.global.ref(), fetch_args[0]);
+        defer JSC.C.JSValueUnprotect(vm.global.ref(), fetch_args[0]);
 
+        for (listeners.items) |listener_ref| {
             vm.tick();
             var result = js.JSObjectCallAsFunctionReturnValue(vm.global.ref(), listener_ref, null, 1, &fetch_args);
             vm.tick();
@@ -3399,7 +3452,7 @@ pub const EventListenerMixin = struct {
             if (fetch_event.rejected) return;
 
             if (promise.status(vm.global.vm()) == .Rejected) {
-                onError(ctx, error.JSError, promise.result(vm.global.vm()), fetch_event.request_context) catch {};
+                onError(ctx, error.JSError, promise.result(vm.global.vm()), request_context) catch {};
                 return;
             } else {
                 _ = promise.result(vm.global.vm());
@@ -3407,13 +3460,13 @@ pub const EventListenerMixin = struct {
 
             vm.waitForTasks();
 
-            if (fetch_event.request_context.has_called_done) {
+            if (request_context.has_called_done) {
                 break;
             }
         }
 
-        if (!fetch_event.request_context.has_called_done) {
-            onError(ctx, error.FetchHandlerRespondWithNeverCalled, JSValue.jsUndefined(), fetch_event.request_context) catch {};
+        if (!request_context.has_called_done) {
+            onError(ctx, error.FetchHandlerRespondWithNeverCalled, JSValue.jsUndefined(), request_context) catch {};
             return;
         }
     }

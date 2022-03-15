@@ -365,6 +365,7 @@ pub extern fn JSC__VM__create(HeapType0: u8) [*c]JSC__VM;
 pub extern fn JSC__VM__deferGC(arg0: [*c]JSC__VM, arg1: ?*anyopaque, ArgFn2: ?fn (?*anyopaque) callconv(.C) void) void;
 pub extern fn JSC__VM__deinit(arg0: [*c]JSC__VM, arg1: [*c]JSC__JSGlobalObject) void;
 pub extern fn JSC__VM__deleteAllCode(arg0: [*c]JSC__VM, arg1: [*c]JSC__JSGlobalObject) void;
+pub extern fn JSC__VM__doWork(arg0: [*c]JSC__VM) void;
 pub extern fn JSC__VM__drainMicrotasks(arg0: [*c]JSC__VM) void;
 pub extern fn JSC__VM__executionForbidden(arg0: [*c]JSC__VM) bool;
 pub extern fn JSC__VM__holdAPILock(arg0: [*c]JSC__VM, arg1: ?*anyopaque, ArgFn2: ?fn (?*anyopaque) callconv(.C) void) void;

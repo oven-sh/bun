@@ -129,7 +129,7 @@ ENABLE_MIMALLOC ?= 1
 # Linking mimalloc via object file on macOS x64 can cause heap corruption
 _MIMALLOC_FILE = libmimalloc.o
 _MIMALLOC_INPUT_PATH = CMakeFiles/mimalloc-obj.dir/src/static.c.o
-
+_MIMALLOC_DEBUG_FILE = libmimalloc-debug.a
 DEFAULT_LINKER_FLAGS =
 
 JSC_BUILD_STEPS :=
@@ -846,8 +846,29 @@ clean: clean-bindings
 
 jsc-bindings-mac: $(OBJ_FILES)
 
+mimalloc-debug:
+	rm -rf $(BUN_DEPS_DIR)/mimalloc/CMakeCache* $(BUN_DEPS_DIR)/mimalloc/CMakeFiles
+	cd $(BUN_DEPS_DIR)/mimalloc; make clean || echo ""; \
+		CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS_WITHOUT_RELEASE) \
+			-DCMAKE_BUILD_TYPE=Debug \
+			-DMI_DEBUG_FULL=1 \
+			-DMI_SKIP_COLLECT_ON_EXIT=1 \
+			-DMI_BUILD_SHARED=OFF \
+			-DMI_BUILD_STATIC=ON \
+			-DMI_BUILD_TESTS=OFF \
+			-DMI_BUILD_OBJECT=ON \
+			-DMI_BUILD_OBJECT=ON \
+			-DMI_OSX_ZONE=OFF \
+			-DMI_OSX_INTERPOSE=OFF \
+			${MIMALLOC_OVERRIDE_FLAG} \
+			-DMI_USE_CXX=OFF .\
+			&& make -j $(CPUS); 
+	cp $(BUN_DEPS_DIR)/mimalloc/$(_MIMALLOC_DEBUG_FILE) $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE)
 
-# mimalloc is built as object files so that it can overload the system malloc
+
+# mimalloc is built as object files so that it can overload the system malloc on linux
+# on macOS, OSX_INTERPOSE and OSX_ZONE do not work correctly.
+# More precisely, they cause assertion failures and occasional segfaults
 mimalloc:
 	rm -rf $(BUN_DEPS_DIR)/mimalloc/CMakeCache* $(BUN_DEPS_DIR)/mimalloc/CMakeFiles
 	cd $(BUN_DEPS_DIR)/mimalloc; \
@@ -856,6 +877,8 @@ mimalloc:
 			-DMI_BUILD_SHARED=OFF \
 			-DMI_BUILD_STATIC=ON \
 			-DMI_BUILD_TESTS=OFF \
+			-DMI_OSX_ZONE=OFF \
+			-DMI_OSX_INTERPOSE=OFF \
 			-DMI_BUILD_OBJECT=ON \
 			${MIMALLOC_OVERRIDE_FLAG} \
 			-DMI_USE_CXX=OFF .\

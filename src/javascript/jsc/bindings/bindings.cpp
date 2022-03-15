@@ -7,6 +7,7 @@
 #include <JavaScriptCore/BytecodeIndex.h>
 #include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/Completion.h>
+#include <JavaScriptCore/DeferredWorkTimer.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/ExceptionScope.h>
@@ -740,7 +741,7 @@ JSC__JSValue ZigString__to16BitValue(const ZigString* arg0, JSC__JSGlobalObject*
     return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(arg1->vm(), str)));
 }
 
-void free_global_string(void* str, void* ptr, unsigned len)
+static void free_global_string(void* str, void* ptr, unsigned len)
 {
     ZigString__free_global(reinterpret_cast<const unsigned char*>(ptr), len);
 }
@@ -2177,6 +2178,11 @@ void JSC__VM__deferGC(JSC__VM* vm, void* ctx, void (*callback)(void* arg0))
     JSC::DisallowGC disallowGC;
 
     callback(ctx);
+}
+
+void JSC__VM__doWork(JSC__VM* vm)
+{
+    vm->deferredWorkTimer->runRunLoop();
 }
 
 void JSC__VM__deleteAllCode(JSC__VM* arg1, JSC__JSGlobalObject* globalObject)

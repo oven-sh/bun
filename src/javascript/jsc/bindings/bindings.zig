@@ -2502,7 +2502,14 @@ pub const VM = extern struct {
         });
     }
 
-    pub const Extern = [_][]const u8{ "deferGC", "holdAPILock", "runGC", "generateHeapSnapshot", "isJITEnabled", "deleteAllCode", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
+    pub fn doWork(
+        vm: *VM,
+    ) void {
+        return cppFn("doWork", .{
+            vm,
+        });
+    }
+    pub const Extern = [_][]const u8{ "doWork", "deferGC", "holdAPILock", "runGC", "generateHeapSnapshot", "isJITEnabled", "deleteAllCode", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
 };
 
 pub const ThrowScope = extern struct {

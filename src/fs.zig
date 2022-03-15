@@ -19,7 +19,6 @@ const Fs = @This();
 const path_handler = @import("./resolver/resolve_path.zig");
 const PathString = bun.PathString;
 const allocators = @import("./allocators.zig");
-const hash_map = @import("hash_map.zig");
 
 pub const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 pub const PathBuffer = [bun.MAX_PATH_BYTES]u8;
@@ -183,7 +182,7 @@ pub const FileSystem = struct {
     }
 
     pub const DirEntry = struct {
-        pub const EntryMap = hash_map.StringHashMapUnmanaged(*Entry);
+        pub const EntryMap = std.StringHashMapUnmanaged(*Entry);
         pub const EntryStore = allocators.BSSList(Entry, Preallocate.Counts.files);
         dir: string,
         fd: StoredFileDescriptorType = 0,
@@ -299,9 +298,21 @@ pub const FileSystem = struct {
                 query[i] = std.ascii.toLower(c);
             };
 
-            const query_hashed = comptime DirEntry.EntryMap.getHash(&query);
+            const query_hashed = comptime std.hash_map.hashString(&query);
 
-            const result = entry.data.getWithHash(&query, query_hashed) orelse return null;
+            const result = entry.data.getAdapted(
+                @as([]const u8, &query),
+                struct {
+                    pub fn hash(_: @This(), _: []const u8) @TypeOf(query_hashed) {
+                        return query_hashed;
+                    }
+
+                    pub fn eql(_: @This(), _: []const u8, b: []const u8) bool {
+                        return strings.eqlComptime(b, query);
+                    }
+                }{},
+            ) orelse return null;
+
             const basename = result.base();
 
             if (!strings.eqlComptime(basename, comptime query[0..query_str.len])) {
@@ -324,9 +335,20 @@ pub const FileSystem = struct {
                 query[i] = std.ascii.toLower(c);
             };
 
-            const query_hashed = comptime DirEntry.EntryMap.getHash(&query);
+            const query_hashed = comptime std.hash_map.hashString(&query);
 
-            return entry.data.getWithHash(&query, query_hashed) != null;
+            return entry.data.containsAdapted(
+                @as([]const u8, &query),
+                struct {
+                    pub fn hash(_: @This(), _: []const u8) @TypeOf(query_hashed) {
+                        return query_hashed;
+                    }
+
+                    pub fn eql(_: @This(), _: []const u8, b: []const u8) bool {
+                        return strings.eqlComptime(b, query);
+                    }
+                }{},
+            );
         }
     };
 

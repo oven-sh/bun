@@ -401,7 +401,7 @@ const RouteLoader = struct {
         if (root_dir_info.getEntriesConst()) |entries| {
             var iter = entries.data.iterator();
             outer: while (iter.next()) |entry_ptr| {
-                const entry = entry_ptr.value;
+                const entry = entry_ptr.value_ptr.*;
                 if (entry.base()[0] == '.') {
                     continue :outer;
                 }

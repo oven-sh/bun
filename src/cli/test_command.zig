@@ -140,7 +140,7 @@ const Scanner = struct {
                 var iter = root.entries.data.iterator();
                 const fd = root.entries.fd;
                 while (iter.next()) |entry| {
-                    this.next(entry.value, fd);
+                    this.next(entry.value_ptr.*, fd);
                 }
             }
         }

@@ -392,17 +392,18 @@ pub const RunCommand = struct {
                         var has_copied = false;
                         var dir_slice: string = "";
                         while (iter.next()) |entry| {
-                            if (entry.value.kind(&this_bundler.fs.fs) == .file) {
+                            const value = entry.value_ptr.*;
+                            if (value.kind(&this_bundler.fs.fs) == .file) {
                                 if (!has_copied) {
-                                    std.mem.copy(u8, &path_buf, entry.value.dir);
-                                    dir_slice = path_buf[0..entry.value.dir.len];
-                                    if (!strings.endsWithChar(entry.value.dir, std.fs.path.sep)) {
-                                        dir_slice = path_buf[0 .. entry.value.dir.len + 1];
+                                    std.mem.copy(u8, &path_buf, value.dir);
+                                    dir_slice = path_buf[0..value.dir.len];
+                                    if (!strings.endsWithChar(value.dir, std.fs.path.sep)) {
+                                        dir_slice = path_buf[0 .. value.dir.len + 1];
                                     }
                                     has_copied = true;
                                 }
 
-                                const base = entry.value.base();
+                                const base = value.base();
                                 std.mem.copy(u8, path_buf[dir_slice.len..], base);
                                 path_buf[dir_slice.len + base.len] = 0;
                                 var slice = path_buf[0 .. dir_slice.len + base.len :0];
@@ -422,11 +423,12 @@ pub const RunCommand = struct {
                     var iter = entries.data.iterator();
 
                     while (iter.next()) |entry| {
-                        const name = entry.value.base();
+                        const value = entry.value_ptr.*;
+                        const name = value.base();
                         if (name[0] != '.' and this_bundler.options.loader(std.fs.path.extension(name)).isJavaScriptLike() and
                             !strings.contains(name, ".config") and
                             !strings.contains(name, ".d.ts") and
-                            entry.value.kind(&this_bundler.fs.fs) == .file)
+                            value.kind(&this_bundler.fs.fs) == .file)
                         {
                             _ = try results.getOrPut(this_bundler.fs.filename_store.append(@TypeOf(name), name) catch continue);
                         }

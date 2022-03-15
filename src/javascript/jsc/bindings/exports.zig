@@ -1231,6 +1231,15 @@ pub const ZigConsoleClient = struct {
                     .cell = js_type,
                 };
 
+                // Cell is the "unknown" type
+                // if we call JSObjectGetPrivate, it can segfault
+                if (js_type == .Cell) {
+                    return .{
+                        .tag = .NativeCode,
+                        .cell = js_type,
+                    };
+                }
+
                 if (CAPI.JSObjectGetPrivate(value.asObjectRef()) != null)
                     return .{
                         .tag = .Private,

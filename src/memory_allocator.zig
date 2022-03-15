@@ -32,35 +32,14 @@ const c = struct {
 const Allocator = mem.Allocator;
 const assert = std.debug.assert;
 const CAllocator = struct {
-    usingnamespace if (@hasDecl(c, "malloc_size"))
-        struct {
-            pub const supports_malloc_size = true;
-            pub const malloc_size = c.malloc_size;
-        }
-    else if (@hasDecl(c, "malloc_usable_size"))
-        struct {
-            pub const supports_malloc_size = true;
-            pub const malloc_size = c.malloc_usable_size;
-        }
-    else if (@hasDecl(c, "_msize"))
-        struct {
-            pub const supports_malloc_size = true;
-            pub const malloc_size = c._msize;
-        }
-    else
-        struct {
-            pub const supports_malloc_size = false;
-        };
-
+    const malloc_size = c.malloc_size;
     pub const supports_posix_memalign = true;
 
-    fn getHeader(ptr: [*]u8) *[*]u8 {
-        return @intToPtr(*[*]u8, @ptrToInt(ptr) - @sizeOf(usize));
-    }
-
+    // This is copied from Rust's mimalloc integration
     const MI_MAX_ALIGN_SIZE = 16;
     inline fn mi_malloc_satisfies_alignment(alignment: usize, size: usize) bool {
-        return (alignment == @sizeOf(*anyopaque) or (alignment == MI_MAX_ALIGN_SIZE and size > (MI_MAX_ALIGN_SIZE / 2)));
+        return (alignment == @sizeOf(*anyopaque) or
+            (alignment == MI_MAX_ALIGN_SIZE and size > (MI_MAX_ALIGN_SIZE / 2)));
     }
 
     fn alignedAlloc(len: usize, alignment: usize) ?[*]u8 {
@@ -72,10 +51,6 @@ const CAllocator = struct {
             mimalloc.mi_malloc_aligned(len, alignment);
 
         return @ptrCast([*]u8, ptr orelse null);
-    }
-
-    fn alignedFree(ptr: [*]u8) void {
-        return c.free(ptr);
     }
 
     fn alignedAllocSize(ptr: [*]u8) usize {
@@ -93,22 +68,11 @@ const CAllocator = struct {
         assert(len > 0);
         assert(std.math.isPowerOfTwo(alignment));
 
-        var ptr = alignedAlloc(
-            len,
-            alignment,
-        ) orelse return error.OutOfMemory;
+        var ptr = alignedAlloc(len, alignment) orelse return error.OutOfMemory;
         if (len_align == 0) {
             return ptr[0..len];
         }
-
-        if (comptime Environment.allow_assert) {
-            const size = mem.alignBackwardAnyAlign(mimalloc.mi_usable_size(ptr), len_align);
-
-            assert(size >= len);
-            return ptr[0..size];
-        } else {
-            return ptr[0..mem.alignBackwardAnyAlign(mimalloc.mi_usable_size(ptr), len_align)];
-        }
+        return ptr[0..mem.alignBackwardAnyAlign(mimalloc.mi_usable_size(ptr), len_align)];
     }
 
     fn resize(
@@ -164,35 +128,14 @@ const c_allocator_vtable = Allocator.VTable{
 
 // This is a memory allocator which always writes zero instead of undefined
 const ZAllocator = struct {
-    usingnamespace if (@hasDecl(c, "malloc_size"))
-        struct {
-            pub const supports_malloc_size = true;
-            pub const malloc_size = c.malloc_size;
-        }
-    else if (@hasDecl(c, "malloc_usable_size"))
-        struct {
-            pub const supports_malloc_size = true;
-            pub const malloc_size = c.malloc_usable_size;
-        }
-    else if (@hasDecl(c, "_msize"))
-        struct {
-            pub const supports_malloc_size = true;
-            pub const malloc_size = c._msize;
-        }
-    else
-        struct {
-            pub const supports_malloc_size = false;
-        };
-
+    const malloc_size = c.malloc_size;
     pub const supports_posix_memalign = true;
 
-    fn getHeader(ptr: [*]u8) *[*]u8 {
-        return @intToPtr(*[*]u8, @ptrToInt(ptr) - @sizeOf(usize));
-    }
-
+    // This is copied from Rust's mimalloc integration
     const MI_MAX_ALIGN_SIZE = 16;
     inline fn mi_malloc_satisfies_alignment(alignment: usize, size: usize) bool {
-        return (alignment == @sizeOf(*anyopaque) or (alignment == MI_MAX_ALIGN_SIZE and size > (MI_MAX_ALIGN_SIZE / 2)));
+        return (alignment == @sizeOf(*anyopaque) or
+            (alignment == MI_MAX_ALIGN_SIZE and size > (MI_MAX_ALIGN_SIZE / 2)));
     }
 
     fn alignedAlloc(len: usize, alignment: usize) ?[*]u8 {
@@ -204,10 +147,6 @@ const ZAllocator = struct {
             mimalloc.mi_zalloc_aligned(len, alignment);
 
         return @ptrCast([*]u8, ptr orelse null);
-    }
-
-    fn alignedFree(ptr: [*]u8) void {
-        return c.free(ptr);
     }
 
     fn alignedAllocSize(ptr: [*]u8) usize {

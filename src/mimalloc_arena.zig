@@ -26,24 +26,22 @@ pub const Arena = struct {
 
     pub fn reset(this: *Arena) void {
         this.deinit();
-        this.* = initAssumeCapacity();
+        this.* = init() catch unreachable;
     }
 
     pub fn init() !Arena {
         return Arena{ .heap = mimalloc.mi_heap_new() orelse return error.OutOfMemory };
     }
 
-    pub fn initAssumeCapacity() Arena {
-        return Arena{ .heap = mimalloc.mi_heap_new().? };
-    }
-
     pub fn gc(this: Arena, force: bool) void {
         mimalloc.mi_heap_collect(this.heap, force);
     }
 
+    // Copied from rust
     const MI_MAX_ALIGN_SIZE = 16;
     inline fn mi_malloc_satisfies_alignment(alignment: usize, size: usize) bool {
-        return (alignment == @sizeOf(*anyopaque) or (alignment == MI_MAX_ALIGN_SIZE and size > (MI_MAX_ALIGN_SIZE / 2)));
+        return (alignment == @sizeOf(*anyopaque) or
+            (alignment == MI_MAX_ALIGN_SIZE and size > (MI_MAX_ALIGN_SIZE / 2)));
     }
 
     fn alignedAlloc(heap: *mimalloc.mi_heap_t, len: usize, alignment: usize) ?[*]u8 {
@@ -56,10 +54,6 @@ pub const Arena = struct {
             mimalloc.mi_heap_malloc_aligned(heap, len, alignment);
 
         return @ptrCast([*]u8, ptr orelse null);
-    }
-
-    fn alignedFree(ptr: [*]u8) void {
-        return mimalloc.mi_free(ptr);
     }
 
     fn alloc(

@@ -87,8 +87,10 @@ public:
     void call()
     {
         JSC::VM& vm = m_globalObject->vm();
-        auto task = &m_task.get();
+        auto task = &m_task.leakRef();
         task->run(m_globalObject.get());
+
+        task->~Microtask();
     }
 
 private:

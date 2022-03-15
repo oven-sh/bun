@@ -1,18 +1,18 @@
 import {
 __require as require
-} from "http://localhost:3000/bun:wrap";
+} from "http://localhost:8080/bun:wrap";
 import {
 __HMRClient as Bun
-} from "http://localhost:3000/bun:wrap";
+} from "http://localhost:8080/bun:wrap";
 import {
 __FastRefreshModule as FastHMR
-} from "http://localhost:3000/bun:wrap";
+} from "http://localhost:8080/bun:wrap";
 import {
 __FastRefreshRuntime as FastRefresh
-} from "http://localhost:3000/bun:wrap";
-import * as $60f52dc2 from "http://localhost:3000/node_modules/lodash/lodash.js";
+} from "http://localhost:8080/bun:wrap";
+import * as $60f52dc2 from "http://localhost:8080/node_modules/lodash/lodash.js";
 var { shuffle} = require($60f52dc2);
-Bun.activate(true);
+Bun.activate(false);
 
 var hmr = new FastHMR(2158065009, "lodash-regexp.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
@@ -43,4 +43,4 @@ export {
   $$hmr_test as test
 };
 
-//# sourceMappingURL=http://localhost:3000/lodash-regexp.js.map
+//# sourceMappingURL=http://localhost:8080/lodash-regexp.js.map

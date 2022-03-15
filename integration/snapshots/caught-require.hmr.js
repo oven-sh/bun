@@ -1,16 +1,16 @@
 import {
 __require as require
-} from "http://localhost:3000/bun:wrap";
+} from "http://localhost:8080/bun:wrap";
 import {
 __HMRClient as Bun
-} from "http://localhost:3000/bun:wrap";
+} from "http://localhost:8080/bun:wrap";
 import {
 __FastRefreshModule as FastHMR
-} from "http://localhost:3000/bun:wrap";
+} from "http://localhost:8080/bun:wrap";
 import {
 __FastRefreshRuntime as FastRefresh
-} from "http://localhost:3000/bun:wrap";
-Bun.activate(true);
+} from "http://localhost:8080/bun:wrap";
+Bun.activate(false);
 
 var hmr = new FastHMR(2398506918, "caught-require.js", FastRefresh), exports = hmr.exports;
 await (hmr._load = async function() {
@@ -52,4 +52,4 @@ export {
   $$hmr_test as test
 };
 
-//# sourceMappingURL=http://localhost:3000/caught-require.js.map
+//# sourceMappingURL=http://localhost:8080/caught-require.js.map

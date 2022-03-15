@@ -18,3 +18,5 @@ export async function test() {
   return testDone(import.meta.url);
 }
 
+
+//# sourceMappingURL=http://localhost:8080/package-json-exports/index.js.map

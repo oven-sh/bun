@@ -21,3 +21,5 @@ export function test() {
     throw new Error('Expected "it worked!" but received: ' + style["content"]);
   return testDone(import.meta.url);
 }
+
+//# sourceMappingURL=http://localhost:8080/custom-emotion-jsx/file.jsx.map

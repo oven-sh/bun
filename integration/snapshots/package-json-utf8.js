@@ -5,3 +5,5 @@ export function test() {
   return testDone(import.meta.url);
 }
 
+
+//# sourceMappingURL=http://localhost:8080/package-json-utf8.js.map

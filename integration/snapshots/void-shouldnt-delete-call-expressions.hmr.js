@@ -1,13 +1,13 @@
 import {
 __HMRClient as Bun
-} from "http://localhost:3000/bun:wrap";
+} from "http://localhost:8080/bun:wrap";
 import {
 __FastRefreshModule as FastHMR
-} from "http://localhost:3000/bun:wrap";
+} from "http://localhost:8080/bun:wrap";
 import {
 __FastRefreshRuntime as FastRefresh
-} from "http://localhost:3000/bun:wrap";
-Bun.activate(true);
+} from "http://localhost:8080/bun:wrap";
+Bun.activate(false);
 
 var hmr = new FastHMR(635901064, "void-shouldnt-delete-call-expressions.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
@@ -34,4 +34,4 @@ export {
   $$hmr_test as test
 };
 
-//# sourceMappingURL=http://localhost:3000/void-shouldnt-delete-call-expressions.js.map
+//# sourceMappingURL=http://localhost:8080/void-shouldnt-delete-call-expressions.js.map

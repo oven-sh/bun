@@ -65,3 +65,5 @@ ${JSON.stringify({ expected, real }, null, 2)}`);
 ${JSON.stringify({ expected, real }, null, 2)}`);
   testDone(import.meta.url);
 }
+
+//# sourceMappingURL=http://localhost:8080/latin1-chars-in-regexp.js.map

@@ -1,22 +1,22 @@
 import {
 __FastRefreshRuntime as FastRefresh
-} from "http://localhost:3000/bun:wrap";
+} from "http://localhost:8080/bun:wrap";
 import {
 __require as require
-} from "http://localhost:3000/bun:wrap";
+} from "http://localhost:8080/bun:wrap";
 import {
 __HMRClient as Bun
-} from "http://localhost:3000/bun:wrap";
+} from "http://localhost:8080/bun:wrap";
 import {
 __FastRefreshModule as FastHMR
-} from "http://localhost:3000/bun:wrap";
-import * as $2f488e5b from "http://localhost:3000/node_modules/react/jsx-dev-runtime.js";
+} from "http://localhost:8080/bun:wrap";
+import * as $2f488e5b from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
 var JSX = require($2f488e5b);
 var jsx = require(JSX).jsxDEV;
 
-import * as $1f6f0e67 from "http://localhost:3000/node_modules/react-dom/server.browser.js";
+import * as $1f6f0e67 from "http://localhost:8080/node_modules/react-dom/server.browser.js";
 var ReactDOM = require($1f6f0e67);
-Bun.activate(true);
+Bun.activate(false);
 
 var hmr = new FastHMR(3614189736, "jsx-spacing.jsx", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
@@ -70,4 +70,4 @@ export {
   $$hmr_test as test
 };
 
-//# sourceMappingURL=http://localhost:3000/jsx-spacing.jsx.map
+//# sourceMappingURL=http://localhost:8080/jsx-spacing.jsx.map

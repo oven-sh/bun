@@ -1,9 +1,9 @@
 import {
 __cJS2eSM
-} from "http://localhost:3000/bun:wrap";
+} from "http://localhost:8080/bun:wrap";
 import {
 __exportDefault
-} from "http://localhost:3000/bun:wrap";
+} from "http://localhost:8080/bun:wrap";
 export default __cJS2eSM(function(module, exports) {
   __exportDefault(module.exports, module.id);
 
@@ -16,4 +16,4 @@ export default __cJS2eSM(function(module, exports) {
 
 
 
-//# sourceMappingURL=http://localhost:3000/export-default-module-hot.js.map
+//# sourceMappingURL=http://localhost:8080/export-default-module-hot.js.map

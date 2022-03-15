@@ -210,17 +210,13 @@ pub const StringOrTinyString = struct {
 };
 
 pub fn copyLowercase(in: string, out: []u8) string {
-    @setRuntimeSafety(false);
     var in_slice: string = in;
     var out_slice: []u8 = out[0..in.len];
 
     begin: while (out_slice.len > 0) {
-        @setRuntimeSafety(false);
         for (in_slice) |c, i| {
-            @setRuntimeSafety(false);
             switch (c) {
                 'A'...'Z' => {
-                    @setRuntimeSafety(false);
                     @memcpy(out_slice.ptr, in_slice.ptr, i);
                     out_slice[i] = std.ascii.toLower(c);
                     const end = i + 1;
@@ -876,7 +872,7 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
             strings.copyU8IntoU16(output.items[output.items.len - remaining.len ..], remaining);
         }
 
-        return output.toOwnedSlice();
+        return output.items;
     }
 
     return null;
@@ -1698,7 +1694,7 @@ pub fn containsAnyBesidesChar(bytes: []const u8, char: u8) bool {
 }
 
 pub fn firstNonASCII16(comptime Slice: type, slice: Slice) ?u32 {
-    return firstNonASCII16CheckMin(Slice, slice, false);
+    return firstNonASCII16CheckMin(Slice, slice, true);
 }
 
 /// Get the line number and the byte offsets of `line_range_count` above the desired line number
@@ -1767,7 +1763,9 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
             const vec: AsciiU16Vector = remaining[0..ascii_u16_vector_size].*;
 
             if (comptime check_min) {
-                const cmp = vec > max_u16_ascii or vec < min_16_ascii;
+                const cmp = @bitCast(AsciiVectorU16U1, vec > max_u16_ascii) |
+                    @bitCast(AsciiVectorU16U1, vec < min_u16_ascii);
+
                 const bitmask = @ptrCast(*const u16, &cmp).*;
                 const first = @ctz(u16, bitmask);
                 if (first < ascii_u16_vector_size) {

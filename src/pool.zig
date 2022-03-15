@@ -118,6 +118,7 @@ pub fn ObjectPool(
     return struct {
         const Pool = @This();
         const LinkedList = SinglyLinkedList(Type, Pool);
+        pub const List = LinkedList;
         pub const Node = LinkedList.Node;
         const MaxCountInt = std.math.IntFittingRange(0, max_count);
         const DataStruct = struct {

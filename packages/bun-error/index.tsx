@@ -863,6 +863,11 @@ const JSException = ({
   const [sourceLines, _setSourceLines] = React.useState(
     value?.stack?.source_lines ?? []
   );
+  var message = value.message || "";
+  var name = value.name || "";
+  if (!name && !message) {
+    name = `Unknown error`;
+  }
 
   // mutating a prop is sacrilege
   function setSourceLines(sourceLines: SourceLine[]) {
@@ -924,15 +929,15 @@ const JSException = ({
     }
 
     default: {
-      const newline = value.message.indexOf("\n");
+      const newline = message.indexOf("\n");
       if (newline > -1) {
-        const subtitle = value.message.substring(newline + 1).trim();
-        const message = value.message.substring(0, newline).trim();
+        const subtitle = message.substring(newline + 1).trim();
+        const message = message.substring(0, newline).trim();
         if (subtitle.length) {
           return (
             <div className={`BunError-JSException`}>
               <div className="BunError-error-header">
-                <div className={`BunError-error-code`}>{value.name}</div>
+                <div className={`BunError-error-code`}>{name}</div>
                 {errorTags[tag]}
               </div>
 
@@ -955,11 +960,11 @@ const JSException = ({
       return (
         <div className={`BunError-JSException`}>
           <div className="BunError-error-header">
-            <div className={`BunError-error-code`}>{value.name}</div>
+            <div className={`BunError-error-code`}>{name}</div>
             {errorTags[tag]}
           </div>
 
-          <div className={`BunError-error-message`}>{value.message}</div>
+          <div className={`BunError-error-message`}>{message}</div>
 
           {value.stack && (
             <NativeStackTrace

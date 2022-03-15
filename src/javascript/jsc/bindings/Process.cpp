@@ -1,7 +1,7 @@
 #include "Process.h"
+#include <JavaScriptCore/DeferredWorkTimer.h>
 #include <JavaScriptCore/JSMicrotask.h>
 #include <JavaScriptCore/ObjectConstructor.h>
-
 #pragma mark - Node.js Process
 
 namespace Zig {
@@ -50,55 +50,45 @@ static JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    switch (argCount) {
-
-    case 1: {
-        // This is a JSC builtin function
-        globalObject->queueMicrotask(JSC::createJSMicrotask(vm, job, JSC::JSValue {}, JSC::JSValue {},
-            JSC::JSValue {}, JSC::JSValue {}));
-        break;
+    Vector<JSC::Strong<JSC::JSCell>> dependencies;
+    WTF::Vector<JSC::JSValue, 16> args;
+    args.reserveInitialCapacity(argCount);
+    dependencies.append(JSC::Strong<JSC::JSCell>(vm, globalObject));
+    for (unsigned i = 1; i < argCount; i++) {
+        if (callFrame->uncheckedArgument(i).isCell()) {
+            dependencies.append(JSC::Strong<JSC::JSCell>(vm, callFrame->uncheckedArgument(i).asCell()));
+        }
+        args.append(callFrame->uncheckedArgument(i));
     }
 
-    case 2:
-    case 3:
-    case 4:
-    case 5: {
-        JSC::JSValue argument0 = callFrame->uncheckedArgument(1);
-        JSC::JSValue argument1 = argCount > 2 ? callFrame->uncheckedArgument(2) : JSC::JSValue {};
-        JSC::JSValue argument2 = argCount > 3 ? callFrame->uncheckedArgument(3) : JSC::JSValue {};
-        JSC::JSValue argument3 = argCount > 4 ? callFrame->uncheckedArgument(4) : JSC::JSValue {};
-        globalObject->queueMicrotask(
-            JSC::createJSMicrotask(vm, job, argument0, argument1, argument2, argument3));
-        break;
-    }
+    auto ticket = vm.deferredWorkTimer->addPendingWork(vm, job.getObject(), WTFMove(dependencies));
+    vm.deferredWorkTimer->scheduleWorkSoon(ticket, [job, args](DeferredWorkTimer::Ticket) {
+        JSGlobalObject* globalObject = job.getObject()->globalObject();
 
-    default: {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        JSC::throwTypeError(globalObject, scope,
-            "nextTick doesn't support more than 4 arguments currently"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+        JSC::MarkedArgumentBuffer argsBuffer;
+        for (auto& arg : args) {
+            argsBuffer.append(arg);
+        }
+        call(globalObject, job, jsUndefined(), argsBuffer, "If you see this, it's a bug in bun!");
+    });
 
-        break;
-    }
+    // JSC::MarkedArgumentBuffer args;
+    // for (unsigned i = 1; i < callFrame->argumentCount(); i++) {
+    //   args.append(callFrame->uncheckedArgument(i));
+    // }
 
-        // JSC::MarkedArgumentBuffer args;
-        // for (unsigned i = 1; i < callFrame->argumentCount(); i++) {
-        //   args.append(callFrame->uncheckedArgument(i));
-        // }
+    // JSC::ArgList argsList(args);
+    // JSC::gcProtect(job);
+    // JSC::JSFunction *callback = JSC::JSNativeStdFunction::create(
+    //   vm, globalObject, 0, String(),
+    //   [job, &argsList](JSC::JSGlobalObject *globalObject, JSC::CallFrame *callFrame) {
+    //     JSC::VM &vm = globalObject->vm();
+    //     auto callData = getCallData(vm, job);
 
-        // JSC::ArgList argsList(args);
-        // JSC::gcProtect(job);
-        // JSC::JSFunction *callback = JSC::JSNativeStdFunction::create(
-        //   vm, globalObject, 0, String(),
-        //   [job, &argsList](JSC::JSGlobalObject *globalObject, JSC::CallFrame *callFrame) {
-        //     JSC::VM &vm = globalObject->vm();
-        //     auto callData = getCallData(vm, job);
+    //     return JSC::JSValue::encode(JSC::call(globalObject, job, callData, job, argsList));
+    //   });
 
-        //     return JSC::JSValue::encode(JSC::call(globalObject, job, callData, job, argsList));
-        //   });
-
-        // globalObject->queueMicrotask(JSC::createJSMicrotask(vm, JSC::JSValue(callback)));
-    }
+    // globalObject->queueMicrotask(JSC::createJSMicrotask(vm, JSC::JSValue(callback)));
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

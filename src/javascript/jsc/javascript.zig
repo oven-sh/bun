@@ -1529,12 +1529,13 @@ const bun_file_import_path = "/node_modules.server.bun";
 
 const FetchTasklet = Fetch.FetchTasklet;
 const TaggedPointerUnion = @import("../../tagged_pointer.zig").TaggedPointerUnion;
-const WorkPool = @import("../../work_pool.zig");
+const WorkPool = @import("../../work_pool.zig").WorkPool;
+const WorkPoolTask = @import("../../work_pool.zig").Task;
 pub fn ConcurrentPromiseTask(comptime Context: type) type {
     return struct {
         const This = @This();
         ctx: *Context,
-        task: WorkPool.Task = .{ .callback = runFromThreadPool },
+        task: WorkPoolTask = .{ .callback = runFromThreadPool },
         event_loop: *VirtualMachine.EventLoop,
         allocator: std.mem.Allocator,
         promise: JSValue,
@@ -1554,7 +1555,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
             return this;
         }
 
-        pub fn runFromThreadPool(task: *WorkPool.Task) void {
+        pub fn runFromThreadPool(task: *WorkPoolTask) void {
             var this = @fieldParentPtr(This, "task", task);
             Context.run(this.ctx);
             this.onFinish();
@@ -1577,6 +1578,67 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
 
         pub fn schedule(this: *This) void {
             WorkPool.schedule(&this.task);
+        }
+
+        pub fn onFinish(this: *This) void {
+            this.event_loop.enqueueTaskConcurrent(Task.init(this));
+        }
+
+        pub fn deinit(this: *This) void {
+            this.allocator.destroy(this);
+        }
+    };
+}
+
+pub fn SerialPromiseTask(comptime Context: type) type {
+    return struct {
+        const SerialWorkPool = @import("../../work_pool.zig").NewWorkPool(1);
+        const This = @This();
+
+        ctx: *Context,
+        task: WorkPoolTask = .{ .callback = runFromThreadPool },
+        event_loop: *VirtualMachine.EventLoop,
+        allocator: std.mem.Allocator,
+        promise: JSValue,
+        globalThis: *JSGlobalObject,
+
+        pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
+            var this = try allocator.create(This);
+            this.* = .{
+                .event_loop = VirtualMachine.vm.event_loop,
+                .ctx = value,
+                .allocator = allocator,
+                .promise = JSValue.createInternalPromise(globalThis),
+                .globalThis = globalThis,
+            };
+            js.JSValueProtect(globalThis.ref(), this.promise.asObjectRef());
+            VirtualMachine.vm.active_tasks +|= 1;
+            return this;
+        }
+
+        pub fn runFromThreadPool(task: *WorkPoolTask) void {
+            var this = @fieldParentPtr(This, "task", task);
+            Context.run(this.ctx);
+            this.onFinish();
+        }
+
+        pub fn runFromJS(this: This) void {
+            var promise_value = this.promise;
+            var promise = promise_value.asInternalPromise() orelse {
+                if (comptime @hasDecl(Context, "deinit")) {
+                    @call(.{}, Context.deinit, .{this.ctx});
+                }
+                return;
+            };
+
+            var ctx = this.ctx;
+
+            js.JSValueUnprotect(this.globalThis.ref(), promise_value.asObjectRef());
+            ctx.then(promise, this.globalThis);
+        }
+
+        pub fn schedule(this: *This) void {
+            SerialWorkPool.schedule(&this.task);
         }
 
         pub fn onFinish(this: *This) void {

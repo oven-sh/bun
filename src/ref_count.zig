@@ -1,7 +1,5 @@
 const std = @import("std");
 
-pub const RefCountedSlice = struct {};
-
 pub fn RefCount(comptime Type: type, comptime deinit_on_zero: bool) type {
     return struct {
         const AllocatorType = if (deinit_on_zero) std.mem.Allocator else void;

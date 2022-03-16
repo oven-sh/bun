@@ -1889,6 +1889,9 @@ static void populateStackTrace(const WTF::Vector<JSC::StackFrame>& frames, ZigSt
     }
     trace->frames_len = frame_i;
 }
+
+#define SYNTAX_ERROR_CODE 4
+
 static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     JSC::ErrorInstance* err, const Vector<JSC::StackFrame>* stackTrace,
     JSC::JSValue val)
@@ -1910,8 +1913,9 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     if (err->isOutOfMemoryError()) {
         except->code = 8;
     }
-
-    if (JSC::JSValue message = obj->getIfPropertyExists(global, global->vm().propertyNames->message)) {
+    if (except->code == SYNTAX_ERROR_CODE) {
+        except->message = Zig::toZigString(err->sanitizedMessageString(global));
+    } else if (JSC::JSValue message = obj->getIfPropertyExists(global, global->vm().propertyNames->message)) {
 
         except->message = Zig::toZigString(message, global);
 
@@ -1922,21 +1926,23 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     except->runtime_type = err->runtimeTypeForCause();
 
     auto clientData = Bun::clientData(global->vm());
+    if (except->code != SYNTAX_ERROR_CODE) {
 
-    if (JSC::JSValue syscall = obj->getIfPropertyExists(global, clientData->builtinNames().syscallPublicName())) {
-        except->syscall = Zig::toZigString(syscall, global);
-    }
+        if (JSC::JSValue syscall = obj->getIfPropertyExists(global, clientData->builtinNames().syscallPublicName())) {
+            except->syscall = Zig::toZigString(syscall, global);
+        }
 
-    if (JSC::JSValue code = obj->getIfPropertyExists(global, clientData->builtinNames().codePublicName())) {
-        except->code_ = Zig::toZigString(code, global);
-    }
+        if (JSC::JSValue code = obj->getIfPropertyExists(global, clientData->builtinNames().codePublicName())) {
+            except->code_ = Zig::toZigString(code, global);
+        }
 
-    if (JSC::JSValue path = obj->getIfPropertyExists(global, clientData->builtinNames().pathPublicName())) {
-        except->path = Zig::toZigString(path, global);
-    }
+        if (JSC::JSValue path = obj->getIfPropertyExists(global, clientData->builtinNames().pathPublicName())) {
+            except->path = Zig::toZigString(path, global);
+        }
 
-    if (JSC::JSValue errno_ = obj->getIfPropertyExists(global, clientData->builtinNames().errnoPublicName())) {
-        except->errno_ = errno_.toInt32(global);
+        if (JSC::JSValue errno_ = obj->getIfPropertyExists(global, clientData->builtinNames().errnoPublicName())) {
+            except->errno_ = errno_.toInt32(global);
+        }
     }
 
     if (getFromSourceURL) {
@@ -2180,11 +2186,6 @@ void JSC__VM__deferGC(JSC__VM* vm, void* ctx, void (*callback)(void* arg0))
     callback(ctx);
 }
 
-void JSC__VM__doWork(JSC__VM* vm)
-{
-    vm->deferredWorkTimer->runRunLoop();
-}
-
 void JSC__VM__deleteAllCode(JSC__VM* arg1, JSC__JSGlobalObject* globalObject)
 {
     JSC::JSLockHolder locker(globalObject->vm());
@@ -2198,6 +2199,12 @@ void JSC__VM__deleteAllCode(JSC__VM* arg1, JSC__JSGlobalObject* globalObject)
     arg1->deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
     arg1->heap.reportAbandonedObjectGraph();
 }
+
+void JSC__VM__doWork(JSC__VM* vm)
+{
+    vm->deferredWorkTimer->runRunLoop();
+}
+
 void JSC__VM__deinit(JSC__VM* arg1, JSC__JSGlobalObject* globalObject) {}
 void JSC__VM__drainMicrotasks(JSC__VM* arg0) { arg0->drainMicrotasks(); }
 

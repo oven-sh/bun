@@ -44,6 +44,7 @@ RUN apt-get update && \
     libicu-dev \
     wget \
     rustc \
+    cargo \
     unzip \
     tar \
     golang-go ninja-build pkg-config automake autoconf libtool curl && \

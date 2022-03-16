@@ -90,3 +90,4 @@ pub const use_libgit2 = true;
 pub const atomic_file_watcher = env.isLinux;
 
 pub const node_streams = env.isDebug or env.isTest;
+pub const simd = true;

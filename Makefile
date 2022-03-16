@@ -960,7 +960,6 @@ endif
 
 ifeq ($(OS_NAME),linux)
 bun-link-lld-release-dsym:
-	-$(STRIP) $(BUN_RELEASE_BIN)
 	mv $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
 copy-to-bun-release-dir-dsym:
 

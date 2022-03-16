@@ -1953,6 +1953,8 @@ pub const VirtualMachine = struct {
                 _ = this.ready_tasks_count.fetchSub(add, .Monotonic);
             }
         }
+
+        // TODO: fix this technical debt
         pub fn tick(this: *EventLoop) void {
             while (true) {
                 this.tickConcurrent();
@@ -1965,6 +1967,7 @@ pub const VirtualMachine = struct {
             }
         }
 
+        // TODO: fix this technical debt
         pub fn waitForPromise(this: *EventLoop, promise: *JSC.JSInternalPromise) void {
             switch (promise.status(this.global.vm())) {
                 JSC.JSPromise.Status.Pending => {
@@ -3304,36 +3307,21 @@ pub const VirtualMachine = struct {
                 writer.writeByteNTimes(' ', pad) catch unreachable;
                 const top = exception.stack.frames()[0];
                 var remainder = std.mem.trim(u8, source.text, "\n");
-                if (@intCast(usize, top.position.column_stop) > remainder.len or (top.position.column_stop - top.position.column_start) <= 0) {
-                    writer.print(
-                        comptime Output.prettyFmt(
-                            "<r><d>{d} |<r> {s}\n",
-                            allow_ansi_color,
-                        ),
-                        .{ source.line, remainder },
-                    ) catch unreachable;
-                } else {
-                    const prefix = remainder[0..@intCast(usize, top.position.column_start)];
-                    const underline = remainder[@intCast(usize, top.position.column_start)..@intCast(usize, top.position.column_stop)];
-                    const suffix = remainder[@intCast(usize, top.position.column_stop)..];
 
-                    writer.print(
-                        comptime Output.prettyFmt(
-                            "<r><d>{d} |<r> {s}<red>{s}<r>{s}<r>\n<r>",
-                            allow_ansi_color,
-                        ),
-                        .{
-                            source.line,
-                            prefix,
-                            underline,
-                            suffix,
-                        },
-                    ) catch unreachable;
+                writer.print(
+                    comptime Output.prettyFmt(
+                        "<r><d>{d} |<r> {s}\n",
+                        allow_ansi_color,
+                    ),
+                    .{ source.line, remainder },
+                ) catch unreachable;
+
+                if (!top.position.isInvalid()) {
                     var first_non_whitespace = @intCast(u32, top.position.column_start);
                     while (first_non_whitespace < source.text.len and source.text[first_non_whitespace] == ' ') {
                         first_non_whitespace += 1;
                     }
-                    const indent = @intCast(usize, pad) + " | ".len + first_non_whitespace + 1;
+                    const indent = @intCast(usize, pad) + " | ".len + first_non_whitespace;
 
                     writer.writeByteNTimes(' ', indent) catch unreachable;
                     writer.print(comptime Output.prettyFmt(
@@ -3514,9 +3502,9 @@ pub const EventListenerMixin = struct {
             if (promise.status(vm.global.vm()) == .Rejected) {
                 onError(ctx, error.JSError, promise.result(vm.global.vm()), request_context) catch {};
                 return;
-            } else {
-                _ = promise.result(vm.global.vm());
             }
+
+            _ = promise.result(vm.global.vm());
 
             vm.waitForTasks();
 

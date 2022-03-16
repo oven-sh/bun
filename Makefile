@@ -164,7 +164,7 @@ POSIX_PKG_MANAGER=sudo apt
 STRIP=
 
 ifeq ($(OS_NAME),darwin)
-STRIP=strip -u -r
+STRIP=strip
 endif
 
 ifeq ($(OS_NAME),linux)
@@ -311,7 +311,8 @@ CLANG_VERSION = $(shell $(CC) --version | awk '/version/ {for(i=1; i<=NF; i++){i
 bun:
 
 
-vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace
+vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml
+
 
 lolhtml:
 	cd $(BUN_DEPS_DIR)/lol-html/ && cd $(BUN_DEPS_DIR)/lol-html/c-api && cargo build --release && cp target/release/liblolhtml.a $(BUN_DEPS_OUT_DIR)
@@ -796,6 +797,26 @@ jsc-build-mac-compile:
 			$(WEBKIT_RELEASE_DIR) && \
 	CFLAGS="$CFLAGS -ffat-lto-objects" CXXFLAGS="$CXXFLAGS -ffat-lto-objects" \
 		cmake --build $(WEBKIT_RELEASE_DIR) --config Release --target jsc
+
+jsc-build-mac-compile-debug:
+	mkdir -p $(WEBKIT_RELEASE_DIR) $(WEBKIT_DIR);
+	cd $(WEBKIT_RELEASE_DIR) && \
+		ICU_INCLUDE_DIRS="$(HOMEBREW_PREFIX)opt/icu4c/include" \
+		cmake \
+			-DPORT="JSCOnly" \
+			-DENABLE_STATIC_JSC=ON \
+			-DCMAKE_BUILD_TYPE=Debug \
+			-DUSE_THIN_ARCHIVES=OFF \
+			-DENABLE_FTL_JIT=ON \
+			-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+			-G Ninja \
+			$(CMAKE_FLAGS_WITHOUT_RELEASE) \
+			-DPTHREAD_JIT_PERMISSIONS_API=1 \
+			-DUSE_PTHREAD_JIT_PERMISSIONS_API=ON \
+			$(WEBKIT_DIR) \
+			$(WEBKIT_RELEASE_DIR) && \
+	CFLAGS="$CFLAGS -ffat-lto-objects" CXXFLAGS="$CXXFLAGS -ffat-lto-objects" \
+		cmake --build $(WEBKIT_RELEASE_DIR) --config Debug --target jsc
 
 jsc-build-linux-compile-config:
 	mkdir -p $(WEBKIT_RELEASE_DIR)

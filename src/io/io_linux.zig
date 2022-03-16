@@ -433,7 +433,7 @@ pub fn asError(err: anytype) Errno {
     };
 }
 
-const timespec = std.os.system.timespec;
+const timespec = linux.timespec;
 const linux = os.linux;
 const IO_Uring = linux.IO_Uring;
 const io_uring_cqe = linux.io_uring_cqe;
@@ -443,6 +443,8 @@ const FIFO = @import("./fifo.zig").FIFO;
 const IO = @This();
 
 ring: IO_Uring,
+
+pending_timeouts: u32 = 0,
 
 /// Operations not yet submitted to the kernel and waiting on available space in the
 /// submission queue.
@@ -454,7 +456,9 @@ completed: FIFO(Completion) = .{},
 next_tick: FIFO(Completion) = .{},
 
 pub fn hasNoWork(this: *IO) bool {
-    return this.completed.peek() == null and this.unqueued.peek() == null and this.next_tick.peek() == null;
+    return this.completed.peek() == null and this.unqueued.peek() == null and
+        this.next_tick.peek() == null and
+        this.pending_timeouts == 0;
 }
 
 pub fn init(entries_: u12, flags: u32) !IO {
@@ -712,8 +716,9 @@ pub const Completion = struct {
             .send => |op| {
                 linux.io_uring_prep_send(sqe, op.socket, op.buffer, os.MSG.NOSIGNAL);
             },
-            .timeout => |*op| {
-                linux.io_uring_prep_timeout(sqe, &op.timespec, 0, 0);
+            .timeout => {
+                var op = &completion.operation.timeout;
+                linux.io_uring_prep_timeout(sqe, &op.timespec, 1, 0);
             },
             .write => |op| {
                 linux.io_uring_prep_write(
@@ -940,7 +945,7 @@ const Operation = union(enum) {
         buffer: []const u8,
     },
     timeout: struct {
-        timespec: os.timespec,
+        timespec: linux.timespec,
     },
     write: struct {
         fd: os.fd_t,
@@ -1395,11 +1400,13 @@ pub fn timeout(
     completion: *Completion,
     nanoseconds: u63,
 ) void {
+    self.pending_timeouts +|= 1;
     completion.* = .{
         .io = self,
         .context = context,
         .callback = struct {
             fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
+                comp.io.pending_timeouts -|= 1;
                 callback(
                     @intToPtr(Context, @ptrToInt(ctx)),
                     comp,

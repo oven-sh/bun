@@ -295,7 +295,7 @@ fn _wait(self: *ThreadPool, _is_waking: bool, comptime sleep_on_idle: bool) erro
                     // If it's been roughly 2ms since the last network request, go to sleep!
                     // this is 4ms because run_for_ns runs for 10 microseconds
                     // 10 microseconds * 400 == 4ms
-                    if (idle_network_ticks > 40) {
+                    if (idle_network_ticks > 400) {
                         idle_network_ticks = 0;
                         // force(true) causes an assertion failure
                         // judging from reading mimalloc's code,

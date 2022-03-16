@@ -779,8 +779,8 @@ pub const Fetch = struct {
 // https://developer.mozilla.org/en-US/docs/Web/API/Headers
 pub const Headers = struct {
     pub usingnamespace HTTPClient.Headers;
-    entries: Headers.Entries,
-    buf: std.ArrayListUnmanaged(u8),
+    entries: Headers.Entries = .{},
+    buf: std.ArrayListUnmanaged(u8) = .{},
     allocator: std.mem.Allocator,
     guard: Guard = Guard.none,
 
@@ -794,10 +794,9 @@ pub const Headers = struct {
     }
 
     pub fn empty(allocator: std.mem.Allocator) Headers {
-        var headers: Headers = undefined;
         return Headers{
-            .entries = @TypeOf(headers.entries){},
-            .buf = @TypeOf(headers.buf){},
+            .entries = .{},
+            .buf = .{},
             .allocator = allocator,
             .guard = Guard.none,
         };
@@ -816,13 +815,14 @@ pub const Headers = struct {
             _: js.ExceptionRef,
         ) js.JSValueRef {
             var this = ref.leak();
-            if (arguments.len == 0 or !js.JSValueIsString(ctx, arguments[0]) or
-                js.JSStringIsEqual(arguments[0], Properties.Refs.empty_string))
-            {
+            if (arguments.len == 0) {
                 return js.JSValueMakeNull(ctx);
             }
 
             const key_slice = ZigString.from(arguments[0], ctx).toSlice(bun.default_allocator);
+            if (key_slice.len == 0) {
+                return js.JSValueMakeNull(ctx);
+            }
             defer key_slice.deinit();
 
             if (this.getHeaderIndex(key_slice.slice())) |index| {
@@ -845,11 +845,15 @@ pub const Headers = struct {
             _: js.ExceptionRef,
         ) js.JSValueRef {
             var this = ref.leak();
-            if (this.guard == .request or arguments.len < 2 or !js.JSValueIsString(ctx, arguments[0]) or js.JSStringIsEqual(arguments[0], Properties.Refs.empty_string) or !js.JSValueIsString(ctx, arguments[1])) {
-                return js.JSValueMakeUndefined(ctx);
+            if (arguments.len == 0) {
+                return js.JSValueMakeNull(ctx);
+            }
+            const key_slice = ZigString.from(arguments[0], ctx);
+            if (key_slice.len == 0) {
+                return js.JSValueMakeNull(ctx);
             }
 
-            this.putHeaderFromJS(arguments[0], arguments[1], false);
+            this.putHeaderFromJS(key_slice, ZigString.from(arguments[1], ctx), false);
             return js.JSValueMakeUndefined(ctx);
         }
 
@@ -863,11 +867,15 @@ pub const Headers = struct {
             _: js.ExceptionRef,
         ) js.JSValueRef {
             var this = ref.leak();
-            if (js.JSStringIsEqual(arguments[0], Properties.Refs.empty_string) or !js.JSValueIsString(ctx, arguments[1])) {
-                return js.JSValueMakeUndefined(ctx);
+            if (arguments.len == 0) {
+                return js.JSValueMakeNull(ctx);
+            }
+            const key_slice = ZigString.from(arguments[0], ctx);
+            if (key_slice.len == 0) {
+                return js.JSValueMakeNull(ctx);
             }
 
-            this.putHeaderFromJS(arguments[0], arguments[1], true);
+            this.putHeaderFromJS(key_slice, ZigString.from(arguments[1], ctx), true);
             return js.JSValueMakeUndefined(ctx);
         }
         pub fn delete(
@@ -880,11 +888,15 @@ pub const Headers = struct {
         ) js.JSValueRef {
             var this: *Headers = ref.leak();
 
-            const key_len = js.JSStringGetUTF8CString(arguments[0], &header_kv_buf, header_kv_buf.len) - 1;
-            const key = header_kv_buf[0..key_len];
+            const key = ZigString.from(arguments[0], ctx);
+            if (key.len == 0) {
+                return js.JSValueMakeNull(ctx);
+            }
+            var str = key.toSlice(ref.allocator);
+            defer str.deinit();
             var entries_ = &this.entries;
 
-            if (this.getHeaderIndex(key)) |header_i| {
+            if (this.getHeaderIndex(str.slice())) |header_i| {
                 entries_.orderedRemove(header_i);
             }
 
@@ -1119,12 +1131,10 @@ pub const Headers = struct {
                     header.name,
                     true,
                     true,
-                    true,
                 ),
                 .value = headers.appendString(
                     string,
                     header.value,
-                    true,
                     true,
                     true,
                 ),
@@ -1143,31 +1153,23 @@ pub const Headers = struct {
         return headers.buf.items[ptr.offset..][0..ptr.length];
     }
 
-    threadlocal var header_kv_buf: [4096]u8 = undefined;
-
     pub fn putHeader(headers: *Headers, key_: []const u8, value_: []const u8, comptime append: bool) void {
+        var header_kv_buf: [4096]u8 = undefined;
+
         const key = strings.copyLowercase(strings.trim(key_, " \n\r"), &header_kv_buf);
         const value = strings.copyLowercase(strings.trim(value_, " \n\r"), header_kv_buf[key.len..]);
+
         return headers.putHeaderNormalized(key, value, append);
     }
 
-    pub fn putHeaderNumber(headers: *Headers, key_: []const u8, value_: u32, comptime append: bool) void {
-        const key = strings.copyLowercase(strings.trim(key_, " \n\r"), &header_kv_buf);
-        const value = std.fmt.bufPrint(header_kv_buf[key.len..], "{d}", .{value_}) catch unreachable;
-        return headers.putHeaderNormalized(key, value, append);
-    }
+    pub fn putHeaderFromJS(headers: *Headers, key_: ZigString, value_: ZigString, comptime append: bool) void {
+        var key_slice = key_.toSlice(headers.allocator);
+        var value_slice = value_.toSlice(headers.allocator);
 
-    pub fn putHeaderFromJS(headers: *Headers, key_: js.JSStringRef, value_: js.JSStringRef, comptime append: bool) void {
-        const key_len = js.JSStringGetUTF8CString(key_, &header_kv_buf, header_kv_buf.len) - 1;
-        // TODO: make this one pass instead of two
-        var key = strings.trim(header_kv_buf[0..key_len], " \n\r");
-        key = std.ascii.lowerString(key[0..key.len], key);
+        defer key_slice.deinit();
+        defer value_slice.deinit();
 
-        var remainder = header_kv_buf[key.len..];
-        const value_len = js.JSStringGetUTF8CString(value_, remainder.ptr, remainder.len) - 1;
-        var value = strings.trim(remainder[0..value_len], " \n\r");
-
-        headers.putHeaderNormalized(key, value, append);
+        headers.putHeader(key_slice.slice(), value_slice.slice(), append);
     }
 
     pub fn putHeaderNormalized(headers: *Headers, key: []const u8, value: []const u8, comptime append: bool) void {
@@ -1191,10 +1193,10 @@ pub const Headers = struct {
                 // We assume that these header objects are going to be kind of short-lived.
             } else {
                 headers.buf.ensureUnusedCapacity(headers.allocator, value.len + 1) catch unreachable;
-                headers.entries.items(.value)[header_i] = headers.appendString(string, value, false, true, true);
+                headers.entries.items(.value)[header_i] = headers.appendString(string, value, false, true);
             }
         } else {
-            headers.appendHeader(key, value, false, false, true);
+            headers.appendHeader(key, value, false, false);
         }
     }
 
@@ -1214,7 +1216,6 @@ pub const Headers = struct {
         value: string,
         comptime needs_lowercase: bool,
         comptime needs_normalize: bool,
-        comptime append_null: bool,
     ) void {
         headers.buf.ensureUnusedCapacity(headers.allocator, key.len + value.len + 2) catch unreachable;
 
@@ -1226,14 +1227,12 @@ pub const Headers = struct {
                     key,
                     needs_lowercase,
                     needs_normalize,
-                    append_null,
                 ),
                 .value = headers.appendString(
                     string,
                     value,
                     needs_lowercase,
                     needs_normalize,
-                    append_null,
                 ),
             },
         ) catch unreachable;
@@ -1245,7 +1244,6 @@ pub const Headers = struct {
         str: StringType,
         comptime needs_lowercase: bool,
         comptime needs_normalize: bool,
-        comptime append_null: bool,
     ) Api.StringPointer {
         var ptr = Api.StringPointer{ .offset = @truncate(u32, this.buf.items.len), .length = 0 };
         ptr.length = @truncate(
@@ -1256,7 +1254,7 @@ pub const Headers = struct {
             },
         );
         if (Environment.allow_assert) std.debug.assert(ptr.length > 0);
-        this.buf.ensureUnusedCapacity(this.allocator, ptr.length + @as(u32, @boolToInt(append_null))) catch unreachable;
+        this.buf.ensureUnusedCapacity(this.allocator, ptr.length) catch unreachable;
         var slice = this.buf.items;
         slice.len += ptr.length;
         slice = slice[ptr.offset..][0..ptr.length];
@@ -1278,9 +1276,6 @@ pub const Headers = struct {
             for (slice) |c, i| {
                 slice[i] = std.ascii.toLower(c);
             }
-        }
-        if (comptime append_null) {
-            slice.ptr[slice.len] = 0;
         }
 
         ptr.length = @truncate(u32, slice.len);
@@ -1372,10 +1367,10 @@ pub const Headers = struct {
 
     pub fn appendInit(this: *Headers, ctx: js.JSContextRef, key: js.JSStringRef, comptime value_type: js.JSType, value: js.JSValueRef) !void {
         this.entries.append(this.allocator, .{
-            .name = this.appendString(js.JSStringRef, key, true, true, false),
+            .name = this.appendString(js.JSStringRef, key, true, true),
             .value = switch (comptime value_type) {
                 js.JSType.kJSTypeNumber => this.appendNumber(js.JSValueToNumber(ctx, value, null)),
-                js.JSType.kJSTypeString => this.appendString(js.JSStringRef, value, true, true, false),
+                js.JSType.kJSTypeString => this.appendString(js.JSStringRef, value, true, true),
                 else => unreachable,
             },
         }) catch unreachable;

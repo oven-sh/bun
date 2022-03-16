@@ -168,7 +168,7 @@ STRIP=strip
 endif
 
 ifeq ($(OS_NAME),linux)
-STRIP=$(which llvm-strip || echo "Missing strip")
+STRIP=$(which llvm-strip || which llvm-strip-13 || echo "Missing strip")
 endif
 
 

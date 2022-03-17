@@ -1822,31 +1822,23 @@ pub const Blob = struct {
         return this.store.?.slice()[this.offset..][0..this.size];
     }
 
-    pub fn setASCIIFlagIfNeeded(this: *Blob, buf: []const u8) bool {
-        var store = this.store orelse return true;
-
-        if (this.is_all_ascii != null)
-            return this.is_all_ascii.?;
-
-        const sync_with_store = this.offset == 0 and this.size == store.len;
-        if (sync_with_store) {
-            this.is_all_ascii = store.is_all_ascii;
-        }
-
-        this.is_all_ascii = this.is_all_ascii orelse strings.isAllASCII(buf);
-
-        if (sync_with_store) {
-            store.is_all_ascii = this.is_all_ascii;
-        }
-
-        return this.is_all_ascii.?;
-    }
-
     pub const Lifetime = enum {
         clone,
         transfer,
         share,
     };
+
+    pub fn setIsASCIIFlag(this: *Blob, is_all_ascii: bool) void {
+        this.is_all_ascii = is_all_ascii;
+        // if this Blob represents the entire binary data
+        // which will be pretty common
+        // we can update the store's is_all_ascii flag
+        // and any other Blob that points to the same store
+        // can skip checking the encoding
+        if (this.size > 0 and this.store != null and this.offset == 0) {
+            this.store.?.is_all_ascii = is_all_ascii;
+        }
+    }
 
     pub fn toString(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) JSValue {
         var view_: []const u8 =
@@ -1855,29 +1847,28 @@ pub const Blob = struct {
         if (view_.len == 0)
             return ZigString.Empty.toValue(global);
 
-        // TODO: use the index to make this one pass instead of two passes
         var buf = view_;
-        const is_all_ascii = this.setASCIIFlagIfNeeded(buf);
+        // null == unknown
+        // false == can't be
+        const could_be_all_ascii = this.is_all_ascii orelse this.store.?.is_all_ascii;
 
-        if (!is_all_ascii) {
-            if (strings.toUTF16Alloc(bun.default_allocator, buf, false) catch null) |external| {
+        if (could_be_all_ascii == null or !could_be_all_ascii.?) {
+            // if toUTF16Alloc returns null, it means there are no non-ASCII characters
+            // instead of erroring, invalid characters will become a U+FFFD replacement character
+            if (strings.toUTF16Alloc(bun.default_allocator, buf, false) catch unreachable) |external| {
                 if (lifetime == .transfer) {
                     this.detach();
                 }
-
+                this.setIsASCIIFlag(false);
                 return ZigString.toExternalU16(external.ptr, external.len, global);
             }
 
-            // if we get here, it means we were wrong
-            // but it generally shouldn't happen
-            this.is_all_ascii = true;
-
-            if (comptime Environment.allow_assert) {
-                unreachable;
-            }
+            this.setIsASCIIFlag(true);
         }
 
         switch (comptime lifetime) {
+            // strings are immutable
+            // we don't need to clone
             .clone => {
                 this.store.?.ref();
                 return ZigString.init(buf).external(global, this.store.?, Store.external);
@@ -1887,6 +1878,8 @@ pub const Blob = struct {
                 this.transfer();
                 return ZigString.init(buf).external(global, store, Store.external);
             },
+            // strings are immutable
+            // sharing isn't really a thing
             .share => {
                 this.store.?.ref();
                 return ZigString.init(buf).external(global, this.store.?, Store.external);
@@ -1903,20 +1896,18 @@ pub const Blob = struct {
         // TODO: use the index to make this one pass instead of two passes
         var buf = view_;
 
-        const is_all_ascii = this.setASCIIFlagIfNeeded(buf);
+        // null == unknown
+        // false == can't be
+        const could_be_all_ascii = this.is_all_ascii orelse this.store.?.is_all_ascii;
 
-        if (!is_all_ascii) {
+        if (could_be_all_ascii == null or !could_be_all_ascii.?) {
+            // if toUTF16Alloc returns null, it means there are no non-ASCII characters
             if (strings.toUTF16Alloc(bun.default_allocator, buf, false) catch null) |external| {
+                this.setIsASCIIFlag(false);
                 return ZigString.toExternalU16(external.ptr, external.len, global).parseJSON(global);
             }
 
-            // if we get here, it means we were wrong
-            // but it generally shouldn't happen
-            this.is_all_ascii = true;
-
-            if (comptime Environment.allow_assert) {
-                unreachable;
-            }
+            this.setIsASCIIFlag(true);
         }
 
         return ZigString.init(buf).toValue(

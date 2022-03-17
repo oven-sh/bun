@@ -690,17 +690,21 @@ pub const Fetch = struct {
 
                 if (options.get(ctx.ptr(), "body")) |body__| {
                     if (Blob.fromJS(ctx.ptr(), body__, true)) |new_blob| {
-                        body = MutableString{
-                            .list = std.ArrayListUnmanaged(u8){
-                                .items = bun.constStrToU8(new_blob.sharedView()),
-                                .capacity = new_blob.size,
-                            },
-                            .allocator = bun.default_allocator,
-                        };
-                        blob_store = new_blob.store;
+                        if (new_blob.size > 0) {
+                            body = MutableString{
+                                .list = std.ArrayListUnmanaged(u8){
+                                    .items = bun.constStrToU8(new_blob.sharedView()),
+                                    .capacity = new_blob.size,
+                                },
+                                .allocator = bun.default_allocator,
+                            };
+                            blob_store = new_blob.store;
+                        }
                         // transfer is unnecessary here because this is a new slice
                         //new_blob.transfer();
-                    } else |_| {}
+                    } else |_| {
+                        return JSPromise.rejectedPromiseValue(globalThis, ZigString.init("fetch() received invalid body").toErrorInstance(globalThis)).asRef();
+                    }
                 }
             }
         } else if (Request.Class.loaded and first_arg.as(Request) != null) {
@@ -1395,6 +1399,10 @@ pub const Blob = struct {
     content_type: string = "",
     content_type_allocated: bool = false,
 
+    /// JavaScriptCore strings are either latin1 or UTF-16
+    /// When UTF-16, they're nearly always due to non-ascii characters
+    is_all_ascii: ?bool = null,
+
     globalThis: *JSGlobalObject,
 
     pub const Store = struct {
@@ -1403,6 +1411,7 @@ pub const Blob = struct {
         ref_count: u32 = 0,
         cap: u32 = 0,
         allocator: std.mem.Allocator,
+        is_all_ascii: ?bool = null,
 
         pub inline fn ref(this: *Store) void {
             this.ref_count += 1;
@@ -1420,7 +1429,7 @@ pub const Blob = struct {
             return store;
         }
 
-        pub fn external(_: ?*anyopaque, ptr: ?*anyopaque, _: usize) callconv(.C) void {
+        pub fn external(ptr: ?*anyopaque, _: ?*anyopaque, _: usize) callconv(.C) void {
             if (ptr == null) return;
             var this = bun.cast(*Store, ptr);
             this.deref();
@@ -1620,6 +1629,8 @@ pub const Blob = struct {
 
         const len = @intCast(u32, @maximum(relativeEnd - relativeStart, 0));
 
+        // This copies over the is_all_ascii flag
+        // which is okay because this will only be a <= slice
         var blob = this.dupe();
         blob.offset = @intCast(u32, relativeStart);
         blob.size = len;
@@ -1689,7 +1700,11 @@ pub const Blob = struct {
                 blob = Blob.init(empty, getAllocator(ctx), ctx.ptr());
             },
             else => {
-                blob = fromJS(ctx.ptr(), JSValue.fromRef(args[0]), false) catch {
+                blob = fromJS(ctx.ptr(), JSValue.fromRef(args[0]), false) catch |err| {
+                    if (err == error.InvalidArguments) {
+                        JSC.JSError(getAllocator(ctx), "new Blob() expects an Array", .{}, ctx, exception);
+                        return null;
+                    }
                     JSC.JSError(getAllocator(ctx), "out of memory :(", .{}, ctx, exception);
                     return null;
                 };
@@ -1729,6 +1744,19 @@ pub const Blob = struct {
 
     pub fn finalize(this: *Blob) void {
         this.deinit();
+    }
+
+    pub fn initWithAllASCII(bytes: []u8, allocator: std.mem.Allocator, globalThis: *JSGlobalObject, is_all_ascii: bool) Blob {
+        var store = Blob.Store.init(bytes, allocator) catch unreachable;
+        store.is_all_ascii = is_all_ascii;
+        return Blob{
+            .size = @truncate(u32, bytes.len),
+            .store = store,
+            .allocator = null,
+            .content_type = "",
+            .globalThis = globalThis,
+            .is_all_ascii = is_all_ascii,
+        };
     }
 
     pub fn init(bytes: []u8, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) Blob {
@@ -1772,23 +1800,16 @@ pub const Blob = struct {
             store.ref();
         }
 
-        return Blob{
-            .store = this.store,
-            .size = this.size,
-            .content_type = this.content_type,
-            .globalThis = this.globalThis,
-        };
+        return this.*;
     }
 
     pub fn deinit(this: *Blob) void {
-        var blob = this.*;
+        this.detach();
 
         if (this.allocator) |alloc| {
             this.allocator = null;
             alloc.destroy(this);
         }
-
-        blob.detach();
     }
 
     pub fn sharedView(this: *const Blob) []const u8 {
@@ -1799,6 +1820,26 @@ pub const Blob = struct {
     pub fn view(this: *const Blob) []const u8 {
         if (this.size == 0 or this.store == null) return "";
         return this.store.?.slice()[this.offset..][0..this.size];
+    }
+
+    pub fn setASCIIFlagIfNeeded(this: *Blob, buf: []const u8) bool {
+        var store = this.store orelse return true;
+
+        if (this.is_all_ascii != null)
+            return this.is_all_ascii.?;
+
+        const sync_with_store = this.offset == 0 and this.size == store.len;
+        if (sync_with_store) {
+            this.is_all_ascii = store.is_all_ascii;
+        }
+
+        this.is_all_ascii = this.is_all_ascii orelse strings.isAllASCII(buf);
+
+        if (sync_with_store) {
+            store.is_all_ascii = this.is_all_ascii;
+        }
+
+        return this.is_all_ascii.?;
     }
 
     pub const Lifetime = enum {
@@ -1816,18 +1857,30 @@ pub const Blob = struct {
 
         // TODO: use the index to make this one pass instead of two passes
         var buf = view_;
-        if (!strings.isAllASCII(buf)) {
-            var external = (strings.toUTF16Alloc(bun.default_allocator, buf, false) catch null) orelse &[_]u16{};
-            if (lifetime == .transfer) {
-                this.detach();
+        const is_all_ascii = this.setASCIIFlagIfNeeded(buf);
+
+        if (!is_all_ascii) {
+            if (strings.toUTF16Alloc(bun.default_allocator, buf, false) catch null) |external| {
+                if (lifetime == .transfer) {
+                    this.detach();
+                }
+
+                return ZigString.toExternalU16(external.ptr, external.len, global);
             }
 
-            return ZigString.toExternalU16(external.ptr, external.len, global);
+            // if we get here, it means we were wrong
+            // but it generally shouldn't happen
+            this.is_all_ascii = true;
+
+            if (comptime Environment.allow_assert) {
+                unreachable;
+            }
         }
 
         switch (comptime lifetime) {
             .clone => {
-                return ZigString.init(buf).toValueGC(global);
+                this.store.?.ref();
+                return ZigString.init(buf).external(global, this.store.?, Store.external);
             },
             .transfer => {
                 var store = this.store.?;
@@ -1849,10 +1902,21 @@ pub const Blob = struct {
 
         // TODO: use the index to make this one pass instead of two passes
         var buf = view_;
-        if (!strings.isAllASCII(buf)) {
-            var external = (strings.toUTF16Alloc(bun.default_allocator, buf, false) catch null) orelse &[_]u16{};
-            defer bun.default_allocator.free(external);
-            return ZigString.toExternalU16(external.ptr, external.len, global).parseJSON(global);
+
+        const is_all_ascii = this.setASCIIFlagIfNeeded(buf);
+
+        if (!is_all_ascii) {
+            if (strings.toUTF16Alloc(bun.default_allocator, buf, false) catch null) |external| {
+                return ZigString.toExternalU16(external.ptr, external.len, global).parseJSON(global);
+            }
+
+            // if we get here, it means we were wrong
+            // but it generally shouldn't happen
+            this.is_all_ascii = true;
+
+            if (comptime Environment.allow_assert) {
+                unreachable;
+            }
         }
 
         return ZigString.init(buf).toValue(
@@ -1941,61 +2005,85 @@ pub const Blob = struct {
             return Blob{ .globalThis = global };
         }
 
-        // Fast path: one item, we don't need to join
+        var top_value = current;
+        var might_only_be_one_thing = false;
         switch (current.jsTypeLoose()) {
-            .Cell,
-            .NumberObject,
-            JSC.JSValue.JSType.String,
-            JSC.JSValue.JSType.StringObject,
-            JSC.JSValue.JSType.DerivedStringObject,
-            => {
-                var sliced = current.toSlice(global, bun.default_allocator);
-
-                if (!sliced.allocated) {
-                    sliced.ptr = @ptrCast([*]const u8, (try bun.default_allocator.dupe(u8, sliced.slice())).ptr);
-                    sliced.allocated = true;
+            .Array, .DerivedArray => {
+                var top_iter = JSC.JSArrayIterator.init(current, global);
+                might_only_be_one_thing = top_iter.len == 1;
+                if (top_iter.len == 0) {
+                    return Blob{ .globalThis = global };
                 }
-
-                return Blob.init(bun.constStrToU8(sliced.slice()), bun.default_allocator, global);
+                if (might_only_be_one_thing) {
+                    top_value = top_iter.next().?;
+                }
             },
-
-            JSC.JSValue.JSType.ArrayBuffer,
-            JSC.JSValue.JSType.Int8Array,
-            JSC.JSValue.JSType.Uint8Array,
-            JSC.JSValue.JSType.Uint8ClampedArray,
-            JSC.JSValue.JSType.Int16Array,
-            JSC.JSValue.JSType.Uint16Array,
-            JSC.JSValue.JSType.Int32Array,
-            JSC.JSValue.JSType.Uint32Array,
-            JSC.JSValue.JSType.Float32Array,
-            JSC.JSValue.JSType.Float64Array,
-            JSC.JSValue.JSType.BigInt64Array,
-            JSC.JSValue.JSType.BigUint64Array,
-            JSC.JSValue.JSType.DataView,
-            => {
-                var buf = try bun.default_allocator.dupe(u8, current.asArrayBuffer(global).?.slice());
-                return Blob.init(buf, bun.default_allocator, global);
-            },
-
             else => {
-                if (JSC.C.JSObjectGetPrivate(current.asObjectRef())) |priv| {
-                    var data = JSC.JSPrivateDataPtr.from(priv);
-                    switch (data.tag()) {
-                        .Blob => {
-                            var blob: *Blob = data.as(Blob);
-                            if (comptime move) {
-                                var _blob = blob.*;
-                                blob.transfer();
-                                return _blob;
-                            } else {
-                                return blob.dupe();
-                            }
-                        },
-
-                        else => return Blob.initEmpty(global),
-                    }
+                might_only_be_one_thing = true;
+                if (comptime !move) {
+                    return error.InvalidArguments;
                 }
             },
+        }
+
+        if (might_only_be_one_thing or !move) {
+
+            // Fast path: one item, we don't need to join
+            switch (top_value.jsTypeLoose()) {
+                .Cell,
+                .NumberObject,
+                JSC.JSValue.JSType.String,
+                JSC.JSValue.JSType.StringObject,
+                JSC.JSValue.JSType.DerivedStringObject,
+                => {
+                    var sliced = top_value.toSlice(global, bun.default_allocator);
+                    const is_all_ascii = !sliced.allocated;
+                    if (!sliced.allocated) {
+                        sliced.ptr = @ptrCast([*]const u8, (try bun.default_allocator.dupe(u8, sliced.slice())).ptr);
+                        sliced.allocated = true;
+                    }
+
+                    return Blob.initWithAllASCII(bun.constStrToU8(sliced.slice()), bun.default_allocator, global, is_all_ascii);
+                },
+
+                JSC.JSValue.JSType.ArrayBuffer,
+                JSC.JSValue.JSType.Int8Array,
+                JSC.JSValue.JSType.Uint8Array,
+                JSC.JSValue.JSType.Uint8ClampedArray,
+                JSC.JSValue.JSType.Int16Array,
+                JSC.JSValue.JSType.Uint16Array,
+                JSC.JSValue.JSType.Int32Array,
+                JSC.JSValue.JSType.Uint32Array,
+                JSC.JSValue.JSType.Float32Array,
+                JSC.JSValue.JSType.Float64Array,
+                JSC.JSValue.JSType.BigInt64Array,
+                JSC.JSValue.JSType.BigUint64Array,
+                JSC.JSValue.JSType.DataView,
+                => {
+                    var buf = try bun.default_allocator.dupe(u8, top_value.asArrayBuffer(global).?.slice());
+                    return Blob.init(buf, bun.default_allocator, global);
+                },
+
+                else => {
+                    if (JSC.C.JSObjectGetPrivate(top_value.asObjectRef())) |priv| {
+                        var data = JSC.JSPrivateDataPtr.from(priv);
+                        switch (data.tag()) {
+                            .Blob => {
+                                var blob: *Blob = data.as(Blob);
+                                if (comptime move) {
+                                    var _blob = blob.*;
+                                    blob.transfer();
+                                    return _blob;
+                                } else {
+                                    return blob.dupe();
+                                }
+                            },
+
+                            else => return Blob.initEmpty(global),
+                        }
+                    }
+                },
+            }
         }
 
         var stack_allocator = std.heap.stackFallback(1024, bun.default_allocator);
@@ -2131,7 +2219,6 @@ pub const Blob = struct {
                     }
                 },
             }
-
             current = stack.popOrNull() orelse break;
         }
 
@@ -2393,7 +2480,12 @@ pub const Body = struct {
         }
 
         body.value = .{
-            .Blob = Blob.fromJS(ctx.ptr(), value, true) catch {
+            .Blob = Blob.fromJS(ctx.ptr(), value, true) catch |err| {
+                if (err == error.InvalidArguments) {
+                    JSC.JSError(allocator, "Expected an Array", .{}, ctx, exception);
+                    return body;
+                }
+
                 JSC.JSError(allocator, "Out of memory", .{}, ctx, exception);
                 return body;
             },
@@ -2637,7 +2729,7 @@ pub const Request = struct {
         ctx: js.JSContextRef,
         _: js.JSObjectRef,
         arguments: []const js.JSValueRef,
-        _: js.ExceptionRef,
+        exception: js.ExceptionRef,
     ) js.JSObjectRef {
         var request = Request{};
 
@@ -2655,8 +2747,18 @@ pub const Request = struct {
                 }
 
                 if (JSC.JSValue.fromRef(arguments[1]).get(ctx.ptr(), "body")) |body_| {
-                    if (Blob.fromJS(ctx.ptr(), body_, true) catch null) |blob| {
-                        request.body = Body.Value{ .Blob = blob };
+                    if (Blob.fromJS(ctx.ptr(), body_, true)) |blob| {
+                        if (blob.size > 0) {
+                            request.body = Body.Value{ .Blob = blob };
+                        }
+                    } else |err| {
+                        if (err == error.InvalidArguments) {
+                            JSC.JSError(getAllocator(ctx), "Expected an Array", .{}, ctx, exception);
+                            return null;
+                        }
+
+                        JSC.JSError(getAllocator(ctx), "Invalid Body", .{}, ctx, exception);
+                        return null;
                     }
                 }
             },

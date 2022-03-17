@@ -1083,7 +1083,7 @@ pub const ESModule = struct {
 
         // If resolved contains any percent encodings of "/" or "\" ("%2f" and "%5C"
         // respectively), then throw an Invalid Module Specifier error.
-        const PercentEncoding = @import("../query_string_map.zig").PercentEncoding;
+        const PercentEncoding = @import("../url.zig").PercentEncoding;
         var fbs = std.io.fixedBufferStream(&resolved_path_buf_percent);
         var writer = fbs.writer();
         const len = PercentEncoding.decode(@TypeOf(&writer), &writer, result.path) catch return Resolution{

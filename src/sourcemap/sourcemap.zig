@@ -11,7 +11,7 @@ const strings = @import("../string_immutable.zig");
 const MutableString = @import("../string_mutable.zig").MutableString;
 const Joiner = @import("../string_joiner.zig");
 const JSPrinter = @import("../js_printer.zig");
-const URL = @import("../query_string_map.zig").URL;
+const URL = @import("../url.zig").URL;
 const FileSystem = @import("../fs.zig").FileSystem;
 
 const SourceMap = @This();

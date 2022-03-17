@@ -2032,3 +2032,216 @@ pub const JSPropertyNameIterator = struct {
         return js.JSPropertyNameArrayGetNameAtIndex(this.array, i);
     }
 };
+
+pub fn getterWrap(comptime Container: type, comptime name: string) GetterType(Container) {
+    return struct {
+        const FunctionType = @TypeOf(@field(Container, name));
+        const FunctionTypeInfo: std.builtin.TypeInfo.Fn = @typeInfo(FunctionType).Fn;
+
+        pub fn callback(
+            this: *Container,
+            ctx: js.JSContextRef,
+            _: js.JSObjectRef,
+            _: js.JSStringRef,
+            exception: js.ExceptionRef,
+        ) js.JSObjectRef {
+            const result: JSValue = @call(.{}, @field(Container, name), .{ this, ctx.ptr() });
+            if (!result.isUndefinedOrNull() and result.isError()) {
+                exception.* = result.asObjectRef();
+                return null;
+            }
+
+            return result.asObjectRef();
+        }
+    }.callback;
+}
+
+pub fn setterWrap(comptime Container: type, comptime name: string) SetterType(Container) {
+    return struct {
+        const FunctionType = @TypeOf(@field(Container, name));
+        const FunctionTypeInfo: std.builtin.TypeInfo.Fn = @typeInfo(FunctionType).Fn;
+
+        pub fn callback(
+            this: *Container,
+            ctx: js.JSContextRef,
+            _: js.JSObjectRef,
+            _: js.JSStringRef,
+            value: js.JSValueRef,
+            exception: js.ExceptionRef,
+        ) bool {
+            @call(.{}, @field(Container, name), .{ this, JSC.JSValue.fromRef(value), exception, ctx.ptr() });
+            return exception.* == null;
+        }
+    }.callback;
+}
+
+fn GetterType(comptime Container: type) type {
+    return fn (
+        this: *Container,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        exception: js.ExceptionRef,
+    ) js.JSObjectRef;
+}
+
+fn SetterType(comptime Container: type) type {
+    return fn (
+        this: *Container,
+        ctx: js.JSContextRef,
+        obj: js.JSObjectRef,
+        prop: js.JSStringRef,
+        value: js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) bool;
+}
+
+fn MethodType(comptime Container: type) type {
+    return fn (
+        this: *Container,
+        ctx: js.JSContextRef,
+        thisObject: js.JSObjectRef,
+        target: js.JSObjectRef,
+        args: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSObjectRef;
+}
+
+pub fn wrapSync(
+    comptime Container: type,
+    comptime name: string,
+) MethodType(Container) {
+    return wrap(Container, name, false);
+}
+
+pub fn wrapAsync(
+    comptime Container: type,
+    comptime name: string,
+) MethodType(Container) {
+    return wrap(Container, name, true);
+}
+
+pub fn wrap(
+    comptime Container: type,
+    comptime name: string,
+    comptime maybe_async: bool,
+) MethodType(Container) {
+    return struct {
+        const FunctionType = @TypeOf(@field(Container, name));
+        const FunctionTypeInfo: std.builtin.TypeInfo.Fn = @typeInfo(FunctionType).Fn;
+
+        pub fn callback(
+            this: *Container,
+            ctx: js.JSContextRef,
+            _: js.JSObjectRef,
+            thisObject: js.JSObjectRef,
+            arguments: []const js.JSValueRef,
+            exception: js.ExceptionRef,
+        ) js.JSObjectRef {
+            var iter = JSC.Node.ArgumentsSlice.from(arguments);
+            var args: std.meta.ArgsTuple(FunctionType) = undefined;
+
+            comptime var i: usize = 0;
+            inline while (i < FunctionTypeInfo.args.len) : (i += 1) {
+                const ArgType = comptime FunctionTypeInfo.args[i].arg_type.?;
+
+                switch (comptime ArgType) {
+                    *Container => {
+                        args[i] = this;
+                    },
+                    *JSC.JSGlobalObject => {
+                        args[i] = ctx.ptr();
+                    },
+                    ZigString => {
+                        var string_value = iter.nextEat() orelse {
+                            JSC.throwInvalidArguments("Missing argument", .{}, ctx, exception);
+                            return null;
+                        };
+
+                        if (string_value.isUndefinedOrNull()) {
+                            JSC.throwInvalidArguments("Expected string", .{}, ctx, exception);
+                            return null;
+                        }
+
+                        args[i] = string_value.getZigString(ctx.ptr());
+                    },
+                    ?JSC.Cloudflare.ContentOptions => {
+                        if (iter.nextEat()) |content_arg| {
+                            if (content_arg.get(ctx.ptr(), "html")) |html_val| {
+                                args[i] = .{ .html = html_val.toBoolean() };
+                            }
+                        } else {
+                            args[i] = null;
+                        }
+                    },
+                    *Response => {
+                        args[i] = (iter.nextEat() orelse {
+                            JSC.throwInvalidArguments("Missing Response object", .{}, ctx, exception);
+                            return null;
+                        }).as(Response) orelse {
+                            JSC.throwInvalidArguments("Expected Response object", .{}, ctx, exception);
+                            return null;
+                        };
+                    },
+                    *Request => {
+                        args[i] = (iter.nextEat() orelse {
+                            JSC.throwInvalidArguments("Missing Request object", .{}, ctx, exception);
+                            return null;
+                        }).as(Request) orelse {
+                            JSC.throwInvalidArguments("Expected Request object", .{}, ctx, exception);
+                            return null;
+                        };
+                    },
+                    js.JSObjectRef => {
+                        args[i] = thisObject;
+                        if (!JSValue.fromRef(thisObject).isCell() or !JSValue.fromRef(thisObject).isObject()) {
+                            JSC.throwInvalidArguments("Expected object", .{}, ctx, exception);
+                            return null;
+                        }
+                    },
+                    js.ExceptionRef => {
+                        args[i] = exception;
+                    },
+                    JSValue => {
+                        const val = iter.nextEat() orelse {
+                            JSC.throwInvalidArguments("Missing argument", .{}, ctx, exception);
+                            return null;
+                        };
+                        args[i] = val;
+                    },
+                    else => @compileError("Unexpected Type " ++ @typeName(ArgType)),
+                }
+            }
+
+            var result: JSValue = @call(.{}, @field(Container, name), args);
+            if (result.isError()) {
+                exception.* = result.asObjectRef();
+                return null;
+            }
+
+            JavaScript.VirtualMachine.vm.tick();
+
+            if (maybe_async) {
+                var promise = JSC.JSInternalPromise.resolvedPromise(ctx.ptr(), result);
+
+                switch (promise.status(ctx.ptr().vm())) {
+                    JSC.JSPromise.Status.Pending => {
+                        while (promise.status(ctx.ptr().vm()) == .Pending) {
+                            JavaScript.VirtualMachine.vm.tick();
+                        }
+                        result = promise.result(ctx.ptr().vm());
+                    },
+                    JSC.JSPromise.Status.Rejected => {
+                        result = promise.result(ctx.ptr().vm());
+                        exception.* = result.asObjectRef();
+                    },
+                    JSC.JSPromise.Status.Fulfilled => {
+                        result = promise.result(ctx.ptr().vm());
+                    },
+                }
+            }
+
+            return result.asObjectRef();
+        }
+    }.callback;
+}

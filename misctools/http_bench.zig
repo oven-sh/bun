@@ -11,7 +11,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const clap = @import("../src/deps/zig-clap/clap.zig");
 
-const URL = @import("../src/query_string_map.zig").URL;
+const URL = @import("../src/url.zig").URL;
 const Headers = @import("../src/javascript/jsc/webcore/response.zig").Headers;
 const Method = @import("../src/http/method.zig").Method;
 const ColonListType = @import("../src/cli/colon_list_type.zig").ColonListType;

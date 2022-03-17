@@ -9,6 +9,7 @@ pub const C = @import("./javascript/jsc/javascript_core_c_api.zig");
 pub const WebCore = @import("./javascript/jsc/webcore.zig");
 pub const Cloudflare = struct {
     pub const HTMLRewriter = @import("./javascript/jsc/api/html_rewriter.zig").HTMLRewriter;
+    pub const ContentOptions = @import("./javascript/jsc/api/html_rewriter.zig").ContentOptions;
     pub const Element = @import("./javascript/jsc/api/html_rewriter.zig").Element;
     pub const Comment = @import("./javascript/jsc/api/html_rewriter.zig").Comment;
     pub const TextChunk = @import("./javascript/jsc/api/html_rewriter.zig").TextChunk;

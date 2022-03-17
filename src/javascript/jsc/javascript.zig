@@ -81,7 +81,7 @@ const ZigGlobalObject = @import("../../jsc.zig").ZigGlobalObject;
 const VM = @import("../../jsc.zig").VM;
 const JSFunction = @import("../../jsc.zig").JSFunction;
 const Config = @import("./config.zig");
-const URL = @import("../../query_string_map.zig").URL;
+const URL = @import("../../url.zig").URL;
 const Transpiler = @import("./api/transpiler.zig");
 pub const GlobalClasses = [_]type{
     Request.Class,

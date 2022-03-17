@@ -3,7 +3,7 @@ const Api = @import("../../../api/schema.zig").Api;
 const bun = @import("../../../global.zig");
 const RequestContext = @import("../../../http.zig").RequestContext;
 const MimeType = @import("../../../http.zig").MimeType;
-const ZigURL = @import("../../../query_string_map.zig").URL;
+const ZigURL = @import("../../../url.zig").URL;
 const HTTPClient = @import("http");
 const NetworkThread = HTTPClient.NetworkThread;
 

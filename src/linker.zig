@@ -35,7 +35,7 @@ const Bundler = _bundler.Bundler;
 const ResolveQueue = _bundler.ResolveQueue;
 const ResolverType = Resolver.Resolver;
 const Runtime = @import("./runtime.zig").Runtime;
-const URL = @import("query_string_map.zig").URL;
+const URL = @import("url.zig").URL;
 pub const CSSResolveError = error{ResolveError};
 
 pub const OnImportCallback = fn (resolve_result: *const Resolver.Result, import_record: *ImportRecord, origin: URL) void;

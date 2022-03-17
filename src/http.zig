@@ -75,7 +75,7 @@ const JavaScript = @import("javascript_core");
 const JavaScriptCore = JavaScriptCore.C;
 const Router = @import("./router.zig");
 pub const Watcher = watcher.NewWatcher(*Server);
-const ZigURL = @import("./query_string_map.zig").URL;
+const ZigURL = @import("./url.zig").URL;
 
 const HTTPStatusCode = u10;
 const URLPath = @import("./http/url_path.zig");

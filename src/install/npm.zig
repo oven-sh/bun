@@ -1,4 +1,4 @@
-const URL = @import("../query_string_map.zig").URL;
+const URL = @import("../url.zig").URL;
 const std = @import("std");
 const MutableString = @import("../string_mutable.zig").MutableString;
 const Semver = @import("./semver.zig");

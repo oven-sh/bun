@@ -743,6 +743,10 @@ JSC__JSValue ZigString__to16BitValue(const ZigString* arg0, JSC__JSGlobalObject*
 
 static void free_global_string(void* str, void* ptr, unsigned len)
 {
+    // i don't understand why this happens
+    if (ptr == nullptr)
+        return;
+
     ZigString__free_global(reinterpret_cast<const unsigned char*>(ptr), len);
 }
 

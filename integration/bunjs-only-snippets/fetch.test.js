@@ -29,110 +29,145 @@ describe("fetch", () => {
 
 function testBlobInterface(blobbyConstructor, hasBlobFn) {
   for (let withGC of [false, true]) {
-    it(`json${withGC ? " (with gc) " : ""}`, async () => {
-      if (withGC) gc();
-      var response = blobbyConstructor(JSON.stringify({ hello: true }));
-      if (withGC) gc();
-      expect(JSON.stringify(await response.json())).toBe(
-        JSON.stringify({ hello: true })
-      );
-      if (withGC) gc();
-    });
-
-    it(`arrayBuffer -> json${withGC ? " (with gc) " : ""}`, async () => {
-      if (withGC) gc();
-      var response = blobbyConstructor(
-        new TextEncoder().encode(JSON.stringify({ hello: true }))
-      );
-      if (withGC) gc();
-      expect(JSON.stringify(await response.json())).toBe(
-        JSON.stringify({ hello: true })
-      );
-      if (withGC) gc();
-    });
-
-    it(`text${withGC ? " (with gc) " : ""}`, async () => {
-      if (withGC) gc();
-      var response = blobbyConstructor(JSON.stringify({ hello: true }));
-      if (withGC) gc();
-      expect(await response.text()).toBe(JSON.stringify({ hello: true }));
-      if (withGC) gc();
-    });
-
-    it(`arrayBuffer -> text${withGC ? " (with gc) " : ""}`, async () => {
-      if (withGC) gc();
-      var response = blobbyConstructor(
-        new TextEncoder().encode(JSON.stringify({ hello: true }))
-      );
-      if (withGC) gc();
-      expect(await response.text()).toBe(JSON.stringify({ hello: true }));
-      if (withGC) gc();
-    });
-
-    it(`arrayBuffer${withGC ? " (with gc) " : ""}`, async () => {
-      if (withGC) gc();
-
-      var response = blobbyConstructor(JSON.stringify({ hello: true }));
-      if (withGC) gc();
-
-      const bytes = new TextEncoder().encode(JSON.stringify({ hello: true }));
-      if (withGC) gc();
-
-      const compare = new Uint8Array(await response.arrayBuffer());
-      if (withGC) gc();
-
-      for (let i = 0; i < compare.length; i++) {
+    for (let jsonObject of [
+      { hello: true },
+      {
+        hello:
+          "😀 😃 😄 😁 😆 😅 😂 🤣 🥲 ☺️ 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳",
+      },
+    ]) {
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} json${
+        withGC ? " (with gc) " : ""
+      }`, async () => {
         if (withGC) gc();
-
-        expect(compare[i]).toBe(bytes[i]);
+        var response = blobbyConstructor(JSON.stringify(jsonObject));
         if (withGC) gc();
-      }
-      if (withGC) gc();
-    });
-
-    it(`arrayBuffer -> arrayBuffer${withGC ? " (with gc) " : ""}`, async () => {
-      if (withGC) gc();
-
-      var response = blobbyConstructor(
-        new TextEncoder().encode(JSON.stringify({ hello: true }))
-      );
-      if (withGC) gc();
-
-      const bytes = new TextEncoder().encode(JSON.stringify({ hello: true }));
-      if (withGC) gc();
-
-      const compare = new Uint8Array(await response.arrayBuffer());
-      if (withGC) gc();
-
-      for (let i = 0; i < compare.length; i++) {
-        if (withGC) gc();
-
-        expect(compare[i]).toBe(bytes[i]);
-        if (withGC) gc();
-      }
-      if (withGC) gc();
-    });
-
-    hasBlobFn &&
-      it(`blob${withGC ? " (with gc) " : ""}`, async () => {
-        if (withGC) gc();
-        var response = blobbyConstructor(JSON.stringify({ hello: true }));
-        if (withGC) gc();
-        const size = JSON.stringify({ hello: true }).length;
-        if (withGC) gc();
-        const blobed = await response.blob();
-        if (withGC) gc();
-        expect(blobed instanceof Blob).toBe(true);
-        if (withGC) gc();
-        expect(blobed.size).toBe(size);
-        if (withGC) gc();
-        expect(blobed.type).toBe("");
-        if (withGC) gc();
-        blobed.type = "application/json";
-        if (withGC) gc();
-        expect(blobed.type).toBe("application/json");
+        expect(JSON.stringify(await response.json())).toBe(
+          JSON.stringify(jsonObject)
+        );
         if (withGC) gc();
       });
+
+      it(`${
+        jsonObject.hello === true ? "latin1" : "utf16"
+      } arrayBuffer -> json${withGC ? " (with gc) " : ""}`, async () => {
+        if (withGC) gc();
+        var response = blobbyConstructor(
+          new TextEncoder().encode(JSON.stringify(jsonObject))
+        );
+        if (withGC) gc();
+        expect(JSON.stringify(await response.json())).toBe(
+          JSON.stringify(jsonObject)
+        );
+        if (withGC) gc();
+      });
+
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} text${
+        withGC ? " (with gc) " : ""
+      }`, async () => {
+        if (withGC) gc();
+        var response = blobbyConstructor(JSON.stringify(jsonObject));
+        if (withGC) gc();
+        expect(await response.text()).toBe(JSON.stringify(jsonObject));
+        if (withGC) gc();
+      });
+
+      it(`${
+        jsonObject.hello === true ? "latin1" : "utf16"
+      } arrayBuffer -> text${withGC ? " (with gc) " : ""}`, async () => {
+        if (withGC) gc();
+        var response = blobbyConstructor(
+          new TextEncoder().encode(JSON.stringify(jsonObject))
+        );
+        if (withGC) gc();
+        expect(await response.text()).toBe(JSON.stringify(jsonObject));
+        if (withGC) gc();
+      });
+
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer${
+        withGC ? " (with gc) " : ""
+      }`, async () => {
+        if (withGC) gc();
+
+        var response = blobbyConstructor(JSON.stringify(jsonObject));
+        if (withGC) gc();
+
+        const bytes = new TextEncoder().encode(JSON.stringify(jsonObject));
+        if (withGC) gc();
+
+        const compare = new Uint8Array(await response.arrayBuffer());
+        if (withGC) gc();
+
+        for (let i = 0; i < compare.length; i++) {
+          if (withGC) gc();
+
+          expect(compare[i]).toBe(bytes[i]);
+          if (withGC) gc();
+        }
+        if (withGC) gc();
+      });
+
+      it(`${
+        jsonObject.hello === true ? "latin1" : "utf16"
+      } arrayBuffer -> arrayBuffer${withGC ? " (with gc) " : ""}`, async () => {
+        if (withGC) gc();
+
+        var response = blobbyConstructor(
+          new TextEncoder().encode(JSON.stringify(jsonObject))
+        );
+        if (withGC) gc();
+
+        const bytes = new TextEncoder().encode(JSON.stringify(jsonObject));
+        if (withGC) gc();
+
+        const compare = new Uint8Array(await response.arrayBuffer());
+        if (withGC) gc();
+
+        for (let i = 0; i < compare.length; i++) {
+          if (withGC) gc();
+
+          expect(compare[i]).toBe(bytes[i]);
+          if (withGC) gc();
+        }
+        if (withGC) gc();
+      });
+
+      hasBlobFn &&
+        it(`${jsonObject.hello === true ? "latin1" : "utf16"} blob${
+          withGC ? " (with gc) " : ""
+        }`, async () => {
+          if (withGC) gc();
+          const text = JSON.stringify(jsonObject);
+          var response = blobbyConstructor(text);
+          if (withGC) gc();
+          const size = new TextEncoder().encode(text).byteLength;
+          if (withGC) gc();
+          const blobed = await response.blob();
+          if (withGC) gc();
+          expect(blobed instanceof Blob).toBe(true);
+          if (withGC) gc();
+          expect(blobed.size).toBe(size);
+          if (withGC) gc();
+          expect(blobed.type).toBe("");
+          if (withGC) gc();
+          blobed.type = "application/json";
+          if (withGC) gc();
+          expect(blobed.type).toBe("application/json");
+          if (withGC) gc();
+          const out = await blobed.text();
+          expect(out).toBe(text);
+          if (withGC) gc();
+          await new Promise((resolve) => setTimeout(resolve, 1));
+          if (withGC) gc();
+          expect(out).toBe(text);
+          const first = await blobed.arrayBuffer();
+          const initial = first[0];
+          first[0] = 254;
+          const second = await blobed.arrayBuffer();
+          expect(second[0]).toBe(initial);
+          expect(first[0]).toBe(254);
+        });
+    }
   }
 }
 
@@ -148,6 +183,18 @@ describe("Blob", () => {
     [Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 9])],
     [Uint8Array.from([1, 2, 3, 4]), "5678", 9],
     [new Blob([Uint8Array.from([1, 2, 3, 4])]), "5678", 9],
+    [
+      new Blob([
+        new TextEncoder().encode(
+          "😀 😃 😄 😁 😆 😅 😂 🤣 🥲 ☺️ 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳"
+        ),
+      ]),
+    ],
+    [
+      new TextEncoder().encode(
+        "😀 😃 😄 😁 😆 😅 😂 🤣 🥲 ☺️ 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳"
+      ),
+    ],
   ];
 
   var expected = [
@@ -159,6 +206,8 @@ describe("Blob", () => {
     "\x01\x02\x03\x04\x05\x06\x07\t",
     "\x01\x02\x03\x0456789",
     "\x01\x02\x03\x0456789",
+    "😀 😃 😄 😁 😆 😅 😂 🤣 🥲 ☺️ 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳",
+    "😀 😃 😄 😁 😆 😅 😂 🤣 🥲 ☺️ 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳",
   ];
 
   it(`blobConstructorValues`, async () => {

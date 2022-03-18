@@ -53,15 +53,14 @@ const first_low_surrogate = 0xDC00;
 const last_low_surrogate = 0xDFFF;
 const CodepointIterator = @import("./string_immutable.zig").UnsignedCodepointIterator;
 const assert = std.debug.assert;
-const ascii_only_always_on_unless_minifying = true;
+
 threadlocal var imported_module_ids_list: std.ArrayList(u32) = undefined;
 threadlocal var imported_module_ids_list_unset: bool = true;
 const ImportRecord = importRecord.ImportRecord;
 const SourceMap = @import("./sourcemap/sourcemap.zig");
 
-fn notimpl() void {
-    Global.panic("Not implemented yet!", .{});
-}
+/// For support JavaScriptCore
+const ascii_only_always_on_unless_minifying = true;
 
 fn formatUnsignedIntegerBetween(comptime len: u16, buf: *[len]u8, val: u64) void {
     comptime var i: u16 = len;
@@ -1405,7 +1404,7 @@ pub fn NewPrinter(
         pub inline fn canPrintIdentifier(_: *Printer, name: string) bool {
             if (comptime is_json) return false;
 
-            if (comptime ascii_only) {
+            if (comptime ascii_only or ascii_only_always_on_unless_minifying) {
                 return js_lexer.isLatin1Identifier(string, name);
             } else {
                 return js_lexer.isIdentifier(name);
@@ -1413,7 +1412,7 @@ pub fn NewPrinter(
         }
 
         pub inline fn canPrintIdentifierUTF16(_: *Printer, name: []const u16) bool {
-            if (comptime ascii_only) {
+            if (comptime ascii_only or ascii_only_always_on_unless_minifying) {
                 return js_lexer.isLatin1Identifier([]const u16, name);
             } else {
                 return js_lexer.isIdentifierUTF16(name);

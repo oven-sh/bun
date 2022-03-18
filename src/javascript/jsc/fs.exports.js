@@ -157,6 +157,13 @@ export var lutimesSync = fs.lutimesSync.bind(fs);
 export var createReadStream = fs.createReadStream.bind(fs);
 export var createWriteStream = fs.createWriteStream.bind(fs);
 
+// todo: rest of these
+export var constants = {
+  COPYFILE_EXCL: 1 << 1,
+  COPYFILE_FICLONE: 1 << 2,
+  COPYFILE_FICLONE_FORCE: 1 << 4,
+};
+
 // lol
 realpath.native = realpath;
 realpathSync.native = realpathSync;
@@ -232,4 +239,5 @@ export default {
   lutimesSync,
   createReadStream,
   createWriteStream,
+  constants,
 };

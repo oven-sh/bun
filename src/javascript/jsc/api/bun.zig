@@ -820,6 +820,7 @@ pub fn getPublicPathJS(
     var stream = std.io.fixedBufferStream(&public_path_temp_str);
     var writer = stream.writer();
     getPublicPath(to, VirtualMachine.vm.origin, @TypeOf(&writer), &writer);
+
     return ZigString.init(stream.buffer[0..stream.pos]).toValueGC(ctx.ptr()).asObjectRef();
 }
 
@@ -921,14 +922,17 @@ pub const Class = NewClass(
                 .name = "registerMacro",
                 .@"return" = "undefined",
             },
+            .enumerable = false,
         },
         .fs = .{
             .rfn = Bun.createNodeFS,
             .ts = d.ts{},
+            .enumerable = false,
         },
         .jest = .{
             .rfn = @import("../test/jest.zig").Jest.call,
             .ts = d.ts{},
+            .enumerable = false,
         },
         .gc = .{
             .rfn = Bun.runGC,
@@ -995,11 +999,14 @@ pub const Class = NewClass(
 pub fn getTranspilerConstructor(
     _: void,
     ctx: js.JSContextRef,
-    _: js.JSValueRef,
+    this: js.JSValueRef,
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    return js.JSObjectMake(ctx, Transpiler.TranspilerConstructor.get().?[0], null);
+    var value = Transpiler.Constructor.constructor(ctx);
+    JSC.JSValue.fromRef(this).put(ctx.ptr(), &ZigString.init("Transpiler"), JSC.JSValue.fromRef(value));
+
+    return value;
 }
 
 pub fn getTOMLObject(

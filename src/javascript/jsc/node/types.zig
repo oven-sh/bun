@@ -691,7 +691,7 @@ pub const Date = enum(u64) {
     }
 };
 
-fn StatsLike(comptime name: string, comptime T: type) type {
+fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
     return struct {
         const This = @This();
 

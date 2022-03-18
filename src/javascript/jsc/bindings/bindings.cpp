@@ -1413,6 +1413,12 @@ bool JSC__JSValue__isBoolean(JSC__JSValue JSValue0)
     return JSC::JSValue::decode(JSValue0).isBoolean();
 }
 
+void JSC__JSValue__put(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, const ZigString* arg2, JSC__JSValue JSValue3)
+{
+    JSC::JSObject* object = JSC::JSValue::decode(JSValue0).asCell()->getObject();
+    object->putDirect(arg1->vm(), Zig::toIdentifier(*arg2, arg1), JSC::JSValue::decode(JSValue3));
+}
+
 bool JSC__JSValue__isClass(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);

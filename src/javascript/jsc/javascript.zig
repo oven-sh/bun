@@ -84,10 +84,18 @@ const Config = @import("./config.zig");
 const URL = @import("../../url.zig").URL;
 const Transpiler = @import("./api/transpiler.zig");
 const Bun = JSC.API.Bun;
+
+pub const GlobalConstructors = [_]type{
+    WebCore.Blob.Constructor,
+    WebCore.TextDecoder.Constructor,
+    WebCore.TextEncoder.Constructor,
+    Request.Constructor,
+    Response.Constructor,
+    Headers.Constructor,
+    JSC.Cloudflare.HTMLRewriter.Constructor,
+};
+
 pub const GlobalClasses = [_]type{
-    Request.Class,
-    Response.Class,
-    Headers.Class,
     EventListenerMixin.addEventListener(VirtualMachine),
     BuildError.Class,
     ResolveError.Class,
@@ -98,12 +106,6 @@ pub const GlobalClasses = [_]type{
 
     WebCore.Crypto.Class,
     WebCore.Crypto.Prototype,
-
-    WebCore.TextEncoder.Constructor.Class,
-    WebCore.TextDecoder.Constructor.Class,
-
-    JSC.Cloudflare.HTMLRewriter.Class,
-    WebCore.Blob.Class,
 
     // The last item in this array becomes "process.env"
     Bun.EnvironmentVariables.Class,
@@ -432,6 +434,7 @@ pub const SavedSourceMap = struct {
 pub const VirtualMachine = struct {
     global: *JSGlobalObject,
     allocator: std.mem.Allocator,
+    has_loaded_constructors: bool = false,
     node_modules: ?*NodeModuleBundle = null,
     bundler: Bundler,
     watcher: ?*http.Watcher = null,
@@ -463,6 +466,7 @@ pub const VirtualMachine = struct {
     is_from_devserver: bool = false,
     has_enabled_macro_mode: bool = false,
     argv: []const []const u8 = &[_][]const u8{"bun"},
+    global_api_constructors: [GlobalConstructors.len]JSC.JSValue = undefined,
 
     origin_timer: std.time.Timer = undefined,
     active_tasks: usize = 0,
@@ -653,6 +657,25 @@ pub const VirtualMachine = struct {
         }
 
         return classes;
+    }
+
+    pub fn getAPIConstructors(globalObject: *JSGlobalObject) []const JSC.JSValue {
+        if (is_bindgen)
+            return &[_]JSC.JSValue{};
+        if (!VirtualMachine.vm.has_loaded_constructors) {
+            VirtualMachine.vm.global = globalObject;
+            VirtualMachine.vm.has_loaded_constructors = true;
+        }
+
+        inline for (GlobalConstructors) |Class, i| {
+            var ref = Class.constructor(globalObject.ref()).?;
+            JSC.C.JSValueProtect(globalObject.ref(), ref);
+            JSC.VirtualMachine.vm.global_api_constructors[i] = JSC.JSValue.fromRef(
+                ref,
+            );
+        }
+
+        return &JSC.VirtualMachine.vm.global_api_constructors;
     }
 
     pub fn init(

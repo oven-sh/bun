@@ -199,6 +199,7 @@ const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject", &Base::s_info, nul
     CREATE_METHOD_TABLE(GlobalObject) };
 
 extern "C" JSClassRef* Zig__getAPIGlobals(size_t* count);
+extern "C" const JSC__JSValue* Zig__getAPIConstructors(size_t* count, JSC__JSGlobalObject*);
 
 static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject)
 {
@@ -214,6 +215,22 @@ static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObjec
     }
 
     return shadow;
+}
+
+extern "C" JSC__JSValue JSC__JSValue__makeWithNameAndPrototype(JSC__JSGlobalObject* globalObject, void* arg1, void* arg2, const ZigString* visibleInterfaceName)
+{
+    auto& vm = globalObject->vm();
+    JSClassRef jsClass = reinterpret_cast<JSClassRef>(arg1);
+    JSClassRef protoClass = reinterpret_cast<JSClassRef>(arg2);
+    JSObjectRef objectRef = JSObjectMake(reinterpret_cast<JSContextRef>(globalObject), jsClass, nullptr);
+    JSC::JSObject* object = JSC::JSValue::decode(reinterpret_cast<JSC__JSValue>(objectRef)).getObject();
+    JSString* nameString = JSC::jsNontrivialString(vm, Zig::toString(*visibleInterfaceName));
+    object->putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
+    object->putDirect(vm, vm.propertyNames->toStringTagSymbol,
+        nameString, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
+    object->putDirect(vm, vm.propertyNames->prototype, JSC::JSValue::decode(reinterpret_cast<JSC__JSValue>(JSObjectMake(reinterpret_cast<JSContextRef>(globalObject), protoClass, nullptr))), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+
+    return JSC::JSValue::encode(JSC::JSValue(object));
 }
 
 const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
@@ -562,16 +579,29 @@ static JSC_DEFINE_HOST_FUNCTION(functionReportError,
 // and any other objects available globally.
 void GlobalObject::installAPIGlobals(JSClassRef* globals, int count)
 {
-    WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
-    extraStaticGlobals.reserveCapacity((size_t)count + 3 + 9);
 
+    auto clientData = Bun::clientData(vm());
+    size_t constructor_count = 0;
+    JSC__JSValue const* constructors = Zig__getAPIConstructors(&constructor_count, this);
+    WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
+    extraStaticGlobals.reserveCapacity((size_t)count + constructor_count + 3 + 9);
     int i = 0;
-    for (; i < count - 1; i++) {
-        auto jsClass = globals[i];
+    for (; i < constructor_count; i++) {
+        auto* object = JSC::jsDynamicCast<JSC::JSCallbackObject<JSNonFinalObject>*>(vm(), JSC::JSValue::decode(constructors[i]).asCell()->getObject());
+        if (JSObject* prototype = object->classRef()->prototype(this))
+            object->setPrototypeDirect(vm(), prototype);
+
+        extraStaticGlobals.uncheckedAppend(
+            GlobalPropertyInfo { JSC::Identifier::fromString(vm(), object->get(this, vm().propertyNames->name).toWTFString(this)),
+                JSC::JSValue(object), JSC::PropertyAttribute::DontDelete | 0 });
+    }
+    int j = 0;
+    for (; j < count - 1; j++) {
+        auto jsClass = globals[j];
 
         JSC::JSCallbackObject<JSNonFinalObject>* object = JSC::JSCallbackObject<JSNonFinalObject>::create(this, this->callbackObjectStructure(),
             jsClass, nullptr);
-        if (JSObject* prototype = jsClass->prototype(this))
+        if (JSObject* prototype = object->classRef()->prototype(this))
             object->setPrototypeDirect(vm(), prototype);
 
         extraStaticGlobals.uncheckedAppend(
@@ -581,7 +611,7 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count)
 
     // The last one must be "process.env"
     // Runtime-support is for if they change
-    dot_env_class_ref = globals[i];
+    dot_env_class_ref = globals[j];
 
     // // The last one must be "process.env"
     // // Runtime-support is for if they change
@@ -652,8 +682,6 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count)
             JSC::JSFunction::create(vm(), JSC::jsCast<JSC::JSGlobalObject*>(this), 0,
                 "reportError", functionReportError),
             JSC::PropertyAttribute::DontDelete | 0 });
-
-    auto clientData = Bun::clientData(vm());
 
     this->addStaticGlobals(extraStaticGlobals.data(), extraStaticGlobals.size());
     putDirectCustomAccessor(

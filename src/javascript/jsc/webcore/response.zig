@@ -42,11 +42,17 @@ const JSPrinter = @import("../../../js_printer.zig");
 const picohttp = @import("picohttp");
 const StringJoiner = @import("../../../string_joiner.zig");
 pub const Response = struct {
+    pub const Constructor = JSC.NewConstructor(
+        Response,
+        .{
+            .@"constructor" = constructor,
+        },
+        .{},
+    );
     pub const Class = NewClass(
         Response,
         .{ .name = "Response" },
         .{
-            .@"constructor" = constructor,
             .@"finalize" = finalize,
             .@"text" = .{
                 .rfn = Response.getText,
@@ -707,8 +713,7 @@ pub const Fetch = struct {
                     }
                 }
             }
-        } else if (Request.Class.loaded and first_arg.as(Request) != null) {
-            var request = first_arg.as(Request).?;
+        } else if (first_arg.asCheckLoaded(Request)) |request| {
             url = ZigURL.parse(request.url.dupe(getAllocator(ctx)) catch unreachable);
             method = request.method;
             if (request.headers) |head| {
@@ -1052,6 +1057,16 @@ pub const Headers = struct {
             this.deref();
         }
     };
+    pub const Constructor = JSC.NewConstructor(
+        Headers,
+        .{
+            .@"constructor" = .{
+                .rfn = JS.constructor,
+                .ts = d.ts{},
+            },
+        },
+        .{},
+    );
     pub const Class = NewClass(
         RefCountedHeaders,
         .{
@@ -1086,10 +1101,7 @@ pub const Headers = struct {
                 .rfn = JS.values,
                 .ts = d.ts{},
             },
-            .@"constructor" = .{
-                .rfn = JS.constructor,
-                .ts = d.ts{},
-            },
+
             .@"finalize" = .{
                 .rfn = JS.finalize,
             },
@@ -1484,11 +1496,18 @@ pub const Blob = struct {
         }
     };
 
+    pub const Constructor = JSC.NewConstructor(
+        Blob,
+        .{
+            .constructor = .{ .rfn = constructor },
+        },
+        .{},
+    );
+
     pub const Class = NewClass(
         Blob,
         .{ .name = "Blob" },
         .{
-            .constructor = constructor,
             .finalize = finalize,
             .text = .{
                 .rfn = getText,
@@ -2530,13 +2549,21 @@ pub const Request = struct {
         }
     }
 
+    pub const Constructor = JSC.NewConstructor(
+        Request,
+        .{
+            .constructor = .{ .rfn = constructor },
+        },
+        .{},
+    );
+
     pub const Class = NewClass(
         Request,
         .{
             .name = "Request",
             .read_only = true,
         },
-        .{ .finalize = finalize, .constructor = constructor, .text = .{
+        .{ .finalize = finalize, .text = .{
             .rfn = Request.getText,
         }, .json = .{
             .rfn = Request.getJSON,
@@ -2977,7 +3004,7 @@ pub const FetchEvent = struct {
         var globalThis = ctx.ptr();
 
         // A Response or a Promise that resolves to a Response. Otherwise, a network error is returned to Fetch.
-        if (arguments.len == 0 or !Response.Class.loaded or !js.JSValueIsObject(ctx, arguments[0])) {
+        if (arguments.len == 0 or !Response.Class.isLoaded() or !js.JSValueIsObject(ctx, arguments[0])) {
             JSError(getAllocator(ctx), "event.respondWith() must be a Response or a Promise<Response>.", .{}, ctx, exception);
             request_context.sendInternalError(error.respondWithWasEmpty) catch {};
             return js.JSValueMakeUndefined(ctx);
@@ -2985,7 +3012,7 @@ pub const FetchEvent = struct {
 
         var arg = arguments[0];
 
-        if (!js.JSValueIsObjectOfClass(ctx, arg, Response.Class.ref)) {
+        if (JSValue.fromRef(arg).as(Response) == null) {
             this.pending_promise = this.pending_promise orelse JSInternalPromise.resolvedPromise(globalThis, JSValue.fromRef(arguments[0]));
         }
 
@@ -3010,19 +3037,10 @@ pub const FetchEvent = struct {
             arg = promise.result(ctx.ptr().vm()).asRef();
         }
 
-        if (!js.JSValueIsObjectOfClass(ctx, arg, Response.Class.ref)) {
-            this.rejected = true;
-            this.pending_promise = null;
-            JSError(getAllocator(ctx), "event.respondWith() must be a Response or a Promise<Response>.", .{}, ctx, exception);
-            this.onPromiseRejectionHandler.?(this.onPromiseRejectionCtx, error.RespondWithInvalidType, this, JSValue.fromRef(exception.*));
-
-            return js.JSValueMakeUndefined(ctx);
-        }
-
         var response: *Response = GetJSPrivateData(Response, arg) orelse {
             this.rejected = true;
             this.pending_promise = null;
-            JSError(getAllocator(ctx), "event.respondWith()'s Response object was invalid. This may be an internal error.", .{}, ctx, exception);
+            JSError(getAllocator(ctx), "event.respondWith() expects Response or Promise<Response>", .{}, ctx, exception);
             this.onPromiseRejectionHandler.?(this.onPromiseRejectionCtx, error.RespondWithInvalidTypeInternal, this, JSValue.fromRef(exception.*));
             return js.JSValueMakeUndefined(ctx);
         };

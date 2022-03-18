@@ -44,6 +44,14 @@ pub const TextEncoder = struct {
     filler: u32 = 0,
     var text_encoder: TextEncoder = TextEncoder{};
 
+    pub const Constructor = JSC.NewConstructor(
+        TextEncoder,
+        .{
+            .constructor = .{ .rfn = constructor },
+        },
+        .{},
+    );
+
     pub const Class = NewClass(
         TextEncoder,
         .{
@@ -154,27 +162,14 @@ pub const TextEncoder = struct {
         return JSC.JSValue.createObject2(ctx.ptr(), &read_key, &written_key, JSValue.jsNumber(result.read), JSValue.jsNumber(result.written)).asObjectRef();
     }
 
-    pub const Constructor = struct {
-        pub const Class = NewClass(
-            void,
-            .{
-                .name = "TextEncoder",
-            },
-            .{
-                .constructor = constructor,
-            },
-            .{},
-        );
-
-        pub fn constructor(
-            ctx: js.JSContextRef,
-            _: js.JSObjectRef,
-            _: []const js.JSValueRef,
-            _: js.ExceptionRef,
-        ) js.JSObjectRef {
-            return TextEncoder.Class.make(ctx, &text_encoder);
-        }
-    };
+    pub fn constructor(
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: []const js.JSValueRef,
+        _: js.ExceptionRef,
+    ) js.JSObjectRef {
+        return TextEncoder.Class.make(ctx, &text_encoder);
+    }
 };
 
 /// https://encoding.spec.whatwg.org/encodings.json
@@ -626,44 +621,35 @@ pub const TextDecoder = struct {
         }
     }
 
-    pub const Constructor = struct {
-        pub const Class = NewClass(
-            void,
-            .{
-                .name = "TextDecoder",
-            },
-            .{
-                .constructor = constructor,
-            },
-            .{},
-        );
+    pub const Constructor = JSC.NewConstructor(TextDecoder, .{
+        .constructor = .{ .rfn = constructor },
+    }, .{});
 
-        pub fn constructor(
-            ctx: js.JSContextRef,
-            _: js.JSObjectRef,
-            args_: []const js.JSValueRef,
-            exception: js.ExceptionRef,
-        ) js.JSObjectRef {
-            var arguments: []const JSC.JSValue = @ptrCast([*]const JSC.JSValue, args_.ptr)[0..args_.len];
-            var encoding = EncodingLabel.@"UTF-8";
-            if (arguments.len > 0) {
-                if (!arguments[0].isString()) {
-                    JSC.throwInvalidArguments("TextDecoder(encoding) label is invalid", .{}, ctx, exception);
-                    return null;
-                }
-
-                var str = arguments[0].toSlice(ctx.ptr(), default_allocator);
-                defer if (str.allocated) str.deinit();
-                encoding = EncodingLabel.which(str.slice()) orelse {
-                    JSC.throwInvalidArguments("Unsupported encoding label \"{s}\"", .{str.slice()}, ctx, exception);
-                    return null;
-                };
+    pub fn constructor(
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        args_: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSObjectRef {
+        var arguments: []const JSC.JSValue = @ptrCast([*]const JSC.JSValue, args_.ptr)[0..args_.len];
+        var encoding = EncodingLabel.@"UTF-8";
+        if (arguments.len > 0) {
+            if (!arguments[0].isString()) {
+                JSC.throwInvalidArguments("TextDecoder(encoding) label is invalid", .{}, ctx, exception);
+                return null;
             }
-            var decoder = getAllocator(ctx).create(TextDecoder) catch unreachable;
-            decoder.* = TextDecoder{ .encoding = encoding };
-            return TextDecoder.Class.make(ctx, decoder);
+
+            var str = arguments[0].toSlice(ctx.ptr(), default_allocator);
+            defer if (str.allocated) str.deinit();
+            encoding = EncodingLabel.which(str.slice()) orelse {
+                JSC.throwInvalidArguments("Unsupported encoding label \"{s}\"", .{str.slice()}, ctx, exception);
+                return null;
+            };
         }
-    };
+        var decoder = getAllocator(ctx).create(TextDecoder) catch unreachable;
+        decoder.* = TextDecoder{ .encoding = encoding };
+        return TextDecoder.Class.make(ctx, decoder);
+    }
 };
 
 test "Vec" {}

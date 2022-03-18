@@ -67,3 +67,4 @@
 #endif
 
 #include <JavaScriptCore/Heap.h>
+#include <wtf/PlatformCallingConventions.h>

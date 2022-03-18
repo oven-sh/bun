@@ -979,6 +979,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 		$(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		-O3 \
+		-g \
 		-fno-exceptions \
 		-ffunction-sections -fdata-sections -g \
 		-ferror-limit=1000

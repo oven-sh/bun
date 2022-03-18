@@ -259,6 +259,12 @@ export fn Zig__getAPIGlobals(count: *usize) [*]JSC.C.JSClassRef {
     return globals.ptr;
 }
 
+export fn Zig__getAPIConstructors(count: *usize, ctx: *JSGlobalObject) [*]const JSValue {
+    var globals = JSC.VirtualMachine.getAPIConstructors(ctx);
+    count.* = globals.len;
+    return globals.ptr;
+}
+
 pub const JSErrorCode = enum(u8) {
     Error = 0,
     EvalError = 1,
@@ -1195,6 +1201,16 @@ pub const ZigConsoleClient = struct {
             };
 
             pub fn get(value: JSValue, globalThis: *JSGlobalObject) Result {
+                switch (@enumToInt(value)) {
+                    0, 0xa => return Result{
+                        .tag = .Undefined,
+                    },
+                    0x2 => return Result{
+                        .tag = .Null,
+                    },
+                    else => {},
+                }
+
                 if (value.isInt32()) {
                     return .{
                         .tag = .Integer,
@@ -1202,14 +1218,6 @@ pub const ZigConsoleClient = struct {
                 } else if (value.isNumber()) {
                     return .{
                         .tag = .Double,
-                    };
-                } else if (value.isUndefined()) {
-                    return .{
-                        .tag = .Undefined,
-                    };
-                } else if (value.isNull()) {
-                    return .{
-                        .tag = .Null,
                     };
                 } else if (value.isBoolean()) {
                     return .{
@@ -1259,7 +1267,7 @@ pub const ZigConsoleClient = struct {
                         };
                     }
                     return .{
-                        .tag = .Class,
+                        .tag = .Object,
                         .cell = js_type,
                     };
                 }
@@ -1878,7 +1886,9 @@ pub const ZigConsoleClient = struct {
 
                                 while (i < count_) : (i += 1) {
                                     var property_name_ref = CAPI.JSPropertyNameArrayGetNameAtIndex(array, i);
-                                    var prop = CAPI.JSStringGetCharacters8Ptr(property_name_ref)[0..CAPI.JSStringGetLength(property_name_ref)];
+                                    const prop_len = CAPI.JSStringGetLength(property_name_ref);
+                                    if (prop_len == 0) continue;
+                                    var prop = CAPI.JSStringGetCharacters8Ptr(property_name_ref)[0..prop_len];
                                     if (strings.eqlComptime(prop, "children")) {
                                         CAPI.JSStringRelease(property_name_ref);
                                         continue;
@@ -2054,7 +2064,9 @@ pub const ZigConsoleClient = struct {
                         while (i < count_) : (i += 1) {
                             var property_name_ref = CAPI.JSPropertyNameArrayGetNameAtIndex(array, i);
                             defer CAPI.JSStringRelease(property_name_ref);
-                            var prop = CAPI.JSStringGetCharacters8Ptr(property_name_ref)[0..CAPI.JSStringGetLength(property_name_ref)];
+                            const len = CAPI.JSStringGetLength(property_name_ref);
+                            if (len == 0) continue;
+                            var prop = CAPI.JSStringGetCharacters8Ptr(property_name_ref)[0..len];
 
                             var property_value = CAPI.JSObjectGetProperty(this.globalThis.ref(), object, property_name_ref, null);
                             const tag = Tag.get(JSValue.fromRef(property_value), this.globalThis);
@@ -2481,6 +2493,7 @@ comptime {
         _ = Process.getTitle;
         _ = Process.setTitle;
         _ = Zig__getAPIGlobals;
+        _ = Zig__getAPIConstructors;
         std.testing.refAllDecls(NodeReadableStream);
         std.testing.refAllDecls(Bun.Timer);
         std.testing.refAllDecls(NodeWritableStream);

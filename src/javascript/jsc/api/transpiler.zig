@@ -69,9 +69,8 @@ pub const Class = NewClass(
     .{},
 );
 
-pub const TranspilerConstructor = NewClass(
-    void,
-    .{ .name = "Transpiler" },
+pub const Constructor = JSC.NewConstructor(
+    @This(),
     .{
         .constructor = .{ .rfn = constructor },
     },

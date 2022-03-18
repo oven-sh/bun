@@ -65,19 +65,19 @@ pub fn match(
         return null;
     }
 
-    var arg: JSC.JSValue = undefined;
+    const arg: JSC.JSValue = brk: {
+        if (FetchEvent.Class.isLoaded()) {
+            if (JSValue.as(JSValue.fromRef(arguments[0]), FetchEvent)) |fetch_event| {
+                if (fetch_event.request_context != null) {
+                    return matchFetchEvent(ctx, fetch_event, exception);
+                }
 
-    if (FetchEvent.Class.loaded and js.JSValueIsObjectOfClass(ctx, arguments[0], FetchEvent.Class.get().*)) {
-        var fetch_event = To.Zig.ptr(FetchEvent, arguments[0]);
-        if (fetch_event.request_context != null) {
-            return matchFetchEvent(ctx, fetch_event, exception);
+                // When disconencted, we still have a copy of the request data in here
+                break :brk JSC.JSValue.fromRef(fetch_event.getRequest(ctx, null, null, null));
+            }
         }
-
-        // When disconencted, we still have a copy of the request data in here
-        arg = JSC.JSValue.fromRef(fetch_event.getRequest(ctx, null, null, null));
-    } else {
-        arg = JSC.JSValue.fromRef(arguments[0]);
-    }
+        break :brk JSC.JSValue.fromRef(arguments[0]);
+    };
 
     var router = JavaScript.VirtualMachine.vm.bundler.router orelse {
         JSError(getAllocator(ctx), "Bun.match needs a framework configured with routes", .{}, ctx, exception);

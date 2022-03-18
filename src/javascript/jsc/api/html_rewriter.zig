@@ -61,11 +61,12 @@ pub const HTMLRewriter = struct {
     builder: *LOLHTML.HTMLRewriter.Builder,
     context: LOLHTMLContext,
 
+    pub const Constructor = JSC.NewConstructor(HTMLRewriter, .{ .constructor = constructor }, .{});
+
     pub const Class = NewClass(
         HTMLRewriter,
         .{ .name = "HTMLRewriter" },
         .{
-            .constructor = constructor,
             .finalize = finalize,
             .on = .{
                 .rfn = wrap(HTMLRewriter, "on"),

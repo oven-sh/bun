@@ -336,7 +336,9 @@ pub extern fn JSC__JSValue__jsonStringify(JSValue0: JSC__JSValue, arg1: [*c]JSC_
 pub extern fn JSC__JSValue__jsTDZValue(...) JSC__JSValue;
 pub extern fn JSC__JSValue__jsType(JSValue0: JSC__JSValue) u8;
 pub extern fn JSC__JSValue__jsUndefined(...) JSC__JSValue;
+pub extern fn JSC__JSValue__makeWithNameAndPrototype(arg0: [*c]JSC__JSGlobalObject, arg1: ?*anyopaque, arg2: ?*anyopaque, arg3: [*c]const ZigString) JSC__JSValue;
 pub extern fn JSC__JSValue__parseJSON(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
+pub extern fn JSC__JSValue__put(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]const ZigString, JSValue3: JSC__JSValue) void;
 pub extern fn JSC__JSValue__putRecord(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]ZigString, arg3: [*c]ZigString, arg4: usize) void;
 pub extern fn JSC__JSValue__symbolFor(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]ZigString) JSC__JSValue;
 pub extern fn JSC__JSValue__symbolKeyFor(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]ZigString) bool;

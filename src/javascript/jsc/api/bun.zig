@@ -506,7 +506,7 @@ pub fn getRouteFiles(
     _: []const js.JSValueRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    if (VirtualMachine.vm.bundler.router == null) return js.JSValueMakeNull(ctx);
+    if (VirtualMachine.vm.bundler.router == null) return js.JSObjectMakeArray(ctx, 0, null, null);
 
     const router = &VirtualMachine.vm.bundler.router.?;
     const list = router.getPublicPaths() catch unreachable;
@@ -527,7 +527,7 @@ pub fn getRouteNames(
     _: []const js.JSValueRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    if (VirtualMachine.vm.bundler.router == null) return js.JSValueMakeNull(ctx);
+    if (VirtualMachine.vm.bundler.router == null) return js.JSObjectMakeArray(ctx, 0, null, null);
 
     const router = &VirtualMachine.vm.bundler.router.?;
     const list = router.getNames() catch unreachable;

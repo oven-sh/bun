@@ -823,29 +823,6 @@ pub fn getPublicPathJS(
     return ZigString.init(stream.buffer[0..stream.pos]).toValueGC(ctx.ptr()).asObjectRef();
 }
 
-// pub fn resolvePath(
-//     _: void,
-//     ctx: js.JSContextRef,
-//     _: js.JSObjectRef,
-//     _: js.JSObjectRef,
-//     arguments: []const js.JSValueRef,
-//     _: js.ExceptionRef,
-// ) js.JSValueRef {
-//     if (arguments.len == 0) return ZigString.Empty.toValue(ctx.ptr()).asObjectRef();
-//     var zig_str: ZigString = ZigString.Empty;
-//     JSValue.toZigString(JSValue.fromRef(arguments[0]), &zig_str, ctx.ptr());
-//     var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-//     var stack = std.heap.stackFallback(32 * @sizeOf(string), VirtualMachine.vm.allocator);
-//     var allocator = stack.get();
-//     var parts = allocator.alloc(string, arguments.len) catch {};
-//     defer allocator.free(parts);
-
-//     const to = zig_str.slice();
-//     var parts = .{to};
-//     const value = ZigString.init(VirtualMachine.vm.bundler.fs.absBuf(&parts, &buf)).toValueGC(ctx.ptr());
-//     return value.asObjectRef();
-// }
-
 pub const Class = NewClass(
     void,
     .{
@@ -1610,3 +1587,13 @@ pub const EnvironmentVariables = struct {
         }
     }
 };
+
+export fn Bun__reportError(_: *JSGlobalObject, err: JSC.JSValue) void {
+    JSC.VirtualMachine.vm.defaultErrorHandler(err, null);
+}
+
+comptime {
+    if (!is_bindgen) {
+        _ = Bun__reportError;
+    }
+}

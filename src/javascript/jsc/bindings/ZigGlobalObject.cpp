@@ -540,13 +540,30 @@ static JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     }
 }
 
+extern "C" void Bun__reportError(JSC::JSGlobalObject*, JSC__JSValue);
+static JSC_DECLARE_HOST_FUNCTION(functionReportError);
+static JSC_DEFINE_HOST_FUNCTION(functionReportError,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    switch (callFrame->argumentCount()) {
+    case 0: {
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+    default: {
+        Bun__reportError(globalObject, JSC::JSValue::encode(callFrame->argument(0)));
+    }
+    }
+
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
 // This is not a publicly exposed API currently.
 // This is used by the bundler to make Response, Request, FetchEvent,
 // and any other objects available globally.
 void GlobalObject::installAPIGlobals(JSClassRef* globals, int count)
 {
     WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
-    extraStaticGlobals.reserveCapacity((size_t)count + 3 + 7);
+    extraStaticGlobals.reserveCapacity((size_t)count + 3 + 9);
 
     int i = 0;
     for (; i < count - 1; i++) {
@@ -628,6 +645,12 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count)
         GlobalPropertyInfo { btoaIdentifier,
             JSC::JSFunction::create(vm(), JSC::jsCast<JSC::JSGlobalObject*>(this), 0,
                 "btoa", functionBTOA),
+            JSC::PropertyAttribute::DontDelete | 0 });
+    JSC::Identifier reportErrorIdentifier = JSC::Identifier::fromString(vm(), "reportError"_s);
+    extraStaticGlobals.uncheckedAppend(
+        GlobalPropertyInfo { reportErrorIdentifier,
+            JSC::JSFunction::create(vm(), JSC::jsCast<JSC::JSGlobalObject*>(this), 0,
+                "reportError", functionReportError),
             JSC::PropertyAttribute::DontDelete | 0 });
 
     auto clientData = Bun::clientData(vm());

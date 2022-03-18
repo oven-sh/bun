@@ -2422,11 +2422,11 @@ pub const Resolver = struct {
                 var tail = load_as_file_buf[path.len - base.len ..];
                 std.mem.copy(u8, tail, segment);
 
-                const exts = comptime [_]string{ ".ts", ".tsx" };
+                const exts = .{ ".ts", ".tsx" };
 
                 inline for (exts) |ext_to_replace| {
                     var buffer = tail[0 .. segment.len + ext_to_replace.len];
-                    std.mem.copy(u8, buffer[segment.len..buffer.len], ext_to_replace);
+                    buffer[segment.len..buffer.len][0..ext_to_replace.len].* = ext_to_replace.*;
 
                     if (entries.get(buffer)) |query| {
                         if (query.entry.kind(rfs) == .file) {
@@ -2437,9 +2437,14 @@ pub const Resolver = struct {
                             return LoadResult{
                                 .path = brk: {
                                     if (query.entry.abs_path.isEmpty()) {
-                                        // Should already have a trailing slash so we shouldn't need to worry.
-                                        var parts = [_]string{ query.entry.dir, buffer };
-                                        query.entry.abs_path = PathString.init(r.fs.filename_store.append(@TypeOf(parts), parts) catch unreachable);
+                                        if (query.entry.dir.len > 0 and query.entry.dir[query.entry.dir.len - 1] == std.fs.path.sep) {
+                                            var parts = [_]string{ query.entry.dir, buffer };
+                                            query.entry.abs_path = PathString.init(r.fs.filename_store.append(@TypeOf(parts), parts) catch unreachable);
+                                            // the trailing path CAN be missing here
+                                        } else {
+                                            var parts = [_]string{ query.entry.dir, "/", buffer };
+                                            query.entry.abs_path = PathString.init(r.fs.filename_store.append(@TypeOf(parts), parts) catch unreachable);
+                                        }
                                     }
 
                                     break :brk query.entry.abs_path.slice();

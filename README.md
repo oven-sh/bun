@@ -41,7 +41,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
   - [Using bun with Create React App](#using-bun-with-create-react-app)
 - [Using bun with TypeScript](#using-bun-with-typescript)
 - [Using Tailwind with bun](#using-tailwind-with-bun)
-- [Things that don’t work yet](#things-that-dont-work-yet)
+- [Not implemented yet](#not-implemented-yet)
   - [Limitations & intended usage](#limitations--intended-usage)
 - [Configuration](#configuration)
   - [bunfig.toml](#bunfig-toml)

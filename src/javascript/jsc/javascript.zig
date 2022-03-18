@@ -1707,7 +1707,7 @@ pub const VirtualMachine = struct {
             },
             else => {
                 this.printErrorInstance(
-                    @intToEnum(JSValue, @intCast(i64, (@ptrToInt(value)))),
+                    @intToEnum(JSValue, @bitCast(JSValue.Type, (@ptrToInt(value)))),
                     exception_list,
                     Writer,
                     writer,

@@ -1401,7 +1401,7 @@ pub const RequestContext = struct {
 
             js_ast.Stmt.Data.Store.reset();
             js_ast.Expr.Data.Store.reset();
-            JavaScript.Bun.flushCSSImports();
+            JavaScript.API.Bun.flushCSSImports();
             vm.flush();
 
             Output.printElapsed(@intToFloat(f64, (handler.start_timer.read())) / std.time.ns_per_ms);
@@ -1530,7 +1530,7 @@ pub const RequestContext = struct {
                     );
                     js_ast.Stmt.Data.Store.reset();
                     js_ast.Expr.Data.Store.reset();
-                    JavaScript.Bun.flushCSSImports();
+                    JavaScript.API.Bun.flushCSSImports();
                     Output.flush();
                     JavaScript.VirtualMachine.vm.arena.deinit();
                     JavaScript.VirtualMachine.vm.has_loaded = false;

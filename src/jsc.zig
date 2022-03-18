@@ -21,6 +21,8 @@ pub const Cloudflare = struct {
 pub const Jest = @import("./javascript/jsc/test/jest.zig");
 pub const API = struct {
     pub const Transpiler = @import("./javascript/jsc/api/transpiler.zig");
+    pub const Bun = @import("./javascript/jsc/api/bun.zig");
+    pub const Router = @import("./javascript/jsc/api/router.zig");
 };
 pub const Node = struct {
     pub usingnamespace @import("./javascript/jsc/node/types.zig");

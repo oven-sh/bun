@@ -1252,7 +1252,7 @@ pub const ZigConsoleClient = struct {
                     // Temporary workaround
                     // console.log(process.env) shows up as [class JSCallbackObject]
                     // We want to print it like an object
-                    if (CAPI.JSValueIsObjectOfClass(globalThis.ref(), value.asObjectRef(), JSC.Bun.EnvironmentVariables.Class.get().?[0])) {
+                    if (CAPI.JSValueIsObjectOfClass(globalThis.ref(), value.asObjectRef(), JSC.API.Bun.EnvironmentVariables.Class.get().?[0])) {
                         return .{
                             .tag = .Object,
                             .cell = js_type,
@@ -2472,7 +2472,7 @@ comptime {
     @export(ErrorCode.JSErrorObject, .{ .name = "Zig_ErrorCodeJSErrorObject" });
 }
 
-const Bun = @import("../javascript.zig").Bun;
+const Bun = @import("../api/bun.zig");
 pub const BunTimer = Bun.Timer;
 pub const Formatter = ZigConsoleClient.Formatter;
 

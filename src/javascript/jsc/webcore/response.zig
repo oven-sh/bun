@@ -1670,9 +1670,12 @@ pub const Blob = struct {
             return true;
 
         const prev_content_type = this.content_type;
-        defer if (this.content_type_allocated) bun.default_allocator.free(prev_content_type);
-        var content_type_buf = getAllocator(ctx).alloc(u8, slice.len) catch unreachable;
-        this.content_type = strings.copyLowercase(slice, content_type_buf);
+        {
+            defer if (this.content_type_allocated) bun.default_allocator.free(prev_content_type);
+            var content_type_buf = getAllocator(ctx).alloc(u8, slice.len) catch unreachable;
+            this.content_type = strings.copyLowercase(slice, content_type_buf);
+        }
+
         this.content_type_allocated = true;
         return true;
     }

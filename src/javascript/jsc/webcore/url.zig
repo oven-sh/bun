@@ -6,7 +6,7 @@ const MimeType = @import("../../../http.zig").MimeType;
 const ZigURL = @import("../../../url.zig").URL;
 const HTTPClient = @import("http");
 const NetworkThread = HTTPClient.NetworkThread;
-
+const bun = @import("../../global.zig");
 const JSC = @import("../../../jsc.zig");
 const js = JSC.C;
 
@@ -131,8 +131,9 @@ pub const DOMURL = struct {
         var input = value.toSlice(globalThis, bun.default_allocator);
         defer input.deinit();
         const buf = input.slice();
-        const host_len = copy.parseHost(buf) orelse return false;
+        _ = copy.parseHost(buf) orelse return false;
         var temp_clone = std.fmt.allocPrint("{}://{s}/{s}", .{ this.url.displayProtocol(), copy.displayHost(), strings.trimLeadingChar(this.url.pathname, '/') }) catch return false;
+        this.url = URL.parse(temp_clone);
         this.m_string = JSC.VirtualMachine.vm.refCountedString(temp_clone, null, false);
         if (this.m_string.ptr != temp_clone.ptr) {
             bun.default_allocator.free(temp_clone);

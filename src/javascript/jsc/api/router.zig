@@ -450,7 +450,7 @@ pub fn getScriptSrcString(
     // instead, we just store a boolean saying whether we should generate this whenever the script is requested
     // this is kind of bad. we should consider instead a way to inline the contents of the script.
     if (client_framework_enabled) {
-        JavaScript.Bun.getPublicPath(
+        JSC.API.Bun.getPublicPath(
             Bundler.ClientEntryPoint.generateEntryPointPath(
                 &entry_point_tempbuf,
                 Fs.PathName.init(file_path),
@@ -460,7 +460,7 @@ pub fn getScriptSrcString(
             writer,
         );
     } else {
-        JavaScript.Bun.getPublicPath(file_path, VirtualMachine.vm.origin, Writer, writer);
+        JSC.API.Bun.getPublicPath(file_path, VirtualMachine.vm.origin, Writer, writer);
     }
 }
 

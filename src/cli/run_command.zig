@@ -779,9 +779,6 @@ pub const RunCommand = struct {
 
         this_bundler.env.loadNodeJSConfig(this_bundler.fs) catch {};
         this_bundler.env.map.putDefault("npm_config_local_prefix", this_bundler.fs.top_level_dir) catch unreachable;
-        if (this_bundler.env.get("BUN_INSTALL")) |bun_install| {
-            this_bundler.env.map.putDefault("npm_config_prefix", bun_install) catch unreachable;
-        }
 
         // we have no way of knowing what version they're expecting without running the node executable
         // running the node executable is too slow
@@ -798,11 +795,6 @@ pub const RunCommand = struct {
             // we don't care if this fails
             if (std.fs.selfExePathAlloc(ctx.allocator)) |self_exe_path| {
                 this_bundler.env.map.putDefault("npm_execpath", self_exe_path) catch unreachable;
-                if (strings.lastIndexOf(self_exe_path, std.fs.path.sep_str ++ "bin" ++ std.fs.path.sep_str)) |bin_dir_i| {
-                    this_bundler.env.map.putDefault("npm_config_prefix", std.fs.path.dirname(self_exe_path[0..bin_dir_i]) orelse "/") catch unreachable;
-                } else {
-                    this_bundler.env.map.putDefault("npm_config_prefix", std.fs.path.dirname(self_exe_path) orelse "/") catch unreachable;
-                }
             } else |_| {}
         }
 

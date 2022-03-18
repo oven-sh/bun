@@ -2932,6 +2932,8 @@ pub const NodeFS = struct {
                     }
                 }
 
+                working_mem[len] = 0;
+
                 // Our final directory will not have a trailing separator
                 // so we have to create it once again
                 switch (Syscall.mkdir(working_mem[0..len :0], args.mode)) {

@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "lib": ["esnext", { "replace": "node", "with": "dom" }],
+    "baseUrl": ".",
+    "paths": {
+      "foo/bar": ["baz.js"]
+    },
+    "typeRoots": ["./node_modules/@types"]
+  }
+}

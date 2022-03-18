@@ -698,7 +698,7 @@ fn doResolve(
         return null;
     }
 
-    return doResolveWithArgs(ctx, specifier.getZigString(ctx.ptr()), from.getZigString(ctx.ptr()), exception);
+    return doResolveWithArgs(ctx, specifier.getZigString(ctx.ptr()), from.getZigString(ctx.ptr()), exception, false);
 }
 
 fn doResolveWithArgs(
@@ -706,15 +706,25 @@ fn doResolveWithArgs(
     specifier: ZigString,
     from: ZigString,
     exception: js.ExceptionRef,
+    comptime is_file_path: bool,
 ) ?JSC.JSValue {
     var errorable: ErrorableZigString = undefined;
 
-    VirtualMachine.resolveForAPI(
-        &errorable,
-        ctx.ptr(),
-        specifier,
-        from,
-    );
+    if (comptime is_file_path) {
+        VirtualMachine.resolve(
+            &errorable,
+            ctx.ptr(),
+            specifier,
+            from,
+        );
+    } else {
+        VirtualMachine.resolveForAPI(
+            &errorable,
+            ctx.ptr(),
+            specifier,
+            from,
+        );
+    }
 
     if (!errorable.success) {
         exception.* = bun.cast(JSC.JSValueRef, errorable.result.err.ptr.?);
@@ -759,22 +769,7 @@ export fn Bun__resolve(
 ) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
     var exception = &exception_;
-    const value = doResolveWithArgs(global.ref(), specifier.getZigString(global), source.getZigString(global), exception) orelse {
-        return JSC.JSPromise.rejectedPromiseValue(global, JSC.JSValue.fromRef(exception[0]));
-    };
-    return JSC.JSPromise.resolvedPromiseValue(global, value);
-}
-
-export fn Bun__resolveSync(
-    global: *JSGlobalObject,
-    specifier: JSValue,
-    source: JSValue,
-    exception_: ?*JSValue,
-) JSC.JSValue {
-    var exception_ = [1]JSC.JSValueRef{null};
-    var exception = &exception_;
-    exception_.* = exception[0];
-    const value = doResolveWithArgs(global.ref(), specifier.getZigString(global), source.getZigString(global), exception) orelse {
+    const value = doResolveWithArgs(global.ref(), specifier.getZigString(global), source.getZigString(global), exception, true) orelse {
         return JSC.JSPromise.rejectedPromiseValue(global, JSC.JSValue.fromRef(exception[0]));
     };
     return JSC.JSPromise.resolvedPromiseValue(global, value);
@@ -783,7 +778,6 @@ export fn Bun__resolveSync(
 comptime {
     if (!is_bindgen) {
         _ = Bun__resolve;
-        _ = Bun__resolveSync;
     }
 }
 

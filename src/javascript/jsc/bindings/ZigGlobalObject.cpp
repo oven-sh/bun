@@ -491,6 +491,55 @@ static JSC_DEFINE_HOST_FUNCTION(functionATOB,
     return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(decodedData->data(), decodedData->size())));
 }
 
+extern "C" JSC__JSValue Bun__resolve(JSC::JSGlobalObject* global, JSC__JSValue specifier, JSC__JSValue from);
+
+static JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolve);
+
+static JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+
+    switch (callFrame->argumentCount()) {
+    case 0: {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        // not "requires" because "require" could be confusing
+        JSC::throwTypeError(globalObject, scope, "import.meta.resolve needs 1 argument (a string)"_s);
+        scope.release();
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    default: {
+        JSC::JSValue moduleName = callFrame->argument(0);
+
+        if (moduleName.isUndefinedOrNull()) {
+            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+            JSC::throwTypeError(globalObject, scope, "import.meta.resolve expects a string"_s);
+            scope.release();
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+
+        JSC__JSValue from;
+
+        if (callFrame->argumentCount() > 1) {
+            from = JSC::JSValue::encode(callFrame->argument(1));
+        } else {
+            JSC::JSObject* thisObject = JSC::jsDynamicCast<JSC::JSObject*>(vm, callFrame->thisValue());
+            if (UNLIKELY(!thisObject)) {
+                auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+                JSC::throwTypeError(globalObject, scope, "import.meta.resolve must be bound to an import.meta object"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+
+            auto clientData = Bun::clientData(vm);
+
+            from = JSC::JSValue::encode(thisObject->get(globalObject, clientData->builtinNames().urlPublicName()));
+        }
+
+        return Bun__resolve(globalObject, JSC::JSValue::encode(moduleName), from);
+    }
+    }
+}
+
 // This is not a publicly exposed API currently.
 // This is used by the bundler to make Response, Request, FetchEvent,
 // and any other objects available globally.
@@ -728,18 +777,22 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
         metaProperties->putDirect(
             vm, clientData->builtinNames().filePublicName(),
             JSC::jsSubstring(globalObject, keyString, index + 1, keyString->length() - index - 1));
+
+        metaProperties->putDirect(
+            vm, clientData->builtinNames().filePublicName(),
+            JSC::jsSubstring(globalObject, keyString, index + 1, keyString->length() - index - 1));
+
+        metaProperties->putDirect(vm, clientData->builtinNames().resolvePublicName(),
+            JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject), 0,
+                WTF::String("resolve"), functionImportMeta__resolve),
+            0);
     }
 
     metaProperties->putDirect(vm, clientData->builtinNames().pathPublicName(), key);
+    // this is a lie
+    metaProperties->putDirect(vm, clientData->builtinNames().urlPublicName(), key);
 
     RETURN_IF_EXCEPTION(scope, nullptr);
-
-    // metaProperties->putDirect(vm, Identifier::fromString(vm, "resolve"),
-    //                           globalObject->globalThis()
-    //                             ->get(vm, Identifier::fromString("Bun"))
-    //                             .getObject()
-    //                             ->get(vm, Identifier::fromString("resolve"))); );
-    // RETURN_IF_EXCEPTION(scope, nullptr);
 
     return metaProperties;
 }

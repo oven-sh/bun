@@ -67,6 +67,7 @@ using namespace JSC;
     macro(parse) \
     macro(relative) \
     macro(resolve) \
+    macro(url) \
     macro(sep) \
     macro(delimiter) \
     macro(toNamespacedPath) \

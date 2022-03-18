@@ -320,7 +320,7 @@ JSC_DEFINE_CUSTOM_GETTER(Process_getVersionsLazy,
     JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 9);
 
     object->putDirect(vm, JSC::Identifier::fromString(vm, "node"),
-        JSC::JSValue(JSC::jsString(vm, WTF::String("17.0.0"))));
+        JSC::JSValue(JSC::jsString(vm, WTF::String("16.14.0"))));
     object->putDirect(
         vm, JSC::Identifier::fromString(vm, "bun"),
         JSC::JSValue(JSC::jsString(vm, WTF::String(Bun__version + 1 /* prefix with v */))));

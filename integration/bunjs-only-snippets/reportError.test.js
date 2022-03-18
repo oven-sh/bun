@@ -1,7 +1,7 @@
 import { it } from "bun:test";
 
 it("reportError", () => {
-  console.error("---BEGIN REPORT ERROR TEST--");
+  console.log("---BEGIN REPORT ERROR TEST--");
   // make sure we don't crash when given non-sensical types
   reportError(new Error("reportError Test!"));
   reportError(true);
@@ -21,5 +21,5 @@ it("reportError", () => {
   reportError([123, null]);
   reportError({});
   reportError([{}]);
-  console.error("---END REPORT ERROR TEST--");
+  console.log("---END REPORT ERROR TEST--");
 });

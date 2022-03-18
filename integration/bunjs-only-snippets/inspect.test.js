@@ -1,9 +1,5 @@
 import { it, expect } from "bun:test";
 
-it("console.trace", () => {
-  console.trace("Hi");
-});
-
 it("jsx with two elements", () => {
   const input = Bun.inspect(
     <div hello="quoted">

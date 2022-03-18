@@ -36,14 +36,7 @@ it("import.meta.resolve", async () => {
     join(import.meta.url, "../node_modules/package-json-exports/foo/bar.js")
   );
 
-  expect(await import.meta.resolve("./resolve-typescript-file.tsx")).toBe(
-    join(import.meta.url, "../resolve-typescript-file.tsx")
-  );
-  expect(await import.meta.resolve("./resolve-typescript-file.js")).toBe(
-    join(import.meta.url, "../resolve-typescript-file.tsx")
-  );
-
-  // works with typescript edgecases like:
+  // works with TypeScript compiler edgecases like:
   // - If the file ends with .js and it doesn't exist, try again with .ts and .tsx
   expect(await import.meta.resolve("./resolve-typescript-file.js")).toBe(
     join(import.meta.url, "../resolve-typescript-file.tsx")
@@ -52,6 +45,7 @@ it("import.meta.resolve", async () => {
     join(import.meta.url, "../resolve-typescript-file.tsx")
   );
 
+  // throws a ResolveError on failure
   try {
     await import.meta.resolve("THIS FILE DOESNT EXIST");
     throw new Error("Test failed");

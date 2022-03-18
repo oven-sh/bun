@@ -2603,6 +2603,14 @@ pub const Package = extern struct {
     };
 };
 
+pub fn deinit(this: *Lockfile) void {
+    this.buffers.deinit(this.allocator);
+    this.packages.deinit(this.allocator);
+    this.unique_packages.deinit(this.allocator);
+    this.string_pool.deinit();
+    this.* = undefined;
+}
+
 const Buffers = struct {
     trees: Tree.List = Tree.List{},
     hoisted_packages: PackageIDList = PackageIDList{},
@@ -2612,6 +2620,14 @@ const Buffers = struct {
     // node_modules_folders: NodeModulesFolderList = NodeModulesFolderList{},
     // node_modules_package_ids: PackageIDList = PackageIDList{},
     string_bytes: StringBuffer = StringBuffer{},
+
+    pub fn deinit(this: *Buffers, allocator: std.mem.Allocator) void {
+        try this.trees.deinit(allocator);
+        try this.resolutions.deinit(allocator);
+        try this.dependencies.deinit(allocator);
+        try this.extern_strings.deinit(allocator);
+        try this.string_bytes.deinit(allocator);
+    }
 
     pub fn preallocate(this: *Buffers, that: Buffers, allocator: std.mem.Allocator) !void {
         try this.trees.ensureTotalCapacity(allocator, that.trees.items.len);

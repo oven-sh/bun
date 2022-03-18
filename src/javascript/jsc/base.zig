@@ -1888,6 +1888,10 @@ pub const RefString = struct {
     pub const Hash = u32;
     pub const Map = std.HashMap(Hash, *JSC.RefString, IdentityContext(Hash), 80);
 
+    pub fn toJS(this: *RefString, global: *JSC.JSGlobalObject) JSValue {
+        return JSC.ZigString.init(this.slice()).external(global, this, RefString__external);
+    }
+
     pub const Callback = fn (ctx: *anyopaque, str: *RefString) void;
 
     pub fn computeHash(input: []const u8) u32 {
@@ -1919,6 +1923,10 @@ pub const RefString = struct {
 
     pub export fn RefString__free(this: *RefString, _: [*]const u8, _: usize) void {
         this.deref();
+    }
+
+    pub export fn RefString__external(this: ?*anyopaque, _: ?*anyopaque, _: usize) void {
+        bun.cast(*RefString, this.?).deref();
     }
 
     pub fn deinit(this: *RefString) void {

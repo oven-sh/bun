@@ -139,8 +139,13 @@ pub const StringOrBuffer = union(Tag) {
     pub fn toJS(this: StringOrBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
         return switch (this) {
             .string => {
-                var external = JSC.C.JSStringCreateExternal(this.string.ptr, this.string.len, null, external_string_finalizer);
-                return JSC.C.JSValueMakeString(ctx, external);
+                const input = this.string;
+                if (strings.toUTF16Alloc(bun.default_allocator, input, false) catch null) |utf16| {
+                    bun.default_allocator.free(bun.constStrToU8(input));
+                    return JSC.ZigString.toExternalU16(utf16.ptr, utf16.len, ctx.ptr()).asObjectRef();
+                }
+
+                return JSC.ZigString.init(input).toExternalValue(ctx.ptr()).asObjectRef();
             },
             .buffer => this.buffer.toJSObjectRef(ctx, exception),
         };

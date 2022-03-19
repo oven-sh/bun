@@ -3042,17 +3042,6 @@ pub fn NewPrinter(
                             // It unfortunately cannot be so simple as exports.foo = foo;
                             // If we have a lazy re-export and it's read-only...
                             // we have to overwrite it via Object.defineProperty
-                            1 => {
-                                const item = s.items[0];
-
-                                const identifier = p.renamer.nameForSymbol(item.name.ref.?);
-                                const name = if (!strings.eql(identifier, item.alias))
-                                    item.alias
-                                else
-                                    identifier;
-                                p.printBundledExport(name, identifier);
-                                p.printSemicolonAfterStatement();
-                            },
 
                             // Object.assign(__export, {prop1, prop2, prop3});
                             else => {
@@ -3219,7 +3208,7 @@ pub fn NewPrinter(
                 },
                 .s_export_from => |s| {
                     if (is_inside_bundle) {
-
+                        p.printIndent();
                         // $$lz(export, $React(), {default: "React"});
                         if (s.items.len == 1) {
                             const item = s.items[0];

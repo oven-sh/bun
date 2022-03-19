@@ -46,6 +46,7 @@ pub const Response = struct {
         Response,
         .{
             .@"constructor" = constructor,
+            .@"json" = .{ .rfn = constructJSON },
         },
         .{},
     );
@@ -219,6 +220,13 @@ pub const Response = struct {
         return js.JSValueMakeBoolean(ctx, this.isOK());
     }
 
+    fn getOrCreateHeaders(this: *Response) *Headers.RefCountedHeaders {
+        if (this.body.init.headers == null) {
+            this.body.init.headers = Headers.RefCountedHeaders.init(Headers.empty(this.allocator), this.allocator) catch unreachable;
+        }
+        return this.body.init.headers.?;
+    }
+
     pub fn getHeaders(
         this: *Response,
         ctx: js.JSContextRef,
@@ -226,11 +234,7 @@ pub const Response = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        if (this.body.init.headers == null) {
-            this.body.init.headers = Headers.RefCountedHeaders.init(Headers.empty(getAllocator(ctx)), getAllocator(ctx)) catch unreachable;
-        }
-
-        return Headers.Class.make(ctx, this.body.init.headers.?.getRef());
+        return Headers.Class.make(ctx, this.getOrCreateHeaders().getRef());
     }
 
     pub fn doClone(
@@ -325,6 +329,73 @@ pub const Response = struct {
         }
     }
 
+    pub fn constructJSON(
+        _: void,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        _: js.ExceptionRef,
+    ) js.JSObjectRef {
+        // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
+        var args = JSC.Node.ArgumentsSlice.from(arguments);
+        // var response = getAllocator(ctx).create(Response) catch unreachable;
+
+        var response = Response{
+            .body = Body{
+                .init = Body.Init{
+                    .headers = null,
+                    .status_code = 200,
+                },
+                .value = Body.Value.empty,
+            },
+            .allocator = getAllocator(ctx),
+            .url = "",
+        };
+
+        const json_value = args.nextEat() orelse JSC.JSValue.zero;
+
+        if (@enumToInt(json_value) != 0) {
+            var zig_str = JSC.ZigString.init("");
+            // calling JSON.stringify on an empty string adds extra quotes
+            // so this is correct
+            json_value.jsonStringify(ctx.ptr(), 0, &zig_str);
+
+            if (zig_str.len > 0) {
+                var zig_str_slice = zig_str.toSlice(getAllocator(ctx));
+
+                if (zig_str_slice.allocated) {
+                    response.body.value = .{
+                        .Blob = Blob.initWithAllASCII(zig_str_slice.mut(), zig_str_slice.allocator, ctx.ptr(), false),
+                    };
+                } else {
+                    response.body.value = .{
+                        .Blob = Blob.initWithAllASCII(getAllocator(ctx).dupe(u8, zig_str_slice.slice()) catch unreachable, zig_str_slice.allocator, ctx.ptr(), true),
+                    };
+                }
+            }
+        }
+
+        if (args.nextEat()) |init| {
+            if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
+                response.body.init.status_code = @intCast(u16, @minimum(@maximum(0, init.toInt32()), std.math.maxInt(u16)));
+            } else {
+                if (Body.Init.init(getAllocator(ctx), ctx, init.asObjectRef()) catch null) |_init| {
+                    response.body.init = _init;
+                    if (response.body.init.status_code == 0) {
+                        response.body.init.status_code = 200;
+                    }
+                }
+            }
+        }
+
+        var headers_ref = response.getOrCreateHeaders().leak();
+        headers_ref.putHeaderNormalized("content-type", "application/json", false);
+        var ptr = response.allocator.create(Response) catch unreachable;
+        ptr.* = response;
+
+        return Response.Class.make(ctx, ptr);
+    }
     pub fn constructor(
         ctx: js.JSContextRef,
         _: js.JSObjectRef,

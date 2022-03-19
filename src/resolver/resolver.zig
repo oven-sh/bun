@@ -438,7 +438,7 @@ pub const Resolver = struct {
                 return r._resolveFramework(package, pair, preference, load_defines) catch |err| {
                     switch (err) {
                         error.ModuleNotFound => {
-                            Output.prettyErrorln("<r><red>ResolveError<r> can't find framework: <b>\"{s}\"<r>.\n\nMaybe it's not installed? Try running this:\n\n   <b>npm install -D {s}<r>\n   <b>bun bun --use {s}<r>", .{ package, package, package });
+                            Output.prettyErrorln("<r><red>ResolveError<r> can't find framework: <b>\"{s}\"<r>.\n\nMaybe it's not installed? Try running this:\n\n   <b>bun add -d {s}<r>\n   <b>bun bun --use {s}<r>", .{ package, package, package });
                             Output.flush();
                             Global.exit(1);
                         },
@@ -458,7 +458,7 @@ pub const Resolver = struct {
                         return r._resolveFramework(package, pair, preference, load_defines) catch |err2| {
                             switch (err2) {
                                 error.ModuleNotFound => {
-                                    Output.prettyErrorln("<r><red>ResolveError<r> can't find framework: <b>\"{s}\"<r>.\n\nMaybe it's not installed? Try running this:\n\n   <b>npm install -D {s}\n   <b>bun bun --use {s}<r>", .{ package, prefixed_name, package });
+                                    Output.prettyErrorln("<r><red>ResolveError<r> can't find framework: <b>\"{s}\"<r>.\n\nMaybe it's not installed? Try running this:\n\n   <b>bun add -d {s}\n   <b>bun bun --use {s}<r>", .{ package, prefixed_name, package });
                                     Output.flush();
                                     Global.exit(1);
                                 },

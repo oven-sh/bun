@@ -47,6 +47,7 @@ pub const Response = struct {
         .{
             .@"constructor" = constructor,
             .@"json" = .{ .rfn = constructJSON },
+            .@"redirect" = .{ .rfn = constructRedirect },
         },
         .{},
     );
@@ -391,6 +392,58 @@ pub const Response = struct {
 
         var headers_ref = response.getOrCreateHeaders().leak();
         headers_ref.putHeaderNormalized("content-type", "application/json", false);
+        var ptr = response.allocator.create(Response) catch unreachable;
+        ptr.* = response;
+
+        return Response.Class.make(ctx, ptr);
+    }
+    pub fn constructRedirect(
+        _: void,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        _: js.ExceptionRef,
+    ) js.JSObjectRef {
+        // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
+        var args = JSC.Node.ArgumentsSlice.from(arguments);
+        // var response = getAllocator(ctx).create(Response) catch unreachable;
+
+        var response = Response{
+            .body = Body{
+                .init = Body.Init{
+                    .headers = null,
+                    .status_code = 302,
+                },
+                .value = Body.Value.empty,
+            },
+            .allocator = getAllocator(ctx),
+            .url = "",
+        };
+
+        const url_string_value = args.nextEat() orelse JSC.JSValue.zero;
+        var url_string = ZigString.init("");
+
+        if (@enumToInt(url_string_value) != 0) {
+            url_string = url_string_value.getZigString(ctx.ptr());
+        }
+        var url_string_slice = url_string.toSlice(getAllocator(ctx));
+        defer url_string_slice.deinit();
+
+        if (args.nextEat()) |init| {
+            if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
+                response.body.init.status_code = @intCast(u16, @minimum(@maximum(0, init.toInt32()), std.math.maxInt(u16)));
+            } else {
+                if (Body.Init.init(getAllocator(ctx), ctx, init.asObjectRef()) catch null) |_init| {
+                    response.body.init = _init;
+                }
+            }
+        }
+
+        response.body.init.headers = response.getOrCreateHeaders();
+        response.body.init.status_code = 302;
+        var headers_ref = response.body.init.headers.?.leak();
+        headers_ref.putHeaderNormalized("Location", url_string_slice.slice(), false);
         var ptr = response.allocator.create(Response) catch unreachable;
         ptr.* = response;
 

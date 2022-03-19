@@ -102,6 +102,10 @@ pub const Response = struct {
                 .@"get" = getBodyUsed,
                 .ro = true,
             },
+            .@"type" = .{
+                .@"get" = getResponseType,
+                .ro = true,
+            },
         },
     );
 
@@ -167,6 +171,20 @@ pub const Response = struct {
     ) js.JSValueRef {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
         return ZigString.init(this.url).withEncoding().toValueGC(ctx.ptr()).asObjectRef();
+    }
+
+    pub fn getResponseType(
+        this: *Response,
+        ctx: js.JSContextRef,
+        _: js.JSValueRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        if (this.body.init.status_code < 200) {
+            return ZigString.init("error").toValue(ctx.ptr()).asObjectRef();
+        }
+
+        return ZigString.init("basic").toValue(ctx.ptr()).asObjectRef();
     }
 
     pub fn getBodyUsed(

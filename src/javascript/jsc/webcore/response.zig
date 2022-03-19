@@ -48,6 +48,7 @@ pub const Response = struct {
             .@"constructor" = constructor,
             .@"json" = .{ .rfn = constructJSON },
             .@"redirect" = .{ .rfn = constructRedirect },
+            .@"error" = .{ .rfn = constructError },
         },
         .{},
     );
@@ -449,6 +450,33 @@ pub const Response = struct {
 
         return Response.Class.make(ctx, ptr);
     }
+    pub fn constructError(
+        _: void,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        _: []const js.JSValueRef,
+        _: js.ExceptionRef,
+    ) js.JSObjectRef {
+        var response = getAllocator(ctx).create(Response) catch unreachable;
+        response.* = Response{
+            .body = Body{
+                .init = Body.Init{
+                    .headers = null,
+                    .status_code = 0,
+                },
+                .value = Body.Value.empty,
+            },
+            .allocator = getAllocator(ctx),
+            .url = "",
+        };
+
+        return Response.Class.make(
+            ctx,
+            response,
+        );
+    }
+
     pub fn constructor(
         ctx: js.JSContextRef,
         _: js.JSObjectRef,

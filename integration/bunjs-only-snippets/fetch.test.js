@@ -280,13 +280,17 @@ describe("Response", () => {
     it("sets the content-type header", () => {
       let response = Response.json("hello");
       expect(response.type).toBe("basic");
-      expect(response.headers.get("content-type")).toBe("application/json");
+      expect(response.headers.get("content-type")).toBe(
+        "application/json;charset=utf-8"
+      );
       expect(response.status).toBe(200);
     });
     it("supports number status code", () => {
       let response = Response.json("hello", 407);
       expect(response.type).toBe("basic");
-      expect(response.headers.get("content-type")).toBe("application/json");
+      expect(response.headers.get("content-type")).toBe(
+        "application/json;charset=utf-8"
+      );
       expect(response.status).toBe(407);
     });
     it("overrides the content-type header", () => {
@@ -296,7 +300,9 @@ describe("Response", () => {
         },
       });
       expect(response.type).toBe("basic");
-      expect(response.headers.get("content-type")).toBe("application/json");
+      expect(response.headers.get("content-type")).toBe(
+        "application/json;charset=utf-8"
+      );
     });
     it("supports headers", () => {
       var response = Response.json("hello", {
@@ -306,7 +312,9 @@ describe("Response", () => {
         },
         statusCode: 408,
       });
-      expect(response.headers.get("content-type")).toBe("application/json");
+      expect(response.headers.get("content-type")).toBe(
+        "application/json;charset=utf-8"
+      );
       expect(response.headers.get("x-hello")).toBe("world");
       expect(response.status).toBe(408);
     });

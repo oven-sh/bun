@@ -392,7 +392,7 @@ pub const Response = struct {
         }
 
         var headers_ref = response.getOrCreateHeaders().leak();
-        headers_ref.putHeaderNormalized("content-type", "application/json", false);
+        headers_ref.putHeaderNormalized("content-type", MimeType.json.value, false);
         var ptr = response.allocator.create(Response) catch unreachable;
         ptr.* = response;
 

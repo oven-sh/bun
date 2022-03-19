@@ -999,14 +999,11 @@ pub const Class = NewClass(
 pub fn getTranspilerConstructor(
     _: void,
     ctx: js.JSContextRef,
-    this: js.JSValueRef,
+    _: js.JSValueRef,
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    var value = Transpiler.Constructor.constructor(ctx);
-    JSC.JSValue.fromRef(this).put(ctx.ptr(), &ZigString.init("Transpiler"), JSC.JSValue.fromRef(value));
-
-    return value;
+    return Transpiler.Constructor.constructor(ctx);
 }
 
 pub fn getTOMLObject(

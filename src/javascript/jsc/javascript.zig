@@ -662,20 +662,26 @@ pub const VirtualMachine = struct {
     pub fn getAPIConstructors(globalObject: *JSGlobalObject) []const JSC.JSValue {
         if (is_bindgen)
             return &[_]JSC.JSValue{};
-        if (!VirtualMachine.vm.has_loaded_constructors) {
+        const is_first = !VirtualMachine.vm.has_loaded_constructors;
+        if (is_first) {
             VirtualMachine.vm.global = globalObject;
             VirtualMachine.vm.has_loaded_constructors = true;
         }
 
+        var slice = if (is_first)
+            @as([]JSC.JSValue, &JSC.VirtualMachine.vm.global_api_constructors)
+        else
+            VirtualMachine.vm.allocator.alloc(JSC.JSValue, GlobalConstructors.len) catch unreachable;
+
         inline for (GlobalConstructors) |Class, i| {
             var ref = Class.constructor(globalObject.ref()).?;
             JSC.C.JSValueProtect(globalObject.ref(), ref);
-            JSC.VirtualMachine.vm.global_api_constructors[i] = JSC.JSValue.fromRef(
+            slice[i] = JSC.JSValue.fromRef(
                 ref,
             );
         }
 
-        return &JSC.VirtualMachine.vm.global_api_constructors;
+        return slice;
     }
 
     pub fn init(

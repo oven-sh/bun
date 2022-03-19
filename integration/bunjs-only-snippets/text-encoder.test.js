@@ -87,7 +87,7 @@ describe("TextEncoder", () => {
     }
   });
 
-  it("should encode long latin1 text", () => {
+  it("should encode long latin1 text", async () => {
     const text = "Hello World!".repeat(1000);
     const encoder = new TextEncoder();
     gcTrace(true);
@@ -96,7 +96,12 @@ describe("TextEncoder", () => {
     expect(encoded instanceof Uint8Array).toBe(true);
     expect(encoded.length).toBe(text.length);
     gcTrace(true);
-    expect(new TextDecoder().decode(encoded)).toBe(text);
+    const decoded = new TextDecoder().decode(encoded);
+    expect(decoded).toBe(text);
+    gcTrace();
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    gcTrace();
+    expect(decoded).toBe(text);
   });
 
   it("should encode latin1 rope text", () => {

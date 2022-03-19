@@ -537,13 +537,13 @@ pub const TextDecoder = struct {
         args: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        var arguments: []const JSC.JSValue = @ptrCast([*]const JSC.JSValue, args.ptr)[0..args.len];
+        const arguments: []const JSC.JSValue = @ptrCast([*]const JSC.JSValue, args.ptr)[0..args.len];
 
         if (arguments.len < 1 or arguments[0].isUndefined()) {
             return ZigString.Empty.toValue(ctx.ptr()).asObjectRef();
         }
 
-        var array_buffer = arguments[0].asArrayBuffer(ctx.ptr()) orelse {
+        const array_buffer = arguments[0].asArrayBuffer(ctx.ptr()) orelse {
             JSC.throwInvalidArguments("TextDecoder.decode expects an ArrayBuffer or TypedArray", .{}, ctx, exception);
             return null;
         };
@@ -557,12 +557,10 @@ pub const TextDecoder = struct {
 
         switch (this.encoding) {
             EncodingLabel.@"latin1" => {
-                var str = ZigString.init(array_buffer.slice());
-                return str.toValueGC(ctx.ptr()).asObjectRef();
+                return ZigString.init(array_buffer.slice()).toValueGC(ctx.ptr()).asObjectRef();
             },
             EncodingLabel.@"UTF-8" => {
                 const buffer_slice = array_buffer.slice();
-                var str = ZigString.init(buffer_slice);
 
                 if (this.fatal) {
                     if (strings.toUTF16Alloc(default_allocator, buffer_slice, true)) |result_| {
@@ -604,7 +602,8 @@ pub const TextDecoder = struct {
                     }
                 }
 
-                return str.toValueGC(ctx.ptr()).asObjectRef();
+                // Experiment: using mimalloc directly is slightly slower
+                return ZigString.init(buffer_slice).toValueGC(ctx.ptr()).asObjectRef();
             },
 
             EncodingLabel.@"UTF-16LE" => {

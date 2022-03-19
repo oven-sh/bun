@@ -510,6 +510,8 @@ pub const Bundler = struct {
                 while (workers_used < this.cpu_count) : (workers_used += 1) {
                     try this.workers[workers_used].init(generator);
                 }
+                if (workers_used > 0)
+                    this.pool.forceSpawn();
             }
 
             pub fn wait(this: *ThreadPool, generator: *GenerateNodeModuleBundle) !void {
@@ -697,6 +699,15 @@ pub const Bundler = struct {
             _ = this.pool.pending_count.fetchAdd(1, .Monotonic);
             this.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
         }
+
+        pub fn ensurePathIsAllocated(this: *GenerateNodeModuleBundle, path_: ?*Fs.Path) !void {
+            var path = path_ orelse return;
+
+            const loader = this.bundler.options.loaders.get(path.name.ext) orelse .file;
+            if (!loader.isJavaScriptLikeOrJSON()) return;
+            path.* = try path.dupeAlloc(this.allocator);
+        }
+
         pub fn enqueueItem(this: *GenerateNodeModuleBundle, resolve: _resolver.Result) !void {
             var result = resolve;
             var path = result.path() orelse return;
@@ -936,6 +947,80 @@ pub const Bundler = struct {
                 return err;
             };
 
+            // The ordering matters here The runtime must appear at the top of
+            // the file But, we don't know which version of the runtime is
+            // necessary until we know if they'll use JSX and if they'll use
+            // react refresh
+            var _new_jsx_runtime_resolve_result: ?_resolver.Result = null;
+            var fast_refresh_resolve_result: ?_resolver.Result = null;
+            // Normally, this is automatic
+            // However, since we only do the parsing pass, it may not get imported automatically.
+            if (bundler.options.jsx.parse) {
+                defer this.bundler.resetStore();
+                if (this.bundler.resolver.resolve(
+                    this.bundler.fs.top_level_dir,
+                    this.bundler.options.jsx.import_source,
+                    .require,
+                )) |new_jsx_runtime| {
+                    _new_jsx_runtime_resolve_result = new_jsx_runtime;
+                    this.ensurePathIsAllocated(_new_jsx_runtime_resolve_result.?.path()) catch unreachable;
+                    Analytics.Features.jsx = true;
+                } else |_| {}
+            }
+
+            const include_fast_refresh_in_bundle = Analytics.Features.jsx and
+                include_refresh_runtime and
+                !Analytics.Features.fast_refresh and !bundler.options.platform.isServerSide();
+
+            var refresh_runtime_module_id: u32 = 0;
+            if (include_refresh_runtime) {
+                defer this.bundler.resetStore();
+
+                if (this.bundler.resolver.resolve(
+                    this.bundler.fs.top_level_dir,
+                    this.bundler.options.jsx.refresh_runtime,
+                    .require,
+                )) |refresh_runtime| {
+                    fast_refresh_resolve_result = refresh_runtime;
+                    this.ensurePathIsAllocated(fast_refresh_resolve_result.?.path()) catch unreachable;
+                    Analytics.Features.fast_refresh = true;
+
+                    if (BundledModuleData.get(this, &refresh_runtime)) |mod| {
+                        refresh_runtime_module_id = mod.module_id;
+                    }
+                } else |_| {}
+            }
+
+            if (Environment.isDebug) {
+                switch (bundler.options.platform) {
+                    .node => try generator.appendBytes(runtime.Runtime.sourceContentNode()),
+                    .bun_macro, .bun => try generator.appendBytes(runtime.Runtime.sourceContentBun()),
+                    else => try generator.appendBytes(runtime.Runtime.sourceContent(include_fast_refresh_in_bundle)),
+                }
+
+                try generator.appendBytes("\n\n");
+            } else if (include_fast_refresh_in_bundle) {
+                try generator.appendBytes(comptime runtime.Runtime.sourceContent(true) ++ "\n\n");
+            } else {
+                try generator.appendBytes(
+                    switch (bundler.options.platform) {
+                        .bun_macro, .bun => comptime @as(string, runtime.Runtime.sourceContentBun() ++ "\n\n"),
+                        .node => comptime @as(string, runtime.Runtime.sourceContentNode() ++ "\n\n"),
+                        else => comptime @as(string, runtime.Runtime.sourceContentWithoutRefresh() ++ "\n\n"),
+                    },
+                );
+            }
+
+            if (_new_jsx_runtime_resolve_result) |new_jsx_runtime| {
+                try this.enqueueItem(new_jsx_runtime);
+                _new_jsx_runtime_resolve_result = null;
+            }
+
+            if (fast_refresh_resolve_result) |fast_refresh| {
+                try this.enqueueItem(fast_refresh);
+                fast_refresh_resolve_result = null;
+            }
+
             if (bundler.router) |router| {
                 defer this.bundler.resetStore();
                 Analytics.Features.filesystem_router = true;
@@ -989,55 +1074,8 @@ pub const Bundler = struct {
                 try this.enqueueItem(resolved);
             }
 
-            // Normally, this is automatic
-            // However, since we only do the parsing pass, it may not get imported automatically.
-            if (bundler.options.jsx.parse) {
-                defer this.bundler.resetStore();
-                if (this.bundler.resolver.resolve(
-                    this.bundler.fs.top_level_dir,
-                    this.bundler.options.jsx.import_source,
-                    .require,
-                )) |new_jsx_runtime| {
-                    try this.enqueueItem(new_jsx_runtime);
-                    Analytics.Features.jsx = true;
-                } else |_| {}
-            }
-
-            var refresh_runtime_module_id: u32 = 0;
-            if (include_refresh_runtime) {
-                defer this.bundler.resetStore();
-
-                if (this.bundler.resolver.resolve(
-                    this.bundler.fs.top_level_dir,
-                    this.bundler.options.jsx.refresh_runtime,
-                    .require,
-                )) |refresh_runtime| {
-                    try this.enqueueItem(refresh_runtime);
-                    Analytics.Features.fast_refresh = true;
-
-                    if (BundledModuleData.get(this, &refresh_runtime)) |mod| {
-                        refresh_runtime_module_id = mod.module_id;
-                    }
-                } else |_| {}
-            }
-
-            this.bundler.resetStore();
-
             if (bundler.options.platform != .bun) Analytics.enqueue(Analytics.EventName.bundle_start);
-
-            const include_fast_refresh_in_bundle = Analytics.Features.jsx and
-                include_refresh_runtime and
-                !Analytics.Features.fast_refresh;
-
-            if (Environment.isDebug) {
-                try generator.appendBytes(runtime.Runtime.sourceContent(include_fast_refresh_in_bundle));
-                try generator.appendBytes("\n\n");
-            } else if (include_fast_refresh_in_bundle) {
-                try generator.appendBytes(comptime runtime.Runtime.sourceContent(true) ++ "\n\n");
-            } else {
-                try generator.appendBytes(comptime runtime.Runtime.sourceContent(false) ++ "\n\n");
-            }
-
+            this.bundler.resetStore();
             this.pool.wait(this) catch |err| {
                 Analytics.enqueue(Analytics.EventName.bundle_fail);
                 return err;

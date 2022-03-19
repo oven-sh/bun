@@ -40,3 +40,11 @@ it("arrayBufferToString u16", () => {
   expect(charCodes.length).toBe("hello world".length);
   Bun.gc(true);
 });
+
+it("Bun.allocUnsafe", () => {
+  var buffer = Bun.allocUnsafe(1024);
+  expect(buffer instanceof Uint8Array).toBe(true);
+  expect(buffer.length).toBe(1024);
+  buffer[0] = 0;
+  expect(buffer[0]).toBe(0);
+});

@@ -2168,7 +2168,7 @@ const Arguments = struct {
     };
 };
 
-const Constants = struct {
+pub const Constants = struct {
     // File Access Constants
     /// Constant for fs.access(). File is visible to the calling process.
     pub const F_OK = std.os.F_OK;

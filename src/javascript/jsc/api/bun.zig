@@ -938,6 +938,10 @@ pub const Class = NewClass(
             .rfn = Bun.runGC,
             .ts = d.ts{},
         },
+        .allocUnsafe = .{
+            .rfn = Bun.allocUnsafe,
+            .ts = .{},
+        },
         .generateHeapSnapshot = .{
             .rfn = Bun.generateHeapSnapshot,
             .ts = d.ts{},
@@ -979,6 +983,7 @@ pub const Class = NewClass(
         .env = .{
             .get = EnvironmentVariables.getter,
         },
+
         .enableANSIColors = .{
             .get = enableANSIColors,
         },
@@ -995,6 +1000,35 @@ pub const Class = NewClass(
         },
     },
 );
+
+pub fn allocUnsafe(
+    _: void,
+    ctx: js.JSContextRef,
+    _: js.JSObjectRef,
+    _: js.JSObjectRef,
+    arguments: []const js.JSValueRef,
+    exception: js.ExceptionRef,
+) js.JSValueRef {
+    var args = JSC.Node.ArgumentsSlice.from(arguments);
+
+    const length = @intCast(
+        usize,
+        @minimum(
+            @maximum(1, (args.nextEat() orelse JSC.JSValue.jsNumber(@as(i32, 1))).toInt32()),
+            std.math.maxInt(i32),
+        ),
+    );
+    var bytes = bun.default_allocator.alloc(u8, length) catch {
+        JSC.JSError(bun.default_allocator, "OOM! Out of memory", .{}, ctx, exception);
+        return null;
+    };
+
+    return JSC.MarkedArrayBuffer.fromBytes(
+        bytes,
+        bun.default_allocator,
+        .Uint8Array,
+    ).toJSObjectRef(ctx, null);
+}
 
 pub fn getTranspilerConstructor(
     _: void,

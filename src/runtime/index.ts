@@ -1,4 +1,10 @@
 export * from "./hmr";
 export * from "./errors";
-export * from "../runtime.js";
-export { default as regeneratorRuntime } from "./regenerator";
+export * from "./index-without-hmr";
+
+globalThis.process ||= {
+  env: {},
+  cwd() {
+    return "/bun-fake-dir/";
+  },
+};

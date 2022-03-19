@@ -164,6 +164,7 @@ pub const Fallback = struct {
 
 pub const Runtime = struct {
     pub const ProdSourceContent = @embedFile("./runtime.out.js");
+    pub const ProdSourceContentBun = @embedFile("./runtime.bun.out.js");
     pub const ProdSourceContentWithRefresh = @embedFile("./runtime.out.refresh.js");
 
     pub inline fn sourceContentWithoutRefresh() string {
@@ -190,6 +191,10 @@ pub const Runtime = struct {
     pub inline fn sourceContent(with_refresh: bool) string {
         if (with_refresh) return sourceContentWithRefresh();
         return sourceContentWithoutRefresh();
+    }
+
+    pub inline fn sourceContentBun() string {
+        return ProdSourceContentBun;
     }
 
     pub inline fn sourceContentWithRefresh() string {

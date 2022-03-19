@@ -182,12 +182,3 @@ export var __reExport = (target, module, desc) => {
         });
   return target;
 };
-
-if (typeof globalThis.process === "undefined") {
-  globalThis.process = {
-    env: {},
-    cwd() {
-      return "/bun-fake-dir/";
-    },
-  };
-}

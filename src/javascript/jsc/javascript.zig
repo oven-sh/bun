@@ -866,7 +866,7 @@ pub const VirtualMachine = struct {
         } else if (jsc_vm.node_modules == null and strings.eqlComptime(_specifier, Runtime.Runtime.Imports.Name)) {
             return ResolvedSource{
                 .allocator = null,
-                .source_code = ZigString.init(Runtime.Runtime.sourceContent(false)),
+                .source_code = ZigString.init(Runtime.Runtime.sourceContentBun()),
                 .specifier = ZigString.init(Runtime.Runtime.Imports.Name),
                 .source_url = ZigString.init(Runtime.Runtime.Imports.Name),
                 .hash = Runtime.Runtime.versionHash(),

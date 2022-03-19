@@ -1614,6 +1614,7 @@ pub const JSValue = enum(u64) {
     pub const include = "<JavaScriptCore/JSValue.h>";
     pub const name = "JSC::JSValue";
     pub const namespace = "JSC";
+    pub const zero = @intToEnum(JSValue, @as(u64, 0));
     pub const JSType = enum(u8) {
         // The Cell value must come before any JS that is a JSCell.
         Cell,

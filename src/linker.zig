@@ -638,30 +638,6 @@ pub const Linker = struct {
 
                 return Fs.Path.initWithPretty(pretty, relative_name);
             },
-            .relative_nodejs => {
-                var relative_name = linker.fs.relative(source_dir, source_path);
-                var pretty: string = undefined;
-                if (use_hashed_name) {
-                    var basepath = Fs.Path.init(source_path);
-                    const basename = try linker.getHashedFilename(basepath, null);
-                    var dir = basepath.name.dirWithTrailingSlash();
-                    var _pretty = try linker.allocator.alloc(u8, dir.len + basename.len + basepath.name.ext.len);
-                    std.mem.copy(u8, _pretty, dir);
-                    var remaining_pretty = _pretty[dir.len..];
-                    std.mem.copy(u8, remaining_pretty, basename);
-                    remaining_pretty = remaining_pretty[basename.len..];
-                    std.mem.copy(u8, remaining_pretty, basepath.name.ext);
-                    pretty = _pretty;
-                    relative_name = try linker.allocator.dupe(u8, relative_name);
-                } else {
-                    pretty = try linker.allocator.dupe(u8, relative_name);
-                    relative_name = pretty;
-                }
-
-                var path = Fs.Path.initWithPretty(pretty, relative_name);
-                path.text = path.text[0 .. path.text.len - path.name.ext.len];
-                return path;
-            },
 
             .absolute_url => {
                 if (strings.eqlComptime(namespace, "node")) {

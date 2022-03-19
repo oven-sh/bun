@@ -1208,8 +1208,6 @@ pub const BundleOptions = struct {
 
     pub const ImportPathFormat = enum {
         relative,
-        // omit file extension for Node.js packages
-        relative_nodejs,
         absolute_url,
         // omit file extension
         absolute_path,
@@ -1315,7 +1313,7 @@ pub const BundleOptions = struct {
 
         switch (opts.platform) {
             .node => {
-                opts.import_path_format = .relative_nodejs;
+                opts.import_path_format = .relative;
                 opts.allow_runtime = false;
             },
             .bun => {

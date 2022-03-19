@@ -3166,7 +3166,6 @@ pub const Bundler = struct {
                         did_start = true;
                         try switch (bundler.options.import_path_format) {
                             .relative => bundler.processResolveQueue(.relative, true, @TypeOf(outstream), outstream),
-                            .relative_nodejs => bundler.processResolveQueue(.relative_nodejs, true, @TypeOf(outstream), outstream),
                             .absolute_url => bundler.processResolveQueue(.absolute_url, true, @TypeOf(outstream), outstream),
                             .absolute_path => bundler.processResolveQueue(.absolute_path, true, @TypeOf(outstream), outstream),
                             .package_path => bundler.processResolveQueue(.package_path, true, @TypeOf(outstream), outstream),
@@ -3178,7 +3177,6 @@ pub const Bundler = struct {
             if (!did_start) {
                 try switch (bundler.options.import_path_format) {
                     .relative => bundler.processResolveQueue(.relative, false, @TypeOf(outstream), outstream),
-                    .relative_nodejs => bundler.processResolveQueue(.relative_nodejs, false, @TypeOf(outstream), outstream),
                     .absolute_url => bundler.processResolveQueue(.absolute_url, false, @TypeOf(outstream), outstream),
                     .absolute_path => bundler.processResolveQueue(.absolute_path, false, @TypeOf(outstream), outstream),
                     .package_path => bundler.processResolveQueue(.package_path, false, @TypeOf(outstream), outstream),
@@ -3197,7 +3195,6 @@ pub const Bundler = struct {
                         did_start = true;
                         try switch (bundler.options.import_path_format) {
                             .relative => bundler.processResolveQueue(.relative, true, std.fs.Dir, output_dir),
-                            .relative_nodejs => bundler.processResolveQueue(.relative_nodejs, true, std.fs.Dir, output_dir),
                             .absolute_url => bundler.processResolveQueue(.absolute_url, true, std.fs.Dir, output_dir),
                             .absolute_path => bundler.processResolveQueue(.absolute_path, true, std.fs.Dir, output_dir),
                             .package_path => bundler.processResolveQueue(.package_path, true, std.fs.Dir, output_dir),
@@ -3209,7 +3206,6 @@ pub const Bundler = struct {
             if (!did_start) {
                 try switch (bundler.options.import_path_format) {
                     .relative => bundler.processResolveQueue(.relative, false, std.fs.Dir, output_dir),
-                    .relative_nodejs => bundler.processResolveQueue(.relative_nodejs, false, std.fs.Dir, output_dir),
                     .absolute_url => bundler.processResolveQueue(.absolute_url, false, std.fs.Dir, output_dir),
                     .absolute_path => bundler.processResolveQueue(.absolute_path, false, std.fs.Dir, output_dir),
                     .package_path => bundler.processResolveQueue(.package_path, false, std.fs.Dir, output_dir),

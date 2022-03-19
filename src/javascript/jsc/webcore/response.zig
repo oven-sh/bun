@@ -1708,6 +1708,9 @@ pub const Blob = struct {
         value: JSC.JSValue,
         global: *JSGlobalObject,
     ) JSC.JSValue {
+        if (value.isError()) {
+            return JSC.JSPromise.rejectedPromiseValue(global, value);
+        }
         return JSC.JSPromise.resolvedPromiseValue(global, value);
     }
 

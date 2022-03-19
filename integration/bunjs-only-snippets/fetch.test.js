@@ -376,6 +376,21 @@ describe("Response", () => {
     expect(await clone.text()).toBe("<div>hello</div>");
     gc();
   });
+  it("invalid json", async () => {
+    gc();
+    var body = new Response("<div>hello</div>", {
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+      },
+    });
+    try {
+      await body.json();
+      expect(false).toBe(true);
+    } catch (exception) {
+      expect(exception instanceof SyntaxError);
+    }
+  });
+
   testBlobInterface((data) => new Response(data), true);
 });
 

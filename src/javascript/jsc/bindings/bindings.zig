@@ -2007,6 +2007,13 @@ pub const JSValue = enum(u64) {
             else => false,
         };
     }
+    /// Empty as in "JSValue {}" rather than an empty string
+    pub fn isEmpty(this: JSValue) bool {
+        return switch (@enumToInt(this)) {
+            0 => true,
+            else => false,
+        };
+    }
     pub fn isBoolean(this: JSValue) bool {
         return cppFn("isBoolean", .{this});
     }

@@ -249,7 +249,14 @@ unsigned char JSC__JSValue__jsType(JSC__JSValue JSValue0)
 JSC__JSValue JSC__JSValue__parseJSON(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
 {
     JSC::JSValue jsValue = JSC::JSValue::decode(JSValue0);
-    return JSC::JSValue::encode(JSC::JSONParse(arg1, jsValue.toWTFString(arg1)));
+
+    JSC::JSValue result = JSC::JSONParse(arg1, jsValue.toWTFString(arg1));
+
+    if (!result) {
+        result = JSC::JSValue(JSC::createSyntaxError(arg1->globalObject(), "Failed to parse JSON"));
+    }
+
+    return JSC::JSValue::encode(result);
 }
 
 void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC__JSGlobalObject* global, ZigString* arg1)

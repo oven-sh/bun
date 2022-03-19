@@ -260,6 +260,95 @@ describe("Blob", () => {
 });
 
 describe("Response", () => {
+  describe("Response.json", () => {
+    it("works", async () => {
+      const inputs = [
+        "hellooo",
+        [[123], 456, 789],
+        { hello: "world" },
+        { ok: "😉 😌 😍 🥰 😘 " },
+      ];
+      for (let input of inputs) {
+        const output = JSON.stringify(input);
+        expect(await Response.json(input).text()).toBe(output);
+      }
+      // JSON.stringify() returns undefined
+      expect(await Response.json().text()).toBe("");
+      // JSON.stringify("") returns '""'
+      expect(await Response.json("").text()).toBe('""');
+    });
+    it("sets the content-type header", () => {
+      let response = Response.json("hello");
+      expect(response.type).toBe("basic");
+      expect(response.headers.get("content-type")).toBe("application/json");
+      expect(response.status).toBe(200);
+    });
+    it("supports number status code", () => {
+      let response = Response.json("hello", 407);
+      expect(response.type).toBe("basic");
+      expect(response.headers.get("content-type")).toBe("application/json");
+      expect(response.status).toBe(407);
+    });
+    it("overrides the content-type header", () => {
+      var response = Response.json("hello", {
+        headers: {
+          "content-type": "potato",
+        },
+      });
+      expect(response.type).toBe("basic");
+      expect(response.headers.get("content-type")).toBe("application/json");
+    });
+    it("supports headers", () => {
+      var response = Response.json("hello", {
+        headers: {
+          "content-type": "potato",
+          "x-hello": "world",
+        },
+        statusCode: 408,
+      });
+      expect(response.headers.get("content-type")).toBe("application/json");
+      expect(response.headers.get("x-hello")).toBe("world");
+      expect(response.status).toBe(408);
+    });
+  });
+  describe("Response.redirect", () => {
+    it("works", () => {
+      const inputs = [
+        "http://example.com",
+        "http://example.com/",
+        "http://example.com/hello",
+        "http://example.com/hello/",
+        "http://example.com/hello/world",
+        "http://example.com/hello/world/",
+      ];
+      for (let input of inputs) {
+        expect(Response.redirect(input).headers.get("Location")).toBe(input);
+      }
+    });
+
+    it("supports headers", () => {
+      var response = Response.redirect("https://example.com", {
+        headers: {
+          "content-type": "potato",
+          "x-hello": "world",
+          Location: "https://wrong.com",
+        },
+        statusCode: 408,
+      });
+      expect(response.headers.get("x-hello")).toBe("world");
+      expect(response.headers.get("Location")).toBe("https://example.com");
+      expect(response.status).toBe(302);
+      expect(response.type).toBe("basic");
+      expect(response.ok).toBe(false);
+    });
+  });
+  describe("Response.error", () => {
+    it("works", () => {
+      expect(Response.error().type).toBe("error");
+      expect(Response.error().ok).toBe(false);
+      expect(Response.error().status).toBe(0);
+    });
+  });
   it("clone", async () => {
     gc();
     var body = new Response("<div>hello</div>", {

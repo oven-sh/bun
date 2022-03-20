@@ -36,7 +36,7 @@ var hmr = new FastHMR(2482749838, "string-escapes.js", FastRefresh), exports = h
     "\uD83D\uDD75\uD83C\uDFFD\u200D\u2642\uFE0F": "\uD83D\uDD75\uD83C\uDFFD\u200D\u2642\uFE0F",
     "\u32E1": "\u32E1",
     "\u263A": "\u263A",
-    シ: "\u30B7",
+    "シ": "\u30B7",
     "\uD83D\uDC4B": "\uD83D\uDC4B",
     f,
     "\u2639": "\u2639",

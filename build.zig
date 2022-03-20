@@ -116,6 +116,11 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
         .path = pkgPath("src/jsc_stub.zig"),
     };
 
+    var uws: std.build.Pkg = .{
+        .name = "uws",
+        .path = pkgPath("src/deps/uws.zig"),
+    };
+
     var javascript_core = if (target.getOsTag() == .freestanding)
         javascript_core_stub
     else
@@ -128,7 +133,7 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
 
     io.dependencies = &.{analytics};
 
-    javascript_core.dependencies = &.{ http, strings, picohttp, io };
+    javascript_core.dependencies = &.{ http, strings, picohttp, io, uws };
     http.dependencies = &.{
         strings,
         picohttp,
@@ -162,6 +167,7 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
     step.addPackage(crash_reporter);
     step.addPackage(datetime);
     step.addPackage(lol_html);
+    step.addPackage(uws);
 }
 var output_dir: []const u8 = "";
 fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
@@ -519,6 +525,7 @@ pub fn linkObjectFiles(b: *std.build.Builder, obj: *std.build.LibExeObjStep, tar
         .{ "libbmalloc.a", "libbmalloc.a" },
         .{ "libbacktrace.a", "libbacktrace.a" },
         .{ "liblolhtml.a", "liblolhtml.a" },
+        .{ "uSockets.a", "uSockets.a" },
     });
 
     for (dirs_to_search.slice()) |deps_path| {

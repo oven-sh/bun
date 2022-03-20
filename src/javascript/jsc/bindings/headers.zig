@@ -274,6 +274,7 @@ pub extern fn WTF__String__isEmpty(arg0: [*c]WTF__String) bool;
 pub extern fn WTF__String__isExternal(arg0: [*c]WTF__String) bool;
 pub extern fn WTF__String__isStatic(arg0: [*c]WTF__String) bool;
 pub extern fn WTF__String__length(arg0: [*c]WTF__String) usize;
+pub extern fn JSC__JSValue___then(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?fn ([*c]JSC__JSGlobalObject, ?*anyopaque, JSC__JSValue, usize) callconv(.C) void, ArgFn4: ?fn ([*c]JSC__JSGlobalObject, ?*anyopaque, JSC__JSValue, usize) callconv(.C) void) void;
 pub extern fn JSC__JSValue__asArrayBuffer_(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]Bun__ArrayBuffer) bool;
 pub extern fn JSC__JSValue__asCell(JSValue0: JSC__JSValue) [*c]JSC__JSCell;
 pub extern fn JSC__JSValue__asInternalPromise(JSValue0: JSC__JSValue) [*c]JSC__JSInternalPromise;

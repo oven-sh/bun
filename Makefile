@@ -164,7 +164,7 @@ POSIX_PKG_MANAGER=sudo apt
 STRIP=
 
 ifeq ($(OS_NAME),darwin)
-STRIP=strip
+STRIP=/usr/bin/strip
 endif
 
 ifeq ($(OS_NAME),linux)
@@ -188,7 +188,7 @@ MAC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders \
 LINUX_INCLUDE_DIRS := -I$(JSC_INCLUDE_DIR) \
 					  -Isrc/javascript/jsc/bindings/
 
-INCLUDE_DIRS :=
+INCLUDE_DIRS := -I$(BUN_DEPS_DIR)/uws
 
 
 
@@ -243,7 +243,8 @@ CLANG_FLAGS = $(INCLUDE_DIRS) \
 		-DBUILDING_JSCONLY__ \
 		-DASSERT_ENABLED=0 \
 		-fvisibility=hidden \
-		-fvisibility-inlines-hidden
+		-fvisibility-inlines-hidden \
+		-fPIC -fno-semantic-interposition
 	
 PLATFORM_LINKER_FLAGS =
 		
@@ -266,11 +267,11 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MIMALLOC_FILE_PATH) \
 		$(BUN_DEPS_OUT_DIR)/libarchive.a \
 		$(BUN_DEPS_OUT_DIR)/libssl.a \
 		$(BUN_DEPS_OUT_DIR)/picohttpparser.o \
-		$(BUN_DEPS_OUT_DIR)/liblolhtml.a
+		$(BUN_DEPS_OUT_DIR)/liblolhtml.a \
+		$(BUN_DEPS_OUT_DIR)/uSockets.a \
+		$(BUN_DEPS_OUT_DIR)/libuwsockets.o
 
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) $(BUN_DEPS_OUT_DIR)/libcrypto.boring.a
-
-
 
 
 STATIC_MUSL_FLAG ?= 
@@ -289,7 +290,8 @@ PLATFORM_LINKER_FLAGS = \
 		-static-libgcc \
 		-fno-omit-frame-pointer $(CFLAGS) \
 		-Wl,--compress-debug-sections,zlib \
-		${STATIC_MUSL_FLAG} 
+		${STATIC_MUSL_FLAG}  \
+		-Wl,-Bsymbolic-functions
 
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO += $(BUN_DEPS_OUT_DIR)/libbacktrace.a
 endif
@@ -428,6 +430,19 @@ build-obj-wasm-small:
 build-obj-safe: 
 	$(ZIG) build obj -Drelease-safe
 
+UWS_CC_FLAGS = -pthread -DLIBUS_USE_OPENSSL=1 -DLIBUS_USE_BORINGSSL=1 -DWITH_BORINGSSL=1 -Wpedantic -Wall -Wextra -Wsign-conversion -Wconversion -Isrc -IuSockets/src -DUWS_WITH_PROXY
+UWS_CXX_FLAGS = $(UWS_CC_FLAGS) -std=gnu++17
+UWS_LDFLAGS = -I$(BUN_DEPS_DIR)/boringssl/include
+
+usockets:
+	rm -rf $(BUN_DEPS_DIR)/uws/uSockets/*.o $(BUN_DEPS_DIR)/uws/uSockets/*.a
+	cd $(BUN_DEPS_DIR)/uws/uSockets && \
+		$(CC) $(CFLAGS) $(UWS_CC_FLAGS)  $(UWS_LDFLAGS)  $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) -O3 -g -c -c src/*.c src/eventing/*.c src/crypto/*.c -flto && \
+		$(CXX) $(CXXFLAGS) $(UWS_CXX_FLAGS) $(UWS_LDFLAGS) $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) -O3 -g -c src/crypto/*.cpp && \
+		ar rvs $(BUN_DEPS_OUT_DIR)/uSockets.a *.o
+
+uws: usockets
+	$(CXX) -I$(BUN_DEPS_DIR)/uws/uSockets/src $(CLANG_FLAGS) $(UWS_CXX_FLAGS) $(UWS_LDFLAGS) -c -flto -I$(BUN_DEPS_DIR) $(BUN_DEPS_OUT_DIR)/uSockets.a $(BUN_DEPS_DIR)/libuwsockets.cpp -o $(BUN_DEPS_OUT_DIR)/libuwsockets.o
 
 
 
@@ -984,7 +999,8 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 		-g \
 		-fno-exceptions \
 		-ffunction-sections -fdata-sections -g \
-		-ferror-limit=1000
+		-ferror-limit=1000 \
+		-emit-llvm -flto -fno-semantic-interposition
 
 sizegen:
 	$(CXX) src/javascript/jsc/headergen/sizegen.cpp -o $(BUN_TMP_DIR)/sizegen $(CLANG_FLAGS) -O1

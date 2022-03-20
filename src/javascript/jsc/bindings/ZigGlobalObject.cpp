@@ -557,7 +557,8 @@ static JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     }
 }
 
-extern "C" void Bun__reportError(JSC::JSGlobalObject*, JSC__JSValue);
+extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
+
 static JSC_DECLARE_HOST_FUNCTION(functionReportError);
 static JSC_DEFINE_HOST_FUNCTION(functionReportError,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

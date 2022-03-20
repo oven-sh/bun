@@ -115,18 +115,14 @@ pub const Run = struct {
 
     pub fn start(this: *Run) void {
         var promise = this.vm.loadEntryPoint(this.entry_path) catch return;
-        this.vm.tick();
-
-        while (promise.status(this.vm.global.vm()) == .Pending) {
-            this.vm.tick();
-        }
 
         if (promise.status(this.vm.global.vm()) == .Rejected) {
             this.vm.defaultErrorHandler(promise.result(this.vm.global.vm()), null);
             Global.exit(1);
         }
 
-        _ = promise.result(this.vm.global.vm());
+        const result = promise.result(this.vm.global.vm());
+        JSC.C.JSValueProtect(this.vm.global.ref(), result.asObjectRef());
 
         if (this.vm.log.msgs.items.len > 0) {
             if (Output.enable_ansi_colors) {

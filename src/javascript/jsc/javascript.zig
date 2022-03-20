@@ -422,6 +422,7 @@ pub const SavedSourceMap = struct {
         return SourceMap.Mapping.find(mappings, line, column);
     }
 };
+const uws = @import("uws");
 
 // If you read JavascriptCore/API/JSVirtualMachine.mm - https://github.com/WebKit/WebKit/blob/acff93fb303baa670c055cb24c2bad08691a01a0/Source/JavaScriptCore/API/JSVirtualMachine.mm#L101
 // We can see that it's sort of like std.mem.Allocator but for JSGlobalContextRef, to support Automatic Reference Counting
@@ -450,6 +451,7 @@ pub const VirtualMachine = struct {
     node_fs: ?*Node.NodeFS = null,
     has_loaded_node_modules: bool = false,
     timer: Bun.Timer = Bun.Timer{},
+    uws_event_loop: ?*uws.Loop = null,
 
     arena: *Arena = undefined,
     has_loaded: bool = false,
@@ -596,6 +598,9 @@ pub const VirtualMachine = struct {
             this.concurrent_lock.lock();
             defer this.concurrent_lock.unlock();
             this.concurrent_tasks.writeItem(task) catch unreachable;
+            if (this.virtual_machine.uws_event_loop) |loop| {
+                loop.nextTick(*EventLoop, this, EventLoop.tick);
+            }
             _ = this.ready_tasks_count.fetchAdd(1, .Monotonic);
         }
     };
@@ -728,7 +733,6 @@ pub const VirtualMachine = struct {
             .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
             .ref_strings = JSC.RefString.Map.init(allocator),
         };
-
         VirtualMachine.vm.regular_event_loop.tasks = EventLoop.Queue.init(
             default_allocator,
         );

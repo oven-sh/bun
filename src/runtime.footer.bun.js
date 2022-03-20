@@ -15,3 +15,5 @@ export var $$bun_runtime_json_parse = JSON.parse;
 export var __internalIsCommonJSNamespace =
   BUN_RUNTIME.__internalIsCommonJSNamespace;
 globalThis.require ||= BUN_RUNTIME.__require;
+globalThis.__internalIsCommonJSNamespace ||=
+  BUN_RUNTIME.__internalIsCommonJSNamespace;

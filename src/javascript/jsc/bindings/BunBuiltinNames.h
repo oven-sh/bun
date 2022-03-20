@@ -72,6 +72,14 @@ using namespace JSC;
     macro(delimiter) \
     macro(toNamespacedPath) \
     macro(isWindows) \
+    macro(get) \
+    macro(put) \
+    macro(post) \
+    macro(patch) \
+    macro(trace) \
+    macro(connect) \
+    macro(options) \
+    macro(port) \
     BUN_ADDITIONAL_PRIVATE_IDENTIFIERS(macro) \
 
 class BunBuiltinNames {

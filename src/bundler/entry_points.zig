@@ -185,9 +185,11 @@ pub const ServerEntryPoint = struct {
             \\//Auto-generated file
             \\import * as start from '{s}{s}';
             \\export * from '{s}{s}';
+            \\var entryNamespace = start;
             \\if ('default' in start && "__internalIsCommonJSNamespace" in globalThis && __internalIsCommonJSNamespace(start)) {{
-            \\  start.default();
+            \\  entryNamespace = start.default();
             \\}}
+            \\if(entryNamespace && 'serverless' in entryNamespace) Bun.startServer(entryNamespace.serverless);
         ,
             .{
                 dir_to_use,

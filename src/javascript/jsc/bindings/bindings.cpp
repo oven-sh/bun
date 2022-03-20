@@ -246,6 +246,45 @@ unsigned char JSC__JSValue__jsType(JSC__JSValue JSValue0)
     return 0;
 }
 
+// TODO: prevent this from allocating so much memory
+void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* ctx, void (*ArgFn3)(JSC__JSGlobalObject* arg0, void* arg1, JSC__JSValue arg2, size_t arg3), void (*ArgFn4)(JSC__JSGlobalObject* arg0, void* arg1, JSC__JSValue arg2, size_t arg3))
+{
+
+    JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
+        globalObject->vm(), globalObject, 1, String(), [ctx, ArgFn3](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+            auto argCount = static_cast<uint16_t>(callFrame->argumentCount());
+            WTF::Vector<JSC::EncodedJSValue, 16> arguments;
+            arguments.reserveInitialCapacity(argCount);
+            if (argCount) {
+                for (uint16_t i = 0; i < argCount; ++i) {
+                    arguments.uncheckedAppend(JSC::JSValue::encode(callFrame->uncheckedArgument(i)));
+                }
+            }
+
+            ArgFn3(globalObject, ctx, reinterpret_cast<JSC__JSValue>(arguments.data()), argCount);
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        });
+    JSC::JSNativeStdFunction* rejecterFunction = JSC::JSNativeStdFunction::create(
+        globalObject->vm(), globalObject, 1, String(),
+        [ctx, ArgFn4](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+            auto argCount = static_cast<uint16_t>(callFrame->argumentCount());
+            WTF::Vector<JSC::EncodedJSValue, 16> arguments;
+            arguments.reserveInitialCapacity(argCount);
+            if (argCount) {
+                for (uint16_t i = 0; i < argCount; ++i) {
+                    arguments.uncheckedAppend(JSC::JSValue::encode(callFrame->uncheckedArgument(i)));
+                }
+            }
+
+            ArgFn4(globalObject, ctx, reinterpret_cast<JSC__JSValue>(arguments.data()), argCount);
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        });
+
+    globalObject->vm().drainMicrotasks();
+    JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(globalObject->vm(), JSC::JSValue::decode(JSValue0).asCell());
+    promise->performPromiseThen(globalObject, resolverFunction, rejecterFunction, JSC::jsUndefined());
+}
+
 JSC__JSValue JSC__JSValue__parseJSON(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
 {
     JSC::JSValue jsValue = JSC::JSValue::decode(JSValue0);
@@ -728,10 +767,8 @@ JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject* glob
     }
 
     JSC::Structure* errorStructure = globalObject->errorStructure(JSC::ErrorType::AggregateError);
-    scope.release();
 
-    return JSC::JSValue::encode(JSC::createAggregateError(
-        globalObject, vm, errorStructure, array, message, options, nullptr, JSC::TypeNothing, false));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::createAggregateError(globalObject, vm, errorStructure, array, message, options, nullptr, JSC::TypeNothing, false)));
 }
 // static JSC::JSNativeStdFunction* resolverFunction;
 // static JSC::JSNativeStdFunction* rejecterFunction;

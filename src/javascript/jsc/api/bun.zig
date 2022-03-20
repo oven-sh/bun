@@ -954,6 +954,10 @@ pub const Class = NewClass(
             .rfn = Bun.readAllStdinSync,
             .ts = d.ts{},
         },
+        .startServer = .{
+            .rfn = Bun.startServer,
+            .ts = d.ts{},
+        },
     },
     .{
         .main = .{
@@ -1000,6 +1004,28 @@ pub const Class = NewClass(
         },
     },
 );
+
+pub fn startServer(
+    _: void,
+    ctx: js.JSContextRef,
+    _: js.JSObjectRef,
+    _: js.JSObjectRef,
+    arguments: []const js.JSValueRef,
+    _: js.ExceptionRef,
+) js.JSValueRef {
+    var vm = JSC.VirtualMachine.vm;
+    const handler = if (arguments.len > 0) JSC.JSValue.fromRef(arguments[0]) else JSC.JSValue.zero;
+    if (handler.isEmpty() or handler.isUndefinedOrNull() or !handler.isCell() or !handler.isCallable(ctx.ptr().vm())) {
+        Output.prettyWarnln("\"serverless\" export should be a function", .{});
+        Output.flush();
+        return JSC.JSValue.jsUndefined().asObjectRef();
+    }
+
+    JSC.C.JSValueProtect(ctx.ptr().ref(), handler.asObjectRef());
+    var server = JSC.API.Server.init(vm.bundler.options.origin.getPortAuto(), handler, ctx.ptr());
+    server.listen();
+    return JSC.JSValue.jsUndefined().asObjectRef();
+}
 
 pub fn allocUnsafe(
     _: void,

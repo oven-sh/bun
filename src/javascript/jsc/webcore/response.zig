@@ -118,6 +118,20 @@ pub const Response = struct {
     status_text: string = "",
     redirected: bool = false,
 
+    pub inline fn statusCode(this: *const Response) u16 {
+        return this.body.init.status_code;
+    }
+
+    pub fn redirectLocation(this: *const Response) ?[]const u8 {
+        return this.header("location");
+    }
+
+    pub fn header(this: *const Response, comptime name: []const u8) ?[]const u8 {
+        const headers: *const Headers = (this.body.init.headers orelse return null).value;
+        const index = headers.getHeaderIndex(name) orelse return null;
+        return headers.asStr(headers.entries.items(.value)[index]);
+    }
+
     pub const Props = struct {};
 
     pub fn writeFormat(this: *const Response, formatter: *JSC.Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
@@ -1585,7 +1599,7 @@ pub const Blob = struct {
     /// When UTF-16, they're nearly always due to non-ascii characters
     is_all_ascii: ?bool = null,
 
-    globalThis: *JSGlobalObject,
+    globalThis: *JSGlobalObject = undefined,
 
     pub const Store = struct {
         ptr: [*]u8 = undefined,
@@ -2488,7 +2502,7 @@ pub const Body = struct {
         }
 
         pub fn init(allocator: std.mem.Allocator, ctx: js.JSContextRef, init_ref: js.JSValueRef) !?Init {
-            var result = Init{ .headers = null, .status_code = 0 };
+            var result = Init{ .headers = null, .status_code = 200 };
             var array = js.JSObjectCopyPropertyNames(ctx, init_ref);
             defer js.JSPropertyNameArrayRelease(array);
             const count = js.JSPropertyNameArrayGetCount(array);
@@ -2515,17 +2529,15 @@ pub const Body = struct {
                             }
                         }
                     },
-                    "statusCode".len => {
-                        if (js.JSStringIsEqualToUTF8CString(property_name_ref, "statusCode")) {
+
+                    "method".len => {
+                        if (js.JSStringIsEqualToUTF8CString(property_name_ref, "status")) {
                             var value_ref = js.JSObjectGetProperty(ctx, init_ref, property_name_ref, null);
                             var exception: js.JSValueRef = null;
                             const number = js.JSValueToNumber(ctx, value_ref, &exception);
                             if (exception != null or !std.math.isFinite(number)) continue;
                             result.status_code = @truncate(u16, @floatToInt(u64, number));
-                        }
-                    },
-                    "method".len => {
-                        if (js.JSStringIsEqualToUTF8CString(property_name_ref, "method")) {
+                        } else if (js.JSStringIsEqualToUTF8CString(property_name_ref, "method")) {
                             result.method = Method.which(
                                 JSC.JSValue.fromRef(init_ref).get(ctx.ptr(), "method").?.getZigString(ctx.ptr()).slice(),
                             ) orelse Method.GET;

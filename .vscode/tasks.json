@@ -29,31 +29,6 @@
         "showReuseMessage": false,
         "clear": true
       }
-    },
-    {
-      "label": "test",
-      "type": "shell",
-      "command": "zig",
-      "args": [
-        "test",
-        "${file}",
-        "--main-pkg-path",
-        "${workspaceFolder}",
-        "-femit-bin=${workspaceFolder}/zig-out/bin/test",
-        ";",
-        "true"
-      ],
-
-      "group": {
-        "kind": "test",
-        "isDefault": true
-      },
-      "presentation": {
-        "showReuseMessage": false,
-        "clear": true,
-        "panel": "new",
-        "reveal": "always"
-      }
     }
   ]
 }

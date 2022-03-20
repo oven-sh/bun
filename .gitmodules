@@ -33,3 +33,6 @@
 	path = src/deps/lol-html
 	url = https://github.com/cloudflare/lol-html
 	ignore = dirty
+[submodule "src/deps/uws"]
+	path = src/deps/uws
+	url = https://github.com/uNetworking/uWebSockets

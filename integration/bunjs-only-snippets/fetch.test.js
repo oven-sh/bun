@@ -310,7 +310,7 @@ describe("Response", () => {
           "content-type": "potato",
           "x-hello": "world",
         },
-        statusCode: 408,
+        status: 408,
       });
       expect(response.headers.get("content-type")).toBe(
         "application/json;charset=utf-8"
@@ -341,7 +341,7 @@ describe("Response", () => {
           "x-hello": "world",
           Location: "https://wrong.com",
         },
-        statusCode: 408,
+        status: 408,
       });
       expect(response.headers.get("x-hello")).toBe("world");
       expect(response.headers.get("Location")).toBe("https://example.com");

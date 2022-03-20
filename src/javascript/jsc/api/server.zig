@@ -92,6 +92,7 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
         app: *App = undefined,
         globalThis: *JSGlobalObject,
         default_server: URL = URL{ .host = "localhost", .port = "3000" },
+        response_objects_pool: JSC.WebCore.Response.Pool = JSC.WebCore.Response.Pool{},
 
         request_pool_allocator: std.mem.Allocator = undefined,
 
@@ -116,6 +117,7 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
 
             this.listener = socket;
             VirtualMachine.vm.uws_event_loop = uws.Loop.get();
+            VirtualMachine.vm.response_objects_pool = &this.response_objects_pool;
             this.app.run();
         }
 
@@ -127,6 +129,7 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
             method: HTTP.Method,
             aborted: bool = false,
             response_jsvalue: JSC.JSValue = JSC.JSValue.zero,
+            response_ptr: ?*JSC.WebCore.Response = null,
             blob: JSC.WebCore.Blob = JSC.WebCore.Blob{},
             promise: ?*JSC.JSValue = null,
             response_headers: ?*JSC.WebCore.Headers.RefCountedHeaders = null,
@@ -181,14 +184,13 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                     .method = HTTP.Method.which(req.method()) orelse .GET,
                     .server = server,
                 };
-                resp.onAborted(*RequestContext, onAbort, this);
             }
 
             pub fn onAbort(this: *RequestContext, _: *App.Response) void {
                 this.aborted = true;
                 this.req = undefined;
                 if (!this.response_jsvalue.isEmpty()) {
-                    JSC.C.JSValueUnprotect(this.server.globalThis.ref(), this.response_jsvalue.asObjectRef());
+                    this.server.response_objects_pool.push(this.server.globalThis, this.response_jsvalue);
                     this.response_jsvalue = JSC.JSValue.zero;
                 }
             }
@@ -196,7 +198,7 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
             pub fn finalize(this: *RequestContext) void {
                 this.blob.detach();
                 if (!this.response_jsvalue.isEmpty()) {
-                    JSC.C.JSValueUnprotect(this.server.globalThis.ref(), this.response_jsvalue.asObjectRef());
+                    this.server.response_objects_pool.push(this.server.globalThis, this.response_jsvalue);
                     this.response_jsvalue = JSC.JSValue.zero;
                 }
 
@@ -213,11 +215,11 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                 this.server.request_pool_allocator.destroy(this);
             }
 
-            pub fn render(this: *RequestContext, response: *JSC.WebCore.Response) void {
+            pub fn doRender(this: *RequestContext) void {
                 if (this.aborted) {
                     return;
                 }
-
+                var response = this.response_ptr.?;
                 this.blob = response.body.use();
                 const status = response.statusCode();
 
@@ -236,9 +238,7 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                         this.resp.writeStatus(std.fmt.bufPrint(&status_text_buf, "{d} HM", .{response.body.init.status_code}) catch unreachable);
                     }
 
-                    for (names) |name, i| {
-                        this.resp.writeHeader(headers.asStr(name), headers.asStr(values[i]));
-                    }
+                    this.resp.writeHeaders(names, values, headers.buf.items);
                 }
 
                 if (status == 302 or status == 202 or this.blob.size == 0) {
@@ -249,6 +249,12 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
 
                 this.resp.end(this.blob.sharedView(), false);
                 this.finalize();
+            }
+
+            pub fn render(this: *RequestContext, response: *JSC.WebCore.Response) void {
+                this.response_ptr = response;
+                this.resp.runCorked(*RequestContext, doRender, this);
+                this.response_ptr = null;
             }
         };
 
@@ -286,6 +292,7 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
             }
 
             if (ctx.response_jsvalue.jsTypeLoose() == .JSPromise) {
+                resp.onAborted(*RequestContext, RequestContext.onAbort, ctx);
                 JSC.VirtualMachine.vm.tick();
 
                 ctx.response_jsvalue.then(

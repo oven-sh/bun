@@ -480,7 +480,7 @@ pub const VirtualMachine = struct {
     ref_strings: JSC.RefString.Map = undefined,
 
     source_mappings: SavedSourceMap = undefined,
-
+    response_objects_pool: ?*Response.Pool = null,
     pub inline fn eventLoop(this: *VirtualMachine) *EventLoop {
         return this.event_loop;
     }

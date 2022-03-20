@@ -282,6 +282,15 @@ void uws_loop_addPreHandler(us_loop_t *loop, void *key,
 void uws_loop_removePreHandler(us_loop_t *loop, void *ctx_);
 void uws_loop_defer(us_loop_t *loop, void *ctx, void (*cb)(void *ctx));
 
+typedef struct StringPointer {
+  uint32_t off;
+  uint32_t len;
+} StringPointer;
+
+void uws_res_write_headers(int ssl, uws_res_t *res, const StringPointer *names,
+                           const StringPointer *values, size_t count,
+                           const char *buf);
+
 #ifdef __cplusplus
 }
 #endif

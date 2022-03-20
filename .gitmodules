@@ -35,4 +35,5 @@
 	ignore = dirty
 [submodule "src/deps/uws"]
 	path = src/deps/uws
-	url = https://github.com/uNetworking/uWebSockets
+	url = https://github.com/Jarred-Sumner/uWebSockets
+	ignore = dirty

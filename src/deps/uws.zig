@@ -1,3 +1,4 @@
+const Api = @import("../api/schema.zig").Api;
 pub const u_int8_t = u8;
 pub const u_int16_t = c_ushort;
 pub const u_int32_t = c_uint;
@@ -497,6 +498,38 @@ pub fn NewApp(comptime ssl: bool) type {
 
                 uws_res_on_data(ssl_flag, res.downcast(), Wrapper.handle, opcional_data);
             }
+
+            pub fn runCorked(
+                res: *Response,
+                comptime UserDataType: type,
+                comptime handler: fn (UserDataType) void,
+                opcional_data: UserDataType,
+            ) void {
+                const Wrapper = struct {
+                    pub fn handle(user_data: ?*anyopaque) callconv(.C) void {
+                        if (comptime UserDataType == void) {
+                            @call(.{ .modifier = .always_inline }, handler, .{
+                                void{},
+                            });
+                        } else {
+                            @call(.{ .modifier = .always_inline }, handler, .{
+                                @ptrCast(UserDataType, @alignCast(@alignOf(UserDataType), user_data.?)),
+                            });
+                        }
+                    }
+                };
+
+                uws_res_cork(ssl_flag, res.downcast(), opcional_data, Wrapper.handle);
+            }
+
+            pub fn writeHeaders(
+                res: *Response,
+                names: []const Api.StringPointer,
+                values: []const Api.StringPointer,
+                buf: []const u8,
+            ) void {
+                uws_res_write_headers(ssl_flag, res.downcast(), names.ptr, values.ptr, values.len, buf.ptr);
+            }
         };
     };
 }
@@ -578,7 +611,8 @@ extern fn uws_res_upgrade(
     sec_web_socket_extensions_length: usize,
     ws: ?*uws_socket_context_t,
 ) void;
-
+extern fn uws_res_cork(c_int, res: *uws_res, ctx: *anyopaque, corker: fn (?*anyopaque) callconv(.C) void) void;
+extern fn uws_res_write_headers(c_int, res: *uws_res, names: [*]const Api.StringPointer, values: [*]const Api.StringPointer, count: usize, buf: [*]const u8) void;
 pub const LIBUS_RECV_BUFFER_LENGTH = @import("std").zig.c_translation.promoteIntLiteral(c_int, 524288, .decimal);
 pub const LIBUS_TIMEOUT_GRANULARITY = @as(c_int, 4);
 pub const LIBUS_RECV_BUFFER_PADDING = @as(c_int, 32);

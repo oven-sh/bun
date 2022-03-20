@@ -42,6 +42,42 @@ const JSPrinter = @import("../../../js_printer.zig");
 const picohttp = @import("picohttp");
 const StringJoiner = @import("../../../string_joiner.zig");
 pub const Response = struct {
+    pub const Pool = struct {
+        response_objects_pool: [127]JSC.C.JSObjectRef = undefined,
+        response_objects_used: u8 = 0,
+
+        pub fn get(this: *Pool, ptr: *Response) ?JSC.C.JSObjectRef {
+            if (this.response_objects_used > 0) {
+                var result = this.response_objects_pool[this.response_objects_used - 1];
+                this.response_objects_used -= 1;
+                if (JSC.C.JSObjectSetPrivate(result, JSPrivateDataPtr.init(ptr).ptr())) {
+                    return result;
+                } else {
+                    JSC.C.JSValueUnprotect(VirtualMachine.vm.global.ref(), result);
+                }
+            }
+
+            return null;
+        }
+
+        pub fn push(this: *Pool, globalThis: *JSC.JSGlobalObject, object: JSC.JSValue) void {
+            var remaining = this.response_objects_pool[@minimum(this.response_objects_used, this.response_objects_pool.len)..];
+            if (remaining.len == 0) {
+                JSC.C.JSValueUnprotect(globalThis.ref(), object.asObjectRef());
+                return;
+            }
+
+            if (object.as(Response)) |resp| {
+                _ = JSC.C.JSObjectSetPrivate(object.asObjectRef(), null);
+
+                _ = resp.body.use();
+                resp.finalize();
+                remaining[0] = object.asObjectRef();
+                this.response_objects_used += 1;
+            }
+        }
+    };
+
     pub const Constructor = JSC.NewConstructor(
         Response,
         .{
@@ -262,7 +298,18 @@ pub const Response = struct {
         _: js.ExceptionRef,
     ) js.JSValueRef {
         var cloned = this.clone(getAllocator(ctx));
-        return Response.Class.make(ctx, cloned);
+        return Response.makeMaybePooled(ctx, cloned);
+    }
+
+    pub fn makeMaybePooled(ctx: js.JSContextRef, ptr: *Response) JSC.C.JSObjectRef {
+        if (JSC.VirtualMachine.vm.response_objects_pool) |pool| {
+            if (pool.get(ptr)) |object| {
+                JSC.C.JSValueUnprotect(ctx, object);
+                return object;
+            }
+        }
+
+        return Response.Class.make(ctx, ptr);
     }
 
     pub fn cloneInto(this: *const Response, new_response: *Response, allocator: std.mem.Allocator) void {
@@ -410,7 +457,7 @@ pub const Response = struct {
         var ptr = response.allocator.create(Response) catch unreachable;
         ptr.* = response;
 
-        return Response.Class.make(ctx, ptr);
+        return Response.makeMaybePooled(ctx, ptr);
     }
     pub fn constructRedirect(
         _: void,
@@ -462,7 +509,7 @@ pub const Response = struct {
         var ptr = response.allocator.create(Response) catch unreachable;
         ptr.* = response;
 
-        return Response.Class.make(ctx, ptr);
+        return Response.makeMaybePooled(ctx, ptr);
     }
     pub fn constructError(
         _: void,
@@ -485,7 +532,7 @@ pub const Response = struct {
             .url = "",
         };
 
-        return Response.Class.make(
+        return Response.makeMaybePooled(
             ctx,
             response,
         );
@@ -522,7 +569,7 @@ pub const Response = struct {
             .allocator = getAllocator(ctx),
             .url = "",
         };
-        return Response.Class.make(
+        return Response.makeMaybePooled(
             ctx,
             response,
         );
@@ -753,7 +800,7 @@ pub const Fetch = struct {
                     },
                 },
             };
-            return JSValue.fromRef(Response.Class.make(@ptrCast(js.JSContextRef, this.global_this), response));
+            return JSValue.fromRef(Response.makeMaybePooled(@ptrCast(js.JSContextRef, this.global_this), response));
         }
 
         pub fn get(

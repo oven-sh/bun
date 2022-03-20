@@ -216,7 +216,7 @@ pub const HTMLRewriter = struct {
 
             response.cloneInto(result, getAllocator(global.ref()));
             this.finalizeWithoutDestroy();
-            return JSValue.fromRef(Response.Class.make(global.ref(), result));
+            return JSValue.fromRef(Response.makeMaybePooled(global.ref(), result));
         }
 
         var new_context = this.context;
@@ -311,7 +311,7 @@ pub const HTMLRewriter = struct {
             };
 
             return JSC.JSValue.fromRef(
-                Response.Class.make(sink.global.ref(), sink.response),
+                Response.makeMaybePooled(sink.global.ref(), sink.response),
             );
         }
 
@@ -327,7 +327,7 @@ pub const HTMLRewriter = struct {
             if (prev_value.Locked.promise) |promise| {
                 prev_value.Locked.promise = null;
                 promise.asInternalPromise().?.resolve(this.global, JSC.JSValue.fromRef(
-                    Response.Class.make(
+                    Response.makeMaybePooled(
                         this.global.ref(),
                         this.response,
                     ),

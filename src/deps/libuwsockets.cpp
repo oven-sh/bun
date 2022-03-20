@@ -981,4 +981,34 @@ void uws_loop_defer(us_loop_t *loop, void *ctx, void (*cb)(void *ctx)) {
   uWS::Loop *uwsLoop = (uWS::Loop *)loop;
   uwsLoop->defer([ctx, cb]() { cb(ctx); });
 }
+
+void uws_res_write_headers(int ssl, uws_res_t *res, const StringPointer *names,
+                           const StringPointer *values, size_t count,
+                           const char *buf) {
+  if (ssl) {
+    uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+    for (size_t i = 0; i < count; i++) {
+      uwsRes->writeHeader(std::string_view(&buf[names[i].off], names[i].len),
+                          std::string_view(&buf[values[i].off], values[i].len));
+    }
+
+  } else {
+    uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+    for (size_t i = 0; i < count; i++) {
+      uwsRes->writeHeader(std::string_view(&buf[names[i].off], names[i].len),
+                          std::string_view(&buf[values[i].off], values[i].len));
+    }
+  }
+}
+
+void uws_res_cork(int ssl, uws_res_t *res, void *ctx,
+                  void (*corker)(void *ctx)) {
+  if (ssl) {
+    uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+    uwsRes->cork([ctx, corker]() { corker(ctx); });
+  } else {
+    uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+    uwsRes->cork([ctx, corker]() { corker(ctx); });
+  }
+}
 }

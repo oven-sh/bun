@@ -5,8 +5,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <uws/uSockets/src/libusockets.h>
-
+#include <uws/src/App.h>
+#include <uws/src/AsyncSocket.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -225,7 +225,7 @@ void uws_res_end(int ssl, uws_res_t *res, const char *data, size_t length,
                  bool close_connection);
 void uws_res_pause(int ssl, uws_res_t *res);
 void uws_res_resume(int ssl, uws_res_t *res);
-void uws_res_write_continue(int ssl, uws_res_t *res);
+void uws_res_write_continwue(int ssl, uws_res_t *res);
 void uws_res_write_status(int ssl, uws_res_t *res, const char *status,
                           size_t length);
 void uws_res_write_header(int ssl, uws_res_t *res, const char *key,
@@ -291,6 +291,8 @@ void uws_res_write_headers(int ssl, uws_res_t *res, const StringPointer *names,
                            const StringPointer *values, size_t count,
                            const char *buf);
 
+void *uws_res_get_native_handle(int ssl, uws_res_t *res);
+void uws_res_uncork(int ssl, uws_res_t *res);
 #ifdef __cplusplus
 }
 #endif

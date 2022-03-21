@@ -304,8 +304,8 @@ pub const HTMLRewriter = struct {
             defer if (!is_pending) input.detach();
 
             if (input.needsToReadFile()) {
-                input.doReadFileInternal(*BufferOutputSink, sink, onFinishedLoading, global);
-            } else if (sink.runOutputSink(input.sharedView())) |error_value| {
+                input.doReadFileInternal(*BufferOutputSink, sink, onFinishedLoadingWrap, global);
+            } else if (sink.runOutputSink(input.sharedView(), false)) |error_value| {
                 return error_value;
             }
 
@@ -316,11 +316,15 @@ pub const HTMLRewriter = struct {
             );
         }
 
+        pub fn onFinishedLoadingWrap(sink: *anyopaque, bytes: anyerror![]u8) void {
+            onFinishedLoading(bun.cast(*BufferOutputSink, sink), bytes);
+        }
+
         pub fn onFinishedLoading(sink: *BufferOutputSink, bytes: anyerror![]u8) void {
             var input = sink.input;
             defer input.detach();
             const data = bytes catch |err| {
-                if (sink.response.body.value == .Locked and sink.response.body.value.Locked.task == sink) {
+                if (sink.response.body.value == .Locked and @ptrToInt(sink.response.body.value.Locked.task) == @ptrToInt(sink)) {
                     sink.response.body.value = .{ .Empty = .{} };
                 }
 
@@ -334,7 +338,7 @@ pub const HTMLRewriter = struct {
         }
 
         pub fn runOutputSink(sink: *BufferOutputSink, bytes: []const u8, is_async: bool) ?JSValue {
-            sink.bytes.growBy(bytes) catch unreachable;
+            sink.bytes.growBy(bytes.len) catch unreachable;
             var global = sink.global;
             var response = sink.response;
             sink.rewriter.write(bytes) catch {

@@ -410,6 +410,12 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn end(res: *Response, data: []const u8, close_connection: bool) void {
                 uws_res_end(ssl_flag, res.downcast(), data.ptr, data.len, close_connection);
             }
+            pub fn uncork(_: *Response) void {
+                // uws_res_uncork(
+                //     ssl_flag,
+                //     res.downcast(),
+                // );
+            }
             pub fn pause(res: *Response) void {
                 uws_res_pause(ssl_flag, res.downcast());
             }
@@ -426,7 +432,7 @@ pub fn NewApp(comptime ssl: bool) type {
                 uws_res_write_header(ssl_flag, res.downcast(), key.ptr, key.len, value.ptr, value.len);
             }
             pub fn writeHeaderInt(res: *Response, key: []const u8, value: u64) void {
-                uws_res_write_header(ssl_flag, res.downcast(), key.ptr, key.len, value);
+                uws_res_write_header_int(ssl_flag, res.downcast(), key.ptr, key.len, value);
             }
             pub fn endWithoutBody(res: *Response) void {
                 uws_res_end_without_body(ssl_flag, res.downcast());
@@ -440,18 +446,26 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn hasResponded(res: *Response) bool {
                 return uws_res_has_responded(ssl_flag, res.downcast());
             }
+
+            pub fn getNativeHandle(res: *Response) i32 {
+                return @intCast(i32, @ptrToInt(uws_res_get_native_handle(ssl_flag, res.downcast())));
+            }
             pub fn onWritable(
                 res: *Response,
                 comptime UserDataType: type,
-                comptime handler: fn (*Response, uintmax_t, UserDataType) callconv(.C) bool,
+                comptime handler: fn (UserDataType, uintmax_t, *Response) callconv(.C) bool,
                 user_data: UserDataType,
             ) void {
                 const Wrapper = struct {
-                    pub fn handle(this: *uws_res, amount: uintmax_t, data: ?*anyopaque) callconv(.C) void {
+                    pub fn handle(this: *uws_res, amount: uintmax_t, data: ?*anyopaque) callconv(.C) bool {
                         if (comptime UserDataType == void) {
-                            @call(.{ .modifier = .always_inline }, handler, .{ void{}, castRes(this), amount });
+                            return @call(.{ .modifier = .always_inline }, handler, .{ void{}, amount, castRes(this) });
                         } else {
-                            @call(.{ .modifier = .always_inline }, handler, .{ @ptrCast(UserDataType, @alignCast(@alignOf(UserDataType), data.?)), castRes(this), amount });
+                            return @call(.{ .modifier = .always_inline }, handler, .{
+                                @ptrCast(UserDataType, @alignCast(@alignOf(UserDataType), data.?)),
+                                amount,
+                                castRes(this),
+                            });
                         }
                     }
                 };
@@ -533,7 +547,7 @@ pub fn NewApp(comptime ssl: bool) type {
         };
     };
 }
-
+extern fn uws_res_get_native_handle(ssl: c_int, res: *uws_res) *us_socket_t;
 extern fn uws_create_app(ssl: c_int, options: us_socket_context_options_t) *uws_app_t;
 extern fn uws_app_destroy(ssl: c_int, app: *uws_app_t) void;
 extern fn uws_app_get(ssl: c_int, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
@@ -580,6 +594,7 @@ extern fn uws_ws_get_buffered_amount(ssl: c_int, ws: ?*uws_websocket_t) c_uint;
 extern fn uws_ws_get_remote_address(ssl: c_int, ws: ?*uws_websocket_t, dest: [*c][*c]const u8) usize;
 extern fn uws_ws_get_remote_address_as_text(ssl: c_int, ws: ?*uws_websocket_t, dest: [*c][*c]const u8) usize;
 const uws_res = opaque {};
+extern fn uws_res_uncork(ssl: c_int, res: *uws_res) void;
 extern fn uws_res_end(ssl: c_int, res: *uws_res, data: [*c]const u8, length: usize, close_connection: bool) void;
 extern fn uws_res_pause(ssl: c_int, res: *uws_res) void;
 extern fn uws_res_resume(ssl: c_int, res: *uws_res) void;

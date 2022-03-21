@@ -390,7 +390,7 @@ pub const Response = struct {
 
                 return default.value;
             },
-            .Used, .Locked, .Empty => return default.value,
+            .Used, .Locked, .Empty, .Error => return default.value,
         }
     }
 
@@ -1806,6 +1806,211 @@ pub const Blob = struct {
             return try Blob.Store.init(list.items, allocator);
         }
 
+        const AsyncIO = HTTPClient.NetworkThread.AsyncIO;
+
+        pub fn FileOpenerMixin(comptime This: type) type {
+            return struct {
+                const open_flags = std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC;
+
+                pub fn getFdMac(this: *This) AsyncIO.OpenError!JSC.Node.FileDescriptor {
+                    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    this.opened_fd = AsyncIO.openSync(
+                        this.file_store.pathlike.path.sliceZ(&buf),
+                        open_flags,
+                    ) catch |err| {
+                        this.errno = err;
+                        return err;
+                    };
+                    return this.opened_fd;
+                }
+
+                pub fn getFd(this: *This) AsyncIO.OpenError!JSC.Node.FileDescriptor {
+                    if (this.opened_fd != 0) {
+                        return this.opened_fd;
+                    }
+
+                    if (comptime Environment.isMac) {
+                        return try this.getFdMac();
+                    } else {
+                        return try this.getFdLinux();
+                    }
+                }
+
+                pub fn getFdLinux(this: *This) AsyncIO.OpenError!JSC.Node.FileDescriptor {
+                    var aio = &AsyncIO.global;
+
+                    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    aio.open(
+                        *This,
+                        this,
+                        onOpen,
+                        &this.open_completion,
+                        this.file_store.pathlike.path.sliceZ(&buf),
+                        open_flags,
+                        0,
+                    );
+
+                    suspend {
+                        this.open_frame = @frame().*;
+                    }
+
+                    if (this.errno) |errno| {
+                        return @errSetCast(AsyncIO.OpenError, errno);
+                    }
+
+                    return this.opened_fd;
+                }
+
+                pub fn onOpen(this: *This, _: *HTTPClient.NetworkThread.Completion, result: AsyncIO.OpenError!JSC.Node.FileDescriptor) void {
+                    this.opened_fd = result catch |err| {
+                        this.errno = err;
+                        if (comptime Environment.isLinux) resume this.open_frame;
+                        return;
+                    };
+
+                    if (comptime Environment.isLinux) resume this.open_frame;
+                }
+            };
+        }
+
+        pub fn FileCloserMixin(comptime This: type) type {
+            return struct {
+                pub fn doClose(this: *This) AsyncIO.CloseError!void {
+                    var aio = &AsyncIO.global;
+
+                    aio.close(
+                        *This,
+                        this,
+                        onClose,
+                        &this.close_completion,
+                        this.opened_fd,
+                    );
+                    this.opened_fd = 0;
+
+                    suspend {
+                        this.close_frame = @frame().*;
+                    }
+                    if (@hasField(This, "errno")) {
+                        if (this.errno) |errno| {
+                            return @errSetCast(AsyncIO.CloseError, errno);
+                        }
+                    }
+                }
+
+                pub fn onClose(this: *This, _: *HTTPClient.NetworkThread.Completion, result: AsyncIO.CloseError!void) void {
+                    result catch |err| {
+                        if (@hasField(This, "errno")) {
+                            this.errno = err;
+                        }
+                        resume this.close_frame;
+                        return;
+                    };
+
+                    resume this.close_frame;
+                }
+            };
+        }
+
+        pub const OpenAndStatFile = struct {
+            const OpenFrameType = if (Environment.isMac)
+                void
+            else
+                @Frame(OpenAndStatFile.getFdLinux);
+
+            open_frame: OpenFrameType = undefined,
+            errno: ?anyerror = null,
+            open_completion: HTTPClient.NetworkThread.Completion = undefined,
+            opened_fd: JSC.Node.FileDescriptor = undefined,
+            size: u32 = 0,
+
+            store: *Store = undefined,
+            file_store: FileStore,
+
+            onCompleteCtx: *anyopaque = undefined,
+            onCompleteCallback: OnCompleteCallback = undefined,
+            runAsyncFrame: @Frame(OpenAndStatFile.runAsync) = undefined,
+
+            task: HTTPClient.NetworkThread.Task = undefined,
+
+            pub const OnCompleteCallback = fn (
+                ctx: *anyopaque,
+                fd: JSC.Node.FileDescriptor,
+                size: anyerror!u32,
+                global: *JSGlobalObject,
+            ) void;
+
+            pub usingnamespace FileOpenerMixin(OpenAndStatFile);
+            pub usingnamespace FileCloserMixin(OpenAndStatFile);
+
+            pub fn createWithCtx(
+                allocator: std.mem.Allocator,
+                store: *Store,
+                ctx: *anyopaque,
+                onCompleteCallback: OnCompleteCallback,
+            ) !*OpenAndStatFile {
+                var read_file = try allocator.create(OpenAndStatFile);
+                read_file.* = OpenAndStatFile{
+                    .file_store = store.data.file,
+
+                    .store = store,
+                    .onCompleteCtx = ctx,
+                    .onCompleteCallback = onCompleteCallback,
+                };
+                store.ref();
+                return read_file;
+            }
+
+            pub const OpenAndStatFileTask = JSC.IOTask(@This());
+
+            pub fn run(this: *OpenAndStatFile, task: *OpenAndStatFileTask) void {
+                this.runAsyncFrame = async this.runAsync(task);
+            }
+
+            pub fn then(this: *OpenAndStatFile, globalThis: *JSC.JSGlobalObject) void {
+                var cb = this.onCompleteCallback;
+                var cb_ctx = this.onCompleteCtx;
+                const fd = this.opened_fd;
+                const _size = this.size;
+                const errno = this.errno;
+                this.store.deref();
+
+                bun.default_allocator.destroy(this);
+                if (errno) |err| {
+                    cb(cb_ctx, fd, err, globalThis);
+                } else {
+                    cb(cb_ctx, fd, _size, globalThis);
+                }
+            }
+
+            pub fn runAsync(this: *OpenAndStatFile, task: *OpenAndStatFileTask) void {
+                defer task.onFinish();
+                this.opened_fd = 0;
+                if (this.file_store.pathlike == .fd) {
+                    this.opened_fd = this.file_store.pathlike.fd;
+                }
+                const fd =
+                    if (this.opened_fd == 0)
+                    this.getFd() catch return
+                else
+                    this.opened_fd;
+
+                const stat: std.os.Stat = switch (JSC.Node.Syscall.fstat(fd)) {
+                    .result => |result| result,
+                    .err => |err| {
+                        this.errno = AsyncIO.asError(err.errno);
+                        return;
+                    },
+                };
+
+                if (!std.os.S.ISREG(stat.mode)) {
+                    this.errno = error.ENOTSUP;
+                    return;
+                }
+
+                this.size = @truncate(u32, @intCast(u64, @maximum(@intCast(i64, stat.size), 0)));
+            }
+        };
+
         pub const ReadFile = struct {
             const OpenFrameType = if (Environment.isMac)
                 void
@@ -1831,18 +2036,19 @@ pub const Blob = struct {
             close_completion: HTTPClient.NetworkThread.Completion = undefined,
             task: HTTPClient.NetworkThread.Task = undefined,
 
-            onReadFileCompleteCtx: *anyopaque = undefined,
-            onReadFileComplete: OnReadFileCallback = undefined,
+            onCompleteCtx: *anyopaque = undefined,
+            onCompleteCallback: OnReadFileCallback = undefined,
 
             pub const OnReadFileCallback = fn (ctx: *anyopaque, bytes: anyerror![]u8) void;
 
-            const AsyncIO = HTTPClient.NetworkThread.AsyncIO;
+            pub usingnamespace FileOpenerMixin(ReadFile);
+            pub usingnamespace FileCloserMixin(ReadFile);
 
             pub fn createWithCtx(
                 allocator: std.mem.Allocator,
                 store: *Store,
                 onReadFileContext: *anyopaque,
-                onReadFileComplete: OnReadFileCallback,
+                onCompleteCallback: OnReadFileCallback,
                 off: u32,
                 max_len: u32,
             ) !*ReadFile {
@@ -1852,8 +2058,8 @@ pub const Blob = struct {
                     .offset = off,
                     .max_length = max_len,
                     .store = store,
-                    .onReadFileCompleteCtx = onReadFileContext,
-                    .onReadFileComplete = onReadFileComplete,
+                    .onCompleteCtx = onReadFileContext,
+                    .onCompleteCallback = onCompleteCallback,
                 };
                 store.ref();
                 return read_file;
@@ -1875,54 +2081,6 @@ pub const Blob = struct {
                 };
 
                 return try ReadFile.createWithCtx(allocator, store, @ptrCast(*anyopaque, context), Handler.run, off, max_len);
-            }
-
-            pub fn getFdMac(this: *ReadFile) AsyncIO.OpenError!JSC.Node.FileDescriptor {
-                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                this.opened_fd = AsyncIO.openSync(
-                    this.file_store.pathlike.path.sliceZ(&buf),
-                    std.os.O.RDONLY,
-                ) catch |err| {
-                    this.errno = err;
-                    return err;
-                };
-                return this.opened_fd;
-            }
-
-            pub fn getFd(this: *ReadFile) AsyncIO.OpenError!JSC.Node.FileDescriptor {
-                if (this.file_store.pathlike == .fd) {
-                    return this.file_store.pathlike.fd;
-                }
-
-                if (comptime Environment.isMac) {
-                    return try this.getFdMac();
-                } else {
-                    return try this.getFdLinux();
-                }
-            }
-
-            pub fn getFdLinux(this: *ReadFile) AsyncIO.OpenError!JSC.Node.FileDescriptor {
-                var aio = &AsyncIO.global;
-
-                aio.open(
-                    *ReadFile,
-                    this,
-                    onOpen,
-                    &this.open_completion,
-                    this.file_store.pathlike.path.sliceZ(),
-                    std.os.O.RDONLY,
-                    0,
-                );
-
-                suspend {
-                    this.open_frame = @frame().*;
-                }
-
-                if (this.errno) |errno| {
-                    return @errSetCast(AsyncIO.OpenError, errno);
-                }
-
-                return this.opened_fd;
             }
 
             pub fn doRead(this: *ReadFile) AsyncIO.ReadError!u32 {
@@ -1951,32 +2109,11 @@ pub const Blob = struct {
                 return this.read_len;
             }
 
-            pub fn doClose(this: *ReadFile) AsyncIO.CloseError!void {
-                var aio = &AsyncIO.global;
-
-                aio.close(
-                    *ReadFile,
-                    this,
-                    onClose,
-                    &this.close_completion,
-                    this.opened_fd,
-                );
-                this.opened_fd = 0;
-
-                suspend {
-                    this.close_frame = @frame().*;
-                }
-
-                if (this.errno) |errno| {
-                    return @errSetCast(AsyncIO.CloseError, errno);
-                }
-            }
-
             pub const ReadFileTask = JSC.IOTask(@This());
 
             pub fn then(this: *ReadFile, _: *JSC.JSGlobalObject) void {
-                var cb = this.onReadFileComplete;
-                var cb_ctx = this.onReadFileCompleteCtx;
+                var cb = this.onCompleteCallback;
+                var cb_ctx = this.onCompleteCtx;
 
                 var store = this.store orelse {
                     var _err = this.errno orelse error.MissingData;
@@ -2017,16 +2154,6 @@ pub const Blob = struct {
                 this.runAsyncFrame = async this.runAsync(task);
             }
 
-            pub fn onOpen(this: *ReadFile, _: *HTTPClient.NetworkThread.Completion, result: AsyncIO.OpenError!JSC.Node.FileDescriptor) void {
-                this.opened_fd = result catch |err| {
-                    this.errno = err;
-                    if (comptime Environment.isLinux) resume this.open_frame;
-                    return;
-                };
-
-                if (comptime Environment.isLinux) resume this.open_frame;
-            }
-
             pub fn onRead(this: *ReadFile, _: *HTTPClient.NetworkThread.Completion, result: AsyncIO.ReadError!usize) void {
                 this.read_len = @truncate(u32, result catch |err| {
                     this.errno = err;
@@ -2038,18 +2165,11 @@ pub const Blob = struct {
                 resume this.read_frame;
             }
 
-            pub fn onClose(this: *ReadFile, _: *HTTPClient.NetworkThread.Completion, result: AsyncIO.CloseError!void) void {
-                result catch |err| {
-                    this.errno = err;
-                    resume this.close_frame;
-                    return;
-                };
-
-                resume this.close_frame;
-            }
-
             pub fn runAsync(this: *ReadFile, task: *ReadFileTask) void {
                 defer task.onFinish();
+                if (this.file_store.pathlike == .fd) {
+                    this.opened_fd = this.file_store.pathlike.fd;
+                }
 
                 const fd = this.getFd() catch return;
                 const needs_close = this.file_store.pathlike == .path;
@@ -2591,10 +2711,8 @@ pub const Blob = struct {
 
     pub fn NewInternalReadFileHandler(comptime Context: type, comptime Function: anytype) type {
         return struct {
-            context: Context,
-
             pub fn run(handler: *anyopaque, bytes_: anyerror![]u8) void {
-                Function(bun.cast(Context, handler.context), bytes_);
+                Function(bun.cast(Context, handler), bytes_);
             }
         };
     }
@@ -2603,13 +2721,23 @@ pub const Blob = struct {
         var file_read = Store.ReadFile.createWithCtx(
             bun.default_allocator,
             this.store.?,
+            ctx,
+            Function,
             this.offset,
             this.size,
-            Handler,
+        ) catch unreachable;
+        var read_file_task = Store.ReadFile.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch unreachable;
+        read_file_task.schedule();
+    }
+
+    pub fn doOpenAndStatFile(this: *Blob, comptime Handler: type, ctx: Handler, comptime Function: anytype, global: *JSGlobalObject) void {
+        var file_read = Store.OpenAndStatFile.createWithCtx(
+            bun.default_allocator,
+            this.store.?,
             ctx,
             Function,
         ) catch unreachable;
-        var read_file_task = Store.ReadFile.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch unreachable;
+        var read_file_task = Store.OpenAndStatFile.OpenAndStatFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch unreachable;
         read_file_task.schedule();
     }
 
@@ -3208,7 +3336,7 @@ pub const Body = struct {
         }
 
         pub fn toErrorInstance(this: *Value, error_instance: JSC.JSValue, global: *JSGlobalObject) void {
-            if (this.value == .Locked) {
+            if (this.* == .Locked) {
                 var locked = this.Locked;
                 locked.deinit = true;
                 if (locked.promise) |promise| {
@@ -3236,7 +3364,7 @@ pub const Body = struct {
                 bun.default_allocator,
                 "Error reading file {s}",
                 .{@errorName(err)},
-            ));
+            ) catch unreachable);
             error_str.mark();
             var error_instance = error_str.toErrorInstance(global);
             return this.toErrorInstance(error_instance, global);
@@ -3255,7 +3383,7 @@ pub const Body = struct {
             }
 
             if (tag == .Error) {
-                JSC.C.JSValueUnprotect(VirtualMachine.vm.global.vm(), this.Error.asObjectRef());
+                JSC.C.JSValueUnprotect(VirtualMachine.vm.global.ref(), this.Error.asObjectRef());
             }
         }
 
@@ -3383,7 +3511,7 @@ pub const Request = struct {
 
                 return MimeType.other.value;
             },
-            .Used, .Locked, .Empty => return MimeType.other.value,
+            .Error, .Used, .Locked, .Empty => return MimeType.other.value,
         }
     }
 

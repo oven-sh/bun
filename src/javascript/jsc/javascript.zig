@@ -298,6 +298,7 @@ pub fn IOTask(comptime Context: type) type {
 const AsyncTransformTask = @import("./api/transpiler.zig").TransformTask.AsyncTransformTask;
 const BunTimerTimeoutTask = Bun.Timer.Timeout.TimeoutTask;
 const ReadFileTask = WebCore.Blob.Store.ReadFile.ReadFileTask;
+const OpenAndStatFileTask = WebCore.Blob.Store.OpenAndStatFile.OpenAndStatFileTask;
 // const PromiseTask = JSInternalPromise.Completion.PromiseTask;
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
@@ -305,6 +306,7 @@ pub const Task = TaggedPointerUnion(.{
     AsyncTransformTask,
     BunTimerTimeoutTask,
     ReadFileTask,
+    OpenAndStatFileTask,
     // PromiseTask,
     // TimeoutTasklet,
 });
@@ -530,6 +532,11 @@ pub const VirtualMachine = struct {
                     },
                     @field(Task.Tag, @typeName(ReadFileTask)) => {
                         var transform_task: *ReadFileTask = task.get(ReadFileTask).?;
+                        transform_task.*.runFromJS();
+                        finished += 1;
+                    },
+                    @field(Task.Tag, @typeName(OpenAndStatFileTask)) => {
+                        var transform_task: *OpenAndStatFileTask = task.get(OpenAndStatFileTask).?;
                         transform_task.*.runFromJS();
                         finished += 1;
                     },

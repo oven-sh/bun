@@ -1001,6 +1001,16 @@ void uws_res_write_headers(int ssl, uws_res_t *res, const StringPointer *names,
   }
 }
 
+void uws_res_uncork(int ssl, uws_res_t *res) {
+  // if (ssl) {
+  //   uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+  //   uwsRes->uncork();
+  // } else {
+  //   uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+  //   uwsRes->uncork();
+  // }
+}
+
 void uws_res_cork(int ssl, uws_res_t *res, void *ctx,
                   void (*corker)(void *ctx)) {
   if (ssl) {
@@ -1009,6 +1019,16 @@ void uws_res_cork(int ssl, uws_res_t *res, void *ctx,
   } else {
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
     uwsRes->cork([ctx, corker]() { corker(ctx); });
+  }
+}
+
+void *uws_res_get_native_handle(int ssl, uws_res_t *res) {
+  if (ssl) {
+    uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+    return uwsRes->getNativeHandle();
+  } else {
+    uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+    return uwsRes->getNativeHandle();
   }
 }
 }

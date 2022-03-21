@@ -731,6 +731,14 @@ pub const JSPromise = extern struct {
         cppFn("rejectAsHandledException", .{ this, globalThis, value });
     }
 
+    pub fn create(globalThis: *JSGlobalObject) *JSPromise {
+        return cppFn("create", .{globalThis});
+    }
+
+    pub fn asValue(this: *JSPromise, globalThis: *JSGlobalObject) JSValue {
+        return cppFn("asValue", .{ this, globalThis });
+    }
+
     pub const Extern = [_][]const u8{
         "rejectWithCaughtException",
         "status",
@@ -745,6 +753,8 @@ pub const JSPromise = extern struct {
         "rejectAsHandledException",
         "rejectedPromiseValue",
         "resolvedPromiseValue",
+        "asValue",
+        "create",
     };
 };
 

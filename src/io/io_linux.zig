@@ -287,7 +287,7 @@ pub const Errno = error{
     EHWPOISON,
     Unexpected,
 };
-const errno_error_map: [135]Errno = brk: {
+pub const errno_map: [135]Errno = brk: {
     var errors: [135]Errno = undefined;
     errors[0] = error.Unexpected;
     errors[1] = error.EPERM;
@@ -428,7 +428,7 @@ const errno_error_map: [135]Errno = brk: {
 };
 pub fn asError(err: anytype) Errno {
     return switch (err) {
-        1...errno_error_map.len => errno_error_map[@intCast(u8, err)],
+        1...errno_map.len => errno_map[@intCast(u8, err)],
         else => error.Unexpected,
     };
 }
@@ -702,6 +702,15 @@ pub const Completion = struct {
                     op.offset,
                 );
             },
+            .open => |op| {
+                linux.io_uring_prep_openat(
+                    sqe,
+                    std.os.AT.FD_CWD,
+                    op.path,
+                    op.flags,
+                    op.mode,
+                );
+            },
             .readev => {
                 var op = &completion.operation.readev;
                 linux.io_uring_prep_readv(sqe, op.socket, &op.iovecs, 0);
@@ -766,6 +775,29 @@ pub const Completion = struct {
                     os.ENOSPC => error.NoSpaceLeft,
                     else => |errno| asError(errno),
                 } else assert(completion.result == 0);
+                completion.callback(completion.context, completion, &result);
+            },
+            .open => {
+                const result = if (completion.result < 0) switch (-completion.result) {
+                    .SUCCESS => unreachable,
+                    .ACCES => error.AccessDenied,
+                    .FBIG => error.FileTooBig,
+                    .OVERFLOW => error.FileTooBig,
+                    .ISDIR => error.IsDir,
+                    .LOOP => error.SymLinkLoop,
+                    .MFILE => error.ProcessFdQuotaExceeded,
+                    .NAMETOOLONG => error.NameTooLong,
+                    .NFILE => error.SystemFdQuotaExceeded,
+                    .NODEV => error.NoDevice,
+                    .NOENT => error.FileNotFound,
+                    .NOMEM => error.SystemResources,
+                    .NOSPC => error.NoSpaceLeft,
+                    .NOTDIR => error.NotDir,
+                    .PERM => error.AccessDenied,
+                    .EXIST => error.PathAlreadyExists,
+                    .BUSY => return error.DeviceBusy,
+                    else => |errno| asError(errno),
+                } else @intCast(linux.fd_t, completion.result);
                 completion.callback(completion.context, completion, &result);
             },
             .connect => {
@@ -922,6 +954,11 @@ const Operation = union(enum) {
     },
     fsync: struct {
         fd: os.fd_t,
+    },
+    open: struct {
+        path: [*:0]const u8,
+        flags: u32,
+        mode: os.mode_t,
     },
     read: struct {
         fd: os.fd_t,
@@ -1342,6 +1379,99 @@ pub fn send(
             .send = .{
                 .socket = socket,
                 .buffer = buffer,
+            },
+        },
+    };
+    self.enqueue(completion);
+}
+
+pub const OpenError = error{
+    /// In WASI, this error may occur when the file descriptor does
+    /// not hold the required rights to open a new resource relative to it.
+    AccessDenied,
+    SymLinkLoop,
+    ProcessFdQuotaExceeded,
+    SystemFdQuotaExceeded,
+    NoDevice,
+    FileNotFound,
+
+    /// The path exceeded `MAX_PATH_BYTES` bytes.
+    NameTooLong,
+
+    /// Insufficient kernel memory was available, or
+    /// the named file is a FIFO and per-user hard limit on
+    /// memory allocation for pipes has been reached.
+    SystemResources,
+
+    /// The file is too large to be opened. This error is unreachable
+    /// for 64-bit targets, as well as when opening directories.
+    FileTooBig,
+
+    /// The path refers to directory but the `O.DIRECTORY` flag was not provided.
+    IsDir,
+
+    /// A new path cannot be created because the device has no room for the new file.
+    /// This error is only reachable when the `O.CREAT` flag is provided.
+    NoSpaceLeft,
+
+    /// A component used as a directory in the path was not, in fact, a directory, or
+    /// `O.DIRECTORY` was specified and the path was not a directory.
+    NotDir,
+
+    /// The path already exists and the `O.CREAT` and `O.EXCL` flags were provided.
+    PathAlreadyExists,
+    DeviceBusy,
+
+    /// The underlying filesystem does not support file locks
+    FileLocksNotSupported,
+
+    BadPathName,
+    InvalidUtf8,
+
+    /// One of these three things:
+    /// * pathname  refers to an executable image which is currently being
+    ///   executed and write access was requested.
+    /// * pathname refers to a file that is currently in  use  as  a  swap
+    ///   file, and the O_TRUNC flag was specified.
+    /// * pathname  refers  to  a file that is currently being read by the
+    ///   kernel (e.g., for module/firmware loading), and write access was
+    ///   requested.
+    FileBusy,
+
+    WouldBlock,
+} || Errno;
+
+pub fn open(
+    self: *IO,
+    comptime Context: type,
+    context: Context,
+    comptime callback: fn (
+        context: Context,
+        completion: *Completion,
+        result: OpenError!linux.fd_t,
+    ) void,
+    completion: *Completion,
+    file_path: [:0]const u8,
+    flags: os.mode_t,
+    mode: os.mode_t,
+) void {
+    completion.* = .{
+        .io = self,
+        .context = context,
+        .callback = struct {
+            fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
+                callback(
+                    @intToPtr(Context, @ptrToInt(ctx)),
+                    comp,
+                    @intToPtr(*const OpenError!linux.fd_t, @ptrToInt(res)).*,
+                );
+            }
+        }.wrapper,
+        .operation = .{
+            .open = .{
+                .file_path = file_path,
+                .flags = flags,
+                .mode = mode,
             },
         },
     };

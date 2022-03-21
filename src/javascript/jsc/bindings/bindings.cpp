@@ -246,6 +246,15 @@ unsigned char JSC__JSValue__jsType(JSC__JSValue JSValue0)
     return 0;
 }
 
+JSC__JSValue JSC__JSPromise__asValue(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1)
+{
+    return JSC::JSValue::encode(JSC::JSValue(arg0));
+}
+JSC__JSPromise* JSC__JSPromise__create(JSC__JSGlobalObject* arg0)
+{
+    return JSC::JSPromise::create(arg0->vm(), arg0->promiseStructure());
+}
+
 // TODO: prevent this from allocating so much memory
 void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* ctx, void (*ArgFn3)(JSC__JSGlobalObject* arg0, void* arg1, JSC__JSValue arg2, size_t arg3), void (*ArgFn4)(JSC__JSGlobalObject* arg0, void* arg1, JSC__JSValue arg2, size_t arg3))
 {
@@ -281,8 +290,12 @@ void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObjec
         });
 
     globalObject->vm().drainMicrotasks();
-    JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(globalObject->vm(), JSC::JSValue::decode(JSValue0).asCell());
-    promise->performPromiseThen(globalObject, resolverFunction, rejecterFunction, JSC::jsUndefined());
+    auto* cell = JSC::JSValue::decode(JSValue0).asCell();
+    if (JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(globalObject->vm(), cell)) {
+        promise->performPromiseThen(globalObject, resolverFunction, rejecterFunction, JSC::jsUndefined());
+    } else if (JSC::JSInternalPromise* promise = JSC::jsDynamicCast<JSC::JSInternalPromise*>(globalObject->vm(), cell)) {
+        promise->then(globalObject, resolverFunction, rejecterFunction);
+    }
 }
 
 JSC__JSValue JSC__JSValue__parseJSON(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)

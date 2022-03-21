@@ -30,6 +30,7 @@ const JSPrivateDataPtr = @import("../base.zig").JSPrivateDataPtr;
 const GetJSPrivateData = @import("../base.zig").GetJSPrivateData;
 const Environment = @import("../../../env.zig");
 const ZigString = JSC.ZigString;
+const IdentityContext = @import("../../../identity_context.zig").IdentityContext;
 const JSInternalPromise = JSC.JSInternalPromise;
 const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
@@ -85,6 +86,7 @@ pub const Response = struct {
             .@"json" = .{ .rfn = constructJSON },
             .@"redirect" = .{ .rfn = constructRedirect },
             .@"error" = .{ .rfn = constructError },
+            .@"file" = .{ .rfn = constructFile },
         },
         .{},
     );
@@ -392,6 +394,63 @@ pub const Response = struct {
         }
     }
 
+    pub fn constructFile(
+        _: void,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSObjectRef {
+        var args = JSC.Node.ArgumentsSlice.from(arguments);
+
+        var response = Response{
+            .body = Body{
+                .init = Body.Init{
+                    .headers = null,
+                    .status_code = 200,
+                },
+                .value = Body.Value.empty,
+            },
+            .allocator = getAllocator(ctx),
+            .url = "",
+        };
+
+        var path = JSC.Node.PathOrFileDescriptor.fromJS(ctx, &args, exception) orelse {
+            exception.* = JSC.toInvalidArguments("Expected file path string or file descriptor", .{}, ctx).asObjectRef();
+            return js.JSValueMakeUndefined(ctx);
+        };
+
+        if (path == .path) {
+            path.path = .{ .string = bun.PathString.init(bun.default_allocator.dupe(u8, path.path.slice()) catch unreachable) };
+        }
+
+        if (args.nextEat()) |init| {
+            if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
+                response.body.init.status_code = @intCast(u16, @minimum(@maximum(0, init.toInt32()), std.math.maxInt(u16)));
+            } else {
+                if (Body.Init.init(getAllocator(ctx), ctx, init.asObjectRef()) catch null) |_init| {
+                    response.body.init = _init;
+                }
+            }
+        }
+
+        response.body.value = .{
+            .Blob = brk: {
+                if (VirtualMachine.vm.getFileBlob(path)) |blob| {
+                    blob.ref();
+                    break :brk Blob.initWithStore(blob, ctx.ptr());
+                }
+
+                break :brk Blob.initWithStore(Blob.Store.initFile(path, null, bun.default_allocator) catch unreachable, ctx.ptr());
+            },
+        };
+
+        var ptr = response.allocator.create(Response) catch unreachable;
+        ptr.* = response;
+        return Response.makeMaybePooled(ctx, ptr);
+    }
+
     pub fn constructJSON(
         _: void,
         ctx: js.JSContextRef,
@@ -445,15 +504,12 @@ pub const Response = struct {
             } else {
                 if (Body.Init.init(getAllocator(ctx), ctx, init.asObjectRef()) catch null) |_init| {
                     response.body.init = _init;
-                    if (response.body.init.status_code == 0) {
-                        response.body.init.status_code = 200;
-                    }
                 }
             }
         }
 
         var headers_ref = response.getOrCreateHeaders().leak();
-        headers_ref.putHeaderNormalized("content-type", MimeType.json.value, false);
+        headers_ref.putDefaultHeader("content-type", MimeType.json.value);
         var ptr = response.allocator.create(Response) catch unreachable;
         ptr.* = response;
 
@@ -1419,10 +1475,25 @@ pub const Headers = struct {
         headers.putHeader(key_slice.slice(), value_slice.slice(), append);
     }
 
-    pub fn putHeaderNormalized(headers: *Headers, key: []const u8, value: []const u8, comptime append: bool) void {
-        if (headers.getHeaderIndex(key)) |header_i| {
-            const existing_value = headers.entries.items(.value)[header_i];
+    pub fn putDefaultHeader(
+        headers: *Headers,
+        key: []const u8,
+        value: []const u8,
+    ) void {
+        return putHeaderNormalizedDefault(headers, key, value, false, true);
+    }
 
+    pub fn putHeaderNormalizedDefault(
+        headers: *Headers,
+        key: []const u8,
+        value: []const u8,
+        comptime append: bool,
+        comptime default: bool,
+    ) void {
+        if (headers.getHeaderIndex(key)) |header_i| {
+            if (comptime default) return;
+
+            const existing_value = headers.entries.items(.value)[header_i];
             if (append) {
                 const end = @truncate(u32, value.len + existing_value.length + 2);
                 const offset = headers.buf.items.len;
@@ -1445,6 +1516,10 @@ pub const Headers = struct {
         } else {
             headers.appendHeader(key, value, false, false);
         }
+    }
+
+    pub fn putHeaderNormalized(headers: *Headers, key: []const u8, value: []const u8, comptime append: bool) void {
+        return putHeaderNormalizedDefault(headers, key, value, append, false);
     }
 
     pub fn getHeaderIndex(headers: *const Headers, key: string) ?u32 {
@@ -1649,27 +1724,29 @@ pub const Blob = struct {
     globalThis: *JSGlobalObject = undefined,
 
     pub const Store = struct {
-        ptr: [*]u8 = undefined,
-        len: u32 = 0,
-        ref_count: u32 = 0,
-        cap: u32 = 0,
-        allocator: std.mem.Allocator,
-        is_all_ascii: ?bool = null,
+        data: Data,
 
-        pub inline fn ref(this: *Store) void {
-            this.ref_count += 1;
+        mime_type: MimeType = MimeType.other,
+        ref_count: u32 = 0,
+        is_all_ascii: ?bool = null,
+        allocator: std.mem.Allocator,
+
+        pub fn size(this: *const Store) u32 {
+            return switch (this.data) {
+                .bytes => this.data.bytes.len,
+                .file => std.math.maxInt(i32),
+            };
         }
 
-        pub fn init(bytes: []u8, allocator: std.mem.Allocator) !*Store {
-            var store = try allocator.create(Store);
-            store.* = .{
-                .ptr = bytes.ptr,
-                .len = @truncate(u32, bytes.len),
-                .ref_count = 1,
-                .cap = @truncate(u32, bytes.len),
-                .allocator = allocator,
-            };
-            return store;
+        pub const Map = std.HashMap(u64, *JSC.WebCore.Blob.Store, IdentityContext(u64), 80);
+
+        pub const Data = union(enum) {
+            bytes: ByteStore,
+            file: FileStore,
+        };
+
+        pub fn ref(this: *Store) void {
+            this.ref_count += 1;
         }
 
         pub fn external(ptr: ?*anyopaque, _: ?*anyopaque, _: usize) callconv(.C) void {
@@ -1678,48 +1755,399 @@ pub const Blob = struct {
             this.deref();
         }
 
-        pub fn fromArrayList(list: std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator) !*Store {
-            var store = try allocator.create(Store);
+        pub fn initFile(pathlike: JSC.Node.PathOrFileDescriptor, mime_type: ?HTTPClient.MimeType, allocator: std.mem.Allocator) !*Store {
+            var store = try allocator.create(Blob.Store);
             store.* = .{
-                .ptr = list.items.ptr,
-                .len = @truncate(u32, list.items.len),
-                .ref_count = 1,
-                .cap = @truncate(u32, list.capacity),
+                .data = .{ .file = FileStore.init(pathlike, mime_type) },
                 .allocator = allocator,
+                .ref_count = 1,
             };
             return store;
         }
 
-        pub fn leakSlice(this: *const Store) []const u8 {
-            return this.ptr[0..this.len];
+        pub fn init(bytes: []u8, allocator: std.mem.Allocator) !*Store {
+            var store = try allocator.create(Blob.Store);
+            store.* = .{
+                .data = .{ .bytes = ByteStore.init(bytes, allocator) },
+                .allocator = allocator,
+                .ref_count = 1,
+            };
+            return store;
         }
 
-        pub fn slice(this: *Store) []u8 {
-            this.ref_count += 1;
-            return this.leakSlice();
+        pub fn sharedView(this: Store) []u8 {
+            if (this.data == .bytes)
+                return this.data.bytes.slice();
+
+            return &[_]u8{};
         }
 
-        pub fn isOnlyOneRef(this: *const Store) bool {
-            return this.ref_count <= 1;
-        }
-
-        pub fn deref(this: *Store) void {
+        pub fn deref(this: *Blob.Store) void {
             this.ref_count -= 1;
             if (this.ref_count == 0) {
-                var allocated_slice = this.ptr[0..this.cap];
-                var allocator = this.allocator;
-                allocator.free(allocated_slice);
-                allocator.destroy(this);
+                this.deinit();
             }
         }
 
-        pub fn asArrayList(this: *Store) std.ArrayListUnmanaged(u8) {
-            this.ref_count += 1;
+        pub fn deinit(this: *Blob.Store) void {
+            switch (this.data) {
+                .bytes => |*bytes| {
+                    bytes.deinit();
+                },
+                .file => |file| {
+                    VirtualMachine.vm.removeFileBlob(file.pathlike);
+                },
+            }
 
+            this.allocator.destroy(this);
+        }
+
+        pub fn fromArrayList(list: std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator) !*Blob.Store {
+            return try Blob.Store.init(list.items, allocator);
+        }
+
+        pub const ReadFile = struct {
+            const OpenFrameType = if (Environment.isMac)
+                void
+            else
+                @Frame(ReadFile.getFdLinux);
+            file_store: FileStore,
+            byte_store: ByteStore = ByteStore{ .allocator = bun.default_allocator },
+            store: ?*Store = null,
+            offset: u32 = 0,
+            max_length: u32 = std.math.maxInt(u32),
+            open_frame: OpenFrameType = undefined,
+            read_frame: @Frame(ReadFile.doRead) = undefined,
+            close_frame: @Frame(ReadFile.doClose) = undefined,
+            errno: ?anyerror = null,
+            open_completion: HTTPClient.NetworkThread.Completion = undefined,
+            opened_fd: JSC.Node.FileDescriptor = undefined,
+            read_completion: HTTPClient.NetworkThread.Completion = undefined,
+            read_len: u32 = 0,
+            read_off: u32 = 0,
+            size: u32 = 0,
+            buffer: []u8 = undefined,
+            runAsyncFrame: @Frame(ReadFile.runAsync) = undefined,
+            close_completion: HTTPClient.NetworkThread.Completion = undefined,
+            task: HTTPClient.NetworkThread.Task = undefined,
+
+            onReadFileCompleteCtx: *anyopaque = undefined,
+            onReadFileComplete: OnReadFileCallback = undefined,
+
+            pub const OnReadFileCallback = fn (ctx: *anyopaque, bytes: anyerror![]u8) void;
+
+            const AsyncIO = HTTPClient.NetworkThread.AsyncIO;
+
+            pub fn createWithCtx(
+                allocator: std.mem.Allocator,
+                store: *Store,
+                onReadFileContext: *anyopaque,
+                onReadFileComplete: OnReadFileCallback,
+                off: u32,
+                max_len: u32,
+            ) !*ReadFile {
+                var read_file = try allocator.create(ReadFile);
+                read_file.* = ReadFile{
+                    .file_store = store.data.file,
+                    .offset = off,
+                    .max_length = max_len,
+                    .store = store,
+                    .onReadFileCompleteCtx = onReadFileContext,
+                    .onReadFileComplete = onReadFileComplete,
+                };
+                store.ref();
+                return read_file;
+            }
+
+            pub fn create(
+                allocator: std.mem.Allocator,
+                store: *Store,
+                off: u32,
+                max_len: u32,
+                comptime Context: type,
+                context: Context,
+                comptime callback: fn (ctx: Context, bytes: anyerror![]u8) void,
+            ) !*ReadFile {
+                const Handler = struct {
+                    pub fn run(ptr: *anyopaque, bytes: anyerror![]u8) void {
+                        callback(bun.cast(Context, ptr), bytes);
+                    }
+                };
+
+                return try ReadFile.createWithCtx(allocator, store, @ptrCast(*anyopaque, context), Handler.run, off, max_len);
+            }
+
+            pub fn getFdMac(this: *ReadFile) AsyncIO.OpenError!JSC.Node.FileDescriptor {
+                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                this.opened_fd = AsyncIO.openSync(
+                    this.file_store.pathlike.path.sliceZ(&buf),
+                    std.os.O.RDONLY,
+                ) catch |err| {
+                    this.errno = err;
+                    return err;
+                };
+                return this.opened_fd;
+            }
+
+            pub fn getFd(this: *ReadFile) AsyncIO.OpenError!JSC.Node.FileDescriptor {
+                if (this.file_store.pathlike == .fd) {
+                    return this.file_store.pathlike.fd;
+                }
+
+                if (comptime Environment.isMac) {
+                    return try this.getFdMac();
+                } else {
+                    return try this.getFdLinux();
+                }
+            }
+
+            pub fn getFdLinux(this: *ReadFile) AsyncIO.OpenError!JSC.Node.FileDescriptor {
+                var aio = &AsyncIO.global;
+
+                aio.open(
+                    *ReadFile,
+                    this,
+                    onOpen,
+                    &this.open_completion,
+                    this.file_store.pathlike.path.sliceZ(),
+                    std.os.O.RDONLY,
+                    0,
+                );
+
+                suspend {
+                    this.open_frame = @frame().*;
+                }
+
+                if (this.errno) |errno| {
+                    return @errSetCast(AsyncIO.OpenError, errno);
+                }
+
+                return this.opened_fd;
+            }
+
+            pub fn doRead(this: *ReadFile) AsyncIO.ReadError!u32 {
+                var aio = &AsyncIO.global;
+
+                var remaining = this.buffer[this.read_off..];
+                this.read_len = 0;
+                aio.read(
+                    *ReadFile,
+                    this,
+                    onRead,
+                    &this.read_completion,
+                    this.opened_fd,
+                    remaining[0..@minimum(remaining.len, this.max_length - this.read_off)],
+                    this.offset + this.read_off,
+                );
+
+                suspend {
+                    this.read_frame = @frame().*;
+                }
+
+                if (this.errno) |errno| {
+                    return @errSetCast(AsyncIO.ReadError, errno);
+                }
+
+                return this.read_len;
+            }
+
+            pub fn doClose(this: *ReadFile) AsyncIO.CloseError!void {
+                var aio = &AsyncIO.global;
+
+                aio.close(
+                    *ReadFile,
+                    this,
+                    onClose,
+                    &this.close_completion,
+                    this.opened_fd,
+                );
+                this.opened_fd = 0;
+
+                suspend {
+                    this.close_frame = @frame().*;
+                }
+
+                if (this.errno) |errno| {
+                    return @errSetCast(AsyncIO.CloseError, errno);
+                }
+            }
+
+            pub const ReadFileTask = JSC.IOTask(@This());
+
+            pub fn then(this: *ReadFile, _: *JSC.JSGlobalObject) void {
+                var cb = this.onReadFileComplete;
+                var cb_ctx = this.onReadFileCompleteCtx;
+
+                var store = this.store orelse {
+                    var _err = this.errno orelse error.MissingData;
+                    this.byte_store.deinit();
+                    bun.default_allocator.destroy(this);
+                    cb(cb_ctx, _err);
+                    return;
+                };
+
+                defer store.deref();
+                if (this.file_store.pathlike == .path) {
+                    VirtualMachine.vm.removeFileBlob(this.file_store.pathlike);
+                }
+
+                if (this.errno) |err| {
+                    bun.default_allocator.destroy(this);
+                    cb(cb_ctx, err);
+                    return;
+                }
+
+                var bytes = this.buffer;
+                if (store.data == .bytes) {
+                    bun.default_allocator.free(this.buffer);
+                    bytes = store.data.bytes.slice();
+                } else if (store.data == .file) {
+                    if (this.file_store.pathlike == .path) {
+                        if (this.file_store.pathlike.path == .string) {
+                            bun.default_allocator.free(this.file_store.pathlike.path.slice());
+                        }
+                    }
+                    store.data = .{ .bytes = ByteStore.init(bytes, bun.default_allocator) };
+                }
+
+                bun.default_allocator.destroy(this);
+                cb(cb_ctx, bytes);
+            }
+            pub fn run(this: *ReadFile, task: *ReadFileTask) void {
+                this.runAsyncFrame = async this.runAsync(task);
+            }
+
+            pub fn onOpen(this: *ReadFile, _: *HTTPClient.NetworkThread.Completion, result: AsyncIO.OpenError!JSC.Node.FileDescriptor) void {
+                this.opened_fd = result catch |err| {
+                    this.errno = err;
+                    if (comptime Environment.isLinux) resume this.open_frame;
+                    return;
+                };
+
+                if (comptime Environment.isLinux) resume this.open_frame;
+            }
+
+            pub fn onRead(this: *ReadFile, _: *HTTPClient.NetworkThread.Completion, result: AsyncIO.ReadError!usize) void {
+                this.read_len = @truncate(u32, result catch |err| {
+                    this.errno = err;
+                    this.read_len = 0;
+                    resume this.read_frame;
+                    return;
+                });
+
+                resume this.read_frame;
+            }
+
+            pub fn onClose(this: *ReadFile, _: *HTTPClient.NetworkThread.Completion, result: AsyncIO.CloseError!void) void {
+                result catch |err| {
+                    this.errno = err;
+                    resume this.close_frame;
+                    return;
+                };
+
+                resume this.close_frame;
+            }
+
+            pub fn runAsync(this: *ReadFile, task: *ReadFileTask) void {
+                defer task.onFinish();
+
+                const fd = this.getFd() catch return;
+                const needs_close = this.file_store.pathlike == .path;
+                const stat: std.os.Stat = switch (JSC.Node.Syscall.fstat(fd)) {
+                    .result => |result| result,
+                    .err => |err| {
+                        this.errno = AsyncIO.asError(err.errno);
+                        return;
+                    },
+                };
+                if (!std.os.S.ISREG(stat.mode)) {
+                    this.errno = error.ENOTSUP;
+                    return;
+                }
+
+                this.size = @minimum(
+                    @truncate(u32, @intCast(u64, @maximum(@intCast(i64, stat.size), 0))),
+                    this.max_length,
+                );
+                if (this.size == 0) {
+                    this.buffer = &[_]u8{};
+                    this.byte_store = ByteStore.init(this.buffer, bun.default_allocator);
+
+                    if (needs_close) {
+                        this.doClose() catch {};
+                    }
+                    return;
+                }
+                var bytes = bun.default_allocator.alloc(u8, this.size) catch |err| {
+                    this.errno = err;
+                    if (needs_close) {
+                        this.doClose() catch {};
+                    }
+                    return;
+                };
+                this.buffer = bytes;
+
+                var remain = bytes;
+                while (remain.len > 0) {
+                    var read_len = this.doRead() catch {
+                        if (needs_close) {
+                            this.doClose() catch {};
+                        }
+                        return;
+                    };
+                    this.read_off += read_len;
+                    if (read_len == 0) break;
+                    remain = remain[read_len..];
+                }
+
+                _ = bun.default_allocator.resize(bytes, this.read_off);
+                this.buffer = bytes[0..this.read_off];
+                this.byte_store = ByteStore.init(this.buffer, bun.default_allocator);
+            }
+        };
+    };
+
+    pub const FileStore = struct {
+        pathlike: JSC.Node.PathOrFileDescriptor,
+        mime_type: HTTPClient.MimeType = HTTPClient.MimeType.other,
+
+        pub fn init(pathlike: JSC.Node.PathOrFileDescriptor, mime_type: ?HTTPClient.MimeType) FileStore {
+            return .{ .pathlike = pathlike, .mime_type = mime_type orelse HTTPClient.MimeType.other };
+        }
+    };
+
+    pub const ByteStore = struct {
+        ptr: [*]u8 = undefined,
+        len: u32 = 0,
+        cap: u32 = 0,
+        allocator: std.mem.Allocator,
+
+        pub fn init(bytes: []u8, allocator: std.mem.Allocator) ByteStore {
+            return .{
+                .ptr = bytes.ptr,
+                .len = @truncate(u32, bytes.len),
+                .cap = @truncate(u32, bytes.len),
+                .allocator = allocator,
+            };
+        }
+
+        pub fn fromArrayList(list: std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator) !*ByteStore {
+            return ByteStore.init(list.items, allocator);
+        }
+
+        pub fn slice(this: ByteStore) []u8 {
+            return this.ptr[0..this.len];
+        }
+
+        pub fn deinit(this: *ByteStore) void {
+            this.allocator.free(this.ptr[0..this.cap]);
+        }
+
+        pub fn asArrayList(this: ByteStore) std.ArrayListUnmanaged(u8) {
             return this.asArrayListLeak();
         }
 
-        pub fn asArrayListLeak(this: *const Store) std.ArrayListUnmanaged(u8) {
+        pub fn asArrayListLeak(this: ByteStore) std.ArrayListUnmanaged(u8) {
             return .{
                 .items = this.ptr[0..this.len],
                 .capacity = this.cap,
@@ -1772,6 +2200,10 @@ pub const Blob = struct {
         if (value.isError()) {
             return JSC.JSPromise.rejectedPromiseValue(global, value);
         }
+
+        if (value.jsType() == .JSPromise)
+            return value;
+
         return JSC.JSPromise.resolvedPromiseValue(global, value);
     }
 
@@ -1940,7 +2372,29 @@ pub const Blob = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
+        if (this.size == std.math.maxInt(i32)) {
+            this.resolveSize();
+            if (this.size == std.math.maxInt(i32) and this.store != null) {
+                return JSValue.jsNumber(@as(u32, 0)).asRef();
+            }
+        }
+
         return JSValue.jsNumber(@truncate(u32, this.size)).asRef();
+    }
+
+    pub fn resolveSize(this: *Blob) void {
+        if (this.store) |store| {
+            if (store.data == .bytes) {
+                const offset = this.offset;
+                const store_size = store.size();
+                if (store_size != std.math.maxInt(i32)) {
+                    this.offset = @minimum(store_size, offset);
+                    this.size = store_size - offset;
+                }
+            }
+        } else {
+            this.size = 0;
+        }
     }
 
     pub fn constructor(
@@ -2025,6 +2479,16 @@ pub const Blob = struct {
         };
     }
 
+    pub fn initWithStore(store: *Blob.Store, globalThis: *JSGlobalObject) Blob {
+        return Blob{
+            .size = store.size(),
+            .store = store,
+            .allocator = null,
+            .content_type = "",
+            .globalThis = globalThis,
+        };
+    }
+
     pub fn initEmpty(globalThis: *JSGlobalObject) Blob {
         return Blob{
             .size = 0,
@@ -2042,20 +2506,15 @@ pub const Blob = struct {
     }
 
     pub fn detach(this: *Blob) void {
-        if (this.store) |store| {
-            store.deref();
-            this.store = null;
-        }
+        if (this.store != null) this.store.?.deref();
+        this.store = null;
     }
 
     /// This does not duplicate
     /// This creates a new view
     /// and increment the reference count
     pub fn dupe(this: *const Blob) Blob {
-        if (this.store) |store| {
-            store.ref();
-        }
-
+        if (this.store != null) this.store.?.ref();
         return this.*;
     }
 
@@ -2070,12 +2529,16 @@ pub const Blob = struct {
 
     pub fn sharedView(this: *const Blob) []const u8 {
         if (this.size == 0 or this.store == null) return "";
-        return this.store.?.leakSlice()[this.offset..][0..this.size];
+        var slice_ = this.store.?.sharedView();
+        if (slice_.len == 0) return "";
+        slice_ = slice_[this.offset..];
+
+        return slice_[0..@minimum(slice_.len, @as(usize, this.size))];
     }
 
     pub fn view(this: *const Blob) []const u8 {
         if (this.size == 0 or this.store == null) return "";
-        return this.store.?.slice()[this.offset..][0..this.size];
+        return this.store.?.sharedView()[this.offset..][0..this.size];
     }
 
     pub const Lifetime = enum {
@@ -2091,12 +2554,100 @@ pub const Blob = struct {
         // we can update the store's is_all_ascii flag
         // and any other Blob that points to the same store
         // can skip checking the encoding
-        if (this.size > 0 and this.store != null and this.offset == 0) {
+        if (this.size > 0 and this.offset == 0) {
             this.store.?.is_all_ascii = is_all_ascii;
         }
     }
 
+    pub fn NewReadFileHandler(comptime Function: anytype, comptime lifetime: Lifetime) type {
+        return struct {
+            context: Blob,
+            promise: *JSPromise,
+            globalThis: *JSGlobalObject,
+            pub fn run(handler: *@This(), bytes_: anyerror![]u8) void {
+                var promise = handler.promise;
+                var blob = handler.context;
+                blob.allocator = null;
+                var globalThis = handler.globalThis;
+                bun.default_allocator.destroy(handler);
+                var bytes = bytes_ catch |err| {
+                    var error_string = ZigString.init(
+                        std.fmt.allocPrint(bun.default_allocator, "Failed to read file: {s}", .{std.mem.span(@errorName(err))}) catch unreachable,
+                    );
+                    error_string.mark();
+                    blob.detach();
+
+                    promise.reject(globalThis, error_string.toErrorInstance(globalThis));
+                    return;
+                };
+
+                if (blob.size > 0)
+                    blob.size = @minimum(@truncate(u32, bytes.len), blob.size);
+
+                promise.resolve(globalThis, Function(&blob, globalThis, comptime lifetime));
+            }
+        };
+    }
+
+    pub fn NewInternalReadFileHandler(comptime Context: type, comptime Function: anytype) type {
+        return struct {
+            context: Context,
+
+            pub fn run(handler: *anyopaque, bytes_: anyerror![]u8) void {
+                Function(bun.cast(Context, handler.context), bytes_);
+            }
+        };
+    }
+
+    pub fn doReadFileInternal(this: *Blob, comptime Handler: type, ctx: Handler, comptime Function: anytype, global: *JSGlobalObject) void {
+        var file_read = Store.ReadFile.createWithCtx(
+            bun.default_allocator,
+            this.store.?,
+            this.offset,
+            this.size,
+            Handler,
+            ctx,
+            Function,
+        ) catch unreachable;
+        var read_file_task = Store.ReadFile.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch unreachable;
+        read_file_task.schedule();
+    }
+
+    pub fn doReadFile(this: *Blob, comptime Function: anytype, comptime lifetime: Lifetime, global: *JSGlobalObject) JSValue {
+        const Handler = NewReadFileHandler(Function, lifetime);
+        var promise = JSPromise.create(global);
+
+        var handler = Handler{
+            .context = this.*,
+            .promise = promise,
+            .globalThis = global,
+        };
+
+        var ptr = bun.default_allocator.create(Handler) catch unreachable;
+        ptr.* = handler;
+        var file_read = Store.ReadFile.create(
+            bun.default_allocator,
+            this.store.?,
+            this.offset,
+            this.size,
+            *Handler,
+            ptr,
+            Handler.run,
+        ) catch unreachable;
+        var read_file_task = Store.ReadFile.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch unreachable;
+        read_file_task.schedule();
+        return promise.asValue(global);
+    }
+
+    pub fn needsToReadFile(this: *const Blob) bool {
+        return this.store != null and this.store.?.data == .file;
+    }
+
     pub fn toString(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) JSValue {
+        if (this.needsToReadFile()) {
+            return this.doReadFile(toString, lifetime, global);
+        }
+
         var view_: []const u8 =
             this.sharedView();
 
@@ -2112,10 +2663,11 @@ pub const Blob = struct {
             // if toUTF16Alloc returns null, it means there are no non-ASCII characters
             // instead of erroring, invalid characters will become a U+FFFD replacement character
             if (strings.toUTF16Alloc(bun.default_allocator, buf, false) catch unreachable) |external| {
+                this.setIsASCIIFlag(false);
+
                 if (lifetime == .transfer) {
                     this.detach();
                 }
-                this.setIsASCIIFlag(false);
                 return ZigString.toExternalU16(external.ptr, external.len, global);
             }
 
@@ -2143,7 +2695,15 @@ pub const Blob = struct {
         }
     }
 
+    pub fn toJSONShare(this: *Blob, global: *JSGlobalObject, comptime _: Lifetime) JSValue {
+        return toJSON(this, global);
+    }
+
     pub fn toJSON(this: *Blob, global: *JSGlobalObject) JSValue {
+        if (this.needsToReadFile()) {
+            return this.doReadFile(toJSONShare, .share, global);
+        }
+
         var view_ = this.sharedView();
 
         if (view_.len == 0)
@@ -2171,6 +2731,10 @@ pub const Blob = struct {
         ).parseJSON(global);
     }
     pub fn toArrayBuffer(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) JSValue {
+        if (this.needsToReadFile()) {
+            return this.doReadFile(toArrayBuffer, lifetime, global);
+        }
+
         var view_ = this.sharedView();
 
         if (view_.len == 0)
@@ -2603,6 +3167,7 @@ pub const Body = struct {
         promise: ?JSValue = null,
         global: *JSGlobalObject,
         task: ?*anyopaque = null,
+        callback: ?fn (ctx: *anyopaque, value: *Value) void = null,
         deinit: bool = false,
     };
 
@@ -2611,12 +3176,14 @@ pub const Body = struct {
         Locked: PendingValue,
         Used: void,
         Empty: void,
+        Error: JSValue,
 
         pub const Tag = enum {
             Blob,
             Locked,
             Used,
             Empty,
+            Error,
         };
 
         pub const empty = Value{ .Empty = .{} };
@@ -2640,6 +3207,41 @@ pub const Body = struct {
             }
         }
 
+        pub fn toErrorInstance(this: *Value, error_instance: JSC.JSValue, global: *JSGlobalObject) void {
+            if (this.value == .Locked) {
+                var locked = this.Locked;
+                locked.deinit = true;
+                if (locked.promise) |promise| {
+                    if (promise.asInternalPromise()) |internal| {
+                        internal.reject(global, error_instance);
+                    }
+
+                    JSC.C.JSValueUnprotect(global.ref(), promise.asObjectRef());
+                    locked.promise = null;
+                }
+
+                this.* = .{ .Error = error_instance };
+                if (locked.callback) |callback| {
+                    locked.callback = null;
+                    callback(locked.task.?, this);
+                }
+                return;
+            }
+
+            this.* = .{ .Error = error_instance };
+        }
+
+        pub fn toError(this: *Value, err: anyerror, global: *JSGlobalObject) void {
+            var error_str = ZigString.init(std.fmt.allocPrint(
+                bun.default_allocator,
+                "Error reading file {s}",
+                .{@errorName(err)},
+            ));
+            error_str.mark();
+            var error_instance = error_str.toErrorInstance(global);
+            return this.toErrorInstance(error_instance, global);
+        }
+
         pub fn deinit(this: *Value) void {
             const tag = @as(Tag, this.*);
             if (tag == .Locked) {
@@ -2650,6 +3252,10 @@ pub const Body = struct {
             if (tag == .Blob) {
                 this.Blob.deinit();
                 this.* = Value.empty;
+            }
+
+            if (tag == .Error) {
+                JSC.C.JSValueUnprotect(VirtualMachine.vm.global.vm(), this.Error.asObjectRef());
             }
         }
 

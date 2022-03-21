@@ -167,6 +167,8 @@ pub extern fn JSC__JSModuleLoader__linkAndEvaluateModule(arg0: [*c]JSC__JSGlobal
 pub extern fn JSC__JSModuleLoader__loadAndEvaluateModule(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const ZigString) [*c]JSC__JSInternalPromise;
 pub extern fn JSC__JSModuleLoader__loadAndEvaluateModuleEntryPoint(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const JSC__SourceCode) [*c]JSC__JSInternalPromise;
 pub extern fn JSC__JSModuleRecord__sourceCode(arg0: [*c]JSC__JSModuleRecord) bJSC__SourceCode;
+pub extern fn JSC__JSPromise__asValue(arg0: [*c]JSC__JSPromise, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
+pub extern fn JSC__JSPromise__create(arg0: [*c]JSC__JSGlobalObject) [*c]JSC__JSPromise;
 pub extern fn JSC__JSPromise__isHandled(arg0: [*c]const JSC__JSPromise, arg1: [*c]JSC__VM) bool;
 pub extern fn JSC__JSPromise__reject(arg0: [*c]JSC__JSPromise, arg1: [*c]JSC__JSGlobalObject, JSValue2: JSC__JSValue) void;
 pub extern fn JSC__JSPromise__rejectAsHandled(arg0: [*c]JSC__JSPromise, arg1: [*c]JSC__JSGlobalObject, JSValue2: JSC__JSValue) void;

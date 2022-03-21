@@ -208,20 +208,28 @@ pub const HTMLRewriter = struct {
         this.context.deinit(bun.default_allocator);
     }
 
+    pub fn beginTransform(this: *HTMLRewriter, global: *JSGlobalObject, response: *Response) JSValue {
+        const new_context = this.context;
+        this.context = .{};
+        return BufferOutputSink.init(new_context, global, response, this.builder);
+    }
+
+    pub fn returnEmptyResponse(this: *HTMLRewriter, global: *JSGlobalObject, response: *Response) JSValue {
+        var result = bun.default_allocator.create(Response) catch unreachable;
+
+        response.cloneInto(result, getAllocator(global.ref()));
+        this.finalizeWithoutDestroy();
+        return JSValue.fromRef(Response.makeMaybePooled(global.ref(), result));
+    }
+
     pub fn transform(this: *HTMLRewriter, global: *JSGlobalObject, response: *Response) JSValue {
         var input = response.body.slice();
 
-        if (input.len == 0) {
-            var result = bun.default_allocator.create(Response) catch unreachable;
-
-            response.cloneInto(result, getAllocator(global.ref()));
-            this.finalizeWithoutDestroy();
-            return JSValue.fromRef(Response.makeMaybePooled(global.ref(), result));
+        if (input.len == 0 and !(response.body.value == .Blob and response.body.value.Blob.needsToReadFile())) {
+            return this.returnEmptyResponse(global, response);
         }
 
-        var new_context = this.context;
-        this.context = .{};
-        return BufferOutputSink.init(new_context, global, response, this.builder);
+        return this.beginTransform(global, response);
     }
 
     pub const BufferOutputSink = struct {
@@ -230,7 +238,7 @@ pub const HTMLRewriter = struct {
         rewriter: *LOLHTML.HTMLRewriter,
         context: LOLHTMLContext,
         response: *Response,
-
+        input: JSC.WebCore.Blob = undefined,
         pub fn init(context: LOLHTMLContext, global: *JSGlobalObject, original: *Response, builder: *LOLHTML.HTMLRewriter.Builder) JSValue {
             var result = bun.default_allocator.create(Response) catch unreachable;
             var sink = bun.default_allocator.create(BufferOutputSink) catch unreachable;
@@ -252,7 +260,7 @@ pub const HTMLRewriter = struct {
             sink.rewriter = builder.build(
                 .UTF8,
                 .{
-                    .preallocated_parsing_buffer_size = original.body.len(),
+                    .preallocated_parsing_buffer_size = @maximum(original.body.len(), 1024),
                     .max_allowed_memory_usage = std.math.maxInt(u32),
                 },
                 false,
@@ -282,19 +290,7 @@ pub const HTMLRewriter = struct {
                     },
                 },
             };
-            {
-                var input = original.body.value.use();
-                sink.bytes.growBy(input.sharedView().len) catch unreachable;
-                defer input.detach();
-                sink.rewriter.write(input.sharedView()) catch {
-                    sink.deinit();
-                    bun.default_allocator.destroy(result);
 
-                    return throwLOLHTMLError(global);
-                };
-            }
-
-            // Hold off on cloning until we're actually done.
             result.body.init.headers = original.body.init.headers;
             result.body.init.method = original.body.init.method;
             result.body.init.status_code = original.body.init.status_code;
@@ -302,17 +298,72 @@ pub const HTMLRewriter = struct {
             result.url = bun.default_allocator.dupe(u8, original.url) catch unreachable;
             result.status_text = bun.default_allocator.dupe(u8, original.status_text) catch unreachable;
 
-            sink.rewriter.end() catch {
-                result.finalize();
-                sink.response = undefined;
-                sink.deinit();
+            var input: JSC.WebCore.Blob = original.body.value.use();
 
-                return throwLOLHTMLError(global);
-            };
+            const is_pending = input.needsToReadFile();
+            defer if (!is_pending) input.detach();
+
+            if (input.needsToReadFile()) {
+                input.doReadFileInternal(*BufferOutputSink, sink, onFinishedLoading, global);
+            } else if (sink.runOutputSink(input.sharedView())) |error_value| {
+                return error_value;
+            }
+
+            // Hold off on cloning until we're actually done.
 
             return JSC.JSValue.fromRef(
                 Response.makeMaybePooled(sink.global.ref(), sink.response),
             );
+        }
+
+        pub fn onFinishedLoading(sink: *BufferOutputSink, bytes: anyerror![]u8) void {
+            var input = sink.input;
+            defer input.detach();
+            const data = bytes catch |err| {
+                if (sink.response.body.value == .Locked and sink.response.body.value.Locked.task == sink) {
+                    sink.response.body.value = .{ .Empty = .{} };
+                }
+
+                sink.response.body.value.toError(err, sink.global);
+                sink.rewriter.end() catch {};
+                sink.deinit();
+                return;
+            };
+
+            _ = sink.runOutputSink(data, true);
+        }
+
+        pub fn runOutputSink(sink: *BufferOutputSink, bytes: []const u8, is_async: bool) ?JSValue {
+            sink.bytes.growBy(bytes) catch unreachable;
+            var global = sink.global;
+            var response = sink.response;
+            sink.rewriter.write(bytes) catch {
+                sink.deinit();
+                bun.default_allocator.destroy(sink);
+
+                if (is_async) {
+                    response.body.value.toErrorInstance(throwLOLHTMLError(global), global);
+
+                    return null;
+                } else {
+                    return throwLOLHTMLError(global);
+                }
+            };
+
+            sink.rewriter.end() catch {
+                if (!is_async) response.finalize();
+                sink.response = undefined;
+                sink.deinit();
+
+                if (is_async) {
+                    response.body.value.toErrorInstance(throwLOLHTMLError(global), global);
+                    return null;
+                } else {
+                    return throwLOLHTMLError(global);
+                }
+            };
+
+            return null;
         }
 
         pub const Sync = enum { suspended, pending, done };

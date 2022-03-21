@@ -510,6 +510,13 @@ pub const PathOrFileDescriptor = union(Tag) {
 
     pub const Tag = enum { fd, path };
 
+    pub fn hash(this: PathOrFileDescriptor) u64 {
+        return switch (this) {
+            .path => std.hash.Wyhash.hash(0, this.path.slice()),
+            .fd => std.hash.Wyhash.hash(0, std.mem.asBytes(&this.fd)),
+        };
+    }
+
     pub fn copyToStream(this: PathOrFileDescriptor, flags: FileSystemFlags, auto_close: bool, mode: Mode, allocator: std.mem.Allocator, stream: *Stream) !void {
         switch (this) {
             .fd => |fd| {

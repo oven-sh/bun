@@ -127,7 +127,7 @@ pub const Errno = error{
     Unexpected,
 };
 
-const errno_map: [108]Errno = brk: {
+pub const errno_map: [108]Errno = brk: {
     var errors: [108]Errno = undefined;
     errors[1] = error.EPERM;
     errors[2] = error.ENOENT;
@@ -244,7 +244,12 @@ const socklen_t = darwin.socklen_t;
 const system = darwin;
 
 pub fn asError(err: anytype) Errno {
-    return switch (@enumToInt(err)) {
+    const int = if (@typeInfo(@TypeOf(err)) == .Enum)
+        @enumToInt(err)
+    else
+        err;
+
+    return switch (int) {
         1...errno_map.len => |val| errno_map[@intCast(u8, val)],
         else => error.Unexpected,
     };
@@ -257,21 +262,71 @@ const c = std.c;
 const darwin = struct {
     pub usingnamespace os.darwin;
     pub extern "c" fn @"recvfrom$NOCANCEL"(sockfd: c.fd_t, noalias buf: *anyopaque, len: usize, flags: u32, noalias src_addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t) isize;
-    pub extern "c" fn @"sendto$NOCANCEL"(
-        sockfd: c.fd_t,
-        buf: *const anyopaque,
-        len: usize,
-        flags: u32,
-        dest_addr: ?*const c.sockaddr,
-        addrlen: c.socklen_t,
-    ) isize;
+    pub extern "c" fn @"sendto$NOCANCEL"(sockfd: c.fd_t, buf: *const anyopaque, len: usize, flags: u32, dest_addr: ?*const c.sockaddr, addrlen: c.socklen_t) isize;
     pub extern "c" fn @"fcntl$NOCANCEL"(fd: c.fd_t, cmd: c_int, ...) c_int;
     pub extern "c" fn @"sendmsg$NOCANCEL"(sockfd: c.fd_t, msg: *const std.x.os.Socket.Message, flags: c_int) isize;
     pub extern "c" fn @"recvmsg$NOCANCEL"(sockfd: c.fd_t, msg: *std.x.os.Socket.Message, flags: c_int) isize;
     pub extern "c" fn @"connect$NOCANCEL"(sockfd: c.fd_t, sock_addr: *const c.sockaddr, addrlen: c.socklen_t) c_int;
     pub extern "c" fn @"accept$NOCANCEL"(sockfd: c.fd_t, noalias addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t) c_int;
     pub extern "c" fn @"accept4$NOCANCEL"(sockfd: c.fd_t, noalias addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t, flags: c_uint) c_int;
+    pub extern "c" fn @"open$NOCANCEL"(path: [*:0]const u8, oflag: c_uint, ...) c_int;
 };
+
+pub const OpenError = error{
+    /// In WASI, this error may occur when the file descriptor does
+    /// not hold the required rights to open a new resource relative to it.
+    AccessDenied,
+    SymLinkLoop,
+    ProcessFdQuotaExceeded,
+    SystemFdQuotaExceeded,
+    NoDevice,
+    FileNotFound,
+
+    /// The path exceeded `MAX_PATH_BYTES` bytes.
+    NameTooLong,
+
+    /// Insufficient kernel memory was available, or
+    /// the named file is a FIFO and per-user hard limit on
+    /// memory allocation for pipes has been reached.
+    SystemResources,
+
+    /// The file is too large to be opened. This error is unreachable
+    /// for 64-bit targets, as well as when opening directories.
+    FileTooBig,
+
+    /// The path refers to directory but the `O.DIRECTORY` flag was not provided.
+    IsDir,
+
+    /// A new path cannot be created because the device has no room for the new file.
+    /// This error is only reachable when the `O.CREAT` flag is provided.
+    NoSpaceLeft,
+
+    /// A component used as a directory in the path was not, in fact, a directory, or
+    /// `O.DIRECTORY` was specified and the path was not a directory.
+    NotDir,
+
+    /// The path already exists and the `O.CREAT` and `O.EXCL` flags were provided.
+    PathAlreadyExists,
+    DeviceBusy,
+
+    /// The underlying filesystem does not support file locks
+    FileLocksNotSupported,
+
+    BadPathName,
+    InvalidUtf8,
+
+    /// One of these three things:
+    /// * pathname  refers to an executable image which is currently being
+    ///   executed and write access was requested.
+    /// * pathname refers to a file that is currently in  use  as  a  swap
+    ///   file, and the O_TRUNC flag was specified.
+    /// * pathname  refers  to  a file that is currently being read by the
+    ///   kernel (e.g., for module/firmware loading), and write access was
+    ///   requested.
+    FileBusy,
+
+    WouldBlock,
+} || Errno;
 
 pub const Syscall = struct {
     pub fn close(fd: std.os.fd_t) CloseError!void {
@@ -279,6 +334,30 @@ pub const Syscall = struct {
             .SUCCESS => void{},
             .BADF => error.FileDescriptorInvalid,
             .IO => error.InputOutput,
+            else => |err| asError(err),
+        };
+    }
+
+    pub fn open(path: [*:0]const u8, oflag: c_uint) OpenError!fd_t {
+        const fd = darwin.@"open$NOCANCEL"(path, oflag);
+        return switch (darwin.getErrno(fd)) {
+            .SUCCESS => fd,
+            .ACCES => error.AccessDenied,
+            .FBIG => error.FileTooBig,
+            .OVERFLOW => error.FileTooBig,
+            .ISDIR => error.IsDir,
+            .LOOP => error.SymLinkLoop,
+            .MFILE => error.ProcessFdQuotaExceeded,
+            .NAMETOOLONG => error.NameTooLong,
+            .NFILE => error.SystemFdQuotaExceeded,
+            .NODEV => error.NoDevice,
+            .NOENT => error.FileNotFound,
+            .NOMEM => error.SystemResources,
+            .NOSPC => error.NoSpaceLeft,
+            .NOTDIR => error.NotDir,
+            .PERM => error.AccessDenied,
+            .EXIST => error.PathAlreadyExists,
+            .BUSY => error.DeviceBusy,
             else => |err| asError(err),
         };
     }
@@ -407,7 +486,7 @@ io_pending: FIFO(Completion) = .{},
 last_event_fd: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(32),
 
 pub fn hasNoWork(this: *IO) bool {
-    return  this.io_inflight == 0 and this.io_pending.peek() == null and this.completed.peek() == null and this.timeouts.peek() == null;
+    return this.io_inflight == 0 and this.io_pending.peek() == null and this.completed.peek() == null and this.timeouts.peek() == null;
 }
 
 pub fn init(_: u12, _: u32) !IO {
@@ -1012,6 +1091,32 @@ pub fn fsync(
             }
         },
     );
+}
+
+/// macOS does not support reading for readiness for open()
+/// so we just run this blocking
+pub fn open(
+    _: *IO,
+    comptime Context: type,
+    context: Context,
+    comptime callback: fn (
+        context: Context,
+        completion: *Completion,
+        result: OpenError!fd_t,
+    ) void,
+    completion: *Completion,
+    file_path: [:0]const u8,
+    flags: os.mode_t,
+    _: os.mode_t,
+) void {
+    callback(context, completion, openSync(file_path, flags));
+}
+
+pub fn openSync(
+    file_path: [:0]const u8,
+    flags: os.mode_t,
+) OpenError!fd_t {
+    return Syscall.open(file_path, @intCast(c_uint, flags));
 }
 
 pub const ReadError = error{

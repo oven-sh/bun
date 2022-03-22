@@ -705,7 +705,7 @@ pub const Completion = struct {
             .open => |op| {
                 linux.io_uring_prep_openat(
                     sqe,
-                    std.os.AT.FD_CWD,
+                    linux.AT.FDCWD,
                     op.path,
                     op.flags,
                     op.mode,
@@ -779,23 +779,27 @@ pub const Completion = struct {
             },
             .open => {
                 const result = if (completion.result < 0) switch (-completion.result) {
-                    .SUCCESS => unreachable,
-                    .ACCES => error.AccessDenied,
-                    .FBIG => error.FileTooBig,
-                    .OVERFLOW => error.FileTooBig,
-                    .ISDIR => error.IsDir,
-                    .LOOP => error.SymLinkLoop,
-                    .MFILE => error.ProcessFdQuotaExceeded,
-                    .NAMETOOLONG => error.NameTooLong,
-                    .NFILE => error.SystemFdQuotaExceeded,
-                    .NODEV => error.NoDevice,
-                    .NOENT => error.FileNotFound,
-                    .NOMEM => error.SystemResources,
-                    .NOSPC => error.NoSpaceLeft,
-                    .NOTDIR => error.NotDir,
-                    .PERM => error.AccessDenied,
-                    .EXIST => error.PathAlreadyExists,
-                    .BUSY => return error.DeviceBusy,
+                    0 => unreachable,
+                    os.EAGAIN, os.EINPROGRESS, os.EINTR => {
+                        completion.io.enqueue(completion);
+                        return;
+                    },
+                    os.EACCES => error.AccessDenied,
+                    os.EFBIG => error.FileTooBig,
+                    os.EOVERFLOW => error.FileTooBig,
+                    os.EISDIR => error.IsDir,
+                    os.ELOOP => error.SymLinkLoop,
+                    os.EMFILE => error.ProcessFdQuotaExceeded,
+                    os.ENAMETOOLONG => error.NameTooLong,
+                    os.ENFILE => error.SystemFdQuotaExceeded,
+                    os.ENODEV => error.NoDevice,
+                    os.ENOENT => error.FileNotFound,
+                    os.ENOMEM => error.SystemResources,
+                    os.ENOSPC => error.NoSpaceLeft,
+                    os.ENOTDIR => error.NotDir,
+                    os.EPERM => error.AccessDenied,
+                    os.EEXIST => error.PathAlreadyExists,
+                    os.EBUSY => error.DeviceBusy,
                     else => |errno| asError(errno),
                 } else @intCast(linux.fd_t, completion.result);
                 completion.callback(completion.context, completion, &result);
@@ -1451,7 +1455,7 @@ pub fn open(
         result: OpenError!linux.fd_t,
     ) void,
     completion: *Completion,
-    file_path: [:0]const u8,
+    path: [:0]const u8,
     flags: os.mode_t,
     mode: os.mode_t,
 ) void {
@@ -1469,8 +1473,8 @@ pub fn open(
         }.wrapper,
         .operation = .{
             .open = .{
-                .file_path = file_path,
-                .flags = flags,
+                .path = path,
+                .flags = @intCast(u32, flags),
                 .mode = mode,
             },
         },

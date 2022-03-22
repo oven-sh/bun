@@ -28,6 +28,10 @@ else
    MARCH_NATIVE = -march=native
 endif
 
+AR=
+
+
+
 TRIPLET = $(OS_NAME)-$(ARCH_NAME)
 PACKAGE_NAME = bun-$(TRIPLET)
 PACKAGES_REALPATH = $(realpath packages)
@@ -87,11 +91,13 @@ CMAKE_FLAGS = $(CMAKE_FLAGS_WITHOUT_RELEASE) -DCMAKE_BUILD_TYPE=Release
 
 LIBTOOL=libtoolize
 ifeq ($(OS_NAME),darwin)
-   LIBTOOL=glibtoolize
+LIBTOOL=glibtoolize
+AR=llvm-ar
 endif
 
 ifeq ($(OS_NAME),linux)
 LIBICONV_PATH = 
+AR=llvm-ar-13
 endif
 
 OPTIMIZATION_LEVEL=-O3
@@ -440,7 +446,7 @@ usockets:
 	cd $(BUN_DEPS_DIR)/uws/uSockets && \
 		$(CC) $(CFLAGS) $(UWS_CC_FLAGS)  $(UWS_LDFLAGS)  $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c -c src/*.c src/eventing/*.c src/crypto/*.c -flto && \
 		$(CXX) $(CXXFLAGS) $(UWS_CXX_FLAGS) $(UWS_LDFLAGS) $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c src/crypto/*.cpp && \
-		ar rvs $(BUN_DEPS_OUT_DIR)/uSockets.a *.o
+		$(AR) rvs $(BUN_DEPS_OUT_DIR)/uSockets.a *.o
 
 uws: usockets
 	$(CXX) -I$(BUN_DEPS_DIR)/uws/uSockets/src $(CLANG_FLAGS) $(UWS_CXX_FLAGS) $(UWS_LDFLAGS) $(PLATFORM_LINKER_FLAGS) -c -flto -I$(BUN_DEPS_DIR) $(BUN_DEPS_OUT_DIR)/uSockets.a $(BUN_DEPS_DIR)/libuwsockets.cpp -o $(BUN_DEPS_OUT_DIR)/libuwsockets.o

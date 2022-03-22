@@ -280,16 +280,14 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                 if (Environment.isLinux) {
                     const start = this.sendfile.offset;
                     const val =
-                        std.os.linux.sendfile(this.sendfile.socket_fd, this.sendfile.fd, &this.sendfile.offset, this.sendfile.adjusted_count);
+                        std.os.linux.sendfile(this.sendfile.socket_fd, this.sendfile.fd, &this.sendfile.offset, this.sendfile.remain);
 
-                    const sent = @intCast(u32, this.sendfile.offset - start);
                     const errcode = std.os.linux.getErrno(val);
 
-                    this.sendfile.offset += sent;
-                    this.sendfile.remain -= sent;
+                    this.sendfile.remain -= @intCast(u32, this.sendfile.offset - start);
 
-                    if (errcode != .AGAIN or this.aborted or this.sendfile.remain == 0 or val == 0) {
-                        if (errcode != .AGAIN and errcode != .SUCCESS) {
+                    if (errcode != .SUCCESS or this.aborted or this.sendfile.remain == 0 or val == 0) {
+                        if (errcode != .SUCCESS) {
                             Output.prettyErrorln("Error: {s}", .{@tagName(errcode)});
                             Output.flush();
                         }

@@ -892,7 +892,6 @@ pub fn NewClassWithInstanceType(
         const function_name_literals = function_names;
         var function_name_refs: [function_names.len]js.JSStringRef = undefined;
         var function_name_refs_set = false;
-        var class_name_str = name[0.. :0].ptr;
 
         const property_names = std.meta.fieldNames(@TypeOf(properties));
         var property_name_refs: [property_names.len]js.JSStringRef = undefined;
@@ -919,7 +918,7 @@ pub fn NewClassWithInstanceType(
                 arguments: [*c]const js.JSValueRef,
                 exception: js.ExceptionRef,
             ) callconv(.C) js.JSValueRef {
-                return class_definition_ptr.callAsConstructor.?(ctx, function, argumentCount, arguments, exception);
+                return &complete_definition.callAsConstructor.?(ctx, function, argumentCount, arguments, exception);
             }
         };
 
@@ -1125,7 +1124,9 @@ pub fn NewClassWithInstanceType(
         }
 
         pub inline fn getDefinition() js.JSClassDefinition {
-            return class_definition_ptr.*;
+            var definition = complete_definition;
+            definition.className = options.name;
+            return definition;
         }
 
         // This should only be run at comptime
@@ -1522,6 +1523,13 @@ pub fn NewClassWithInstanceType(
             };
 
             var __static_functions: [function_name_literals.len + 1]js.JSStaticFunction = undefined;
+            for (__static_functions) |_, i| {
+                __static_functions[i] = js.JSStaticFunction{
+                    .name = @intToPtr([*c]const u8, 0),
+                    .callAsFunction = null,
+                    .attributes = js.JSPropertyAttributes.kJSPropertyAttributeNone,
+                };
+            }
 
             for (function_name_literals) |function_name_literal, i| {
                 const is_read_only = options.read_only;
@@ -1633,14 +1641,6 @@ pub fn NewClassWithInstanceType(
             if (ReturnType == JSC.C.JSClassDefinition) {
                 return def;
             } else {
-                while (count < __static_functions.len) : (count += 1) {
-                    __static_functions[count] = js.JSStaticFunction{
-                        .name = "",
-                        .callAsFunction = null,
-                        .attributes = js.JSPropertyAttributes.kJSPropertyAttributeNone,
-                    };
-                }
-
                 return __static_functions;
             }
         }
@@ -1649,6 +1649,7 @@ pub fn NewClassWithInstanceType(
         const static_functions__ = generateDef([function_name_literals.len + 1]js.JSStaticFunction);
         const static_functions_ptr = &static_functions__;
         const static_values_ptr = &static_properties;
+        const class_name_str: stringZ = options.name;
 
         const complete_definition = brk: {
             var def = base_def_;
@@ -1660,7 +1661,7 @@ pub fn NewClassWithInstanceType(
                 def.staticValues = static_values_ptr;
             }
 
-            def.className = options.name;
+            def.className = class_name_str;
             // def.getProperty = getPropertyCallback;
 
             if (def.callAsConstructor == null) {

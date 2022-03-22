@@ -81,8 +81,10 @@ const uws = @import("uws");
 
 const SendfileContext = struct {
     fd: i32,
+    socket_fd: i32 = 0,
     remain: u32 = 0,
     offset: i64 = 0,
+    has_listener: bool = false,
 };
 
 pub fn NewServer(comptime ssl_enabled: bool) type {
@@ -262,62 +264,84 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                 this.sendfile = undefined;
                 this.finalize();
             }
+            const separator: string = "\r\n";
+            const separator_iovec = [1]std.os.iovec_const{.{
+                .iov_base = separator.ptr,
+                .iov_len = separator.len,
+            }};
 
-            pub fn onSendfile(this: *RequestContext, amount_: c_ulong, response: *App.Response) callconv(.C) bool {
-                const amount = @minimum(@truncate(u32, amount_), this.sendfile.remain);
-
-                if (amount == 0 or this.aborted) {
-                    this.cleanupAfterSendfile();
-                    return true;
-                }
-
-                const adjusted_count_temporary = @minimum(amount, @as(u63, std.math.maxInt(i32)));
+            pub fn onSendfile(this: *RequestContext) bool {
+                const adjusted_count_temporary = @minimum(@as(u63, this.sendfile.remain), @as(u63, std.math.maxInt(i32)));
                 // TODO we should not need this int cast; improve the return type of `@minimum`
                 const adjusted_count = @intCast(u63, adjusted_count_temporary);
                 var sbytes: std.os.off_t = adjusted_count;
                 const signed_offset = @bitCast(i64, this.sendfile.offset);
 
                 if (Environment.isLinux) {
-                    const sent = @truncate(
-                        u32,
-                        std.os.linux.sendfile(response.getNativeHandle(), this.sendfile.fd, &this.sendfile.offset, amount),
-                    );
+                    const start = this.sendfile.offset;
+                    const val =
+                        std.os.linux.sendfile(this.sendfile.socket_fd, this.sendfile.fd, &this.sendfile.offset, this.sendfile.adjusted_count);
+
+                    const sent = @intCast(u32, this.sendfile.offset - start);
+                    const errcode = std.os.linux.getErrno(val);
 
                     this.sendfile.offset += sent;
                     this.sendfile.remain -= sent;
 
-                    if (sent == 0 or this.aborted or this.sendfile.remain == 0) {
+                    if (errcode != .AGAIN or this.aborted or this.sendfile.remain == 0 or val == 0) {
+                        if (errcode != .AGAIN and errcode != .SUCCESS) {
+                            Output.prettyErrorln("Error: {s}", .{@tagName(errcode)});
+                            Output.flush();
+                        }
                         this.cleanupAfterSendfile();
-                        return false;
+                        return errcode != .SUCCESS;
                     }
                 } else {
+                    // var sf_hdr_trailer: std.os.darwin.sf_hdtr = .{
+                    //     .headers = &separator_iovec,
+                    //     .hdr_cnt = 1,
+                    //     .trailers = undefined,
+                    //     .trl_cnt = 0,
+                    // };
+                    // const headers = if (this.sendfile.offset == 0)
+                    //     &sf_hdr_trailer
+                    // else
+                    //     null;
+
                     const errcode = std.c.getErrno(std.c.sendfile(
                         this.sendfile.fd,
-                        response.getNativeHandle(),
+                        this.sendfile.socket_fd,
 
                         signed_offset,
                         &sbytes,
                         null,
                         0,
                     ));
+
                     this.sendfile.offset += sbytes;
-                    this.sendfile.remain -= if (errcode != .SUCCESS) @intCast(u32, sbytes) else 0;
-                    if ((errcode != .AGAIN and errcode != .SUCCESS) or this.aborted or this.sendfile.remain == 0) {
+                    this.sendfile.remain -= @intCast(u32, sbytes);
+                    if (errcode != .AGAIN or this.aborted or this.sendfile.remain == 0 or sbytes == 0) {
                         if (errcode != .AGAIN and errcode != .SUCCESS) {
                             Output.prettyErrorln("Error: {s}", .{@tagName(errcode)});
                             Output.flush();
                         }
                         this.cleanupAfterSendfile();
-                        return false;
+                        return errcode != .SUCCESS;
                     }
                 }
 
-                this.resp.onWritable(*RequestContext, onSendfile, this);
+                this.resp.setWriteOffset(this.sendfile.offset);
+                this.resp.onWritable(*RequestContext, onWritableSendfile, this);
                 return true;
+            }
+
+            pub fn onWritableSendfile(this: *RequestContext, _: c_ulong, _: *App.Response) callconv(.C) bool {
+                return this.onSendfile();
             }
 
             pub fn onWritablePrepareSendfile(this: *RequestContext, _: c_ulong, _: *App.Response) callconv(.C) bool {
                 this.renderSendFile(this.blob);
+
                 return true;
             }
 
@@ -349,7 +373,8 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
 
                 this.sendfile = .{
                     .fd = fd,
-                    .remain = size_,
+                    .remain = size_, // 2 is for \r\n,
+                    .socket_fd = this.resp.getNativeHandle(),
                 };
 
                 if (size_ == 0) {
@@ -358,24 +383,10 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
 
                     return;
                 }
-                {
-                    const wrote = std.os.write(
-                        this.resp.getNativeHandle(),
-                        "\r\n",
-                    ) catch {
-                        this.cleanupAfterSendfile();
-                        return;
-                    };
-                    if (wrote == 0) {
-                        this.cleanupAfterSendfile();
-                        return;
-                    }
-                }
 
-                // if we're not immediately writable, go ahead and try
-                if (this.sendfile.remain == size_) {
-                    _ = this.onSendfile(size_, this.resp);
-                }
+                _ = std.os.write(this.sendfile.socket_fd, "\r\n") catch 0;
+
+                _ = this.onSendfile();
             }
 
             pub fn renderSendFile(this: *RequestContext, blob: JSC.WebCore.Blob) void {
@@ -413,7 +424,6 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                         this.blob = response.body.use();
                         this.req.setYield(false);
                         this.setAbortHandler();
-                        this.resp.onWritable(*RequestContext, onWritablePrepareSendfile, this);
                         if (!this.has_sendfile_ctx) this.renderSendFile(this.blob);
                         return;
                     }

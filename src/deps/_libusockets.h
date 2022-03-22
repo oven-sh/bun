@@ -293,6 +293,8 @@ void uws_res_write_headers(int ssl, uws_res_t *res, const StringPointer *names,
 
 void *uws_res_get_native_handle(int ssl, uws_res_t *res);
 void uws_res_uncork(int ssl, uws_res_t *res);
+void uws_res_set_write_offset(int ssl, uws_res_t *res, size_t off);
+void us_socket_mark_needs_more_not_ssl(uws_res_t *res);
 #ifdef __cplusplus
 }
 #endif

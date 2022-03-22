@@ -1,6 +1,7 @@
 #include "_libusockets.h"
 #include <string_view>
 #include <uws/src/App.h>
+#include <uws/uSockets/src/internal/internal.h>
 
 extern "C" {
 
@@ -794,9 +795,12 @@ void uws_res_write_header_int(int ssl, uws_res_t *res, const char *key,
 void uws_res_end_without_body(int ssl, uws_res_t *res) {
   if (ssl) {
     uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+    uwsRes->setWriteOffset(0);
     uwsRes->endWithoutBody(0);
   } else {
+
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+    uwsRes->setWriteOffset(0);
     uwsRes->endWithoutBody(0);
   }
 }
@@ -1009,6 +1013,23 @@ void uws_res_uncork(int ssl, uws_res_t *res) {
   //   uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
   //   uwsRes->uncork();
   // }
+}
+
+void us_socket_mark_needs_more_not_ssl(uws_res_t *res) {
+  us_socket_t *s = (us_socket_t *)res;
+  s->context->loop->data.last_write_failed = 1;
+  us_poll_change(&s->p, s->context->loop,
+                 LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+}
+
+void uws_res_set_write_offset(int ssl, uws_res_t *res, size_t off) {
+  if (ssl) {
+    uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+    uwsRes->setWriteOffset(off);
+  } else {
+    uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+    uwsRes->setWriteOffset(off);
+  }
 }
 
 void uws_res_cork(int ssl, uws_res_t *res, void *ctx,

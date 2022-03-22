@@ -94,12 +94,13 @@ ifeq ($(OS_NAME),linux)
 LIBICONV_PATH = 
 endif
 
-
-CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE) -ffunction-sections -fdata-sections -g -O3
+OPTIMIZATION_LEVEL=-O3
+CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE) -ffunction-sections -fdata-sections -g $(OPTIMIZATION_LEVEL)
 BUN_TMP_DIR := /tmp/make-bun
 BUN_DEPLOY_DIR = /tmp/bun-v$(PACKAGE_JSON_VERSION)/$(PACKAGE_NAME)
 
 DEFAULT_USE_BMALLOC := 1
+
 
 USE_BMALLOC ?= DEFAULT_USE_BMALLOC
 
@@ -404,7 +405,7 @@ dev-wasm: dev-build-obj-wasm
 	emcc -sEXPORTED_FUNCTIONS="['_bun_free', '_cycleStart', '_cycleEnd', '_bun_malloc', '_scan', '_transform', '_init']" \
 		-g -s ERROR_ON_UNDEFINED_SYMBOLS=0  -DNDEBUG  \
 		$(BUN_DEPS_DIR)/libmimalloc.a.wasm  \
-		packages/debug-bun-freestanding-wasm32/bun-wasm.o -O3 --no-entry --allow-undefined  -s ASSERTIONS=0  -s ALLOW_MEMORY_GROWTH=1 -s WASM_BIGINT=1  \
+		packages/debug-bun-freestanding-wasm32/bun-wasm.o $(OPTIMIZATION_LEVEL) --no-entry --allow-undefined  -s ASSERTIONS=0  -s ALLOW_MEMORY_GROWTH=1 -s WASM_BIGINT=1  \
 		-o packages/debug-bun-freestanding-wasm32/bun-wasm.wasm
 	cp packages/debug-bun-freestanding-wasm32/bun-wasm.wasm src/api/demo/public/bun-wasm.wasm
 
@@ -413,7 +414,7 @@ build-obj-wasm:
 	emcc -sEXPORTED_FUNCTIONS="['_bun_free', '_cycleStart', '_cycleEnd', '_bun_malloc', '_scan', '_transform', '_init']" \
 		-g -s ERROR_ON_UNDEFINED_SYMBOLS=0  -DNDEBUG  \
 		$(BUN_DEPS_DIR)/libmimalloc.a.wasm  \
-		packages/bun-freestanding-wasm32/bun-wasm.o -O3 --no-entry --allow-undefined  -s ASSERTIONS=0  -s ALLOW_MEMORY_GROWTH=1 -s WASM_BIGINT=1  \
+		packages/bun-freestanding-wasm32/bun-wasm.o $(OPTIMIZATION_LEVEL) --no-entry --allow-undefined  -s ASSERTIONS=0  -s ALLOW_MEMORY_GROWTH=1 -s WASM_BIGINT=1  \
 		-o packages/bun-freestanding-wasm32/bun-wasm.wasm
 	cp packages/bun-freestanding-wasm32/bun-wasm.wasm src/api/demo/public/bun-wasm.wasm
 
@@ -437,12 +438,12 @@ UWS_LDFLAGS = -I$(BUN_DEPS_DIR)/boringssl/include
 usockets:
 	rm -rf $(BUN_DEPS_DIR)/uws/uSockets/*.o $(BUN_DEPS_DIR)/uws/uSockets/*.a
 	cd $(BUN_DEPS_DIR)/uws/uSockets && \
-		$(CC) $(CFLAGS) $(UWS_CC_FLAGS)  $(UWS_LDFLAGS)  $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) -O3 -g -c -c src/*.c src/eventing/*.c src/crypto/*.c -flto && \
-		$(CXX) $(CXXFLAGS) $(UWS_CXX_FLAGS) $(UWS_LDFLAGS) $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) -O3 -g -c src/crypto/*.cpp && \
+		$(CC) $(CFLAGS) $(UWS_CC_FLAGS)  $(UWS_LDFLAGS)  $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c -c src/*.c src/eventing/*.c src/crypto/*.c -flto && \
+		$(CXX) $(CXXFLAGS) $(UWS_CXX_FLAGS) $(UWS_LDFLAGS) $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c src/crypto/*.cpp && \
 		ar rvs $(BUN_DEPS_OUT_DIR)/uSockets.a *.o
 
 uws: usockets
-	$(CXX) -I$(BUN_DEPS_DIR)/uws/uSockets/src $(CLANG_FLAGS) $(UWS_CXX_FLAGS) $(UWS_LDFLAGS) -c -flto -I$(BUN_DEPS_DIR) $(BUN_DEPS_OUT_DIR)/uSockets.a $(BUN_DEPS_DIR)/libuwsockets.cpp -o $(BUN_DEPS_OUT_DIR)/libuwsockets.o
+	$(CXX) -I$(BUN_DEPS_DIR)/uws/uSockets/src $(CLANG_FLAGS) $(UWS_CXX_FLAGS) $(UWS_LDFLAGS) $(PLATFORM_LINKER_FLAGS) -c -flto -I$(BUN_DEPS_DIR) $(BUN_DEPS_OUT_DIR)/uSockets.a $(BUN_DEPS_DIR)/libuwsockets.cpp -o $(BUN_DEPS_OUT_DIR)/libuwsockets.o
 
 
 
@@ -504,12 +505,12 @@ generate-install-script:
 
 fetch:
 	$(ZIG) build -Drelease-fast fetch-obj
-	$(CXX) $(PACKAGE_DIR)/fetch.o -g -O3 -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
+	$(CXX) $(PACKAGE_DIR)/fetch.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
 	rm -rf $(PACKAGE_DIR)/fetch.o
 	
 fetch-debug:
 	$(ZIG) build fetch-obj
-	$(CXX) $(DEBUG_PACKAGE_DIR)/fetch.o -g -O3 -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
+	$(CXX) $(DEBUG_PACKAGE_DIR)/fetch.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
 
 
 httpbench-debug:
@@ -519,7 +520,7 @@ httpbench-debug:
 
 httpbench-release:
 	$(ZIG) build -Drelease-fast httpbench-obj
-	$(CXX) $(PACKAGE_DIR)/httpbench.o -g -O3 -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
+	$(CXX) $(PACKAGE_DIR)/httpbench.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
 	rm -rf $(PACKAGE_DIR)/httpbench.o
 
 
@@ -961,7 +962,7 @@ bun-link-lld-release:
 		-o $(BUN_RELEASE_BIN) \
 		-W \
 		-flto \
-		-O3
+		$(OPTIMIZATION_LEVEL)
 	rm -rf $(BUN_RELEASE_BIN).dSYM
 	cp $(BUN_RELEASE_BIN) $(BUN_RELEASE_BIN)-profile
 
@@ -995,7 +996,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	$(CXX) -c -o $@ $< \
 		$(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
-		-O3 \
+		$(OPTIMIZATION_LEVEL) \
 		-g \
 		-fno-exceptions \
 		-ffunction-sections -fdata-sections -g \
@@ -1007,7 +1008,7 @@ sizegen:
 	$(BUN_TMP_DIR)/sizegen > src/javascript/jsc/bindings/sizes.zig
 
 picohttp:
-	 $(CC) $(CFLAGS) -O3 -g -fPIC -c $(BUN_DEPS_DIR)/picohttpparser/picohttpparser.c -I$(BUN_DEPS_DIR) -o $(BUN_DEPS_OUT_DIR)/picohttpparser.o; cd ../../	
+	 $(CC) $(CFLAGS) $(OPTIMIZATION_LEVEL) -g -fPIC -c $(BUN_DEPS_DIR)/picohttpparser/picohttpparser.c -I$(BUN_DEPS_DIR) -o $(BUN_DEPS_OUT_DIR)/picohttpparser.o; cd ../../	
 
 analytics:
 	./node_modules/.bin/peechy --schema src/analytics/schema.peechy --zig src/analytics/analytics_schema.zig

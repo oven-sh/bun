@@ -63,7 +63,7 @@ extern fn us_socket_context_free(ssl: c_int, context: ?*us_socket_context_t) voi
 extern fn us_socket_context_on_open(ssl: c_int, context: ?*us_socket_context_t, on_open: ?fn (?*us_socket_t, c_int, [*c]u8, c_int) callconv(.C) ?*us_socket_t) void;
 extern fn us_socket_context_on_close(ssl: c_int, context: ?*us_socket_context_t, on_close: ?fn (?*us_socket_t, c_int, ?*anyopaque) callconv(.C) ?*us_socket_t) void;
 extern fn us_socket_context_on_data(ssl: c_int, context: ?*us_socket_context_t, on_data: ?fn (?*us_socket_t, [*c]u8, c_int) callconv(.C) ?*us_socket_t) void;
-extern fn us_socket_context_on_writable(ssl: c_int, context: ?*us_socket_context_t, on_writable: ?fn (?*us_socket_t) callconv(.C) ?*us_socket_t) void;
+extern fn us_socket_context_on_writable(ssl: c_int, context: ?*us_socket_context_t, on_writable: ?fn (*us_socket_t) callconv(.C) ?*us_socket_t) void;
 extern fn us_socket_context_on_timeout(ssl: c_int, context: ?*us_socket_context_t, on_timeout: ?fn (?*us_socket_t) callconv(.C) ?*us_socket_t) void;
 extern fn us_socket_context_on_connect_error(ssl: c_int, context: ?*us_socket_context_t, on_connect_error: ?fn (?*us_socket_t, c_int) callconv(.C) ?*us_socket_t) void;
 extern fn us_socket_context_on_end(ssl: c_int, context: ?*us_socket_context_t, on_end: ?fn (?*us_socket_t) callconv(.C) ?*us_socket_t) void;
@@ -79,7 +79,7 @@ extern fn us_socket_context_adopt_socket(ssl: c_int, context: ?*us_socket_contex
 extern fn us_create_child_socket_context(ssl: c_int, context: ?*us_socket_context_t, context_ext_size: c_int) ?*us_socket_context_t;
 
 pub const Poll = opaque {
-    extern fn us_create_poll(loop: ?*Loop, fallthrough: c_int, ext_size: c_uint) ?*Poll;
+    extern fn us_create_poll(loop: ?*Loop, fallthrough: c_int, ext_size: c_uint) *Poll;
     extern fn us_poll_free(p: ?*Poll, loop: ?*Loop) void;
     extern fn us_poll_init(p: ?*Poll, fd: c_int, poll_type: c_int) void;
     extern fn us_poll_start(p: ?*Poll, loop: ?*Loop, events: c_int) void;
@@ -410,6 +410,7 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn end(res: *Response, data: []const u8, close_connection: bool) void {
                 uws_res_end(ssl_flag, res.downcast(), data.ptr, data.len, close_connection);
             }
+
             pub fn uncork(_: *Response) void {
                 // uws_res_uncork(
                 //     ssl_flag,
@@ -443,6 +444,9 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn getWriteOffset(res: *Response) uintmax_t {
                 return uws_res_get_write_offset(ssl_flag, res.downcast());
             }
+            pub fn setWriteOffset(res: *Response, offset: anytype) void {
+                uws_res_set_write_offset(ssl_flag, res.downcast(), @intCast(uintmax_t, offset));
+            }
             pub fn hasResponded(res: *Response) bool {
                 return uws_res_has_responded(ssl_flag, res.downcast());
             }
@@ -470,6 +474,9 @@ pub fn NewApp(comptime ssl: bool) type {
                     }
                 };
                 uws_res_on_writable(ssl_flag, res.downcast(), Wrapper.handle, user_data);
+                if (!ssl) {
+                    us_socket_mark_needs_more_not_ssl(res.downcast());
+                }
             }
             pub fn onAborted(res: *Response, comptime UserDataType: type, comptime handler: fn (UserDataType, *Response) void, opcional_data: UserDataType) void {
                 const Wrapper = struct {
@@ -535,6 +542,57 @@ pub fn NewApp(comptime ssl: bool) type {
 
                 uws_res_cork(ssl_flag, res.downcast(), opcional_data, Wrapper.handle);
             }
+
+            // pub fn onSocketWritable(
+            //     res: *Response,
+            //     comptime UserDataType: type,
+            //     comptime handler: fn (UserDataType, fd: i32) void,
+            //     opcional_data: UserDataType,
+            // ) void {
+            //     const Wrapper = struct {
+            //         pub fn handle(user_data: ?*anyopaque, fd: i32) callconv(.C) void {
+            //             if (comptime UserDataType == void) {
+            //                 @call(.{ .modifier = .always_inline }, handler, .{
+            //                     void{},
+            //                     fd,
+            //                 });
+            //             } else {
+            //                 @call(.{ .modifier = .always_inline }, handler, .{
+            //                     @ptrCast(
+            //                         UserDataType,
+            //                         @alignCast(@alignOf(UserDataType), user_data.?),
+            //                     ),
+            //                     fd,
+            //                 });
+            //             }
+            //         }
+            //     };
+
+            //     const OnWritable = struct {
+            //         pub fn handle(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
+            //             if (comptime UserDataType == void) {
+            //                 @call(.{ .modifier = .always_inline }, handler, .{
+            //                     void{},
+            //                     fd,
+            //                 });
+            //             } else {
+            //                 @call(.{ .modifier = .always_inline }, handler, .{
+            //                     @ptrCast(
+            //                         UserDataType,
+            //                         @alignCast(@alignOf(UserDataType), user_data.?),
+            //                     ),
+            //                     fd,
+            //                 });
+            //             }
+
+            //             return socket;
+            //         }
+            //     };
+
+            //     var socket_ctx = us_socket_context(ssl_flag, uws_res_get_native_handle(ssl_flag, res)).?;
+            //     var child = us_create_child_socket_context(ssl_flag, socket_ctx, 8);
+
+            // }
 
             pub fn writeHeaders(
                 res: *Response,
@@ -605,6 +663,7 @@ extern fn uws_res_write_header_int(ssl: c_int, res: *uws_res, key: [*c]const u8,
 extern fn uws_res_end_without_body(ssl: c_int, res: *uws_res) void;
 extern fn uws_res_write(ssl: c_int, res: *uws_res, data: [*c]const u8, length: usize) bool;
 extern fn uws_res_get_write_offset(ssl: c_int, res: *uws_res) uintmax_t;
+extern fn uws_res_set_write_offset(ssl: c_int, res: *uws_res, uintmax_t) void;
 extern fn uws_res_has_responded(ssl: c_int, res: *uws_res) bool;
 extern fn uws_res_on_writable(ssl: c_int, res: *uws_res, handler: ?fn (*uws_res, uintmax_t, ?*anyopaque) callconv(.C) bool, user_data: ?*anyopaque) void;
 extern fn uws_res_on_aborted(ssl: c_int, res: *uws_res, handler: ?fn (*uws_res, ?*anyopaque) callconv(.C) void, opcional_data: ?*anyopaque) void;
@@ -673,3 +732,5 @@ pub const uws_app_listen_config_t = extern struct {
     host: [*c]const u8 = null,
     options: c_int,
 };
+
+extern fn us_socket_mark_needs_more_not_ssl(socket: ?*uws_res) void;

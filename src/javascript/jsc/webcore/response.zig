@@ -86,7 +86,6 @@ pub const Response = struct {
             .@"json" = .{ .rfn = constructJSON },
             .@"redirect" = .{ .rfn = constructRedirect },
             .@"error" = .{ .rfn = constructError },
-            .@"file" = .{ .rfn = constructFile },
         },
         .{},
     );
@@ -392,63 +391,6 @@ pub const Response = struct {
             },
             .Used, .Locked, .Empty, .Error => return default.value,
         }
-    }
-
-    pub fn constructFile(
-        _: void,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) js.JSObjectRef {
-        var args = JSC.Node.ArgumentsSlice.from(arguments);
-
-        var response = Response{
-            .body = Body{
-                .init = Body.Init{
-                    .headers = null,
-                    .status_code = 200,
-                },
-                .value = Body.Value.empty,
-            },
-            .allocator = getAllocator(ctx),
-            .url = "",
-        };
-
-        var path = JSC.Node.PathOrFileDescriptor.fromJS(ctx, &args, exception) orelse {
-            exception.* = JSC.toInvalidArguments("Expected file path string or file descriptor", .{}, ctx).asObjectRef();
-            return js.JSValueMakeUndefined(ctx);
-        };
-
-        if (path == .path) {
-            path.path = .{ .string = bun.PathString.init(bun.default_allocator.dupe(u8, path.path.slice()) catch unreachable) };
-        }
-
-        if (args.nextEat()) |init| {
-            if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
-                response.body.init.status_code = @intCast(u16, @minimum(@maximum(0, init.toInt32()), std.math.maxInt(u16)));
-            } else {
-                if (Body.Init.init(getAllocator(ctx), ctx, init.asObjectRef()) catch null) |_init| {
-                    response.body.init = _init;
-                }
-            }
-        }
-
-        response.body.value = .{
-            .Blob = brk: {
-                if (VirtualMachine.vm.getFileBlob(path)) |blob| {
-                    blob.ref();
-                    break :brk Blob.initWithStore(blob, ctx.ptr());
-                }
-
-                break :brk Blob.initWithStore(Blob.Store.initFile(path, null, bun.default_allocator) catch unreachable, ctx.ptr());
-            },
-        };
-
-        var ptr = response.allocator.create(Response) catch unreachable;
-        ptr.* = response;
-        return Response.makeMaybePooled(ctx, ptr);
     }
 
     pub fn constructJSON(
@@ -1723,6 +1665,42 @@ pub const Blob = struct {
 
     globalThis: *JSGlobalObject = undefined,
 
+    pub fn constructFile(
+        _: void,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSObjectRef {
+        var args = JSC.Node.ArgumentsSlice.from(arguments);
+
+        var path = JSC.Node.PathOrFileDescriptor.fromJS(ctx, &args, exception) orelse {
+            exception.* = JSC.toInvalidArguments("Expected file path string or file descriptor", .{}, ctx).asObjectRef();
+            return js.JSValueMakeUndefined(ctx);
+        };
+
+        const blob = brk: {
+            if (VirtualMachine.vm.getFileBlob(path)) |blob| {
+                blob.ref();
+                break :brk Blob.initWithStore(blob, ctx.ptr());
+            }
+
+            if (path == .path) {
+                path.path = .{ .string = bun.PathString.init(
+                    (bun.default_allocator.dupeZ(u8, path.path.slice()) catch unreachable)[0..path.path.slice().len],
+                ) };
+            }
+
+            break :brk Blob.initWithStore(Blob.Store.initFile(path, null, bun.default_allocator) catch unreachable, ctx.ptr());
+        };
+
+        var ptr = bun.default_allocator.create(Blob) catch unreachable;
+        ptr.* = blob;
+        ptr.allocator = bun.default_allocator;
+        return Blob.Class.make(ctx, ptr);
+    }
+
     pub const Store = struct {
         data: Data,
 
@@ -1920,7 +1898,7 @@ pub const Blob = struct {
             open_frame: OpenFrameType = undefined,
             errno: ?anyerror = null,
             open_completion: HTTPClient.NetworkThread.Completion = undefined,
-            opened_fd: JSC.Node.FileDescriptor = undefined,
+            opened_fd: JSC.Node.FileDescriptor = 0,
             size: u32 = 0,
 
             store: *Store = undefined,
@@ -2026,7 +2004,7 @@ pub const Blob = struct {
             close_frame: @Frame(ReadFile.doClose) = undefined,
             errno: ?anyerror = null,
             open_completion: HTTPClient.NetworkThread.Completion = undefined,
-            opened_fd: JSC.Node.FileDescriptor = undefined,
+            opened_fd: JSC.Node.FileDescriptor = 0,
             read_completion: HTTPClient.NetworkThread.Completion = undefined,
             read_len: u32 = 0,
             read_off: u32 = 0,
@@ -2692,7 +2670,7 @@ pub const Blob = struct {
                 bun.default_allocator.destroy(handler);
                 var bytes = bytes_ catch |err| {
                     var error_string = ZigString.init(
-                        std.fmt.allocPrint(bun.default_allocator, "Failed to read file: {s}", .{std.mem.span(@errorName(err))}) catch unreachable,
+                        std.fmt.allocPrint(bun.default_allocator, "Failed to read file \"{s}\"", .{std.mem.span(@errorName(err))}) catch unreachable,
                     );
                     error_string.mark();
                     blob.detach();

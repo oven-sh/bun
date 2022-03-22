@@ -958,6 +958,10 @@ pub const Class = NewClass(
             .rfn = Bun.startServer,
             .ts = d.ts{},
         },
+        .file = .{
+            .rfn = JSC.WebCore.Blob.constructFile,
+            .ts = d.ts{},
+        },
     },
     .{
         .main = .{

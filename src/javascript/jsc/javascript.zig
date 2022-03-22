@@ -161,6 +161,8 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         }
 
         pub fn runFromJS(this: This) void {
+            if (comptime JSC.is_bindgen)
+                unreachable;
             var promise_value = this.promise;
             var promise = promise_value.asInternalPromise() orelse {
                 if (comptime @hasDecl(Context, "deinit")) {

@@ -408,7 +408,7 @@ pub const ZigStackTrace = extern struct {
         root_path: string,
         origin: ?*const ZigURL,
     ) !Api.StackTrace {
-        var stack_trace: Api.StackTrace = std.mem.zeroes(Api.StackTrace);
+        var stack_trace: Api.StackTrace = comptime std.mem.zeroes(Api.StackTrace);
         {
             var source_lines_iter = this.sourceLineIterator();
 
@@ -506,7 +506,7 @@ pub const ZigStackFrame = extern struct {
     remapped: bool = false,
 
     pub fn toAPI(this: *const ZigStackFrame, root_path: string, origin: ?*const ZigURL, allocator: std.mem.Allocator) !Api.StackFrame {
-        var frame: Api.StackFrame = std.mem.zeroes(Api.StackFrame);
+        var frame: Api.StackFrame = comptime std.mem.zeroes(Api.StackFrame);
         if (this.function_name.len > 0) {
             frame.function_name = try allocator.dupe(u8, this.function_name.slice());
         }

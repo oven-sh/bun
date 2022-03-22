@@ -943,6 +943,9 @@ pub fn NewClassWithInstanceType(
         const class_definition_ptr = &complete_definition;
 
         pub fn get() callconv(.C) [*c]js.JSClassRef {
+            if (comptime JSC.is_bindgen)
+                unreachable;
+
             var lazy = lazy_ref;
 
             if (!lazy.loaded) {
@@ -974,6 +977,9 @@ pub fn NewClassWithInstanceType(
         }
 
         pub fn make(ctx: js.JSContextRef, ptr: *ZigType) js.JSObjectRef {
+            if (comptime JSC.is_bindgen)
+                unreachable;
+
             var real_ptr = JSPrivateDataPtr.init(ptr).ptr();
             if (comptime Environment.allow_assert) {
                 std.debug.assert(JSPrivateDataPtr.isValidPtr(real_ptr));
@@ -1024,6 +1030,9 @@ pub fn NewClassWithInstanceType(
                     prop: js.JSStringRef,
                     exception: js.ExceptionRef,
                 ) callconv(.C) js.JSValueRef {
+                    if (comptime JSC.is_bindgen)
+                        unreachable;
+
                     var this: ObjectPtrType(ZigType) = if (comptime ZigType == void) void{} else GetJSPrivateData(ZigType, obj) orelse return js.JSValueMakeUndefined(ctx);
 
                     const Field = @TypeOf(@field(
@@ -1095,6 +1104,9 @@ pub fn NewClassWithInstanceType(
                     value: js.JSValueRef,
                     exception: js.ExceptionRef,
                 ) callconv(.C) bool {
+                    if (comptime JSC.is_bindgen)
+                        unreachable;
+
                     var this = GetJSPrivateData(ZigType, obj) orelse return false;
 
                     switch (comptime @typeInfo(@TypeOf(@field(
@@ -1313,6 +1325,8 @@ pub fn NewClassWithInstanceType(
             _: js.JSObjectRef,
             props: js.JSPropertyNameAccumulatorRef,
         ) callconv(.C) void {
+            if (comptime JSC.is_bindgen)
+                unreachable;
             if (comptime property_name_refs.len > 0) {
                 comptime var i: usize = 0;
                 if (!property_name_refs_set) {
@@ -1695,6 +1709,9 @@ pub fn JSError(
     ctx: js.JSContextRef,
     exception: ExceptionValueRef,
 ) void {
+    if (comptime JSC.is_bindgen)
+        unreachable;
+
     var error_args: [1]js.JSValueRef = undefined;
     @setCold(true);
 

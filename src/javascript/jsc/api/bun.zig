@@ -1358,6 +1358,9 @@ pub const Timer = struct {
         }
 
         pub fn then(this: *Timeout, global: *JSGlobalObject) void {
+            if (comptime JSC.is_bindgen)
+                unreachable;
+
             if (!this.cancelled) {
                 if (this.repeat) {
                     this.io_task.?.deinit();
@@ -1376,6 +1379,9 @@ pub const Timer = struct {
         }
 
         pub fn clear(this: *Timeout, global: *JSGlobalObject) void {
+            if (comptime JSC.is_bindgen)
+                unreachable;
+
             this.cancelled = true;
             JSC.C.JSValueUnprotect(global.ref(), this.callback.asObjectRef());
             _ = VirtualMachine.vm.timer.timeouts.swapRemove(this.id);
@@ -1474,11 +1480,13 @@ pub const Timer = struct {
     });
 
     comptime {
-        @export(setTimeout, .{ .name = Export[0].symbol_name });
-        @export(setInterval, .{ .name = Export[1].symbol_name });
-        @export(clearTimeout, .{ .name = Export[2].symbol_name });
-        @export(clearInterval, .{ .name = Export[3].symbol_name });
-        @export(getNextID, .{ .name = Export[4].symbol_name });
+        if (!JSC.is_bindgen) {
+            @export(setTimeout, .{ .name = Export[0].symbol_name });
+            @export(setInterval, .{ .name = Export[1].symbol_name });
+            @export(clearTimeout, .{ .name = Export[2].symbol_name });
+            @export(clearInterval, .{ .name = Export[3].symbol_name });
+            @export(getNextID, .{ .name = Export[4].symbol_name });
+        }
     }
 };
 

@@ -1607,6 +1607,25 @@ JSC__JSValue JSC__JSValue__jsNumberFromUint64(uint64_t arg0)
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
 };
 
+int64_t JSC__JSValue__toInt64(JSC__JSValue val)
+{
+    JSC::JSValue _val = JSC::JSValue::decode(val);
+
+    int64_t result = JSC::tryConvertToInt52(_val.asDouble());
+    if (result != JSC::JSValue::notInt52) {
+        return result;
+    }
+
+    if (auto* heapBigInt = _val.asHeapBigInt()) {
+        return heapBigInt->toBigInt64(heapBigInt);
+    }
+
+
+
+    return _val.asAnyInt();
+}
+
+
 JSC__JSValue JSC__JSValue__createObject2(JSC__JSGlobalObject* globalObject, const ZigString* arg1,
     const ZigString* arg2, JSC__JSValue JSValue3,
     JSC__JSValue JSValue4)

@@ -48,6 +48,8 @@ pub const Response = struct {
         response_objects_used: u8 = 0,
 
         pub fn get(this: *Pool, ptr: *Response) ?JSC.C.JSObjectRef {
+            if (comptime JSC.is_bindgen)
+                unreachable;
             if (this.response_objects_used > 0) {
                 var result = this.response_objects_pool[this.response_objects_used - 1];
                 this.response_objects_used -= 1;
@@ -303,6 +305,8 @@ pub const Response = struct {
     }
 
     pub fn makeMaybePooled(ctx: js.JSContextRef, ptr: *Response) JSC.C.JSObjectRef {
+        if (comptime JSC.is_bindgen)
+            unreachable;
         if (JSC.VirtualMachine.vm.response_objects_pool) |pool| {
             if (pool.get(ptr)) |object| {
                 JSC.C.JSValueUnprotect(ctx, object);
@@ -689,6 +693,8 @@ pub const Fetch = struct {
         };
 
         pub fn onDone(this: *FetchTasklet) void {
+            if (comptime JSC.is_bindgen)
+                unreachable;
             var args = [1]js.JSValueRef{undefined};
 
             var callback_object = switch (this.http.state.load(.Monotonic)) {
@@ -1652,8 +1658,8 @@ pub const Headers = struct {
 };
 
 pub const Blob = struct {
-    size: u32 = 0,
-    offset: u32 = 0,
+    size: SizeType = 0,
+    offset: SizeType = 0,
     allocator: ?std.mem.Allocator = null,
     store: ?*Store = null,
     content_type: string = "",
@@ -1664,6 +1670,8 @@ pub const Blob = struct {
     is_all_ascii: ?bool = null,
 
     globalThis: *JSGlobalObject = undefined,
+
+    pub const SizeType = u64;
 
     pub fn constructFile(
         _: void,
@@ -1709,7 +1717,7 @@ pub const Blob = struct {
         is_all_ascii: ?bool = null,
         allocator: std.mem.Allocator,
 
-        pub fn size(this: *const Store) u32 {
+        pub fn size(this: *const Store) SizeType {
             return switch (this.data) {
                 .bytes => this.data.bytes.len,
                 .file => std.math.maxInt(i32),
@@ -1899,7 +1907,7 @@ pub const Blob = struct {
             errno: ?anyerror = null,
             open_completion: HTTPClient.NetworkThread.Completion = undefined,
             opened_fd: JSC.Node.FileDescriptor = 0,
-            size: u32 = 0,
+            size: SizeType = 0,
 
             store: *Store = undefined,
             file_store: FileStore,
@@ -1913,7 +1921,7 @@ pub const Blob = struct {
             pub const OnCompleteCallback = fn (
                 ctx: *anyopaque,
                 fd: JSC.Node.FileDescriptor,
-                size: anyerror!u32,
+                size: anyerror!SizeType,
                 global: *JSGlobalObject,
             ) void;
 
@@ -1985,7 +1993,7 @@ pub const Blob = struct {
                     return;
                 }
 
-                this.size = @truncate(u32, @intCast(u64, @maximum(@intCast(i64, stat.size), 0)));
+                this.size = @truncate(SizeType, @intCast(u64, @maximum(@intCast(i64, stat.size), 0)));
             }
         };
 
@@ -1997,8 +2005,8 @@ pub const Blob = struct {
             file_store: FileStore,
             byte_store: ByteStore = ByteStore{ .allocator = bun.default_allocator },
             store: ?*Store = null,
-            offset: u32 = 0,
-            max_length: u32 = std.math.maxInt(u32),
+            offset: SizeType = 0,
+            max_length: SizeType = std.math.maxInt(SizeType),
             open_frame: OpenFrameType = undefined,
             read_frame: @Frame(ReadFile.doRead) = undefined,
             close_frame: @Frame(ReadFile.doClose) = undefined,
@@ -2006,9 +2014,9 @@ pub const Blob = struct {
             open_completion: HTTPClient.NetworkThread.Completion = undefined,
             opened_fd: JSC.Node.FileDescriptor = 0,
             read_completion: HTTPClient.NetworkThread.Completion = undefined,
-            read_len: u32 = 0,
-            read_off: u32 = 0,
-            size: u32 = 0,
+            read_len: SizeType = 0,
+            read_off: SizeType = 0,
+            size: SizeType = 0,
             buffer: []u8 = undefined,
             runAsyncFrame: @Frame(ReadFile.runAsync) = undefined,
             close_completion: HTTPClient.NetworkThread.Completion = undefined,
@@ -2027,8 +2035,8 @@ pub const Blob = struct {
                 store: *Store,
                 onReadFileContext: *anyopaque,
                 onCompleteCallback: OnReadFileCallback,
-                off: u32,
-                max_len: u32,
+                off: SizeType,
+                max_len: SizeType,
             ) !*ReadFile {
                 var read_file = try allocator.create(ReadFile);
                 read_file.* = ReadFile{
@@ -2046,8 +2054,8 @@ pub const Blob = struct {
             pub fn create(
                 allocator: std.mem.Allocator,
                 store: *Store,
-                off: u32,
-                max_len: u32,
+                off: SizeType,
+                max_len: SizeType,
                 comptime Context: type,
                 context: Context,
                 comptime callback: fn (ctx: Context, bytes: anyerror![]u8) void,
@@ -2061,7 +2069,7 @@ pub const Blob = struct {
                 return try ReadFile.createWithCtx(allocator, store, @ptrCast(*anyopaque, context), Handler.run, off, max_len);
             }
 
-            pub fn doRead(this: *ReadFile) AsyncIO.ReadError!u32 {
+            pub fn doRead(this: *ReadFile) AsyncIO.ReadError!SizeType {
                 var aio = &AsyncIO.global;
 
                 var remaining = this.buffer[this.read_off..];
@@ -2133,7 +2141,7 @@ pub const Blob = struct {
             }
 
             pub fn onRead(this: *ReadFile, _: *HTTPClient.NetworkThread.Completion, result: AsyncIO.ReadError!usize) void {
-                this.read_len = @truncate(u32, result catch |err| {
+                this.read_len = @truncate(SizeType, result catch |err| {
                     this.errno = err;
                     this.read_len = 0;
                     resume this.read_frame;
@@ -2164,7 +2172,7 @@ pub const Blob = struct {
                 }
 
                 this.size = @minimum(
-                    @truncate(u32, @intCast(u64, @maximum(@intCast(i64, stat.size), 0))),
+                    @truncate(SizeType, @intCast(SizeType, @maximum(@intCast(i64, stat.size), 0))),
                     this.max_length,
                 );
                 if (this.size == 0) {
@@ -2216,15 +2224,15 @@ pub const Blob = struct {
 
     pub const ByteStore = struct {
         ptr: [*]u8 = undefined,
-        len: u32 = 0,
-        cap: u32 = 0,
+        len: SizeType = 0,
+        cap: SizeType = 0,
         allocator: std.mem.Allocator,
 
         pub fn init(bytes: []u8, allocator: std.mem.Allocator) ByteStore {
             return .{
                 .ptr = bytes.ptr,
-                .len = @truncate(u32, bytes.len),
-                .cap = @truncate(u32, bytes.len),
+                .len = @truncate(SizeType, bytes.len),
+                .cap = @truncate(SizeType, bytes.len),
                 .allocator = allocator,
             };
         }
@@ -2369,32 +2377,32 @@ pub const Blob = struct {
             return constructor(ctx, null, &[_]js.JSValueRef{}, exception);
         }
         // If the optional start parameter is not used as a parameter when making this call, let relativeStart be 0.
-        var relativeStart: i32 = 0;
+        var relativeStart: i64 = 0;
 
         // If the optional end parameter is not used as a parameter when making this call, let relativeEnd be size.
-        var relativeEnd: i32 = @intCast(i32, this.size);
+        var relativeEnd: i64 = @intCast(i64, this.size);
 
         var args_iter = JSC.Node.ArgumentsSlice.from(args);
         if (args_iter.nextEat()) |start_| {
-            const start = start_.toInt32();
+            const start = start_.toInt64();
             if (start < 0) {
                 // If the optional start parameter is negative, let relativeStart be start + size.
-                relativeStart = @intCast(i32, @maximum(start + @intCast(i32, this.size), 0));
+                relativeStart = @intCast(i64, @maximum(start + @intCast(i64, this.size), 0));
             } else {
                 // Otherwise, let relativeStart be start.
-                relativeStart = @minimum(@intCast(i32, start), @intCast(i32, this.size));
+                relativeStart = @minimum(@intCast(i64, start), @intCast(i64, this.size));
             }
         }
 
         if (args_iter.nextEat()) |end_| {
-            const end = end_.toInt32();
+            const end = end_.toInt64();
             // If end is negative, let relativeEnd be max((size + end), 0).
             if (end < 0) {
                 // If the optional start parameter is negative, let relativeStart be start + size.
-                relativeEnd = @intCast(i32, @maximum(end + @intCast(i32, this.size), 0));
+                relativeEnd = @intCast(i64, @maximum(end + @intCast(i64, this.size), 0));
             } else {
                 // Otherwise, let relativeStart be start.
-                relativeEnd = @minimum(@intCast(i32, end), @intCast(i32, this.size));
+                relativeEnd = @minimum(@intCast(i64, end), @intCast(i64, this.size));
             }
         }
 
@@ -2410,12 +2418,12 @@ pub const Blob = struct {
             }
         }
 
-        const len = @intCast(u32, @maximum(relativeEnd - relativeStart, 0));
+        const len = @intCast(SizeType, @maximum(relativeEnd - relativeStart, 0));
 
         // This copies over the is_all_ascii flag
         // which is okay because this will only be a <= slice
         var blob = this.dupe();
-        blob.offset = @intCast(u32, relativeStart);
+        blob.offset = @intCast(SizeType, relativeStart);
         blob.size = len;
         blob.content_type = content_type;
         blob.content_type_allocated = content_type.len > 0;
@@ -2470,14 +2478,18 @@ pub const Blob = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        if (this.size == std.math.maxInt(i32)) {
+        if (this.size == std.math.maxInt(SizeType)) {
             this.resolveSize();
-            if (this.size == std.math.maxInt(i32) and this.store != null) {
-                return JSValue.jsNumber(@as(u32, 0)).asRef();
+            if (this.size == std.math.maxInt(SizeType) and this.store != null) {
+                return JSValue.jsNumber(@as(SizeType, 0)).asRef();
             }
         }
 
-        return JSValue.jsNumber(@truncate(u32, this.size)).asRef();
+        if (this.size < std.math.maxInt(i32)) {
+            return JSValue.jsNumber(this.size).asRef();
+        }
+
+        return JSC.JSValue.jsNumberFromUint64(this.size).asRef();
     }
 
     pub fn resolveSize(this: *Blob) void {
@@ -2485,7 +2497,7 @@ pub const Blob = struct {
             if (store.data == .bytes) {
                 const offset = this.offset;
                 const store_size = store.size();
-                if (store_size != std.math.maxInt(i32)) {
+                if (store_size != std.math.maxInt(SizeType)) {
                     this.offset = @minimum(store_size, offset);
                     this.size = store_size - offset;
                 }

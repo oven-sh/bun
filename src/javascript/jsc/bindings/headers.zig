@@ -63,15 +63,6 @@ pub const Bun__ArrayBuffer = bindings.ArrayBuffer;
 
 pub const ptrdiff_t = c_long;
 pub const wchar_t = c_int;
-pub const __uint16_t = c_ushort;
-pub const __int32_t = c_int;
-pub const __uint32_t = c_uint;
-pub const __int64_t = c_longlong;
-pub const __uint64_t = c_ulonglong;
-pub const __mbstate_t = extern union {
-    __mbstate8: [128]u8,
-    _mbstateL: c_longlong,
-};
 
 pub const JSC__GeneratorPrototype = struct_JSC__GeneratorPrototype;
 
@@ -347,6 +338,7 @@ pub extern fn JSC__JSValue__symbolFor(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]Z
 pub extern fn JSC__JSValue__symbolKeyFor(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]ZigString) bool;
 pub extern fn JSC__JSValue__toBoolean(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__toInt32(JSValue0: JSC__JSValue) i32;
+pub extern fn JSC__JSValue__toInt64(JSValue0: JSC__JSValue) i64;
 pub extern fn JSC__JSValue__toObject(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSValue__toPropertyKey(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject) bJSC__Identifier;
 pub extern fn JSC__JSValue__toPropertyKeyValue(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;

@@ -78,13 +78,14 @@ const VirtualMachine = @import("../javascript.zig").VirtualMachine;
 const IOTask = JSC.IOTask;
 const is_bindgen = JSC.is_bindgen;
 const uws = @import("uws");
-
+const Blob = JSC.WebCore.Blob;
 const SendfileContext = struct {
     fd: i32,
     socket_fd: i32 = 0,
-    remain: u32 = 0,
-    offset: i64 = 0,
+    remain: Blob.SizeType = 0,
+    offset: Blob.SizeType = 0,
     has_listener: bool = false,
+    has_set_on_writable: bool = false,
 };
 
 pub fn NewServer(comptime ssl_enabled: bool) type {
@@ -259,6 +260,7 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
             }
 
             fn cleanupAfterSendfile(this: *RequestContext) void {
+                this.resp.setWriteOffset(this.sendfile.offset);
                 this.resp.endWithoutBody();
                 std.os.close(this.sendfile.fd);
                 this.sendfile = undefined;
@@ -271,20 +273,20 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
             }};
 
             pub fn onSendfile(this: *RequestContext) bool {
-                const adjusted_count_temporary = @minimum(@as(u63, this.sendfile.remain), @as(u63, std.math.maxInt(i32)));
+                const adjusted_count_temporary = @minimum(@truncate(u64, this.sendfile.remain), @as(u63, std.math.maxInt(u63)));
                 // TODO we should not need this int cast; improve the return type of `@minimum`
                 const adjusted_count = @intCast(u63, adjusted_count_temporary);
-                var sbytes: std.os.off_t = adjusted_count;
-                const signed_offset = @bitCast(i64, this.sendfile.offset);
 
                 if (Environment.isLinux) {
+                    var signed_offset = @intCast(i64, this.sendfile.offset);
                     const start = this.sendfile.offset;
                     const val =
-                        std.os.linux.sendfile(this.sendfile.socket_fd, this.sendfile.fd, &this.sendfile.offset, this.sendfile.remain);
+                        std.os.linux.sendfile(this.sendfile.socket_fd, this.sendfile.fd, &signed_offset, this.sendfile.remain);
+                    this.sendfile.offset = @intCast(Blob.SizeType, signed_offset);
 
                     const errcode = std.os.linux.getErrno(val);
 
-                    this.sendfile.remain -= @intCast(u32, this.sendfile.offset - start);
+                    this.sendfile.remain -= @intCast(Blob.SizeType, this.sendfile.offset - start);
 
                     if (errcode != .SUCCESS or this.aborted or this.sendfile.remain == 0 or val == 0) {
                         if (errcode != .SUCCESS) {
@@ -295,6 +297,9 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                         return errcode != .SUCCESS;
                     }
                 } else {
+                    var sbytes: std.os.off_t = adjusted_count;
+                    const signed_offset = @bitCast(i64, this.sendfile.offset);
+
                     // var sf_hdr_trailer: std.os.darwin.sf_hdtr = .{
                     //     .headers = &separator_iovec,
                     //     .hdr_cnt = 1,
@@ -317,7 +322,7 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                     ));
 
                     this.sendfile.offset += sbytes;
-                    this.sendfile.remain -= @intCast(u32, sbytes);
+                    this.sendfile.remain -= @intCast(JSC.WebCore.Blob.SizeType, sbytes);
                     if (errcode != .AGAIN or this.aborted or this.sendfile.remain == 0 or sbytes == 0) {
                         if (errcode != .AGAIN and errcode != .SUCCESS) {
                             Output.prettyErrorln("Error: {s}", .{@tagName(errcode)});
@@ -328,8 +333,12 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                     }
                 }
 
-                this.resp.setWriteOffset(this.sendfile.offset);
-                this.resp.onWritable(*RequestContext, onWritableSendfile, this);
+                if (!this.sendfile.has_set_on_writable) {
+                    this.sendfile.has_set_on_writable = true;
+                    this.resp.onWritable(*RequestContext, onWritableSendfile, this);
+                }
+                if (comptime !ssl_enabled)
+                    this.resp.markNeedsMore();
                 return true;
             }
 
@@ -343,11 +352,11 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                 return true;
             }
 
-            pub fn onPrepareSendfileWrap(this: *anyopaque, fd: i32, size: anyerror!u32, _: *JSGlobalObject) void {
+            pub fn onPrepareSendfileWrap(this: *anyopaque, fd: i32, size: anyerror!Blob.SizeType, _: *JSGlobalObject) void {
                 onPrepareSendfile(bun.cast(*RequestContext, this), fd, size);
             }
 
-            fn onPrepareSendfile(this: *RequestContext, fd: i32, size: anyerror!u32) void {
+            fn onPrepareSendfile(this: *RequestContext, fd: i32, size: anyerror!Blob.SizeType) void {
                 this.setAbortHandler();
                 if (this.aborted) return;
                 const size_ = size catch {
@@ -381,7 +390,6 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
 
                     return;
                 }
-
                 _ = std.os.write(this.sendfile.socket_fd, "\r\n") catch 0;
 
                 _ = this.onSendfile();
@@ -390,6 +398,7 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
             pub fn renderSendFile(this: *RequestContext, blob: JSC.WebCore.Blob) void {
                 if (this.has_sendfile_ctx) return;
                 this.has_sendfile_ctx = true;
+                this.setAbortHandler();
 
                 JSC.WebCore.Blob.doOpenAndStatFile(
                     &this.blob,

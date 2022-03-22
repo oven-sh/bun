@@ -71,7 +71,7 @@ const mode_t = os.mode_t;
 
 const open_sym = system.open;
 
-const fstat_sym = if (builtin.os.tag == .linux and builtin.link_libc)
+const fstat_sym = if (builtin.os.tag == .linux)
     libc.fstat64
 else
     libc.fstat;
@@ -99,19 +99,19 @@ pub fn chdir(destination: [:0]const u8) Maybe(void) {
 }
 
 pub fn stat(path: [:0]const u8) Maybe(os.Stat) {
-    var stat_ = mem.zeroes(os.Stat);
+    var stat_ = comptime mem.zeroes(os.Stat);
     if (Maybe(os.Stat).errnoSys(libc.stat(path, &stat_), .stat)) |err| return err;
     return Maybe(os.Stat){ .result = stat_ };
 }
 
 pub fn lstat(path: [:0]const u8) Maybe(os.Stat) {
-    var stat_ = mem.zeroes(os.Stat);
+    var stat_ = comptime mem.zeroes(os.Stat);
     if (Maybe(os.Stat).errnoSys(C.lstat(path, &stat_), .lstat)) |err| return err;
     return Maybe(os.Stat){ .result = stat_ };
 }
 
 pub fn fstat(fd: JSC.Node.FileDescriptor) Maybe(os.Stat) {
-    var stat_ = mem.zeroes(os.Stat);
+    var stat_ = comptime mem.zeroes(os.Stat);
     if (Maybe(os.Stat).errnoSys(fstat_sym(fd, &stat_), .fstat)) |err| return err;
     return Maybe(os.Stat){ .result = stat_ };
 }

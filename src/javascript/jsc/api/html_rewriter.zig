@@ -303,7 +303,7 @@ pub const HTMLRewriter = struct {
             const is_pending = input.needsToReadFile();
             defer if (!is_pending) input.detach();
 
-            if (input.needsToReadFile()) {
+            if (is_pending) {
                 input.doReadFileInternal(*BufferOutputSink, sink, onFinishedLoadingWrap, global);
             } else if (sink.runOutputSink(input.sharedView(), false)) |error_value| {
                 return error_value;
@@ -321,8 +321,6 @@ pub const HTMLRewriter = struct {
         }
 
         pub fn onFinishedLoading(sink: *BufferOutputSink, bytes: anyerror![]u8) void {
-            var input = sink.input;
-            defer input.detach();
             const data = bytes catch |err| {
                 if (sink.response.body.value == .Locked and @ptrToInt(sink.response.body.value.Locked.task) == @ptrToInt(sink)) {
                     sink.response.body.value = .{ .Empty = .{} };
@@ -378,16 +376,10 @@ pub const HTMLRewriter = struct {
             this.response.body.value = .{
                 .Blob = JSC.WebCore.Blob.init(bytes, this.bytes.allocator, this.global),
             };
-
-            if (prev_value.Locked.promise) |promise| {
-                prev_value.Locked.promise = null;
-                promise.asInternalPromise().?.resolve(this.global, JSC.JSValue.fromRef(
-                    Response.makeMaybePooled(
-                        this.global.ref(),
-                        this.response,
-                    ),
-                ));
-            }
+            prev_value.resolve(
+                &this.response.body.value,
+                this.global,
+            );
         }
 
         pub fn write(this: *BufferOutputSink, bytes: []const u8) void {

@@ -298,7 +298,7 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                     }
                 } else {
                     var sbytes: std.os.off_t = adjusted_count;
-                    const signed_offset = @bitCast(i64, this.sendfile.offset);
+                    const signed_offset = @bitCast(i64, @as(u64, this.sendfile.offset));
 
                     // var sf_hdr_trailer: std.os.darwin.sf_hdtr = .{
                     //     .headers = &separator_iovec,
@@ -320,9 +320,9 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                         null,
                         0,
                     ));
-
-                    this.sendfile.offset += sbytes;
-                    this.sendfile.remain -= @intCast(JSC.WebCore.Blob.SizeType, sbytes);
+                    const wrote = @intCast(Blob.SizeType, sbytes);
+                    this.sendfile.offset += wrote;
+                    this.sendfile.remain -= wrote;
                     if (errcode != .AGAIN or this.aborted or this.sendfile.remain == 0 or sbytes == 0) {
                         if (errcode != .AGAIN and errcode != .SUCCESS) {
                             Output.prettyErrorln("Error: {s}", .{@tagName(errcode)});

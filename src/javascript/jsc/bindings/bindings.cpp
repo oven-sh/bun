@@ -221,6 +221,12 @@ JSC__JSInternalPromise* JSC__JSValue__asInternalPromise(JSC__JSValue JSValue0)
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     return JSC::jsCast<JSC::JSInternalPromise*>(value);
 }
+
+JSC__JSPromise* JSC__JSValue__asPromise(JSC__JSValue JSValue0)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    return JSC::jsCast<JSC::JSPromise*>(value);
+}
 JSC__JSValue JSC__JSValue__createInternalPromise(JSC__JSGlobalObject* globalObject)
 {
     JSC::VM& vm = globalObject->vm();
@@ -1616,18 +1622,14 @@ int64_t JSC__JSValue__toInt64(JSC__JSValue val)
         return result;
     }
 
-    if (auto* heapBigInt = _val.asHeapBigInt()) {
-        if (heapBigInt != nullptr) {
+    if (_val.isHeapBigInt()) {
+
+        if (auto* heapBigInt = _val.asHeapBigInt()) {
             return heapBigInt->toBigInt64(heapBigInt);
         }
-        
     }
-
-
-
     return _val.asAnyInt();
 }
-
 
 JSC__JSValue JSC__JSValue__createObject2(JSC__JSGlobalObject* globalObject, const ZigString* arg1,
     const ZigString* arg2, JSC__JSValue JSValue3,

@@ -10,10 +10,30 @@ it("Bun.write('out.txt', 'string')", async () => {
       } catch (e) {}
     }
 
-    const out = await Bun.write("/tmp/out.txt", "string");
+    await Bun.write("/tmp/out.txt", "string");
+    const out = Bun.file("/tmp/out.txt");
     expect(await out.text()).toBe("string");
     expect(await out.text()).toBe(fs.readFileSync("/tmp/out.txt", "utf8"));
   }
+});
+
+it("Bun.write blob", async () => {
+  await Bun.write(
+    Bun.file("/tmp/response-file.test.txt"),
+    Bun.file(path.join(import.meta.dir, "fetch.js.txt"))
+  );
+  await Bun.write(Bun.file("/tmp/response-file.test.txt"), "blah blah blha");
+  await Bun.write(
+    Bun.file("/tmp/response-file.test.txt"),
+    new Uint32Array(1024)
+  );
+  await Bun.write("/tmp/response-file.test.txt", new Uint32Array(1024));
+  expect(
+    await Bun.write(
+      new TextEncoder().encode("/tmp/response-file.test.txt"),
+      new Uint32Array(1024)
+    )
+  ).toBe(new Uint32Array(1024).byteLength);
 });
 
 it("Bun.file -> Bun.file", async () => {
@@ -33,23 +53,22 @@ it("Bun.file -> Bun.file", async () => {
       Bun.file("/tmp/fetch.js.out"),
       Bun.file("/tmp/fetch.js.in")
     );
-    expect(await result.text()).toBe(text);
+    expect(await Bun.file("/tmp/fetch.js.out").text()).toBe(text);
   }
 
   {
-    const result = await Bun.write(
+    await Bun.write(
       Bun.file("/tmp/fetch.js.in").slice(0, (text.length / 2) | 0),
       Bun.file("/tmp/fetch.js.out")
     );
-    expect(await result.text()).toBe(text.substring(0, (text.length / 2) | 0));
+    expect(await Bun.file("/tmp/fetch.js.in").text()).toBe(
+      text.substring(0, (text.length / 2) | 0)
+    );
   }
 
   {
-    const result = await Bun.write(
-      "/tmp/fetch.js.in",
-      Bun.file("/tmp/fetch.js.out")
-    );
-    expect(await result.text()).toBe(text);
+    await Bun.write("/tmp/fetch.js.in", Bun.file("/tmp/fetch.js.out"));
+    expect(await Bun.file("/tmp/fetch.js.in").text()).toBe(text);
   }
 });
 
@@ -97,6 +116,19 @@ it("Response -> Bun.file", async () => {
   const text = fs.readFileSync(file, "utf8");
   const response = new Response(Bun.file(file));
   expect(await response.text()).toBe(text);
+});
+
+it("Bun.file -> Response", async () => {
+  // ensure the file doesn't already exist
+  try {
+    fs.unlinkSync("/tmp/fetch.js.out");
+  } catch {}
+
+  const file = path.join(import.meta.dir, "fetch.js.txt");
+  const text = fs.readFileSync(file, "utf8");
+  const resp = await fetch("https://example.com");
+  expect(await Bun.write("/tmp/fetch.js.out", resp)).toBe(text.length);
+  expect(await Bun.file("/tmp/fetch.js.out").text()).toBe(text);
 });
 
 it("Response -> Bun.file -> Response -> text", async () => {

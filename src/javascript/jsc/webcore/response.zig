@@ -157,6 +157,12 @@ pub const Response = struct {
     status_text: string = "",
     redirected: bool = false,
 
+    pub fn getBodyValue(
+        this: *Response,
+    ) *Body.Value {
+        return &this.body.value;
+    }
+
     pub inline fn statusCode(this: *const Response) u16 {
         return this.body.init.status_code;
     }
@@ -1995,13 +2001,19 @@ pub const Blob = struct {
 
                 pub fn getFdMac(this: *This) AsyncIO.OpenError!JSC.Node.FileDescriptor {
                     var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                    this.opened_fd = AsyncIO.openSync(
-                        this.file_store.pathlike.path.sliceZ(&buf),
-                        open_flags_,
-                    ) catch |err| {
-                        this.errno = err;
-                        return err;
+                    var path = if (@hasField(This, "file_store"))
+                        this.file_store.pathlike.path.sliceZ(&buf)
+                    else
+                        this.file_blob.store.?.data.file.pathlike.path.sliceZ(&buf);
+
+                    this.opened_fd = switch (JSC.Node.Syscall.open(path, open_flags_, JSC.Node.default_permission)) {
+                        .result => |fd| fd,
+                        .err => |err| {
+                            this.errno = AsyncIO.asError(err.errno);
+                            return @errSetCast(AsyncIO.OpenError, this.errno.?);
+                        },
                     };
+
                     return this.opened_fd;
                 }
 
@@ -2437,8 +2449,8 @@ pub const Blob = struct {
             onCompleteCallback: OnWriteFileCallback = undefined,
             wrote: usize = 0,
 
-            pub const ResultType = anyerror!Blob;
-            pub const OnWriteFileCallback = fn (ctx: *anyopaque, blob: ResultType) void;
+            pub const ResultType = anyerror!SizeType;
+            pub const OnWriteFileCallback = fn (ctx: *anyopaque, count: ResultType) void;
 
             pub usingnamespace FileOpenerMixin(WriteFile);
             pub usingnamespace FileCloserMixin(WriteFile);
@@ -2522,6 +2534,7 @@ pub const Blob = struct {
                 var cb_ctx = this.onCompleteCtx;
 
                 this.bytes_blob.store.?.deref();
+                this.file_blob.store.?.deref();
 
                 if (this.errno) |err| {
                     bun.default_allocator.destroy(this);
@@ -2529,10 +2542,8 @@ pub const Blob = struct {
                     return;
                 }
 
-                var blob = this.file_blob;
-
                 bun.default_allocator.destroy(this);
-                cb(cb_ctx, blob);
+                cb(cb_ctx, @truncate(SizeType, this.wrote));
             }
             pub fn run(this: *WriteFile, task: *WriteFileTask) void {
                 this.runAsyncFrame = async this.runAsync(task);
@@ -2580,7 +2591,7 @@ pub const Blob = struct {
                     if (wrote_len == 0) break;
                 }
 
-                this.file_blob.size = @truncate(SizeType, total_written);
+                this.wrote = @truncate(SizeType, total_written);
 
                 if (needs_close) {
                     this.doClose() catch {};
@@ -2613,7 +2624,7 @@ pub const Blob = struct {
 
             globalThis: *JSGlobalObject,
 
-            pub const ResultType = anyerror!Blob;
+            pub const ResultType = anyerror!SizeType;
 
             pub const Callback = fn (ctx: *anyopaque, len: ResultType) void;
             pub const CopyFilePromiseTask = JSC.ConcurrentPromiseTask(CopyFile);
@@ -2651,6 +2662,7 @@ pub const Blob = struct {
                         bun.default_allocator.free(bun.constStrToU8(this.source_file_store.pathlike.path.slice()));
                     }
                 }
+                this.store.?.deref();
 
                 bun.default_allocator.destroy(this);
             }
@@ -2673,21 +2685,14 @@ pub const Blob = struct {
             }
 
             pub fn then(this: *CopyFile, promise: *JSC.JSInternalPromise) void {
-                defer this.source_store.?.deref();
+                this.source_store.?.deref();
 
                 if (this.errno != null) {
                     this.reject(promise);
                     return;
                 }
-                var blob = Blob{
-                    .offset = this.read_off,
-                    .size = this.read_len,
-                    .store = this.store,
-                };
-                blob.allocator = bun.default_allocator;
-                var ptr = bun.default_allocator.create(Blob) catch unreachable;
-                ptr.* = blob;
-                promise.resolve(this.globalThis, JSC.JSValue.fromRef(Blob.Class.make(this.globalThis.ref(), ptr)));
+
+                promise.resolve(this.globalThis, JSC.JSValue.jsNumberFromUint64(this.read_len));
             }
             pub fn run(this: *CopyFile) void {
                 this.runAsync();
@@ -2802,9 +2807,18 @@ pub const Blob = struct {
 
             pub fn doFCopyFile(this: *CopyFile) anyerror!void {
                 switch (JSC.Node.Syscall.fcopyfile(this.source_fd, this.destination_fd, os.system.COPYFILE_DATA)) {
-                    else => |errno| {
-                        this.errno = AsyncIO.asError(errno);
+                    .err => |errno| {
+                        this.errno = AsyncIO.asError(errno.errno);
                         return this.errno.?;
+                    },
+                    .result => {},
+                }
+            }
+
+            pub fn doClonefile(this: *CopyFile) anyerror!void {
+                switch (JSC.Node.Syscall.clonefile(this.destination_file_store.pathlike.path.sliceZAssume(), this.source_file_store.pathlike.path.sliceZAssume())) {
+                    .err => |errno| {
+                        return AsyncIO.asError(errno.errno);
                     },
                     .result => {},
                 }
@@ -2829,7 +2843,7 @@ pub const Blob = struct {
                     // First, we attempt to clonefile() on macOS
                     // This is the fastest way to copy a file.
                     if (comptime Environment.isMac) {
-                        if (this.offset == 0) {
+                        if (this.offset == 0 and this.source_file_store.pathlike == .path and this.destination_file_store.pathlike == .path) {
                             do_clonefile: {
 
                                 // stat the output file, make sure it:
@@ -2848,12 +2862,12 @@ pub const Blob = struct {
                                     },
                                     .err => |err| {
                                         // If we can't stat it, we also can't copy it.
-                                        this.errno = err;
+                                        this.errno = AsyncIO.asError(err.errno);
                                         return;
                                     },
                                 }
 
-                                if (this.doCloneFile()) {
+                                if (this.doClonefile()) {
                                     if (this.max_length != Blob.max_size and this.max_length < @intCast(SizeType, stat_.?.size)) {
                                         // If this fails...well, there's not much we can do about it.
                                         _ = bun.C.truncate(
@@ -3448,11 +3462,11 @@ pub const Blob = struct {
     pub const WriteFilePromise = struct {
         promise: *JSPromise,
         globalThis: *JSGlobalObject,
-        pub fn run(handler: *@This(), blob_: Blob.Store.WriteFile.ResultType) void {
+        pub fn run(handler: *@This(), count: Blob.Store.WriteFile.ResultType) void {
             var promise = handler.promise;
             var globalThis = handler.globalThis;
             bun.default_allocator.destroy(handler);
-            var blob = blob_ catch |err| {
+            var wrote = count catch |err| {
                 var error_string = ZigString.init(
                     std.fmt.allocPrint(bun.default_allocator, "Failed to write file \"{s}\"", .{std.mem.span(@errorName(err))}) catch unreachable,
                 );
@@ -3461,10 +3475,7 @@ pub const Blob = struct {
                 return;
             };
 
-            var ptr = bun.default_allocator.create(Blob) catch unreachable;
-            ptr.* = blob;
-
-            promise.resolve(globalThis, JSC.JSValue.fromRef(Blob.Class.make(globalThis.ref(), ptr)));
+            promise.resolve(globalThis, JSC.JSValue.jsNumberFromUint64(wrote));
         }
     };
 
@@ -3775,7 +3786,7 @@ pub const Blob = struct {
                 JSC.JSValue.JSType.BigUint64Array,
                 JSC.JSValue.JSType.DataView,
                 => {
-                    var buf = try bun.default_allocator.dupe(u8, top_value.asArrayBuffer(global).?.slice());
+                    var buf = try bun.default_allocator.dupe(u8, top_value.asArrayBuffer(global).?.byteSlice());
                     return Blob.init(buf, bun.default_allocator, global);
                 },
 
@@ -3866,7 +3877,7 @@ pub const Blob = struct {
                                 JSC.JSValue.JSType.DataView,
                                 => {
                                     var buf = item.asArrayBuffer(global).?;
-                                    joiner.append(buf.slice(), 0, null);
+                                    joiner.append(buf.byteSlice(), 0, null);
                                     continue;
                                 },
                                 .Array, .DerivedArray => {
@@ -4073,6 +4084,15 @@ pub const Body = struct {
         task: ?*anyopaque = null,
         callback: ?fn (ctx: *anyopaque, value: *Value) void = null,
         deinit: bool = false,
+        action: Action = Action.none,
+
+        pub const Action = enum {
+            none,
+            getText,
+            getJSON,
+            getArrayBuffer,
+            getBlob,
+        };
     };
 
     pub const Value = union(Tag) {
@@ -4091,6 +4111,47 @@ pub const Body = struct {
         };
 
         pub const empty = Value{ .Empty = .{} };
+
+        pub fn resolve(this: *Value, new: *Value, global: *JSGlobalObject) void {
+            if (this.* == .Locked) {
+                var locked = this.Locked;
+                if (locked.callback) |callback| {
+                    locked.callback = null;
+                    callback(locked.task.?, new);
+                }
+
+                if (locked.promise) |promise| {
+                    var blob = new.use();
+
+                    switch (locked.action) {
+                        .getText => {
+                            promise.asPromise().?.resolve(global, JSValue.fromRef(blob.getTextTransfer(global.ref())));
+                        },
+                        .getJSON => {
+                            promise.asPromise().?.resolve(global, blob.toJSON(global));
+                            blob.detach();
+                        },
+                        .getArrayBuffer => {
+                            promise.asPromise().?.resolve(global, JSValue.fromRef(blob.getArrayBufferTransfer(global.ref())));
+                        },
+                        .getBlob => {
+                            var ptr = bun.default_allocator.create(Blob) catch unreachable;
+                            ptr.* = blob;
+                            ptr.allocator = bun.default_allocator;
+                            promise.asPromise().?.resolve(global, JSC.JSValue.fromRef(Blob.Class.make(global.ref(), ptr)));
+                        },
+                        else => {
+                            var ptr = bun.default_allocator.create(Blob) catch unreachable;
+                            ptr.* = blob;
+                            ptr.allocator = bun.default_allocator;
+                            promise.asInternalPromise().?.resolve(global, JSC.JSValue.fromRef(Blob.Class.make(global.ref(), ptr)));
+                        },
+                    }
+                    JSC.C.JSValueUnprotect(global.ref(), promise.asObjectRef());
+                    locked.promise = null;
+                }
+            }
+        }
         pub fn slice(this: Value) []const u8 {
             return switch (this) {
                 .Blob => this.Blob.sharedView(),
@@ -4118,8 +4179,9 @@ pub const Body = struct {
                 if (locked.promise) |promise| {
                     if (promise.asInternalPromise()) |internal| {
                         internal.reject(global, error_instance);
+                    } else if (promise.asPromise()) |internal| {
+                        internal.reject(global, error_instance);
                     }
-
                     JSC.C.JSValueUnprotect(global.ref(), promise.asObjectRef());
                     locked.promise = null;
                 }
@@ -4535,6 +4597,12 @@ pub const Request = struct {
         );
     }
 
+    pub fn getBodyValue(
+        this: *Request,
+    ) *Body.Value {
+        return &this.body;
+    }
+
     pub fn getBodyUsed(
         this: *Request,
         _: js.JSContextRef,
@@ -4602,6 +4670,14 @@ fn BlobInterface(comptime Type: type) type {
             _: []const js.JSValueRef,
             _: js.ExceptionRef,
         ) js.JSValueRef {
+            var value = this.getBodyValue();
+            if (value.* == .Locked) {
+                value.Locked.action = .getText;
+                var promise = JSC.JSPromise.create(ctx.ptr());
+                value.Locked.promise = promise.asValue(ctx.ptr());
+                return value.Locked.promise.?.asObjectRef();
+            }
+
             var blob = this.body.use();
             return blob.getTextTransfer(ctx);
         }
@@ -4614,6 +4690,14 @@ fn BlobInterface(comptime Type: type) type {
             _: []const js.JSValueRef,
             exception: js.ExceptionRef,
         ) js.JSValueRef {
+            var value = this.getBodyValue();
+            if (value.* == .Locked) {
+                value.Locked.action = .getJSON;
+                var promise = JSC.JSPromise.create(ctx.ptr());
+                value.Locked.promise = promise.asValue(ctx.ptr());
+                return value.Locked.promise.?.asObjectRef();
+            }
+
             var blob = this.body.use();
             return blob.getJSON(ctx, null, null, &.{}, exception);
         }
@@ -4625,6 +4709,15 @@ fn BlobInterface(comptime Type: type) type {
             _: []const js.JSValueRef,
             _: js.ExceptionRef,
         ) js.JSValueRef {
+            var value = this.getBodyValue();
+
+            if (value.* == .Locked) {
+                value.Locked.action = .getArrayBuffer;
+                var promise = JSC.JSPromise.create(ctx.ptr());
+                value.Locked.promise = promise.asValue(ctx.ptr());
+                return value.Locked.promise.?.asObjectRef();
+            }
+
             var blob = this.body.use();
             return blob.getArrayBufferTransfer(ctx);
         }
@@ -4637,6 +4730,14 @@ fn BlobInterface(comptime Type: type) type {
             _: []const js.JSValueRef,
             _: js.ExceptionRef,
         ) js.JSValueRef {
+            var value = this.getBodyValue();
+            if (value.* == .Locked) {
+                value.Locked.action = .getBlob;
+                var promise = JSC.JSPromise.create(ctx.ptr());
+                value.Locked.promise = promise.asValue(ctx.ptr());
+                return value.Locked.promise.?.asObjectRef();
+            }
+
             var blob = this.body.use();
             var ptr = getAllocator(ctx).create(Blob) catch unreachable;
             ptr.* = blob;

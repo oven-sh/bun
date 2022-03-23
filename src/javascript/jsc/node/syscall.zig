@@ -328,7 +328,7 @@ pub fn copyfile(from: [:0]const u8, to: [:0]const u8, flags: c_int) Maybe(void) 
     unreachable;
 }
 
-pub fn fcopyfile(fd_in: std.os.fd_t, fd_out: std.os.fd_t, flags: c_int) Maybe(void) {
+pub fn fcopyfile(fd_in: std.os.fd_t, fd_out: std.os.fd_t, flags: u32) Maybe(void) {
     if (comptime !Environment.isMac) @compileError("macOS only");
 
     while (true) {

@@ -42,6 +42,19 @@ describe("HTMLRewriter", () => {
     expect(await output.text()).toBe("<div><blink>it worked!</blink></div>");
   });
 
+  it("(from file) supports element handlers", async () => {
+    var rewriter = new HTMLRewriter();
+    rewriter.on("div", {
+      element(element) {
+        element.setInnerContent("<blink>it worked!</blink>", { html: true });
+      },
+    });
+    await Bun.write("/tmp/html-rewriter.txt.js", "<div>hello</div>");
+    var input = new Response(Bun.file("/tmp/html-rewriter.txt.js"));
+    var output = rewriter.transform(input);
+    expect(await output.text()).toBe("<div><blink>it worked!</blink></div>");
+  });
+
   it("supports attribute iterator", async () => {
     var rewriter = new HTMLRewriter();
     var expected = [

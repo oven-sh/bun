@@ -273,6 +273,7 @@ pub extern fn JSC__JSValue__asCell(JSValue0: JSC__JSValue) [*c]JSC__JSCell;
 pub extern fn JSC__JSValue__asInternalPromise(JSValue0: JSC__JSValue) [*c]JSC__JSInternalPromise;
 pub extern fn JSC__JSValue__asNumber(JSValue0: JSC__JSValue) f64;
 pub extern fn JSC__JSValue__asObject(JSValue0: JSC__JSValue) bJSC__JSObject;
+pub extern fn JSC__JSValue__asPromise(JSValue0: JSC__JSValue) [*c]JSC__JSPromise;
 pub extern fn JSC__JSValue__asString(JSValue0: JSC__JSValue) [*c]JSC__JSString;
 pub extern fn JSC__JSValue__createEmptyObject(arg0: [*c]JSC__JSGlobalObject, arg1: usize) JSC__JSValue;
 pub extern fn JSC__JSValue__createInternalPromise(arg0: [*c]JSC__JSGlobalObject) JSC__JSValue;

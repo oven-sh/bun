@@ -1868,6 +1868,10 @@ pub const ArrayBuffer = extern struct {
         return this.ptr[this.offset .. this.offset + this.len];
     }
 
+    pub inline fn byteSlice(this: *const @This()) []u8 {
+        return this.ptr[this.offset .. this.offset + this.byte_len];
+    }
+
     pub inline fn asU16(this: *const @This()) []u16 {
         return std.mem.bytesAsSlice(u16, @alignCast(@alignOf([*]u16), this.ptr[this.offset..this.byte_len]));
     }

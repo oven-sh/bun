@@ -1918,6 +1918,7 @@ pub const JSValue = enum(u64) {
             c_uint => jsNumberFromUint64(@intCast(u64, number)),
             u64 => jsNumberFromUint64(@intCast(u64, number)),
             u32 => jsNumberFromInt32(@intCast(i32, number)),
+            u52 => jsNumberFromUint64(@as(u64, number)),
             else => @compileError("Type transformation missing for number of type: " ++ @typeName(Number)),
         };
     }

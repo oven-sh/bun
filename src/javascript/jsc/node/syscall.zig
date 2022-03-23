@@ -18,6 +18,9 @@ const linux = os.linux;
 const Maybe = JSC.Node.Maybe;
 
 pub const system = if (Environment.isLinux) linux else darwin;
+pub const S = struct {
+    pub usingnamespace if (Environment.isLinux) linux.S else std.os.S;
+};
 const libc = std.os.system;
 
 pub const Tag = enum(u8) {

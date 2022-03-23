@@ -962,6 +962,10 @@ pub const Class = NewClass(
             .rfn = JSC.WebCore.Blob.constructFile,
             .ts = d.ts{},
         },
+        .write = .{
+            .rfn = JSC.WebCore.Blob.writeFile,
+            .ts = d.ts{},
+        },
     },
     .{
         .main = .{

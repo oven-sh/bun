@@ -297,9 +297,11 @@ pub fn IOTask(comptime Context: type) type {
     };
 }
 
+const CopyFilePromiseTask = WebCore.Blob.Store.CopyFile.CopyFilePromiseTask;
 const AsyncTransformTask = @import("./api/transpiler.zig").TransformTask.AsyncTransformTask;
 const BunTimerTimeoutTask = Bun.Timer.Timeout.TimeoutTask;
 const ReadFileTask = WebCore.Blob.Store.ReadFile.ReadFileTask;
+const WriteFileTask = WebCore.Blob.Store.WriteFile.WriteFileTask;
 const OpenAndStatFileTask = WebCore.Blob.Store.OpenAndStatFile.OpenAndStatFileTask;
 // const PromiseTask = JSInternalPromise.Completion.PromiseTask;
 pub const Task = TaggedPointerUnion(.{
@@ -309,6 +311,8 @@ pub const Task = TaggedPointerUnion(.{
     BunTimerTimeoutTask,
     ReadFileTask,
     OpenAndStatFileTask,
+    CopyFilePromiseTask,
+    WriteFileTask,
     // PromiseTask,
     // TimeoutTasklet,
 });
@@ -527,6 +531,13 @@ pub const VirtualMachine = struct {
                         finished += 1;
                         vm_.active_tasks -|= 1;
                     },
+                    @field(Task.Tag, @typeName(CopyFilePromiseTask)) => {
+                        var transform_task: *CopyFilePromiseTask = task.get(CopyFilePromiseTask).?;
+                        transform_task.*.runFromJS();
+                        transform_task.deinit();
+                        finished += 1;
+                        vm_.active_tasks -|= 1;
+                    },
                     @field(Task.Tag, @typeName(BunTimerTimeoutTask)) => {
                         var transform_task: *BunTimerTimeoutTask = task.get(BunTimerTimeoutTask).?;
                         transform_task.*.runFromJS();
@@ -539,6 +550,11 @@ pub const VirtualMachine = struct {
                     },
                     @field(Task.Tag, @typeName(OpenAndStatFileTask)) => {
                         var transform_task: *OpenAndStatFileTask = task.get(OpenAndStatFileTask).?;
+                        transform_task.*.runFromJS();
+                        finished += 1;
+                    },
+                    @field(Task.Tag, @typeName(WriteFileTask)) => {
+                        var transform_task: *WriteFileTask = task.get(WriteFileTask).?;
                         transform_task.*.runFromJS();
                         finished += 1;
                     },

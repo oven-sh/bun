@@ -1617,7 +1617,10 @@ int64_t JSC__JSValue__toInt64(JSC__JSValue val)
     }
 
     if (auto* heapBigInt = _val.asHeapBigInt()) {
-        return heapBigInt->toBigInt64(heapBigInt);
+        if (heapBigInt != nullptr) {
+            return heapBigInt->toBigInt64(heapBigInt);
+        }
+        
     }
 
 

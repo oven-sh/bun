@@ -6,7 +6,7 @@ const MimeType = @import("../../../http.zig").MimeType;
 const ZigURL = @import("../../../url.zig").URL;
 const HTTPClient = @import("http");
 const NetworkThread = HTTPClient.NetworkThread;
-
+const AsyncIO = NetworkThread.AsyncIO;
 const JSC = @import("../../../jsc.zig");
 const js = JSC.C;
 
@@ -930,7 +930,7 @@ pub const Fetch = struct {
                 }
 
                 if (options.get(ctx.ptr(), "body")) |body__| {
-                    if (Blob.fromJS(ctx.ptr(), body__, true)) |new_blob| {
+                    if (Blob.fromJS(ctx.ptr(), body__, true, false)) |new_blob| {
                         if (new_blob.size > 0) {
                             body = MutableString{
                                 .list = std.ArrayListUnmanaged(u8){
@@ -1657,6 +1657,31 @@ pub const Headers = struct {
     }
 };
 
+const PathOrBlob = union(enum) {
+    path: JSC.Node.PathOrFileDescriptor,
+    blob: Blob,
+
+    pub fn fromJS(ctx: js.JSContextRef, args: *JSC.Node.ArgumentsSlice, exception: js.ExceptionRef) ?PathOrBlob {
+        if (JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, exception)) |path| {
+            return PathOrBlob{ .path = .{
+                .path = .{
+                    .string = bun.PathString.init((bun.default_allocator.dupeZ(u8, path.path.slice()) catch unreachable)[0..path.path.slice().len]),
+                },
+            } };
+        }
+
+        const arg = args.nextEat() orelse return null;
+
+        if (arg.as(Blob)) |blob| {
+            return PathOrBlob{
+                .blob = blob.dupe(),
+            };
+        }
+
+        return null;
+    }
+};
+
 pub const Blob = struct {
     size: SizeType = 0,
     offset: SizeType = 0,
@@ -1671,7 +1696,170 @@ pub const Blob = struct {
 
     globalThis: *JSGlobalObject = undefined,
 
-    pub const SizeType = u64;
+    /// Max int of double precision
+    /// 9 petabytes is probably enough for awhile
+    /// We want to avoid coercing to a BigInt because that's a heap allocation
+    /// and it's generally just harder to use
+    pub const SizeType = u52;
+    pub const max_size = std.math.maxInt(SizeType);
+
+    const CopyFilePromiseHandler = struct {
+        promise: *JSPromise,
+        globalThis: *JSGlobalObject,
+        pub fn run(handler: *@This(), blob_: Store.CopyFile.ResultType) void {
+            var promise = handler.promise;
+            var globalThis = handler.globalThis;
+            bun.default_allocator.destroy(handler);
+            var blob = blob_ catch |err| {
+                var error_string = ZigString.init(
+                    std.fmt.allocPrint(bun.default_allocator, "Failed to write file \"{s}\"", .{std.mem.span(@errorName(err))}) catch unreachable,
+                );
+                error_string.mark();
+
+                promise.reject(globalThis, error_string.toErrorInstance(globalThis));
+                return;
+            };
+            var _blob = bun.default_allocator.create(Blob) catch unreachable;
+            _blob.* = blob;
+            _blob.allocator = bun.default_allocator;
+            promise.resolve(
+                globalThis,
+            );
+        }
+    };
+
+    pub fn writeFile(
+        _: void,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSObjectRef {
+        var args = JSC.Node.ArgumentsSlice.from(arguments);
+        // accept a path or a blob
+        var path_or_blob = PathOrBlob.fromJS(ctx, &args, exception) orelse {
+            exception.* = JSC.toInvalidArguments("Bun.write expects a path, file descriptor or a blob", .{}, ctx).asObjectRef();
+            return null;
+        };
+
+        // if path_or_blob is a path, convert it into a file blob
+        const destination_blob: Blob = if (path_or_blob == .path)
+            Blob.findOrCreateFileFromPath(path_or_blob.path, ctx.ptr())
+        else
+            path_or_blob.blob.dupe();
+
+        if (destination_blob.store == null) {
+            exception.* = JSC.toInvalidArguments("Writing to an empty blob is not implemented yet", .{}, ctx).asObjectRef();
+            return null;
+        }
+
+        var data = args.nextEat() orelse {
+            exception.* = JSC.toInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{}, ctx).asObjectRef();
+            return null;
+        };
+
+        if (data.isUndefinedOrNull() or data.isEmpty()) {
+            exception.* = JSC.toInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{}, ctx).asObjectRef();
+            return null;
+        }
+
+        // TODO: implement a writeev() fast path
+        var source_blob: Blob = brk: {
+            if (data.as(Response)) |response| {
+                break :brk response.body.use();
+            }
+
+            if (data.as(Request)) |request| {
+                break :brk request.body.use();
+            }
+
+            break :brk Blob.fromJS(
+                ctx.ptr(),
+                data,
+                false,
+                false,
+            ) catch |err| {
+                if (err == error.InvalidArguments) {
+                    exception.* = JSC.toInvalidArguments(
+                        "Expected an Array",
+                        .{},
+                        ctx,
+                    ).asObjectRef();
+                    return null;
+                }
+
+                exception.* = JSC.toInvalidArguments(
+                    "Out of memory",
+                    .{},
+                    ctx,
+                ).asObjectRef();
+                return null;
+            };
+        };
+
+        if (source_blob.store == null) {
+            JSC.throwInvalidArguments("Writing an empty blob is not supported yet", .{}, ctx, exception);
+            return null;
+        }
+
+        const source_type = std.meta.activeTag(source_blob.store.?.data);
+        const destination_type = std.meta.activeTag(destination_blob.store.?.data);
+
+        if (destination_type == .file and source_type == .bytes) {
+            var write_file_promise = bun.default_allocator.create(WriteFilePromise) catch unreachable;
+            write_file_promise.* = .{
+                .promise = JSC.JSPromise.create(ctx.ptr()),
+                .globalThis = ctx.ptr(),
+            };
+            JSC.C.JSValueProtect(ctx, write_file_promise.promise.asValue(ctx.ptr()).asObjectRef());
+
+            var file_copier = Store.WriteFile.create(
+                bun.default_allocator,
+                destination_blob,
+                source_blob,
+                *WriteFilePromise,
+                write_file_promise,
+                WriteFilePromise.run,
+            ) catch unreachable;
+            var task = Store.WriteFile.WriteFileTask.createOnJSThread(bun.default_allocator, ctx.ptr(), file_copier) catch unreachable;
+            task.schedule();
+            return write_file_promise.promise.asValue(ctx.ptr()).asObjectRef();
+        }
+        // If this is file <> file, we can just copy the file
+        else if (destination_type == .file and source_type == .file) {
+            var file_copier = Store.CopyFile.create(
+                bun.default_allocator,
+                destination_blob.store.?,
+                source_blob.store.?,
+
+                destination_blob.offset,
+                destination_blob.size,
+                ctx.ptr(),
+            ) catch unreachable;
+            file_copier.schedule();
+            return file_copier.promise.asObjectRef();
+        } else if (destination_type == .bytes and source_type == .bytes) {
+            // If this is bytes <> bytes, we can just duplicate it
+            // this is an edgecase
+            // it will happen if someone did Bun.write(new Blob([123]), new Blob([456]))
+            // eventually, this could be like Buffer.concat
+            var clone = source_blob.dupe();
+            clone.allocator = bun.default_allocator;
+            var cloned = bun.default_allocator.create(Blob) catch unreachable;
+            cloned.* = clone;
+            return JSPromise.resolvedPromiseValue(ctx.ptr(), JSC.JSValue.fromRef(Blob.Class.make(ctx, cloned))).asObjectRef();
+        } else if (destination_type == .bytes and source_type == .file) {
+            return JSPromise.resolvedPromiseValue(
+                ctx.ptr(),
+                JSC.JSValue.fromRef(
+                    source_blob.getSlice(ctx, undefined, undefined, &.{}, exception),
+                ),
+            ).asObjectRef();
+        }
+
+        unreachable;
+    }
 
     pub fn constructFile(
         _: void,
@@ -1688,25 +1876,30 @@ pub const Blob = struct {
             return js.JSValueMakeUndefined(ctx);
         };
 
-        const blob = brk: {
-            if (VirtualMachine.vm.getFileBlob(path)) |blob| {
-                blob.ref();
-                break :brk Blob.initWithStore(blob, ctx.ptr());
-            }
-
-            if (path == .path) {
-                path.path = .{ .string = bun.PathString.init(
-                    (bun.default_allocator.dupeZ(u8, path.path.slice()) catch unreachable)[0..path.path.slice().len],
-                ) };
-            }
-
-            break :brk Blob.initWithStore(Blob.Store.initFile(path, null, bun.default_allocator) catch unreachable, ctx.ptr());
-        };
+        const blob = Blob.findOrCreateFileFromPath(path, ctx.ptr());
 
         var ptr = bun.default_allocator.create(Blob) catch unreachable;
         ptr.* = blob;
         ptr.allocator = bun.default_allocator;
         return Blob.Class.make(ctx, ptr);
+    }
+
+    pub fn findOrCreateFileFromPath(path_: JSC.Node.PathOrFileDescriptor, globalThis: *JSGlobalObject) Blob {
+        var path = path_;
+        if (VirtualMachine.vm.getFileBlob(path)) |blob| {
+            blob.ref();
+            return Blob.initWithStore(blob, globalThis);
+        }
+
+        if (path == .path) {
+            path.path = .{
+                .string = bun.PathString.init(
+                    (bun.default_allocator.dupeZ(u8, path.path.slice()) catch unreachable)[0..path.path.slice().len],
+                ),
+            };
+        }
+
+        return Blob.initWithStore(Blob.Store.initFile(path, null, bun.default_allocator) catch unreachable, globalThis);
     }
 
     pub const Store = struct {
@@ -1720,7 +1913,7 @@ pub const Blob = struct {
         pub fn size(this: *const Store) SizeType {
             return switch (this.data) {
                 .bytes => this.data.bytes.len,
-                .file => std.math.maxInt(i32),
+                .file => Blob.max_size,
             };
         }
 
@@ -1792,17 +1985,19 @@ pub const Blob = struct {
             return try Blob.Store.init(list.items, allocator);
         }
 
-        const AsyncIO = HTTPClient.NetworkThread.AsyncIO;
-
         pub fn FileOpenerMixin(comptime This: type) type {
             return struct {
-                const open_flags = std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC;
+                const __opener_flags = std.os.O.NONBLOCK | std.os.O.CLOEXEC;
+                const open_flags_ = if (@hasDecl(This, "open_flags"))
+                    This.open_flags | __opener_flags
+                else
+                    std.os.O.RDONLY | __opener_flags;
 
                 pub fn getFdMac(this: *This) AsyncIO.OpenError!JSC.Node.FileDescriptor {
                     var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                     this.opened_fd = AsyncIO.openSync(
                         this.file_store.pathlike.path.sliceZ(&buf),
-                        open_flags,
+                        open_flags_,
                     ) catch |err| {
                         this.errno = err;
                         return err;
@@ -1826,14 +2021,19 @@ pub const Blob = struct {
                     var aio = &AsyncIO.global;
 
                     var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var path = if (@hasField(This, "file_store"))
+                        this.file_store.pathlike.path.sliceZ(&buf)
+                    else
+                        this.file_blob.store.?.data.file.pathlike.path.sliceZ(&buf);
+
                     aio.open(
                         *This,
                         this,
                         onOpen,
                         &this.open_completion,
-                        this.file_store.pathlike.path.sliceZ(&buf),
-                        open_flags,
-                        0,
+                        path,
+                        open_flags_,
+                        JSC.Node.default_permission,
                     );
 
                     suspend {
@@ -2006,7 +2206,7 @@ pub const Blob = struct {
             byte_store: ByteStore = ByteStore{ .allocator = bun.default_allocator },
             store: ?*Store = null,
             offset: SizeType = 0,
-            max_length: SizeType = std.math.maxInt(SizeType),
+            max_length: SizeType = Blob.max_size,
             open_frame: OpenFrameType = undefined,
             read_frame: @Frame(ReadFile.doRead) = undefined,
             close_frame: @Frame(ReadFile.doClose) = undefined,
@@ -2209,6 +2409,552 @@ pub const Blob = struct {
                 _ = bun.default_allocator.resize(bytes, this.read_off);
                 this.buffer = bytes[0..this.read_off];
                 this.byte_store = ByteStore.init(this.buffer, bun.default_allocator);
+            }
+        };
+
+        pub const WriteFile = struct {
+            const OpenFrameType = if (Environment.isMac)
+                void
+            else
+                @Frame(WriteFile.getFdLinux);
+
+            file_blob: Blob,
+            bytes_blob: Blob,
+
+            opened_fd: JSC.Node.FileDescriptor = 0,
+            open_frame: OpenFrameType = undefined,
+            write_frame: @Frame(WriteFile.doWrite) = undefined,
+            close_frame: @Frame(WriteFile.doClose) = undefined,
+            errno: ?anyerror = null,
+            open_completion: HTTPClient.NetworkThread.Completion = undefined,
+
+            write_completion: HTTPClient.NetworkThread.Completion = undefined,
+            runAsyncFrame: @Frame(WriteFile.runAsync) = undefined,
+            close_completion: HTTPClient.NetworkThread.Completion = undefined,
+            task: HTTPClient.NetworkThread.Task = undefined,
+
+            onCompleteCtx: *anyopaque = undefined,
+            onCompleteCallback: OnWriteFileCallback = undefined,
+            wrote: usize = 0,
+
+            pub const ResultType = anyerror!Blob;
+            pub const OnWriteFileCallback = fn (ctx: *anyopaque, blob: ResultType) void;
+
+            pub usingnamespace FileOpenerMixin(WriteFile);
+            pub usingnamespace FileCloserMixin(WriteFile);
+
+            pub const open_flags = std.os.O.WRONLY | std.os.O.CREAT | std.os.O.TRUNC;
+
+            pub fn createWithCtx(
+                allocator: std.mem.Allocator,
+                file_blob: Blob,
+                bytes_blob: Blob,
+                onWriteFileContext: *anyopaque,
+                onCompleteCallback: OnWriteFileCallback,
+            ) !*WriteFile {
+                var read_file = try allocator.create(WriteFile);
+                read_file.* = WriteFile{
+                    .file_blob = file_blob,
+                    .bytes_blob = bytes_blob,
+                    .onCompleteCtx = onWriteFileContext,
+                    .onCompleteCallback = onCompleteCallback,
+                };
+                file_blob.store.?.ref();
+                bytes_blob.store.?.ref();
+                return read_file;
+            }
+
+            pub fn create(
+                allocator: std.mem.Allocator,
+                file_blob: Blob,
+                bytes_blob: Blob,
+                comptime Context: type,
+                context: Context,
+                comptime callback: fn (ctx: Context, bytes: ResultType) void,
+            ) !*WriteFile {
+                const Handler = struct {
+                    pub fn run(ptr: *anyopaque, bytes: ResultType) void {
+                        callback(bun.cast(Context, ptr), bytes);
+                    }
+                };
+
+                return try WriteFile.createWithCtx(
+                    allocator,
+                    file_blob,
+                    bytes_blob,
+                    @ptrCast(*anyopaque, context),
+                    Handler.run,
+                );
+            }
+
+            pub fn doWrite(
+                this: *WriteFile,
+                buffer: []const u8,
+                file_offset: u64,
+            ) AsyncIO.WriteError!SizeType {
+                var aio = &AsyncIO.global;
+                this.wrote = 0;
+                aio.write(
+                    *WriteFile,
+                    this,
+                    onWrite,
+                    &this.write_completion,
+                    this.opened_fd,
+                    buffer,
+                    file_offset,
+                );
+
+                suspend {
+                    this.write_frame = @frame().*;
+                }
+
+                if (this.errno) |errno| {
+                    return @errSetCast(AsyncIO.WriteError, errno);
+                }
+
+                return @truncate(SizeType, this.wrote);
+            }
+
+            pub const WriteFileTask = JSC.IOTask(@This());
+
+            pub fn then(this: *WriteFile, _: *JSC.JSGlobalObject) void {
+                var cb = this.onCompleteCallback;
+                var cb_ctx = this.onCompleteCtx;
+
+                this.bytes_blob.store.?.deref();
+
+                if (this.errno) |err| {
+                    bun.default_allocator.destroy(this);
+                    cb(cb_ctx, err);
+                    return;
+                }
+
+                var blob = this.file_blob;
+
+                bun.default_allocator.destroy(this);
+                cb(cb_ctx, blob);
+            }
+            pub fn run(this: *WriteFile, task: *WriteFileTask) void {
+                this.runAsyncFrame = async this.runAsync(task);
+            }
+
+            pub fn onWrite(this: *WriteFile, _: *HTTPClient.NetworkThread.Completion, result: AsyncIO.WriteError!usize) void {
+                this.wrote = @truncate(SizeType, result catch |err| {
+                    this.errno = err;
+                    this.wrote = 0;
+                    resume this.write_frame;
+                    return;
+                });
+
+                resume this.write_frame;
+            }
+
+            pub fn runAsync(this: *WriteFile, task: *WriteFileTask) void {
+                defer task.onFinish();
+                const file = this.file_blob.store.?.data.file;
+                if (file.pathlike == .fd) {
+                    this.opened_fd = file.pathlike.fd;
+                }
+
+                _ = this.getFd() catch return;
+                const needs_close = file.pathlike == .path;
+
+                var remain = this.bytes_blob.sharedView();
+
+                var total_written: usize = 0;
+                var file_offset = this.file_blob.offset;
+
+                const end =
+                    @minimum(this.file_blob.size, remain.len);
+
+                while (remain.len > 0 and total_written < end) {
+                    const wrote_len = this.doWrite(remain, file_offset) catch {
+                        if (needs_close) {
+                            this.doClose() catch {};
+                        }
+                        return;
+                    };
+                    remain = remain[wrote_len..];
+                    total_written += wrote_len;
+                    file_offset += wrote_len;
+                    if (wrote_len == 0) break;
+                }
+
+                this.file_blob.size = @truncate(SizeType, total_written);
+
+                if (needs_close) {
+                    this.doClose() catch {};
+                }
+            }
+        };
+
+        pub const IOWhich = enum {
+            source,
+            destination,
+            both,
+        };
+
+        // blocking, but off the main thread
+        pub const CopyFile = struct {
+            destination_file_store: FileStore,
+            source_file_store: FileStore,
+            store: ?*Store = null,
+            source_store: ?*Store = null,
+            offset: SizeType = 0,
+            size: SizeType = 0,
+            max_length: SizeType = Blob.max_size,
+            destination_fd: JSC.Node.FileDescriptor = 0,
+            source_fd: JSC.Node.FileDescriptor = 0,
+
+            errno: ?anyerror = null,
+
+            read_len: SizeType = 0,
+            read_off: SizeType = 0,
+
+            globalThis: *JSGlobalObject,
+
+            pub const ResultType = anyerror!Blob;
+
+            pub const Callback = fn (ctx: *anyopaque, len: ResultType) void;
+            pub const CopyFilePromiseTask = JSC.ConcurrentPromiseTask(CopyFile);
+            pub const CopyFilePromiseTaskEventLoopTask = CopyFilePromiseTask.EventLoopTask;
+
+            pub fn create(
+                allocator: std.mem.Allocator,
+                store: *Store,
+                source_store: *Store,
+                off: SizeType,
+                max_len: SizeType,
+                globalThis: *JSC.JSGlobalObject,
+            ) !*CopyFilePromiseTask {
+                var read_file = try allocator.create(CopyFile);
+                read_file.* = CopyFile{
+                    .store = store,
+                    .source_store = source_store,
+                    .offset = off,
+                    .max_length = max_len,
+                    .globalThis = globalThis,
+                    .destination_file_store = store.data.file,
+                    .source_file_store = source_store.data.file,
+                };
+                store.ref();
+                source_store.ref();
+                return try CopyFilePromiseTask.createOnJSThread(allocator, globalThis, read_file);
+            }
+
+            const linux = std.os.linux;
+            const darwin = std.os.darwin;
+
+            pub fn deinit(this: *CopyFile) void {
+                if (this.source_file_store.pathlike == .path) {
+                    if (this.source_file_store.pathlike.path == .string) {
+                        bun.default_allocator.free(bun.constStrToU8(this.source_file_store.pathlike.path.slice()));
+                    }
+                }
+
+                bun.default_allocator.destroy(this);
+            }
+
+            pub fn reject(this: *CopyFile, promise: *JSC.JSInternalPromise) void {
+                var globalThis = this.globalThis;
+                var system_error = JSC.SystemError{};
+                if (this.destination_file_store.pathlike == .path) {
+                    system_error.path = ZigString.init(this.destination_file_store.pathlike.path.slice());
+                    system_error.path.mark();
+                }
+                system_error.message = ZigString.init("Failed to copy file");
+                var _err = this.errno orelse error.MissingData;
+                system_error.code = ZigString.init(std.mem.span(@errorName(_err)));
+                var instance = system_error.toErrorInstance(this.globalThis);
+                if (this.store) |store| {
+                    store.deref();
+                }
+                promise.reject(globalThis, instance);
+            }
+
+            pub fn then(this: *CopyFile, promise: *JSC.JSInternalPromise) void {
+                defer this.source_store.?.deref();
+
+                if (this.errno != null) {
+                    this.reject(promise);
+                    return;
+                }
+                var blob = Blob{
+                    .offset = this.read_off,
+                    .size = this.read_len,
+                    .store = this.store,
+                };
+                blob.allocator = bun.default_allocator;
+                var ptr = bun.default_allocator.create(Blob) catch unreachable;
+                ptr.* = blob;
+                promise.resolve(this.globalThis, JSC.JSValue.fromRef(Blob.Class.make(this.globalThis.ref(), ptr)));
+            }
+            pub fn run(this: *CopyFile) void {
+                this.runAsync();
+            }
+
+            pub fn doClose(this: *CopyFile) void {
+                // const repos = await fetch("https://api.github.com/users/octocat/repos")
+                const close_input = this.destination_file_store.pathlike != .fd and this.destination_fd != 0;
+                const close_output = this.source_file_store.pathlike != .fd and this.source_fd != 0;
+
+                if (close_input and close_output) {
+                    this.doCloseFile(.both);
+                } else if (close_input) {
+                    this.doCloseFile(.destination);
+                } else if (close_output) {
+                    this.doCloseFile(.source);
+                }
+            }
+
+            const os = std.os;
+
+            pub fn doCloseFile(this: *CopyFile, comptime which: IOWhich) void {
+                switch (which) {
+                    .both => {
+                        _ = JSC.Node.Syscall.close(this.destination_fd);
+                        _ = JSC.Node.Syscall.close(this.source_fd);
+                    },
+                    .destination => {
+                        _ = JSC.Node.Syscall.close(this.destination_fd);
+                    },
+                    .source => {
+                        _ = JSC.Node.Syscall.close(this.source_fd);
+                    },
+                }
+            }
+
+            const O = if (Environment.isLinux) linux.O else std.os.O;
+            const open_destination_flags = O.CLOEXEC | O.CREAT | O.WRONLY | O.TRUNC;
+            const open_source_flags = O.CLOEXEC | O.RDONLY;
+
+            pub fn doOpenFile(this: *CopyFile, comptime which: IOWhich) !void {
+                // open source file first
+                // if it fails, we don't want the extra destination file hanging out
+                if (which == .both or which == .source) {
+                    this.source_fd = switch (JSC.Node.Syscall.open(
+                        this.source_file_store.pathlike.path.sliceZAssume(),
+                        open_source_flags,
+                        0,
+                    )) {
+                        .result => |result| result,
+                        .err => |errno| {
+                            this.errno = AsyncIO.asError(errno.errno);
+                            return;
+                        },
+                    };
+                }
+
+                if (which == .both or which == .destination) {
+                    this.destination_fd = switch (JSC.Node.Syscall.open(
+                        this.destination_file_store.pathlike.path.sliceZAssume(),
+                        open_destination_flags,
+                        JSC.Node.default_permission,
+                    )) {
+                        .result => |result| result,
+                        .err => |errno| {
+                            if (which == .both) {
+                                _ = JSC.Node.Syscall.close(this.source_fd);
+                                this.source_fd = 0;
+                            }
+
+                            this.errno = AsyncIO.asError(errno.errno);
+                            return;
+                        },
+                    };
+                }
+            }
+
+            pub fn doCopyFileRange(this: *CopyFile) anyerror!void {
+                this.read_off += this.offset;
+
+                var remain = @as(usize, this.max_length);
+                if (remain == 0) {
+                    // sometimes stat lies
+                    // let's give it 2048 and see how it goes
+                    remain = 2048;
+                }
+
+                var total_written: usize = 0;
+                const src_fd = this.source_fd;
+                const dest_fd = this.destination_fd;
+                defer {
+                    this.read_off = this.offset;
+                    this.read_len = @truncate(SizeType, total_written);
+                }
+                while (remain > 0) {
+                    // Linux Kernel 5.3 or later
+                    const written = linux.copy_file_range(src_fd, null, dest_fd, null, remain, 0);
+                    switch (linux.getErrno(written)) {
+                        .SUCCESS => {},
+                        else => |errno| {
+                            this.errno = AsyncIO.asError(errno);
+                            return this.errno.?;
+                        },
+                    }
+
+                    // wrote zero bytes means EOF
+                    if (written == 0) break;
+                    remain -|= written;
+                    total_written += written;
+                }
+            }
+
+            pub fn doFCopyFile(this: *CopyFile) anyerror!void {
+                switch (JSC.Node.Syscall.fcopyfile(this.source_fd, this.destination_fd, os.system.COPYFILE_DATA)) {
+                    else => |errno| {
+                        this.errno = AsyncIO.asError(errno);
+                        return this.errno.?;
+                    },
+                    .result => {},
+                }
+            }
+
+            pub fn runAsync(this: *CopyFile) void {
+                // defer task.onFinish();
+
+                var stat_: ?std.os.Stat = null;
+
+                if (this.destination_file_store.pathlike == .fd) {
+                    this.destination_fd = this.destination_file_store.pathlike.fd;
+                }
+
+                if (this.source_file_store.pathlike == .fd) {
+                    this.source_fd = this.source_file_store.pathlike.fd;
+                }
+
+                // Do we need to open both files?
+                if (this.destination_fd == 0 and this.source_fd == 0) {
+
+                    // First, we attempt to clonefile() on macOS
+                    // This is the fastest way to copy a file.
+                    if (comptime Environment.isMac) {
+                        if (this.offset == 0) {
+                            do_clonefile: {
+
+                                // stat the output file, make sure it:
+                                // 1. Exists
+                                switch (JSC.Node.Syscall.stat(this.source_file_store.pathlike.path.sliceZAssume())) {
+                                    .result => |result| {
+                                        stat_ = result;
+
+                                        if (os.S.ISDIR(result.mode)) {
+                                            this.errno = error.@"Bun.write() doesn't support directories yet.";
+                                            return;
+                                        }
+
+                                        if (!os.S.ISREG(result.mode))
+                                            break :do_clonefile;
+                                    },
+                                    .err => |err| {
+                                        // If we can't stat it, we also can't copy it.
+                                        this.errno = err;
+                                        return;
+                                    },
+                                }
+
+                                if (this.doCloneFile()) {
+                                    if (this.max_length != Blob.max_size and this.max_length < @intCast(SizeType, stat_.?.size)) {
+                                        // If this fails...well, there's not much we can do about it.
+                                        _ = bun.C.truncate(
+                                            this.destination_file_store.pathlike.path.sliceZAssume(),
+                                            @intCast(std.os.off_t, this.max_length),
+                                        );
+                                        this.read_len = @intCast(SizeType, this.max_length);
+                                    } else {
+                                        this.read_len = @intCast(SizeType, stat_.?.size);
+                                    }
+                                    return;
+                                } else |_| {
+                                    // this may still fail, in which case we just continue trying with fcopyfile
+                                    // it can fail when the input file already exists
+                                    // or if the output is not a directory
+                                    // or if it's a network volume
+                                }
+                            }
+                        }
+                    }
+
+                    this.doOpenFile(.both) catch |err| {
+                        this.errno = err;
+                        return;
+                    };
+                    // Do we need to open only one file?
+                } else if (this.destination_fd == 0) {
+                    this.source_fd = this.source_file_store.pathlike.fd;
+
+                    this.doOpenFile(.destination) catch |err| {
+                        this.errno = err;
+                        return;
+                    };
+                    // Do we need to open only one file?
+                } else if (this.source_fd == 0) {
+                    this.destination_fd = this.destination_file_store.pathlike.fd;
+
+                    this.doOpenFile(.source) catch |err| {
+                        this.errno = err;
+                        return;
+                    };
+                }
+
+                if (this.errno != null) {
+                    return;
+                }
+
+                std.debug.assert(this.destination_fd != 0);
+                std.debug.assert(this.source_fd != 0);
+
+                const stat: std.os.Stat = stat_ orelse switch (JSC.Node.Syscall.fstat(this.source_fd)) {
+                    .result => |result| result,
+                    .err => |err| {
+                        this.doClose();
+                        this.errno = AsyncIO.asError(err.errno);
+                        return;
+                    },
+                };
+
+                if (os.S.ISDIR(stat.mode)) {
+                    this.errno = error.@"Bun.write() doesn't support directories yet.";
+                    this.doClose();
+                    return;
+                }
+
+                if (stat.size != 0) {
+                    this.max_length = @maximum(@minimum(@intCast(SizeType, stat.size), this.max_length), this.offset) - this.offset;
+                    if (this.max_length == 0) {
+                        this.doClose();
+                        return;
+                    }
+
+                    if (this.max_length > std.mem.page_size) {
+                        bun.C.preallocate_file(this.destination_fd, 0, this.max_length) catch {};
+                    }
+                }
+
+                if (os.S.ISREG(stat.mode)) {
+                    if (comptime Environment.isLinux) {
+                        this.doCopyFileRange() catch |err| {
+                            this.doClose();
+                            this.errno = err;
+                            return;
+                        };
+                    } else if (comptime Environment.isMac) {
+                        this.doFCopyFile() catch |err| {
+                            this.doClose();
+                            this.errno = err;
+                            return;
+                        };
+                        if (stat.size != 0 and @intCast(SizeType, stat.size) > this.max_length) {
+                            _ = darwin.ftruncate(this.destination_fd, @intCast(std.os.off_t, this.max_length));
+                        }
+                    } else {
+                        @compileError("TODO: implement copyfile");
+                    }
+                } else {
+                    this.errno = error.@"Bun.write() doesn't support non-regular files yet.";
+                }
+
+                this.doClose();
             }
         };
     };
@@ -2478,10 +3224,10 @@ pub const Blob = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        if (this.size == std.math.maxInt(SizeType)) {
+        if (this.size == Blob.max_size) {
             this.resolveSize();
-            if (this.size == std.math.maxInt(SizeType) and this.store != null) {
-                return JSValue.jsNumber(@as(SizeType, 0)).asRef();
+            if (this.size == Blob.max_size and this.store != null) {
+                return JSValue.jsNumberFromChar(0).asRef();
             }
         }
 
@@ -2497,7 +3243,7 @@ pub const Blob = struct {
             if (store.data == .bytes) {
                 const offset = this.offset;
                 const store_size = store.size();
-                if (store_size != std.math.maxInt(SizeType)) {
+                if (store_size != Blob.max_size) {
                     this.offset = @minimum(store_size, offset);
                     this.size = store_size - offset;
                 }
@@ -2520,7 +3266,7 @@ pub const Blob = struct {
                 blob = Blob.init(empty, getAllocator(ctx), ctx.ptr());
             },
             else => {
-                blob = fromJS(ctx.ptr(), JSValue.fromRef(args[0]), false) catch |err| {
+                blob = fromJS(ctx.ptr(), JSValue.fromRef(args[0]), false, true) catch |err| {
                     if (err == error.InvalidArguments) {
                         JSC.JSError(getAllocator(ctx), "new Blob() expects an Array", .{}, ctx, exception);
                         return null;
@@ -2570,7 +3316,7 @@ pub const Blob = struct {
         var store = Blob.Store.init(bytes, allocator) catch unreachable;
         store.is_all_ascii = is_all_ascii;
         return Blob{
-            .size = @truncate(u32, bytes.len),
+            .size = @truncate(SizeType, bytes.len),
             .store = store,
             .allocator = null,
             .content_type = "",
@@ -2581,7 +3327,7 @@ pub const Blob = struct {
 
     pub fn init(bytes: []u8, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) Blob {
         return Blob{
-            .size = @truncate(u32, bytes.len),
+            .size = @truncate(SizeType, bytes.len),
             .store = Blob.Store.init(bytes, allocator) catch unreachable,
             .allocator = null,
             .content_type = "",
@@ -2698,6 +3444,29 @@ pub const Blob = struct {
             }
         };
     }
+
+    pub const WriteFilePromise = struct {
+        promise: *JSPromise,
+        globalThis: *JSGlobalObject,
+        pub fn run(handler: *@This(), blob_: Blob.Store.WriteFile.ResultType) void {
+            var promise = handler.promise;
+            var globalThis = handler.globalThis;
+            bun.default_allocator.destroy(handler);
+            var blob = blob_ catch |err| {
+                var error_string = ZigString.init(
+                    std.fmt.allocPrint(bun.default_allocator, "Failed to write file \"{s}\"", .{std.mem.span(@errorName(err))}) catch unreachable,
+                );
+                error_string.mark();
+                promise.reject(globalThis, error_string.toErrorInstance(globalThis));
+                return;
+            };
+
+            var ptr = bun.default_allocator.create(Blob) catch unreachable;
+            ptr.* = blob;
+
+            promise.resolve(globalThis, JSC.JSValue.fromRef(Blob.Class.make(globalThis.ref(), ptr)));
+        }
+    };
 
     pub fn NewInternalReadFileHandler(comptime Context: type, comptime Function: anytype) type {
         return struct {
@@ -2887,25 +3656,37 @@ pub const Blob = struct {
         }
     }
 
-    pub inline fn fromJS(global: *JSGlobalObject, arg: JSValue, comptime move: bool) anyerror!Blob {
-        if (comptime move) {
-            return fromJSMove(global, arg);
-        } else {
-            return fromJSClone(global, arg);
-        }
+    pub inline fn fromJS(
+        global: *JSGlobalObject,
+        arg: JSValue,
+        comptime move: bool,
+        comptime require_array: bool,
+    ) anyerror!Blob {
+        return fromJSMovable(global, arg, move, require_array);
     }
 
     pub inline fn fromJSMove(global: *JSGlobalObject, arg: JSValue) anyerror!Blob {
-        return fromJSWithoutDeferGC(global, arg, true);
+        return fromJSWithoutDeferGC(global, arg, true, false);
     }
 
     pub inline fn fromJSClone(global: *JSGlobalObject, arg: JSValue) anyerror!Blob {
-        return fromJSWithoutDeferGC(global, arg, false);
+        return fromJSWithoutDeferGC(global, arg, false, true);
     }
 
-    fn fromJSMovable(global: *JSGlobalObject, arg: JSValue, comptime move: bool) anyerror!Blob {
-        const FromJSFunction = if (comptime move)
+    pub inline fn fromJSCloneOptionalArray(global: *JSGlobalObject, arg: JSValue) anyerror!Blob {
+        return fromJSWithoutDeferGC(global, arg, false, false);
+    }
+
+    fn fromJSMovable(
+        global: *JSGlobalObject,
+        arg: JSValue,
+        comptime move: bool,
+        comptime require_array: bool,
+    ) anyerror!Blob {
+        const FromJSFunction = if (comptime move and !require_array)
             fromJSMove
+        else if (!require_array)
+            fromJSCloneOptionalArray
         else
             fromJSClone;
         const DeferCtx = struct {
@@ -2928,7 +3709,12 @@ pub const Blob = struct {
         return ctx.ret;
     }
 
-    fn fromJSWithoutDeferGC(global: *JSGlobalObject, arg: JSValue, comptime move: bool) anyerror!Blob {
+    fn fromJSWithoutDeferGC(
+        global: *JSGlobalObject,
+        arg: JSValue,
+        comptime move: bool,
+        comptime require_array: bool,
+    ) anyerror!Blob {
         var current = arg;
         if (current.isUndefinedOrNull()) {
             return Blob{ .globalThis = global };
@@ -2949,7 +3735,7 @@ pub const Blob = struct {
             },
             else => {
                 might_only_be_one_thing = true;
-                if (comptime !move) {
+                if (require_array) {
                     return error.InvalidArguments;
                 }
             },
@@ -3449,7 +4235,7 @@ pub const Body = struct {
         }
 
         body.value = .{
-            .Blob = Blob.fromJS(ctx.ptr(), value, true) catch |err| {
+            .Blob = Blob.fromJS(ctx.ptr(), value, true, false) catch |err| {
                 if (err == error.InvalidArguments) {
                     JSC.JSError(allocator, "Expected an Array", .{}, ctx, exception);
                     return body;
@@ -3724,7 +4510,7 @@ pub const Request = struct {
                 }
 
                 if (JSC.JSValue.fromRef(arguments[1]).get(ctx.ptr(), "body")) |body_| {
-                    if (Blob.fromJS(ctx.ptr(), body_, true)) |blob| {
+                    if (Blob.fromJS(ctx.ptr(), body_, true, false)) |blob| {
                         if (blob.size > 0) {
                             request.body = Body.Value{ .Blob = blob };
                         }

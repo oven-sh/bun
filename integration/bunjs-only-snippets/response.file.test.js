@@ -1,6 +1,58 @@
 import fs from "fs";
 import { it, expect } from "bun:test";
 import path from "path";
+
+it("Bun.write('out.txt', 'string')", async () => {
+  for (let erase of [true, false]) {
+    if (erase) {
+      try {
+        fs.unlinkSync(path.join("/tmp", "out.txt"));
+      } catch (e) {}
+    }
+
+    const out = await Bun.write("/tmp/out.txt", "string");
+    expect(await out.text()).toBe("string");
+    expect(await out.text()).toBe(fs.readFileSync("/tmp/out.txt", "utf8"));
+  }
+});
+
+it("Bun.file -> Bun.file", async () => {
+  try {
+    fs.unlinkSync(path.join("/tmp", "fetch.js.in"));
+  } catch (e) {}
+
+  try {
+    fs.unlinkSync(path.join("/tmp", "fetch.js.out"));
+  } catch (e) {}
+
+  const file = path.join(import.meta.dir, "fetch.js.txt");
+  const text = fs.readFileSync(file, "utf8");
+  fs.writeFileSync("/tmp/fetch.js.in", text, { mode: 0644 });
+  {
+    const result = await Bun.write(
+      Bun.file("/tmp/fetch.js.out"),
+      Bun.file("/tmp/fetch.js.in")
+    );
+    expect(await result.text()).toBe(text);
+  }
+
+  {
+    const result = await Bun.write(
+      Bun.file("/tmp/fetch.js.in").slice(0, (text.length / 2) | 0),
+      Bun.file("/tmp/fetch.js.out")
+    );
+    expect(await result.text()).toBe(text.substring(0, (text.length / 2) | 0));
+  }
+
+  {
+    const result = await Bun.write(
+      "/tmp/fetch.js.in",
+      Bun.file("/tmp/fetch.js.out")
+    );
+    expect(await result.text()).toBe(text);
+  }
+});
+
 it("Bun.file", async () => {
   const file = path.join(import.meta.dir, "fetch.js.txt");
   expect(await Bun.file(file).text()).toBe(fs.readFileSync(file, "utf8"));

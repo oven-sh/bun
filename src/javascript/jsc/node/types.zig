@@ -276,6 +276,12 @@ pub const PathLike = union(Tag) {
         return sliceZWithForceCopy(this, buf, false);
     }
 
+    pub inline fn sliceZAssume(
+        this: PathLike,
+    ) [:0]const u8 {
+        return std.meta.assumeSentinel(this.slice(), 0);
+    }
+
     pub fn toJS(this: PathLike, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
         return switch (this) {
             .string => this.string.toJS(ctx, exception),

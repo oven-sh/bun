@@ -273,7 +273,7 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
             }};
 
             pub fn onSendfile(this: *RequestContext) bool {
-                const adjusted_count_temporary = @minimum(@truncate(u64, this.sendfile.remain), @as(u63, std.math.maxInt(u63)));
+                const adjusted_count_temporary = @minimum(@as(u64, this.sendfile.remain), @as(u63, std.math.maxInt(u63)));
                 // TODO we should not need this int cast; improve the return type of `@minimum`
                 const adjusted_count = @intCast(u63, adjusted_count_temporary);
 

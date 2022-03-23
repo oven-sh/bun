@@ -427,8 +427,12 @@ pub const errno_map: [135]Errno = brk: {
     break :brk errors;
 };
 pub fn asError(err: anytype) Errno {
-    return switch (err) {
-        1...errno_map.len => errno_map[@intCast(u8, err)],
+    const errnum = if (@typeInfo(@TypeOf(err)) == .Enum)
+        @enumToInt(err)
+    else
+        err;
+    return switch (errnum) {
+        1...errno_map.len => errno_map[@intCast(u8, errnum)],
         else => error.Unexpected,
     };
 }

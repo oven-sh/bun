@@ -45,6 +45,13 @@ pub const FlavoredIO = struct {
     io: *AsyncIO,
 };
 
+pub const default_permission = Syscall.S.IRUSR |
+    Syscall.S.IWUSR |
+    Syscall.S.IRGRP |
+    Syscall.S.IWGRP |
+    Syscall.S.IROTH |
+    Syscall.S.IWOTH;
+
 const ArrayBuffer = JSC.MarkedArrayBuffer;
 const Buffer = JSC.Buffer;
 const FileSystemFlags = JSC.Node.FileSystemFlags;
@@ -947,7 +954,7 @@ const Arguments = struct {
     pub const Open = struct {
         path: PathLike,
         flags: FileSystemFlags = FileSystemFlags.@"r",
-        mode: Mode = 0o666,
+        mode: Mode = default_permission,
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Open {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
@@ -965,7 +972,7 @@ const Arguments = struct {
             if (exception.* != null) return null;
 
             var flags = FileSystemFlags.@"r";
-            var mode: Mode = 0o666;
+            var mode: Mode = default_permission;
 
             if (arguments.next()) |val| {
                 arguments.eat();
@@ -1471,7 +1478,7 @@ const Arguments = struct {
     pub const WriteFile = struct {
         encoding: Encoding = Encoding.utf8,
         flag: FileSystemFlags = FileSystemFlags.@"w",
-        mode: Mode = 0o666,
+        mode: Mode = 0666,
         file: PathOrFileDescriptor,
         data: StringOrBuffer,
 
@@ -1517,7 +1524,7 @@ const Arguments = struct {
 
             var encoding = Encoding.buffer;
             var flag = FileSystemFlags.@"w";
-            var mode: Mode = 0o666;
+            var mode: Mode = default_permission;
 
             if (arguments.next()) |arg| {
                 arguments.eat();
@@ -1746,7 +1753,7 @@ const Arguments = struct {
         file: PathOrFileDescriptor,
         flags: FileSystemFlags = FileSystemFlags.@"r",
         encoding: Encoding = Encoding.utf8,
-        mode: Mode = 0o666,
+        mode: Mode = default_permission,
         autoClose: bool = true,
         emitClose: bool = true,
         start: i32 = 0,
@@ -1881,7 +1888,7 @@ const Arguments = struct {
         file: PathOrFileDescriptor,
         flags: FileSystemFlags = FileSystemFlags.@"w",
         encoding: Encoding = Encoding.utf8,
-        mode: Mode = 0o666,
+        mode: Mode = default_permission,
         autoClose: bool = true,
         emitClose: bool = true,
         start: i32 = 0,
@@ -2565,13 +2572,27 @@ pub const NodeFS = struct {
                     }
 
                     var size = @intCast(usize, @maximum(stat_.size, 0));
-                    while (size > 0) {
-                        // Linux Kernel 5.3 or later
-                        const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, size, 0);
-                        if (ret.errnoSysP(written, .copy_file_range, dest)) |err| return err;
-                        // wrote zero bytes means EOF
-                        if (written == 0) break;
-                        size -|= written;
+
+                    if (size == 0) {
+                        // copy until EOF
+                        size = std.mem.page_size;
+                        while (true) {
+                            // Linux Kernel 5.3 or later
+                            const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, size, 0);
+                            if (ret.errnoSysP(written, .copy_file_range, dest)) |err| return err;
+                            // wrote zero bytes means EOF
+                            if (written == 0) break;
+                            size -|= written;
+                        }
+                    } else {
+                        while (size > 0) {
+                            // Linux Kernel 5.3 or later
+                            const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, size, 0);
+                            if (ret.errnoSysP(written, .copy_file_range, dest)) |err| return err;
+                            // wrote zero bytes means EOF
+                            if (written == 0) break;
+                            size -|= written;
+                        }
                     }
 
                     return ret.success;

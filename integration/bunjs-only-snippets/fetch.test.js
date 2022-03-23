@@ -293,17 +293,7 @@ describe("Response", () => {
       );
       expect(response.status).toBe(407);
     });
-    it("overrides the content-type header", () => {
-      var response = Response.json("hello", {
-        headers: {
-          "content-type": "potato",
-        },
-      });
-      expect(response.type).toBe("basic");
-      expect(response.headers.get("content-type")).toBe(
-        "application/json;charset=utf-8"
-      );
-    });
+
     it("supports headers", () => {
       var response = Response.json("hello", {
         headers: {
@@ -312,9 +302,7 @@ describe("Response", () => {
         },
         status: 408,
       });
-      expect(response.headers.get("content-type")).toBe(
-        "application/json;charset=utf-8"
-      );
+
       expect(response.headers.get("x-hello")).toBe("world");
       expect(response.status).toBe(408);
     });

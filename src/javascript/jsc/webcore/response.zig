@@ -3356,8 +3356,12 @@ pub const Blob = struct {
     }
 
     pub fn initWithAllASCII(bytes: []u8, allocator: std.mem.Allocator, globalThis: *JSGlobalObject, is_all_ascii: bool) Blob {
-        var store = Blob.Store.init(bytes, allocator) catch unreachable;
-        store.is_all_ascii = is_all_ascii;
+        // avoid allocating a Blob.Store if the buffer is actually empty
+        var store: ?*Blob.Store = null;
+        if (bytes.len > 0) {
+            store = Blob.Store.init(bytes, allocator) catch unreachable;
+            store.?.is_all_ascii = is_all_ascii;
+        }
         return Blob{
             .size = @truncate(SizeType, bytes.len),
             .store = store,
@@ -3371,7 +3375,10 @@ pub const Blob = struct {
     pub fn init(bytes: []u8, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) Blob {
         return Blob{
             .size = @truncate(SizeType, bytes.len),
-            .store = Blob.Store.init(bytes, allocator) catch unreachable,
+            .store = if (bytes.len > 0)
+                Blob.Store.init(bytes, allocator) catch unreachable
+            else
+                null,
             .allocator = null,
             .content_type = "",
             .globalThis = globalThis,
@@ -3793,7 +3800,7 @@ pub const Blob = struct {
                 => {
                     var sliced = top_value.toSlice(global, bun.default_allocator);
                     const is_all_ascii = !sliced.allocated;
-                    if (!sliced.allocated) {
+                    if (!sliced.allocated and sliced.len > 0) {
                         sliced.ptr = @ptrCast([*]const u8, (try bun.default_allocator.dupe(u8, sliced.slice())).ptr);
                         sliced.allocated = true;
                     }
@@ -4119,14 +4126,16 @@ pub const Body = struct {
         deinit: bool = false,
         action: Action = Action.none,
 
-        pub fn setPromise(value: *PendingValue, globalThis: *JSC.JSGlobalObject, action: Action) void {
+        pub fn setPromise(value: *PendingValue, globalThis: *JSC.JSGlobalObject, action: Action) JSValue {
             value.action = action;
             var promise = JSC.JSPromise.create(globalThis);
-            value.promise = promise.asValue(globalThis);
+            const promise_value = promise.asValue(globalThis);
+            value.promise = promise_value;
             if (value.onRequestData) |onRequestData| {
                 value.onRequestData = null;
                 onRequestData(value.task.?);
             }
+            return promise_value;
         }
 
         pub const Action = enum {
@@ -4732,8 +4741,7 @@ fn BlobInterface(comptime Type: type) type {
         ) js.JSValueRef {
             var value = this.getBodyValue();
             if (value.* == .Locked) {
-                value.Locked.setPromise(ctx.ptr(), .getText);
-                return value.Locked.promise.?.asObjectRef();
+                return value.Locked.setPromise(ctx.ptr(), .getText).asObjectRef();
             }
 
             var blob = this.body.use();
@@ -4750,8 +4758,7 @@ fn BlobInterface(comptime Type: type) type {
         ) js.JSValueRef {
             var value = this.getBodyValue();
             if (value.* == .Locked) {
-                value.Locked.setPromise(ctx.ptr(), .getJSON);
-                return value.Locked.promise.?.asObjectRef();
+                return value.Locked.setPromise(ctx.ptr(), .getJSON).asObjectRef();
             }
 
             var blob = this.body.use();
@@ -4768,8 +4775,7 @@ fn BlobInterface(comptime Type: type) type {
             var value = this.getBodyValue();
 
             if (value.* == .Locked) {
-                value.Locked.setPromise(ctx.ptr(), .getArrayBuffer);
-                return value.Locked.promise.?.asObjectRef();
+                return value.Locked.setPromise(ctx.ptr(), .getArrayBuffer).asObjectRef();
             }
 
             var blob = this.body.use();
@@ -4786,8 +4792,7 @@ fn BlobInterface(comptime Type: type) type {
         ) js.JSValueRef {
             var value = this.getBodyValue();
             if (value.* == .Locked) {
-                value.Locked.setPromise(ctx.ptr(), .getBlob);
-                return value.Locked.promise.?.asObjectRef();
+                return value.Locked.setPromise(ctx.ptr(), .getBlob).asObjectRef();
             }
 
             var blob = this.body.use();

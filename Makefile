@@ -437,7 +437,7 @@ build-obj-wasm-small:
 build-obj-safe: 
 	$(ZIG) build obj -Drelease-safe
 
-UWS_CC_FLAGS = -pthread -DLIBUS_USE_OPENSSL=1 -DLIBUS_USE_BORINGSSL=1 -DWITH_BORINGSSL=1 -Wpedantic -Wall -Wextra -Wsign-conversion -Wconversion -Isrc -IuSockets/src -DUWS_WITH_PROXY
+UWS_CC_FLAGS = -pthread -DUWS_HTTPRESPONSE_NO_WRITEMARK=1  -DLIBUS_USE_OPENSSL=1 -DLIBUS_USE_BORINGSSL=1 -DWITH_BORINGSSL=1 -Wpedantic -Wall -Wextra -Wsign-conversion -Wconversion -Isrc -IuSockets/src -DUWS_WITH_PROXY
 UWS_CXX_FLAGS = $(UWS_CC_FLAGS) -std=gnu++17
 UWS_LDFLAGS = -I$(BUN_DEPS_DIR)/boringssl/include
 

@@ -428,6 +428,10 @@ pub fn NewApp(comptime ssl: bool) type {
                 uws_res_end(ssl_flag, res.downcast(), data.ptr, data.len, close_connection);
             }
 
+            pub fn tryEnd(res: *Response, data: []const u8, total: usize) bool {
+                return uws_res_try_end(ssl_flag, res.downcast(), data.ptr, data.len, total);
+            }
+
             pub fn uncork(_: *Response) void {
                 // uws_res_uncork(
                 //     ssl_flag,
@@ -522,14 +526,14 @@ pub fn NewApp(comptime ssl: bool) type {
                             @call(.{ .modifier = .always_inline }, handler, .{
                                 void{},
                                 castRes(this),
-                                chunk_ptr[0..len],
+                                if (len > 0) chunk_ptr[0..len] else "",
                                 last,
                             });
                         } else {
                             @call(.{ .modifier = .always_inline }, handler, .{
                                 @ptrCast(UserDataType, @alignCast(@alignOf(UserDataType), user_data.?)),
                                 castRes(this),
-                                chunk_ptr[0..len],
+                                if (len > 0) chunk_ptr[0..len] else "",
                                 last,
                             });
                         }
@@ -673,6 +677,7 @@ extern fn uws_ws_get_remote_address_as_text(ssl: c_int, ws: ?*uws_websocket_t, d
 const uws_res = opaque {};
 extern fn uws_res_uncork(ssl: c_int, res: *uws_res) void;
 extern fn uws_res_end(ssl: c_int, res: *uws_res, data: [*c]const u8, length: usize, close_connection: bool) void;
+extern fn uws_res_try_end(ssl: c_int, res: *uws_res, data: [*c]const u8, length: usize, total: usize) bool;
 extern fn uws_res_pause(ssl: c_int, res: *uws_res) void;
 extern fn uws_res_resume(ssl: c_int, res: *uws_res) void;
 extern fn uws_res_write_continue(ssl: c_int, res: *uws_res) void;

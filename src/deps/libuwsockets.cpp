@@ -795,12 +795,10 @@ void uws_res_write_header_int(int ssl, uws_res_t *res, const char *key,
 void uws_res_end_without_body(int ssl, uws_res_t *res) {
   if (ssl) {
     uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-    uwsRes->setWriteOffset(0);
     uwsRes->endWithoutBody(0);
   } else {
 
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-    uwsRes->setWriteOffset(0);
     uwsRes->endWithoutBody(0);
   }
 }
@@ -1071,6 +1069,17 @@ void uws_res_cork(int ssl, uws_res_t *res, void *ctx,
   } else {
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
     uwsRes->cork([ctx, corker]() { corker(ctx); });
+  }
+}
+
+bool uws_res_try_end(int ssl, uws_res_t *res, const char *bytes, size_t len,
+                     size_t total_len) {
+  if (ssl) {
+    uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+    return uwsRes->tryEnd(std::string_view(bytes, len), total_len).first;
+  } else {
+    uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+    return uwsRes->tryEnd(std::string_view(bytes, len), total_len).first;
   }
 }
 

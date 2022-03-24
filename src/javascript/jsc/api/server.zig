@@ -277,7 +277,6 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                 const names = entries.items(.name);
                 const values = entries.items(.value);
 
-                this.resp.writeHeaderInt("content-length", this.blob.size);
                 this.resp.writeHeaders(names, values, headers.buf.items);
             }
 
@@ -366,6 +365,22 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                 return true;
             }
 
+            pub fn onWritableBytes(this: *RequestContext, write_offset: c_ulong, resp: *App.Response) callconv(.C) bool {
+                if (this.aborted)
+                    return false;
+
+                var bytes = this.blob.sharedView();
+
+                bytes = bytes[@minimum(bytes.len, @truncate(usize, write_offset))..];
+                if (resp.tryEnd(bytes, this.blob.size)) {
+                    this.finalize();
+                    return true;
+                } else {
+                    this.resp.onWritable(*RequestContext, onWritableBytes, this);
+                    return true;
+                }
+            }
+
             pub fn onWritableSendfile(this: *RequestContext, _: c_ulong, _: *App.Response) callconv(.C) bool {
                 return this.onSendfile();
             }
@@ -389,24 +404,14 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                     return;
                 };
                 this.blob.size = size_;
-                const code = this.response_ptr.?.statusCode();
-                if (size_ == 0 and code >= 200 and code < 300) {
-                    this.writeStatus(204);
-                } else {
-                    this.writeStatus(code);
-                }
-
-                if (this.response_ptr.?.body.init.headers) |headers_| {
-                    this.writeHeaders(headers_);
-                } else {
-                    this.resp.writeHeaderInt("content-length", size_);
-                }
 
                 this.sendfile = .{
                     .fd = fd,
                     .remain = size_, // 2 is for \r\n,
                     .socket_fd = this.resp.getNativeHandle(),
                 };
+
+                this.resp.runCorked(*RequestContext, renderMetadata, this);
 
                 if (size_ == 0) {
                     this.cleanupAfterSendfile();
@@ -460,31 +465,47 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                     }
                 }
 
-                this.renderBytes(response);
+                if (this.has_abort_handler)
+                    this.resp.runCorked(*RequestContext, renderMetadata, this)
+                else
+                    this.renderMetadata();
+
+                this.renderBytes();
             }
 
-            pub fn renderBytes(this: *RequestContext, response: *JSC.WebCore.Response) void {
-                const status = response.statusCode();
+            pub fn renderMetadata(this: *RequestContext) void {
+                var response: *JSC.WebCore.Response = this.response_ptr.?;
+                var status = response.statusCode();
+                const size = this.blob.size;
+                status = if (status == 200 and size == 0)
+                    204
+                else
+                    status;
 
                 this.writeStatus(status);
 
                 if (response.body.init.headers) |headers_| {
                     this.writeHeaders(headers_);
                 }
+            }
 
-                if (status == 302 or status == 202 or this.blob.size == 0) {
-                    this.resp.endWithoutBody();
-                    this.finalize();
+            pub fn renderBytes(this: *RequestContext) void {
+                const bytes = this.blob.sharedView();
+
+                if (!this.resp.tryEnd(
+                    bytes,
+                    bytes.len,
+                )) {
+                    this.resp.onWritable(*RequestContext, onWritableBytes, this);
                     return;
                 }
 
-                this.resp.end(this.blob.sharedView(), false);
                 this.finalize();
             }
 
             pub fn render(this: *RequestContext, response: *JSC.WebCore.Response) void {
                 this.response_ptr = response;
-                // this.resp.runCorked(*RequestContext, doRender, this);
+
                 this.doRender();
             }
 
@@ -495,7 +516,10 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                     var bytes = this.request_body_buf.toOwnedSlice(bun.default_allocator);
                     var old = req.body;
                     req.body = .{
-                        .Blob = Blob.init(bytes, bun.default_allocator, this.server.globalThis),
+                        .Blob = if (bytes.len > 0)
+                            Blob.init(bytes, bun.default_allocator, this.server.globalThis)
+                        else
+                            Blob.initEmpty(this.server.globalThis),
                     };
                     old.resolve(&req.body, this.server.globalThis);
                     VirtualMachine.vm.tick();

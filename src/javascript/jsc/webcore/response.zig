@@ -4111,9 +4111,23 @@ pub const Body = struct {
         promise: ?JSValue = null,
         global: *JSGlobalObject,
         task: ?*anyopaque = null,
+        /// runs after the data is available.
         callback: ?fn (ctx: *anyopaque, value: *Value) void = null,
+        /// conditionally runs when requesting data
+        /// used in HTTP server to ignore request bodies unless asked for it
+        onRequestData: ?fn (ctx: *anyopaque) void = null,
         deinit: bool = false,
         action: Action = Action.none,
+
+        pub fn setPromise(value: *PendingValue, globalThis: *JSC.JSGlobalObject, action: Action) void {
+            value.action = action;
+            var promise = JSC.JSPromise.create(globalThis);
+            value.promise = promise.asValue(globalThis);
+            if (value.onRequestData) |onRequestData| {
+                value.onRequestData = null;
+                onRequestData(value.task.?);
+            }
+        }
 
         pub const Action = enum {
             none,
@@ -4150,6 +4164,7 @@ pub const Body = struct {
                 }
 
                 if (locked.promise) |promise| {
+                    locked.promise = null;
                     var blob = new.use();
 
                     switch (locked.action) {
@@ -4177,7 +4192,6 @@ pub const Body = struct {
                         },
                     }
                     JSC.C.JSValueUnprotect(global.ref(), promise.asObjectRef());
-                    locked.promise = null;
                 }
             }
         }
@@ -4718,9 +4732,7 @@ fn BlobInterface(comptime Type: type) type {
         ) js.JSValueRef {
             var value = this.getBodyValue();
             if (value.* == .Locked) {
-                value.Locked.action = .getText;
-                var promise = JSC.JSPromise.create(ctx.ptr());
-                value.Locked.promise = promise.asValue(ctx.ptr());
+                value.Locked.setPromise(ctx.ptr(), .getText);
                 return value.Locked.promise.?.asObjectRef();
             }
 
@@ -4738,9 +4750,7 @@ fn BlobInterface(comptime Type: type) type {
         ) js.JSValueRef {
             var value = this.getBodyValue();
             if (value.* == .Locked) {
-                value.Locked.action = .getJSON;
-                var promise = JSC.JSPromise.create(ctx.ptr());
-                value.Locked.promise = promise.asValue(ctx.ptr());
+                value.Locked.setPromise(ctx.ptr(), .getJSON);
                 return value.Locked.promise.?.asObjectRef();
             }
 
@@ -4758,9 +4768,7 @@ fn BlobInterface(comptime Type: type) type {
             var value = this.getBodyValue();
 
             if (value.* == .Locked) {
-                value.Locked.action = .getArrayBuffer;
-                var promise = JSC.JSPromise.create(ctx.ptr());
-                value.Locked.promise = promise.asValue(ctx.ptr());
+                value.Locked.setPromise(ctx.ptr(), .getArrayBuffer);
                 return value.Locked.promise.?.asObjectRef();
             }
 
@@ -4778,9 +4786,7 @@ fn BlobInterface(comptime Type: type) type {
         ) js.JSValueRef {
             var value = this.getBodyValue();
             if (value.* == .Locked) {
-                value.Locked.action = .getBlob;
-                var promise = JSC.JSPromise.create(ctx.ptr());
-                value.Locked.promise = promise.asValue(ctx.ptr());
+                value.Locked.setPromise(ctx.ptr(), .getBlob);
                 return value.Locked.promise.?.asObjectRef();
             }
 

@@ -91,7 +91,8 @@ const linux = std.os.linux;
 
 pub const ServerConfig = struct {
     port: u16 = 0,
-    hostnames: std.ArrayList([*:0]const u8) = .{},
+    hostnames: std.ArrayListUnmanaged([*:0]const u8) = .{},
+    max_request_body_size: usize = 1024 * 1024 * 128,
 };
 
 pub fn NewServer(comptime ssl_enabled: bool) type {
@@ -108,7 +109,7 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
         globalThis: *JSGlobalObject,
         default_server: URL = URL{ .host = "localhost", .port = "3000" },
         response_objects_pool: JSC.WebCore.Response.Pool = JSC.WebCore.Response.Pool{},
-
+        config: ServerConfig = ServerConfig{},
         request_pool_allocator: std.mem.Allocator = undefined,
 
         pub fn init(port: u16, callback: JSC.JSValue, globalThis: *JSGlobalObject) *ThisServer {
@@ -152,6 +153,8 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
             has_sendfile_ctx: bool = false,
             sendfile: SendfileContext = undefined,
             request_js_object: JSC.C.JSObjectRef = null,
+            request_body_buf: std.ArrayListUnmanaged(u8) = .{},
+
             pub threadlocal var pool: *RequestContextStackAllocator = undefined;
 
             pub fn setAbortHandler(this: *RequestContext) void {
@@ -177,7 +180,8 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                 }
 
                 var response = arguments[0].as(JSC.WebCore.Response) orelse {
-                    Output.prettyErrorln("Expected serverless to return a Response", .{});
+                    Output.prettyErrorln("Expected a Response object", .{});
+                    Output.flush();
                     ctx.req.setYield(true);
                     ctx.finalize();
                     return;
@@ -190,12 +194,13 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                 _: *JSC.JSGlobalObject,
                 arguments: []const JSC.JSValue,
             ) void {
+                JSC.VirtualMachine.vm.defaultErrorHandler(arguments[0], null);
+
                 if (ctx.aborted) {
                     ctx.finalize();
                     return;
                 }
 
-                JSC.VirtualMachine.vm.defaultErrorHandler(arguments[0], null);
                 ctx.req.setYield(true);
                 ctx.finalize();
             }
@@ -212,22 +217,31 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
 
             pub fn onAbort(this: *RequestContext, _: *App.Response) void {
                 this.aborted = true;
-                this.req = undefined;
-                if (!this.response_jsvalue.isEmpty()) {
-                    this.server.response_objects_pool.push(this.server.globalThis, this.response_jsvalue);
-                    this.response_jsvalue = JSC.JSValue.zero;
-                }
+                this.finalizeWithoutDeinit();
             }
 
-            pub fn finalize(this: *RequestContext) void {
+            // This function may be called multiple times
+            // so it's important that we can safely do that
+            pub fn finalizeWithoutDeinit(this: *RequestContext) void {
                 this.blob.detach();
+                this.request_body_buf.clearAndFree(bun.default_allocator);
+
                 if (!this.response_jsvalue.isEmpty()) {
                     this.server.response_objects_pool.push(this.server.globalThis, this.response_jsvalue);
                     this.response_jsvalue = JSC.JSValue.zero;
                 }
 
                 if (this.request_js_object != null) {
+                    // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
+                    // but we received nothing
                     if (JSC.JSValue.fromRef(this.request_js_object).as(Request)) |req| {
+                        if (req.body == .Locked and req.body.Locked.action != .none and req.body.Locked.promise != null) {
+                            var old_body = req.body;
+                            req.body = JSC.WebCore.Body.Value.empty;
+                            old_body.Locked.callback = null;
+                            old_body.resolve(&req.body, this.server.globalThis);
+                            VirtualMachine.vm.tick();
+                        }
                         req.uws_request = null;
                         JSC.C.JSValueUnprotect(this.server.globalThis.ref(), this.request_js_object);
                         this.request_js_object = null;
@@ -243,6 +257,9 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                     this.response_headers.?.deref();
                     this.response_headers = null;
                 }
+            }
+            pub fn finalize(this: *RequestContext) void {
+                this.finalizeWithoutDeinit();
 
                 this.server.request_pool_allocator.destroy(this);
             }
@@ -469,6 +486,76 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                 // this.resp.runCorked(*RequestContext, doRender, this);
                 this.doRender();
             }
+
+            pub fn resolveRequestBody(this: *RequestContext) void {
+                if (this.aborted)
+                    return;
+                if (JSC.JSValue.fromRef(this.request_js_object).as(Request)) |req| {
+                    var bytes = this.request_body_buf.toOwnedSlice(bun.default_allocator);
+                    var old = req.body;
+                    req.body = .{
+                        .Blob = Blob.init(bytes, bun.default_allocator, this.server.globalThis),
+                    };
+                    old.resolve(&req.body, this.server.globalThis);
+                    VirtualMachine.vm.tick();
+                    return;
+                }
+            }
+
+            pub fn onBodyChunk(this: *RequestContext, _: *App.Response, chunk: []const u8, last: bool) void {
+                if (this.aborted) return;
+                this.request_body_buf.appendSlice(bun.default_allocator, chunk) catch @panic("Out of memory while allocating request body");
+
+                if (last) {
+                    if (JSC.JSValue.fromRef(this.request_js_object).as(Request) != null) {
+                        uws.Loop.get().?.nextTick(*RequestContext, this, resolveRequestBody);
+                    } else {
+                        this.request_body_buf.deinit(bun.default_allocator);
+                        this.request_body_buf = .{};
+                    }
+                }
+            }
+
+            pub fn onRequestData(this: *RequestContext) void {
+                if (this.req.header("content-length")) |content_length| {
+                    const len = std.fmt.parseInt(usize, content_length, 10) catch 0;
+                    if (len == 0) {
+                        if (JSC.JSValue.fromRef(this.request_js_object).as(Request)) |req| {
+                            var old = req.body;
+                            old.Locked.callback = null;
+                            req.body = .{ .Empty = .{} };
+                            old.resolve(&req.body, this.server.globalThis);
+                            VirtualMachine.vm.tick();
+                            return;
+                        }
+                    }
+
+                    if (len >= this.server.config.max_request_body_size) {
+                        if (JSC.JSValue.fromRef(this.request_js_object).as(Request)) |req| {
+                            var old = req.body;
+                            old.Locked.callback = null;
+                            req.body = .{ .Empty = .{} };
+                            old.toError(error.RequestBodyTooLarge, this.server.globalThis);
+                            VirtualMachine.vm.tick();
+                            return;
+                        }
+
+                        this.resp.writeStatus("413 Request Entity Too Large");
+                        this.resp.endWithoutBody();
+                        this.finalize();
+                        return;
+                    }
+
+                    this.request_body_buf.ensureTotalCapacityPrecise(bun.default_allocator, len) catch @panic("Out of memory while allocating request body buffer");
+                }
+                this.setAbortHandler();
+
+                this.resp.onData(*RequestContext, onBodyChunk, this);
+            }
+
+            pub fn onRequestDataCallback(this: *anyopaque) void {
+                onRequestData(bun.cast(*RequestContext, this));
+            }
         };
 
         pub fn onRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
@@ -481,6 +568,13 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                 .url = JSC.ZigString.init(ctx.url),
                 .method = ctx.method,
                 .uws_request = req,
+                .body = .{
+                    .Locked = .{
+                        .task = ctx,
+                        .global = this.globalThis,
+                        .onRequestData = RequestContext.onRequestDataCallback,
+                    },
+                },
             };
             // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
             var args = [_]JSC.C.JSValueRef{JSC.WebCore.Request.Class.make(this.globalThis.ref(), request_object)};
@@ -494,7 +588,7 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                 return;
             }
 
-            if (ctx.response_jsvalue.isUndefinedOrNull()) {
+            if (ctx.response_jsvalue.isUndefinedOrNull() or ctx.response_jsvalue.isError() or ctx.response_jsvalue.isAggregateError(this.globalThis) or ctx.response_jsvalue.isException(this.globalThis.vm())) {
                 req.setYield(true);
                 ctx.finalize();
                 return;

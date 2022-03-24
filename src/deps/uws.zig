@@ -158,13 +158,15 @@ pub const Request = opaque {
         var ptr: [*]const u8 = undefined;
         return ptr[0..req.uws_req_get_method(&ptr)];
     }
-    pub fn header(req: *Request, name: []const u8) []const u8 {
+    pub fn header(req: *Request, name: []const u8) ?[]const u8 {
         var ptr: [*]const u8 = undefined;
-        return ptr[0..req.uws_req_get_header(req, name.ptr, name.len, &ptr)];
+        const len = req.uws_req_get_header(name.ptr, name.len, &ptr);
+        if (len == 0) return null;
+        return ptr[0..len];
     }
     pub fn query(req: *Request, name: []const u8) []const u8 {
         var ptr: [*]const u8 = undefined;
-        return ptr[0..req.uws_req_get_query(req, name.ptr, name.len, &ptr)];
+        return ptr[0..req.uws_req_get_query(name.ptr, name.len, &ptr)];
     }
     pub fn parameter(req: *Request, index: u16) []const u8 {
         var ptr: [*]const u8 = undefined;
@@ -173,7 +175,7 @@ pub const Request = opaque {
 
     pub fn cloneHeaders(
         req: *Request,
-       ctx: *anyopaque,
+        ctx: *anyopaque,
     ) void {
         uws_req_clone_headers(req, ctx);
     }
@@ -190,7 +192,7 @@ pub const Request = opaque {
     extern fn uws_req_set_field(res: *Request, yield: bool) void;
     extern fn uws_req_get_url(res: *Request, dest: *[*]const u8) usize;
     extern fn uws_req_get_method(res: *Request, dest: *[*]const u8) usize;
-    extern fn uws_req_get_header(res: *Request, lower_case_header: *[*]const u8, lower_case_header_length: usize, dest: *[*]const u8) usize;
+    extern fn uws_req_get_header(res: *Request, lower_case_header: [*]const u8, lower_case_header_length: usize, dest: *[*]const u8) usize;
     extern fn uws_req_get_query(res: *Request, key: [*c]const u8, key_length: usize, dest: *[*]const u8) usize;
     extern fn uws_req_get_parameter(res: *Request, index: c_ushort, dest: *[*]const u8) usize;
 };
@@ -511,7 +513,7 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn onData(
                 res: *Response,
                 comptime UserDataType: type,
-                comptime handler: fn (*Response, chunk: []const u8, last: bool, UserDataType) void,
+                comptime handler: fn (UserDataType, *Response, chunk: []const u8, last: bool) void,
                 opcional_data: UserDataType,
             ) void {
                 const Wrapper = struct {

@@ -42,6 +42,7 @@ const Task = @import("../javascript.zig").Task;
 const JSPrinter = @import("../../../js_printer.zig");
 const picohttp = @import("picohttp");
 const StringJoiner = @import("../../../string_joiner.zig");
+const uws = @import("uws");
 pub const Response = struct {
     pub const Pool = struct {
         response_objects_pool: [127]JSC.C.JSObjectRef = undefined,
@@ -1043,6 +1044,24 @@ pub const Headers = struct {
         headers.entries.deinit(headers.allocator);
     }
 
+    pub fn clonefromUWSRequest(headers: *Headers, req: *uws.Request) void {
+        req.cloneHeaders(headers);
+    }
+
+    pub fn preallocate(this: *Headers, buf_size: usize, header_count: usize) callconv(.C) void {
+        this.buf.ensureTotalCapacityPrecise(this.allocator, buf_size) catch unreachable;
+        this.entries.ensureTotalCapacity(this.allocator, header_count) catch unreachable;
+    }
+
+    comptime {
+        if (!JSC.is_bindgen) {
+            // Initially, these were function pointers
+            // However, some Zig Stage1 C ABI bug causes EXC_BAD_ACCESS
+            @export(preallocate, .{ .name = "Headers__preallocate" });
+            @export(appendHeaderNormalizedC, .{ .name = "Headers__appendHeaderNormalized" });
+        }
+    }
+
     pub fn empty(allocator: std.mem.Allocator) Headers {
         return Headers{
             .entries = .{},
@@ -1484,6 +1503,16 @@ pub const Headers = struct {
         }
 
         return null;
+    }
+
+    pub fn appendHeaderNormalizedC(
+        headers: *Headers,
+        key: [*]const u8,
+        key_len: usize,
+        value: [*]const u8,
+        value_len: usize,
+    ) callconv(.C) void {
+        headers.appendHeader(key[0..key_len], value[0..value_len], false, false);
     }
 
     pub fn appendHeader(
@@ -4318,6 +4347,7 @@ pub const Request = struct {
     headers: ?*Headers.RefCountedHeaders = null,
     body: Body.Value = Body.Value{ .Empty = .{} },
     method: Method = Method.GET,
+    uws_request: ?*uws.Request = null,
 
     pub fn fromRequestContext(ctx: *RequestContext) !Request {
         var req = Request{
@@ -4367,17 +4397,24 @@ pub const Request = struct {
             .name = "Request",
             .read_only = true,
         },
-        .{ .finalize = finalize, .text = .{
-            .rfn = Request.getText,
-        }, .json = .{
-            .rfn = Request.getJSON,
-        }, .arrayBuffer = .{
-            .rfn = Request.getArrayBuffer,
-        }, .blob = .{
-            .rfn = Request.getBlob,
-        }, .clone = .{
-            .rfn = Request.doClone,
-        } },
+        .{
+            .finalize = finalize,
+            .text = .{
+                .rfn = Request.getText,
+            },
+            .json = .{
+                .rfn = Request.getJSON,
+            },
+            .arrayBuffer = .{
+                .rfn = Request.getArrayBuffer,
+            },
+            .blob = .{
+                .rfn = Request.getBlob,
+            },
+            .clone = .{
+                .rfn = Request.doClone,
+            },
+        },
         .{
             .@"cache" = .{
                 .@"get" = getCache,
@@ -4636,6 +4673,11 @@ pub const Request = struct {
     ) js.JSValueRef {
         if (this.headers == null) {
             this.headers = Headers.RefCountedHeaders.init(Headers.empty(bun.default_allocator), bun.default_allocator) catch unreachable;
+
+            if (this.uws_request) |req| {
+                this.headers.?.value.allocator = bun.default_allocator;
+                this.headers.?.value.clonefromUWSRequest(req);
+            }
         }
 
         return Headers.Class.make(ctx, this.headers.?.getRef());
@@ -4645,11 +4687,15 @@ pub const Request = struct {
         req.* = Request{
             .body = this.body.clone(allocator),
             .url = ZigString.init(allocator.dupe(u8, this.url.slice()) catch unreachable),
+            .method = this.method,
         };
         if (this.headers) |head| {
             var new_headers = Headers.RefCountedHeaders.init(undefined, allocator) catch unreachable;
             head.leak().clone(&new_headers.value) catch unreachable;
             req.headers = new_headers;
+        } else if (this.uws_request) |uws_req| {
+            req.headers = Headers.RefCountedHeaders.init(Headers.empty(allocator), allocator) catch unreachable;
+            req.headers.?.value.clonefromUWSRequest(uws_req);
         }
     }
 

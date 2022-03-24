@@ -87,6 +87,12 @@ const SendfileContext = struct {
     has_listener: bool = false,
     has_set_on_writable: bool = false,
 };
+const linux = std.os.linux;
+
+pub const ServerConfig = struct {
+    port: u16 = 0,
+    hostnames: std.ArrayList([*:0]const u8) = .{},
+};
 
 pub fn NewServer(comptime ssl_enabled: bool) type {
     return struct {
@@ -145,6 +151,7 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
             has_abort_handler: bool = false,
             has_sendfile_ctx: bool = false,
             sendfile: SendfileContext = undefined,
+            request_js_object: JSC.C.JSObjectRef = null,
             pub threadlocal var pool: *RequestContextStackAllocator = undefined;
 
             pub fn setAbortHandler(this: *RequestContext) void {
@@ -219,6 +226,14 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                     this.response_jsvalue = JSC.JSValue.zero;
                 }
 
+                if (this.request_js_object != null) {
+                    if (JSC.JSValue.fromRef(this.request_js_object).as(Request)) |req| {
+                        req.uws_request = null;
+                        JSC.C.JSValueUnprotect(this.server.globalThis.ref(), this.request_js_object);
+                        this.request_js_object = null;
+                    }
+                }
+
                 if (this.promise != null) {
                     JSC.C.JSValueUnprotect(this.server.globalThis.ref(), this.promise.?.asObjectRef());
                     this.promise = null;
@@ -281,10 +296,11 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                     var signed_offset = @intCast(i64, this.sendfile.offset);
                     const start = this.sendfile.offset;
                     const val =
-                        std.os.linux.sendfile(this.sendfile.socket_fd, this.sendfile.fd, &signed_offset, this.sendfile.remain);
+                        // this does the syscall directly, without libc
+                        linux.sendfile(this.sendfile.socket_fd, this.sendfile.fd, &signed_offset, this.sendfile.remain);
                     this.sendfile.offset = @intCast(Blob.SizeType, signed_offset);
 
-                    const errcode = std.os.linux.getErrno(val);
+                    const errcode = linux.getErrno(val);
 
                     this.sendfile.remain -= @intCast(Blob.SizeType, this.sendfile.offset - start);
 
@@ -299,17 +315,6 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                 } else {
                     var sbytes: std.os.off_t = adjusted_count;
                     const signed_offset = @bitCast(i64, @as(u64, this.sendfile.offset));
-
-                    // var sf_hdr_trailer: std.os.darwin.sf_hdtr = .{
-                    //     .headers = &separator_iovec,
-                    //     .hdr_cnt = 1,
-                    //     .trailers = undefined,
-                    //     .trl_cnt = 0,
-                    // };
-                    // const headers = if (this.sendfile.offset == 0)
-                    //     &sf_hdr_trailer
-                    // else
-                    //     null;
 
                     const errcode = std.c.getErrno(std.c.sendfile(
                         this.sendfile.fd,
@@ -337,8 +342,9 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                     this.sendfile.has_set_on_writable = true;
                     this.resp.onWritable(*RequestContext, onWritableSendfile, this);
                 }
-                if (comptime !ssl_enabled)
-                    this.resp.markNeedsMore();
+
+                this.resp.markNeedsMore();
+
                 return true;
             }
 
@@ -415,6 +421,7 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                 }
                 var response = this.response_ptr.?;
                 var body = &response.body;
+                this.blob = response.body.use();
 
                 if (body.value == .Error) {
                     this.resp.writeStatus("500 Internal Server Error");
@@ -428,7 +435,6 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
 
                 if (body.value == .Blob) {
                     if (body.value.Blob.needsToReadFile()) {
-                        this.blob = response.body.use();
                         this.req.setYield(false);
                         this.setAbortHandler();
                         if (!this.has_sendfile_ctx) this.renderSendFile(this.blob);
@@ -474,8 +480,12 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
             request_object.* = .{
                 .url = JSC.ZigString.init(ctx.url),
                 .method = ctx.method,
+                .uws_request = req,
             };
+            // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
             var args = [_]JSC.C.JSValueRef{JSC.WebCore.Request.Class.make(this.globalThis.ref(), request_object)};
+            ctx.request_js_object = args[0];
+            JSC.C.JSValueProtect(this.globalThis.ref(), args[0]);
             ctx.response_jsvalue = JSC.C.JSObjectCallAsFunctionReturnValue(this.globalThis.ref(), this.callback.asObjectRef(), null, 1, &args);
             defer JSC.VirtualMachine.vm.tick();
             if (ctx.aborted) {

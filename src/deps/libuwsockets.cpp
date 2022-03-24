@@ -897,7 +897,7 @@ void uws_req_set_field(uws_req_t *res, bool yield) {
 
 size_t uws_req_get_url(uws_req_t *res, const char **dest) {
   uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
-  std::string_view value = uwsReq->getUrl();
+  std::string_view value = uwsReq->getFullUrl();
   *dest = value.data();
   return value.length();
 }
@@ -1005,12 +1005,43 @@ void uws_res_write_headers(int ssl, uws_res_t *res, const StringPointer *names,
   }
 }
 
+extern "C" void Headers__preallocate(void *ctx, size_t len,
+                                     size_t header_count);
+extern "C" void Headers__appendHeaderNormalized(void *ctx, const char *name,
+                                                size_t name_length,
+                                                const char *value,
+                                                size_t value_length);
+
+void uws_req_clone_headers(uws_req_t *req_, void *ctx) {
+
+  size_t buffer_len = 0;
+  size_t header_count = 0;
+
+  uWS::HttpRequest *req = (uWS::HttpRequest *)req_;
+  uWS::HttpRequest iterator = *req;
+
+  for (const auto &header : iterator) {
+    buffer_len += header.first.length() + header.second.length();
+    header_count++;
+  }
+
+  Headers__preallocate(ctx, buffer_len, header_count);
+
+  for (const auto &header : iterator) {
+    Headers__appendHeaderNormalized(ctx, header.first.data(),
+                                    header.first.length(), header.second.data(),
+                                    header.second.length());
+  }
+}
+
 void uws_res_uncork(int ssl, uws_res_t *res) {
   // if (ssl) {
-  //   uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+  //   uWS::HttpResponse<true> *uwsRes =
+  //   (uWS::HttpResponse<true> *)res;
   //   uwsRes->uncork();
   // } else {
-  //   uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+  //   uWS::HttpResponse<false> *uwsRes =
+  //   (uWS::HttpResponse<false> *)res;
   //   uwsRes->uncork();
   // }
 }

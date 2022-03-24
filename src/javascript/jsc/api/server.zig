@@ -294,7 +294,8 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
             fn cleanupAfterSendfile(this: *RequestContext) void {
                 this.resp.setWriteOffset(this.sendfile.offset);
                 this.resp.endWithoutBody();
-                std.os.close(this.sendfile.fd);
+                // use node syscall so that we don't segfault on BADF
+                _ = JSC.Node.Syscall.close(this.sendfile.fd);
                 this.sendfile = undefined;
                 this.finalize();
             }

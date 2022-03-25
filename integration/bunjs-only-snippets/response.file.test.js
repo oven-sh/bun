@@ -2,6 +2,14 @@ import fs from "fs";
 import { it, expect } from "bun:test";
 import path from "path";
 
+it("Bun.file not found returns ENOENT", async () => {
+  try {
+    await Bun.file("/does/not/exist.txt").text();
+  } catch (exception) {
+    expect(exception.code).toBe("ENOENT");
+  }
+});
+
 it("Bun.write('out.txt', 'string')", async () => {
   for (let erase of [true, false]) {
     if (erase) {

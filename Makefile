@@ -573,7 +573,7 @@ jsc-bindings-headers:
 	touch src/javascript/jsc/bindings/headers.zig
 	mkdir -p src/javascript/jsc/bindings-obj/
 	$(ZIG) build headers-obj
-	$(CXX) $(PLATFORM_LINKER_FLAGS) -g $(DEBUG_BIN)/headers.o -W -o /tmp/build-jsc-headers $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES);
+	$(CXX) $(PLATFORM_LINKER_FLAGS) $(JSC_FILES) ${ICU_FLAGS} $(BUN_LLD_FLAGS_WITHOUT_JSC) -g $(DEBUG_BIN)/headers.o -W -o /tmp/build-jsc-headers -lc;
 	/tmp/build-jsc-headers
 	$(ZIG) translate-c src/javascript/jsc/bindings/headers.h > src/javascript/jsc/bindings/headers.zig
 	$(ZIG) run misctools/headers-cleaner.zig -lc
@@ -589,6 +589,7 @@ jsc-bindings-headers:
 	cat src/javascript/jsc/bindings/headers.zig > /tmp/headers.zig
 	cat src/javascript/jsc/bindings/headers-replacements.zig /tmp/headers.zig > src/javascript/jsc/bindings/headers.zig
 	$(ZIG) fmt src/javascript/jsc/bindings/headers.zig
+	clang-format -i src/javascript/jsc/bindings/*.{cpp,h}
 	
 
 MIMALLOC_OVERRIDE_FLAG ?= 

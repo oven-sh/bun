@@ -636,7 +636,6 @@ pub fn NewPrinter(
             }
         }
 
-        //
         fn printBunJestImportStatement(p: *Printer, import: S.Import) void {
             p.print("const ");
 

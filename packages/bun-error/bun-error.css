@@ -33,6 +33,17 @@
     Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
 }
 
+.BunErrorRoot--FullPage #BunErrorOverlay-container {
+  position: static;
+  top: unset;
+  right: unset;
+  margin: 60px auto;
+}
+
+.BunError-error-message--quoted {
+  color: rgb(25, 46, 9);
+}
+
 :host a {
   color: inherit;
 }

@@ -119,3 +119,27 @@ pub fn crash() noreturn {
 
 const Global = @This();
 const string = @import("./global.zig").string;
+
+pub const BunInfo = struct {
+    bun_version: string,
+    platform: Analytics.GenerateHeader.GeneratePlatform.Platform = undefined,
+    framework: string = "",
+    framework_version: string = "",
+
+    const Analytics = @import("./analytics/analytics_thread.zig");
+    const JSON = @import("./json_parser.zig");
+    const JSAst = @import("./js_ast.zig");
+    pub fn generate(comptime Bundler: type, bundler: Bundler, allocator: std.mem.Allocator) !JSAst.Expr {
+        var info = BunInfo{
+            .bun_version = Global.package_json_version,
+            .platform = Analytics.GenerateHeader.GeneratePlatform.forOS(),
+        };
+
+        if (bundler.options.framework) |framework| {
+            info.framework = framework.package;
+            info.framework_version = framework.version;
+        }
+
+        return try JSON.toAST(allocator, BunInfo, info);
+    }
+};

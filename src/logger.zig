@@ -491,6 +491,12 @@ pub const Log = struct {
     msgs: ArrayList(Msg),
     level: Level = if (Environment.isDebug) Level.info else Level.warn,
 
+    pub fn reset(this: *Log) void {
+        this.msgs.clearRetainingCapacity();
+        this.warnings = 0;
+        this.errors = 0;
+    }
+
     pub var default_log_level = if (Environment.isDebug) Level.info else Level.warn;
 
     pub fn hasAny(this: *const Log) bool {

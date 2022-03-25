@@ -943,9 +943,6 @@ pub fn NewClassWithInstanceType(
         const class_definition_ptr = &complete_definition;
 
         pub fn get() callconv(.C) [*c]js.JSClassRef {
-            if (comptime JSC.is_bindgen)
-                unreachable;
-
             var lazy = lazy_ref;
 
             if (!lazy.loaded) {
@@ -977,9 +974,6 @@ pub fn NewClassWithInstanceType(
         }
 
         pub fn make(ctx: js.JSContextRef, ptr: *ZigType) js.JSObjectRef {
-            if (comptime JSC.is_bindgen)
-                unreachable;
-
             var real_ptr = JSPrivateDataPtr.init(ptr).ptr();
             if (comptime Environment.allow_assert) {
                 std.debug.assert(JSPrivateDataPtr.isValidPtr(real_ptr));
@@ -1030,9 +1024,6 @@ pub fn NewClassWithInstanceType(
                     prop: js.JSStringRef,
                     exception: js.ExceptionRef,
                 ) callconv(.C) js.JSValueRef {
-                    if (comptime JSC.is_bindgen)
-                        unreachable;
-
                     var this: ObjectPtrType(ZigType) = if (comptime ZigType == void) void{} else GetJSPrivateData(ZigType, obj) orelse return js.JSValueMakeUndefined(ctx);
 
                     const Field = @TypeOf(@field(
@@ -1104,9 +1095,6 @@ pub fn NewClassWithInstanceType(
                     value: js.JSValueRef,
                     exception: js.ExceptionRef,
                 ) callconv(.C) bool {
-                    if (comptime JSC.is_bindgen)
-                        unreachable;
-
                     var this = GetJSPrivateData(ZigType, obj) orelse return false;
 
                     switch (comptime @typeInfo(@TypeOf(@field(
@@ -1139,6 +1127,460 @@ pub fn NewClassWithInstanceType(
             var definition = complete_definition;
             definition.className = options.name;
             return definition;
+        }
+
+        const GetterNameFormatter = struct {
+            index: usize = 0,
+
+            pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                try writer.writeAll(std.mem.span(class_name_str));
+                try writer.writeAll("_get_");
+                const property_name = property_names[this.index];
+                try writer.writeAll(std.mem.span(property_name));
+            }
+        };
+
+        const SetterNameFormatter = struct {
+            index: usize = 0,
+
+            pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                try writer.writeAll(std.mem.span(class_name_str));
+                try writer.writeAll("_set_");
+                const property_name = property_names[this.index];
+                try writer.writeAll(std.mem.span(property_name));
+            }
+        };
+
+        const FunctionNameFormatter = struct {
+            index: usize = 0,
+
+            pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                try writer.writeAll(std.mem.span(class_name_str));
+                try writer.writeAll("_fn_");
+                const property_name = function_names[this.index];
+                try writer.writeAll(std.mem.span(property_name));
+            }
+        };
+
+        const PropertyDeclaration = struct {
+            index: usize = 0,
+            pub fn format(this: @This(), comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+                const definition = getDefinition();
+                const property = definition.staticValues[this.index];
+
+                if (property.getProperty != null) {
+                    try writer.writeAll("static JSC_DECLARE_CUSTOM_GETTER(");
+                    const getter_name = GetterNameFormatter{ .index = this.index };
+                    try getter_name.format(fmt, opts, writer);
+                    try writer.writeAll(");\n");
+                }
+
+                if (property.setProperty != null) {
+                    try writer.writeAll("static JSC_DECLARE_CUSTOM_SETTER(");
+                    const getter_name = SetterNameFormatter{ .index = this.index };
+                    try getter_name.format(fmt, opts, writer);
+                    try writer.writeAll(");\n");
+                }
+            }
+        };
+
+        const FunctionDeclaration = struct {
+            index: usize = 0,
+            pub fn format(this: @This(), comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+                const definition = getDefinition();
+                const function = definition.staticFunctions[this.index];
+
+                if (function.callAsFunction != null) {
+                    try writer.writeAll("static JSC_DECLARE_HOST_FUNCTION(");
+                    const getter_name = FunctionNameFormatter{ .index = this.index };
+                    try getter_name.format(fmt, opts, writer);
+                    try writer.writeAll(");\n");
+                }
+            }
+        };
+
+        const PropertyDefinition = struct {
+            index: usize = 0,
+            pub fn format(this: @This(), comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+                const definition = getDefinition();
+                const property = definition.staticValues[this.index];
+
+                if (property.getProperty != null) {
+                    try writer.writeAll("static JSC_DEFINE_CUSTOM_GETTER(");
+                    const getter_name = GetterNameFormatter{ .index = this.index };
+                    try getter_name.format(fmt, opts, writer);
+                    try writer.writeAll(", (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName)) {\n");
+                    try std.fmt.format(
+                        writer,
+                        \\  JSC::VM& vm = globalObject->vm();
+                        \\  Bun::{[name]s}* thisObject = JSC::jsDynamicCast<Bun::{[name]s}*>(vm, JSValue::decode(thisValue));
+                        \\  if (UNLIKELY(!thisObject)) {{
+                        \\    return JSValue::encode(JSC::jsUndefined());
+                        \\  }}
+                        \\
+                        \\  auto clientData = Bun::clientData(vm);
+                        \\  auto scope = DECLARE_THROW_SCOPE(vm);
+                        \\
+                    ,
+                        .{ .name = std.mem.span(class_name_str) },
+                    );
+                    if (ZigType == void) {
+                        try std.fmt.format(
+                            writer,
+                            \\ JSC::EncodedJSValue result = Zig__{[getter]any}(globalObject);
+                        ,
+                            .{ .getter = getter_name },
+                        );
+                    } else {
+                        try std.fmt.format(
+                            writer,
+                            \\ JSC::EncodedJSValue result = Zig__{[getter]any}(globalObject, thisObject->m_ptr);
+                        ,
+                            .{ .getter = getter_name },
+                        );
+                    }
+
+                    try writer.writeAll(
+                        \\ JSC::JSObject *obj = JSC::JSValue::decode(result).getObject();
+                        \\
+                        \\ if (UNLIKELY(obj != nullptr && obj->isErrorInstance())) {
+                        \\   scope.throwException(globalObject, obj);
+                        \\   return JSValue::encode(JSC::jsUndefined());
+                        \\ }
+                        \\
+                        \\ scope.release();
+                        \\
+                        \\ return result;
+                    );
+
+                    try writer.writeAll("}\n");
+                }
+
+                if (property.setProperty != null) {
+                    try writer.writeAll("JSC_DEFINE_CUSTOM_SETTER(");
+                    const getter_name = SetterNameFormatter{ .index = this.index };
+                    try getter_name.format(fmt, opts, writer);
+                    try writer.writeAll(", (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName)) {\n");
+                    try std.fmt.format(writer,
+                        \\  JSC::VM& vm = globalObject->vm();
+                        \\  Bun::{[name]s}* thisObject = JSC::jsDynamicCast<Bun::{[name]s}*>(vm, JSValue::decode(thisValue));
+                        \\  if (UNLIKELY(!thisObject)) {{
+                        \\    return false;
+                        \\  }}
+                        \\
+                        \\  auto clientData = Bun::clientData(vm);
+                        \\  auto scope = DECLARE_THROW_SCOPE(vm);
+                        \\
+                        \\
+                    , .{ .name = getter_name });
+                    try writer.writeAll("};\n");
+                }
+            }
+        };
+
+        const PropertyDeclarationsFormatter = struct {
+            pub fn format(_: @This(), comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+                const definition = getDefinition();
+                for (definition.staticValues[0 .. static_values_ptr.len - 1]) |_, i| {
+                    const property = PropertyDeclaration{ .index = i };
+                    try property.format(fmt, opts, writer);
+                }
+            }
+        };
+
+        const PropertyDefinitionsFormatter = struct {
+            pub fn format(_: @This(), comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+                const definition = getDefinition();
+                if (static_values_ptr.len > 1) {
+                    for (definition.staticValues[0 .. static_values_ptr.len - 1]) |_, i| {
+                        const property = PropertyDefinition{ .index = i };
+                        try property.format(fmt, opts, writer);
+                    }
+                }
+            }
+        };
+
+        const FunctionDefinitionsFormatter = struct {
+            pub fn format(_: @This(), comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+                _ = fmt;
+                _ = writer;
+                _ = opts;
+                // for (static_properties[0 .. static_properties.len - 1]) |_, i| {
+                //     const property = FunctionDefinition{ .index = i };
+                //     try property.format(fmt, opts, writer);
+                // }
+            }
+        };
+
+        const FunctionDeclarationsFormatter = struct {
+            pub fn format(_: @This(), comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+                _ = fmt;
+                _ = writer;
+                const definition = getDefinition();
+                if (static_functions__.len > 1) {
+                    for (definition.staticFunctions[0 .. static_functions__.len - 1]) |_, i| {
+                        const function = FunctionDeclaration{ .index = i };
+                        try function.format(fmt, opts, writer);
+                    }
+                }
+            }
+        };
+
+        pub fn @"generateC++Header"(writer: anytype) !void {
+            const header_file =
+                \\// AUTO-GENERATED FILE
+                \\#pragma once
+                \\
+                \\#include "BunBuiltinNames.h"
+                \\#include "BunClientData.h"
+                \\#include "root.h"
+                \\
+                \\
+                \\namespace Bun {{
+                \\
+                \\using namespace JSC;
+                \\using namespace Zig;
+                \\
+                \\class {[name]s} : public JSNonFinalObject {{
+                \\   using Base = JSNonFinalObject;
+                \\
+                \\public:
+                \\   {[name]s}(JSC::VM& vm, Structure* structure) : Base(vm, structure) {{}}
+                \\
+                \\
+                \\   DECLARE_INFO;
+                \\
+                \\   static constexpr unsigned StructureFlags = Base::StructureFlags;
+                \\   template<typename CellType, SubspaceAccess> static GCClient::IsoSubspace* subspaceFor(VM& vm)
+                \\   {{
+                \\    return &vm.cellSpace();
+                \\   }}
+                \\   static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject,
+                \\   JSC::JSValue prototype)
+                \\   {{
+                \\     return JSC::Structure::create(vm, globalObject, prototype,
+                \\     JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+                \\   }}
+                \\
+                \\   static {[name]s}* create(JSC::VM& vm, JSC::Structure* structure)
+                \\   {{
+                \\     {[name]s}* accessor = new (NotNull, JSC::allocateCell<{[name]s}>(vm)) {[name]s}(vm, structure);
+                \\     accessor->finishCreation(vm);
+                \\     return accessor;
+                \\   }}
+                \\
+                \\   void finishCreation(JSC::VM& vm);
+                \\
+                \\}};
+                \\
+                \\}} // namespace Bun
+                \\
+            ;
+            _ = writer;
+            _ = header_file;
+            const Opts = struct { name: string };
+            try writer.print(header_file, Opts{
+                .name = std.mem.span(name),
+            });
+        }
+
+        const LookupTableFormatter = struct {
+            // example:
+            //
+            // /* Source for IntlLocalePrototype.lut.h
+            // @begin localePrototypeTable
+            //   maximize         intlLocalePrototypeFuncMaximize           DontEnum|Function 0
+            //   minimize         intlLocalePrototypeFuncMinimize           DontEnum|Function 0
+            //   toString         intlLocalePrototypeFuncToString           DontEnum|Function 0
+            //   baseName         intlLocalePrototypeGetterBaseName         DontEnum|ReadOnly|CustomAccessor
+            //   calendar         intlLocalePrototypeGetterCalendar         DontEnum|ReadOnly|CustomAccessor
+            //   calendars        intlLocalePrototypeGetterCalendars        DontEnum|ReadOnly|CustomAccessor
+            //   caseFirst        intlLocalePrototypeGetterCaseFirst        DontEnum|ReadOnly|CustomAccessor
+            //   collation        intlLocalePrototypeGetterCollation        DontEnum|ReadOnly|CustomAccessor
+            //   collations       intlLocalePrototypeGetterCollations       DontEnum|ReadOnly|CustomAccessor
+            //   hourCycle        intlLocalePrototypeGetterHourCycle        DontEnum|ReadOnly|CustomAccessor
+            //   hourCycles       intlLocalePrototypeGetterHourCycles       DontEnum|ReadOnly|CustomAccessor
+            //   numeric          intlLocalePrototypeGetterNumeric          DontEnum|ReadOnly|CustomAccessor
+            //   numberingSystem  intlLocalePrototypeGetterNumberingSystem  DontEnum|ReadOnly|CustomAccessor
+            //   numberingSystems intlLocalePrototypeGetterNumberingSystems DontEnum|ReadOnly|CustomAccessor
+            //   language         intlLocalePrototypeGetterLanguage         DontEnum|ReadOnly|CustomAccessor
+            //   script           intlLocalePrototypeGetterScript           DontEnum|ReadOnly|CustomAccessor
+            //   region           intlLocalePrototypeGetterRegion           DontEnum|ReadOnly|CustomAccessor
+            //   timeZones        intlLocalePrototypeGetterTimeZones        DontEnum|ReadOnly|CustomAccessor
+            //   textInfo         intlLocalePrototypeGetterTextInfo         DontEnum|ReadOnly|CustomAccessor
+            //   weekInfo         intlLocalePrototypeGetterWeekInfo         DontEnum|ReadOnly|CustomAccessor
+            // @end
+            // */
+            pub fn format(_: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                const definition = getDefinition();
+                try writer.writeAll("/* Source for ");
+                try writer.writeAll(std.mem.span(definition.className));
+                try writer.writeAll(".lut.h\n");
+                try writer.writeAll("@begin ");
+                try writer.writeAll(std.mem.span(definition.className));
+                try writer.writeAll("HashTableValues \n");
+                var middle_padding: usize = 0;
+                if (property_names.len > 0) {
+                    for (property_names) |prop| {
+                        middle_padding = @maximum(prop.len, middle_padding);
+                    }
+                }
+                if (function_names.len > 0) {
+                    for (function_names[0..function_names.len]) |_name| {
+                        middle_padding = @maximum(std.mem.span(_name).len, middle_padding);
+                    }
+                }
+
+                if (property_names.len > 0) {
+                    comptime var i: usize = 0;
+                    inline while (i < property_names.len) : (i += 1) {
+                        try writer.writeAll("  ");
+                        const name_ = property_names[i];
+                        try writer.writeAll(name_);
+                        try writer.writeAll(" ");
+                        var k: usize = 0;
+                        while (k < middle_padding - name_.len) : (k += 1) {
+                            try writer.writeAll(" ");
+                        }
+
+                        try writer.print("{any} ", .{GetterNameFormatter{ .index = i }});
+
+                        k = 0;
+
+                        while (k < middle_padding - name_.len) : (k += 1) {
+                            try writer.writeAll(" ");
+                        }
+
+                        try writer.writeAll("CustomAccessor");
+                        if (options.read_only or @hasField(@TypeOf(@field(properties, property_names[i])), "ro")) {
+                            try writer.writeAll("|ReadOnly");
+                        }
+
+                        if (@hasField(@TypeOf(@field(properties, property_names[i])), "enumerable") and !@field(properties, property_names[i])) {
+                            try writer.writeAll("|DontEnum");
+                        }
+
+                        try writer.writeAll("\n");
+                    }
+                }
+                if (function_names.len > 0) {
+                    comptime var i: usize = 0;
+                    inline while (i < function_names.len) : (i += 1) {
+                        try writer.writeAll("  ");
+                        const name_ = function_names[i];
+                        try writer.writeAll(name_);
+                        try writer.writeAll(" ");
+                        var k: usize = 0;
+                        while (k < middle_padding - name_.len) : (k += 1) {
+                            try writer.writeAll(" ");
+                        }
+
+                        try writer.print("{any} ", .{FunctionNameFormatter{ .index = i }});
+                        k = 0;
+
+                        while (k < middle_padding - name_.len) : (k += 1) {
+                            try writer.writeAll(" ");
+                        }
+                        var read_only_ = false;
+                        if (options.read_only or @hasField(@TypeOf(comptime @field(staticFunctions, function_names[i])), "ro")) {
+                            read_only_ = true;
+                            try writer.writeAll("ReadOnly");
+                        }
+
+                        if (comptime std.meta.trait.isContainer(
+                            @TypeOf(comptime @field(staticFunctions, function_names[i])),
+                        ) and
+                            @hasField(@TypeOf(comptime @field(
+                            staticFunctions,
+                            function_names[i],
+                        )), "enumerable") and !@field(staticFunctions, function_names[i]).enumerable) {
+                            if (read_only_) {
+                                try writer.writeAll("|");
+                            }
+                            try writer.writeAll("DontEnum");
+                        }
+
+                        try writer.writeAll("Function 1");
+
+                        try writer.writeAll("\n");
+                    }
+                }
+
+                try writer.writeAll("@end\n*/\n");
+            }
+        };
+
+        pub fn @"generateC++Class"(writer: anytype) !void {
+            const implementation_file =
+                \\// AUTO-GENERATED FILE
+                \\
+                \\#include "{[name]s}.generated.h"
+                \\#include "{[name]s}.lut.h"
+                \\
+                \\namespace Bun {{
+                \\
+                \\{[lut]any}
+                \\
+                \\using JSGlobalObject = JSC::JSGlobalObject;
+                \\using Exception = JSC::Exception;
+                \\using JSValue = JSC::JSValue;
+                \\using JSString = JSC::JSString;
+                \\using JSModuleLoader = JSC::JSModuleLoader;
+                \\using JSModuleRecord = JSC::JSModuleRecord;
+                \\using Identifier = JSC::Identifier;
+                \\using SourceOrigin = JSC::SourceOrigin;
+                \\using JSObject = JSC::JSObject;
+                \\using JSNonFinalObject = JSC::JSNonFinalObject;
+                \\namespace JSCastingHelpers = JSC::JSCastingHelpers;
+                \\
+                \\#pragma mark - Function Declarations
+                \\
+                \\{[function_declarations]any}
+                \\
+                \\#pragma mark - Property Declarations
+                \\
+                \\{[property_declarations]any}
+                \\
+                \\#pragma mark - Function Definitions
+                \\
+                \\{[function_definitions]any}
+                \\
+                \\#pragma mark - Property Definitions
+                \\
+                \\{[property_definitions]any}
+                \\
+                \\const JSC::ClassInfo {[name]s}::s_info = {{ "{[name]s}", &Base::s_info, &{[name]s}HashTableValues, nullptr, CREATE_METHOD_TABLE([name]s) }};
+                \\
+                \\  void {[name]s}::finishCreation(JSC::VM& vm) {{
+                \\    Base::finishCreation(vm);
+                \\    auto clientData = Bun::clientData(vm);
+                \\    JSC::JSGlobalObject *globalThis = globalObject();
+                \\
+                \\
+                \\#pragma mark - Property Initializers
+                \\
+                \\{[property_initializers]any}
+                \\
+                \\#pragma mark - Function Initializers
+                \\
+                \\{[function_initializers]any}
+                \\
+                \\  }}
+                \\
+                \\}} // namespace Bun
+                \\
+            ;
+
+            try writer.print(implementation_file, .{
+                .name = std.mem.span(class_name_str),
+                .function_initializers = @as(string, ""),
+                .property_initializers = @as(string, ""),
+                .function_declarations = FunctionDeclarationsFormatter{},
+                .property_declarations = FunctionDeclarationsFormatter{},
+                .function_definitions = FunctionDefinitionsFormatter{},
+                .property_definitions = PropertyDefinitionsFormatter{},
+                .lut = LookupTableFormatter{},
+            });
         }
 
         // This should only be run at comptime
@@ -1325,8 +1767,6 @@ pub fn NewClassWithInstanceType(
             _: js.JSObjectRef,
             props: js.JSPropertyNameAccumulatorRef,
         ) callconv(.C) void {
-            if (comptime JSC.is_bindgen)
-                unreachable;
             if (comptime property_name_refs.len > 0) {
                 comptime var i: usize = 0;
                 if (!property_name_refs_set) {
@@ -1480,7 +1920,7 @@ pub fn NewClassWithInstanceType(
             return comptime class;
         }
 
-        const static_properties = brk: {
+        const static_properties: [property_names.len + 1]js.JSStaticValue = brk: {
             var props: [property_names.len + 1]js.JSStaticValue = undefined;
             std.mem.set(
                 js.JSStaticValue,
@@ -1660,7 +2100,7 @@ pub fn NewClassWithInstanceType(
         }
 
         const base_def_ = generateDef(JSC.C.JSClassDefinition);
-        const static_functions__ = generateDef([function_name_literals.len + 1]js.JSStaticFunction);
+        const static_functions__: [function_name_literals.len + 1]js.JSStaticFunction = generateDef([function_name_literals.len + 1]js.JSStaticFunction);
         const static_functions_ptr = &static_functions__;
         const static_values_ptr = &static_properties;
         const class_name_str: stringZ = options.name;
@@ -1709,9 +2149,6 @@ pub fn JSError(
     ctx: js.JSContextRef,
     exception: ExceptionValueRef,
 ) void {
-    if (comptime JSC.is_bindgen)
-        unreachable;
-
     var error_args: [1]js.JSValueRef = undefined;
     @setCold(true);
 

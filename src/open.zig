@@ -324,3 +324,104 @@ pub const Editor = enum(u8) {
         child_process.deinit();
     }
 };
+
+pub const EditorContext = struct {
+    editor: ?Editor = null,
+    name: string = "",
+    path: string = "",
+    const Fs = @import("./fs.zig");
+
+    pub fn openInEditor(this: *EditorContext, editor_: Editor, blob: []const u8, id: string, tmpdir: std.fs.Dir, line: string, column: string) void {
+        _openInEditor(this.path, editor_, blob, id, tmpdir, line, column) catch |err| {
+            if (editor_ != .other) {
+                Output.prettyErrorln("Error {s} opening in {s}", .{ @errorName(err), @tagName(editor_) });
+            }
+
+            this.editor = Editor.none;
+        };
+    }
+
+    fn _openInEditor(path: string, editor_: Editor, blob: []const u8, id: string, tmpdir: std.fs.Dir, line: string, column: string) !void {
+        var basename_buf: [512]u8 = undefined;
+        var basename = std.fs.path.basename(id);
+        if (strings.endsWith(basename, ".bun") and basename.len < 499) {
+            std.mem.copy(u8, &basename_buf, basename);
+            basename_buf[basename.len..][0..3].* = ".js".*;
+            basename = basename_buf[0 .. basename.len + 3];
+        }
+
+        try tmpdir.writeFile(basename, blob);
+
+        var opened = try tmpdir.openFile(basename, .{});
+        defer opened.close();
+        var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        try editor_.open(
+            path,
+            try std.os.getFdPath(opened.handle, &path_buf),
+            line,
+            column,
+            default_allocator,
+        );
+    }
+
+    pub fn autoDetectEditor(this: *EditorContext, env: *DotEnv.Loader) void {
+        if (this.editor == null) {
+            this.detectEditor(env);
+        }
+    }
+    pub fn detectEditor(this: *EditorContext, env: *DotEnv.Loader) void {
+        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+        var out: string = "";
+        // first: choose from user preference
+        if (this.name.len > 0) {
+            // /usr/bin/vim
+            if (std.fs.path.isAbsolute(this.name)) {
+                this.editor = Editor.byName(std.fs.path.basename(this.name)) orelse Editor.other;
+                this.path = this.name;
+                return;
+            }
+
+            // "vscode"
+            if (Editor.byName(std.fs.path.basename(this.name))) |editor_| {
+                if (Editor.byPATHForEditor(env, editor_, &buf, Fs.FileSystem.instance.top_level_dir, &out)) {
+                    this.editor = editor_;
+                    this.path = Fs.FileSystem.instance.dirname_store.append(string, out) catch unreachable;
+                    return;
+                }
+
+                // not in path, try common ones
+                if (Editor.byFallbackPathForEditor(editor_, &out)) {
+                    this.editor = editor_;
+                    this.path = Fs.FileSystem.instance.dirname_store.append(string, out) catch unreachable;
+                    return;
+                }
+            }
+        }
+
+        // EDITOR=code
+        if (Editor.detect(env)) |editor_| {
+            if (Editor.byPATHForEditor(env, editor_, &buf, Fs.FileSystem.instance.top_level_dir, &out)) {
+                this.editor = editor_;
+                this.path = Fs.FileSystem.instance.dirname_store.append(string, out) catch unreachable;
+                return;
+            }
+
+            // not in path, try common ones
+            if (Editor.byFallbackPathForEditor(editor_, &out)) {
+                this.editor = editor_;
+                this.path = Fs.FileSystem.instance.dirname_store.append(string, out) catch unreachable;
+                return;
+            }
+        }
+
+        // Don't know, so we will just guess based on what exists
+        if (Editor.byFallback(env, &buf, Fs.FileSystem.instance.top_level_dir, &out)) |editor_| {
+            this.editor = editor_;
+            this.path = Fs.FileSystem.instance.dirname_store.append(string, out) catch unreachable;
+            return;
+        }
+
+        this.editor = Editor.none;
+    }
+};

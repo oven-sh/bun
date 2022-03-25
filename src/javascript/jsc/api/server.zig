@@ -78,6 +78,8 @@ const VirtualMachine = @import("../javascript.zig").VirtualMachine;
 const IOTask = JSC.IOTask;
 const is_bindgen = JSC.is_bindgen;
 const uws = @import("uws");
+const Fallback = Runtime.Fallback;
+const MimeType = HTTP.MimeType;
 const Blob = JSC.WebCore.Blob;
 const SendfileContext = struct {
     fd: i32,
@@ -154,6 +156,7 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
             sendfile: SendfileContext = undefined,
             request_js_object: JSC.C.JSObjectRef = null,
             request_body_buf: std.ArrayListUnmanaged(u8) = .{},
+            fallback_buf: std.ArrayListUnmanaged(u8) = .{},
 
             pub threadlocal var pool: *RequestContextStackAllocator = undefined;
 
@@ -194,7 +197,21 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                 _: *JSC.JSGlobalObject,
                 arguments: []const JSC.JSValue,
             ) void {
-                JSC.VirtualMachine.vm.defaultErrorHandler(arguments[0], null);
+                var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(bun.default_allocator);
+                JSC.VirtualMachine.vm.defaultErrorHandler(arguments[0], &exception_list);
+                if (!ctx.resp.hasResponded()) {
+                    ctx.renderDefaultError(
+                        JSC.VirtualMachine.vm.log,
+                        error.PromiseRejection,
+                        exception_list.toOwnedSlice(),
+                        "",
+                        .{},
+                    );
+                    JSC.VirtualMachine.vm.log.reset();
+                    return;
+                } else {
+                    exception_list.deinit();
+                }
 
                 if (ctx.aborted) {
                     ctx.finalize();
@@ -203,6 +220,64 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
 
                 ctx.req.setYield(true);
                 ctx.finalize();
+            }
+
+            pub fn renderDefaultError(
+                this: *RequestContext,
+                log: *logger.Log,
+                err: anyerror,
+                exceptions: []Api.JsException,
+                comptime fmt: string,
+                args: anytype,
+            ) void {
+                this.resp.writeStatus("500 Internal Server Error");
+                this.resp.writeHeader("content-type", MimeType.html.value);
+
+                var allocator = bun.default_allocator;
+
+                var fallback_container = allocator.create(Api.FallbackMessageContainer) catch unreachable;
+                defer allocator.destroy(fallback_container);
+                fallback_container.* = Api.FallbackMessageContainer{
+                    .message = std.fmt.allocPrint(allocator, fmt, args) catch unreachable,
+                    .router = null,
+                    .reason = .fetch_event_handler,
+                    .cwd = VirtualMachine.vm.bundler.fs.top_level_dir,
+                    .problems = Api.Problems{
+                        .code = @truncate(u16, @errorToInt(err)),
+                        .name = @errorName(err),
+                        .exceptions = exceptions,
+                        .build = log.toAPI(allocator) catch unreachable,
+                    },
+                };
+
+                if (comptime fmt.len > 0) Output.prettyErrorln(fmt, args);
+                Output.flush();
+
+                var bb = std.ArrayList(u8).init(allocator);
+                var bb_writer = bb.writer();
+
+                Fallback.renderBackend(
+                    allocator,
+                    fallback_container,
+                    @TypeOf(bb_writer),
+                    bb_writer,
+                ) catch unreachable;
+                if (this.resp.tryEnd(bb.items, bb.items.len)) {
+                    bb.clearAndFree();
+                    this.finalize();
+                    return;
+                }
+
+                this.fallback_buf = std.ArrayListUnmanaged(u8){ .items = bb.items, .capacity = bb.capacity };
+                this.resp.onWritable(*RequestContext, onWritableFallback, this);
+            }
+
+            pub fn onWritableFallback(this: *RequestContext, write_offset: c_ulong, resp: *App.Response) callconv(.C) bool {
+                if (this.aborted) {
+                    return false;
+                }
+
+                return this.sendWritableBytes(this.fallback_buf.items, write_offset, resp);
             }
 
             pub fn create(this: *RequestContext, server: *ThisServer, req: *uws.Request, resp: *App.Response) void {
@@ -257,6 +332,8 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                     this.response_headers.?.deref();
                     this.response_headers = null;
                 }
+
+                this.fallback_buf.clearAndFree(bun.default_allocator);
             }
             pub fn finalize(this: *RequestContext) void {
                 this.finalizeWithoutDeinit();
@@ -370,9 +447,12 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                     return false;
 
                 var bytes = this.blob.sharedView();
+                return this.sendWritableBytes(bytes, write_offset, resp);
+            }
 
-                bytes = bytes[@minimum(bytes.len, @truncate(usize, write_offset))..];
-                if (resp.tryEnd(bytes, this.blob.size)) {
+            pub fn sendWritableBytes(this: *RequestContext, bytes_: []const u8, write_offset: c_ulong, resp: *App.Response) bool {
+                var bytes = bytes_[@minimum(bytes_.len, @truncate(usize, write_offset))..];
+                if (resp.tryEnd(bytes, bytes_.len)) {
                     this.finalize();
                     return true;
                 } else {
@@ -583,7 +663,61 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
             }
         };
 
+        pub fn onBunInfoRequest(_: *ThisServer, req: *uws.Request, resp: *App.Response) void {
+            if (comptime JSC.is_bindgen) return undefined;
+            req.setYield(false);
+            var stack_fallback = std.heap.stackFallback(8096, bun.default_allocator);
+            var allocator = stack_fallback.get();
+
+            var buffer_writer = js_printer.BufferWriter.init(allocator) catch unreachable;
+            var writer = js_printer.BufferPrinter.init(buffer_writer);
+            defer writer.ctx.buffer.deinit();
+            var source = logger.Source.initEmptyFile("info.json");
+            _ = js_printer.printJSON(
+                *js_printer.BufferPrinter,
+                &writer,
+                bun.Global.BunInfo.generate(*Bundler, &JSC.VirtualMachine.vm.bundler, allocator) catch unreachable,
+                &source,
+            ) catch unreachable;
+
+            resp.writeStatus("200 OK");
+            resp.writeHeader("Content-Type", MimeType.json.value);
+            resp.writeHeader("Cache-Control", "public, max-age=3600");
+            resp.writeHeaderInt("Age", 0);
+            const buffer = writer.ctx.written;
+            resp.end(buffer, false);
+        }
+        pub fn onSrcRequest(_: *ThisServer, req: *uws.Request, resp: *App.Response) void {
+            if (comptime JSC.is_bindgen) return undefined;
+            req.setYield(false);
+            if (req.header("open-in-editor") == null) {
+                resp.writeStatus("501 Not Implemented");
+                resp.end("Viewing source without opening in editor is not implemented yet!", false);
+                return;
+            }
+
+            var ctx = &JSC.VirtualMachine.vm.rareData().editor_context;
+            ctx.autoDetectEditor(JSC.VirtualMachine.vm.bundler.env);
+            var line: ?string = req.header("editor-line");
+            var column: ?string = req.header("editor-column");
+
+            if (ctx.editor) |editor| {
+                resp.writeStatus("200 Opened");
+                resp.end("Opened in editor", false);
+                var url = req.url()["/src:".len..];
+                if (strings.indexOfChar(url, ':')) |colon| {
+                    url = url[0..colon];
+                }
+                editor.open(ctx.path, url, line, column, bun.default_allocator) catch Output.prettyErrorln("Failed to open editor", .{});
+            } else {
+                resp.writeStatus("500 Missing Editor :(");
+                resp.end("Please set your editor in bunfig.toml", false);
+            }
+        }
+
         pub fn onRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
+            if (comptime JSC.is_bindgen) return undefined;
+
             req.setYield(false);
             var ctx = this.request_pool_allocator.create(RequestContext) catch @panic("ran out of memory");
             ctx.create(this, req, resp);
@@ -613,10 +747,28 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                 return;
             }
 
-            if (ctx.response_jsvalue.isUndefinedOrNull() or ctx.response_jsvalue.isError() or ctx.response_jsvalue.isAggregateError(this.globalThis) or ctx.response_jsvalue.isException(this.globalThis.vm())) {
+            if (ctx.response_jsvalue.isUndefinedOrNull()) {
                 req.setYield(true);
                 ctx.finalize();
                 return;
+            }
+
+            if (ctx.response_jsvalue.isError() or ctx.response_jsvalue.isAggregateError(this.globalThis) or ctx.response_jsvalue.isException(this.globalThis.vm())) {
+                var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(bun.default_allocator);
+                JSC.VirtualMachine.vm.defaultErrorHandler(ctx.response_jsvalue, &exception_list);
+                if (!ctx.resp.hasResponded()) {
+                    ctx.renderDefaultError(
+                        JSC.VirtualMachine.vm.log,
+                        error.ExceptionOcurred,
+                        exception_list.toOwnedSlice(),
+                        "Unhandled exception in request handler",
+                        .{},
+                    );
+                    JSC.VirtualMachine.vm.log.reset();
+                    return;
+                } else {
+                    exception_list.deinit();
+                }
             }
 
             JSC.C.JSValueProtect(this.globalThis.ref(), ctx.response_jsvalue.asObjectRef());
@@ -650,6 +802,10 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
         pub fn listen(this: *ThisServer) void {
             this.app = App.create(.{});
             this.app.any("/*", *ThisServer, this, onRequest);
+
+            this.app.get("/bun:info", *ThisServer, this, onBunInfoRequest);
+            this.app.get("/src:/*", *ThisServer, this, onSrcRequest);
+
             this.app.listenWithConfig(*ThisServer, this, onListen, .{
                 .port = this.default_server.getPort().?,
                 .host = bun.default_allocator.dupeZ(u8, this.default_server.displayHostname()) catch unreachable,

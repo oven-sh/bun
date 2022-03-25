@@ -70,6 +70,7 @@ pub const ErrorJS = struct {
 pub const Fallback = struct {
     pub const ProdSourceContent = @embedFile("./fallback.out.js");
     pub const HTMLTemplate = @embedFile("./fallback.html");
+    pub const HTMLBackendTemplate = @embedFile("./fallback-backend.html");
 
     const Base64FallbackMessage = struct {
         msg: *const Api.FallbackMessageContainer,
@@ -158,6 +159,28 @@ pub const Fallback = struct {
             .preload = preload,
             .fallback = scriptContent(),
             .entry_point = entry_point,
+        });
+    }
+
+    pub fn renderBackend(
+        allocator: std.mem.Allocator,
+        msg: *const Api.FallbackMessageContainer,
+        comptime WriterType: type,
+        writer: WriterType,
+    ) !void {
+        const PrintArgs = struct {
+            blob: Base64FallbackMessage,
+            bun_error_css: string,
+            bun_error: string,
+            fallback: string,
+            bun_error_page_css: string,
+        };
+        try writer.print(HTMLBackendTemplate, PrintArgs{
+            .blob = Base64FallbackMessage{ .msg = msg, .allocator = allocator },
+            .bun_error_css = ErrorCSS.sourceContent(),
+            .bun_error = ErrorJS.sourceContent(),
+            .bun_error_page_css = "",
+            .fallback = scriptContent(),
         });
     }
 };

@@ -237,6 +237,16 @@ const srcFileURL = (
     return new URL("/" + filename, globalThis.location.href).href;
   }
 
+  if (!filename.startsWith("/") && thisCwd) {
+    var orig = filename;
+    filename = thisCwd;
+    if (thisCwd.endsWith("/")) {
+      filename += orig;
+    } else {
+      filename += "/" + orig;
+    }
+  }
+
   var base = `/src:${filename}`;
   base = appendLineColumnIfNeeded(base, line, column);
 
@@ -1072,8 +1082,8 @@ const ResolveError = ({ message }: { message: Message }) => {
 
       <div className={`BunError-error-message`}>
         Can't import{" "}
-        <span className="BunError-error-message--mono">
-          {message.on.resolve}
+        <span className="BunError-error-message--mono BunError-error-message--quoted">
+          "{message.on.resolve}"
         </span>
       </div>
 
@@ -1189,16 +1199,34 @@ function renderWithFunc(func) {
 
     reactRoot = document.createElement("div");
     reactRoot.id = BUN_ERROR_CONTAINER_ID;
-    reactRoot.style.visibility = "hidden";
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = new URL("/bun:erro.css", document.baseURI).href;
-    link.onload = () => {
-      reactRoot.style.visibility = "visible";
-    };
 
+    const fallbackStyleSheet = document.querySelector(
+      "style[data-has-bun-fallback-style]"
+    );
+    if (!fallbackStyleSheet) {
+      reactRoot.style.visibility = "hidden";
+    }
     const shadowRoot = root.attachShadow({ mode: "closed" });
-    shadowRoot.appendChild(link);
+    if (!fallbackStyleSheet) {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = new URL("/bun:erro.css", document.baseURI).href;
+      link.onload = () => {
+        reactRoot.style.visibility = "visible";
+      };
+      shadowRoot.appendChild(link);
+    } else {
+      fallbackStyleSheet.remove();
+      shadowRoot.appendChild(fallbackStyleSheet);
+      reactRoot.classList.add("BunErrorRoot--FullPage");
+
+      const page = document.querySelector("style[data-bun-error-page-style]");
+      if (page) {
+        page.remove();
+        shadowRoot.appendChild(page);
+      }
+    }
+
     shadowRoot.appendChild(reactRoot);
 
     document.body.appendChild(root);
@@ -1221,6 +1249,8 @@ export function renderFallbackError(fallback: FallbackMessageContainer) {
     </ErrorGroupContext.Provider>
   ));
 }
+
+globalThis[Symbol.for("Bun__renderFallbackError")] = renderFallbackError;
 
 import { parse as getStackTrace } from "./stack-trace-parser";
 var runtimeErrorController: AbortController;

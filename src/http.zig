@@ -95,6 +95,7 @@ fn disableSIGPIPESoClosingTheTabDoesntCrash(conn: anytype) void {
         &std.mem.toBytes(@as(c_int, 1)),
     ) catch {};
 }
+var http_editor_context: EditorContext = EditorContext{};
 
 pub const RequestContext = struct {
     request: Request,
@@ -817,11 +818,11 @@ pub const RequestContext = struct {
     pub fn sendJSB(ctx: *RequestContext) !void {
         const node_modules_bundle = ctx.bundler.options.node_modules_bundle orelse unreachable;
         if (ctx.header("Open-In-Editor") != null) {
-            if (Server.editor == null) {
-                Server.detectEditor(ctx.bundler.env);
+            if (http_editor_context.editor == null) {
+                http_editor_context.detectEditor(ctx.bundler.env);
             }
 
-            if (Server.editor.? != .none) {
+            if (http_editor_context.editor.? != .none) {
                 var buf: string = "";
 
                 if (node_modules_bundle.code_string == null) {
@@ -830,8 +831,8 @@ pub const RequestContext = struct {
                     buf = node_modules_bundle.code_string.?.str;
                 }
 
-                Server.openInEditor(
-                    Server.editor.?,
+                http_editor_context.openInEditor(
+                    http_editor_context.editor.?,
                     buf,
                     std.fs.path.basename(ctx.url.path),
                     ctx.bundler.fs.tmpdir(),
@@ -839,7 +840,7 @@ pub const RequestContext = struct {
                     ctx.header("Editor-Column") orelse "",
                 );
 
-                if (Server.editor.? != .none) {
+                if (http_editor_context.editor.? != .none) {
                     try ctx.sendNoContent();
                     return;
                 }
@@ -2325,13 +2326,13 @@ pub const RequestContext = struct {
                         }
 
                         if (chunky.rctx.header("Open-In-Editor") != null) {
-                            if (Server.editor == null) {
-                                Server.detectEditor(chunky.rctx.bundler.env);
+                            if (http_editor_context.editor == null) {
+                                http_editor_context.detectEditor(chunky.rctx.bundler.env);
                             }
 
-                            if (Server.editor.? != .none) {
-                                Server.openInEditor(
-                                    Server.editor.?,
+                            if (http_editor_context.editor.? != .none) {
+                                http_editor_context.openInEditor(
+                                    http_editor_context.editor.?,
                                     buf,
                                     std.fs.path.basename(chunky.rctx.url.path),
                                     chunky.rctx.bundler.fs.tmpdir(),
@@ -2339,7 +2340,7 @@ pub const RequestContext = struct {
                                     chunky.rctx.header("Editor-Column") orelse "",
                                 );
 
-                                if (Server.editor.? != .none) {
+                                if (http_editor_context.editor.? != .none) {
                                     try chunky.rctx.sendNoContent();
                                     return;
                                 }
@@ -2701,8 +2702,8 @@ pub const RequestContext = struct {
         }
 
         if (ctx.header("Open-In-Editor") != null) {
-            if (Server.editor == null) {
-                Server.detectEditor(ctx.bundler.env);
+            if (http_editor_context.editor == null) {
+                http_editor_context.detectEditor(ctx.bundler.env);
             }
 
             if (line.len == 0) {
@@ -2717,10 +2718,10 @@ pub const RequestContext = struct {
                 }
             }
 
-            if (Server.editor) |editor| {
+            if (http_editor_context.editor) |editor| {
                 if (editor != .none) {
-                    Server.openInEditor(editor, blob.ptr[0..blob.len], id, Fs.FileSystem.instance.tmpdir(), line, column);
-                    if (Server.editor.? != .none) {
+                    http_editor_context.openInEditor(editor, blob.ptr[0..blob.len], id, Fs.FileSystem.instance.tmpdir(), line, column);
+                    if (http_editor_context.editor.? != .none) {
                         defer ctx.done();
                         try ctx.writeStatus(200);
                         ctx.appendHeader("Content-Type", MimeType.html.value);
@@ -2866,23 +2867,6 @@ pub const RequestContext = struct {
     }
 
     fn sendBunInfoJSON(ctx: *RequestContext) anyerror!void {
-        const Info = struct {
-            bun_version: string,
-            platform: Analytics.GenerateHeader.GeneratePlatform.Platform = undefined,
-            framework: string = "",
-            framework_version: string = "",
-        };
-        var info = Info{
-            .bun_version = Global.package_json_version,
-            .platform = Analytics.GenerateHeader.GeneratePlatform.forOS(),
-        };
-
-        if (ctx.bundler.options.framework) |framework| {
-            info.framework = framework.package;
-            info.framework_version = framework.version;
-        }
-
-        var expr = try JSON.toAST(ctx.allocator, Info, info);
         defer ctx.bundler.resetStore();
 
         var buffer_writer = try JSPrinter.BufferWriter.init(default_allocator);
@@ -2890,7 +2874,12 @@ pub const RequestContext = struct {
         var writer = JSPrinter.BufferPrinter.init(buffer_writer);
         defer writer.ctx.buffer.deinit();
         var source = logger.Source.initEmptyFile("info.json");
-        _ = try JSPrinter.printJSON(*JSPrinter.BufferPrinter, &writer, expr, &source);
+        _ = try JSPrinter.printJSON(
+            *JSPrinter.BufferPrinter,
+            &writer,
+            try Global.BunInfo.generate(*Bundler, ctx.bundler, ctx.allocator) ,
+            &source,
+        );
         const buffer = writer.ctx.written;
 
         ctx.appendHeader("Content-Type", MimeType.json.value);
@@ -2955,20 +2944,20 @@ pub const RequestContext = struct {
             .pending => |resolve_result| {
                 const path = resolve_result.pathConst() orelse return try ctx.sendNotFound();
                 if (ctx.header("Open-In-Editor") != null) {
-                    if (Server.editor == null)
-                        Server.detectEditor(ctx.bundler.env);
+                    if (http_editor_context.editor == null)
+                        http_editor_context.detectEditor(ctx.bundler.env);
 
-                    if (Server.editor) |editor| {
+                    if (http_editor_context.editor) |editor| {
                         if (editor != .none) {
-                            editor.open(Server.editor_path, path.text, line, column, bun.default_allocator) catch |err| {
+                            editor.open(http_editor_context.path, path.text, line, column, bun.default_allocator) catch |err| {
                                 if (editor != .other) {
                                     Output.prettyErrorln("Error {s} opening in {s}", .{ @errorName(err), @tagName(editor) });
                                 }
 
-                                Server.editor = Editor.none;
+                                http_editor_context.editor = Editor.none;
                             };
 
-                            if (Server.editor.? != .none) {
+                            if (http_editor_context.editor.? != .none) {
                                 defer ctx.done();
                                 try ctx.writeStatus(200);
                                 ctx.appendHeader("Content-Type", MimeType.html.value);
@@ -3209,6 +3198,7 @@ var serve_as_package_path = false;
 //      - Parsing time
 //      - IO read time
 const Editor = @import("./open.zig").Editor;
+const EditorContext = @import("./open.zig").EditorContext;
 
 pub const Server = struct {
     log: logger.Log,
@@ -3248,99 +3238,6 @@ pub const Server = struct {
             node.release();
             any = true;
         }
-    }
-
-    pub var editor: ?Editor = null;
-    pub var editor_name: string = "";
-    pub var editor_path: string = "";
-
-    pub fn openInEditor(editor_: Editor, blob: []const u8, id: string, tmpdir: std.fs.Dir, line: string, column: string) void {
-        _openInEditor(editor_, blob, id, tmpdir, line, column) catch |err| {
-            if (editor_ != .other) {
-                Output.prettyErrorln("Error {s} opening in {s}", .{ @errorName(err), @tagName(editor_) });
-            }
-
-            editor = Editor.none;
-        };
-    }
-
-    fn _openInEditor(editor_: Editor, blob: []const u8, id: string, tmpdir: std.fs.Dir, line: string, column: string) !void {
-        var basename_buf: [512]u8 = undefined;
-        var basename = std.fs.path.basename(id);
-        if (strings.endsWith(basename, ".bun") and basename.len < 499) {
-            std.mem.copy(u8, &basename_buf, basename);
-            basename_buf[basename.len..][0..3].* = ".js".*;
-            basename = basename_buf[0 .. basename.len + 3];
-        }
-
-        try tmpdir.writeFile(basename, blob);
-
-        var opened = try tmpdir.openFile(basename, .{});
-        defer opened.close();
-        var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        try editor_.open(
-            Server.editor_path,
-            try std.os.getFdPath(opened.handle, &path_buf),
-            line,
-            column,
-            default_allocator,
-        );
-    }
-
-    pub fn detectEditor(env: *DotEnv.Loader) void {
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-
-        var out: string = "";
-        // first: choose from user preference
-        if (Server.editor_name.len > 0) {
-            // /usr/bin/vim
-            if (std.fs.path.isAbsolute(Server.editor_name)) {
-                Server.editor = Editor.byName(std.fs.path.basename(Server.editor_name)) orelse Editor.other;
-                editor_path = Server.editor_name;
-                return;
-            }
-
-            // "vscode"
-            if (Editor.byName(std.fs.path.basename(Server.editor_name))) |editor_| {
-                if (Editor.byPATHForEditor(env, editor_, &buf, Fs.FileSystem.instance.top_level_dir, &out)) {
-                    editor = editor_;
-                    editor_path = Fs.FileSystem.instance.dirname_store.append(string, out) catch unreachable;
-                    return;
-                }
-
-                // not in path, try common ones
-                if (Editor.byFallbackPathForEditor(editor_, &out)) {
-                    editor = editor_;
-                    editor_path = Fs.FileSystem.instance.dirname_store.append(string, out) catch unreachable;
-                    return;
-                }
-            }
-        }
-
-        // EDITOR=code
-        if (Editor.detect(env)) |editor_| {
-            if (Editor.byPATHForEditor(env, editor_, &buf, Fs.FileSystem.instance.top_level_dir, &out)) {
-                editor = editor_;
-                editor_path = Fs.FileSystem.instance.dirname_store.append(string, out) catch unreachable;
-                return;
-            }
-
-            // not in path, try common ones
-            if (Editor.byFallbackPathForEditor(editor_, &out)) {
-                editor = editor_;
-                editor_path = Fs.FileSystem.instance.dirname_store.append(string, out) catch unreachable;
-                return;
-            }
-        }
-
-        // Don't know, so we will just guess based on what exists
-        if (Editor.byFallback(env, &buf, Fs.FileSystem.instance.top_level_dir, &out)) |editor_| {
-            editor = editor_;
-            editor_path = Fs.FileSystem.instance.dirname_store.append(string, out) catch unreachable;
-            return;
-        }
-
-        Server.editor = Editor.none;
     }
 
     threadlocal var filechange_buf: [32]u8 = undefined;
@@ -4090,7 +3987,7 @@ pub const Server = struct {
             return;
         }
 
-        Server.editor_name = debug.editor;
+        http_editor_context.name = debug.editor;
 
         server.bundler.options.macro_remap = debug.macros orelse .{};
 

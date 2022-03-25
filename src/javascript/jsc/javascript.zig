@@ -161,8 +161,6 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         }
 
         pub fn runFromJS(this: This) void {
-            if (comptime JSC.is_bindgen)
-                unreachable;
             var promise_value = this.promise;
             var promise = promise_value.asInternalPromise() orelse {
                 if (comptime @hasDecl(Context, "deinit")) {
@@ -492,6 +490,17 @@ pub const VirtualMachine = struct {
 
     source_mappings: SavedSourceMap = undefined,
     response_objects_pool: ?*Response.Pool = null,
+
+    rare_data: ?*JSC.RareData = null,
+
+    pub inline fn rareData(this: *VirtualMachine) *JSC.RareData {
+        return this.rare_data orelse brk: {
+            this.rare_data = this.allocator.create(JSC.RareData) catch unreachable;
+            this.rare_data.?.* = .{};
+            break :brk this.rare_data.?;
+        };
+    }
+
     pub inline fn eventLoop(this: *VirtualMachine) *EventLoop {
         return this.event_loop;
     }

@@ -94,18 +94,27 @@ extern "C" void JSCInitialize()
     if (has_loaded_jsc)
         return;
     has_loaded_jsc = true;
+    JSC::Config::enableRestrictedOptions();
 
-    JSC::Options::useConcurrentJIT() = true;
-    JSC::Options::useSigillCrashAnalyzer() = true;
-    JSC::Options::useWebAssembly() = true;
-    JSC::Options::useSourceProviderCache() = true;
-    JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
-    JSC::Options::exposeInternalModuleLoader() = true;
-    JSC::Options::useSharedArrayBuffer() = true;
     // JSC::Options::useAtMethod() = true;
     std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
     WTF::initializeMainThread();
     JSC::initialize();
+    {
+        JSC::Options::AllowUnfinalizedAccessScope scope;
+
+        JSC::Options::useConcurrentJIT() = true;
+        JSC::Options::useSigillCrashAnalyzer() = true;
+        JSC::Options::useWebAssembly() = true;
+        JSC::Options::useSourceProviderCache() = true;
+        JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
+        JSC::Options::exposeInternalModuleLoader() = true;
+        JSC::Options::useSharedArrayBuffer() = true;
+        JSC::Options::useJIT() = true;
+        JSC::Options::useBBQJIT() = true;
+
+        JSC::Options::ensureOptionsAreCoherent();
+    }
 }
 
 extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObjectClass, int count,

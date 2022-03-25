@@ -63,6 +63,15 @@ pub const Bun__ArrayBuffer = bindings.ArrayBuffer;
 
 pub const ptrdiff_t = c_long;
 pub const wchar_t = c_int;
+pub const __uint16_t = c_ushort;
+pub const __int32_t = c_int;
+pub const __uint32_t = c_uint;
+pub const __int64_t = c_longlong;
+pub const __uint64_t = c_ulonglong;
+pub const __mbstate_t = extern union {
+    __mbstate8: [128]u8,
+    _mbstateL: c_longlong,
+};
 
 pub const JSC__GeneratorPrototype = struct_JSC__GeneratorPrototype;
 

@@ -108,6 +108,7 @@ static bool isTaggedExternalPtr(const unsigned char* ptr)
     return (reinterpret_cast<uintptr_t>(ptr) & (static_cast<uint64_t>(1) << 62)) != 0;
 }
 
+// Switching to AtomString doesn't yield a perf benefit because we're recreating it each time.
 static const WTF::String toString(ZigString str)
 {
     if (str.len == 0 || str.ptr == nullptr) {

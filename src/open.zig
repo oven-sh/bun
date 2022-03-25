@@ -219,12 +219,14 @@ pub const Editor = enum(u8) {
         file: []const u8,
         line: ?string,
         column: ?string,
-        allocator: std.mem.Allocator,
+        _: std.mem.Allocator,
     ) !void {
-        var file_path_buf: [bun.MAX_PATH_BYTES + 1024]u8 = undefined;
-        var file_path_buf_stream = std.io.fixedBufferStream(&file_path_buf);
+        var spawned = try default_allocator.create(SpawnedEditorContext);
+        spawned.* = .{};
+        var file_path_buf_stream = std.io.fixedBufferStream(&spawned.file_path_buf);
         var file_path_buf_writer = file_path_buf_stream.writer();
-        var args_buf: [10]string = undefined;
+        var args_buf = &spawned.buf;
+        errdefer default_allocator.destroy(spawned);
 
         var i: usize = 0;
 
@@ -309,19 +311,22 @@ pub const Editor = enum(u8) {
             },
         }
 
-        var child_process = try std.ChildProcess.init(args_buf[0..i], allocator);
-        child_process.stderr_behavior = .Pipe;
-        child_process.stdin_behavior = .Ignore;
-        child_process.stdout_behavior = .Pipe;
-        try child_process.spawn();
-        var thread = try std.Thread.spawn(.{}, autoClose, .{child_process});
+        spawned.child_process = try std.ChildProcess.init(args_buf[0..i], default_allocator);
+        var thread = try std.Thread.spawn(.{}, autoClose, .{spawned});
         thread.detach();
     }
+    const SpawnedEditorContext = struct {
+        file_path_buf: [1024 + bun.MAX_PATH_BYTES]u8 = undefined,
+        buf: [10]string = undefined,
+        child_process: *std.ChildProcess = undefined,
+    };
 
-    fn autoClose(child_process: *std.ChildProcess) void {
+    fn autoClose(spawned: *SpawnedEditorContext) void {
+        defer bun.default_allocator.destroy(spawned);
+
         Global.setThreadName("Open Editor");
-        _ = child_process.wait() catch {};
-        child_process.deinit();
+        spawned.child_process.spawn() catch return;
+        _ = spawned.child_process.wait() catch {};
     }
 };
 

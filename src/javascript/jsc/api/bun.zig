@@ -75,6 +75,7 @@ const URL = @import("../../../url.zig").URL;
 const Transpiler = @import("./transpiler.zig");
 const VirtualMachine = @import("../javascript.zig").VirtualMachine;
 const IOTask = JSC.IOTask;
+
 const is_bindgen = JSC.is_bindgen;
 
 threadlocal var css_imports_list_strings: [512]ZigString = undefined;
@@ -540,6 +541,82 @@ pub fn getRouteNames(
     return ref;
 }
 
+const Editor = @import("../../../open.zig").Editor;
+pub fn openInEditor(
+    _: void,
+    ctx: js.JSContextRef,
+    _: js.JSObjectRef,
+    _: js.JSObjectRef,
+    args: []const js.JSValueRef,
+    exception: js.ExceptionRef,
+) js.JSValueRef {
+    var edit = &VirtualMachine.vm.rareData().editor_context;
+
+    var arguments = JSC.Node.ArgumentsSlice.from(args);
+    var path: string = "";
+    var editor_choice: ?Editor = null;
+    var line: ?string = null;
+    var column: ?string = null;
+
+    if (arguments.nextEat()) |file_path_| {
+        path = file_path_.toSlice(ctx.ptr(), bun.default_allocator).slice();
+    }
+
+    if (arguments.nextEat()) |opts| {
+        if (!opts.isUndefinedOrNull()) {
+            if (opts.getTruthy(ctx.ptr(), "editor")) |editor_val| {
+                var sliced = editor_val.toSlice(ctx.ptr(), bun.default_allocator);
+                var prev_name = edit.name;
+
+                if (!strings.eqlLong(prev_name, sliced.slice(), true)) {
+                    var prev = edit.*;
+                    edit.name = sliced.slice();
+                    edit.detectEditor(VirtualMachine.vm.bundler.env);
+                    editor_choice = edit.editor;
+                    if (editor_choice == null) {
+                        edit.* = prev;
+                        JSError(getAllocator(ctx), "Could not find editor \"{s}\"", .{sliced.slice()}, ctx, exception);
+                        return js.JSValueMakeUndefined(ctx);
+                    } else if (edit.name.ptr == edit.path.ptr) {
+                        edit.name = bun.default_allocator.dupe(u8, edit.path) catch unreachable;
+                        edit.path = edit.path;
+                    }
+                }
+            }
+
+            if (opts.getTruthy(ctx.ptr(), "line")) |line_| {
+                line = line_.toSlice(ctx.ptr(), bun.default_allocator).slice();
+            }
+
+            if (opts.getTruthy(ctx.ptr(), "column")) |column_| {
+                column = column_.toSlice(ctx.ptr(), bun.default_allocator).slice();
+            }
+        }
+    }
+
+    const editor = editor_choice orelse edit.editor orelse brk: {
+        edit.autoDetectEditor(VirtualMachine.vm.bundler.env);
+        if (edit.editor == null) {
+            JSC.JSError(bun.default_allocator, "Failed to auto-detect editor", .{}, ctx, exception);
+            return null;
+        }
+
+        break :brk edit.editor.?;
+    };
+
+    if (path.len == 0) {
+        JSError(getAllocator(ctx), "No file path specified", .{}, ctx, exception);
+        return js.JSValueMakeUndefined(ctx);
+    }
+
+    editor.open(edit.path, path, line, column, bun.default_allocator) catch |err| {
+        JSC.JSError(bun.default_allocator, "Opening editor failed {s}", .{@errorName(err)}, ctx, exception);
+        return null;
+    };
+
+    return JSC.JSValue.jsUndefined().asObjectRef();
+}
+
 pub fn readFileAsBytes(
     _: void,
     ctx: js.JSContextRef,
@@ -948,6 +1025,10 @@ pub const Class = NewClass(
         },
         .shrink = .{
             .rfn = Bun.shrink,
+            .ts = d.ts{},
+        },
+        .openInEditor = .{
+            .rfn = Bun.openInEditor,
             .ts = d.ts{},
         },
         .readAllStdinSync = .{

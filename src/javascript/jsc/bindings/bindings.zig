@@ -2256,6 +2256,15 @@ pub const JSValue = enum(u64) {
         return if (@enumToInt(value) != 0) value else return null;
     }
 
+    pub fn getTruthy(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
+        if (get(this, global, property)) |prop| {
+            if (@enumToInt(prop) == 0 or prop.isUndefinedOrNull()) return null;
+            return prop;
+        }
+
+        return null;
+    }
+
     /// Alias for getIfPropertyExists
     pub const getIfPropertyExists = get;
 

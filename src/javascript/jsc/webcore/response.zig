@@ -2046,15 +2046,19 @@ pub const Blob = struct {
 
                 pub fn getFdMac(this: *This) AsyncIO.OpenError!JSC.Node.FileDescriptor {
                     var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                    var path = if (@hasField(This, "file_store"))
-                        this.file_store.pathlike.path.sliceZ(&buf)
+                    var path_string = if (@hasField(This, "file_store"))
+                        this.file_store.pathlike.path
                     else
-                        this.file_blob.store.?.data.file.pathlike.path.sliceZ(&buf);
+                        this.file_blob.store.?.data.file.pathlike.path;
+
+                    var path = path_string.sliceZ(&buf);
 
                     this.opened_fd = switch (JSC.Node.Syscall.open(path, open_flags_, JSC.Node.default_permission)) {
                         .result => |fd| fd,
                         .err => |err| {
                             this.errno = AsyncIO.asError(err.errno);
+                            this.system_error = err.withPath(path_string.slice()).toSystemError();
+
                             return @errSetCast(AsyncIO.OpenError, this.errno.?);
                         },
                     };
@@ -2078,10 +2082,12 @@ pub const Blob = struct {
                     var aio = &AsyncIO.global;
 
                     var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                    var path = if (@hasField(This, "file_store"))
-                        this.file_store.pathlike.path.sliceZ(&buf)
+                    var path_string = if (@hasField(This, "file_store"))
+                        this.file_store.pathlike.path
                     else
-                        this.file_blob.store.?.data.file.pathlike.path.sliceZ(&buf);
+                        this.file_blob.store.?.data.file.pathlike.path;
+
+                    var path = path_string.sliceZ(&buf);
 
                     aio.open(
                         *This,
@@ -2098,6 +2104,12 @@ pub const Blob = struct {
                     }
 
                     if (this.errno) |errno| {
+                        this.system_error = .{
+                            .syscall = ZigString.init("open"),
+                            .code = ZigString.init(std.mem.span(@errorName(errno))),
+                            .path = path_string.slice(),
+                        };
+
                         return @errSetCast(AsyncIO.OpenError, errno);
                     }
 
@@ -2107,6 +2119,7 @@ pub const Blob = struct {
                 pub fn onOpen(this: *This, _: *HTTPClient.NetworkThread.Completion, result: AsyncIO.OpenError!JSC.Node.FileDescriptor) void {
                     this.opened_fd = result catch |err| {
                         this.errno = err;
+
                         if (comptime Environment.isLinux) resume this.open_frame;
                         return;
                     };
@@ -2163,6 +2176,7 @@ pub const Blob = struct {
 
             open_frame: OpenFrameType = undefined,
             errno: ?anyerror = null,
+            system_error: ?JSC.SystemError = null,
             open_completion: HTTPClient.NetworkThread.Completion = undefined,
             opened_fd: JSC.Node.FileDescriptor = 0,
             size: SizeType = 0,
@@ -2978,10 +2992,12 @@ pub const Blob = struct {
                                     }
                                     return;
                                 } else |_| {
+
                                     // this may still fail, in which case we just continue trying with fcopyfile
                                     // it can fail when the input file already exists
                                     // or if the output is not a directory
                                     // or if it's a network volume
+                                    this.system_error = null;
                                 }
                             }
                         }

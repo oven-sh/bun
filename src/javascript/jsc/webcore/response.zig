@@ -1972,7 +1972,23 @@ pub const Blob = struct {
         pub fn initFile(pathlike: JSC.Node.PathOrFileDescriptor, mime_type: ?HTTPClient.MimeType, allocator: std.mem.Allocator) !*Store {
             var store = try allocator.create(Blob.Store);
             store.* = .{
-                .data = .{ .file = FileStore.init(pathlike, mime_type) },
+                .data = .{ .file = FileStore.init(
+                    pathlike,
+                    mime_type orelse brk: {
+                        if (pathlike == .path) {
+                            const sliced = pathlike.path.slice();
+                            if (sliced.len > 0) {
+                                var extname = std.fs.path.extension(sliced);
+                                extname = std.mem.trim(u8, extname, ".");
+                                if (HTTPClient.MimeType.byExtension(extname)) |mime| {
+                                    break :brk mime.value;
+                                }
+                            }
+
+                            break :brk null;
+                        }
+                    },
+                ) },
                 .allocator = allocator,
                 .ref_count = 1,
             };

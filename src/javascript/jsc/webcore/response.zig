@@ -1054,12 +1054,12 @@ pub const Headers = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
-            // Initially, these were function pointers
-            // However, some Zig Stage1 C ABI bug causes EXC_BAD_ACCESS
-            @export(preallocate, .{ .name = "Headers__preallocate" });
-            @export(appendHeaderNormalizedC, .{ .name = "Headers__appendHeaderNormalized" });
-        }
+        // if (!JSC.is_bindgen) {
+        // Initially, these were function pointers
+        // However, some Zig Stage1 C ABI bug causes EXC_BAD_ACCESS
+        @export(preallocate, .{ .name = "Headers__preallocate" });
+        @export(appendHeaderNormalizedC, .{ .name = "Headers__appendHeaderNormalized" });
+        // }
     }
 
     pub fn empty(allocator: std.mem.Allocator) Headers {

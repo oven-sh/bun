@@ -16,7 +16,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
     };
 
     const precomputed = comptime blk: {
-        @setEvalBranchQuota(2000);
+        @setEvalBranchQuota(99999);
 
         var sorted_kvs: [kvs_list.len]KV = undefined;
         const lenAsc = (struct {
@@ -47,7 +47,10 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
         var len_indexes: [max_len + 1]usize = undefined;
         var len: usize = 0;
         var i: usize = 0;
+
         while (len <= max_len) : (len += 1) {
+            @setEvalBranchQuota(99999);
+
             // find the first keyword len == len
             while (len > sorted_kvs[i].key.len) {
                 i += 1;
@@ -73,7 +76,10 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
         pub fn getWithLength(str: []const KeyType, comptime len: usize) ?V {
             const end = comptime brk: {
                 var i = len_indexes[len];
+                @setEvalBranchQuota(99999);
+
                 while (i < kvs.len and kvs[i].key.len == len) : (i += 1) {}
+
                 break :brk i;
             };
 

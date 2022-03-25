@@ -359,19 +359,17 @@ if (typeof window !== "undefined") {
       build: API.WebsocketMessageBuildSuccess,
       timestamp: number
     ) {
+      debugger;
       const start = performance.now();
       var update = this.findCSSLinkTag(build.id);
       // The last 4 bytes of the build message are the hash of the module
       // Currently, this hash is only used for ensuring we reload the source-map
-      var end = buffer.index + build.blob_length;
-      if (end > buffer.data.length && end > 4) {
-        end = buffer.data.length - 4;
+
+      let bytes = new Uint8Array(buffer.data.buffer, buffer.index);
+      if (bytes.length > 4) {
+        bytes = bytes.subarray(0, bytes.length - 4);
       }
 
-      let bytes =
-        buffer.data.length > buffer.index
-          ? buffer.data.subarray(buffer.index, end)
-          : new Uint8Array(0);
       if (update === null) {
         __hmrlog.debug("Skipping unused CSS.");
         return;
@@ -431,15 +429,19 @@ if (typeof window !== "undefined") {
             update.node.tagName === "LINK" ||
             update.node.tagName === "STYLE"
           ) {
+            console.log("check");
             // This might cause CSS specifity issues....
             // I'm not 100% sure this is a safe operation
             const sheet = new CSSStyleSheet();
-            sheet.replaceSync(this.decoder.decode(bytes));
-            update.node.remove();
+            const decoded = this.decoder.decode(bytes);
+
+            sheet.replaceSync(decoded);
+
             document.adoptedStyleSheets = [
               ...document.adoptedStyleSheets,
               sheet,
             ];
+            update.node.remove();
           }
           break;
         }

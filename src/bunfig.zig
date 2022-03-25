@@ -148,6 +148,18 @@ pub const Bunfig = struct {
                 this.bunfig.origin = try expr.data.e_string.string(allocator);
             }
 
+            if (comptime cmd == .RunCommand or cmd == .AutoCommand) {
+                if (json.get("serve")) |expr| {
+                    if (expr.get("port")) |port| {
+                        try this.expect(port, .e_number);
+                        this.bunfig.port = port.data.e_number.toU16();
+                        if (this.bunfig.port.? == 0) {
+                            this.bunfig.port = 3000;
+                        }
+                    }
+                }
+            }
+
             if (comptime cmd == .DevCommand or cmd == .AutoCommand) {
                 if (json.get("dev")) |expr| {
                     if (expr.get("disableBunJS")) |disable| {

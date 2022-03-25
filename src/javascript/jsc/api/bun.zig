@@ -1035,8 +1035,8 @@ pub const Class = NewClass(
             .rfn = Bun.readAllStdinSync,
             .ts = d.ts{},
         },
-        .startServer = .{
-            .rfn = Bun.startServer,
+        .serve = .{
+            .rfn = Bun.serve,
             .ts = d.ts{},
         },
         .file = .{
@@ -1094,25 +1094,38 @@ pub const Class = NewClass(
     },
 );
 
-pub fn startServer(
+pub fn serve(
     _: void,
     ctx: js.JSContextRef,
     _: js.JSObjectRef,
     _: js.JSObjectRef,
     arguments: []const js.JSValueRef,
-    _: js.ExceptionRef,
+    exception: js.ExceptionRef,
 ) js.JSValueRef {
-    var vm = JSC.VirtualMachine.vm;
-    const handler = if (arguments.len > 0) JSC.JSValue.fromRef(arguments[0]) else JSC.JSValue.zero;
-    if (handler.isEmpty() or handler.isUndefinedOrNull() or !handler.isCell() or !handler.isCallable(ctx.ptr().vm())) {
-        Output.prettyWarnln("\"serverless\" export should be a function", .{});
-        Output.flush();
-        return JSC.JSValue.jsUndefined().asObjectRef();
+    var args = JSC.Node.ArgumentsSlice.from(arguments);
+    var config = JSC.API.ServerConfig.fromJS(ctx.ptr(), &args, exception);
+    if (exception.* != null) {
+        return null;
     }
 
-    JSC.C.JSValueProtect(ctx.ptr().ref(), handler.asObjectRef());
-    var server = JSC.API.Server.init(vm.bundler.options.origin.getPortAuto(), handler, ctx.ptr());
-    server.listen();
+    if (config.ssl_config != null) {
+        if (config.development) {
+            var server = JSC.API.DebugSSLServer.init(config, ctx.ptr());
+            server.listen();
+        } else {
+            var server = JSC.API.SSLServer.init(config, ctx.ptr());
+            server.listen();
+        }
+    } else {
+        if (config.development) {
+            var server = JSC.API.DebugServer.init(config, ctx.ptr());
+            server.listen();
+        } else {
+            var server = JSC.API.Server.init(config, ctx.ptr());
+            server.listen();
+        }
+    }
+
     return JSC.JSValue.jsUndefined().asObjectRef();
 }
 

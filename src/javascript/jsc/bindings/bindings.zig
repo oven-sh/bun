@@ -357,6 +357,13 @@ pub const SystemError = extern struct {
     path: ZigString = ZigString.init(""),
     syscall: ZigString = ZigString.init(""),
 
+    pub fn Maybe(comptime Result: type) type {
+        return union(enum) {
+            err: SystemError,
+            result: Result,
+        };
+    }
+
     pub const shim = Shimmer("", "SystemError", @This());
 
     pub const name = "SystemError";

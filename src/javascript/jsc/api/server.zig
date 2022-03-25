@@ -93,11 +93,240 @@ const linux = std.os.linux;
 
 pub const ServerConfig = struct {
     port: u16 = 0,
-    hostnames: std.ArrayListUnmanaged([*:0]const u8) = .{},
+    hostname: [*:0]const u8 = "0.0.0.0",
+    ssl_config: ?SSLConfig = null,
     max_request_body_size: usize = 1024 * 1024 * 128,
+    development: bool = false,
+
+    onError: JSC.JSValue = JSC.JSValue.zero,
+    onRequest: JSC.JSValue = JSC.JSValue.zero,
+
+    pub const SSLConfig = struct {
+        server_name: [*:0]const u8 = "",
+
+        key_file_name: [*:0]const u8 = "",
+        cert_file_name: [*:0]const u8 = "",
+
+        ca_file_name: [*:0]const u8 = "",
+        dh_params_file_name: [*:0]const u8 = "",
+
+        passphrase: [*:0]const u8 = "",
+        low_memory_mode: bool = false,
+
+        pub fn deinit(this: *SSLConfig) void {
+            const fields = .{
+                "server_name",
+                "key_file_name",
+                "cert_file_name",
+                "ca_file_name",
+                "dh_params_file_name",
+                "passphrase",
+            };
+
+            inline for (fields) |field| {
+                const slice = std.mem.span(@field(this, field));
+                if (slice.len > 0) {
+                    bun.default_allocator.free(slice);
+                }
+            }
+        }
+
+        const zero = SSLConfig{};
+
+        pub fn inJS(global: *JSC.JSGlobalObject, obj: JSC.JSValue, exception: JSC.C.ExceptionRef) ?SSLConfig {
+            var result = zero;
+            var any = false;
+
+            // Required
+            if (obj.getTruthy(global, "keyFile")) |key_file_name| {
+                var sliced = key_file_name.toSlice(global, bun.default_allocator);
+                if (sliced.len > 0) {
+                    result.key_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    if (std.os.system.access(result.key_file_name, std.os.F_OK) != 0) {
+                        JSC.throwInvalidArguments("Invalid keyFile path", .{}, global.ref(), exception);
+                        result.deinit();
+
+                        return null;
+                    }
+                    any = true;
+                }
+            }
+            if (obj.getTruthy(global, "certFile")) |cert_file_name| {
+                var sliced = cert_file_name.toSlice(global, bun.default_allocator);
+                if (sliced.len > 0) {
+                    result.cert_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    if (std.os.system.access(result.cert_file_name, std.os.F_OK) != 0) {
+                        JSC.throwInvalidArguments("Invalid certFile path", .{}, global.ref(), exception);
+                        result.deinit();
+                        return null;
+                    }
+                    any = true;
+                }
+            }
+
+            // Optional
+            if (any) {
+                if (obj.getTruthy(global, "serverName")) |key_file_name| {
+                    var sliced = key_file_name.toSlice(global, bun.default_allocator);
+                    if (sliced.len > 0) {
+                        result.server_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    }
+                }
+
+                if (obj.getTruthy(global, "caFile")) |ca_file_name| {
+                    var sliced = ca_file_name.toSlice(global, bun.default_allocator);
+                    if (sliced.len > 0) {
+                        result.ca_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                        if (std.os.system.access(result.ca_file_name, std.os.F_OK) != 0) {
+                            JSC.throwInvalidArguments("Invalid caFile path", .{}, global.ref(), exception);
+                            result.deinit();
+                            return null;
+                        }
+                    }
+                }
+                if (obj.getTruthy(global, "dhParamsFile")) |dh_params_file_name| {
+                    var sliced = dh_params_file_name.toSlice(global, bun.default_allocator);
+                    if (sliced.len > 0) {
+                        result.dh_params_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                        if (std.os.system.access(result.dh_params_file_name, std.os.F_OK) != 0) {
+                            JSC.throwInvalidArguments("Invalid dhParamsFile path", .{}, global.ref(), exception);
+                            result.deinit();
+                            return null;
+                        }
+                    }
+                }
+
+                if (obj.getTruthy(global, "passphrase")) |passphrase| {
+                    var sliced = passphrase.toSlice(global, bun.default_allocator);
+                    if (sliced.len > 0) {
+                        result.passphrase = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    }
+                }
+
+                if (obj.get(global, "lowMemoryMode")) |low_memory_mode| {
+                    result.low_memory_mode = low_memory_mode.toBoolean();
+                    any = true;
+                }
+            }
+
+            if (!any)
+                return null;
+            return result;
+        }
+
+        pub fn fromJS(global: *JSC.JSGlobalObject, arguments: *JSC.Node.ArgumentsSlice, exception: JSC.C.ExceptionRef) ?SSLConfig {
+            if (arguments.next()) |arg| {
+                return SSLConfig.inJS(global, arg, exception);
+            }
+
+            return null;
+        }
+    };
+
+    pub fn fromJS(global: *JSC.JSGlobalObject, arguments: *JSC.Node.ArgumentsSlice, exception: JSC.C.ExceptionRef) ServerConfig {
+        var env = VirtualMachine.vm.bundler.env;
+
+        var args = ServerConfig{
+            .port = 3000,
+            .hostname = "0.0.0.0",
+            .development = true,
+        };
+
+        if (strings.eqlComptime(env.get("NODE_ENV") orelse "", "production")) {
+            args.development = false;
+        }
+
+        if (VirtualMachine.vm.bundler.options.production) {
+            args.development = false;
+        }
+
+        const PORT_ENV = .{ "PORT", "BUN_PORT" };
+
+        inline for (PORT_ENV) |PORT| {
+            if (env.get(PORT)) |port| {
+                if (std.fmt.parseInt(u16, port, 10)) |_port| {
+                    args.port = _port;
+                } else |_| {}
+            }
+        }
+
+        if (VirtualMachine.vm.bundler.options.transform_options.port) |port| {
+            args.port = port;
+        }
+
+        if (arguments.next()) |arg| {
+            if (arg.isUndefinedOrNull() or !arg.isObject()) {
+                JSC.throwInvalidArguments("Bun.serve expects an object", .{}, global.ref(), exception);
+                return args;
+            }
+
+            if (arg.getTruthy(global, "port")) |port_| {
+                args.port = @intCast(u16, @minimum(@maximum(0, port_.toInt32()), std.math.maxInt(u16)));
+            }
+
+            if (arg.getTruthy(global, "hostname") orelse arg.getTruthy(global, "host")) |host| {
+                const host_str = host.toSlice(
+                    global,
+                    bun.default_allocator,
+                );
+                if (host_str.len > 0) {
+                    args.hostname = bun.default_allocator.dupeZ(u8, host_str.slice()) catch unreachable;
+                }
+            }
+
+            if (arg.get(global, "development")) |dev| {
+                args.development = dev.toBoolean();
+            }
+
+            if (SSLConfig.fromJS(global, arguments, exception)) |ssl_config| {
+                args.ssl_config = ssl_config;
+            }
+
+            if (exception.* != null) {
+                return args;
+            }
+
+            if (arg.getTruthy(global, "maxRequestBodySize")) |max_request_body_size| {
+                args.max_request_body_size = @intCast(u64, @maximum(0, max_request_body_size.toInt64()));
+            }
+
+            if (arg.getTruthy(global, "error")) |onError| {
+                if (!onError.isCallable(global.vm())) {
+                    JSC.throwInvalidArguments("Expected error to be a function", .{}, global.ref(), exception);
+                    if (args.ssl_config) |*conf| {
+                        conf.deinit();
+                    }
+                    return args;
+                }
+                JSC.C.JSValueProtect(global.ref(), onError.asObjectRef());
+                args.onError = onError;
+            }
+
+            if (arg.getTruthy(global, "fetch")) |onRequest| {
+                if (!onRequest.isCallable(global.vm())) {
+                    JSC.throwInvalidArguments("Expected fetch() to be a function", .{}, global.ref(), exception);
+                    return args;
+                }
+                JSC.C.JSValueProtect(global.ref(), onRequest.asObjectRef());
+                args.onRequest = onRequest;
+            } else {
+                JSC.throwInvalidArguments("Expected fetch() to be a function", .{}, global.ref(), exception);
+                if (args.ssl_config) |*conf| {
+                    conf.deinit();
+                }
+                return args;
+            }
+        }
+
+        if (args.port == 0) {
+            JSC.throwInvalidArguments("Invalid port: must be > 0", .{}, global.ref(), exception);
+        }
+
+        return args;
+    }
 };
 
-pub fn NewServer(comptime ssl_enabled: bool) type {
+pub fn NewServer(comptime ssl_enabled: bool, comptime debug_mode: bool) type {
     return struct {
         const ThisServer = @This();
         const RequestContextStackAllocator = std.heap.StackFallbackAllocator(@sizeOf(RequestContext) * 2048 + 4096);
@@ -105,21 +334,19 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
         pub const App = uws.NewApp(ssl_enabled);
 
         listener: ?*App.ListenSocket = null,
-        callback: JSC.JSValue = JSC.JSValue.zero,
-        port: u16 = 3000,
+
         app: *App = undefined,
         globalThis: *JSGlobalObject,
-        default_server: URL = URL{ .host = "localhost", .port = "3000" },
+
         response_objects_pool: JSC.WebCore.Response.Pool = JSC.WebCore.Response.Pool{},
         config: ServerConfig = ServerConfig{},
         request_pool_allocator: std.mem.Allocator = undefined,
 
-        pub fn init(port: u16, callback: JSC.JSValue, globalThis: *JSGlobalObject) *ThisServer {
+        pub fn init(config: ServerConfig, globalThis: *JSGlobalObject) *ThisServer {
             var server = bun.default_allocator.create(ThisServer) catch @panic("Out of memory!");
             server.* = .{
-                .port = port,
-                .callback = callback,
                 .globalThis = globalThis,
+                .config = config,
             };
             RequestContext.pool = bun.default_allocator.create(RequestContextStackAllocator) catch @panic("Out of memory!");
             server.request_pool_allocator = RequestContext.pool.get();
@@ -128,14 +355,14 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
 
         pub fn onListen(this: *ThisServer, socket: ?*App.ListenSocket, _: uws.uws_app_listen_config_t) void {
             if (socket == null) {
-                Output.prettyErrorln("Failed to start socket", .{});
-                Output.flush();
+                JSC.VirtualMachine.vm.defaultErrorHandler(ZigString.init("Bun.serve failed to start").toErrorInstance(this.globalThis), null);
                 return;
             }
 
             this.listener = socket;
             VirtualMachine.vm.uws_event_loop = uws.Loop.get();
             VirtualMachine.vm.response_objects_pool = &this.response_objects_pool;
+
             this.app.run();
         }
 
@@ -153,6 +380,7 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
             response_headers: ?*JSC.WebCore.Headers.RefCountedHeaders = null,
             has_abort_handler: bool = false,
             has_sendfile_ctx: bool = false,
+            has_called_error_handler: bool = false,
             sendfile: SendfileContext = undefined,
             request_js_object: JSC.C.JSObjectRef = null,
             request_body_buf: std.ArrayListUnmanaged(u8) = .{},
@@ -197,21 +425,9 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                 _: *JSC.JSGlobalObject,
                 arguments: []const JSC.JSValue,
             ) void {
-                var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(bun.default_allocator);
-                JSC.VirtualMachine.vm.defaultErrorHandler(arguments[0], &exception_list);
-                if (!ctx.resp.hasResponded()) {
-                    ctx.renderDefaultError(
-                        JSC.VirtualMachine.vm.log,
-                        error.PromiseRejection,
-                        exception_list.toOwnedSlice(),
-                        "",
-                        .{},
-                    );
-                    JSC.VirtualMachine.vm.log.reset();
-                    return;
-                } else {
-                    exception_list.deinit();
-                }
+                ctx.runErrorHandler(
+                    if (arguments.len > 0) arguments[0] else JSC.JSValue.jsUndefined(),
+                );
 
                 if (ctx.aborted) {
                     ctx.finalize();
@@ -264,7 +480,7 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                 ) catch unreachable;
                 if (this.resp.tryEnd(bb.items, bb.items.len)) {
                     bb.clearAndFree();
-                    this.finalize();
+                    this.finalizeWithoutDeinit();
                     return;
                 }
 
@@ -349,6 +565,13 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                 if (headers.getHeaderIndex("content-length")) |index| {
                     headers.entries.orderedRemove(index);
                 }
+
+                if (this.blob.content_type.len > 0 and headers.getHeaderIndex("content-type") == null) {
+                    this.resp.writeHeader("content-type", this.blob.content_type);
+                } else if (MimeType.sniff(this.blob.sharedView())) |content| {
+                    this.resp.writeHeader("content-type", content.value);
+                }
+
                 defer headers_.deref();
                 var entries = headers.entries.slice();
                 const names = entries.items(.name);
@@ -487,7 +710,7 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
 
                 this.sendfile = .{
                     .fd = fd,
-                    .remain = size_, // 2 is for \r\n,
+                    .remain = size_,
                     .socket_fd = this.resp.getNativeHandle(),
                 };
 
@@ -499,6 +722,8 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
 
                     return;
                 }
+
+                // TODO: fix this to be MSGHDR
                 _ = std.os.write(this.sendfile.socket_fd, "\r\n") catch 0;
 
                 _ = this.onSendfile();
@@ -553,6 +778,51 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                 this.renderBytes();
             }
 
+            pub fn renderProductionError(this: *RequestContext) void {
+                this.resp.writeStatus("500 Internal Server Error");
+                this.resp.writeHeader("content-type", "text/plain");
+                this.resp.end("Something went wrong!", true);
+
+                this.finalize();
+            }
+
+            pub fn runErrorHandler(this: *RequestContext, value: JSC.JSValue) void {
+                if (this.resp.hasResponded()) return;
+
+                var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(bun.default_allocator);
+
+                if (!this.server.config.onError.isEmpty() and !this.has_called_error_handler) {
+                    this.has_called_error_handler = true;
+                    var args = [_]JSC.C.JSValueRef{value.asObjectRef()};
+                    const result = JSC.C.JSObjectCallAsFunctionReturnValue(this.server.globalThis.ref(), this.server.config.onError.asObjectRef(), null, 1, &args);
+                    if (!result.isUndefinedOrNull()) {
+                        if (result.isError() or result.isAggregateError(this.server.globalThis)) {
+                            JSC.VirtualMachine.vm.defaultErrorHandler(result, &exception_list);
+                        } else if (result.as(Response)) |response| {
+                            this.render(response);
+                            return;
+                        }
+                    }
+                }
+
+                if (comptime debug_mode) {
+                    JSC.VirtualMachine.vm.defaultErrorHandler(value, &exception_list);
+
+                    this.renderDefaultError(
+                        JSC.VirtualMachine.vm.log,
+                        error.ExceptionOcurred,
+                        exception_list.toOwnedSlice(),
+                        "Unhandled exception in request handler",
+                        .{},
+                    );
+                } else {
+                    JSC.VirtualMachine.vm.defaultErrorHandler(value, &exception_list);
+                    this.renderProductionError();
+                }
+                JSC.VirtualMachine.vm.log.reset();
+                return;
+            }
+
             pub fn renderMetadata(this: *RequestContext) void {
                 var response: *JSC.WebCore.Response = this.response_ptr.?;
                 var status = response.statusCode();
@@ -566,6 +836,10 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
 
                 if (response.body.init.headers) |headers_| {
                     this.writeHeaders(headers_);
+                } else if (this.blob.content_type.len > 0) {
+                    this.resp.writeHeader("content-type", this.blob.content_type);
+                } else if (MimeType.sniff(this.blob.sharedView())) |content| {
+                    this.resp.writeHeader("content-type", content.value);
                 }
             }
 
@@ -687,6 +961,7 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
             const buffer = writer.ctx.written;
             resp.end(buffer, false);
         }
+
         pub fn onSrcRequest(_: *ThisServer, req: *uws.Request, resp: *App.Response) void {
             if (comptime JSC.is_bindgen) return undefined;
             req.setYield(false);
@@ -739,7 +1014,7 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
             var args = [_]JSC.C.JSValueRef{JSC.WebCore.Request.Class.make(this.globalThis.ref(), request_object)};
             ctx.request_js_object = args[0];
             JSC.C.JSValueProtect(this.globalThis.ref(), args[0]);
-            ctx.response_jsvalue = JSC.C.JSObjectCallAsFunctionReturnValue(this.globalThis.ref(), this.callback.asObjectRef(), null, 1, &args);
+            ctx.response_jsvalue = JSC.C.JSObjectCallAsFunctionReturnValue(this.globalThis.ref(), this.config.onRequest.asObjectRef(), null, 1, &args);
             defer JSC.VirtualMachine.vm.tick();
             if (ctx.aborted) {
                 ctx.finalize();
@@ -754,21 +1029,7 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
             }
 
             if (ctx.response_jsvalue.isError() or ctx.response_jsvalue.isAggregateError(this.globalThis) or ctx.response_jsvalue.isException(this.globalThis.vm())) {
-                var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(bun.default_allocator);
-                JSC.VirtualMachine.vm.defaultErrorHandler(ctx.response_jsvalue, &exception_list);
-                if (!ctx.resp.hasResponded()) {
-                    ctx.renderDefaultError(
-                        JSC.VirtualMachine.vm.log,
-                        error.ExceptionOcurred,
-                        exception_list.toOwnedSlice(),
-                        "Unhandled exception in request handler",
-                        .{},
-                    );
-                    JSC.VirtualMachine.vm.log.reset();
-                    return;
-                } else {
-                    exception_list.deinit();
-                }
+                ctx.runErrorHandler(ctx.response_jsvalue);
             }
 
             JSC.C.JSValueProtect(this.globalThis.ref(), ctx.response_jsvalue.asObjectRef());
@@ -790,6 +1051,12 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
                     RequestContext.onResolve,
                     RequestContext.onReject,
                 );
+                return;
+            }
+
+            if (!ctx.resp.hasResponded()) {
+                ctx.resp.writeStatus("200 OK");
+                ctx.resp.end("Welcome to Bun! To get started, ", false);
             }
 
             // switch (ctx.response_jsvalue.jsTypeLoose()) {
@@ -800,20 +1067,42 @@ pub fn NewServer(comptime ssl_enabled: bool) type {
         }
 
         pub fn listen(this: *ThisServer) void {
-            this.app = App.create(.{});
+            if (ssl_enabled) {
+                const ssl_config = this.config.ssl_config orelse @panic("Assertion failure: ssl_config");
+                this.app = App.create(.{
+                    .key_file_name = ssl_config.key_file_name,
+                    .cert_file_name = ssl_config.cert_file_name,
+                    .passphrase = ssl_config.passphrase,
+                    .dh_params_file_name = ssl_config.dh_params_file_name,
+                    .ca_file_name = ssl_config.ca_file_name,
+                    .ssl_prefer_low_memory_usage = @as(c_int, @boolToInt(ssl_config.low_memory_mode)),
+                });
+
+                if (std.mem.span(ssl_config.server_name).len > 0) {
+                    this.app.addServerName(ssl_config.server_name);
+                }
+            } else {
+                this.app = App.create(.{});
+            }
+
             this.app.any("/*", *ThisServer, this, onRequest);
 
-            this.app.get("/bun:info", *ThisServer, this, onBunInfoRequest);
-            this.app.get("/src:/*", *ThisServer, this, onSrcRequest);
+            if (comptime debug_mode) {
+                this.app.get("/bun:info", *ThisServer, this, onBunInfoRequest);
+                this.app.get("/src:/*", *ThisServer, this, onSrcRequest);
+            }
 
             this.app.listenWithConfig(*ThisServer, this, onListen, .{
-                .port = this.default_server.getPort().?,
-                .host = bun.default_allocator.dupeZ(u8, this.default_server.displayHostname()) catch unreachable,
+                .port = this.config.port,
+                .host = this.config.hostname,
                 .options = 0,
             });
         }
     };
 }
 
-pub const Server = NewServer(false);
-pub const SSLServer = NewServer(true);
+pub const Server = NewServer(false, true);
+pub const SSLServer = NewServer(true, true);
+
+pub const DebugServer = NewServer(false, true);
+pub const DebugSSLServer = NewServer(true, true);

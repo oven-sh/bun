@@ -396,10 +396,10 @@ pub fn NewApp(comptime ssl: bool) type {
         pub fn getNativeHandle(app: *ThisApp) ?*anyopaque {
             return uws_get_native_handle(ssl_flag, app);
         }
-        pub fn removeServerName(app: *ThisApp, hostname_pattern: [:0]const u8) void {
+        pub fn removeServerName(app: *ThisApp, hostname_pattern: [*:0]const u8) void {
             return uws_remove_server_name(ssl_flag, @ptrCast(*uws_app_t, app), hostname_pattern);
         }
-        pub fn addServerName(app: *ThisApp, hostname_pattern: [:0]const u8) void {
+        pub fn addServerName(app: *ThisApp, hostname_pattern: [*:0]const u8) void {
             return uws_add_server_name(ssl_flag, @ptrCast(*uws_app_t, app), hostname_pattern);
         }
         pub fn addServerNameWithOptions(app: *ThisApp, hostname_pattern: [:0]const u8, opts: us_socket_context_options_t) void {

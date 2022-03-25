@@ -189,8 +189,16 @@ pub const ServerEntryPoint = struct {
             \\if ('default' in start && "__internalIsCommonJSNamespace" in globalThis && __internalIsCommonJSNamespace(start)) {{
             \\  entryNamespace = start.default();
             \\}}
-            \\if(typeof entryNamespace?.default?.fetch === 'function') Bun.startServer(entryNamespace.default.fetch);
-            \\if(typeof entryNamespace?.default?.cli === 'function') Bun.startServer(entryNamespace.default.cli);
+            \\if (typeof entryNamespace?.then === 'function') {{
+            \\   entryNamespace = entryNamespace.then((entryNamespace) => {{
+            \\      if(typeof entryNamespace?.default?.fetch === 'function')  {{
+            \\        Bun.serve(entryNamespace.default);
+            \\      }}
+            \\   }}, reportError);
+            \\}} else if (typeof entryNamespace?.default?.fetch === 'function') {{
+            \\   Bun.serve(entryNamespace);
+            \\}}
+            \\
         ,
             .{
                 dir_to_use,

@@ -13,7 +13,7 @@ const js = JSC.C;
 const Method = @import("../../../http/method.zig").Method;
 
 const ObjectPool = @import("../../../pool.zig").ObjectPool;
-
+const SystemError = JSC.SystemError;
 const Output = @import("../../../global.zig").Output;
 const MutableString = @import("../../../global.zig").MutableString;
 const strings = @import("../../../global.zig").strings;
@@ -1980,13 +1980,13 @@ pub const Blob = struct {
                             if (sliced.len > 0) {
                                 var extname = std.fs.path.extension(sliced);
                                 extname = std.mem.trim(u8, extname, ".");
-                                if (HTTPClient.MimeType.byExtension(extname)) |mime| {
-                                    break :brk mime.value;
+                                if (HTTPClient.MimeType.byExtensionNoDefault(extname)) |mime| {
+                                    break :brk mime;
                                 }
                             }
-
-                            break :brk null;
                         }
+
+                        break :brk null;
                     },
                 ) },
                 .allocator = allocator,
@@ -2133,6 +2133,7 @@ pub const Blob = struct {
                     suspend {
                         this.close_frame = @frame().*;
                     }
+
                     if (@hasField(This, "errno")) {
                         if (this.errno) |errno| {
                             return @errSetCast(AsyncIO.CloseError, errno);
@@ -2267,7 +2268,6 @@ pub const Blob = struct {
             open_frame: OpenFrameType = undefined,
             read_frame: @Frame(ReadFile.doRead) = undefined,
             close_frame: @Frame(ReadFile.doClose) = undefined,
-            errno: ?anyerror = null,
             open_completion: HTTPClient.NetworkThread.Completion = undefined,
             opened_fd: JSC.Node.FileDescriptor = 0,
             read_completion: HTTPClient.NetworkThread.Completion = undefined,
@@ -2278,11 +2278,14 @@ pub const Blob = struct {
             runAsyncFrame: @Frame(ReadFile.runAsync) = undefined,
             close_completion: HTTPClient.NetworkThread.Completion = undefined,
             task: HTTPClient.NetworkThread.Task = undefined,
-
+            system_error: ?JSC.SystemError = null,
+            errno: ?anyerror = null,
             onCompleteCtx: *anyopaque = undefined,
             onCompleteCallback: OnReadFileCallback = undefined,
 
-            pub const OnReadFileCallback = fn (ctx: *anyopaque, bytes: anyerror![]u8) void;
+            pub const ResultType = SystemError.Maybe([]u8);
+
+            pub const OnReadFileCallback = fn (ctx: *anyopaque, bytes: ResultType) void;
 
             pub usingnamespace FileOpenerMixin(ReadFile);
             pub usingnamespace FileCloserMixin(ReadFile);
@@ -2315,10 +2318,10 @@ pub const Blob = struct {
                 max_len: SizeType,
                 comptime Context: type,
                 context: Context,
-                comptime callback: fn (ctx: Context, bytes: anyerror![]u8) void,
+                comptime callback: fn (ctx: Context, bytes: ResultType) void,
             ) !*ReadFile {
                 const Handler = struct {
-                    pub fn run(ptr: *anyopaque, bytes: anyerror![]u8) void {
+                    pub fn run(ptr: *anyopaque, bytes: ResultType) void {
                         callback(bun.cast(Context, ptr), bytes);
                     }
                 };
@@ -2346,6 +2349,15 @@ pub const Blob = struct {
                 }
 
                 if (this.errno) |errno| {
+                    this.system_error = JSC.SystemError{
+                        .code = ZigString.init(std.mem.span(@errorName(errno))),
+                        .path = if (this.file_store.pathlike == .path)
+                            ZigString.init(this.file_store.pathlike.path.slice())
+                        else
+                            ZigString.Empty,
+                        .syscall = ZigString.init("read"),
+                    };
+
                     return @errSetCast(AsyncIO.ReadError, errno);
                 }
 
@@ -2358,22 +2370,31 @@ pub const Blob = struct {
                 var cb = this.onCompleteCallback;
                 var cb_ctx = this.onCompleteCtx;
 
-                var store = this.store orelse {
-                    var _err = this.errno orelse error.MissingData;
-                    this.byte_store.deinit();
+                if (this.store == null and this.system_error != null) {
+                    var system_error = this.system_error.?;
                     bun.default_allocator.destroy(this);
-                    cb(cb_ctx, _err);
+                    cb(cb_ctx, ResultType{ .err = system_error });
                     return;
-                };
+                } else if (this.store == null) {
+                    bun.default_allocator.destroy(this);
+                    cb(cb_ctx, ResultType{ .err = SystemError{
+                        .code = ZigString.init("INTERNAL_ERROR"),
+                        .path = ZigString.Empty,
+                        .message = ZigString.init("assertion failure - store should not be null"),
+                        .syscall = ZigString.init("read"),
+                    } });
+                    return;
+                }
+                var store = this.store.?;
 
                 defer store.deref();
                 if (this.file_store.pathlike == .path) {
                     VirtualMachine.vm.removeFileBlob(this.file_store.pathlike);
                 }
 
-                if (this.errno) |err| {
+                if (this.system_error) |err| {
                     bun.default_allocator.destroy(this);
-                    cb(cb_ctx, err);
+                    cb(cb_ctx, ResultType{ .err = err });
                     return;
                 }
 
@@ -2391,7 +2412,7 @@ pub const Blob = struct {
                 }
 
                 bun.default_allocator.destroy(this);
-                cb(cb_ctx, bytes);
+                cb(cb_ctx, .{ .result = bytes });
             }
             pub fn run(this: *ReadFile, task: *ReadFileTask) void {
                 this.runAsyncFrame = async this.runAsync(task);
@@ -2400,6 +2421,7 @@ pub const Blob = struct {
             pub fn onRead(this: *ReadFile, _: *HTTPClient.NetworkThread.Completion, result: AsyncIO.ReadError!usize) void {
                 this.read_len = @truncate(SizeType, result catch |err| {
                     this.errno = err;
+                    this.system_error = .{ .code = ZigString.init(std.mem.span(@errorName(err))), .syscall = ZigString.init("read") };
                     this.read_len = 0;
                     resume this.read_frame;
                     return;
@@ -2420,11 +2442,21 @@ pub const Blob = struct {
                     .result => |result| result,
                     .err => |err| {
                         this.errno = AsyncIO.asError(err.errno);
+                        this.system_error = err.toSystemError();
                         return;
                     },
                 };
                 if (!std.os.S.ISREG(stat.mode)) {
                     this.errno = error.ENOTSUP;
+                    this.system_error = JSC.SystemError{
+                        .code = ZigString.init(std.mem.span(@errorName(error.TODO))),
+                        .path = if (this.file_store.pathlike == .path)
+                            ZigString.init(this.file_store.pathlike.path.slice())
+                        else
+                            ZigString.Empty,
+                        .message = ZigString.init("Non-regular files are not supported yet"),
+                        .syscall = ZigString.init("read"),
+                    };
                     return;
                 }
 
@@ -2482,6 +2514,7 @@ pub const Blob = struct {
             open_frame: OpenFrameType = undefined,
             write_frame: @Frame(WriteFile.doWrite) = undefined,
             close_frame: @Frame(WriteFile.doClose) = undefined,
+            system_error: ?JSC.SystemError = null,
             errno: ?anyerror = null,
             open_completion: HTTPClient.NetworkThread.Completion = undefined,
 
@@ -2494,7 +2527,7 @@ pub const Blob = struct {
             onCompleteCallback: OnWriteFileCallback = undefined,
             wrote: usize = 0,
 
-            pub const ResultType = anyerror!SizeType;
+            pub const ResultType = SystemError.Maybe(SizeType);
             pub const OnWriteFileCallback = fn (ctx: *anyopaque, count: ResultType) void;
 
             pub usingnamespace FileOpenerMixin(WriteFile);
@@ -2566,6 +2599,10 @@ pub const Blob = struct {
                 }
 
                 if (this.errno) |errno| {
+                    this.system_error = this.system_error orelse JSC.SystemError{
+                        .code = ZigString.init(std.mem.span(@errorName(errno))),
+                        .syscall = ZigString.init("write"),
+                    };
                     return @errSetCast(AsyncIO.WriteError, errno);
                 }
 
@@ -2581,14 +2618,16 @@ pub const Blob = struct {
                 this.bytes_blob.store.?.deref();
                 this.file_blob.store.?.deref();
 
-                if (this.errno) |err| {
+                if (this.system_error) |err| {
                     bun.default_allocator.destroy(this);
-                    cb(cb_ctx, err);
+                    cb(cb_ctx, .{
+                        .err = err,
+                    });
                     return;
                 }
 
                 bun.default_allocator.destroy(this);
-                cb(cb_ctx, @truncate(SizeType, this.wrote));
+                cb(cb_ctx, .{ .result = @truncate(SizeType, this.wrote) });
             }
             pub fn run(this: *WriteFile, task: *WriteFileTask) void {
                 this.runAsyncFrame = async this.runAsync(task);
@@ -2650,6 +2689,17 @@ pub const Blob = struct {
             both,
         };
 
+        const unsupported_directory_error = SystemError{
+            .errno = @intCast(c_int, @enumToInt(bun.C.SystemErrno.EISDIR)),
+            .message = ZigString.init("That doesn't work on folders"),
+            .syscall = ZigString.init("fstat"),
+        };
+        const unsupported_non_regular_file_error = SystemError{
+            .errno = @intCast(c_int, @enumToInt(bun.C.SystemErrno.ENOTSUP)),
+            .message = ZigString.init("Non-regular files aren't supported yet"),
+            .syscall = ZigString.init("fstat"),
+        };
+
         // blocking, but off the main thread
         pub const CopyFile = struct {
             destination_file_store: FileStore,
@@ -2662,7 +2712,7 @@ pub const Blob = struct {
             destination_fd: JSC.Node.FileDescriptor = 0,
             source_fd: JSC.Node.FileDescriptor = 0,
 
-            errno: ?anyerror = null,
+            system_error: ?SystemError = null,
 
             read_len: SizeType = 0,
             read_off: SizeType = 0,
@@ -2703,7 +2753,7 @@ pub const Blob = struct {
 
             pub fn deinit(this: *CopyFile) void {
                 if (this.source_file_store.pathlike == .path) {
-                    if (this.source_file_store.pathlike.path == .string) {
+                    if (this.source_file_store.pathlike.path == .string and this.system_error == null) {
                         bun.default_allocator.free(bun.constStrToU8(this.source_file_store.pathlike.path.slice()));
                     }
                 }
@@ -2714,14 +2764,13 @@ pub const Blob = struct {
 
             pub fn reject(this: *CopyFile, promise: *JSC.JSInternalPromise) void {
                 var globalThis = this.globalThis;
-                var system_error = JSC.SystemError{};
-                if (this.destination_file_store.pathlike == .path) {
-                    system_error.path = ZigString.init(this.destination_file_store.pathlike.path.slice());
+                var system_error: SystemError = this.system_error orelse SystemError{};
+                if (this.source_file_store.pathlike == .path and system_error.path.len == 0) {
+                    system_error.path = ZigString.init(this.source_file_store.pathlike.path.slice());
                     system_error.path.mark();
                 }
                 system_error.message = ZigString.init("Failed to copy file");
-                var _err = this.errno orelse error.MissingData;
-                system_error.code = ZigString.init(std.mem.span(@errorName(_err)));
+
                 var instance = system_error.toErrorInstance(this.globalThis);
                 if (this.store) |store| {
                     store.deref();
@@ -2732,7 +2781,7 @@ pub const Blob = struct {
             pub fn then(this: *CopyFile, promise: *JSC.JSInternalPromise) void {
                 this.source_store.?.deref();
 
-                if (this.errno != null) {
+                if (this.system_error != null) {
                     this.reject(promise);
                     return;
                 }
@@ -2789,8 +2838,8 @@ pub const Blob = struct {
                     )) {
                         .result => |result| result,
                         .err => |errno| {
-                            this.errno = AsyncIO.asError(errno.errno);
-                            return;
+                            this.system_error = errno.toSystemError();
+                            return AsyncIO.asError(errno.errno);
                         },
                     };
                 }
@@ -2808,8 +2857,8 @@ pub const Blob = struct {
                                 this.source_fd = 0;
                             }
 
-                            this.errno = AsyncIO.asError(errno.errno);
-                            return;
+                            this.system_error = errno.toSystemError();
+                            return AsyncIO.asError(errno.errno);
                         },
                     };
                 }
@@ -2838,8 +2887,11 @@ pub const Blob = struct {
                     switch (linux.getErrno(written)) {
                         .SUCCESS => {},
                         else => |errno| {
-                            this.errno = AsyncIO.asError(errno);
-                            return this.errno.?;
+                            this.system_error = (JSC.Node.Syscall.Error{
+                                .errno = @intCast(JSC.Node.Syscall.Error.Int, @enumToInt(errno)),
+                                .syscall = ZigString.init("copy_file_range"),
+                            }).toSystemError();
+                            return AsyncIO.asError(errno);
                         },
                     }
 
@@ -2853,8 +2905,8 @@ pub const Blob = struct {
             pub fn doFCopyFile(this: *CopyFile) anyerror!void {
                 switch (JSC.Node.Syscall.fcopyfile(this.source_fd, this.destination_fd, os.system.COPYFILE_DATA)) {
                     .err => |errno| {
-                        this.errno = AsyncIO.asError(errno.errno);
-                        return this.errno.?;
+                        this.system_error = errno.toSystemError();
+                        return AsyncIO.asError(errno.errno);
                     },
                     .result => {},
                 }
@@ -2863,6 +2915,7 @@ pub const Blob = struct {
             pub fn doClonefile(this: *CopyFile) anyerror!void {
                 switch (JSC.Node.Syscall.clonefile(this.destination_file_store.pathlike.path.sliceZAssume(), this.source_file_store.pathlike.path.sliceZAssume())) {
                     .err => |errno| {
+                        this.system_error = errno.toSystemError();
                         return AsyncIO.asError(errno.errno);
                     },
                     .result => {},
@@ -2898,7 +2951,7 @@ pub const Blob = struct {
                                         stat_ = result;
 
                                         if (os.S.ISDIR(result.mode)) {
-                                            this.errno = error.@"Bun.write() doesn't support directories yet.";
+                                            this.system_error = unsupported_directory_error;
                                             return;
                                         }
 
@@ -2907,7 +2960,7 @@ pub const Blob = struct {
                                     },
                                     .err => |err| {
                                         // If we can't stat it, we also can't copy it.
-                                        this.errno = AsyncIO.asError(err.errno);
+                                        this.system_error = err.toSystemError();
                                         return;
                                     },
                                 }
@@ -2934,29 +2987,20 @@ pub const Blob = struct {
                         }
                     }
 
-                    this.doOpenFile(.both) catch |err| {
-                        this.errno = err;
-                        return;
-                    };
+                    this.doOpenFile(.both) catch return;
                     // Do we need to open only one file?
                 } else if (this.destination_fd == 0) {
                     this.source_fd = this.source_file_store.pathlike.fd;
 
-                    this.doOpenFile(.destination) catch |err| {
-                        this.errno = err;
-                        return;
-                    };
+                    this.doOpenFile(.destination) catch return;
                     // Do we need to open only one file?
                 } else if (this.source_fd == 0) {
                     this.destination_fd = this.destination_file_store.pathlike.fd;
 
-                    this.doOpenFile(.source) catch |err| {
-                        this.errno = err;
-                        return;
-                    };
+                    this.doOpenFile(.source) catch return;
                 }
 
-                if (this.errno != null) {
+                if (this.system_error != null) {
                     return;
                 }
 
@@ -2967,13 +3011,13 @@ pub const Blob = struct {
                     .result => |result| result,
                     .err => |err| {
                         this.doClose();
-                        this.errno = AsyncIO.asError(err.errno);
+                        this.system_error = err.toSystemError();
                         return;
                     },
                 };
 
                 if (os.S.ISDIR(stat.mode)) {
-                    this.errno = error.@"Bun.write() doesn't support directories yet.";
+                    this.system_error = unsupported_directory_error;
                     this.doClose();
                     return;
                 }
@@ -2992,15 +3036,15 @@ pub const Blob = struct {
 
                 if (os.S.ISREG(stat.mode)) {
                     if (comptime Environment.isLinux) {
-                        this.doCopyFileRange() catch |err| {
+                        this.doCopyFileRange() catch {
                             this.doClose();
-                            this.errno = err;
+
                             return;
                         };
                     } else if (comptime Environment.isMac) {
-                        this.doFCopyFile() catch |err| {
+                        this.doFCopyFile() catch {
                             this.doClose();
-                            this.errno = err;
+
                             return;
                         };
                         if (stat.size != 0 and @intCast(SizeType, stat.size) > this.max_length) {
@@ -3010,7 +3054,7 @@ pub const Blob = struct {
                         @compileError("TODO: implement copyfile");
                     }
                 } else {
-                    this.errno = error.@"Bun.write() doesn't support non-regular files yet.";
+                    this.system_error = unsupported_non_regular_file_error;
                 }
 
                 this.doClose();
@@ -3486,27 +3530,24 @@ pub const Blob = struct {
             context: Blob,
             promise: *JSPromise,
             globalThis: *JSGlobalObject,
-            pub fn run(handler: *@This(), bytes_: anyerror![]u8) void {
+            pub fn run(handler: *@This(), bytes_: Blob.Store.ReadFile.ResultType) void {
                 var promise = handler.promise;
                 var blob = handler.context;
                 blob.allocator = null;
                 var globalThis = handler.globalThis;
                 bun.default_allocator.destroy(handler);
-                var bytes = bytes_ catch |err| {
-                    var error_string = ZigString.init(
-                        std.fmt.allocPrint(bun.default_allocator, "Failed to read file \"{s}\"", .{std.mem.span(@errorName(err))}) catch unreachable,
-                    );
-                    error_string.mark();
-                    blob.detach();
+                switch (bytes_) {
+                    .result => |bytes| {
+                        if (blob.size > 0)
+                            blob.size = @minimum(@truncate(u32, bytes.len), blob.size);
 
-                    promise.reject(globalThis, error_string.toErrorInstance(globalThis));
-                    return;
-                };
-
-                if (blob.size > 0)
-                    blob.size = @minimum(@truncate(u32, bytes.len), blob.size);
-
-                promise.resolve(globalThis, Function(&blob, globalThis, comptime lifetime));
+                        promise.resolve(globalThis, Function(&blob, globalThis, comptime lifetime));
+                    },
+                    .err => |err| {
+                        blob.detach();
+                        promise.reject(globalThis, err.toErrorInstance(globalThis));
+                    },
+                }
             }
         };
     }
@@ -3518,22 +3559,20 @@ pub const Blob = struct {
             var promise = handler.promise;
             var globalThis = handler.globalThis;
             bun.default_allocator.destroy(handler);
-            var wrote = count catch |err| {
-                var error_string = ZigString.init(
-                    std.fmt.allocPrint(bun.default_allocator, "Failed to write file \"{s}\"", .{std.mem.span(@errorName(err))}) catch unreachable,
-                );
-                error_string.mark();
-                promise.reject(globalThis, error_string.toErrorInstance(globalThis));
-                return;
-            };
-
-            promise.resolve(globalThis, JSC.JSValue.jsNumberFromUint64(wrote));
+            switch (count) {
+                .err => |err| {
+                    promise.reject(globalThis, err.toErrorInstance(globalThis));
+                },
+                .result => |wrote| {
+                    promise.resolve(globalThis, JSC.JSValue.jsNumberFromUint64(wrote));
+                },
+            }
         }
     };
 
     pub fn NewInternalReadFileHandler(comptime Context: type, comptime Function: anytype) type {
         return struct {
-            pub fn run(handler: *anyopaque, bytes_: anyerror![]u8) void {
+            pub fn run(handler: *anyopaque, bytes_: Store.ReadFile.ResultType) void {
                 Function(bun.cast(Context, handler), bytes_);
             }
         };

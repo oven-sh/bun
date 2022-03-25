@@ -65,11 +65,13 @@ pub const WebsocketHeader = packed struct {
     }
 
     pub fn packLength(length: usize) u7 {
-        return switch (length) {
+        var eight: u7 = 0;
+        eight = switch (length) {
             0...126 => @truncate(u7, length),
             127...0xFFFF => 126,
             else => 127,
         };
+        return eight;
     }
 };
 

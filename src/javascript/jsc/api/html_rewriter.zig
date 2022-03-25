@@ -316,23 +316,26 @@ pub const HTMLRewriter = struct {
             );
         }
 
-        pub fn onFinishedLoadingWrap(sink: *anyopaque, bytes: anyerror![]u8) void {
+        pub fn onFinishedLoadingWrap(sink: *anyopaque, bytes: JSC.WebCore.Blob.Store.ReadFile.ResultType) void {
             onFinishedLoading(bun.cast(*BufferOutputSink, sink), bytes);
         }
 
-        pub fn onFinishedLoading(sink: *BufferOutputSink, bytes: anyerror![]u8) void {
-            const data = bytes catch |err| {
-                if (sink.response.body.value == .Locked and @ptrToInt(sink.response.body.value.Locked.task) == @ptrToInt(sink)) {
-                    sink.response.body.value = .{ .Empty = .{} };
-                }
+        pub fn onFinishedLoading(sink: *BufferOutputSink, bytes: JSC.WebCore.Blob.Store.ReadFile.ResultType) void {
+            switch (bytes) {
+                .err => |err| {
+                    if (sink.response.body.value == .Locked and @ptrToInt(sink.response.body.value.Locked.task) == @ptrToInt(sink)) {
+                        sink.response.body.value = .{ .Empty = .{} };
+                    }
 
-                sink.response.body.value.toError(err, sink.global);
-                sink.rewriter.end() catch {};
-                sink.deinit();
-                return;
-            };
-
-            _ = sink.runOutputSink(data, true);
+                    sink.response.body.value.toErrorInstance(err.toErrorInstance(sink.global), sink.global);
+                    sink.rewriter.end() catch {};
+                    sink.deinit();
+                    return;
+                },
+                .result => |data| {
+                    _ = sink.runOutputSink(data, true);
+                },
+            }
         }
 
         pub fn runOutputSink(sink: *BufferOutputSink, bytes: []const u8, is_async: bool) ?JSValue {

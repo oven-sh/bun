@@ -3469,7 +3469,10 @@ pub const Blob = struct {
             .size = store.size(),
             .store = store,
             .allocator = null,
-            .content_type = "",
+            .content_type = if (store.data == .file)
+                store.data.file.mime_type.value
+            else
+                "",
             .globalThis = globalThis,
         };
     }

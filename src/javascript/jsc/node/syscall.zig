@@ -201,7 +201,7 @@ pub fn write(fd: os.fd_t, bytes: []const u8) Maybe(usize) {
     unreachable;
 }
 
-const pread_sym = if (builtin.os.tag == .linux and builtin.link_sys)
+const pread_sym = if (builtin.os.tag == .linux and builtin.link_libc)
     sys.pread64
 else
     sys.pread;
@@ -221,7 +221,7 @@ pub fn pread(fd: os.fd_t, buf: []u8, offset: i64) Maybe(usize) {
     unreachable;
 }
 
-const pwrite_sym = if (builtin.os.tag == .linux and builtin.link_sys)
+const pwrite_sym = if (builtin.os.tag == .linux and builtin.link_libc)
     sys.pwrite64
 else
     sys.pwrite;

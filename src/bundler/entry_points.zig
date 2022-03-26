@@ -196,7 +196,7 @@ pub const ServerEntryPoint = struct {
             \\      }}
             \\   }}, reportError);
             \\}} else if (typeof entryNamespace?.default?.fetch === 'function') {{
-            \\   Bun.serve(entryNamespace);
+            \\   Bun.serve(entryNamespace.default);
             \\}}
             \\
         ,

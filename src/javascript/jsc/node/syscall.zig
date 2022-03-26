@@ -21,7 +21,7 @@ pub const system = if (Environment.isLinux) linux else darwin;
 pub const S = struct {
     pub usingnamespace if (Environment.isLinux) linux.S else std.os.S;
 };
-const libc = std.os.system;
+const sys = std.os.system;
 
 pub const Tag = enum(u8) {
     TODO,
@@ -75,9 +75,9 @@ const mode_t = os.mode_t;
 const open_sym = system.open;
 
 const fstat_sym = if (builtin.os.tag == .linux)
-    libc.fstat64
+    sys.fstat64
 else
-    libc.fstat;
+    sys.fstat;
 
 const mem = std.mem;
 
@@ -97,13 +97,13 @@ pub fn fchmod(fd: JSC.Node.FileDescriptor, mode: JSC.Node.Mode) Maybe(void) {
 }
 
 pub fn chdir(destination: [:0]const u8) Maybe(void) {
-    const rc = libc.chdir(destination);
+    const rc = sys.chdir(destination);
     return Maybe(void).errnoSys(rc, .chdir) orelse Maybe(void).success;
 }
 
 pub fn stat(path: [:0]const u8) Maybe(os.Stat) {
     var stat_ = comptime mem.zeroes(os.Stat);
-    if (Maybe(os.Stat).errnoSys(libc.stat(path, &stat_), .stat)) |err| return err;
+    if (Maybe(os.Stat).errnoSys(sys.stat(path, &stat_), .stat)) |err| return err;
     return Maybe(os.Stat){ .result = stat_ };
 }
 
@@ -191,7 +191,7 @@ pub fn write(fd: os.fd_t, bytes: []const u8) Maybe(usize) {
     const adjusted_len = @minimum(max_count, bytes.len);
 
     while (true) {
-        const rc = libc.write(fd, bytes.ptr, adjusted_len);
+        const rc = sys.write(fd, bytes.ptr, adjusted_len);
         if (Maybe(usize).errnoSys(rc, .write)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
@@ -201,10 +201,10 @@ pub fn write(fd: os.fd_t, bytes: []const u8) Maybe(usize) {
     unreachable;
 }
 
-const pread_sym = if (builtin.os.tag == .linux and builtin.link_libc)
-    libc.pread64
+const pread_sym = if (builtin.os.tag == .linux and builtin.link_sys)
+    sys.pread64
 else
-    libc.pread;
+    sys.pread;
 
 pub fn pread(fd: os.fd_t, buf: []u8, offset: i64) Maybe(usize) {
     const adjusted_len = @minimum(buf.len, max_count);
@@ -221,10 +221,10 @@ pub fn pread(fd: os.fd_t, buf: []u8, offset: i64) Maybe(usize) {
     unreachable;
 }
 
-const pwrite_sym = if (builtin.os.tag == .linux and builtin.link_libc)
-    libc.pwrite64
+const pwrite_sym = if (builtin.os.tag == .linux and builtin.link_sys)
+    sys.pwrite64
 else
-    libc.pwrite;
+    sys.pwrite;
 
 pub fn pwrite(fd: os.fd_t, bytes: []const u8, offset: i64) Maybe(usize) {
     const adjusted_len = @minimum(bytes.len, max_count);
@@ -246,7 +246,7 @@ pub fn pwrite(fd: os.fd_t, bytes: []const u8, offset: i64) Maybe(usize) {
 pub fn read(fd: os.fd_t, buf: []u8) Maybe(usize) {
     const adjusted_len = @minimum(buf.len, max_count);
     while (true) {
-        const rc = libc.read(fd, buf.ptr, adjusted_len);
+        const rc = sys.read(fd, buf.ptr, adjusted_len);
         if (Maybe(usize).errnoSys(rc, .read)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
@@ -258,7 +258,7 @@ pub fn read(fd: os.fd_t, buf: []u8) Maybe(usize) {
 
 pub fn readlink(in: [:0]const u8, buf: []u8) Maybe(usize) {
     while (true) {
-        const rc = libc.readlink(in, buf.ptr, buf.len);
+        const rc = sys.readlink(in, buf.ptr, buf.len);
 
         if (Maybe(usize).errnoSys(rc, .readlink)) |err| {
             if (err.getErrno() == .INTR) continue;
@@ -271,7 +271,7 @@ pub fn readlink(in: [:0]const u8, buf: []u8) Maybe(usize) {
 
 pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
     while (true) {
-        if (Maybe(void).errnoSys(libc.rename(from, to), .rename)) |err| {
+        if (Maybe(void).errnoSys(sys.rename(from, to), .rename)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -293,7 +293,7 @@ pub fn chown(path: [:0]const u8, uid: os.uid_t, gid: os.gid_t) Maybe(void) {
 
 pub fn symlink(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
     while (true) {
-        if (Maybe(void).errnoSys(libc.symlink(from, to), .symlink)) |err| {
+        if (Maybe(void).errnoSys(sys.symlink(from, to), .symlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -343,7 +343,7 @@ pub fn fcopyfile(fd_in: std.os.fd_t, fd_out: std.os.fd_t, flags: u32) Maybe(void
 
 pub fn unlink(from: [:0]const u8) Maybe(void) {
     while (true) {
-        if (Maybe(void).errno(libc.unlink(from), .unlink)) |err| {
+        if (Maybe(void).errno(sys.unlink(from), .unlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -438,7 +438,7 @@ pub const Error = struct {
     pub const todo = Error{ .errno = todo_errno };
 
     pub fn toSystemError(this: Error) SystemError {
-        var sys = SystemError{
+        var err = SystemError{
             .errno = @as(c_int, this.errno) * -1,
             .syscall = JSC.ZigString.init(@tagName(this.syscall)),
         };
@@ -446,17 +446,17 @@ pub const Error = struct {
         // errno label
         if (this.errno > 0 and this.errno < C.SystemErrno.max) {
             const system_errno = @intToEnum(C.SystemErrno, this.errno);
-            sys.code = JSC.ZigString.init(@tagName(system_errno));
+            err.code = JSC.ZigString.init(@tagName(system_errno));
             if (C.SystemErrno.labels.get(system_errno)) |label| {
-                sys.message = JSC.ZigString.init(label);
+                err.message = JSC.ZigString.init(label);
             }
         }
 
         if (this.path.len > 0) {
-            sys.path = JSC.ZigString.init(this.path);
+            err.path = JSC.ZigString.init(this.path);
         }
 
-        return sys;
+        return err;
     }
 
     pub fn toJS(this: Error, ctx: JSC.C.JSContextRef) JSC.C.JSObjectRef {

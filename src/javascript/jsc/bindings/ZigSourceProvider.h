@@ -17,7 +17,6 @@ class SourceProvider;
 // #include <JavaScriptCore/SourceCodeKey.h>
 #include <JavaScriptCore/SourceProvider.h>
 #include <JavaScriptCore/Structure.h>
-#include <wtf/FileSystem.h>
 
 namespace Zig {
 

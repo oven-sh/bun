@@ -6,7 +6,6 @@
 
 #include <JavaScriptCore/Completion.h>
 #include <sys/stat.h>
-#include <wtf/FileSystem.h>
 #include <wtf/Scope.h>
 #include <wtf/text/StringHash.h>
 

@@ -1,0 +1,4 @@
+{
+  "name": "@types/bun",
+  "types": "./bun.d.ts"
+}

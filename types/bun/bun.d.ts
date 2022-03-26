@@ -10,10 +10,108 @@ declare global {
     written: number;
   }
 
+  export interface Process {
+    version: string;
+    nextTick(callback, ...args): void;
+    versions: Record<string, string>;
+    ppid: number;
+    pid: number;
+    arch:
+      | "arm64"
+      | "arm"
+      | "ia32"
+      | "mips"
+      | "mipsel"
+      | "ppc"
+      | "ppc64"
+      | "s390"
+      | "s390x"
+      | "x32"
+      | "x64"
+      | "x86";
+    platform: "darwin" | "freebsd" | "linux" | "openbsd" | "sunos" | "win32";
+    argv: string[];
+    // execArgv: string[];
+    env: Record<string, string> & {
+      NODE_ENV: string;
+    };
+    // execPath: string;
+    // abort(): void;
+    chdir(directory: string): void;
+    cwd(): string;
+    exit(code?: number): void;
+    getgid(): number;
+    setgid(id: number | string): void;
+    getuid(): number;
+    setuid(id: number | string): void;
+  }
+
+  export var process: Process;
+
+  export interface BlobInterface {
+    text(): Promise<string>;
+    arrayBuffer(): Promise<ArrayBuffer>;
+    json(): Promise<JSON>;
+  }
+
+  type BlobPart = string | Blob | ArrayBufferView | ArrayBuffer | FileBlob;
+  interface BlobPropertyBag {
+    /** Set a default "type" */
+    type?: string;
+
+    /** Not implemented in Bun yet. */
+    endings?: "transparent" | "native";
+  }
+
+  type HeadersInit = string[][] | Record<string, string> | Headers;
+
+  export class Blob implements BlobInterface {
+    slice(begin?: number, end?: number): Blob;
+    text(): Promise<string>;
+    arrayBuffer(): Promise<ArrayBuffer>;
+    json(): Promise<JSON>;
+  }
+
+  export class Response implements BlobInterface {
+    constructor(
+      body: BlobPart | BlobPart[] | Blob,
+      options: {
+        headers?: HeadersInit;
+      }
+    );
+    headers: Headers;
+    text(): Promise<string>;
+    arrayBuffer(): Promise<ArrayBuffer>;
+    json(): Promise<JSON>;
+  }
+
+  export class Request implements BlobInterface {
+    constructor(
+      body: BlobPart | BlobPart[] | Blob,
+      options: {
+        headers?: HeadersInit;
+      }
+    );
+    headers: Headers;
+    text(): Promise<string>;
+    arrayBuffer(): Promise<ArrayBuffer>;
+    json(): Promise<JSON>;
+  }
+
   export interface Crypto {
     getRandomValues(array: TypedArray): void;
     randomUUID(): string;
   }
+
+  var crypto: Crypto;
+
+  /**
+   * [`atob`](https://developer.mozilla.org/en-US/docs/Web/API/atob) converts ascii text into base64.
+   *
+   * @param asciiText The ascii text to convert.
+   */
+  export function atob(asciiText: string): string;
+  export function btoa(base64Text: string): string;
 
   /**
    * An implementation of the [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/) `TextEncoder` API. All
@@ -128,7 +226,7 @@ declare global {
 
     export function addEventListener(
       event: "fetch",
-      listener: (event: FetchEvent) => Promise<void>
+      listener: (event: FetchEvent) => Promise<void> | void
     ): void;
 
     type JavaScriptLoader = "jsx" | "js" | "ts" | "tsx";
@@ -288,7 +386,7 @@ declare global {
       fetch(request: Request): Response | Promise<Response>;
 
       error?: (
-        request: Request
+        request: Errorlike
       ) => Response | Promise<Response> | undefined | Promise<undefined>;
     }
 
@@ -436,7 +534,7 @@ declare global {
    * ```js
    * const file = Bun.file("./hello.json");
    * console.log(file.type); // "application/json"
-   * console.log(await file.json()); // { hello: "world" }
+   * console.log(await file.text()); // '{"hello":"world"}'
    * ```
    *
    * @example
@@ -448,6 +546,9 @@ declare global {
    * ```
    *
    */
-  export interface FileBlob extends Blob {}
+  export interface FileBlob extends Blob {
+    /** Currently, "name" is not exposed because it may or may not exist */
+    name: never;
+  }
 }
 export {};

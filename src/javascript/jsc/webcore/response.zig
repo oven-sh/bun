@@ -2927,7 +2927,10 @@ pub const Blob = struct {
             }
 
             pub fn doClonefile(this: *CopyFile) anyerror!void {
-                switch (JSC.Node.Syscall.clonefile(this.destination_file_store.pathlike.path.sliceZAssume(), this.source_file_store.pathlike.path.sliceZAssume())) {
+                var source_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+                switch (JSC.Node.Syscall.clonefile(this.source_file_store.pathlike.path.sliceZ(&source_buf), this.destination_file_store.pathlike.path.sliceZ(&dest_buf))) {
                     .err => |errno| {
                         this.system_error = errno.toSystemError();
                         return AsyncIO.asError(errno.errno);

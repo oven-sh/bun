@@ -303,18 +303,17 @@ JSC_DEFINE_CUSTOM_GETTER(property_lazyProcessGetter,
         JSC::PropertyName))
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(_globalObject);
-    if (LIKELY(globalObject->m_process))
-        return JSValue::encode(JSC::JSValue(globalObject->m_process));
 
     JSC::VM& vm = globalObject->vm();
+    auto clientData = Bun::clientData(vm);
+    JSC::JSValue processPrivate = globalObject->getIfPropertyExists(globalObject, clientData->builtinNames().processPrivateName());
+    if (LIKELY(processPrivate)) {
+        return JSC::JSValue::encode(processPrivate);
+    }
 
-    globalObject->m_process = Zig::Process::create(
+    auto* process = Zig::Process::create(
         vm, Zig::Process::createStructure(vm, globalObject, globalObject->objectPrototype()));
-    // We must either:
-    // - GC it and re-create it
-    // - keep it alive forever
-    // I think it is more correct to keep it alive forever
-    JSC::gcProtect(globalObject->m_process);
+
     {
         auto jsClass = dot_env_class_ref;
 
@@ -323,14 +322,16 @@ JSC_DEFINE_CUSTOM_GETTER(property_lazyProcessGetter,
         if (JSObject* prototype = jsClass->prototype(globalObject))
             object->setPrototypeDirect(vm, prototype);
 
-        globalObject->m_process->putDirect(vm, JSC::Identifier::fromString(vm, "env"),
+        process->putDirect(vm, JSC::Identifier::fromString(vm, "env"),
             JSC::JSValue(object),
             JSC::PropertyAttribute::DontDelete | 0);
 
         JSC::gcProtect(JSC::JSValue(object));
     }
+    globalObject->putDirect(vm, clientData->builtinNames().processPrivateName(), JSC::JSValue(process), 0);
+    JSC::gcProtect(JSC::JSValue(process));
 
-    return JSC::JSValue::encode(JSC::JSValue(globalObject->m_process));
+    return JSC::JSValue::encode(JSC::JSValue(process));
 }
 
 static JSC_DECLARE_HOST_FUNCTION(functionQueueMicrotask);
@@ -697,7 +698,7 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count)
     putDirectCustomAccessor(
         vm(), clientData->builtinNames().processPublicName(),
         JSC::CustomGetterSetter::create(vm(), property_lazyProcessGetter, property_lazyProcessSetter),
-        JSC::PropertyAttribute::CustomValue | 0);
+        PropertyAttribute::DontDelete | JSC::PropertyAttribute::CustomAccessor | 0);
 
     extraStaticGlobals.releaseBuffer();
 }

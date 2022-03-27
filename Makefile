@@ -245,13 +245,11 @@ CLANG_FLAGS = $(INCLUDE_DIRS) \
 		-DNDEBUG=1 \
 		-DNOMINMAX \
 		-DIS_BUILD \
-		-g \
 		-DENABLE_INSPECTOR_ALTERNATE_DISPATCHERS=0 \
 		-DBUILDING_JSCONLY__ \
 		-DASSERT_ENABLED=0 \
 		-fvisibility=hidden \
-		-fvisibility-inlines-hidden \
-		-fPIC -fno-semantic-interposition
+		-fvisibility-inlines-hidden
 	
 PLATFORM_LINKER_FLAGS =
 		
@@ -262,10 +260,24 @@ PLATFORM_LINKER_FLAGS += -DDU_DISABLE_RENAMING=1 \
 		-lstdc++ \
 		-fno-keep-static-consts \
 		-ffunction-sections \
-		-fdata-sections \
-		-Wl,-dead_strip \
-		-Wl,-dead_strip_dylibs
+		-fdata-sections
 endif
+
+
+
+
+JSC_BINDINGS=$(BUN_DEPS_OUT_DIR)/jsc-bindings.a
+
+RELEASE_FLAGS=
+DEBUG_FLAGS=
+
+ifeq ($(OS_NAME), darwin)
+	RELEASE_FLAGS += -Wl,-dead_strip -Wl,-dead_strip_dylibs 
+	DEBUG_FLAGS += -undefined dynamic_lookup
+endif
+
+
+
 
 
 
@@ -298,7 +310,8 @@ PLATFORM_LINKER_FLAGS = \
 		-fno-omit-frame-pointer $(CFLAGS) \
 		-Wl,--compress-debug-sections,zlib \
 		${STATIC_MUSL_FLAG}  \
-		-Wl,-Bsymbolic-functions
+		-Wl,-Bsymbolic-functions \
+		-fno-semantic-interposition
 
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO += $(BUN_DEPS_OUT_DIR)/libbacktrace.a
 endif
@@ -312,7 +325,7 @@ BUN_LLD_FLAGS_WITHOUT_JSC = $(ARCHIVE_FILES) \
 		
 
 
-BUN_LLD_FLAGS = $(OBJ_FILES) $(JSC_FILES) ${ICU_FLAGS} $(BUN_LLD_FLAGS_WITHOUT_JSC)
+BUN_LLD_FLAGS = $(JSC_BINDINGS) $(JSC_FILES) ${ICU_FLAGS} $(BUN_LLD_FLAGS_WITHOUT_JSC)
 
 CLANG_VERSION = $(shell $(CC) --version | awk '/version/ {for(i=1; i<=NF; i++){if($$i=="version"){split($$(i+1),v,".");print v[1]}}}')
 
@@ -557,6 +570,7 @@ endif
 bun-codesign-debug:
 bun-codesign-release-local:
 bun-codesign-release-local-debug:
+
 
 
 jsc: jsc-build jsc-copy-headers jsc-bindings  
@@ -891,6 +905,10 @@ clean: clean-bindings
 	(cd $(BUN_DEPS_DIR)/zlib && make clean) || echo "";
 
 jsc-bindings-mac: $(OBJ_FILES)
+	make jsc-bindings-archive
+
+jsc-bindings-archive:
+	$(AR) rvs $(JSC_BINDINGS) $(OBJ_FILES)
 
 mimalloc-debug:
 	rm -rf $(BUN_DEPS_DIR)/mimalloc/CMakeCache* $(BUN_DEPS_DIR)/mimalloc/CMakeFiles
@@ -937,7 +955,7 @@ mimalloc-wasm:
 	cp $(BUN_DEPS_DIR)/mimalloc/$(MIMALLOC_INPUT_PATH) $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE).wasm
 
 bun-link-lld-debug:
-	$(CXX) $(BUN_LLD_FLAGS) \
+	$(CXX) $(BUN_LLD_FLAGS) $(DEBUG_FLAGS) \
 		-g \
 		$(DEBUG_BIN)/bun-debug.o \
 		-W \
@@ -969,7 +987,7 @@ bun-link-lld-release:
 		-o $(BUN_RELEASE_BIN) \
 		-W \
 		-flto \
-		$(OPTIMIZATION_LEVEL)
+		$(OPTIMIZATION_LEVEL) $(RELEASE_FLAGS)
 	rm -rf $(BUN_RELEASE_BIN).dSYM
 	cp $(BUN_RELEASE_BIN) $(BUN_RELEASE_BIN)-profile
 
@@ -997,19 +1015,18 @@ wasm-return1:
 	zig build-lib -OReleaseSmall integration/bunjs-only-snippets/wasm-return-1-test.zig -femit-bin=integration/bunjs-only-snippets/wasm-return-1-test.wasm -target wasm32-freestanding
 
 
+
+
 # We do this outside of build.zig for performance reasons
 # The C compilation stuff with build.zig is really slow and we don't need to run this as often as the rest
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
-	$(CXX) -c -o $@ $< \
-		$(CLANG_FLAGS) \
+	$(CXX) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
-		-g \
 		-fno-exceptions \
-		-ffunction-sections -fdata-sections -g \
 		-ferror-limit=1000 \
-		-emit-llvm -flto -fno-semantic-interposition
-
+		-g3 -c -o $@ $<
+		
 sizegen:
 	$(CXX) src/javascript/jsc/headergen/sizegen.cpp -o $(BUN_TMP_DIR)/sizegen $(CLANG_FLAGS) -O1
 	$(BUN_TMP_DIR)/sizegen > src/javascript/jsc/bindings/sizes.zig
@@ -1136,7 +1153,7 @@ run-all-unit-tests:
 	-lc -lc++ \
 	--cache-dir /tmp/zig-cache-bun-__main_test \
 	-fallow-shlib-undefined \
-	$(ARCHIVE_FILES) $(ICU_FLAGS) $(JSC_FILES) $(OBJ_FILES) && \
+	$(ARCHIVE_FILES) $(ICU_FLAGS) $(JSC_FILES) $(JSC_BINDINGS) && \
 	zig-out/bin/__main_test $(ZIG)
 
 run-unit:

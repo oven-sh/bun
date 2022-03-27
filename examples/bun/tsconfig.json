@@ -1,0 +1,6 @@
+{
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "types": ["../../types/bun"]
+  }
+}

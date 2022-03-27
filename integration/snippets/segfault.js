@@ -1,1 +1,1 @@
-Bun.__debug__doSegfault();
+Bun.unsafe.segfault();

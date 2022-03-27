@@ -13,8 +13,16 @@ it("mmap finalizer", async () => {
   await new Promise(resolve => setTimeout(resolve, 1));
 });
 
-it("mmap sync", () => {
-  let map = Bun.mmap(path);
+it('mmap passed to other syscalls', async () => {
+  const map = Bun.mmap(path);
+  await Bun.write(path + '1', map);
+  const text = await (await Bun.file(path + '1')).text();
+
+  expect(text).toBe(new TextDecoder().decode(map));
+});
+
+it("mmap sync", async () => {
+  const map = Bun.mmap(path);
   const map2 = Bun.mmap(path);
 
   const old = map[0];
@@ -24,6 +32,9 @@ it("mmap sync", () => {
 
   map2[0] = old;
   expect(map[0]).toBe(old);
+
+  await Bun.write(path, "olleh");
+  expect(new TextDecoder().decode(map)).toBe("olleh");
 });
 
 it("mmap private", () => {

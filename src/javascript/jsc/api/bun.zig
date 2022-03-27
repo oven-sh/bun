@@ -1204,7 +1204,7 @@ pub fn mmapFile(
 
     return JSC.C.JSObjectMakeTypedArrayWithBytesNoCopy(ctx, JSC.C.JSTypedArrayType.kJSTypedArrayTypeUint8Array, @ptrCast(?*anyopaque, map.ptr), map.len, struct {
         pub fn x(ptr: ?*anyopaque, size: ?*anyopaque) callconv(.C) void {
-            _ = JSC.Node.Syscall.munmap(@ptrCast([*]align(16384) u8, @alignCast(16384, ptr))[0..@ptrToInt(size)]);
+            _ = JSC.Node.Syscall.munmap(@ptrCast([*]align(std.mem.page_size) u8, @alignCast(std.mem.page_size, ptr))[0..@ptrToInt(size)]);
         }
     }.x, @intToPtr(?*anyopaque, map.len), exception);
 }

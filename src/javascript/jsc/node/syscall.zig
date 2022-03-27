@@ -51,6 +51,8 @@ pub const Tag = enum(u8) {
     lutimes,
     mkdir,
     mkdtemp,
+    mmap,
+    munmap,
     open,
     pread,
     pwrite,
@@ -397,6 +399,74 @@ pub fn getFdPath(fd: fd_t, out_buffer: *[MAX_PATH_BYTES]u8) Maybe([]u8) {
         // },
         else => @compileError("querying for canonical path of a handle is unsupported on this host"),
     }
+}
+
+/// Use of a mapped region can result in these signals:
+/// * SIGSEGV - Attempted write into a region mapped as read-only.
+/// * SIGBUS - Attempted  access to a portion of the buffer that does not correspond to the file
+fn sysmmap(
+    ptr: ?[*]align(mem.page_size) u8,
+    length: usize,
+    prot: u32,
+    flags: u32,
+    fd: os.fd_t,
+    offset: u64,
+) Maybe([]align(mem.page_size) u8) {
+    const mmap_sym = if (builtin.os.tag == .linux and builtin.link_libc)
+        system.mmap64
+    else
+        system.mmap;
+
+    const ioffset = @bitCast(i64, offset); // the OS treats this as unsigned
+    const rc = mmap_sym(ptr, length, prot, flags, fd, ioffset);
+
+    _ = if (builtin.link_libc) blk: {
+        if (rc != std.c.MAP.FAILED) return .{ .result = @ptrCast([*]align(mem.page_size) u8, @alignCast(mem.page_size, rc))[0..length] };
+        break :blk rc;
+    } else blk: {
+        const err = os.errno(rc);
+        if (err == .SUCCESS) return .{ .result = @intToPtr([*]align(mem.page_size) u8, rc)[0..length] };
+        break :blk rc;
+    };
+
+    return Maybe([]align(mem.page_size) u8).errnoSys(@ptrToInt(rc), .mmap).?;
+}
+
+pub fn mmapFile(path: [:0]const u8, flags: u32) Maybe([]align(mem.page_size) u8) {
+    const fd = switch (open(path, os.O.RDWR, 0)) {
+        .result => |fd| fd,
+        .err => |err| return .{ .err = err },
+    };
+
+    const size = switch (stat(path)) {
+        .result => |stat| stat.size,
+        .err => |err| {
+            _ = close(fd);
+            return .{ .err = err };
+        },
+    };
+
+    const map = switch (sysmmap(null, @intCast(usize, size), os.PROT.READ | os.PROT.WRITE, flags, fd, 0)) {
+        .result => |map| map,
+
+        .err => |err| {
+            _ = close(fd);
+            return .{ .err = err };
+        },
+    };
+
+    if (close(fd)) |err| {
+        _ = munmap(map);
+        return .{ .err = err };
+    }
+
+    return .{ .result = map };
+}
+
+pub fn munmap(memory: []align(mem.page_size) const u8) Maybe(void) {
+    if (Maybe(void).errnoSys(system.munmap(memory.ptr, memory.len), .munmap)) |err| {
+        return err;
+    } else return Maybe(void).success;
 }
 
 pub const Error = struct {

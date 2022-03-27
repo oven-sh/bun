@@ -2255,6 +2255,91 @@ pub fn NewLengthSorter(comptime Type: type, comptime field: string) type {
     };
 }
 
+/// Update all strings in a struct pointing to "from" to point to "to".
+pub fn moveAllSlices(comptime Type: type, container: *Type, from: string, to: string) void {
+    const fields_we_care_about = comptime brk: {
+        var count: usize = 0;
+        for (std.meta.fields(Type)) |field| {
+            if (std.meta.trait.isSlice(field.field_type) and std.meta.Child(field.field_type) == u8) {
+                count += 1;
+            }
+        }
+
+        var fields: [count][]const u8 = undefined;
+        count = 0;
+        for (std.meta.fields(Type)) |field| {
+            if (std.meta.trait.isSlice(field.field_type) and std.meta.Child(field.field_type) == u8) {
+                fields[count] = field.name;
+                count += 1;
+            }
+        }
+        break :brk fields;
+    };
+
+    inline for (fields_we_care_about) |name| {
+        const slice = @field(container, name);
+        if ((@ptrToInt(from.ptr) + from.len) >= @ptrToInt(slice.ptr) + slice.len and
+            (@ptrToInt(from.ptr) <= @ptrToInt(slice.ptr)))
+        {
+            @field(container, name) = moveSlice(slice, from, to);
+        }
+    }
+}
+
+pub fn moveSlice(slice: string, from: string, to: string) string {
+    std.debug.assert(from.len <= to.len and from.len >= slice.len);
+
+    if (comptime Environment.allow_assert) {
+        // assert we are in bounds
+        std.debug.assert(
+            (@ptrToInt(from.ptr) + from.len) >=
+                @ptrToInt(slice.ptr) + slice.len and
+                (@ptrToInt(from.ptr) <= @ptrToInt(slice.ptr)),
+        );
+
+        std.debug.assert(eqlLong(from, to[0..from.len], false)); // data should be identical
+    }
+
+    const ptr_offset = @ptrToInt(slice.ptr) - @ptrToInt(from.ptr);
+    const result = to[ptr_offset..][0..slice.len];
+
+    if (comptime Environment.allow_assert) {
+        std.debug.assert(eqlLong(slice, result, false)); // data should be identical
+    }
+
+    return result;
+}
+
+test "moveSlice" {
+    var input: string = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz";
+    var cloned = try std.heap.page_allocator.dupe(u8, input);
+
+    var slice = input[20..][0..10];
+
+    try std.testing.expectEqual(eqlLong(moveSlice(slice, input, cloned), slice, false), true);
+}
+
+test "moveAllSlices" {
+    const Move = struct {
+        foo: string,
+        bar: string,
+        baz: string,
+        wrong: string,
+    };
+    var input: string = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz";
+    var move = Move{ .foo = input[20..], .bar = input[30..], .baz = input[10..20], .wrong = "baz" };
+    var cloned = try std.heap.page_allocator.dupe(u8, input);
+    moveAllSlices(Move, &move, input, cloned);
+    var expected = Move{ .foo = cloned[20..], .bar = cloned[30..], .baz = cloned[10..20], .wrong = "bar" };
+    try std.testing.expectEqual(move.foo.ptr, expected.foo.ptr);
+    try std.testing.expectEqual(move.bar.ptr, expected.bar.ptr);
+    try std.testing.expectEqual(move.baz.ptr, expected.baz.ptr);
+    try std.testing.expectEqual(move.foo.len, expected.foo.len);
+    try std.testing.expectEqual(move.bar.len, expected.bar.len);
+    try std.testing.expectEqual(move.baz.len, expected.baz.len);
+    try std.testing.expect(move.wrong.ptr != expected.wrong.ptr);
+}
+
 test "join" {
     var string_list = &[_]string{ "abc", "def", "123", "hello" };
     const list = try join(string_list, "-", std.heap.page_allocator);

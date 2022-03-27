@@ -1330,6 +1330,14 @@ pub const JSGlobalObject = extern struct {
         return cppFn("generateHeapSnapshot", .{this});
     }
 
+    pub fn putCachedObject(this: *JSGlobalObject, key: *const ZigString, value: JSValue) JSValue {
+        return cppFn("putCachedObject", .{ this, key, value });
+    }
+
+    pub fn getCachedObject(this: *JSGlobalObject, key: *const ZigString) JSValue {
+        return cppFn("getCachedObject", .{ this, key });
+    }
+
     pub fn vm(this: *JSGlobalObject) *VM {
         return cppFn("vm", .{this});
     }
@@ -1339,6 +1347,8 @@ pub const JSGlobalObject = extern struct {
     }
 
     pub const Extern = [_][]const u8{
+        "putCachedObject",
+        "getCachedObject",
         "createAggregateError",
         "objectPrototype",
         "functionPrototype",

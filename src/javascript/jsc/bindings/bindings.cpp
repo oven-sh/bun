@@ -317,6 +317,25 @@ JSC__JSValue JSC__JSValue__parseJSON(JSC__JSValue JSValue0, JSC__JSGlobalObject*
     return JSC::JSValue::encode(result);
 }
 
+JSC__JSValue JSC__JSGlobalObject__getCachedObject(JSC__JSGlobalObject* globalObject, const ZigString* arg1)
+{
+    JSC::VM& vm = globalObject->vm();
+    WTF::String string = Zig::toString(*arg1);
+    auto symbol = vm.privateSymbolRegistry().symbolForKey(string);
+    JSC::Identifier ident = JSC::Identifier::fromUid(symbol);
+    JSC::JSValue result = globalObject->getIfPropertyExists(globalObject, ident);
+    return JSC::JSValue::encode(result);
+}
+JSC__JSValue JSC__JSGlobalObject__putCachedObject(JSC__JSGlobalObject* globalObject, const ZigString* arg1, JSC__JSValue JSValue2)
+{
+    JSC::VM& vm = globalObject->vm();
+    WTF::String string = Zig::toString(*arg1);
+    auto symbol = vm.privateSymbolRegistry().symbolForKey(string);
+    JSC::Identifier ident = JSC::Identifier::fromUid(symbol);
+    globalObject->putDirect(vm, ident, JSC::JSValue::decode(JSValue2), JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum);
+    return JSValue2;
+}
+
 void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC__JSGlobalObject* global, ZigString* arg1)
 {
     JSC::JSMap* map = JSC::jsDynamicCast<JSC::JSMap*>(

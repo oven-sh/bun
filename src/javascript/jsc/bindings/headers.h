@@ -412,6 +412,7 @@ CPP_DECL JSC__FunctionPrototype* JSC__JSGlobalObject__functionPrototype(JSC__JSG
 CPP_DECL JSC__JSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC__JSGlobalObject* arg0);
 CPP_DECL JSC__GeneratorFunctionPrototype* JSC__JSGlobalObject__generatorFunctionPrototype(JSC__JSGlobalObject* arg0);
 CPP_DECL JSC__GeneratorPrototype* JSC__JSGlobalObject__generatorPrototype(JSC__JSGlobalObject* arg0);
+CPP_DECL JSC__JSValue JSC__JSGlobalObject__getCachedObject(JSC__JSGlobalObject* arg0, const ZigString* arg1);
 CPP_DECL JSC__IteratorPrototype* JSC__JSGlobalObject__iteratorPrototype(JSC__JSGlobalObject* arg0);
 CPP_DECL JSC__JSObject* JSC__JSGlobalObject__jsSetPrototype(JSC__JSGlobalObject* arg0);
 CPP_DECL JSC__MapIteratorPrototype* JSC__JSGlobalObject__mapIteratorPrototype(JSC__JSGlobalObject* arg0);
@@ -419,6 +420,7 @@ CPP_DECL JSC__JSObject* JSC__JSGlobalObject__mapPrototype(JSC__JSGlobalObject* a
 CPP_DECL JSC__JSObject* JSC__JSGlobalObject__numberPrototype(JSC__JSGlobalObject* arg0);
 CPP_DECL JSC__ObjectPrototype* JSC__JSGlobalObject__objectPrototype(JSC__JSGlobalObject* arg0);
 CPP_DECL JSC__JSPromisePrototype* JSC__JSGlobalObject__promisePrototype(JSC__JSGlobalObject* arg0);
+CPP_DECL JSC__JSValue JSC__JSGlobalObject__putCachedObject(JSC__JSGlobalObject* arg0, const ZigString* arg1, JSC__JSValue JSValue2);
 CPP_DECL JSC__RegExpPrototype* JSC__JSGlobalObject__regExpPrototype(JSC__JSGlobalObject* arg0);
 CPP_DECL JSC__SetIteratorPrototype* JSC__JSGlobalObject__setIteratorPrototype(JSC__JSGlobalObject* arg0);
 CPP_DECL JSC__StringPrototype* JSC__JSGlobalObject__stringPrototype(JSC__JSGlobalObject* arg0);

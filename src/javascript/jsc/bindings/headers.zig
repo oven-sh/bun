@@ -222,6 +222,7 @@ pub extern fn JSC__JSGlobalObject__functionPrototype(arg0: [*c]JSC__JSGlobalObje
 pub extern fn JSC__JSGlobalObject__generateHeapSnapshot(arg0: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSGlobalObject__generatorFunctionPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__GeneratorFunctionPrototype;
 pub extern fn JSC__JSGlobalObject__generatorPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__GeneratorPrototype;
+pub extern fn JSC__JSGlobalObject__getCachedObject(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const ZigString) JSC__JSValue;
 pub extern fn JSC__JSGlobalObject__iteratorPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__IteratorPrototype;
 pub extern fn JSC__JSGlobalObject__jsSetPrototype(arg0: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__mapIteratorPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__MapIteratorPrototype;
@@ -229,6 +230,7 @@ pub extern fn JSC__JSGlobalObject__mapPrototype(arg0: [*c]JSC__JSGlobalObject) [
 pub extern fn JSC__JSGlobalObject__numberPrototype(arg0: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__objectPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__ObjectPrototype;
 pub extern fn JSC__JSGlobalObject__promisePrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__JSPromisePrototype;
+pub extern fn JSC__JSGlobalObject__putCachedObject(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const ZigString, JSValue2: JSC__JSValue) JSC__JSValue;
 pub extern fn JSC__JSGlobalObject__regExpPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__RegExpPrototype;
 pub extern fn JSC__JSGlobalObject__setIteratorPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__SetIteratorPrototype;
 pub extern fn JSC__JSGlobalObject__stringPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__StringPrototype;

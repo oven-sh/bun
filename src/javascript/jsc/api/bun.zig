@@ -1165,7 +1165,15 @@ pub fn getTranspilerConstructor(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    return Transpiler.Constructor.constructor(ctx);
+    var existing = ctx.ptr().getCachedObject(&ZigString.init("BunTranspiler"));
+    if (existing.isEmpty()) {
+        return ctx.ptr().putCachedObject(
+            &ZigString.init("BunTranspiler"),
+            JSC.JSValue.fromRef(Transpiler.Constructor.constructor(ctx)),
+        ).asObjectRef();
+    }
+
+    return existing.asObjectRef();
 }
 
 pub fn getTOMLObject(
@@ -1175,7 +1183,15 @@ pub fn getTOMLObject(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    return js.JSObjectMake(ctx, TOML.Class.get().?[0], null);
+    var existing = ctx.ptr().getCachedObject(&ZigString.init("TOML"));
+    if (existing.isEmpty()) {
+        return ctx.ptr().putCachedObject(
+            &ZigString.init("TOML"),
+            JSValue.fromRef(js.JSObjectMake(ctx, TOML.Class.get().?[0], null)),
+        ).asObjectRef();
+    }
+
+    return existing.asObjectRef();
 }
 
 pub fn getUnsafe(
@@ -1185,7 +1201,15 @@ pub fn getUnsafe(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    return js.JSObjectMake(ctx, Unsafe.Class.get().?[0], null);
+    var existing = ctx.ptr().getCachedObject(&ZigString.init("Unsafe"));
+    if (existing.isEmpty()) {
+        return ctx.ptr().putCachedObject(
+            &ZigString.init("Unsafe"),
+            JSValue.fromRef(js.JSObjectMake(ctx, Unsafe.Class.get().?[0], null)),
+        ).asObjectRef();
+    }
+
+    return existing.asObjectRef();
 }
 
 pub const Unsafe = struct {
@@ -1630,7 +1654,15 @@ pub const EnvironmentVariables = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return js.JSObjectMake(ctx, EnvironmentVariables.Class.get().*, null);
+        var existing = ctx.ptr().getCachedObject(&ZigString.init("Bun.env"));
+        if (existing.isEmpty()) {
+            return ctx.ptr().putCachedObject(
+                &ZigString.init("Bun.env"),
+                JSValue.fromRef(js.JSObjectMake(ctx, EnvironmentVariables.Class.get().*, null)),
+            ).asObjectRef();
+        }
+
+        return existing.asObjectRef();
     }
 
     pub const BooleanString = struct {

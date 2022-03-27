@@ -1019,6 +1019,10 @@ pub const Class = NewClass(
             .rfn = Bun.allocUnsafe,
             .ts = .{},
         },
+        .mmap = .{
+            .rfn = Bun.mmapFile,
+            .ts = .{},
+        },
         .generateHeapSnapshot = .{
             .rfn = Bun.generateHeapSnapshot,
             .ts = d.ts{},
@@ -1156,6 +1160,53 @@ pub fn allocUnsafe(
         bun.default_allocator,
         .Uint8Array,
     ).toJSObjectRef(ctx, null);
+}
+
+pub fn mmapFile(
+    _: void,
+    ctx: js.JSContextRef,
+    _: js.JSObjectRef,
+    _: js.JSObjectRef,
+    arguments: []const js.JSValueRef,
+    exception: js.ExceptionRef,
+) js.JSValueRef {
+    var args = JSC.Node.ArgumentsSlice.from(arguments);
+
+    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    const path = getFilePath(ctx, arguments[0..@minimum(1, arguments.len)], &buf, exception) orelse return null;
+
+    buf[path.len] = 0;
+
+    const buf_z: [:0]const u8 = buf[0..path.len :0];
+
+    const flags = v: {
+        _ = args.nextEat();
+        const opts = args.nextEat() orelse break :v std.os.MAP.SHARED;
+        const sync = opts.get(ctx.ptr(), "sync") orelse JSC.JSValue.jsBoolean(false);
+        const shared = opts.get(ctx.ptr(), "shared") orelse JSC.JSValue.jsBoolean(true);
+        const sync_flags = if (@hasDecl(std.os, "SYNC")) std.os.MAP.SYNC | std.os.MAP.SHARED_VALIDATE else 0;
+
+        var flags: u32 = 0;
+        if (sync.toBoolean()) flags |= sync_flags;
+        if (shared.toBoolean()) flags |= std.os.MAP.SHARED else flags |= std.os.MAP.PRIVATE;
+
+        break :v flags;
+    };
+
+    const map = switch (JSC.Node.Syscall.mmapFile(buf_z, flags)) {
+        .result => |map| map,
+
+        .err => |err| {
+            exception.* = err.toJS(ctx);
+            return null;
+        },
+    };
+
+    return JSC.C.JSObjectMakeTypedArrayWithBytesNoCopy(ctx, JSC.C.JSTypedArrayType.kJSTypedArrayTypeUint8Array, @ptrCast(?*anyopaque, map.ptr), map.len, struct {
+        pub fn x(ptr: ?*anyopaque, size: ?*anyopaque) callconv(.C) void {
+            _ = JSC.Node.Syscall.munmap(@ptrCast([*]align(std.mem.page_size) u8, @alignCast(std.mem.page_size, ptr))[0..@ptrToInt(size)]);
+        }
+    }.x, @intToPtr(?*anyopaque, map.len), exception);
 }
 
 pub fn getTranspilerConstructor(

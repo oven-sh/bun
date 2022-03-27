@@ -14,34 +14,40 @@
 
 // using namespace JSC;
 
-// BunGCOutputConstraint::BunGCOutputConstraint(VM &vm, Bun::JSVMClientData &clientData)
-//   : MarkingConstraint("Domo", "DOM Output", ConstraintVolatility::SeldomGreyed,
-//                       ConstraintConcurrency::Concurrent, ConstraintParallelism::Parallel),
-//     m_vm(vm),
-//     m_clientData(clientData),
-//     m_lastExecutionVersion(vm.heap.mutatorExecutionVersion()) {}
-
-// template <typename Visitor> void BunGCOutputConstraint::executeImplImpl(Visitor &visitor) {
-//   Heap &heap = m_vm.heap;
-
-//   if (heap.mutatorExecutionVersion() == m_lastExecutionVersion) return;
-
-//   m_lastExecutionVersion = heap.mutatorExecutionVersion();
-
-//   m_clientData.forEachOutputConstraintSpace([&](Subspace &subspace) {
-//     auto func = [](Visitor &visitor, HeapCell *heapCell, HeapCell::Kind) {
-//       SetRootMarkReasonScope rootScope(visitor, RootMarkReason::DOMGCOutput);
-//       JSCell *cell = static_cast<JSCell *>(heapCell);
-//       cell->methodTable(visitor.vm())->visitOutputConstraints(cell, visitor);
-//     };
-
-//     RefPtr<SharedTask<void(Visitor &)>> task =
-//       subspace.template forEachMarkedCellInParallel<Visitor>(func);
-//     visitor.addParallelConstraintTask(task);
-//   });
+// BunGCOutputConstraint::BunGCOutputConstraint(VM& vm, Bun::JSVMClientData& clientData)
+//     : MarkingConstraint("Domo", "DOM Output", ConstraintVolatility::SeldomGreyed,
+//         ConstraintConcurrency::Concurrent, ConstraintParallelism::Parallel)
+//     , m_vm(vm)
+//     , m_clientData(clientData)
+//     , m_lastExecutionVersion(vm.heap.mutatorExecutionVersion())
+// {
 // }
 
-// void BunGCOutputConstraint::executeImpl(AbstractSlotVisitor &visitor) { executeImplImpl(visitor);
-// } void BunGCOutputConstraint::executeImpl(SlotVisitor &visitor) { executeImplImpl(visitor); }
+// template<typename Visitor> void BunGCOutputConstraint::executeImplImpl(Visitor& visitor)
+// {
+//     Heap& heap = m_vm.heap;
+
+//     if (heap.mutatorExecutionVersion() == m_lastExecutionVersion)
+//         return;
+
+//     m_lastExecutionVersion = heap.mutatorExecutionVersion();
+
+//     m_clientData.forEachOutputConstraintSpace([&](Subspace& subspace) {
+//         auto func = [](Visitor& visitor, HeapCell* heapCell, HeapCell::Kind) {
+//             SetRootMarkReasonScope rootScope(visitor, RootMarkReason::DOMGCOutput);
+//             JSCell* cell = static_cast<JSCell*>(heapCell);
+//             cell->methodTable(visitor.vm())->visitOutputConstraints(cell, visitor);
+//         };
+
+//         RefPtr<SharedTask<void(Visitor&)>> task = subspace.template forEachMarkedCellInParallel<Visitor>(func);
+//         visitor.addParallelConstraintTask(task);
+//     });
+// }
+
+// void BunGCOutputConstraint::executeImpl(AbstractSlotVisitor& visitor)
+// {
+//     executeImplImpl(visitor);
+// }
+// void BunGCOutputConstraint::executeImpl(SlotVisitor& visitor) { executeImplImpl(visitor); }
 
 // } // namespace Bun

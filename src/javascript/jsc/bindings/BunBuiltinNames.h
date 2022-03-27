@@ -41,6 +41,10 @@ using namespace JSC;
     macro(filePath) \
     macro(format) \
     macro(get) \
+    macro(hash) \
+    macro(host) \
+    macro(hostname) \
+    macro(href) \
     macro(isAbsolute) \
     macro(isPaused) \
     macro(isWindows) \
@@ -51,9 +55,12 @@ using namespace JSC;
     macro(on) \
     macro(once) \
     macro(options) \
+    macro(origin) \
     macro(parse) \
+    macro(password) \
     macro(patch) \
     macro(path) \
+    macro(pathname) \
     macro(pause) \
     macro(pid) \
     macro(pipe) \
@@ -62,12 +69,15 @@ using namespace JSC;
     macro(ppid) \
     macro(prependEventListener) \
     macro(process) \
+    macro(protocol) \
     macro(put) \
     macro(read) \
     macro(relative) \
     macro(removeEventListener) \
     macro(resolve) \
     macro(resume) \
+    macro(search) \
+    macro(searchParams) \
     macro(sep) \
     macro(syscall) \
     macro(title) \
@@ -77,6 +87,7 @@ using namespace JSC;
     macro(unpipe) \
     macro(unshift) \
     macro(url) \
+    macro(username) \
     macro(version) \
     macro(versions) \
     macro(write) \

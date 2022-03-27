@@ -75,6 +75,8 @@
 
 #include "ZigSourceProvider.h"
 
+#include "JSDOMURL.h"
+
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
 using JSValue = JSC::JSValue;
@@ -698,6 +700,14 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count)
         vm(), clientData->builtinNames().processPublicName(),
         JSC::CustomGetterSetter::create(vm(), property_lazyProcessGetter, property_lazyProcessSetter),
         PropertyAttribute::DontDelete | JSC::PropertyAttribute::CustomAccessor | 0);
+
+    auto domURL = WebCore::DOMURL::create("https://example.com/"_s, WTF::String());
+    auto url = WebCore::JSDOMURL::create(
+        WebCore::JSDOMURL::createStructure(vm(), this, objectPrototype()),
+        this,
+        domURL.returnValue().get());
+
+    this->putDirect(vm(), clientData->builtinNames().urlPublicName(), JSC::JSValue(url), JSC::PropertyAttribute::DontDelete | 0);
 
     extraStaticGlobals.releaseBuffer();
 }

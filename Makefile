@@ -194,7 +194,8 @@ MAC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders \
 		-I$(WEBKIT_RELEASE_DIR)/ \
 		-Isrc/javascript/jsc/bindings/ \
 		-Isrc/javascript/jsc/bindings/webcore \
-		-I$(WEBKIT_DIR)/Source/bmalloc 
+		-I$(WEBKIT_DIR)/Source/bmalloc  \
+		-I$(WEBKIT_DIR)/Source
 
 LINUX_INCLUDE_DIRS := -I$(JSC_INCLUDE_DIR) \
 					  -Isrc/javascript/jsc/bindings/

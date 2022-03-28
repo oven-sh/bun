@@ -6,6 +6,10 @@ class Identifier;
 
 } // namespace JSC
 
+namespace WebCore {
+class ScriptExecutionContext;
+}
+
 #include "root.h"
 
 #include "headers-handwritten.h"
@@ -83,6 +87,9 @@ public:
     bool worldIsNormal() const { return m_worldIsNormal; }
     static ptrdiff_t offsetOfWorldIsNormal() { return OBJECT_OFFSETOF(GlobalObject, m_worldIsNormal); }
 
+    WebCore::ScriptExecutionContext* scriptExecutionContext();
+    WebCore::ScriptExecutionContext* scriptExecutionContext() const;
+
     JSDOMStructureMap& structures() WTF_REQUIRES_LOCK(m_gcLock) { return m_structures; }
     JSDOMStructureMap& structures(NoLockingNecessaryTag) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     {
@@ -117,20 +124,12 @@ public:
     void installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm);
 
 private:
-    GlobalObject(JSC::VM& vm, JSC::Structure* structure)
-        : JSC::JSGlobalObject(vm, structure, &s_globalObjectMethodTable)
-        , m_constructors(makeUnique<WebCore::DOMConstructors>())
-        , m_world(WebCore::DOMWrapperWorld::create(vm, WebCore::DOMWrapperWorld::Type::Normal))
-        , m_worldIsNormal(true)
-    {
-    }
-
-private:
+    GlobalObject(JSC::VM& vm, JSC::Structure* structure);
     std::unique_ptr<WebCore::DOMConstructors> m_constructors;
     uint8_t m_worldIsNormal;
     JSDOMStructureMap m_structures WTF_GUARDED_BY_LOCK(m_gcLock);
     Lock m_gcLock;
-
+    WebCore::ScriptExecutionContext* m_scriptExecutionContext;
     Ref<WebCore::DOMWrapperWorld> m_world;
 };
 
@@ -164,10 +163,9 @@ private:
 
 } // namespace Zig
 
+#ifndef RENAMED_JSDOM_GLOBAL_OBJECT
+#define RENAMED_JSDOM_GLOBAL_OBJECT
 namespace WebCore {
 using JSDOMGlobalObject = Zig::GlobalObject;
 }
-
-namespace WebCore {
-using JSDOMGlobalObject = Zig::GlobalObject;
-}
+#endif

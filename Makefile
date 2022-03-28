@@ -183,13 +183,17 @@ HOMEBREW_PREFIX ?= $(BREW_PREFIX_PATH)
 
 SRC_DIR := src/javascript/jsc/bindings
 OBJ_DIR := src/javascript/jsc/bindings-obj
-SRC_FILES := $(wildcard $(SRC_DIR)/*.cpp)
+SRC_FILES := $(wildcard $(SRC_DIR)/*.cpp) 
+SRC_WEBCORE_FILES := $(wildcard $(SRC_DIR)/webcore/*.cpp) 
 OBJ_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
+WEBCORE_OBJ_FILES := $(patsubst $(SRC_DIR)/webcore/%.cpp,$(OBJ_DIR)/%.o,$(SRC_WEBCORE_FILES))
+
 MAC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders \
 		-I$(WEBKIT_RELEASE_DIR)/WTF/Headers \
 		-I$(WEBKIT_RELEASE_DIR)/ICU/Headers \
 		-I$(WEBKIT_RELEASE_DIR)/ \
 		-Isrc/javascript/jsc/bindings/ \
+		-Isrc/javascript/jsc/bindings/webcore \
 		-I$(WEBKIT_DIR)/Source/bmalloc 
 
 LINUX_INCLUDE_DIRS := -I$(JSC_INCLUDE_DIR) \
@@ -206,7 +210,7 @@ endif
 ifeq ($(OS_NAME),darwin)
 MACOS_MIN_FLAG=-mmacosx-version-min=$(MIN_MACOS_VERSION)
 POSIX_PKG_MANAGER=brew
-	INCLUDE_DIRS += $(MAC_INCLUDE_DIRS)
+INCLUDE_DIRS += $(MAC_INCLUDE_DIRS)
 endif
 
 
@@ -266,14 +270,14 @@ endif
 
 
 
-JSC_BINDINGS=$(BUN_DEPS_OUT_DIR)/jsc-bindings.a
+JSC_BINDINGS=$(BUN_DEPS_OUT_DIR)/libjsc-bindings.a
 
 RELEASE_FLAGS=
 DEBUG_FLAGS=
 
 ifeq ($(OS_NAME), darwin)
 	RELEASE_FLAGS += -Wl,-dead_strip -Wl,-dead_strip_dylibs 
-	DEBUG_FLAGS += -undefined dynamic_lookup
+	DEBUG_FLAGS += -Wl,-dead_strip -Wl,-dead_strip_dylibs 
 endif
 
 
@@ -325,7 +329,7 @@ BUN_LLD_FLAGS_WITHOUT_JSC = $(ARCHIVE_FILES) \
 		
 
 
-BUN_LLD_FLAGS = $(JSC_BINDINGS) $(JSC_FILES) ${ICU_FLAGS} $(BUN_LLD_FLAGS_WITHOUT_JSC)
+BUN_LLD_FLAGS = $(JSC_BINDINGS) ${ICU_FLAGS} $(BUN_LLD_FLAGS_WITHOUT_JSC)
 
 CLANG_VERSION = $(shell $(CC) --version | awk '/version/ {for(i=1; i<=NF; i++){if($$i=="version"){split($$(i+1),v,".");print v[1]}}}')
 
@@ -806,6 +810,7 @@ test-dev-bunjs:
 test-dev: test-dev-with-hmr
 
 jsc-copy-headers:
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/heap/WeakHandleOwner.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/WeakHandleOwner.h
 	find $(WEBKIT_RELEASE_DIR)/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/ \;
 
 # This is a workaround for a JSC bug that impacts aarch64
@@ -895,6 +900,8 @@ clean-jsc:
 	cd src/javascript/jsc/WebKit && rm -rf **/CMakeCache.txt **/CMakeFiles && rm -rf src/javascript/jsc/WebKit/WebKitBuild
 clean-bindings: 
 	rm -rf $(OBJ_DIR)/*.o
+	rm -rf $(OBJ_DIR)/webcore/*.o
+	rm -rf $(JSC_BINDINGS)
 
 clean: clean-bindings
 	rm $(BUN_DEPS_DIR)/*.a $(BUN_DEPS_DIR)/*.o
@@ -904,11 +911,13 @@ clean: clean-bindings
 	(cd $(BUN_DEPS_DIR)/picohttp && make clean) || echo "";
 	(cd $(BUN_DEPS_DIR)/zlib && make clean) || echo "";
 
-jsc-bindings-mac: $(OBJ_FILES)
+jsc-bindings-mac: $(OBJ_FILES) $(WEBCORE_OBJ_FILES)
 	make jsc-bindings-archive
 
 jsc-bindings-archive:
-	$(AR) rvs $(JSC_BINDINGS) $(OBJ_FILES)
+	$(AR) rvs $(JSC_BINDINGS).1.a $(OBJ_FILES) $(WEBCORE_OBJ_FILES)
+	llvm-libtool-darwin -static -o $(JSC_BINDINGS) -L$(BUN_DEPS_DIR) -lJavaScriptCore -lWTF -lbmalloc -U --color -ljsc-bindings.a.1
+
 
 mimalloc-debug:
 	rm -rf $(BUN_DEPS_DIR)/mimalloc/CMakeCache* $(BUN_DEPS_DIR)/mimalloc/CMakeFiles
@@ -1020,6 +1029,14 @@ wasm-return1:
 # We do this outside of build.zig for performance reasons
 # The C compilation stuff with build.zig is really slow and we don't need to run this as often as the rest
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
+	$(CXX) $(CLANG_FLAGS) \
+		$(MACOS_MIN_FLAG) \
+		$(OPTIMIZATION_LEVEL) \
+		-fno-exceptions \
+		-ferror-limit=1000 \
+		-g3 -c -o $@ $<
+
+$(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 	$(CXX) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \

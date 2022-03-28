@@ -367,8 +367,7 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForCSSTransformValue;
     // std::unique_ptr<IsoSubspace> m_subspaceForCSSTransformValueIterator;
     // std::unique_ptr<IsoSubspace> m_subspaceForCSSTranslate;
-    // std::unique_ptr<IsoSubspace> m_subspaceForAbortController;
-    // std::unique_ptr<IsoSubspace> m_subspaceForAbortSignal;
+
     // std::unique_ptr<IsoSubspace> m_subspaceForAbstractRange;
     // std::unique_ptr<IsoSubspace> m_subspaceForAnimationEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForAttr;
@@ -401,10 +400,7 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForDocumentType;
     // std::unique_ptr<IsoSubspace> m_subspaceForDragEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForElement;
-    // std::unique_ptr<IsoSubspace> m_subspaceForErrorEvent;
-    // std::unique_ptr<IsoSubspace> m_subspaceForEvent;
-    // std::unique_ptr<IsoSubspace> m_subspaceForEventListener;
-    // std::unique_ptr<IsoSubspace> m_subspaceForEventTarget;
+
     // std::unique_ptr<IsoSubspace> m_subspaceForFocusEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForFormDataEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForHashChangeEvent;
@@ -858,6 +854,13 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForXPathNSResolver;
     // std::unique_ptr<IsoSubspace> m_subspaceForXPathResult;
     // std::unique_ptr<IsoSubspace> m_subspaceForXSLTProcessor;
+
+    std::unique_ptr<IsoSubspace> m_subspaceForAbortController;
+    std::unique_ptr<IsoSubspace> m_subspaceForAbortSignal;
+    std::unique_ptr<IsoSubspace> m_subspaceForErrorEvent;
+    std::unique_ptr<IsoSubspace> m_subspaceForEvent;
+    std::unique_ptr<IsoSubspace> m_subspaceForEventListener;
+    std::unique_ptr<IsoSubspace> m_subspaceForEventTarget;
 
     std::unique_ptr<IsoSubspace> m_subspaceForGlobalObject;
 

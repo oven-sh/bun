@@ -70,3 +70,10 @@
 #include "JavaScriptCore/Strong.h"
 #include "JavaScriptCore/Weak.h"
 #include "JavaScriptCore/WeakInlines.h"
+
+#define WTF_MAKE_ISO_ALLOCATED(className) \
+    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(className)
+
+#define WTF_MAKE_ISO_ALLOCATED_EXPORT(className, a) WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(className);
+
+#define WTF_MAKE_ISO_ALLOCATED_IMPL(className)

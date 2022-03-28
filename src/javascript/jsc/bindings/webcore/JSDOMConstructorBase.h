@@ -49,7 +49,7 @@ public:
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
 
     JSDOMGlobalObject* globalObject() const { return JSC::jsCast<JSDOMGlobalObject*>(Base::globalObject()); }
-    // ScriptExecutionContext* scriptExecutionContext() const { return globalObject()->scriptExecutionContext(); }
+    ScriptExecutionContext* scriptExecutionContext() const { return globalObject()->scriptExecutionContext(); }
 
 protected:
     JSDOMConstructorBase(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction functionForConstruct)

@@ -33,6 +33,7 @@ using namespace JSC;
     macro(cork) \
     macro(cwd) \
     macro(delimiter) \
+    macro(whenSignalAborted) \
     macro(destroy) \
     macro(dir) \
     macro(dirname) \

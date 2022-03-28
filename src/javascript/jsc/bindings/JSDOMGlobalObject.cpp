@@ -4,6 +4,11 @@
 
 namespace WebCore {
 
+Zig::GlobalObject* toJSDOMGlobalObject(ScriptExecutionContext& ctx, DOMWrapperWorld& world)
+{
+    return JSC::jsCast<Zig::GlobalObject*>(ctx.jsGlobalObject());
+}
+
 // static JSDOMGlobalObject& callerGlobalObject(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame* callFrame, bool skipFirstFrame, bool lookUpFromVMEntryScope)
 // {
 //     VM& vm = lexicalGlobalObject.vm();

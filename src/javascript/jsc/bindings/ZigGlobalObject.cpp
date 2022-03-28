@@ -80,6 +80,11 @@
 #include "JSDOMURL.h"
 #include "JSURLSearchParams.h"
 #include "JSDOMException.h"
+#include "JSEventTarget.h"
+#include "EventTargetConcrete.h"
+#include "JSAbortSignal.h"
+#include "JSAbortController.h"
+#include "JSEvent.h"
 
 #include "Process.h"
 
@@ -277,6 +282,26 @@ const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     &Zig::deriveShadowRealmGlobalObject
 };
 
+GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure)
+    : JSC::JSGlobalObject(vm, structure, &s_globalObjectMethodTable)
+    , m_constructors(makeUnique<WebCore::DOMConstructors>())
+    , m_world(WebCore::DOMWrapperWorld::create(vm, WebCore::DOMWrapperWorld::Type::Normal))
+    , m_worldIsNormal(true)
+
+{
+    m_scriptExecutionContext = new WebCore::ScriptExecutionContext(&vm, this);
+}
+
+WebCore::ScriptExecutionContext* GlobalObject::scriptExecutionContext()
+{
+    return m_scriptExecutionContext;
+}
+
+WebCore::ScriptExecutionContext* GlobalObject::scriptExecutionContext() const
+{
+    return m_scriptExecutionContext;
+}
+
 void GlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject* globalObject,
     JSC::Exception* exception)
 {
@@ -320,6 +345,50 @@ JSC_DEFINE_CUSTOM_GETTER(JSURLSearchParams_getter,
     Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     return JSC::JSValue::encode(
         WebCore::JSURLSearchParams::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
+}
+
+JSC_DECLARE_CUSTOM_GETTER(JSEvent_getter);
+
+JSC_DEFINE_CUSTOM_GETTER(JSEvent_getter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return JSC::JSValue::encode(
+        WebCore::JSEvent::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
+}
+
+JSC_DECLARE_CUSTOM_GETTER(JSEventTarget_getter);
+
+JSC_DEFINE_CUSTOM_GETTER(JSEventTarget_getter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return JSC::JSValue::encode(
+        WebCore::JSEventTarget::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
+}
+
+JSC_DECLARE_CUSTOM_GETTER(JSDOMAbortController_getter);
+
+JSC_DEFINE_CUSTOM_GETTER(JSDOMAbortController_getter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return JSC::JSValue::encode(
+        WebCore::JSAbortController::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
+}
+
+JSC_DECLARE_CUSTOM_GETTER(JSDOMAbortSignal_getter);
+
+JSC_DEFINE_CUSTOM_GETTER(JSDOMAbortSignal_getter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return JSC::JSValue::encode(
+        WebCore::JSAbortSignal::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
 }
 
 JSC_DECLARE_CUSTOM_GETTER(JSDOMException_getter);
@@ -749,6 +818,18 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "DOMException"), JSC::CustomGetterSetter::create(vm, JSDOMException_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Event"), JSC::CustomGetterSetter::create(vm, JSEvent_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "EventTarget"), JSC::CustomGetterSetter::create(vm, JSEventTarget_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "AbortController"), JSC::CustomGetterSetter::create(vm, JSDOMAbortController_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "AbortSignal"), JSC::CustomGetterSetter::create(vm, JSDOMAbortSignal_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     extraStaticGlobals.releaseBuffer();

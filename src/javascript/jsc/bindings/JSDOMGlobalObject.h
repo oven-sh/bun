@@ -8,10 +8,11 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/JSObjectInlines.h"
 #include "JavaScriptCore/WeakGCMap.h"
+#include "ScriptExecutionContext.h"
 
 namespace WebCore {
 
-// Zig::GlobalObject* toJSDOMGlobalObject(ScriptExecutionContext&, DOMWrapperWorld&);
+Zig::GlobalObject* toJSDOMGlobalObject(ScriptExecutionContext& ctx, DOMWrapperWorld& world);
 WEBCORE_EXPORT Zig::GlobalObject& callerGlobalObject(JSC::JSGlobalObject&, JSC::CallFrame*);
 Zig::GlobalObject& legacyActiveGlobalObjectForAccessor(JSC::JSGlobalObject&, JSC::CallFrame*);
 

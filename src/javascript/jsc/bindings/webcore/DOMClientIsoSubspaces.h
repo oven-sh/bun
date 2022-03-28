@@ -379,8 +379,6 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCSSTransformValue;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCSSTransformValueIterator;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCSSTranslate;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAbortController;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAbortSignal;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAbstractRange;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAnimationEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAttr;
@@ -412,10 +410,6 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDocumentType;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDragEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForElement;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForErrorEvent;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForEvent;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForEventListener;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForEventTarget;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFocusEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFormDataEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForHashChangeEvent;
@@ -869,5 +863,12 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForXPathNSResolver;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForXPathResult;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForXSLTProcessor;
+
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAbortController;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAbortSignal;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForErrorEvent;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForEvent;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForEventListener;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForEventTarget;
 };
 } // namespace WebCore

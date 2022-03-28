@@ -1,0 +1,61 @@
+/*
+ * Copyright (C) 2006, 2007, 2009, 2011, 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2006 Samuel Weinig <sam.weinig@gmail.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public License
+ * along with this library; see the file COPYING.LIB.  If not, write to
+ * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
+ */
+
+typedef double DOMHighResTimeStamp;
+
+[
+    CustomToJSObject,
+    DOMJIT,
+    ExportToWrappedFunction,
+    Exposed=*,
+    JSCustomHeader,
+] interface Event {
+    constructor(DOMString type, optional EventInit eventInitDict);
+
+    readonly attribute DOMString type;
+    readonly attribute EventTarget? target;
+    readonly attribute EventTarget? currentTarget;
+    sequence<EventTarget> composedPath();
+
+    const unsigned short NONE = 0;
+    const unsigned short CAPTURING_PHASE = 1;
+    const unsigned short AT_TARGET = 2;
+    const unsigned short BUBBLING_PHASE = 3;
+    readonly attribute unsigned short eventPhase;
+
+    undefined stopPropagation();
+    attribute boolean cancelBubble; // historical alias of .stopPropagation.
+    undefined stopImmediatePropagation();
+
+    readonly attribute boolean bubbles;
+    readonly attribute boolean cancelable;
+    undefined preventDefault();
+    readonly attribute boolean defaultPrevented;
+    readonly attribute boolean composed;
+
+    [LegacyUnforgeable] readonly attribute boolean isTrusted;
+    [CallWith=RelevantScriptExecutionContext, ImplementedAs=timeStampForBindings] readonly attribute DOMHighResTimeStamp timeStamp;
+
+    undefined initEvent(DOMString type, optional boolean bubbles = false, optional boolean cancelable = false); // Historical.
+
+    // IE extensions that may get standardized (https://github.com/whatwg/dom/issues/334).
+    [ImplementedAs=target] readonly attribute EventTarget srcElement;
+    [ImplementedAs=legacyReturnValue] attribute boolean returnValue;
+};

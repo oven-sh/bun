@@ -30,8 +30,11 @@
 
 namespace WebCore {
 using namespace Zig;
+#ifndef RENAMED_JSDOM_GLOBAL_OBJECT
+#define RENAMED_JSDOM_GLOBAL_OBJECT
 using JSDOMGlobalObject = Zig::GlobalObject;
-
+}
+#endif
 class ScriptExecutionContext;
 
 // JSC allows us to extend JSType. If the highest 3 bits are set, we can add any Object types and they are
@@ -67,7 +70,7 @@ public:
     static void subspaceFor(JSC::VM&) { RELEASE_ASSERT_NOT_REACHED(); }
 
     JSDOMGlobalObject* globalObject() const { return JSC::jsCast<JSDOMGlobalObject*>(JSC::JSNonFinalObject::globalObject()); }
-    // ScriptExecutionContext* scriptExecutionContext() const { return globalObject()->scriptExecutionContext(); }
+    ScriptExecutionContext* scriptExecutionContext() const { return globalObject()->scriptExecutionContext(); }
 
 protected:
     WEBCORE_EXPORT JSDOMObject(JSC::Structure*, JSC::JSGlobalObject&);

@@ -379,7 +379,7 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForComment;
     // std::unique_ptr<IsoSubspace> m_subspaceForCompositionEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForCustomElementRegistry;
-    // std::unique_ptr<IsoSubspace> m_subspaceForCustomEvent;
+    std::unique_ptr<IsoSubspace> m_subspaceForCustomEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMException;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMImplementation;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMPoint;

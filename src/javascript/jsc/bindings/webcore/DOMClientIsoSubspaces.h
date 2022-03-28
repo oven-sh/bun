@@ -390,7 +390,7 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForComment;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCompositionEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCustomElementRegistry;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCustomEvent;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCustomEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMImplementation;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMPoint;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMPointReadOnly;

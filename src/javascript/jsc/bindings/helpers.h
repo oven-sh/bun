@@ -1,16 +1,17 @@
 #pragma once
 
-#include "headers.h"
 #include "root.h"
 
-#include <JavaScriptCore/Error.h>
-#include <JavaScriptCore/Exception.h>
-#include <JavaScriptCore/Identifier.h>
-#include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSString.h>
-#include <JavaScriptCore/JSValueInternal.h>
-#include <JavaScriptCore/ThrowScope.h>
-#include <JavaScriptCore/VM.h>
+#include "headers.h"
+
+#include "JavaScriptCore/Error.h"
+#include "JavaScriptCore/Exception.h"
+#include "JavaScriptCore/Identifier.h"
+#include "JavaScriptCore/JSGlobalObject.h"
+#include "JavaScriptCore/JSString.h"
+#include "JavaScriptCore/JSValueInternal.h"
+#include "JavaScriptCore/ThrowScope.h"
+#include "JavaScriptCore/VM.h"
 
 template<class CppType, typename ZigType> class Wrap {
 public:

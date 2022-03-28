@@ -275,7 +275,7 @@ pub const JSErrorCode = enum(u8) {
     URIError = 6,
     AggregateError = 7,
 
-    // StackOverflow & OutOfMemoryError is not an ErrorType in <JavaScriptCore/ErrorType.h> within JSC, so the number here is just totally made up
+    // StackOverflow & OutOfMemoryError is not an ErrorType in "JavaScriptCore/ErrorType.h" within JSC, so the number here is just totally made up
     OutOfMemoryError = 8,
     BundlerError = 252,
     StackOverflow = 253,

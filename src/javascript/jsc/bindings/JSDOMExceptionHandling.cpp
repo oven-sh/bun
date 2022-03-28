@@ -25,11 +25,11 @@
 #include "JSDOMException.h"
 #include "JSDOMExceptionHandling.h"
 
-#include <JavaScriptCore/ErrorHandlingScope.h>
-#include <JavaScriptCore/Exception.h>
-#include <JavaScriptCore/ExceptionHelpers.h>
-#include <JavaScriptCore/ScriptCallStack.h>
-#include <JavaScriptCore/ScriptCallStackFactory.h>
+#include "JavaScriptCore/ErrorHandlingScope.h"
+#include "JavaScriptCore/Exception.h"
+#include "JavaScriptCore/ExceptionHelpers.h"
+#include "JavaScriptCore/ScriptCallStack.h"
+#include "JavaScriptCore/ScriptCallStackFactory.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -76,7 +76,7 @@ void reportCurrentException(JSGlobalObject* lexicalGlobalObject)
     auto scope = DECLARE_CATCH_SCOPE(vm);
     auto* exception = scope.exception();
     scope.clearException();
-    reportException(lexicalGlobalObject, exception);
+    // reportException(lexicalGlobalObject, exception);
 }
 
 JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec, const String& message)
@@ -116,7 +116,7 @@ JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec
         // For now, we're going to assume the lexicalGlobalObject. Which is wrong in cases like this:
         // frames[0].document.createElement(null, null); // throws an exception which should have the subframe's prototypes.
         // https://bugs.webkit.org/show_bug.cgi?id=222229
-        JSDOMGlobalObject* globalObject = deprecatedGlobalObjectForPrototype(lexicalGlobalObject);
+        JSDOMGlobalObject* globalObject = JSC::jsCast<JSDOMGlobalObject*>(lexicalGlobalObject);
         JSValue errorObject = toJS(lexicalGlobalObject, globalObject, DOMException::create(ec, message));
 
         ASSERT(errorObject);
@@ -214,10 +214,10 @@ void throwNonFiniteTypeError(JSGlobalObject& lexicalGlobalObject, JSC::ThrowScop
     throwTypeError(&lexicalGlobalObject, scope, "The provided value is non-finite"_s);
 }
 
-JSC::EncodedJSValue rejectPromiseWithGetterTypeError(JSC::JSGlobalObject& lexicalGlobalObject, const JSC::ClassInfo* classInfo, JSC::PropertyName attributeName)
-{
-    return createRejectedPromiseWithTypeError(lexicalGlobalObject, JSC::makeDOMAttributeGetterTypeErrorMessage(classInfo->className, String(attributeName.uid())), RejectedPromiseWithTypeErrorCause::NativeGetter);
-}
+// JSC::EncodedJSValue rejectPromiseWithGetterTypeError(JSC::JSGlobalObject& lexicalGlobalObject, const JSC::ClassInfo* classInfo, JSC::PropertyName attributeName)
+// {
+//     return createRejectedPromiseWithTypeError(lexicalGlobalObject, JSC::makeDOMAttributeGetterTypeErrorMessage(classInfo->className, String(attributeName.uid())), RejectedPromiseWithTypeErrorCause::NativeGetter);
+// }
 
 String makeThisTypeErrorMessage(const char* interfaceName, const char* functionName)
 {
@@ -234,16 +234,16 @@ EncodedJSValue throwThisTypeError(JSC::JSGlobalObject& lexicalGlobalObject, JSC:
     return throwTypeError(lexicalGlobalObject, scope, makeThisTypeErrorMessage(interfaceName, functionName));
 }
 
-JSC::EncodedJSValue rejectPromiseWithThisTypeError(DeferredPromise& promise, const char* interfaceName, const char* methodName)
-{
-    promise.reject(TypeError, makeThisTypeErrorMessage(interfaceName, methodName));
-    return JSValue::encode(jsUndefined());
-}
+// JSC::EncodedJSValue rejectPromiseWithThisTypeError(DeferredPromise& promise, const char* interfaceName, const char* methodName)
+// {
+//     promise.reject(TypeError, makeThisTypeErrorMessage(interfaceName, methodName));
+//     return JSValue::encode(jsUndefined());
+// }
 
-JSC::EncodedJSValue rejectPromiseWithThisTypeError(JSC::JSGlobalObject& lexicalGlobalObject, const char* interfaceName, const char* methodName)
-{
-    return createRejectedPromiseWithTypeError(lexicalGlobalObject, makeThisTypeErrorMessage(interfaceName, methodName), RejectedPromiseWithTypeErrorCause::InvalidThis);
-}
+// JSC::EncodedJSValue rejectPromiseWithThisTypeError(JSC::JSGlobalObject& lexicalGlobalObject, const char* interfaceName, const char* methodName)
+// {
+//     return createRejectedPromiseWithTypeError(lexicalGlobalObject, makeThisTypeErrorMessage(interfaceName, methodName), RejectedPromiseWithTypeErrorCause::InvalidThis);
+// }
 
 void throwDOMSyntaxError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, ASCIILiteral message)
 {

@@ -1,8 +1,10 @@
 #include "BunStream.h"
-#include <JavaScriptCore/JSMicrotask.h>
-#include <JavaScriptCore/ObjectConstructor.h>
+#include "JavaScriptCore/JSMicrotask.h"
+#include "JavaScriptCore/ObjectConstructor.h"
 
-namespace Bun {
+#include "JavaScriptCore/JSCInlines.h"
+
+namespace WebCore {
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
 using JSValue = JSC::JSValue;
@@ -127,7 +129,7 @@ static JSC_DEFINE_HOST_FUNCTION(Readable__on,
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto thisObject = JSC::jsDynamicCast<Bun::Readable*>(vm, callFrame->thisValue());
+    auto thisObject = JSC::jsDynamicCast<WebCore::Readable*>(vm, callFrame->thisValue());
     if (UNLIKELY(!thisObject)) {
         scope.release();
         JSC::throwVMTypeError(globalObject, scope);
@@ -163,7 +165,7 @@ static JSC_DEFINE_HOST_FUNCTION(Readable__on,
 
 extern "C" Bun__Readable* JSC__JSValue__getReadableStreamState(JSC__JSValue value, JSC__VM* vm)
 {
-    auto* thisObject = JSC::jsDynamicCast<Bun::Readable*>(*vm, JSC::JSValue::decode(value));
+    auto* thisObject = JSC::jsDynamicCast<WebCore::Readable*>(*vm, JSC::JSValue::decode(value));
     if (UNLIKELY(!thisObject)) {
         return nullptr;
     }
@@ -171,17 +173,17 @@ extern "C" Bun__Readable* JSC__JSValue__getReadableStreamState(JSC__JSValue valu
 }
 extern "C" Bun__Writable* JSC__JSValue__getWritableStreamState(JSC__JSValue value, JSC__VM* vm)
 {
-    auto* thisObject = JSC::jsDynamicCast<Bun::Writable*>(*vm, JSC::JSValue::decode(value));
+    auto* thisObject = JSC::jsDynamicCast<WebCore::Writable*>(*vm, JSC::JSValue::decode(value));
     if (UNLIKELY(!thisObject)) {
         return nullptr;
     }
     return thisObject->state;
 }
 
-const JSC::ClassInfo Readable::s_info = { "Readable", &Base::s_info, nullptr, nullptr,
+const JSC::ClassInfo Readable::s_info = { "Readable"_s, &Base::s_info, nullptr, nullptr,
     CREATE_METHOD_TABLE(Readable) };
 
-const JSC::ClassInfo Writable::s_info = { "Writable", &Base::s_info, nullptr, nullptr,
+const JSC::ClassInfo Writable::s_info = { "Writable"_s, &Base::s_info, nullptr, nullptr,
     CREATE_METHOD_TABLE(Writable) };
 
 static JSC_DEFINE_HOST_FUNCTION(Readable__once,
@@ -194,7 +196,7 @@ static JSC_DEFINE_HOST_FUNCTION(Readable__once,
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto thisObject = JSC::jsDynamicCast<Bun::Readable*>(vm, callFrame->thisValue());
+    auto thisObject = JSC::jsDynamicCast<WebCore::Readable*>(vm, callFrame->thisValue());
     if (UNLIKELY(!thisObject)) {
         scope.release();
         JSC::throwVMTypeError(globalObject, scope);
@@ -238,7 +240,7 @@ static JSC_DEFINE_HOST_FUNCTION(Writable__on,
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto thisObject = JSC::jsDynamicCast<Bun::Writable*>(vm, callFrame->thisValue());
+    auto thisObject = JSC::jsDynamicCast<WebCore::Writable*>(vm, callFrame->thisValue());
     if (UNLIKELY(!thisObject)) {
         scope.release();
         JSC::throwVMTypeError(globalObject, scope);
@@ -282,7 +284,7 @@ static JSC_DEFINE_HOST_FUNCTION(Writable__once,
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto thisObject = JSC::jsDynamicCast<Bun::Writable*>(vm, callFrame->thisValue());
+    auto thisObject = JSC::jsDynamicCast<WebCore::Writable*>(vm, callFrame->thisValue());
     if (UNLIKELY(!thisObject)) {
         scope.release();
         JSC::throwVMTypeError(globalObject, scope);
@@ -319,71 +321,71 @@ static JSC_DEFINE_HOST_FUNCTION(Writable__once,
 static JSC_DEFINE_HOST_FUNCTION(Readable__read,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    DEFINE_CALLBACK_FUNCTION_BODY(Bun::Readable, Bun__Readable__read);
+    DEFINE_CALLBACK_FUNCTION_BODY(WebCore::Readable, Bun__Readable__read);
 }
 
 static JSC_DEFINE_HOST_FUNCTION(Readable__pipe,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    DEFINE_CALLBACK_FUNCTION_BODY(Bun::Readable, Bun__Readable__pipe);
+    DEFINE_CALLBACK_FUNCTION_BODY(WebCore::Readable, Bun__Readable__pipe);
 }
 
 static JSC_DEFINE_HOST_FUNCTION(Readable__resume,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    DEFINE_CALLBACK_FUNCTION_BODY(Bun::Readable, Bun__Readable__resume);
+    DEFINE_CALLBACK_FUNCTION_BODY(WebCore::Readable, Bun__Readable__resume);
 }
 static JSC_DEFINE_HOST_FUNCTION(Readable__unpipe,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    DEFINE_CALLBACK_FUNCTION_BODY(Bun::Readable, Bun__Readable__unpipe);
+    DEFINE_CALLBACK_FUNCTION_BODY(WebCore::Readable, Bun__Readable__unpipe);
 }
 static JSC_DEFINE_HOST_FUNCTION(Readable__pause,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    DEFINE_CALLBACK_FUNCTION_BODY(Bun::Readable, Bun__Readable__pause);
+    DEFINE_CALLBACK_FUNCTION_BODY(WebCore::Readable, Bun__Readable__pause);
 }
 static JSC_DEFINE_HOST_FUNCTION(Readable__unshift,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    DEFINE_CALLBACK_FUNCTION_BODY(Bun::Readable, Bun__Readable__unshift);
+    DEFINE_CALLBACK_FUNCTION_BODY(WebCore::Readable, Bun__Readable__unshift);
 }
 
 // static JSC_DECLARE_HOST_FUNCTION(Readable__isPaused);
 // static JSC_DECLARE_HOST_FUNCTION(Writable__setDefaultEncoding);
 
-// static DEFINE_CALLBACK_FUNCTION(Writable__setDefaultEncoding, Bun::Writable,
+// static DEFINE_CALLBACK_FUNCTION(Writable__setDefaultEncoding, WebCore::Writable,
 //                                 Bun__Writable__setDefaultEncoding);
 
 static JSC_DEFINE_HOST_FUNCTION(Writable__write,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    DEFINE_CALLBACK_FUNCTION_BODY(Bun::Writable, Bun__Writable__write);
+    DEFINE_CALLBACK_FUNCTION_BODY(WebCore::Writable, Bun__Writable__write);
 }
 static JSC_DEFINE_HOST_FUNCTION(Writable__end,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    DEFINE_CALLBACK_FUNCTION_BODY(Bun::Writable, Bun__Writable__end);
+    DEFINE_CALLBACK_FUNCTION_BODY(WebCore::Writable, Bun__Writable__end);
 }
 static JSC_DEFINE_HOST_FUNCTION(Writable__close,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    DEFINE_CALLBACK_FUNCTION_BODY(Bun::Writable, Bun__Writable__close);
+    DEFINE_CALLBACK_FUNCTION_BODY(WebCore::Writable, Bun__Writable__close);
 }
 static JSC_DEFINE_HOST_FUNCTION(Writable__destroy,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    DEFINE_CALLBACK_FUNCTION_BODY(Bun::Writable, Bun__Writable__destroy);
+    DEFINE_CALLBACK_FUNCTION_BODY(WebCore::Writable, Bun__Writable__destroy);
 }
 static JSC_DEFINE_HOST_FUNCTION(Writable__cork,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    DEFINE_CALLBACK_FUNCTION_BODY(Bun::Writable, Bun__Writable__cork);
+    DEFINE_CALLBACK_FUNCTION_BODY(WebCore::Writable, Bun__Writable__cork);
 }
 static JSC_DEFINE_HOST_FUNCTION(Writable__uncork,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    DEFINE_CALLBACK_FUNCTION_BODY(Bun::Writable, Bun__Writable__uncork);
+    DEFINE_CALLBACK_FUNCTION_BODY(WebCore::Writable, Bun__Writable__uncork);
 }
 
 extern "C" JSC__JSValue Bun__Readable__create(Bun__Readable* state,
@@ -422,7 +424,7 @@ Writable::~Writable()
 void Readable::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    auto clientData = Bun::clientData(vm);
+    auto clientData = WebCore::clientData(vm);
     auto* globalObject = this->globalObject();
 
     putDirect(vm, clientData->builtinNames().onPublicName(),
@@ -469,7 +471,7 @@ void Readable::finishCreation(JSC::VM& vm)
 void Writable::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    auto clientData = Bun::clientData(vm);
+    auto clientData = WebCore::clientData(vm);
 
     auto* globalObject = this->globalObject();
 
@@ -524,4 +526,4 @@ void Writable::finishCreation(JSC::VM& vm)
         0);
 }
 
-} // namespace Bun
+} // namespace WebCore

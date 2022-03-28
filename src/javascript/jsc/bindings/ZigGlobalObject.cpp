@@ -1,81 +1,86 @@
+
 #include "ZigGlobalObject.h"
+
 #include "helpers.h"
 
+#include "JavaScriptCore/AggregateError.h"
+#include "JavaScriptCore/BytecodeIndex.h"
+#include "JavaScriptCore/CallFrameInlines.h"
+#include "JavaScriptCore/ClassInfo.h"
+#include "JavaScriptCore/CodeBlock.h"
+#include "JavaScriptCore/CodeCache.h"
+#include "JavaScriptCore/Completion.h"
+#include "JavaScriptCore/Error.h"
+#include "JavaScriptCore/ErrorInstance.h"
+#include "JavaScriptCore/Exception.h"
+#include "JavaScriptCore/ExceptionScope.h"
+#include "JavaScriptCore/FunctionConstructor.h"
+#include "JavaScriptCore/HashMapImpl.h"
+#include "JavaScriptCore/HashMapImplInlines.h"
+#include "JavaScriptCore/Heap.h"
+#include "JavaScriptCore/Identifier.h"
+#include "JavaScriptCore/InitializeThreading.h"
+#include "JavaScriptCore/IteratorOperations.h"
+#include "JavaScriptCore/JSArray.h"
+#include "JavaScriptCore/JSCInlines.h"
+#include "JavaScriptCore/JSCallbackConstructor.h"
+#include "JavaScriptCore/JSCallbackObject.h"
+#include "JavaScriptCore/JSCast.h"
+#include "JavaScriptCore/JSClassRef.h"
+#include "JavaScriptCore/JSMicrotask.h"
 #include "ZigConsoleClient.h"
-#include <JavaScriptCore/AggregateError.h>
-#include <JavaScriptCore/BytecodeIndex.h>
-#include <JavaScriptCore/CallFrameInlines.h>
-#include <JavaScriptCore/ClassInfo.h>
-#include <JavaScriptCore/CodeBlock.h>
-#include <JavaScriptCore/CodeCache.h>
-#include <JavaScriptCore/Completion.h>
-#include <JavaScriptCore/Error.h>
-#include <JavaScriptCore/ErrorInstance.h>
-#include <JavaScriptCore/Exception.h>
-#include <JavaScriptCore/ExceptionScope.h>
-#include <JavaScriptCore/FunctionConstructor.h>
-#include <JavaScriptCore/HashMapImpl.h>
-#include <JavaScriptCore/HashMapImplInlines.h>
-#include <JavaScriptCore/Heap.h>
-#include <JavaScriptCore/Identifier.h>
-#include <JavaScriptCore/InitializeThreading.h>
-#include <JavaScriptCore/IteratorOperations.h>
-#include <JavaScriptCore/JSArray.h>
-#include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSCallbackConstructor.h>
-#include <JavaScriptCore/JSCallbackObject.h>
-#include <JavaScriptCore/JSCast.h>
-#include <JavaScriptCore/JSClassRef.h>
-#include <JavaScriptCore/JSMicrotask.h>
-// #include <JavaScriptCore/JSContextInternal.h>
-#include <JavaScriptCore/CatchScope.h>
-#include <JavaScriptCore/DeferredWorkTimer.h>
-#include <JavaScriptCore/JSInternalPromise.h>
-#include <JavaScriptCore/JSLock.h>
-#include <JavaScriptCore/JSMap.h>
-#include <JavaScriptCore/JSModuleLoader.h>
-#include <JavaScriptCore/JSModuleRecord.h>
-#include <JavaScriptCore/JSNativeStdFunction.h>
-#include <JavaScriptCore/JSObject.h>
-#include <JavaScriptCore/JSPromise.h>
-#include <JavaScriptCore/JSSet.h>
-#include <JavaScriptCore/JSSourceCode.h>
-#include <JavaScriptCore/JSString.h>
-#include <JavaScriptCore/JSValueInternal.h>
-#include <JavaScriptCore/JSVirtualMachineInternal.h>
-#include <JavaScriptCore/ObjectConstructor.h>
-#include <JavaScriptCore/OptionsList.h>
-#include <JavaScriptCore/ParserError.h>
-#include <JavaScriptCore/ScriptExecutable.h>
-#include <JavaScriptCore/SourceOrigin.h>
-#include <JavaScriptCore/StackFrame.h>
-#include <JavaScriptCore/StackVisitor.h>
-#include <JavaScriptCore/VM.h>
-#include <JavaScriptCore/VMEntryScope.h>
-#include <JavaScriptCore/WasmFaultSignalHandler.h>
+// #include "JavaScriptCore/JSContextInternal.h"
+#include "JavaScriptCore/CatchScope.h"
+#include "JavaScriptCore/DeferredWorkTimer.h"
+#include "JavaScriptCore/JSInternalPromise.h"
+#include "JavaScriptCore/JSLock.h"
+#include "JavaScriptCore/JSMap.h"
+#include "JavaScriptCore/JSModuleLoader.h"
+#include "JavaScriptCore/JSModuleRecord.h"
+#include "JavaScriptCore/JSNativeStdFunction.h"
+#include "JavaScriptCore/JSObject.h"
+#include "JavaScriptCore/JSPromise.h"
+#include "JavaScriptCore/JSSet.h"
+#include "JavaScriptCore/JSSourceCode.h"
+#include "JavaScriptCore/JSString.h"
+#include "JavaScriptCore/JSValueInternal.h"
+#include "JavaScriptCore/JSVirtualMachineInternal.h"
+#include "JavaScriptCore/ObjectConstructor.h"
+#include "JavaScriptCore/OptionsList.h"
+#include "JavaScriptCore/ParserError.h"
+#include "JavaScriptCore/ScriptExecutable.h"
+#include "JavaScriptCore/SourceOrigin.h"
+#include "JavaScriptCore/StackFrame.h"
+#include "JavaScriptCore/StackVisitor.h"
+#include "JavaScriptCore/VM.h"
+#include "JavaScriptCore/VMEntryScope.h"
+#include "JavaScriptCore/WasmFaultSignalHandler.h"
+#include "wtf/Gigacage.h"
+#include "wtf/StdLibExtras.h"
+#include "wtf/URL.h"
+#include "wtf/text/ExternalStringImpl.h"
+#include "wtf/text/StringCommon.h"
+#include "wtf/text/StringImpl.h"
+#include "wtf/text/StringView.h"
+#include "wtf/text/WTFString.h"
 #include <unistd.h>
-#include <wtf/Gigacage.h>
-#include <wtf/StdLibExtras.h>
-#include <wtf/URL.h>
-#include <wtf/text/ExternalStringImpl.h>
-#include <wtf/text/StringCommon.h>
-#include <wtf/text/StringImpl.h>
-#include <wtf/text/StringView.h>
-#include <wtf/text/WTFString.h>
 
+#include "wtf/text/Base64.h"
 #include <cstdlib>
 #include <exception>
 #include <iostream>
-#include <wtf/text/Base64.h>
-// #include <JavaScriptCore/CachedType.h>
-#include <JavaScriptCore/JSCallbackObject.h>
-#include <JavaScriptCore/JSClassRef.h>
+// #include "JavaScriptCore/CachedType.h"
+#include "JavaScriptCore/JSCallbackObject.h"
+#include "JavaScriptCore/JSClassRef.h"
 
 #include "BunClientData.h"
 
 #include "ZigSourceProvider.h"
 
 #include "JSDOMURL.h"
+#include "JSURLSearchParams.h"
+
+#include "Process.h"
 
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
@@ -125,18 +130,19 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObje
     auto heapSize = JSC::HeapType::Large;
 
     JSC::VM& vm = JSC::VM::create(heapSize).leakRef();
-    Bun::JSVMClientData::create(&vm);
+
+    WebCore::JSVMClientData::create(&vm);
 
     vm.heap.acquireAccess();
 
     JSC::Wasm::enableFastMemory();
 
     JSC::JSLockHolder locker(vm);
-    Zig::GlobalObject* globalObject = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::jsNull()));
+    Zig::GlobalObject* globalObject = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::JSGlobalObject::create(vm, JSC::JSGlobalObject::createStructure(vm, JSC::jsNull())), JSC::jsNull()));
     globalObject->setConsole(globalObject);
 
     if (count > 0) {
-        globalObject->installAPIGlobals(globalObjectClass, count);
+        globalObject->installAPIGlobals(globalObjectClass, count, vm);
     }
 
     JSC::gcProtect(globalObject);
@@ -206,7 +212,9 @@ extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* g
 
 namespace Zig {
 
-const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject", &Base::s_info, nullptr, nullptr,
+using namespace WebCore;
+
+const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, nullptr, nullptr,
     CREATE_METHOD_TABLE(GlobalObject) };
 
 extern "C" JSClassRef* Zig__getAPIGlobals(size_t* count);
@@ -215,14 +223,14 @@ extern "C" const JSC__JSValue* Zig__getAPIConstructors(size_t* count, JSC__JSGlo
 static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
-    Zig::GlobalObject* shadow = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::jsNull()));
+    Zig::GlobalObject* shadow = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::JSGlobalObject::create(vm, JSC::JSGlobalObject::createStructure(vm, JSC::jsNull())), JSC::jsNull()));
     shadow->setConsole(shadow);
     size_t count = 0;
     JSClassRef* globalObjectClass = Zig__getAPIGlobals(&count);
 
     shadow->setConsole(shadow);
     if (count > 0) {
-        shadow->installAPIGlobals(globalObjectClass, count);
+        shadow->installAPIGlobals(globalObjectClass, count, vm);
     }
 
     return shadow;
@@ -269,7 +277,7 @@ const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
 };
 
 void GlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject* globalObject,
-    Exception* exception)
+    JSC::Exception* exception)
 {
     Zig__GlobalObject__reportUncaughtException(globalObject, exception);
 }
@@ -291,6 +299,28 @@ void GlobalObject::setConsole(void* console)
 
 #pragma mark - Globals
 
+JSC_DECLARE_CUSTOM_GETTER(JSDOMURL_getter);
+
+JSC_DEFINE_CUSTOM_GETTER(JSDOMURL_getter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return JSC::JSValue::encode(
+        WebCore::JSDOMURL::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
+}
+
+JSC_DECLARE_CUSTOM_GETTER(JSURLSearchParams_getter);
+
+JSC_DEFINE_CUSTOM_GETTER(JSURLSearchParams_getter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return JSC::JSValue::encode(
+        WebCore::JSURLSearchParams::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
+}
+
 static JSC_DECLARE_CUSTOM_SETTER(property_lazyProcessSetter);
 static JSC_DECLARE_CUSTOM_GETTER(property_lazyProcessGetter);
 
@@ -309,7 +339,7 @@ JSC_DEFINE_CUSTOM_GETTER(property_lazyProcessGetter,
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(_globalObject);
 
     JSC::VM& vm = globalObject->vm();
-    auto clientData = Bun::clientData(vm);
+    auto clientData = WebCore::clientData(vm);
     JSC::JSValue processPrivate = globalObject->getIfPropertyExists(globalObject, clientData->builtinNames().processPrivateName());
     if (LIKELY(processPrivate)) {
         return JSC::JSValue::encode(processPrivate);
@@ -561,7 +591,7 @@ static JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
                 return JSC::JSValue::encode(JSC::JSValue {});
             }
 
-            auto clientData = Bun::clientData(vm);
+            auto clientData = WebCore::clientData(vm);
 
             from = JSC::JSValue::encode(thisObject->get(globalObject, clientData->builtinNames().urlPublicName()));
         }
@@ -592,19 +622,19 @@ static JSC_DEFINE_HOST_FUNCTION(functionReportError,
 // This is not a publicly exposed API currently.
 // This is used by the bundler to make Response, Request, FetchEvent,
 // and any other objects available globally.
-void GlobalObject::installAPIGlobals(JSClassRef* globals, int count)
+void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm)
 {
-    auto clientData = Bun::clientData(vm());
+    auto clientData = WebCore::clientData(vm);
     size_t constructor_count = 0;
     JSC__JSValue const* constructors = Zig__getAPIConstructors(&constructor_count, this);
     WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
     extraStaticGlobals.reserveCapacity((size_t)count + constructor_count + 3 + 10);
     int i = 0;
     for (; i < constructor_count; i++) {
-        auto* object = JSC::jsDynamicCast<JSC::JSCallbackConstructor*>(vm(), JSC::JSValue::decode(constructors[i]).asCell()->getObject());
+        auto* object = JSC::jsDynamicCast<JSC::JSCallbackConstructor*>(vm, JSC::JSValue::decode(constructors[i]).asCell()->getObject());
 
         extraStaticGlobals.uncheckedAppend(
-            GlobalPropertyInfo { JSC::Identifier::fromString(vm(), object->get(this, vm().propertyNames->name).toWTFString(this)),
+            GlobalPropertyInfo { JSC::Identifier::fromString(vm, object->get(this, vm.propertyNames->name).toWTFString(this)),
                 JSC::JSValue(object), JSC::PropertyAttribute::DontDelete | 0 });
     }
     int j = 0;
@@ -614,10 +644,10 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count)
         JSC::JSCallbackObject<JSNonFinalObject>* object = JSC::JSCallbackObject<JSNonFinalObject>::create(this, this->callbackObjectStructure(),
             jsClass, nullptr);
         if (JSObject* prototype = object->classRef()->prototype(this))
-            object->setPrototypeDirect(vm(), prototype);
+            object->setPrototypeDirect(vm, prototype);
 
         extraStaticGlobals.uncheckedAppend(
-            GlobalPropertyInfo { JSC::Identifier::fromString(vm(), jsClass->className()),
+            GlobalPropertyInfo { JSC::Identifier::fromString(vm, jsClass->className()),
                 JSC::JSValue(object), JSC::PropertyAttribute::DontDelete | 0 });
     }
 
@@ -633,84 +663,142 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count)
     //   JSC::JSCallbackObject<JSNonFinalObject> *object =
     //     JSC::JSCallbackObject<JSNonFinalObject>::create(this, this->callbackObjectStructure(),
     //                                                     jsClass, nullptr);
-    //   if (JSObject *prototype = jsClass->prototype(this)) object->setPrototypeDirect(vm(),
+    //   if (JSObject *prototype = jsClass->prototype(this)) object->setPrototypeDirect(vm,
     //   prototype);
 
-    //   process->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "env"),
+    //   process->putDirect(this->vm, JSC::Identifier::fromString(this->vm, "env"),
     //                      JSC::JSValue(object), JSC::PropertyAttribute::DontDelete | 0);
     // }
 
-    JSC::Identifier queueMicrotaskIdentifier = JSC::Identifier::fromString(vm(), "queueMicrotask"_s);
+    JSC::Identifier queueMicrotaskIdentifier = JSC::Identifier::fromString(vm, "queueMicrotask"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { queueMicrotaskIdentifier,
-            JSC::JSFunction::create(vm(), JSC::jsCast<JSC::JSGlobalObject*>(this), 0,
+            JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
                 "queueMicrotask", functionQueueMicrotask),
             JSC::PropertyAttribute::DontDelete | 0 });
 
-    JSC::Identifier setTimeoutIdentifier = JSC::Identifier::fromString(vm(), "setTimeout"_s);
+    JSC::Identifier setTimeoutIdentifier = JSC::Identifier::fromString(vm, "setTimeout"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { setTimeoutIdentifier,
-            JSC::JSFunction::create(vm(), JSC::jsCast<JSC::JSGlobalObject*>(this), 0,
+            JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
                 "setTimeout", functionSetTimeout),
             JSC::PropertyAttribute::DontDelete | 0 });
 
-    JSC::Identifier clearTimeoutIdentifier = JSC::Identifier::fromString(vm(), "clearTimeout"_s);
+    JSC::Identifier clearTimeoutIdentifier = JSC::Identifier::fromString(vm, "clearTimeout"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { clearTimeoutIdentifier,
-            JSC::JSFunction::create(vm(), JSC::jsCast<JSC::JSGlobalObject*>(this), 0,
+            JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
                 "clearTimeout", functionClearTimeout),
             JSC::PropertyAttribute::DontDelete | 0 });
 
-    JSC::Identifier setIntervalIdentifier = JSC::Identifier::fromString(vm(), "setInterval"_s);
+    JSC::Identifier setIntervalIdentifier = JSC::Identifier::fromString(vm, "setInterval"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { setIntervalIdentifier,
-            JSC::JSFunction::create(vm(), JSC::jsCast<JSC::JSGlobalObject*>(this), 0,
+            JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
                 "setInterval", functionSetInterval),
             JSC::PropertyAttribute::DontDelete | 0 });
 
-    JSC::Identifier clearIntervalIdentifier = JSC::Identifier::fromString(vm(), "clearInterval"_s);
+    JSC::Identifier clearIntervalIdentifier = JSC::Identifier::fromString(vm, "clearInterval"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { clearIntervalIdentifier,
-            JSC::JSFunction::create(vm(), JSC::jsCast<JSC::JSGlobalObject*>(this), 0,
+            JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
                 "clearInterval", functionClearInterval),
             JSC::PropertyAttribute::DontDelete | 0 });
 
-    JSC::Identifier atobIdentifier = JSC::Identifier::fromString(vm(), "atob"_s);
+    JSC::Identifier atobIdentifier = JSC::Identifier::fromString(vm, "atob"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { atobIdentifier,
-            JSC::JSFunction::create(vm(), JSC::jsCast<JSC::JSGlobalObject*>(this), 0,
+            JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
                 "atob", functionATOB),
             JSC::PropertyAttribute::DontDelete | 0 });
 
-    JSC::Identifier btoaIdentifier = JSC::Identifier::fromString(vm(), "btoa"_s);
+    JSC::Identifier btoaIdentifier = JSC::Identifier::fromString(vm, "btoa"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { btoaIdentifier,
-            JSC::JSFunction::create(vm(), JSC::jsCast<JSC::JSGlobalObject*>(this), 0,
+            JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
                 "btoa", functionBTOA),
             JSC::PropertyAttribute::DontDelete | 0 });
-    JSC::Identifier reportErrorIdentifier = JSC::Identifier::fromString(vm(), "reportError"_s);
+    JSC::Identifier reportErrorIdentifier = JSC::Identifier::fromString(vm, "reportError"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { reportErrorIdentifier,
-            JSC::JSFunction::create(vm(), JSC::jsCast<JSC::JSGlobalObject*>(this), 0,
+            JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
+                "reportError", functionReportError),
+            JSC::PropertyAttribute::DontDelete | 0 });
+
+    JSC::Identifier URLConstructor = JSC::Identifier::fromString(vm, "URL"_s);
+    extraStaticGlobals.uncheckedAppend(
+        GlobalPropertyInfo { reportErrorIdentifier,
+            JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
                 "reportError", functionReportError),
             JSC::PropertyAttribute::DontDelete | 0 });
 
     this->addStaticGlobals(extraStaticGlobals.data(), extraStaticGlobals.size());
-    putDirectCustomAccessor(
-        vm(), clientData->builtinNames().processPublicName(),
-        JSC::CustomGetterSetter::create(vm(), property_lazyProcessGetter, property_lazyProcessSetter),
-        PropertyAttribute::DontDelete | JSC::PropertyAttribute::CustomAccessor | 0);
 
-    auto domURL = WebCore::DOMURL::create("https://example.com/"_s, WTF::String());
-    auto url = WebCore::JSDOMURL::create(
-        WebCore::JSDOMURL::createStructure(vm(), this, objectPrototype()),
-        this,
-        domURL.returnValue().get());
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "URL"), JSC::CustomGetterSetter::create(vm, JSDOMURL_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
-    this->putDirect(vm(), clientData->builtinNames().urlPublicName(), JSC::JSValue(url), JSC::PropertyAttribute::DontDelete | 0);
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "URLSearchParams"), JSC::CustomGetterSetter::create(vm, JSURLSearchParams_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     extraStaticGlobals.releaseBuffer();
 }
+
+template<typename Visitor>
+void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    GlobalObject* thisObject = jsCast<GlobalObject*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    {
+        // The GC thread has to grab the GC lock even though it is not mutating the containers.
+        Locker locker { thisObject->m_gcLock };
+
+        for (auto& structure : thisObject->m_structures.values())
+            visitor.append(structure);
+
+        // for (auto& guarded : thisObject->m_guardedObjects)
+        //     guarded->visitAggregate(visitor);
+    }
+
+    for (auto& constructor : thisObject->constructors().array())
+        visitor.append(constructor);
+
+    // thisObject->m_builtinInternalFunctions.visit(visitor);
+}
+
+DEFINE_VISIT_CHILDREN(GlobalObject);
+
+// void GlobalObject::destroy(JSCell* cell)
+// {
+//     static_cast<Zig::GlobalObject*>(cell)->Zig::GlobalObject::~Zig::GlobalObject();
+// }
+
+// template<typename Visitor>
+// void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+// {
+//     Zig::GlobalObject* thisObject = jsCast<Zig::GlobalObject*>(cell);
+//     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+//     Base::visitChildren(thisObject, visitor);
+
+//     {
+//         // The GC thread has to grab the GC lock even though it is not mutating the containers.
+//         Locker locker { thisObject->m_gcLock };
+
+//         for (auto& structure : thisObject->m_structures.values())
+//             visitor.append(structure);
+
+//         for (auto& guarded : thisObject->m_guardedObjects)
+//             guarded->visitAggregate(visitor);
+//     }
+
+//     for (auto& constructor : thisObject->constructors().array())
+//         visitor.append(constructor);
+
+//     thisObject->m_builtinInternalFunctions.visit(visitor);
+// }
+
+// DEFINE_VISIT_CHILDREN(Zig::GlobalObject);
 
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject,
     JSModuleLoader* loader, JSValue key,
@@ -835,7 +923,7 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     JSC::JSObject* metaProperties = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    auto clientData = Bun::clientData(vm);
+    auto clientData = WebCore::clientData(vm);
     JSString* keyString = key.toStringOrNull(globalObject);
     if (UNLIKELY(!keyString)) {
         return metaProperties;

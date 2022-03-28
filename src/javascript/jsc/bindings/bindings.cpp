@@ -1,49 +1,53 @@
+#include "root.h"
+
 #include "BunClientData.h"
 #include "GCDefferalContext.h"
+
+#include "JavaScriptCore/AggregateError.h"
+#include "JavaScriptCore/BytecodeIndex.h"
+#include "JavaScriptCore/CodeBlock.h"
+#include "JavaScriptCore/Completion.h"
+#include "JavaScriptCore/DeferredWorkTimer.h"
+#include "JavaScriptCore/ErrorInstance.h"
+#include "JavaScriptCore/ExceptionHelpers.h"
+#include "JavaScriptCore/ExceptionScope.h"
+#include "JavaScriptCore/FunctionConstructor.h"
+#include "JavaScriptCore/HeapSnapshotBuilder.h"
+#include "JavaScriptCore/Identifier.h"
+#include "JavaScriptCore/IteratorOperations.h"
+#include "JavaScriptCore/JSArray.h"
+#include "JavaScriptCore/JSArrayBuffer.h"
+#include "JavaScriptCore/JSArrayInlines.h"
+#include "JavaScriptCore/JSCInlines.h"
+#include "JavaScriptCore/JSCallbackObject.h"
+#include "JavaScriptCore/JSClassRef.h"
+#include "JavaScriptCore/JSInternalPromise.h"
+#include "JavaScriptCore/JSMap.h"
+#include "JavaScriptCore/JSModuleLoader.h"
+#include "JavaScriptCore/JSModuleRecord.h"
+#include "JavaScriptCore/JSNativeStdFunction.h"
+#include "JavaScriptCore/JSONObject.h"
+#include "JavaScriptCore/JSObject.h"
+#include "JavaScriptCore/JSSet.h"
+#include "JavaScriptCore/JSString.h"
+#include "JavaScriptCore/Microtask.h"
+#include "JavaScriptCore/ObjectConstructor.h"
+#include "JavaScriptCore/ParserError.h"
+#include "JavaScriptCore/ScriptExecutable.h"
+#include "JavaScriptCore/StackFrame.h"
+#include "JavaScriptCore/StackVisitor.h"
+#include "JavaScriptCore/VM.h"
+#include "JavaScriptCore/WasmFaultSignalHandler.h"
+#include "JavaScriptCore/Watchdog.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
-#include "root.h"
-#include <JavaScriptCore/AggregateError.h>
-#include <JavaScriptCore/BytecodeIndex.h>
-#include <JavaScriptCore/CodeBlock.h>
-#include <JavaScriptCore/Completion.h>
-#include <JavaScriptCore/DeferredWorkTimer.h>
-#include <JavaScriptCore/ErrorInstance.h>
-#include <JavaScriptCore/ExceptionHelpers.h>
-#include <JavaScriptCore/ExceptionScope.h>
-#include <JavaScriptCore/FunctionConstructor.h>
-#include <JavaScriptCore/HeapSnapshotBuilder.h>
-#include <JavaScriptCore/Identifier.h>
-#include <JavaScriptCore/IteratorOperations.h>
-#include <JavaScriptCore/JSArray.h>
-#include <JavaScriptCore/JSArrayBuffer.h>
-#include <JavaScriptCore/JSArrayInlines.h>
-#include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSCallbackObject.h>
-#include <JavaScriptCore/JSClassRef.h>
-#include <JavaScriptCore/JSInternalPromise.h>
-#include <JavaScriptCore/JSMap.h>
-#include <JavaScriptCore/JSModuleLoader.h>
-#include <JavaScriptCore/JSModuleRecord.h>
-#include <JavaScriptCore/JSNativeStdFunction.h>
-#include <JavaScriptCore/JSONObject.h>
-#include <JavaScriptCore/JSObject.h>
-#include <JavaScriptCore/JSSet.h>
-#include <JavaScriptCore/JSString.h>
-#include <JavaScriptCore/Microtask.h>
-#include <JavaScriptCore/ObjectConstructor.h>
-#include <JavaScriptCore/ParserError.h>
-#include <JavaScriptCore/ScriptExecutable.h>
-#include <JavaScriptCore/StackFrame.h>
-#include <JavaScriptCore/StackVisitor.h>
-#include <JavaScriptCore/VM.h>
-#include <JavaScriptCore/WasmFaultSignalHandler.h>
-#include <JavaScriptCore/Watchdog.h>
-#include <wtf/text/ExternalStringImpl.h>
-#include <wtf/text/StringCommon.h>
-#include <wtf/text/StringImpl.h>
-#include <wtf/text/StringView.h>
-#include <wtf/text/WTFString.h>
+
+#include "wtf/text/ExternalStringImpl.h"
+#include "wtf/text/StringCommon.h"
+#include "wtf/text/StringImpl.h"
+#include "wtf/text/StringView.h"
+#include "wtf/text/WTFString.h"
+
 extern "C" {
 
 JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
@@ -66,7 +70,7 @@ JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
     JSC::Structure* errorStructure = globalObject->errorStructure();
     JSC::JSObject* result = JSC::ErrorInstance::create(globalObject, errorStructure, message, options);
 
-    auto clientData = Bun::clientData(vm);
+    auto clientData = WebCore::clientData(vm);
 
     if (err.code.len > 0) {
         JSC::JSValue code = Zig::toJSString(err.code, globalObject);
@@ -642,7 +646,7 @@ JSC__JSValue JSC__JSValue__createRangeError(const ZigString* message, const ZigS
         0);
 
     if (code.len > 0) {
-        auto clientData = Bun::clientData(vm);
+        auto clientData = WebCore::clientData(vm);
         JSC::JSValue codeValue = Zig::toJSStringValue(code, globalObject);
         rangeError->putDirect(vm, clientData->builtinNames().codePublicName(), codeValue,
             JSC::PropertyAttribute::ReadOnly | 0);
@@ -665,7 +669,7 @@ JSC__JSValue JSC__JSValue__createTypeError(const ZigString* message, const ZigSt
         0);
 
     if (code.len > 0) {
-        auto clientData = Bun::clientData(vm);
+        auto clientData = WebCore::clientData(vm);
         JSC::JSValue codeValue = Zig::toJSStringValue(code, globalObject);
         typeError->putDirect(vm, clientData->builtinNames().codePublicName(), codeValue, 0);
     }
@@ -1184,77 +1188,77 @@ void JSC__SourceCode__fromString(JSC__SourceCode* arg0, const WTF__String* arg1,
 
 #pragma mark - JSC::JSFunction
 
-JSC__JSValue JSC__JSFunction__callWithArguments(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,
-    JSC__JSValue* arg2, size_t arg3,
-    JSC__Exception** arg4, const unsigned char* arg5)
-{
-    auto args = makeArgs(arg2, arg3);
-    return JSC::JSValue::encode(JSC::call(arg1, JSC::JSValue::decode(JSValue0),
-        JSC::JSValue::decode(JSValue0), args, (const char*)arg5));
-}
-JSC__JSValue JSC__JSFunction__callWithArgumentsAndThis(JSC__JSValue JSValue0, JSC__JSValue JSValue1,
-    JSC__JSGlobalObject* arg2,
-    JSC__JSValue* arg3, size_t arg4,
-    JSC__Exception** arg5,
-    const unsigned char* arg6)
-{
-    auto args = makeArgs(arg3, arg4);
-    return JSC::JSValue::encode(JSC::call(arg2, JSC::JSValue::decode(JSValue0),
-        JSC::JSValue::decode(JSValue1), args, (const char*)arg6));
-}
-JSC__JSValue JSC__JSFunction__callWithoutAnyArgumentsOrThis(JSC__JSValue JSValue0,
-    JSC__JSGlobalObject* arg1,
-    JSC__Exception** arg2,
-    const unsigned char* arg3)
-{
-    return JSC::JSValue::encode(JSC::call(arg1, JSC::JSValue::decode(JSValue0),
-        JSC::JSValue::decode(JSValue0), JSC::ArgList(),
-        (const char*)arg3));
-}
-JSC__JSValue JSC__JSFunction__callWithThis(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,
-    JSC__JSValue JSValue2, JSC__Exception** arg3,
-    const unsigned char* arg4)
-{
-    return JSC::JSValue::encode(JSC::call(arg1, JSC::JSValue::decode(JSValue0),
-        JSC::JSValue::decode(JSValue2), JSC::ArgList(),
-        (const char*)arg4));
-}
-JSC__JSValue JSC__JSFunction__constructWithArguments(JSC__JSValue JSValue0,
-    JSC__JSGlobalObject* arg1, JSC__JSValue* arg2,
-    size_t arg3, JSC__Exception** arg4,
-    const unsigned char* arg5)
-{
-    auto args = makeArgs(arg2, arg3);
-    return JSC::JSValue::encode(
-        JSC::construct(arg1, JSC::JSValue::decode(JSValue0), args, (const char*)arg5));
-}
+// JSC__JSValue JSC__JSFunction__callWithArguments(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,
+//     JSC__JSValue* arg2, size_t arg3,
+//     JSC__Exception** arg4, const unsigned char* arg5)
+// {
+//     auto args = makeArgs(arg2, arg3);
+//     return JSC::JSValue::encode(JSC::call(arg1, JSC::JSValue::decode(JSValue0),
+//         JSC::JSValue::decode(JSValue0), args, (const char*)arg5));
+// }
+// JSC__JSValue JSC__JSFunction__callWithArgumentsAndThis(JSC__JSValue JSValue0, JSC__JSValue JSValue1,
+//     JSC__JSGlobalObject* arg2,
+//     JSC__JSValue* arg3, size_t arg4,
+//     JSC__Exception** arg5,
+//     const unsigned char* arg6)
+// {
+//     auto args = makeArgs(arg3, arg4);
+//     return JSC::JSValue::encode(JSC::call(arg2, JSC::JSValue::decode(JSValue0),
+//         JSC::JSValue::decode(JSValue1), args, (const char*)arg6));
+// }
+// JSC__JSValue JSC__JSFunction__callWithoutAnyArgumentsOrThis(JSC__JSValue JSValue0,
+//     JSC__JSGlobalObject* arg1,
+//     JSC__Exception** arg2,
+//     const unsigned char* arg3)
+// {
+//     return JSC::JSValue::encode(JSC::call(arg1, JSC::JSValue::decode(JSValue0),
+//         JSC::JSValue::decode(JSValue0), JSC::ArgList(),
+//         (const char*)arg3));
+// }
+// JSC__JSValue JSC__JSFunction__callWithThis(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,
+//     JSC__JSValue JSValue2, JSC__Exception** arg3,
+//     const unsigned char* arg4)
+// {
+//     return JSC::JSValue::encode(JSC::call(arg1, JSC::JSValue::decode(JSValue0),
+//         JSC::JSValue::decode(JSValue2), JSC::ArgList(),
+//         (const char*)arg4));
+// }
+// JSC__JSValue JSC__JSFunction__constructWithArguments(JSC__JSValue JSValue0,
+//     JSC__JSGlobalObject* arg1, JSC__JSValue* arg2,
+//     size_t arg3, JSC__Exception** arg4,
+//     const unsigned char* arg5)
+// {
+//     auto args = makeArgs(arg2, arg3);
+//     return JSC::JSValue::encode(
+//         JSC::construct(arg1, JSC::JSValue::decode(JSValue0), args, (const char*)arg5));
+// }
 
-JSC__JSValue JSC__JSFunction__constructWithArgumentsAndNewTarget(
-    JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* arg2, JSC__JSValue* arg3,
-    size_t arg4, JSC__Exception** arg5, const unsigned char* arg6)
-{
-    auto args = makeArgs(arg3, arg4);
-    return JSC::JSValue::encode(JSC::construct(arg2, JSC::JSValue::decode(JSValue0),
-        JSC::JSValue::decode(JSValue0), args,
-        (const char*)arg6));
-}
-JSC__JSValue JSC__JSFunction__constructWithNewTarget(JSC__JSValue JSValue0,
-    JSC__JSGlobalObject* arg1,
-    JSC__JSValue JSValue2, JSC__Exception** arg3,
-    const unsigned char* arg4)
-{
-    return JSC::JSValue::encode(JSC::construct(arg1, JSC::JSValue::decode(JSValue0),
-        JSC::JSValue::decode(JSValue2), JSC::ArgList(),
-        (const char*)arg4));
-}
-JSC__JSValue JSC__JSFunction__constructWithoutAnyArgumentsOrNewTarget(JSC__JSValue JSValue0,
-    JSC__JSGlobalObject* arg1,
-    JSC__Exception** arg2,
-    const unsigned char* arg3)
-{
-    return JSC::JSValue::encode(
-        JSC::construct(arg1, JSC::JSValue::decode(JSValue0), JSC::ArgList(), (const char*)arg3));
-}
+// JSC__JSValue JSC__JSFunction__constructWithArgumentsAndNewTarget(
+//     JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* arg2, JSC__JSValue* arg3,
+//     size_t arg4, JSC__Exception** arg5, const unsigned char* arg6)
+// {
+//     auto args = makeArgs(arg3, arg4);
+//     return JSC::JSValue::encode(JSC::construct(arg2, JSC::JSValue::decode(JSValue0),
+//         JSC::JSValue::decode(JSValue0), args,
+//         (const char*)arg6));
+// }
+// JSC__JSValue JSC__JSFunction__constructWithNewTarget(JSC__JSValue JSValue0,
+//     JSC__JSGlobalObject* arg1,
+//     JSC__JSValue JSValue2, JSC__Exception** arg3,
+//     const unsigned char* arg4)
+// {
+//     return JSC::JSValue::encode(JSC::construct(arg1, JSC::JSValue::decode(JSValue0),
+//         JSC::JSValue::decode(JSValue2), JSC::ArgList(),
+//         (const char*)arg4));
+// }
+// JSC__JSValue JSC__JSFunction__constructWithoutAnyArgumentsOrNewTarget(JSC__JSValue JSValue0,
+//     JSC__JSGlobalObject* arg1,
+//     JSC__Exception** arg2,
+//     const unsigned char* arg3)
+// {
+//     return JSC::JSValue::encode(
+//         JSC::construct(arg1, JSC::JSValue::decode(JSValue0), JSC::ArgList(), (const char*)arg3));
+// }
 
 JSC__JSFunction* JSC__JSFunction__createFromNative(JSC__JSGlobalObject* arg0, uint16_t arg1,
     const WTF__String* arg2, void* ctx,
@@ -2035,7 +2039,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     except->name = Zig::toZigString(err->sanitizedNameString(global));
     except->runtime_type = err->runtimeTypeForCause();
 
-    auto clientData = Bun::clientData(global->vm());
+    auto clientData = WebCore::clientData(global->vm());
     if (except->code != SYNTAX_ERROR_CODE) {
 
         if (JSC::JSValue syscall = obj->getIfPropertyExists(global, clientData->builtinNames().syscallPublicName())) {
@@ -2643,7 +2647,7 @@ bWTF__String WTF__URL__stringWithoutFragmentIdentifier(WTF__URL* arg0)
 };
 bWTF__StringView WTF__URL__stringWithoutQueryOrFragmentIdentifier(WTF__URL* arg0)
 {
-    auto result = arg0->stringWithoutQueryOrFragmentIdentifier();
+    auto result = arg0->viewWithoutQueryOrFragmentIdentifier();
     return cast<bWTF__StringView>(&result);
 };
 bWTF__URL WTF__URL__truncatedForUseAsBase(WTF__URL* arg0)

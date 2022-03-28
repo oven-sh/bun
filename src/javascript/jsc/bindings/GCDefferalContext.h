@@ -2,6 +2,8 @@
 
 #include "helpers.h"
 
+#include "JavaScriptCore/JSCInlines.h"
+
 namespace JSC {
 
 ALWAYS_INLINE GCDeferralContext::GCDeferralContext(VM& vm)

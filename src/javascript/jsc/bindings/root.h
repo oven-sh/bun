@@ -2,7 +2,7 @@
 
 /*
  * Copyright (C) 2006-2021 Apple Inc. All rights reserved.
- * Copyright (C) 2006 Samuel Weinig <sam.weinig@gmail.com>
+ * Copyright (C) 2006 Samuel Weinig "sam.weinig@gmail.com"
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -34,16 +34,14 @@
 #define JSC_MAC_VERSION_TBA 0
 #define JSC_IOS_VERSION_TBA 0
 
-#include <wtf/ExportMacros.h>
+#include "wtf/ExportMacros.h"
 
 #if !defined(JS_EXPORT_PRIVATE)
 
 #if defined(BUILDING_JavaScriptCore) || defined(STATICALLY_LINKED_WITH_JavaScriptCore)
 #define JS_EXPORT_PRIVATE WTF_EXPORT_DECLARATION
-#define WEBCORE_EXPORT WTF_EXPORT_DECLARATION
 #else
 #define JS_EXPORT_PRIVATE WTF_IMPORT_DECLARATION
-#define WEBCORE_EXPORT WTF_IMPORT_DECLARATION
 #endif
 
 #endif
@@ -51,10 +49,10 @@
 #ifdef __cplusplus
 #undef new
 #undef delete
-#include <wtf/FastMalloc.h>
+#include "wtf/FastMalloc.h"
 #endif
 
-#include <wtf/DisallowCType.h>
+#include "wtf/DisallowCType.h"
 
 /* Disabling warning C4206: nonstandard extension used: translation unit is empty.
    By design, we rely on #define flags to make some translation units empty.
@@ -64,9 +62,11 @@
 #pragma warning(disable : 4206)
 #endif
 
-#ifdef USE_FOUNDATION
-#include <CoreFoundation/CoreFoundation.h>
+#ifndef WEBCORE_EXPORT
+#define WEBCORE_EXPORT JS_EXPORT_PRIVATE
 #endif
 
-#include <JavaScriptCore/Heap.h>
-#include <wtf/PlatformCallingConventions.h>
+#include "wtf/PlatformCallingConventions.h"
+#include "JavaScriptCore/Strong.h"
+#include "JavaScriptCore/Weak.h"
+#include "JavaScriptCore/WeakInlines.h"

@@ -4,7 +4,7 @@
 #include "BunClientData.h"
 #include "root.h"
 
-namespace Bun {
+namespace WebCore {
 
 using namespace JSC;
 
@@ -39,7 +39,7 @@ public:
 
     static Readable* create(JSC::VM& vm, Bun__Readable* state, JSC::Structure* structure)
     {
-        Readable* accessor = new (NotNull, JSC::allocateCell<Bun::Readable>(vm)) Readable(vm, state, structure);
+        Readable* accessor = new (NotNull, JSC::allocateCell<WebCore::Readable>(vm)) Readable(vm, state, structure);
         accessor->finishCreation(vm);
         return accessor;
     }
@@ -86,4 +86,4 @@ public:
     void finishCreation(JSC::VM& vm);
 };
 
-} // namespace Bun
+} // namespace WebCore

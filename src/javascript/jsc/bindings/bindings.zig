@@ -19,7 +19,7 @@ pub const JSObject = extern struct {
     pub const shim = Shimmer("JSC", "JSObject", @This());
     bytes: shim.Bytes,
     const cppFn = shim.cppFn;
-    pub const include = "<JavaScriptCore/JSObject.h>";
+    pub const include = "JavaScriptCore/JSObject.h";
     pub const name = "JSC::JSObject";
     pub const namespace = "JSC";
 
@@ -384,7 +384,7 @@ pub const JSCell = extern struct {
     pub const shim = Shimmer("JSC", "JSCell", @This());
     bytes: shim.Bytes,
     const cppFn = shim.cppFn;
-    pub const include = "<JavaScriptCore/JSCell.h>";
+    pub const include = "JavaScriptCore/JSCell.h";
     pub const name = "JSC::JSCell";
     pub const namespace = "JSC";
 
@@ -411,7 +411,7 @@ pub const JSString = extern struct {
     pub const shim = Shimmer("JSC", "JSString", @This());
     bytes: shim.Bytes,
     const cppFn = shim.cppFn;
-    pub const include = "<JavaScriptCore/JSString.h>";
+    pub const include = "JavaScriptCore/JSString.h";
     pub const name = "JSC::JSString";
     pub const namespace = "JSC";
 
@@ -463,7 +463,7 @@ pub const ScriptArguments = extern struct {
     pub const shim = Shimmer("Inspector", "ScriptArguments", @This());
     bytes: shim.Bytes,
     const cppFn = shim.cppFn;
-    pub const include = "<JavaScriptCore/ScriptArguments.h>";
+    pub const include = "JavaScriptCore/ScriptArguments.h";
     pub const name = "Inspector::ScriptArguments";
     pub const namespace = "Inspector";
 
@@ -569,7 +569,7 @@ pub const JSModuleLoader = extern struct {
     pub const shim = Shimmer("JSC", "JSModuleLoader", @This());
     bytes: shim.Bytes,
     const cppFn = shim.cppFn;
-    pub const include = "<JavaScriptCore/JSModuleLoader.h>";
+    pub const include = "JavaScriptCore/JSModuleLoader.h";
     pub const name = "JSC::JSModuleLoader";
     pub const namespace = "JSC";
 
@@ -663,7 +663,7 @@ pub const JSModuleRecord = extern struct {
     pub const shim = Shimmer("JSC", "JSModuleRecord", @This());
     bytes: shim.Bytes,
     const cppFn = shim.cppFn;
-    pub const include = "<JavaScriptCore/JSModuleRecord.h>";
+    pub const include = "JavaScriptCore/JSModuleRecord.h";
     pub const name = "JSC::JSModuleRecord";
     pub const namespace = "JSC";
 
@@ -682,7 +682,7 @@ pub const JSPromise = extern struct {
     pub const shim = Shimmer("JSC", "JSPromise", @This());
     bytes: shim.Bytes,
     const cppFn = shim.cppFn;
-    pub const include = "<JavaScriptCore/JSPromise.h>";
+    pub const include = "JavaScriptCore/JSPromise.h";
     pub const name = "JSC::JSPromise";
     pub const namespace = "JSC";
 
@@ -769,7 +769,7 @@ pub const JSInternalPromise = extern struct {
     pub const shim = Shimmer("JSC", "JSInternalPromise", @This());
     bytes: shim.Bytes,
     const cppFn = shim.cppFn;
-    pub const include = "<JavaScriptCore/JSInternalPromise.h>";
+    pub const include = "JavaScriptCore/JSInternalPromise.h";
     pub const name = "JSC::JSInternalPromise";
     pub const namespace = "JSC";
 
@@ -988,7 +988,7 @@ pub const SourceOrigin = extern struct {
     pub const shim = Shimmer("JSC", "SourceOrigin", @This());
     bytes: shim.Bytes,
     const cppFn = shim.cppFn;
-    pub const include = "<JavaScriptCore/SourceOrigin.h>";
+    pub const include = "JavaScriptCore/SourceOrigin.h";
     pub const name = "JSC::SourceOrigin";
     pub const namespace = "JSC";
 
@@ -1005,7 +1005,7 @@ pub const SourceCode = extern struct {
     pub const shim = Shimmer("JSC", "SourceCode", @This());
     bytes: shim.Bytes,
     const cppFn = shim.cppFn;
-    pub const include = "<JavaScriptCore/SourceProvider.h>";
+    pub const include = "JavaScriptCore/SourceProvider.h";
     pub const name = "JSC::SourceCode";
     pub const namespace = "JSC";
 
@@ -1022,7 +1022,7 @@ pub const JSFunction = extern struct {
     pub const shim = Shimmer("JSC", "JSFunction", @This());
     bytes: shim.Bytes,
     const cppFn = shim.cppFn;
-    pub const include = "<JavaScriptCore/JSFunction.h>";
+    pub const include = "JavaScriptCore/JSFunction.h";
     pub const name = "JSC::JSFunction";
     pub const namespace = "JSC";
 
@@ -1224,7 +1224,7 @@ pub const JSGlobalObject = extern struct {
     pub const shim = Shimmer("JSC", "JSGlobalObject", @This());
     bytes: shim.Bytes,
 
-    pub const include = "<JavaScriptCore/JSGlobalObject.h>";
+    pub const include = "JavaScriptCore/JSGlobalObject.h";
     pub const name = "JSC::JSGlobalObject";
     pub const namespace = "JSC";
 
@@ -1395,7 +1395,7 @@ fn _JSCellStub(comptime str: []const u8) type {
 fn _Bun(comptime str: []const u8) type {
     if (is_bindgen) {
         return opaque {
-            pub const name = "Bun::" ++ str ++ "";
+            pub const name = "WebCore::" ++ str ++ "";
         };
     } else {
         return opaque {};
@@ -1416,7 +1416,7 @@ pub const URL = extern struct {
     pub const shim = Shimmer("WTF", "URL", @This());
     bytes: shim.Bytes,
     const cppFn = shim.cppFn;
-    pub const include = "<wtf/URL.h>";
+    pub const include = "wtf/URL.h";
     pub const name = "WTF::URL";
     pub const namespace = "WTF";
 
@@ -1547,7 +1547,7 @@ pub const String = extern struct {
     pub const shim = Shimmer("WTF", "String", @This());
     bytes: shim.Bytes,
     const cppFn = shim.cppFn;
-    pub const include = "<wtf/text/WTFString.h>";
+    pub const include = "wtf/text/WTFString.h";
     pub const name = "WTF::String";
     pub const namespace = "WTF";
 
@@ -1638,7 +1638,7 @@ pub const JSValue = enum(u64) {
     pub const Type = u64;
     const cppFn = shim.cppFn;
 
-    pub const include = "<JavaScriptCore/JSValue.h>";
+    pub const include = "JavaScriptCore/JSValue.h";
     pub const name = "JSC::JSValue";
     pub const namespace = "JSC";
     pub const zero = @intToEnum(JSValue, @as(u64, 0));
@@ -2430,7 +2430,7 @@ pub const PropertyName = extern struct {
 
     const cppFn = shim.cppFn;
 
-    pub const include = "<JavaScriptCore/PropertyName.h>";
+    pub const include = "JavaScriptCore/PropertyName.h";
     pub const name = "JSC::PropertyName";
     pub const namespace = "JSC";
 
@@ -2463,7 +2463,7 @@ pub const Exception = extern struct {
     pub const Type = JSObject;
     const cppFn = shim.cppFn;
 
-    pub const include = "<JavaScriptCore/Exception.h>";
+    pub const include = "JavaScriptCore/Exception.h";
     pub const name = "JSC::Exception";
     pub const namespace = "JSC";
 
@@ -2502,7 +2502,7 @@ pub const JSLock = extern struct {
 
     const cppFn = shim.cppFn;
 
-    pub const include = "<JavaScriptCore/JSLock.h>";
+    pub const include = "JavaScriptCore/JSLock.h";
     pub const name = "JSC::JSLock";
     pub const namespace = "JSC";
 
@@ -2522,7 +2522,7 @@ pub const VM = extern struct {
 
     const cppFn = shim.cppFn;
 
-    pub const include = "<JavaScriptCore/VM.h>";
+    pub const include = "JavaScriptCore/VM.h";
     pub const name = "JSC::VM";
     pub const namespace = "JSC";
 
@@ -2639,7 +2639,7 @@ pub const ThrowScope = extern struct {
 
     const cppFn = shim.cppFn;
 
-    pub const include = "<JavaScriptCore/ThrowScope.h>";
+    pub const include = "JavaScriptCore/ThrowScope.h";
     pub const name = "JSC::ThrowScope";
     pub const namespace = "JSC";
 
@@ -2678,7 +2678,7 @@ pub const CatchScope = extern struct {
 
     const cppFn = shim.cppFn;
 
-    pub const include = "<JavaScriptCore/CatchScope.h>";
+    pub const include = "JavaScriptCore/CatchScope.h";
     pub const name = "JSC::CatchScope";
     pub const namespace = "JSC";
 
@@ -2711,7 +2711,7 @@ pub const CallFrame = extern struct {
     bytes: shim.Bytes,
     const cppFn = shim.cppFn;
 
-    pub const include = "<JavaScriptCore/CallFrame.h>";
+    pub const include = "JavaScriptCore/CallFrame.h";
     pub const name = "JSC::CallFrame";
     pub const namespace = "JSC";
 
@@ -2767,7 +2767,7 @@ pub const CallFrame = extern struct {
 //
 //
 
-//     pub const include = "<JavaScriptCore/CommonIdentifiers.h>";
+//     pub const include = "JavaScriptCore/CommonIdentifiers.h";
 //     pub const name = "JSC::CommonIdentifiers";
 //     pub const namespace = "JSC";
 
@@ -2795,7 +2795,7 @@ pub const EncodedJSValue = enum(i64) {
     pub const Type = u64;
     const cppFn = shim.cppFn;
 
-    pub const include = "<JavaScriptCore/EncodedJSValue.h>";
+    pub const include = "JavaScriptCore/EncodedJSValue.h";
     pub const name = "JSC::EncodedJSValue";
     pub const namespace = "JSC";
 };
@@ -2805,7 +2805,7 @@ pub const Identifier = extern struct {
     bytes: shim.Bytes,
     const cppFn = shim.cppFn;
 
-    pub const include = "<JavaScriptCore/Identifier.h>";
+    pub const include = "JavaScriptCore/Identifier.h";
     pub const name = "JSC::Identifier";
     pub const namespace = "JSC";
 
@@ -2892,7 +2892,7 @@ pub const StringImpl = extern struct {
     bytes: shim.Bytes,
     const cppFn = shim.cppFn;
 
-    pub const include = "<wtf/text/StringImpl.h>";
+    pub const include = "wtf/text/StringImpl.h";
     pub const name = "WTF::StringImpl";
     pub const namespace = "WTF";
 
@@ -2940,7 +2940,7 @@ pub const ExternalStringImpl = extern struct {
     bytes: shim.Bytes,
     const cppFn = shim.cppFn;
 
-    pub const include = "<wtf/text/ExternalStringImpl.h>";
+    pub const include = "wtf/text/ExternalStringImpl.h";
     pub const name = "WTF::ExternalStringImpl";
     pub const namespace = "WTF";
 
@@ -3015,7 +3015,7 @@ pub const StringView = extern struct {
     bytesA: u64,
     const cppFn = shim.cppFn;
 
-    pub const include = "<wtf/text/StringView.h>";
+    pub const include = "wtf/text/StringView.h";
     pub const name = "WTF::StringView";
     pub const namespace = "WTF";
 

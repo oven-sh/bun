@@ -1,7 +1,4 @@
-#include "root.h"
 #pragma once
-
-#include "headers-handwritten.h"
 
 namespace JSC {
 class Structure;
@@ -9,43 +6,93 @@ class Identifier;
 
 } // namespace JSC
 
-#include "Process.h"
+#include "root.h"
+
+#include "headers-handwritten.h"
+#include "BunClientData.h"
+
+#include "JavaScriptCore/CatchScope.h"
+#include "JavaScriptCore/JSGlobalObject.h"
+#include "JavaScriptCore/JSTypeInfo.h"
+#include "JavaScriptCore/Structure.h"
+
 #include "ZigConsoleClient.h"
-#include <JavaScriptCore/CatchScope.h>
-#include <JavaScriptCore/JSGlobalObject.h>
-#include <JavaScriptCore/JSTypeInfo.h>
-#include <JavaScriptCore/Structure.h>
+
+#include "DOMConstructors.h"
+#include "DOMWrapperWorld-class.h"
+#include "DOMIsoSubspaces.h"
 
 namespace Zig {
+
+using JSDOMStructureMap = HashMap<const JSC::ClassInfo*, JSC::WriteBarrier<JSC::Structure>>;
 
 class GlobalObject : public JSC::JSGlobalObject {
     using Base = JSC::JSGlobalObject;
 
 public:
-    DECLARE_EXPORT_INFO;
+    static const JSC::ClassInfo s_info;
     static const JSC::GlobalObjectMethodTable s_globalObjectMethodTable;
-    Zig::Process* m_process;
-    static constexpr bool needsDestruction = true;
-    template<typename CellType, JSC::SubspaceAccess mode>
-    static GCClient::IsoSubspace* subspaceFor(VM& vm)
+    static constexpr bool needsDestruction = false;
+
+    template<typename, SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
-        return vm.globalObjectSpace<mode>();
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForGlobalObject.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForGlobalObject = WTFMove(space); },
+            [](auto& spaces) { return spaces.m_subspaceForGlobalObject.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForGlobalObject = WTFMove(space); });
     }
+
+    ~GlobalObject();
+
+    static constexpr const JSC::ClassInfo* info() { return &s_info; }
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* global, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, global, prototype, JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags), info());
+    }
+
+    // Make binding code generation easier.
+    GlobalObject* globalObject() { return this; }
 
     static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure)
     {
-        auto* object = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure);
-        object->finishCreation(vm);
-        return object;
+        GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure);
+        ptr->finishCreation(vm);
+        return ptr;
     }
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSValue prototype)
+    const JSDOMStructureMap& structures() const WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     {
-        auto* result = JSC::Structure::create(
-            vm, nullptr, prototype, JSC::TypeInfo(JSC::GlobalObjectType, Base::StructureFlags), info());
-        result->setTransitionWatchpointIsLikelyToBeFired(true);
-        return result;
+        ASSERT(!Thread::mayBeGCThread());
+        return m_structures;
     }
+    const WebCore::DOMConstructors& constructors() const
+    {
+        ASSERT(!Thread::mayBeGCThread());
+        return *m_constructors;
+    }
+
+    WebCore::DOMWrapperWorld& world() { return m_world.get(); }
+
+    DECLARE_VISIT_CHILDREN;
+
+    bool worldIsNormal() const { return m_worldIsNormal; }
+    static ptrdiff_t offsetOfWorldIsNormal() { return OBJECT_OFFSETOF(GlobalObject, m_worldIsNormal); }
+
+    JSDOMStructureMap& structures() WTF_REQUIRES_LOCK(m_gcLock) { return m_structures; }
+    JSDOMStructureMap& structures(NoLockingNecessaryTag) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+    {
+        ASSERT(!vm().heap.mutatorShouldBeFenced());
+        return m_structures;
+    }
+
+    WebCore::DOMConstructors& constructors() { return *m_constructors; }
+
+    Lock& gcLock() WTF_RETURNS_LOCK(m_gcLock) { return m_gcLock; }
 
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, JSC::Exception*);
     static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject);
@@ -67,13 +114,24 @@ public:
     static void promiseRejectionTracker(JSGlobalObject*, JSC::JSPromise*,
         JSC::JSPromiseRejectionOperation);
     void setConsole(void* console);
-    void installAPIGlobals(JSClassRef* globals, int count);
+    void installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm);
 
 private:
     GlobalObject(JSC::VM& vm, JSC::Structure* structure)
         : JSC::JSGlobalObject(vm, structure, &s_globalObjectMethodTable)
+        , m_constructors(makeUnique<WebCore::DOMConstructors>())
+        , m_world(WebCore::DOMWrapperWorld::create(vm, WebCore::DOMWrapperWorld::Type::Normal))
+        , m_worldIsNormal(true)
     {
     }
+
+private:
+    std::unique_ptr<WebCore::DOMConstructors> m_constructors;
+    uint8_t m_worldIsNormal;
+    JSDOMStructureMap m_structures WTF_GUARDED_BY_LOCK(m_gcLock);
+    Lock m_gcLock;
+
+    Ref<WebCore::DOMWrapperWorld> m_world;
 };
 
 class JSMicrotaskCallback : public RefCounted<JSMicrotaskCallback> {
@@ -105,3 +163,11 @@ private:
 };
 
 } // namespace Zig
+
+namespace WebCore {
+using JSDOMGlobalObject = Zig::GlobalObject;
+}
+
+namespace WebCore {
+using JSDOMGlobalObject = Zig::GlobalObject;
+}

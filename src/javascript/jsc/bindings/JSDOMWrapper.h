@@ -22,10 +22,11 @@
 #pragma once
 #include "root.h"
 
-#include "NodeConstants.h"
+#include "JSDOMGlobalObject.h"
 #include "ZigGlobalObject.h"
-#include <JavaScriptCore/JSDestructibleObject.h>
-#include <wtf/SignedPtr.h>
+#include "NodeConstants.h"
+#include "JavaScriptCore/JSDestructibleObject.h"
+#include "wtf/SignedPtr.h"
 
 namespace WebCore {
 using namespace Zig;

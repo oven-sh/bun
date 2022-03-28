@@ -1,8 +1,13 @@
-#include "BunClientData.h"
+
 #include "root.h"
-#include <JavaScriptCore/JSFunction.h>
-#include <JavaScriptCore/JSMicrotask.h>
-#include <JavaScriptCore/ObjectConstructor.h>
+
+#include "BunClientData.h"
+
+#include "JavaScriptCore/JSCInlines.h"
+
+#include "JavaScriptCore/JSFunction.h"
+#include "JavaScriptCore/JSMicrotask.h"
+#include "JavaScriptCore/ObjectConstructor.h"
 
 #pragma mark - Node.js Path
 
@@ -36,7 +41,7 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
             arguments.uncheckedAppend(JSC::JSValue::encode(callFrame->uncheckedArgument(i))); \
         } \
      } \
-    auto clientData = Bun::clientData(vm); \
+    auto clientData = WebCore::clientData(vm); \
     auto isWindows = thisObject->get(globalObject, clientData->builtinNames().isWindowsPrivateName()); \
     JSC::JSValue result = JSC::JSValue::decode( \
         ZigFunction(globalObject, isWindows.asBoolean(), reinterpret_cast<JSC__JSValue*>(arguments.data()), argCount) \
@@ -127,7 +132,7 @@ static JSC::JSObject* createPath(JSGlobalObject* globalThis, bool isWindows)
     JSC::VM& vm = globalThis->vm();
     JSC::Structure* plainObjectStructure = JSC::JSFinalObject::createStructure(vm, globalThis, globalThis->objectPrototype(), 0);
     JSC::JSObject* path = JSC::JSFinalObject::create(vm, plainObjectStructure);
-    auto clientData = Bun::clientData(vm);
+    auto clientData = WebCore::clientData(vm);
 
     path->putDirect(vm, clientData->builtinNames().isWindowsPrivateName(),
         JSC::jsBoolean(isWindows), 0);

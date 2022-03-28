@@ -26,10 +26,10 @@
 #include "root.h"
 
 #include "ExceptionOr.h"
+#include "wtf/Vector.h"
+#include "wtf/WeakPtr.h"
+#include "wtf/text/WTFString.h"
 #include <variant>
-#include <wtf/Vector.h>
-#include <wtf/WeakPtr.h>
-#include <wtf/text/WTFString.h>
 
 namespace WebCore {
 

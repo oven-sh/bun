@@ -2,12 +2,15 @@
 
 #pragma once
 
-#include "helpers.h"
 #include "root.h"
-#include <JavaScriptCore/BuiltinUtils.h>
 
 
-namespace Bun {
+#include "helpers.h"
+
+#include "JavaScriptCore/BuiltinUtils.h"
+
+
+namespace WebCore {
 
 using namespace JSC;
 
@@ -116,5 +119,5 @@ private:
     BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(DECLARE_BUILTIN_NAMES)
 };
 
-} // namespace Bun
+} // namespace WebCore
 

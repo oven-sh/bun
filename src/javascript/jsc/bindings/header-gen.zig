@@ -621,7 +621,7 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                 \\
                 \\#ifdef __cplusplus
                 \\#include "root.h"
-                \\#include <JavaScriptCore/JSClassRef.h>
+                \\#include "JavaScriptCore/JSClassRef.h"
                 \\#endif
                 \\#include "headers-handwritten.h"
                 \\

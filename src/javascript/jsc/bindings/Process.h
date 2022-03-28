@@ -1,8 +1,9 @@
 #pragma once
 
+#include "root.h"
+
 #include "BunBuiltinNames.h"
 #include "BunClientData.h"
-#include "root.h"
 
 namespace Zig {
 

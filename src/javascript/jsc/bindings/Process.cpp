@@ -1,6 +1,8 @@
 #include "Process.h"
-#include <JavaScriptCore/JSMicrotask.h>
-#include <JavaScriptCore/ObjectConstructor.h>
+#include "JavaScriptCore/JSMicrotask.h"
+#include "JavaScriptCore/ObjectConstructor.h"
+
+#include "JavaScriptCore/JSCInlines.h"
 
 #pragma mark - Node.js Process
 
@@ -145,7 +147,7 @@ static JSC_DEFINE_HOST_FUNCTION(Process_functionChdir,
 void Process::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    auto clientData = Bun::clientData(vm);
+    auto clientData = WebCore::clientData(vm);
 
     putDirectCustomAccessor(vm, clientData->builtinNames().pidPublicName(),
         JSC::CustomGetterSetter::create(vm, Process_getPID, nullptr),
@@ -223,7 +225,7 @@ void Process::finishCreation(JSC::VM& vm)
 #endif
 }
 
-const JSC::ClassInfo Process::s_info = { "Process", &Base::s_info, nullptr, nullptr,
+const JSC::ClassInfo Process::s_info = { "Process"_s, &Base::s_info, nullptr, nullptr,
     CREATE_METHOD_TABLE(Process) };
 
 JSC_DEFINE_CUSTOM_GETTER(Process_getTitle, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
@@ -259,7 +261,7 @@ JSC_DEFINE_CUSTOM_GETTER(Process_getArgv, (JSC::JSGlobalObject * globalObject, J
     if (!thisObject) {
         return JSValue::encode(JSC::jsUndefined());
     }
-    auto clientData = Bun::clientData(vm);
+    auto clientData = WebCore::clientData(vm);
 
     if (JSC::JSValue argv = thisObject->getIfPropertyExists(
             globalObject, clientData->builtinNames().argvPrivateName())) {
@@ -284,7 +286,7 @@ JSC_DEFINE_CUSTOM_SETTER(Process_setArgv,
         return false;
     }
 
-    auto clientData = Bun::clientData(vm);
+    auto clientData = WebCore::clientData(vm);
 
     return thisObject->putDirect(vm, clientData->builtinNames().argvPrivateName(),
         JSC::JSValue::decode(value));
@@ -305,7 +307,7 @@ JSC_DEFINE_CUSTOM_GETTER(Process_getVersionsLazy,
         JSC::PropertyName))
 {
     JSC::VM& vm = globalObject->vm();
-    auto clientData = Bun::clientData(vm);
+    auto clientData = WebCore::clientData(vm);
 
     Zig::Process* thisObject = JSC::jsDynamicCast<Zig::Process*>(vm, JSValue::decode(thisValue));
     if (!thisObject) {
@@ -351,7 +353,7 @@ JSC_DEFINE_CUSTOM_SETTER(Process_setVersionsLazy,
 {
 
     JSC::VM& vm = globalObject->vm();
-    auto clientData = Bun::clientData(vm);
+    auto clientData = WebCore::clientData(vm);
 
     Zig::Process* thisObject = JSC::jsDynamicCast<Zig::Process*>(vm, JSValue::decode(thisValue));
     if (!thisObject) {

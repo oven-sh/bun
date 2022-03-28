@@ -1,34 +1,35 @@
 
-// #pragma once
+#pragma once
 
-// #include "root.h"
-// #include <JavaScriptCore/MarkingConstraint.h>
+#include "root.h"
 
-// namespace JSC {
-// class VM;
-// }
+#include "JavaScriptCore/MarkingConstraint.h"
 
-// namespace Bun {
+namespace JSC {
+class VM;
+}
 
-// class JSVMClientData;
+namespace WebCore {
 
-// class BunGCOutputConstraint : public JSC::MarkingConstraint {
-//     WTF_MAKE_FAST_ALLOCATED;
+class JSVMClientData;
 
-// public:
-//     BunGCOutputConstraint(JSC::VM&, Bun::JSVMClientData&);
-//     ~BunGCOutputConstraint() {};
+class BunGCOutputConstraint : public JSC::MarkingConstraint {
+    WTF_MAKE_FAST_ALLOCATED;
 
-// protected:
-//     void executeImpl(JSC::AbstractSlotVisitor&) override;
-//     void executeImpl(JSC::SlotVisitor&) override;
+public:
+    BunGCOutputConstraint(JSC::VM&, WebCore::JSVMClientData&);
+    ~BunGCOutputConstraint() {};
 
-// private:
-//     template<typename Visitor> void executeImplImpl(Visitor&);
+protected:
+    void executeImpl(JSC::AbstractSlotVisitor&) override;
+    void executeImpl(JSC::SlotVisitor&) override;
 
-//     JSC::VM& m_vm;
-//     JSVMClientData& m_clientData;
-//     uint64_t m_lastExecutionVersion;
-// };
+private:
+    template<typename Visitor> void executeImplImpl(Visitor&);
 
-// } // namespace Bun
+    JSC::VM& m_vm;
+    JSVMClientData& m_clientData;
+    uint64_t m_lastExecutionVersion;
+};
+
+} // namespace WebCore

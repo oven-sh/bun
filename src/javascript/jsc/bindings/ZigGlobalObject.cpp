@@ -79,6 +79,7 @@
 
 #include "JSDOMURL.h"
 #include "JSURLSearchParams.h"
+#include "JSDOMException.h"
 
 #include "Process.h"
 
@@ -319,6 +320,17 @@ JSC_DEFINE_CUSTOM_GETTER(JSURLSearchParams_getter,
     Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     return JSC::JSValue::encode(
         WebCore::JSURLSearchParams::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
+}
+
+JSC_DECLARE_CUSTOM_GETTER(JSDOMException_getter);
+
+JSC_DEFINE_CUSTOM_GETTER(JSDOMException_getter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return JSC::JSValue::encode(
+        WebCore::JSDOMException::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
 }
 
 static JSC_DECLARE_CUSTOM_SETTER(property_lazyProcessSetter);
@@ -725,19 +737,18 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
                 "reportError", functionReportError),
             JSC::PropertyAttribute::DontDelete | 0 });
 
-    JSC::Identifier URLConstructor = JSC::Identifier::fromString(vm, "URL"_s);
-    extraStaticGlobals.uncheckedAppend(
-        GlobalPropertyInfo { reportErrorIdentifier,
-            JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
-                "reportError", functionReportError),
-            JSC::PropertyAttribute::DontDelete | 0 });
-
     this->addStaticGlobals(extraStaticGlobals.data(), extraStaticGlobals.size());
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "process"), JSC::CustomGetterSetter::create(vm, property_lazyProcessGetter, property_lazyProcessSetter),
+        JSC::PropertyAttribute::CustomAccessor | 0);
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "URL"), JSC::CustomGetterSetter::create(vm, JSDOMURL_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "URLSearchParams"), JSC::CustomGetterSetter::create(vm, JSURLSearchParams_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "DOMException"), JSC::CustomGetterSetter::create(vm, JSDOMException_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     extraStaticGlobals.releaseBuffer();

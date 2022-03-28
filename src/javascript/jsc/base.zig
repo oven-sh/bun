@@ -1549,7 +1549,7 @@ pub fn NewClassWithInstanceType(
                 \\
                 \\{[property_definitions]any}
                 \\
-                \\const JSC::ClassInfo {[name]s}::s_info = {{ "{[name]s}", &Base::s_info, &{[name]s}HashTableValues, nullptr, CREATE_METHOD_TABLE([name]s) }};
+                \\const JSC::ClassInfo {[name]s}::s_info = {{ "{[name]s}"_s, &Base::s_info, &{[name]s}HashTableValues, nullptr, CREATE_METHOD_TABLE([name]s) }};
                 \\
                 \\  void {[name]s}::finishCreation(JSC::VM& vm) {{
                 \\    Base::finishCreation(vm);

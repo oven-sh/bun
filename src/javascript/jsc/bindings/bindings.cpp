@@ -2083,7 +2083,7 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
     // ErrorInstance
     if (JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(global->vm(), value)) {
         if (obj->hasProperty(global, global->vm().propertyNames->name)) {
-            auto name_str = obj->getDirect(global->vm(), global->vm().propertyNames->name).toWTFString(global);
+            auto name_str = obj->getIfPropertyExists(global, global->vm().propertyNames->name).toWTFString(global);
             except->name = Zig::toZigString(name_str);
             if (name_str == "Error"_s) {
                 except->code = JSErrorCodeError;
@@ -2104,20 +2104,26 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
             }
         }
 
-        if (obj->hasProperty(global, global->vm().propertyNames->message)) {
-            except->message = Zig::toZigString(
-                obj->getDirect(global->vm(), global->vm().propertyNames->message).toWTFString(global));
+        if (JSC::JSValue message = obj->getIfPropertyExists(global, global->vm().propertyNames->message)) {
+            if (message) {
+                except->message = Zig::toZigString(
+                    message.toWTFString(global));
+            }
         }
 
-        if (obj->hasProperty(global, global->vm().propertyNames->sourceURL)) {
-            except->stack.frames_ptr[0].source_url = Zig::toZigString(
-                obj->getDirect(global->vm(), global->vm().propertyNames->sourceURL).toWTFString(global));
-            except->stack.frames_len = 1;
+        if (JSC::JSValue sourceURL = obj->getIfPropertyExists(global, global->vm().propertyNames->sourceURL)) {
+            if (sourceURL) {
+                except->stack.frames_ptr[0].source_url = Zig::toZigString(
+                    sourceURL.toWTFString(global));
+                except->stack.frames_len = 1;
+            }
         }
 
-        if (obj->hasProperty(global, global->vm().propertyNames->line)) {
-            except->stack.frames_ptr[0].position.line = obj->getDirect(global->vm(), global->vm().propertyNames->line).toInt32(global);
-            except->stack.frames_len = 1;
+        if (JSC::JSValue line = obj->getIfPropertyExists(global, global->vm().propertyNames->line)) {
+            if (line) {
+                except->stack.frames_ptr[0].position.line = line.toInt32(global);
+                except->stack.frames_len = 1;
+            }
         }
 
         return;

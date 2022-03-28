@@ -866,8 +866,8 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForURLSearchParamsIterator;
 
     std::unique_ptr<IsoSubspace> m_subspaceForDOMException;
-    std::unique_ptr<IsoSubspace> m_subspaceForDOMFormData;
-    std::unique_ptr<IsoSubspace> m_subspaceForDOMFormDataIterator;
+    // std::unique_ptr<IsoSubspace> m_subspaceForDOMFormData;
+    // std::unique_ptr<IsoSubspace> m_subspaceForDOMFormDataIterator;
     std::unique_ptr<IsoSubspace> m_subspaceForDOMURL;
 };
 } // namespace WebCore

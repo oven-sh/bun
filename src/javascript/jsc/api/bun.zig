@@ -1088,6 +1088,9 @@ pub const Class = NewClass(
             .get = getTranspilerConstructor,
             .ts = d.ts{ .name = "Transpiler", .@"return" = "Transpiler.prototype" },
         },
+        .hash = .{
+            .get = getHashObject,
+        },
         .TOML = .{
             .get = getTOMLObject,
             .ts = d.ts{ .name = "TOML", .@"return" = "TOML.prototype" },
@@ -1226,6 +1229,135 @@ pub fn getTranspilerConstructor(
 
     return existing.asObjectRef();
 }
+
+pub fn getHashObject(
+    _: void,
+    ctx: js.JSContextRef,
+    _: js.JSValueRef,
+    _: js.JSStringRef,
+    _: js.ExceptionRef,
+) js.JSValueRef {
+    var existing = ctx.ptr().getCachedObject(&ZigString.init("BunHash"));
+    if (existing.isEmpty()) {
+        return ctx.ptr().putCachedObject(
+            &ZigString.init("BunHash"),
+            JSC.JSValue.fromRef(JSC.C.JSObjectMake(ctx, Hash.Class.get().*, null)),
+        ).asObjectRef();
+    }
+
+    return existing.asObjectRef();
+}
+
+pub const Hash = struct {
+    pub const Class = NewClass(
+        void,
+        .{
+            .name = "Hash",
+        },
+        .{
+            .call = .{
+                .rfn = call,
+            },
+            .wyhash = .{
+                .rfn = hashWrap(std.hash.Wyhash).hash,
+            },
+            .adler32 = .{
+                .rfn = hashWrap(std.hash.Adler32).hash,
+            },
+            .crc32 = .{
+                .rfn = hashWrap(std.hash.Crc32).hash,
+            },
+            .cityHash32 = .{
+                .rfn = hashWrap(std.hash.CityHash32).hash,
+            },
+            .cityHash64 = .{
+                .rfn = hashWrap(std.hash.CityHash64).hash,
+            },
+            .murmur32v3 = .{
+                .rfn = hashWrap(std.hash.murmur.Murmur3_32).hash,
+            },
+            .murmur64v2 = .{
+                .rfn = hashWrap(std.hash.murmur.Murmur2_64).hash,
+            },
+            .murmur64v2 = .{
+                .rfn = hashWrap(std.hash.murmur.Murmur2_64).hash,
+            },
+        },
+        .{},
+    );
+
+    pub fn call(
+        _: void,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSObjectRef {
+        return hashWrap(std.hash.Wyhash).hash(void{}, ctx, null, null, arguments, exception);
+    }
+    fn hashWrap(comptime Hasher: anytype) type {
+        return struct {
+            pub fn hash(
+                _: void,
+                ctx: js.JSContextRef,
+                _: js.JSObjectRef,
+                _: js.JSObjectRef,
+                arguments: []const js.JSValueRef,
+                exception: js.ExceptionRef,
+            ) js.JSValueRef {
+                var args = JSC.Node.ArgumentsSlice.from(arguments);
+                var input: []const u8 = "";
+                var input_slice = ZigString.Slice.empty;
+                defer input_slice.deinit();
+                if (args.nextEat()) |arg| {
+                    if (arg.as(JSC.WebCore.Blob)) |blob| {
+                        // TODO: files
+                        input = blob.sharedView();
+                    } else {
+                        switch (arg.jsTypeLoose()) {
+                            .ArrayBuffer, .Int8Array, .Uint8Array, .Uint8ClampedArray, .Int16Array, .Uint16Array, .Int32Array, .Uint32Array, .Float32Array, .Float64Array, .BigInt64Array, .BigUint64Array, .DataView => {
+                                var array_buffer = arg.asArrayBuffer(ctx.ptr()) orelse {
+                                    JSC.throwInvalidArguments("ArrayBuffer conversion error", .{}, ctx, exception);
+                                    return null;
+                                };
+                                input = array_buffer.slice();
+                            },
+                            else => {
+                                input_slice = arg.toSlice(ctx.ptr(), bun.default_allocator);
+                                input = input_slice.slice();
+                            },
+                        }
+                    }
+                }
+
+                // std.hash has inconsistent interfaces
+                //
+                const Function = if (@hasDecl(Hasher, "hashWithSeed")) Hasher.hashWithSeed else Hasher.hash;
+                var function_args: std.meta.ArgsTuple(@TypeOf(Function)) = undefined;
+                if (comptime std.meta.fields(std.meta.ArgsTuple(@TypeOf(Function))).len == 1) {
+                    return JSC.JSValue.jsNumber(Function(input)).asObjectRef();
+                } else {
+                    var seed: u64 = 0;
+                    if (args.nextEat()) |arg| {
+                        if (arg.isNumber()) {
+                            seed = arg.toU32();
+                        }
+                    }
+                    if (comptime std.meta.trait.isNumber(@TypeOf(function_args[0]))) {
+                        function_args[0] = @intCast(@TypeOf(function_args[0]), seed);
+                        function_args[1] = input;
+                    } else {
+                        function_args[1] = @intCast(@TypeOf(function_args[1]), seed);
+                        function_args[0] = input;
+                    }
+
+                    return JSC.JSValue.jsNumber(@call(.{}, Function, function_args)).asObjectRef();
+                }
+            }
+        };
+    }
+};
 
 pub fn getTOMLObject(
     _: void,

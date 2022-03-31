@@ -14,6 +14,7 @@ const Buffer = JSC.MarkedArrayBuffer;
 const IdentityContext = @import("../../../identity_context.zig").IdentityContext;
 const logger = @import("../../../logger.zig");
 const Fs = @import("../../../fs.zig");
+const URL = @import("../../../url.zig").URL;
 const Shimmer = @import("../bindings/shimmer.zig").Shimmer;
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const meta = bun.meta;
@@ -335,7 +336,24 @@ pub const PathLike = union(Tag) {
 
                 return PathLike{ .string = PathString.init(zig_str.slice()) };
             },
-            else => return null,
+            else => {
+                if (arg.as(JSC.DOMURL)) |domurl| {
+                    var zig_str = domurl.pathname();
+                    if (!Valid.pathString(zig_str, ctx, exception)) return null;
+
+                    JSC.C.JSValueProtect(ctx, arg.asObjectRef());
+                    arguments.eat();
+
+                    if (zig_str.is16Bit()) {
+                        var printed = std.mem.span(std.fmt.allocPrintZ(arguments.arena.allocator(), "{}", .{zig_str}) catch unreachable);
+                        return PathLike{ .string = PathString.init(printed.ptr[0 .. printed.len + 1]) };
+                    }
+
+                    return PathLike{ .string = PathString.init(zig_str.slice()) };
+                }
+
+                return null;
+            },
         }
     }
 };

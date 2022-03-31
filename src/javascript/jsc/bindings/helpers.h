@@ -202,6 +202,14 @@ static ZigString toZigString(WTF::StringView& str)
               str.length() };
 }
 
+static ZigString toZigString(const WTF::StringView& str)
+{
+    return str.isEmpty()
+        ? ZigStringEmpty
+        : ZigString { str.is8Bit() ? str.characters8() : taggedUTF16Ptr(str.characters16()),
+              str.length() };
+}
+
 static ZigString toZigString(JSC::JSString& str, JSC::JSGlobalObject* global)
 {
     return toZigString(str.value(global));

@@ -45,6 +45,8 @@ pub const bJSC__CallFrame = bindings.CallFrame;
 pub const bInspector__ScriptArguments = bindings.ScriptArguments;
 pub const JSC__JSValue = bindings.JSValue;
 
+pub const struct_WebCore__DOMURL = bindings.DOMURL;
+
 // Inlined types
 pub const ZigString = bindings.ZigString;
 pub const ZigException = bindings.ZigException;
@@ -123,6 +125,8 @@ pub const JSC__BigIntPrototype = struct_JSC__BigIntPrototype;
 
 pub const JSC__GeneratorFunctionPrototype = struct_JSC__GeneratorFunctionPrototype;
 
+pub const WebCore__DOMURL = struct_WebCore__DOMURL;
+
 pub const JSC__FunctionPrototype = struct_JSC__FunctionPrototype;
 pub const Inspector__ScriptArguments = bInspector__ScriptArguments;
 pub const JSC__Exception = bJSC__Exception;
@@ -144,6 +148,9 @@ pub extern fn ZigString__toExternalValue(arg0: [*c]const ZigString, arg1: [*c]JS
 pub extern fn ZigString__toExternalValueWithCallback(arg0: [*c]const ZigString, arg1: [*c]JSC__JSGlobalObject, ArgFn2: ?fn (?*anyopaque, ?*anyopaque, usize) callconv(.C) void) JSC__JSValue;
 pub extern fn ZigString__toValue(arg0: [*c]const ZigString, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toValueGC(arg0: [*c]const ZigString, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
+pub extern fn WebCore__DOMURL__cast(JSValue0: JSC__JSValue) ?*WebCore__DOMURL;
+pub extern fn WebCore__DOMURL__href_(arg0: ?*WebCore__DOMURL, arg1: [*c]ZigString) void;
+pub extern fn WebCore__DOMURL__pathname_(arg0: ?*WebCore__DOMURL, arg1: [*c]ZigString) void;
 pub extern fn SystemError__toErrorInstance(arg0: [*c]const SystemError, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSCell__getObject(arg0: [*c]JSC__JSCell) [*c]JSC__JSObject;
 pub extern fn JSC__JSCell__getString(arg0: [*c]JSC__JSCell, arg1: [*c]JSC__JSGlobalObject) bWTF__String;

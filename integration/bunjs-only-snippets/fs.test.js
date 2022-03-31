@@ -30,6 +30,14 @@ describe("readFileSync", () => {
     expect(text).toBe("File read successfully");
   });
 
+  it("works with a file url", () => {
+    const text = readFileSync(
+      new URL("file://" + import.meta.dir + "/readFileSync.txt"),
+      "utf8"
+    );
+    expect(text).toBe("File read successfully");
+  });
+
   it("returning Buffer works", () => {
     const text = readFileSync(import.meta.dir + "/readFileSync.txt");
     const encoded = [

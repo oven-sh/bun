@@ -349,6 +349,43 @@ pub const ZigString = extern struct {
     pub const Extern = [_][]const u8{ "toValue", "toExternalValue", "to16BitValue", "toValueGC", "toErrorInstance", "toExternalU16", "toExternalValueWithCallback", "external" };
 };
 
+pub const DOMURL = opaque {
+    pub const shim = Shimmer("WebCore", "DOMURL", @This());
+
+    const cppFn = shim.cppFn;
+    pub const name = "WebCore::DOMURL";
+
+    pub fn cast(value: JSValue) ?*DOMURL {
+        return shim.cppFn("cast", .{value});
+    }
+
+    pub fn href_(this: *DOMURL, out: *ZigString) void {
+        return shim.cppFn("href_", .{ this, out });
+    }
+
+    pub fn href(this: *DOMURL) ZigString {
+        var out = ZigString.Empty;
+        this.href_(&out);
+        return out;
+    }
+
+    pub fn pathname_(this: *DOMURL, out: *ZigString) void {
+        return shim.cppFn("pathname_", .{ this, out });
+    }
+
+    pub fn pathname(this: *DOMURL) ZigString {
+        var out = ZigString.Empty;
+        this.pathname_(&out);
+        return out;
+    }
+
+    pub const Extern = [_][]const u8{
+        "cast",
+        "href_",
+        "pathname_",
+    };
+};
+
 pub const SystemError = extern struct {
     errno: c_int = 0,
     /// label for errno
@@ -1900,6 +1937,10 @@ pub const JSValue = enum(u64) {
     pub fn as(value: JSValue, comptime ZigType: type) ?*ZigType {
         if (value.isUndefinedOrNull())
             return null;
+
+        if (comptime ZigType == DOMURL) {
+            return DOMURL.cast(value);
+        }
 
         return JSC.GetJSPrivateData(ZigType, value.asObjectRef());
     }

@@ -46,7 +46,7 @@ var bun_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 const Futex = @import("../futex.zig");
 const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMap;
 
-const target_nextjs_version = "12.1.0";
+const target_nextjs_version = "12.1.3";
 pub var initialized_store = false;
 pub fn initializeStore() void {
     if (initialized_store) return;

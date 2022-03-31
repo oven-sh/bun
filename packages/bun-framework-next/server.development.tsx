@@ -1,8 +1,9 @@
-import nextPackage from "next/package.json";
 import "./server-polyfills";
 import { render } from "./renderDocument";
+import { packageVersion } from "macro:./packageVersion.ts";
 
-const { version } = nextPackage;
+const version = packageVersion("next");
+
 if (
   (!version.startsWith("11.1") &&
     !version.startsWith("12.0") &&

@@ -1,11 +1,19 @@
-/// <reference types="react-dom/experimental" />
-
 globalThis.global = globalThis;
 globalThis.Bun_disableCSSImports = true;
 
 import * as React from "react";
 
-import * as ReactDOM from "react-dom";
+var ReactDOM;
+try {
+  ReactDOM = require("react-dom/client");
+} catch (exception) {}
+
+if (!ReactDOM) {
+  try {
+    ReactDOM = require("react-dom");
+  } catch (exception) {}
+}
+
 import NextApp from "next/app";
 import mitt, { MittEmitter } from "next/dist/shared/lib/mitt";
 import { RouterContext } from "next/dist/shared/lib/router-context";

@@ -4,29 +4,43 @@ import { HeadManagerContext } from "next/dist/shared/lib/head-manager-context";
 import Loadable from "next/dist/shared/lib/loadable";
 import { LoadableContext } from "next/dist/shared/lib/loadable-context";
 import { RouterContext } from "next/dist/shared/lib/router-context";
-import { NextRouter } from "next/dist/shared/lib/router/router";
+import { type NextRouter } from "next/dist/shared/lib/router/router";
 import {
-  AppType,
-  ComponentsEnhancer,
-  DocumentInitialProps,
-  DocumentProps,
-  DocumentType,
   getDisplayName,
   loadGetInitialProps,
-  NextComponentType,
-  RenderPage,
-  RenderPageResult,
-  HtmlContext,
+  type AppType,
+  type ComponentsEnhancer,
+  type DocumentInitialProps,
+  type DocumentProps,
+  type DocumentType,
+  type NextComponentType,
+  type RenderPage,
+  type RenderPageResult,
 } from "next/dist/shared/lib/utils";
-import { RenderOpts } from "next/dist/server/render";
+import * as NextUtils from "next/dist/shared/lib/utils";
+import type { RenderOpts } from "next/dist/server/render";
 import * as NextDocument from "next/document";
 import * as ReactDOMServer from "react-dom/server.browser";
 import * as React from "react";
 import * as ReactIs from "react-is";
-import nextPackage from "next/package.json";
+import { packageVersion } from "macro:./packageVersion.ts";
+
+const nextVersion = packageVersion("next");
+
+var HtmlContext;
+// HtmlContext is in different places depending on the next version
+if ("HtmlContext" in NextUtils) {
+  HtmlContext = NextUtils.HtmlContext;
+} else {
+  try {
+    HtmlContext = require("next/dist/shared/lib/html-context").HtmlContext;
+  } catch (err) {
+    throw err;
+  }
+}
 
 function appendNextBody(html: string, docPropsHtml) {
-  if (nextPackage.version.startsWith("12.0")) {
+  if (nextVersion.startsWith("12.0")) {
     const NEXT_12_0_BODY_RENDER_TARGET = "__NEXT_BODY_RENDER_TARGET__";
 
     const bodyRenderIdx = html.indexOf(NEXT_12_0_BODY_RENDER_TARGET);
@@ -228,6 +242,7 @@ function renderDocument(
     useMaybeDeferContent,
     ...docProps,
   };
+
   return (
     "<!DOCTYPE html>" +
     ReactDOMServer.renderToStaticMarkup(

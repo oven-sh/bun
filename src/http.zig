@@ -1749,7 +1749,6 @@ pub const RequestContext = struct {
             Output.Source.configureThread();
             js_ast.Stmt.Data.Store.create(default_allocator);
             js_ast.Expr.Data.Store.create(default_allocator);
-            websocket_handler_caches = CacheSet.init(default_allocator);
             websocket_printer = JSPrinter.BufferWriter.init(default_allocator) catch unreachable;
 
             return null;
@@ -1759,7 +1758,6 @@ pub const RequestContext = struct {
             handle(@fieldParentPtr(WebsocketHandler, "task", self));
         }
         const CacheSet = @import("./cache.zig").Set;
-        threadlocal var websocket_handler_caches: CacheSet = undefined;
         threadlocal var websocket_printer: JSPrinter.BufferWriter = undefined;
         pub fn handle(self: *WebsocketHandler) void {
             var req_body = self.ctx.req_body_node;
@@ -1772,7 +1770,7 @@ pub const RequestContext = struct {
             self.builder.printer = JSPrinter.BufferPrinter.init(
                 websocket_printer,
             );
-            self.builder.bundler.resolver.caches = websocket_handler_caches;
+
             _handle(self) catch {};
         }
 
@@ -1780,10 +1778,11 @@ pub const RequestContext = struct {
             var ctx = &handler.ctx;
             ctx.arena = ThreadlocalArena.init() catch unreachable;
             ctx.allocator = ctx.arena.allocator();
+            handler.builder.bundler.resolver.caches = CacheSet.init(ctx.allocator);
+            handler.builder.bundler.resolver.caches.fs.stream = true;
 
             var is_socket_closed = false;
             defer {
-                websocket_handler_caches = handler.builder.bundler.resolver.caches;
                 websocket_printer = handler.builder.printer.ctx;
                 handler.tombstone = true;
                 removeWebsocket(handler);
@@ -1968,7 +1967,6 @@ pub const RequestContext = struct {
                                         @minimum(handler.message_buffer.list.items.len, 128),
                                     );
                                 }
-
                                 const build_result = handler.builder.build(request_id, cmd.timestamp, arena.allocator()) catch |err| {
                                     if (err == error.MissingWatchID) {
                                         msg.timestamp = cmd.timestamp;
@@ -1993,6 +1991,7 @@ pub const RequestContext = struct {
 
                                     return err;
                                 };
+
                                 const file_path = switch (build_result.value) {
                                     .fail => |fail| fail.module_path,
                                     .success => |fail| fail.module_path,
@@ -2877,7 +2876,7 @@ pub const RequestContext = struct {
         _ = try JSPrinter.printJSON(
             *JSPrinter.BufferPrinter,
             &writer,
-            try Global.BunInfo.generate(*Bundler, ctx.bundler, ctx.allocator) ,
+            try Global.BunInfo.generate(*Bundler, ctx.bundler, ctx.allocator),
             &source,
         );
         const buffer = writer.ctx.written;

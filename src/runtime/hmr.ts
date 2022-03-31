@@ -823,7 +823,8 @@ if (typeof window !== "undefined") {
       // Ignore builds of modules we expect a later version of
       const currentVersion = this.builds.get(build.id) || -Infinity;
 
-      if (currentVersion > build.from_timestamp) {
+      // allow 4ms of leeway
+      if (currentVersion > build.from_timestamp + 4) {
         if (this.verbose) {
           __hmrlog.debug(
             `Ignoring outdated update for "${build.module_path}".\n  Expected: >=`,

@@ -1322,11 +1322,6 @@ pub inline fn wtf8ByteSequenceLength(first_byte: u8) u3 {
     };
 }
 
-pub fn firstCodePoint(text: []const u8) CodePoint {
-    const len = wtf8ByteSequenceLength(text[0]);
-    return decodeWTF8RuneT(text.ptr[0..4], len, CodePoint, 0);
-}
-
 /// 0 == invalid
 pub inline fn wtf8ByteSequenceLengthWithInvalid(first_byte: u8) u3 {
     return switch (first_byte) {

@@ -915,6 +915,7 @@ pub const FileSystem = struct {
             file: std.fs.File,
             comptime use_shared_buffer: bool,
             shared_buffer: *MutableString,
+            comptime stream: bool,
         ) !File {
             FileSystem.setMaxFd(file.handle);
 
@@ -944,19 +945,50 @@ pub const FileSystem = struct {
             // As a mitigation, we can just keep one buffer forever and re-use it for the parsed files
             if (use_shared_buffer) {
                 shared_buffer.reset();
+                var offset: u64 = 0;
                 try shared_buffer.growBy(size);
                 shared_buffer.list.expandToCapacity();
-                // We use pread to ensure if the file handle was open, it doesn't seek from the last position
-                var read_count = file.preadAll(shared_buffer.list.items, 0) catch |err| {
-                    fs.readFileError(path, err);
-                    return err;
-                };
-                shared_buffer.list.items = shared_buffer.list.items[0..read_count];
-                file_contents = shared_buffer.list.items;
+
+                // if you press save on a large file we might not read all the
+                // bytes in the first few pread() calls. we only handle this on
+                // stream because we assume that this only realistically happens
+                // during HMR
+                while (true) {
+
+                    // We use pread to ensure if the file handle was open, it doesn't seek from the last position
+                    const read_count = file.preadAll(shared_buffer.list.items[offset..], offset) catch |err| {
+                        fs.readFileError(path, err);
+                        return err;
+                    };
+                    shared_buffer.list.items = shared_buffer.list.items[0 .. read_count + offset];
+                    file_contents = shared_buffer.list.items;
+
+                    if (comptime stream) {
+                        // check again that stat() didn't change the file size
+                        // another reason to only do this when stream
+                        const new_size = file.getEndPos() catch |err| {
+                            fs.readFileError(path, err);
+                            return err;
+                        };
+
+                        offset += read_count;
+
+                        // don't infinite loop is we're still not reading more
+                        if (read_count == 0) break;
+
+                        if (offset < new_size) {
+                            try shared_buffer.growBy(new_size - size);
+                            shared_buffer.list.expandToCapacity();
+                            size = new_size;
+                            continue;
+                        }
+                    }
+                    break;
+                }
             } else {
                 // We use pread to ensure if the file handle was open, it doesn't seek from the last position
                 var buf = try fs.allocator.alloc(u8, size);
-                var read_count = file.preadAll(buf, 0) catch |err| {
+                const read_count = file.preadAll(buf, 0) catch |err| {
                     fs.readFileError(path, err);
                     return err;
                 };

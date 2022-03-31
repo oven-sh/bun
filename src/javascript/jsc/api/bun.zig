@@ -1273,11 +1273,11 @@ pub const Hash = struct {
             .cityHash64 = .{
                 .rfn = hashWrap(std.hash.CityHash64).hash,
             },
+            .murmur32v2 = .{
+                .rfn = hashWrap(std.hash.murmur.Murmur2_32).hash,
+            },
             .murmur32v3 = .{
                 .rfn = hashWrap(std.hash.murmur.Murmur3_32).hash,
-            },
-            .murmur64v2 = .{
-                .rfn = hashWrap(std.hash.murmur.Murmur2_64).hash,
             },
             .murmur64v2 = .{
                 .rfn = hashWrap(std.hash.murmur.Murmur2_64).hash,
@@ -1352,7 +1352,12 @@ pub const Hash = struct {
                         function_args[0] = input;
                     }
 
-                    return JSC.JSValue.jsNumber(@call(.{}, Function, function_args)).asObjectRef();
+                    const value = @call(.{}, Function, function_args);
+
+                    if (@TypeOf(value) == u32) {
+                        return JSC.JSValue.jsNumber(@bitCast(i32, value)).asObjectRef();
+                    }
+                    return JSC.JSValue.jsNumber(value).asObjectRef();
                 }
             }
         };

@@ -1,5 +1,8 @@
 #pragma once
 
+#ifndef BUN__ROOT__H
+#define BUN__ROOT__H
+
 /*
  * Copyright (C) 2006-2021 Apple Inc. All rights reserved.
  * Copyright (C) 2006 Samuel Weinig "sam.weinig@gmail.com"
@@ -67,9 +70,7 @@
 #endif
 
 #include "wtf/PlatformCallingConventions.h"
-#include "JavaScriptCore/Strong.h"
-#include "JavaScriptCore/Weak.h"
-#include "JavaScriptCore/WeakInlines.h"
+#include "JavaScriptCore/JSCInlines.h"
 
 #define WTF_MAKE_ISO_ALLOCATED(className) \
     WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(className)
@@ -77,3 +78,4 @@
 #define WTF_MAKE_ISO_ALLOCATED_EXPORT(className, a) WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(className);
 
 #define WTF_MAKE_ISO_ALLOCATED_IMPL(className)
+#endif

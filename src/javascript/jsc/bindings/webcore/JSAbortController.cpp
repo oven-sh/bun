@@ -39,15 +39,17 @@
 #include "JSDOMWrapperCache.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
-#include <JavaScriptCore/FunctionPrototype.h>
-#include <JavaScriptCore/HeapAnalyzer.h>
-#include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
-#include <JavaScriptCore/SlotVisitorMacros.h>
-#include <JavaScriptCore/SubspaceInlines.h>
+#include "JavaScriptCore/FunctionPrototype.h"
+#include "JavaScriptCore/HeapAnalyzer.h"
+#include "JavaScriptCore/JSCInlines.h"
+#include "JavaScriptCore/JSDestructibleObjectHeapCellType.h"
+#include "JavaScriptCore/SlotVisitorMacros.h"
+#include "JavaScriptCore/SubspaceInlines.h"
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
+
+#include "weak_handle.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -273,38 +275,8 @@ void JSAbortControllerOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* co
     uncacheWrapper(world, &jsAbortController->wrapped(), jsAbortController);
 }
 
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7AbortController@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore15AbortControllerE[];
-}
-#endif
-#endif
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<AbortController>&& impl)
 {
-
-    if constexpr (std::is_polymorphic_v<AbortController>) {
-#if ENABLE(BINDING_INTEGRITY)
-        const void* actualVTablePointer = getVTablePointer(impl.ptr());
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7AbortController@WebCore@@6B@");
-#else
-        void* expectedVTablePointer = &_ZTVN7WebCore15AbortControllerE[2];
-#endif
-
-        // If you hit this assertion you either have a use after free bug, or
-        // AbortController has subclasses. If AbortController has subclasses that get passed
-        // to toJS() we currently require AbortController you to opt out of binding hardening
-        // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-#endif
-    }
     return createWrapper<AbortController>(globalObject, WTFMove(impl));
 }
 

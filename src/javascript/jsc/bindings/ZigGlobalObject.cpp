@@ -89,6 +89,8 @@
 
 #include "Process.h"
 
+#include "JavaScriptCore/RemoteInspectorServer.h"
+
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
 using JSValue = JSC::JSValue;
@@ -848,6 +850,11 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     extraStaticGlobals.releaseBuffer();
+
+    // this->setRemoteDebuggingEnabled(true);
+    // auto& server = Inspector::RemoteInspectorServer::singleton();
+    // if (server.start("127.0.0.1", 9222)) {
+    // }
 }
 
 template<typename Visitor>
@@ -872,6 +879,9 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         visitor.append(constructor);
 
     // thisObject->m_builtinInternalFunctions.visit(visitor);
+
+    ScriptExecutionContext* context = thisObject->scriptExecutionContext();
+    visitor.addOpaqueRoot(context);
 }
 
 DEFINE_VISIT_CHILDREN(GlobalObject);

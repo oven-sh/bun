@@ -1,5 +1,8 @@
 #pragma once
 
+#ifndef ZIG_GLOBAL_OBJECT
+#define ZIG_GLOBAL_OBJECT
+
 namespace JSC {
 class Structure;
 class Identifier;
@@ -168,4 +171,6 @@ private:
 namespace WebCore {
 using JSDOMGlobalObject = Zig::GlobalObject;
 }
+#endif
+
 #endif

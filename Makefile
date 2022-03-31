@@ -187,7 +187,7 @@ SRC_FILES := $(wildcard $(SRC_DIR)/*.cpp)
 SRC_WEBCORE_FILES := $(wildcard $(SRC_DIR)/webcore/*.cpp) 
 OBJ_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
 WEBCORE_OBJ_FILES := $(patsubst $(SRC_DIR)/webcore/%.cpp,$(OBJ_DIR)/%.o,$(SRC_WEBCORE_FILES))
-
+BINDINGS_OBJ := $(OBJ_FILES) $(WEBCORE_OBJ_FILES)
 MAC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders \
 		-I$(WEBKIT_RELEASE_DIR)/WTF/Headers \
 		-I$(WEBKIT_RELEASE_DIR)/ICU/Headers \
@@ -250,7 +250,7 @@ CLANG_FLAGS = $(INCLUDE_DIRS) \
 		-DNDEBUG=1 \
 		-DNOMINMAX \
 		-DIS_BUILD \
-		-DENABLE_INSPECTOR_ALTERNATE_DISPATCHERS=0 \
+		-DENABLE_INSPECTOR_ALTERNATE_DISPATCHERS=1 \
 		-DBUILDING_JSCONLY__ \
 		-DASSERT_ENABLED=0 \
 		-fvisibility=hidden \
@@ -271,7 +271,7 @@ endif
 
 
 
-JSC_BINDINGS=$(BUN_DEPS_OUT_DIR)/libjsc-bindings.a
+JSC_BINDINGS = $(JSC_FILES) $(BINDINGS_OBJ)
 
 RELEASE_FLAGS=
 DEBUG_FLAGS=
@@ -316,7 +316,8 @@ PLATFORM_LINKER_FLAGS = \
 		-Wl,--compress-debug-sections,zlib \
 		${STATIC_MUSL_FLAG}  \
 		-Wl,-Bsymbolic-functions \
-		-fno-semantic-interposition
+		-fno-semantic-interposition \
+		--allow-multiple-definition
 
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO += $(BUN_DEPS_OUT_DIR)/libbacktrace.a
 endif
@@ -838,9 +839,11 @@ jsc-build-mac-compile:
 			$(CMAKE_FLAGS_WITHOUT_RELEASE) \
 			-DPTHREAD_JIT_PERMISSIONS_API=1 \
 			-DUSE_PTHREAD_JIT_PERMISSIONS_API=ON \
+			-DENABLE_REMOTE_INSPECTOR=ON \
+			-DUSE_VISIBILITY_ATTRIBUTE=1 \
 			$(WEBKIT_DIR) \
 			$(WEBKIT_RELEASE_DIR) && \
-	CFLAGS="$CFLAGS -ffat-lto-objects" CXXFLAGS="$CXXFLAGS -ffat-lto-objects" \
+	CFLAGS="$(CFLAGS) -Wl,--whole-archive -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -ffat-lto-objects" \
 		cmake --build $(WEBKIT_RELEASE_DIR) --config Release --target jsc
 
 jsc-build-mac-compile-debug:
@@ -858,9 +861,11 @@ jsc-build-mac-compile-debug:
 			$(CMAKE_FLAGS_WITHOUT_RELEASE) \
 			-DPTHREAD_JIT_PERMISSIONS_API=1 \
 			-DUSE_PTHREAD_JIT_PERMISSIONS_API=ON \
+			-DENABLE_REMOTE_INSPECTOR=ON \
+			-DUSE_VISIBILITY_ATTRIBUTE=1 \
 			$(WEBKIT_DIR) \
 			$(WEBKIT_RELEASE_DIR) && \
-	CFLAGS="$CFLAGS -ffat-lto-objects" CXXFLAGS="$CXXFLAGS -ffat-lto-objects" \
+	CFLAGS="$(CFLAGS) -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -ffat-lto-objects" \
 		cmake --build $(WEBKIT_RELEASE_DIR) --config Debug --target jsc
 
 jsc-build-linux-compile-config:
@@ -872,6 +877,9 @@ jsc-build-linux-compile-config:
 			-DCMAKE_BUILD_TYPE=relwithdebuginfo \
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DENABLE_FTL_JIT=ON \
+			-DENABLE_REMOTE_INSPECTOR=ON \
+			-DJSEXPORT_PRIVATE=WTF_EXPORT_DECLARATION \
+			-USE_VISIBILITY_ATTRIBUTE=1 \
 			-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 			-G Ninja \
 			-DCMAKE_CXX_COMPILER=$(CXX) \
@@ -884,7 +892,7 @@ jsc-build-linux-compile-config:
 jsc-build-linux-compile-build:
 		mkdir -p $(WEBKIT_RELEASE_DIR)  && \
 		cd $(WEBKIT_RELEASE_DIR)  && \
-	CFLAGS="$CFLAGS -ffat-lto-objects" CXXFLAGS="$CXXFLAGS -ffat-lto-objects" \
+	CFLAGS="$(CFLAGS) -Wl,--whole-archive -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -Wl,--whole-archive -ffat-lto-objects" \
 		cmake --build $(WEBKIT_RELEASE_DIR) --config relwithdebuginfo --target jsc
 
 
@@ -902,7 +910,7 @@ clean-jsc:
 clean-bindings: 
 	rm -rf $(OBJ_DIR)/*.o
 	rm -rf $(OBJ_DIR)/webcore/*.o
-	rm -rf $(JSC_BINDINGS)
+	rm -rf $(BINDINGS_OBJ)
 
 clean: clean-bindings
 	rm $(BUN_DEPS_DIR)/*.a $(BUN_DEPS_DIR)/*.o
@@ -913,12 +921,6 @@ clean: clean-bindings
 	(cd $(BUN_DEPS_DIR)/zlib && make clean) || echo "";
 
 jsc-bindings-mac: $(OBJ_FILES) $(WEBCORE_OBJ_FILES)
-	make jsc-bindings-archive
-
-jsc-bindings-archive:
-	$(AR) rvs $(JSC_BINDINGS).1.a $(OBJ_FILES) $(WEBCORE_OBJ_FILES)
-	llvm-libtool-darwin -static -o $(JSC_BINDINGS) -L$(BUN_DEPS_DIR) -lJavaScriptCore -lWTF -lbmalloc -U --color -ljsc-bindings.a.1
-
 
 mimalloc-debug:
 	rm -rf $(BUN_DEPS_DIR)/mimalloc/CMakeCache* $(BUN_DEPS_DIR)/mimalloc/CMakeFiles

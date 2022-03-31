@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include "root.h"
+
 #include "AbortController.h"
 #include "JSDOMWrapper.h"
 #include <wtf/NeverDestroyed.h>
@@ -59,6 +61,7 @@ public:
     DECLARE_VISIT_CHILDREN;
 
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+
 protected:
     JSAbortController(JSC::Structure*, JSDOMGlobalObject&, Ref<AbortController>&&);
 

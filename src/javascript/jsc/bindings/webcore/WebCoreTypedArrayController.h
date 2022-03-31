@@ -28,10 +28,6 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/TypedArrayController.h"
 
-namespace JSC {
-class WeakHandleOwner;
-}
-
 namespace WebCore {
 
 class WebCoreTypedArrayController : public JSC::TypedArrayController {

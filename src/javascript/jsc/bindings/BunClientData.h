@@ -20,6 +20,8 @@ class DOMWrapperWorld;
 #include "wtf/Function.h"
 #include "wtf/HashSet.h"
 #include "wtf/RefPtr.h"
+#include "JavaScriptCore/WeakHandleOwner.h"
+#include "JavaScriptCore/WeakInlines.h"
 
 #include "JavaScriptCore/IsoSubspacePerVM.h"
 

@@ -65,7 +65,7 @@ public:
     bool isDocument() { return false; }
     bool isWorkerGlobalScope() { return true; }
     bool isJSExecutionForbidden() { return false; }
-    void reportException(const String& errorMessage, int lineNumber, int columnNumber, const String& sourceURL, JSC::Exception*, RefPtr<void*>&&, CachedScript* = nullptr, bool = false)
+    void reportException(const String& errorMessage, int lineNumber, int columnNumber, const String& sourceURL, JSC::Exception* exception, RefPtr<void*>&&, CachedScript* = nullptr, bool = false)
     {
     }
     // void reportUnhandledPromiseRejection(JSC::JSGlobalObject&, JSC::JSPromise&, RefPtr<Inspector::ScriptCallStack>&&)
@@ -74,6 +74,7 @@ public:
 
     void postTask(Task&&)
     {
+
     } // Executes the task on context's thread asynchronously.
 
     template<typename... Arguments>
@@ -87,7 +88,6 @@ public:
     JSC::VM& vm() { return *m_vm; }
 
 private:
-    int m_junk = 0;
     JSC::VM* m_vm = nullptr;
     JSC::JSGlobalObject* m_globalObject = nullptr;
     WTF::URL m_url = WTF::URL();

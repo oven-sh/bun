@@ -25,9 +25,7 @@
 
 #pragma once
 
-// #include "DOMWindow.h"
 #include "JSDOMBinding.h"
-// #include "JSDOMBindingSecurity.h";/
 #include "JSDOMOperation.h"
 
 namespace WebCore {
@@ -71,11 +69,6 @@ public:
             return throwThisTypeError(lexicalGlobalObject, throwScope, "EventTarget", operationName);
 
         auto& wrapped = thisObject->wrapped();
-        // if (is<DOMWindow>(wrapped)) {
-        //     auto& window = downcast<DOMWindow>(wrapped);
-        //     if (!window.frame() || !BindingSecurity::shouldAllowAccessToDOMWindow(&lexicalGlobalObject, window, ThrowSecurityError))
-        //         return JSC::JSValue::encode(JSC::jsUndefined());
-        // }
 
         RELEASE_AND_RETURN(throwScope, (operation(&lexicalGlobalObject, &callFrame, thisObject.get())));
     }

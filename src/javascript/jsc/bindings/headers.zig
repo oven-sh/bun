@@ -45,8 +45,6 @@ pub const bJSC__CallFrame = bindings.CallFrame;
 pub const bInspector__ScriptArguments = bindings.ScriptArguments;
 pub const JSC__JSValue = bindings.JSValue;
 
-pub const struct_WebCore__DOMURL = bindings.DOMURL;
-
 // Inlined types
 pub const ZigString = bindings.ZigString;
 pub const ZigException = bindings.ZigException;
@@ -61,6 +59,7 @@ pub const JSC__CatchScope = bindings.CatchScope;
 pub const Bun__Readable = bindings.NodeReadableStream;
 pub const Bun__Writable = bindings.NodeWritableStream;
 pub const Bun__ArrayBuffer = bindings.ArrayBuffer;
+pub const struct_WebCore__DOMURL = bindings.DOMURL;
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
 pub const ptrdiff_t = c_long;

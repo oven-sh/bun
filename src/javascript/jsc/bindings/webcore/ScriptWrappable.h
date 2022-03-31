@@ -31,16 +31,13 @@
 
 #pragma once
 
-#include "JavaScriptCore/Weak.h"
+#include "root.h"
+#include "JavaScriptCore/JSCInlines.h"
+#include "JSDOMWrapper.h"
+
 // #include "wtf/IsoMalloc.h"
 
-namespace JSC {
-class WeakHandleOwner;
-}
-
 namespace WebCore {
-
-class JSDOMObject;
 
 class ScriptWrappable {
     WTF_MAKE_FAST_ALLOCATED;

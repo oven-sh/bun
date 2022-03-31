@@ -23,6 +23,8 @@
 
 #pragma once
 
+#include "root.h"
+
 #include "DOMWrapperWorld.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMWrapper.h"

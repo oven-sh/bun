@@ -48,7 +48,31 @@
 #include "wtf/text/StringView.h"
 #include "wtf/text/WTFString.h"
 
+#include "DOMURL.h"
+#include "JSDOMURL.h"
+
 extern "C" {
+
+WebCore__DOMURL* WebCore__DOMURL__cast(JSC__JSValue JSValue0)
+{
+    auto* jsdomURL = JSC::jsCast<WebCore::JSDOMURL*>(JSC::JSValue::decode(JSValue0));
+    if (jsdomURL == nullptr) {
+        return nullptr;
+    }
+
+    return &jsdomURL->wrapped();
+}
+void WebCore__DOMURL__href_(WebCore__DOMURL* domURL, ZigString* arg1)
+{
+    const WTF::URL& href = domURL->href();
+    *arg1 = Zig::toZigString(href.string());
+}
+void WebCore__DOMURL__pathname_(WebCore__DOMURL* domURL, ZigString* arg1)
+{
+    const WTF::URL& href = domURL->href();
+    const WTF::StringView& pathname = href.path();
+    *arg1 = Zig::toZigString(pathname);
+}
 
 JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
     JSC__JSGlobalObject* globalObject)

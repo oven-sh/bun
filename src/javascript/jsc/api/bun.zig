@@ -788,7 +788,7 @@ fn doResolveWithArgs(
     var errorable: ErrorableZigString = undefined;
 
     if (comptime is_file_path) {
-        VirtualMachine.resolve(
+        VirtualMachine.resolveFilePathForAPI(
             &errorable,
             ctx.ptr(),
             specifier,

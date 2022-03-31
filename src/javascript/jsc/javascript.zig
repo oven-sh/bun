@@ -1233,6 +1233,7 @@ pub const VirtualMachine = struct {
         specifier: string,
         source: string,
         comptime is_a_file_path: bool,
+        comptime realpath: bool,
     ) !void {
         std.debug.assert(VirtualMachine.vm_loaded);
         // macOS threadlocal vars are very slow
@@ -1289,45 +1290,46 @@ pub const VirtualMachine = struct {
         ret.result = result;
         const result_path = result.pathConst() orelse return error.ModuleNotFound;
         jsc_vm.resolved_count += 1;
+        if (comptime !realpath) {
+            if (jsc_vm.node_modules != null and !strings.eqlComptime(result_path.namespace, "node") and result.isLikelyNodeModule()) {
+                const node_modules_bundle = jsc_vm.node_modules.?;
 
-        if (jsc_vm.node_modules != null and !strings.eqlComptime(result_path.namespace, "node") and result.isLikelyNodeModule()) {
-            const node_modules_bundle = jsc_vm.node_modules.?;
-
-            node_module_checker: {
-                const package_json = result.package_json orelse brk: {
-                    if (jsc_vm.bundler.resolver.packageJSONForResolvedNodeModule(&result)) |pkg| {
-                        break :brk pkg;
-                    } else {
-                        break :node_module_checker;
-                    }
-                };
-
-                if (node_modules_bundle.getPackageIDByName(package_json.name)) |possible_pkg_ids| {
-                    const pkg_id: u32 = brk: {
-                        for (possible_pkg_ids) |pkg_id| {
-                            const pkg = node_modules_bundle.bundle.packages[pkg_id];
-                            if (pkg.hash == package_json.hash) {
-                                break :brk pkg_id;
-                            }
+                node_module_checker: {
+                    const package_json = result.package_json orelse brk: {
+                        if (jsc_vm.bundler.resolver.packageJSONForResolvedNodeModule(&result)) |pkg| {
+                            break :brk pkg;
+                        } else {
+                            break :node_module_checker;
                         }
-                        break :node_module_checker;
                     };
 
-                    const package = &node_modules_bundle.bundle.packages[pkg_id];
+                    if (node_modules_bundle.getPackageIDByName(package_json.name)) |possible_pkg_ids| {
+                        const pkg_id: u32 = brk: {
+                            for (possible_pkg_ids) |pkg_id| {
+                                const pkg = node_modules_bundle.bundle.packages[pkg_id];
+                                if (pkg.hash == package_json.hash) {
+                                    break :brk pkg_id;
+                                }
+                            }
+                            break :node_module_checker;
+                        };
 
-                    if (Environment.isDebug) {
-                        std.debug.assert(strings.eql(node_modules_bundle.str(package.name), package_json.name));
+                        const package = &node_modules_bundle.bundle.packages[pkg_id];
+
+                        if (Environment.isDebug) {
+                            std.debug.assert(strings.eql(node_modules_bundle.str(package.name), package_json.name));
+                        }
+
+                        const package_relative_path = jsc_vm.bundler.fs.relative(
+                            package_json.source.path.name.dirWithTrailingSlash(),
+                            result_path.text,
+                        );
+
+                        if (node_modules_bundle.findModuleIDInPackage(package, package_relative_path) == null) break :node_module_checker;
+
+                        ret.path = bun_file_import_path;
+                        return;
                     }
-
-                    const package_relative_path = jsc_vm.bundler.fs.relative(
-                        package_json.source.path.name.dirWithTrailingSlash(),
-                        result_path.text,
-                    );
-
-                    if (node_modules_bundle.findModuleIDInPackage(package, package_relative_path) == null) break :node_module_checker;
-
-                    ret.path = bun_file_import_path;
-                    return;
                 }
             }
         }
@@ -1344,17 +1346,21 @@ pub const VirtualMachine = struct {
     }
 
     pub fn resolveForAPI(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, false);
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, false, true);
+    }
+
+    pub fn resolveFilePathForAPI(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) void {
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, true, true);
     }
 
     pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, true);
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, true, false);
     }
 
-    pub fn resolveMaybeNeedsTrailingSlash(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString, comptime is_a_file_path: bool) void {
+    pub fn resolveMaybeNeedsTrailingSlash(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString, comptime is_a_file_path: bool, comptime realpath: bool) void {
         var result = ResolveFunctionResult{ .path = "", .result = null };
 
-        _resolve(&result, global, specifier.slice(), source.slice(), is_a_file_path) catch |err| {
+        _resolve(&result, global, specifier.slice(), source.slice(), is_a_file_path, realpath) catch |err| {
             // This should almost always just apply to dynamic imports
 
             const printed = ResolveError.fmt(

@@ -514,7 +514,7 @@ pub const Response = struct {
         response.body.init.headers = response.getOrCreateHeaders();
         response.body.init.status_code = 302;
         var headers_ref = response.body.init.headers.?.leak();
-        headers_ref.putHeaderNormalized("Location", url_string_slice.slice(), false);
+        headers_ref.putHeaderNormalized("location", url_string_slice.slice(), false);
         var ptr = response.allocator.create(Response) catch unreachable;
         ptr.* = response;
 
@@ -1479,12 +1479,11 @@ pub const Headers = struct {
             } else if (existing_value.length >= value.len) {
                 std.mem.copy(u8, headers.asStr(existing_value), value);
                 headers.entries.items(.value)[header_i].length = @truncate(u32, value.len);
-                headers.asStr(headers.entries.items(.value)[header_i]).ptr[value.len] = 0;
                 // Otherwise, append to the buffer, and just don't bother dealing with the existing header value
                 // We assume that these header objects are going to be kind of short-lived.
             } else {
                 headers.buf.ensureUnusedCapacity(headers.allocator, value.len + 1) catch unreachable;
-                headers.entries.items(.value)[header_i] = headers.appendString(string, value, false, true);
+                headers.entries.items(.value)[header_i] = headers.appendString(string, value, false, false);
             }
         } else {
             headers.appendHeader(key, value, false, false);

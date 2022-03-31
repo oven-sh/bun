@@ -95,7 +95,7 @@ pub fn estimateLengthForJSON(input: []const u8, comptime ascii_only: bool) usize
     while (strings.indexOfNeedsEscape(remaining)) |i| {
         len += i;
         remaining = remaining[i..];
-        const char_len = strings.wtf8ByteSequenceLength(remaining[0]);
+        const char_len = strings.wtf8ByteSequenceLengthWithInvalid(remaining[0]);
         const c = strings.decodeWTF8RuneT(remaining.ptr[0..4], char_len, i32, 0);
         if (canPrintWithoutEscape(i32, c, ascii_only)) {
             len += @as(u32, char_len);
@@ -119,7 +119,7 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_onl
     var i: usize = 0;
     var n: usize = text.len;
     while (i < n) {
-        const width = strings.wtf8ByteSequenceLength(text[i]);
+        const width = strings.wtf8ByteSequenceLengthWithInvalid(text[i]);
         const c = strings.decodeWTF8RuneT(text.ptr[i .. i + 4][0..4], width, i32, 0);
         if (canPrintWithoutEscape(i32, c, ascii_only)) {
             const remain = text[i + @as(usize, width) ..];
@@ -243,7 +243,7 @@ pub fn writeJSONString(text: []const u8, comptime Writer: type, writer: Writer, 
     var i: usize = 0;
     var n: usize = text.len;
     while (i < n) {
-        const width = strings.wtf8ByteSequenceLength(text[i]);
+        const width = strings.wtf8ByteSequenceLengthWithInvalid(text[i]);
         const c = strings.decodeWTF8RuneT(text.ptr[i .. i + 4][0..4], width, i32, 0);
         if (canPrintWithoutEscape(i32, c, ascii_only)) {
             const remain = text[i + @as(usize, width) ..];

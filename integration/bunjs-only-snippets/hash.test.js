@@ -3,26 +3,34 @@ import { it, expect } from "bun:test";
 import path from "path";
 
 it(`Bun.hash()`, () => {
-  console.log(Bun.hash("hello world"));
+  Bun.hash("hello world");
+  Bun.hash(new TextEncoder().encode("hello world"));
 });
 it(`Bun.hash.wyhash()`, () => {
-  console.log(Bun.hash.wyhash("hello world"));
+  Bun.hash.wyhash("hello world");
+  Bun.hash.wyhash(new TextEncoder().encode("hello world"));
 });
 it(`Bun.hash.adler32()`, () => {
-  console.log(Bun.hash.adler32("hello world"));
+  Bun.hash.adler32("hello world");
+  Bun.hash.adler32(new TextEncoder().encode("hello world"));
 });
 it(`Bun.hash.crc32()`, () => {
-  console.log(Bun.hash.crc32("hello world"));
+  Bun.hash.crc32("hello world");
+  Bun.hash.crc32(new TextEncoder().encode("hello world"));
 });
 it(`Bun.hash.cityHash32()`, () => {
-  console.log(Bun.hash.cityHash32("hello world"));
+  Bun.hash.cityHash32("hello world");
+  Bun.hash.cityHash32(new TextEncoder().encode("hello world"));
 });
 it(`Bun.hash.cityHash64()`, () => {
-  console.log(Bun.hash.cityHash64("hello world"));
+  Bun.hash.cityHash64("hello world");
+  Bun.hash.cityHash64(new TextEncoder().encode("hello world"));
 });
 it(`Bun.hash.murmur32v3()`, () => {
-  console.log(Bun.hash.murmur32v3("hello world"));
+  Bun.hash.murmur32v3("hello world");
+  Bun.hash.murmur32v3(new TextEncoder().encode("hello world"));
 });
 it(`Bun.hash.murmur64v2()`, () => {
-  console.log(Bun.hash.murmur64v2("hello world"));
+  Bun.hash.murmur64v2("hello world");
+  Bun.hash.murmur64v2(new TextEncoder().encode("hello world"));
 });

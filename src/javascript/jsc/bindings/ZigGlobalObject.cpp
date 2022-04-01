@@ -86,6 +86,7 @@
 #include "JSCustomEvent.h"
 #include "JSAbortController.h"
 #include "JSEvent.h"
+#include "JSErrorEvent.h"
 #include "JSFetchHeaders.h"
 
 #include "Process.h"
@@ -349,6 +350,17 @@ JSC_DEFINE_CUSTOM_GETTER(JSURLSearchParams_getter,
     Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     return JSC::JSValue::encode(
         WebCore::JSURLSearchParams::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
+}
+
+JSC_DECLARE_CUSTOM_GETTER(JSErrorEvent_getter);
+
+JSC_DEFINE_CUSTOM_GETTER(JSErrorEvent_getter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return JSC::JSValue::encode(
+        WebCore::JSErrorEvent::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
 }
 
 JSC_DECLARE_CUSTOM_GETTER(JSEvent_getter);
@@ -834,34 +846,37 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
 
     this->addStaticGlobals(extraStaticGlobals.data(), extraStaticGlobals.size());
 
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "process"), JSC::CustomGetterSetter::create(vm, property_lazyProcessGetter, property_lazyProcessSetter),
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "process"_s), JSC::CustomGetterSetter::create(vm, property_lazyProcessGetter, property_lazyProcessSetter),
         JSC::PropertyAttribute::CustomAccessor | 0);
 
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "URL"), JSC::CustomGetterSetter::create(vm, JSDOMURL_getter, nullptr),
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "URL"_s), JSC::CustomGetterSetter::create(vm, JSDOMURL_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "URLSearchParams"), JSC::CustomGetterSetter::create(vm, JSURLSearchParams_getter, nullptr),
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "URLSearchParams"_s), JSC::CustomGetterSetter::create(vm, JSURLSearchParams_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "DOMException"), JSC::CustomGetterSetter::create(vm, JSDOMException_getter, nullptr),
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "DOMException"_s), JSC::CustomGetterSetter::create(vm, JSDOMException_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Event"), JSC::CustomGetterSetter::create(vm, JSEvent_getter, nullptr),
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Event"_s), JSC::CustomGetterSetter::create(vm, JSEvent_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "EventTarget"), JSC::CustomGetterSetter::create(vm, JSEventTarget_getter, nullptr),
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "EventTarget"_s), JSC::CustomGetterSetter::create(vm, JSEventTarget_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "AbortController"), JSC::CustomGetterSetter::create(vm, JSDOMAbortController_getter, nullptr),
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "AbortController"_s), JSC::CustomGetterSetter::create(vm, JSDOMAbortController_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "AbortSignal"), JSC::CustomGetterSetter::create(vm, JSDOMAbortSignal_getter, nullptr),
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "AbortSignal"_s), JSC::CustomGetterSetter::create(vm, JSDOMAbortSignal_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "CustomEvent"), JSC::CustomGetterSetter::create(vm, JSCustomEvent_getter, nullptr),
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "CustomEvent"_s), JSC::CustomGetterSetter::create(vm, JSCustomEvent_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Headers"), JSC::CustomGetterSetter::create(vm, JSFetchHeaders_getter, nullptr),
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Headers"_s), JSC::CustomGetterSetter::create(vm, JSFetchHeaders_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "ErrorEvent"_s), JSC::CustomGetterSetter::create(vm, JSErrorEvent_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     extraStaticGlobals.releaseBuffer();

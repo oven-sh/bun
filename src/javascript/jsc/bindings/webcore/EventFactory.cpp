@@ -75,33 +75,33 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     case EventInterfaceType: {
         return createWrapper<Event>(globalObject, WTFMove(impl));
     }
-        //     case BeforeUnloadEventInterfaceType:
-        //         return createWrapper<BeforeUnloadEvent>(globalObject, WTFMove(impl));
-        // #if ENABLE(MEDIA_RECORDER)
-        //     case BlobEventInterfaceType:
-        //         return createWrapper<BlobEvent>(globalObject, WTFMove(impl));
-        // #endif
-        //     case ClipboardEventInterfaceType:
-        //         return createWrapper<ClipboardEvent>(globalObject, WTFMove(impl));
-        //     case CloseEventInterfaceType:
-        //         return createWrapper<CloseEvent>(globalObject, WTFMove(impl));
-        //     case CompositionEventInterfaceType:
-        //         return createWrapper<CompositionEvent>(globalObject, WTFMove(impl));
-        //     case CustomEventInterfaceType:
-        //         return createWrapper<CustomEvent>(globalObject, WTFMove(impl));
-        // #if ENABLE(DEVICE_ORIENTATION)
-        //     case DeviceMotionEventInterfaceType:
-        //         return createWrapper<DeviceMotionEvent>(globalObject, WTFMove(impl));
-        // #endif
-        // #if ENABLE(DEVICE_ORIENTATION)
-        //     case DeviceOrientationEventInterfaceType:
-        //         return createWrapper<DeviceOrientationEvent>(globalObject, WTFMove(impl));
-        // #endif
-        //     case DragEventInterfaceType:
-        //         return createWrapper<DragEvent>(globalObject, WTFMove(impl));
-        // case ErrorEventInterfaceType: {
-        //     return createWrapper<ErrorEvent>(globalObject, WTFMove(impl));
-        // }
+    //     case BeforeUnloadEventInterfaceType:
+    //         return createWrapper<BeforeUnloadEvent>(globalObject, WTFMove(impl));
+    // #if ENABLE(MEDIA_RECORDER)
+    //     case BlobEventInterfaceType:
+    //         return createWrapper<BlobEvent>(globalObject, WTFMove(impl));
+    // #endif
+    //     case ClipboardEventInterfaceType:
+    //         return createWrapper<ClipboardEvent>(globalObject, WTFMove(impl));
+    //     case CloseEventInterfaceType:
+    //         return createWrapper<CloseEvent>(globalObject, WTFMove(impl));
+    //     case CompositionEventInterfaceType:
+    //         return createWrapper<CompositionEvent>(globalObject, WTFMove(impl));
+    //     case CustomEventInterfaceType:
+    //         return createWrapper<CustomEvent>(globalObject, WTFMove(impl));
+    // #if ENABLE(DEVICE_ORIENTATION)
+    //     case DeviceMotionEventInterfaceType:
+    //         return createWrapper<DeviceMotionEvent>(globalObject, WTFMove(impl));
+    // #endif
+    // #if ENABLE(DEVICE_ORIENTATION)
+    //     case DeviceOrientationEventInterfaceType:
+    //         return createWrapper<DeviceOrientationEvent>(globalObject, WTFMove(impl));
+    // #endif
+    //     case DragEventInterfaceType:
+    //         return createWrapper<DragEvent>(globalObject, WTFMove(impl));
+    case ErrorEventInterfaceType: {
+        return createWrapper<ErrorEvent>(globalObject, WTFMove(impl));
+    }
         // #if ENABLE(SERVICE_WORKER)
         //     case ExtendableEventInterfaceType:
         //         return createWrapper<ExtendableEvent>(globalObject, WTFMove(impl));

@@ -377,7 +377,7 @@ pub fn NewServer(comptime ssl_enabled: bool, comptime debug_mode: bool) type {
             response_ptr: ?*JSC.WebCore.Response = null,
             blob: JSC.WebCore.Blob = JSC.WebCore.Blob{},
             promise: ?*JSC.JSValue = null,
-            response_headers: ?*JSC.WebCore.Headers.RefCountedHeaders = null,
+            response_headers: ?*JSC.FetchHeaders = null,
             has_abort_handler: bool = false,
             has_sendfile_ctx: bool = false,
             has_called_error_handler: bool = false,
@@ -559,25 +559,18 @@ pub fn NewServer(comptime ssl_enabled: bool, comptime debug_mode: bool) type {
 
             fn writeHeaders(
                 this: *RequestContext,
-                headers_: *Headers.RefCountedHeaders,
+                headers: *JSC.FetchHeaders,
             ) void {
-                var headers: *JSC.WebCore.Headers = headers_.get();
-                if (headers.getHeaderIndex("content-length")) |index| {
-                    headers.entries.orderedRemove(index);
+                headers.remove(&ZigString.init("content-length"));
+                if (!headers.has(&ZigString.init("content-type"))) {
+                    if (this.blob.content_type.len > 0) {
+                        this.resp.writeHeader("content-type", this.blob.content_type);
+                    } else if (MimeType.sniff(this.blob.sharedView())) |content| {
+                        this.resp.writeHeader("content-type", content.value);
+                    }
                 }
 
-                if (this.blob.content_type.len > 0 and headers.getHeaderIndex("content-type") == null) {
-                    this.resp.writeHeader("content-type", this.blob.content_type);
-                } else if (MimeType.sniff(this.blob.sharedView())) |content| {
-                    this.resp.writeHeader("content-type", content.value);
-                }
-
-                defer headers_.deref();
-                var entries = headers.entries.slice();
-                const names = entries.items(.name);
-                const values = entries.items(.value);
-
-                this.resp.writeHeaders(names, values, headers.buf.items);
+                headers.toUWSResponse(ssl_enabled, this.resp);
             }
 
             pub fn writeStatus(this: *RequestContext, status: u16) void {
@@ -834,8 +827,9 @@ pub fn NewServer(comptime ssl_enabled: bool, comptime debug_mode: bool) type {
 
                 this.writeStatus(status);
 
-                if (response.body.init.headers) |headers_| {
+                if (response.body.init.headers.as(JSC.FetchHeaders)) |headers_| {
                     this.writeHeaders(headers_);
+                    headers_.deref();
                 } else if (this.blob.content_type.len > 0) {
                     this.resp.writeHeader("content-type", this.blob.content_type);
                 } else if (MimeType.sniff(this.blob.sharedView())) |content| {

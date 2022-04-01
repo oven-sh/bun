@@ -175,12 +175,15 @@ typedef struct {
     uint8_t cell_type;
 } Bun__ArrayBuffer;
 
-#ifdef __cplusplus
-
+#ifndef STRING_POINTER
+#define STRING_POINTER
 typedef struct StringPointer {
     uint32_t off;
     uint32_t len;
 } StringPointer;
+#endif
+
+#ifdef __cplusplus
 
 extern "C" ZigErrorCode Zig_ErrorCodeParserError;
 

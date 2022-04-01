@@ -91,7 +91,6 @@ pub const GlobalConstructors = [_]type{
     WebCore.TextEncoder.Constructor,
     Request.Constructor,
     Response.Constructor,
-    Headers.Constructor,
     JSC.Cloudflare.HTMLRewriter.Constructor,
 };
 
@@ -2199,7 +2198,7 @@ pub const EventListenerMixin = struct {
 
         fetch_event.* = FetchEvent{
             .request_context = request_context,
-            .request = try Request.fromRequestContext(request_context),
+            .request = try Request.fromRequestContext(request_context, vm.global),
             .onPromiseRejectionCtx = @as(*anyopaque, ctx),
             .onPromiseRejectionHandler = FetchEventRejectionHandler.onRejection,
         };

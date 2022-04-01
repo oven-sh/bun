@@ -110,6 +110,24 @@ pub const ZigString = extern struct {
 
         pub const empty = Slice{ .allocator = bun.default_allocator, .ptr = undefined, .len = 0, .allocated = false };
 
+        pub fn clone(this: Slice, allocator: std.mem.Allocator) !Slice {
+            if (!this.allocated) {
+                return Slice{ .allocator = allocator, .ptr = this.ptr, .len = this.len, .allocated = false };
+            }
+
+            var duped = try allocator.dupe(u8, this.ptr[0..this.len]);
+            return Slice{ .allocator = allocator, .ptr = duped.ptr, .len = this.len, .allocated = true };
+        }
+
+        pub fn cloneZ(this: Slice, allocator: std.mem.Allocator) !Slice {
+            if (this.allocated or this.len == 0) {
+                return this;
+            }
+
+            var duped = try allocator.dupeZ(u8, this.ptr[0..this.len]);
+            return Slice{ .allocator = allocator, .ptr = duped.ptr, .len = this.len, .allocated = true };
+        }
+
         pub fn slice(this: Slice) []const u8 {
             return this.ptr[0..this.len];
         }
@@ -272,6 +290,28 @@ pub const ZigString = extern struct {
         };
     }
 
+    pub fn toSliceZ(this: ZigString, allocator: std.mem.Allocator) Slice {
+        if (this.len == 0)
+            return Slice{ .ptr = "", .len = 0, .allocator = allocator, .allocated = false };
+
+        if (is16Bit(&this)) {
+            var buffer = std.fmt.allocPrintZ(allocator, "{}", .{this}) catch unreachable;
+            return Slice{
+                .ptr = buffer.ptr,
+                .len = @truncate(u32, buffer.len),
+                .allocated = true,
+                .allocator = allocator,
+            };
+        }
+
+        return Slice{
+            .ptr = untagged(this.ptr),
+            .len = @truncate(u32, this.len),
+            .allocated = false,
+            .allocator = allocator,
+        };
+    }
+
     pub fn sliceZBuf(this: ZigString, buf: *[bun.MAX_PATH_BYTES]u8) ![:0]const u8 {
         return try std.fmt.bufPrintZ(buf, "{}", .{this});
     }
@@ -355,8 +395,12 @@ pub const DOMURL = opaque {
     const cppFn = shim.cppFn;
     pub const name = "WebCore::DOMURL";
 
+    pub fn cast_(value: JSValue, vm: *VM) ?*DOMURL {
+        return shim.cppFn("cast_", .{ value, vm });
+    }
+
     pub fn cast(value: JSValue) ?*DOMURL {
-        return shim.cppFn("cast", .{value});
+        return cast_(value, JSC.VirtualMachine.vm.global.vm());
     }
 
     pub fn href_(this: *DOMURL, out: *ZigString) void {
@@ -380,9 +424,288 @@ pub const DOMURL = opaque {
     }
 
     pub const Extern = [_][]const u8{
-        "cast",
+        "cast_",
         "href_",
         "pathname_",
+    };
+};
+
+const Api = @import("../../../api/schema.zig").Api;
+
+pub const FetchHeaders = opaque {
+    pub const shim = Shimmer("WebCore", "FetchHeaders", @This());
+
+    const cppFn = shim.cppFn;
+    pub const name = "WebCore::FetchHeaders";
+
+    pub fn createValue(
+        global: *JSGlobalObject,
+        names: [*c]Api.StringPointer,
+        values: [*c]Api.StringPointer,
+        buf: *const ZigString,
+        count_: u32,
+    ) JSValue {
+        return shim.cppFn("createValue", .{
+            global,
+            names,
+            values,
+            buf,
+            count_,
+        });
+    }
+
+    pub fn createFromJS(
+        global: *JSGlobalObject,
+        value: JSValue,
+    ) ?*FetchHeaders {
+        return shim.cppFn("createFromJS", .{
+            global,
+            value,
+        });
+    }
+
+    pub fn putDefault(this: *FetchHeaders, name_: []const u8, value: []const u8) void {
+        if (this.has(&ZigString.init(name_))) {
+            return;
+        }
+
+        this.put_(&ZigString.init(name_), &ZigString.init(value));
+    }
+
+    pub fn from(
+        global: *JSGlobalObject,
+        names: [*c]Api.StringPointer,
+        values: [*c]Api.StringPointer,
+        buf: *const ZigString,
+        count_: u32,
+    ) JSValue {
+        return shim.cppFn("createValue", .{
+            global,
+            names,
+            values,
+            buf,
+            count_,
+        });
+    }
+
+    pub fn createFromUWS(
+        global: *JSGlobalObject,
+        uws_request: *anyopaque,
+    ) JSValue {
+        return shim.cppFn("createFromUWS", .{
+            global,
+            uws_request,
+        });
+    }
+
+    pub fn toUWSResponse(
+        headers: *FetchHeaders,
+        is_ssl: bool,
+        uws_response: *anyopaque,
+    ) void {
+        return shim.cppFn("toUWSResponse", .{
+            headers,
+            is_ssl,
+            uws_response,
+        });
+    }
+
+    const PicoHeaders = extern struct {
+        ptr: *const anyopaque,
+        len: usize,
+    };
+
+    pub fn createEmpty(
+        global: *JSGlobalObject,
+    ) JSValue {
+        const pico_ = PicoHeaders{ .ptr = undefined, .len = 0 };
+        return shim.cppFn("createFromPicoHeaders_", .{
+            global,
+            &pico_,
+        });
+    }
+
+    pub fn createFromPicoHeaders(
+        global: *JSGlobalObject,
+        pico_headers: anytype,
+    ) JSValue {
+        const out = PicoHeaders{ .ptr = pico_headers.ptr, .len = pico_headers.len };
+        const result = shim.cppFn("createFromPicoHeaders_", .{
+            global,
+            &out,
+        });
+        return result;
+    }
+
+    pub fn createFromPicoHeaders_(
+        global: *JSGlobalObject,
+        pico_headers: *const anyopaque,
+    ) JSValue {
+        return shim.cppFn("createFromPicoHeaders_", .{
+            global,
+            pico_headers,
+        });
+    }
+
+    pub fn append(
+        this: *FetchHeaders,
+        name_: *const ZigString,
+        value: *const ZigString,
+    ) void {
+        return shim.cppFn("append", .{
+            this,
+            name_,
+            value,
+        });
+    }
+
+    pub fn put_(
+        this: *FetchHeaders,
+        name_: *const ZigString,
+        value: *const ZigString,
+    ) void {
+        return shim.cppFn("put_", .{
+            this,
+            name_,
+            value,
+        });
+    }
+
+    pub fn put(
+        this: *FetchHeaders,
+        name_: []const u8,
+        value: []const u8,
+    ) void {
+        this.put_(&ZigString.init(name_), &ZigString.init(value));
+    }
+
+    pub fn get_(
+        this: *FetchHeaders,
+        name_: *const ZigString,
+        out: *ZigString,
+    ) void {
+        shim.cppFn("get_", .{
+            this,
+            name_,
+            out,
+        });
+    }
+
+    pub fn get(
+        this: *FetchHeaders,
+        name_: []const u8,
+    ) ?[]const u8 {
+        var out = ZigString.Empty;
+        get_(this, &ZigString.init(name_), &out);
+        if (out.len > 0) {
+            return out.slice();
+        }
+
+        return null;
+    }
+
+    pub fn has(
+        this: *FetchHeaders,
+        name_: *const ZigString,
+    ) bool {
+        return shim.cppFn("has", .{
+            this,
+            name_,
+        });
+    }
+
+    pub fn remove(
+        this: *FetchHeaders,
+        name_: *const ZigString,
+    ) void {
+        return shim.cppFn("remove", .{
+            this,
+            name_,
+        });
+    }
+
+    pub fn cast_(value: JSValue, vm: *VM) ?*FetchHeaders {
+        return shim.cppFn("cast_", .{ value, vm });
+    }
+
+    pub fn cast(value: JSValue) ?*FetchHeaders {
+        return cast_(value, JSC.VirtualMachine.vm.global.vm());
+    }
+
+    pub fn toJS(this: *FetchHeaders, globalThis: *JSGlobalObject) JSValue {
+        return shim.cppFn("toJS", .{ this, globalThis });
+    }
+
+    pub fn count(
+        this: *FetchHeaders,
+        names: *u32,
+        buf_len: *u32,
+    ) void {
+        return shim.cppFn("count", .{
+            this,
+            names,
+            buf_len,
+        });
+    }
+
+    pub fn clone(
+        this: *FetchHeaders,
+        global: *JSGlobalObject,
+    ) JSValue {
+        return shim.cppFn("clone", .{
+            this,
+            global,
+        });
+    }
+
+    pub fn cloneThis(
+        this: *FetchHeaders,
+    ) ?*FetchHeaders {
+        return shim.cppFn("cloneThis", .{
+            this,
+        });
+    }
+
+    pub fn deref(
+        this: *FetchHeaders,
+    ) void {
+        return shim.cppFn("deref", .{
+            this,
+        });
+    }
+
+    pub fn copyTo(
+        this: *FetchHeaders,
+        names: [*c]Api.StringPointer,
+        values: [*c]Api.StringPointer,
+        buf: [*]u8,
+    ) void {
+        return shim.cppFn("copyTo", .{
+            this,
+            names,
+            values,
+            buf,
+        });
+    }
+
+    pub const Extern = [_][]const u8{
+        "append",
+        "cast_",
+        "clone",
+        "cloneThis",
+        "copyTo",
+        "count",
+        "createFromJS",
+        "createFromPicoHeaders_",
+        "createFromUWS",
+        "createValue",
+        "deref",
+        "get_",
+        "has",
+        "put_",
+        "remove",
+        "toJS",
+        "toUWSResponse",
     };
 };
 
@@ -1667,6 +1990,10 @@ pub const String = extern struct {
     };
 };
 
+pub const BuiltinName = enum(u8) {
+    headers,
+};
+
 pub const JSValue = enum(u64) {
     _,
 
@@ -1935,11 +2262,15 @@ pub const JSValue = enum(u64) {
     }
 
     pub fn as(value: JSValue, comptime ZigType: type) ?*ZigType {
-        if (value.isUndefinedOrNull())
+        if (value.isEmptyOrUndefinedOrNull())
             return null;
 
         if (comptime ZigType == DOMURL) {
             return DOMURL.cast(value);
+        }
+
+        if (comptime ZigType == FetchHeaders) {
+            return FetchHeaders.cast(value);
         }
 
         return JSC.GetJSPrivateData(ZigType, value.asObjectRef());
@@ -2082,6 +2413,12 @@ pub const JSValue = enum(u64) {
     }
     pub fn isNull(this: JSValue) bool {
         return @enumToInt(this) == 0x2;
+    }
+    pub fn isEmptyOrUndefinedOrNull(this: JSValue) bool {
+        return switch (@enumToInt(this)) {
+            0, 0xa, 0x2 => true,
+            else => false,
+        };
     }
     pub fn isUndefinedOrNull(this: JSValue) bool {
         return switch (@enumToInt(this)) {
@@ -2249,6 +2586,10 @@ pub const JSValue = enum(u64) {
         return cppFn("getIfPropertyExistsImpl", .{ this, global, ptr, len });
     }
 
+    pub fn getHiddenIfPropertyExistsImpl(this: JSValue, global: *JSGlobalObject, ptr: [*]const u8, len: u32) JSValue {
+        return cppFn("getHiddenIfPropertyExistsImpl", .{ this, global, ptr, len });
+    }
+
     pub fn getSymbolDescription(this: JSValue, global: *JSGlobalObject, str: *ZigString) void {
         cppFn("getSymbolDescription", .{ this, global, str });
     }
@@ -2310,6 +2651,11 @@ pub const JSValue = enum(u64) {
     }
 
     pub fn get(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
+        const value = getIfPropertyExistsImpl(this, global, property.ptr, @intCast(u32, property.len));
+        return if (@enumToInt(value) != 0) value else return null;
+    }
+
+    pub fn getHidden(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
         const value = getIfPropertyExistsImpl(this, global, property.ptr, @intCast(u32, property.len));
         return if (@enumToInt(value) != 0) value else return null;
     }

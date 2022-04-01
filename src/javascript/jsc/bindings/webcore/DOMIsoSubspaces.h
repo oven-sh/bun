@@ -89,8 +89,8 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForFileSystemDirectoryReader;
     // std::unique_ptr<IsoSubspace> m_subspaceForFileSystemEntry;
     // std::unique_ptr<IsoSubspace> m_subspaceForFileSystemFileEntry;
-    // std::unique_ptr<IsoSubspace> m_subspaceForFetchHeaders;
-    // std::unique_ptr<IsoSubspace> m_subspaceForFetchHeadersIterator;
+    std::unique_ptr<IsoSubspace> m_subspaceForFetchHeaders;
+    std::unique_ptr<IsoSubspace> m_subspaceForFetchHeadersIterator;
     // std::unique_ptr<IsoSubspace> m_subspaceForFetchRequest;
     // std::unique_ptr<IsoSubspace> m_subspaceForFetchResponse;
     // std::unique_ptr<IsoSubspace> m_subspaceForFileSystemDirectoryHandle;

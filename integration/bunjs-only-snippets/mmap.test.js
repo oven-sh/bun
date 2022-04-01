@@ -10,13 +10,13 @@ it("mmap finalizer", async () => {
 
   map = null;
   Bun.gc(true);
-  await new Promise(resolve => setTimeout(resolve, 1));
+  await new Promise((resolve) => setTimeout(resolve, 1));
 });
 
-it('mmap passed to other syscalls', async () => {
+it("mmap passed to other syscalls", async () => {
   const map = Bun.mmap(path);
-  await Bun.write(path + '1', map);
-  const text = await (await Bun.file(path + '1')).text();
+  await Bun.write(path + "1", map);
+  const text = await (await Bun.file(path + "1")).text();
 
   expect(text).toBe(new TextDecoder().decode(map));
 });

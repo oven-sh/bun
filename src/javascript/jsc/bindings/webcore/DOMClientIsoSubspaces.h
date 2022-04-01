@@ -101,8 +101,8 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFileSystemDirectoryReader;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFileSystemEntry;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFileSystemFileEntry;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFetchHeaders;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFetchHeadersIterator;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFetchHeaders;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFetchHeadersIterator;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFetchRequest;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFetchResponse;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFileSystemDirectoryHandle;

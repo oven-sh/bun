@@ -41,6 +41,7 @@ pub fn cTypeLabel(comptime Type: type) ?[]const u8 {
         f64 => "double",
         f32 => "float",
         *anyopaque => "void*",
+        *const anyopaque => "const void*",
         [*]bool => "bool*",
         [*]usize => "size_t*",
         [*]isize => "int*",

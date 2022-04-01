@@ -1,3 +1,4 @@
+#pragma once
 
 #ifndef LIBUWS_CAPI_HEADER
 #define LIBUWS_CAPI_HEADER
@@ -7,6 +8,15 @@
 #include <stdint.h>
 #include <uws/src/App.h>
 #include <uws/src/AsyncSocket.h>
+
+#ifndef STRING_POINTER
+#define STRING_POINTER
+typedef struct StringPointer {
+  uint32_t off;
+  uint32_t len;
+} StringPointer;
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -281,11 +291,6 @@ void uws_loop_addPreHandler(us_loop_t *loop, void *key,
                             void (*cb)(void *ctx, us_loop_t *loop));
 void uws_loop_removePreHandler(us_loop_t *loop, void *ctx_);
 void uws_loop_defer(us_loop_t *loop, void *ctx, void (*cb)(void *ctx));
-
-typedef struct StringPointer {
-  uint32_t off;
-  uint32_t len;
-} StringPointer;
 
 void uws_res_write_headers(int ssl, uws_res_t *res, const StringPointer *names,
                            const StringPointer *values, size_t count,

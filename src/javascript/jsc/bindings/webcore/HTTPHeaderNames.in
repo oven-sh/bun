@@ -1,0 +1,119 @@
+//
+// Copyright (C) 2014 Apple Inc. All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions
+// are met:
+// 1. Redistributions of source code must retain the above copyright
+//    notice, this list of conditions and the following disclaimer.
+// 2. Redistributions in binary form must reproduce the above copyright
+//    notice, this list of conditions and the following disclaimer in the
+//    documentation and/or other materials provided with the distribution.
+//
+// THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+// THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+// PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+// BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+// THE POSSIBILITY OF SUCH DAMAGE.
+//
+
+Accept
+Accept-Charset
+Accept-Language
+Accept-Encoding
+Accept-Ranges
+Access-Control-Allow-Credentials
+Access-Control-Allow-Headers
+Access-Control-Allow-Methods
+Access-Control-Allow-Origin
+Access-Control-Expose-Headers
+Access-Control-Max-Age
+Access-Control-Request-Headers
+Access-Control-Request-Method
+Age
+Authorization
+Cache-Control
+Connection
+Content-Disposition
+Content-Encoding
+Content-Language
+Content-Length
+Content-Location
+Content-Security-Policy
+Content-Security-Policy-Report-Only
+Content-Type
+Content-Range
+Cookie
+Cookie2
+Cross-Origin-Embedder-Policy
+Cross-Origin-Embedder-Policy-Report-Only
+Cross-Origin-Opener-Policy
+Cross-Origin-Opener-Policy-Report-Only
+Cross-Origin-Resource-Policy
+Date
+DNT
+Default-Style
+ETag
+Expect
+Expires
+Host
+If-Match
+If-Modified-Since
+If-None-Match
+If-Range
+If-Unmodified-Since
+Keep-Alive
+Last-Event-ID
+Last-Modified
+Link
+Location
+Origin
+Ping-From
+Ping-To
+Purpose
+Pragma
+Proxy-Authorization
+Range
+Referer
+Referrer-Policy
+Refresh
+Report-To
+Sec-Fetch-Dest
+Sec-Fetch-Mode
+Sec-WebSocket-Accept
+Sec-WebSocket-Extensions
+Sec-WebSocket-Key
+Sec-WebSocket-Protocol
+Sec-WebSocket-Version
+Server-Timing
+Service-Worker
+Service-Worker-Allowed
+Service-Worker-Navigation-Preload
+Set-Cookie
+Set-Cookie2
+SourceMap
+TE
+Timing-Allow-Origin
+Trailer
+Transfer-Encoding
+Upgrade
+Upgrade-Insecure-Requests
+User-Agent
+Vary
+Via
+X-Content-Type-Options
+X-DNS-Prefetch-Control
+X-Frame-Options
+X-SourceMap
+X-XSS-Protection
+X-Temp-Tablet
+
+// These headers are specific to GStreamer.
+Icy-MetaInt
+Icy-Metadata

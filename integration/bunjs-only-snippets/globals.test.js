@@ -16,7 +16,8 @@ it("extendable", () => {
     var Foo = class extends Class {};
     var bar = new Foo();
     expect(bar instanceof Class).toBe(true);
-    expect(Class.prototype instanceof Class).toBe(true);
+    expect(!!Class.prototype).toBe(true);
+    expect(typeof Class.prototype).toBe("object");
   }
   expect(true).toBe(true);
 });

@@ -21,7 +21,6 @@ const Response = WebCore.Response;
 const Request = WebCore.Request;
 const Router = @import("./api/router.zig");
 const FetchEvent = WebCore.FetchEvent;
-const Headers = WebCore.Headers.RefCountedHeaders;
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 
 const Body = WebCore.Body;
@@ -2536,7 +2535,6 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     ExpectPrototype,
     FetchEvent,
     FetchTaskletContext,
-    Headers,
     HTMLRewriter,
     JSNode,
     LazyPropertiesObject,

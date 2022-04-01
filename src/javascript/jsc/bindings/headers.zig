@@ -60,6 +60,8 @@ pub const Bun__Readable = bindings.NodeReadableStream;
 pub const Bun__Writable = bindings.NodeWritableStream;
 pub const Bun__ArrayBuffer = bindings.ArrayBuffer;
 pub const struct_WebCore__DOMURL = bindings.DOMURL;
+pub const struct_WebCore__FetchHeaders = bindings.FetchHeaders;
+pub const StringPointer = @import("../../../api/schema.zig").Api.StringPointer;
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
 pub const ptrdiff_t = c_long;
@@ -106,10 +108,12 @@ pub const WTF__URL = bWTF__URL;
 pub const JSC__IteratorPrototype = struct_JSC__IteratorPrototype;
 pub const JSC__JSInternalPromise = bJSC__JSInternalPromise;
 
+pub const JSC__MapIteratorPrototype = struct_JSC__MapIteratorPrototype;
+
 pub const JSC__RegExpPrototype = struct_JSC__RegExpPrototype;
 pub const JSC__CallFrame = bJSC__CallFrame;
 
-pub const JSC__MapIteratorPrototype = struct_JSC__MapIteratorPrototype;
+pub const WebCore__FetchHeaders = struct_WebCore__FetchHeaders;
 pub const WTF__StringView = bWTF__StringView;
 pub const JSC__ThrowScope = bJSC__ThrowScope;
 pub const WTF__StringImpl = bWTF__StringImpl;
@@ -147,9 +151,27 @@ pub extern fn ZigString__toExternalValue(arg0: [*c]const ZigString, arg1: [*c]JS
 pub extern fn ZigString__toExternalValueWithCallback(arg0: [*c]const ZigString, arg1: [*c]JSC__JSGlobalObject, ArgFn2: ?fn (?*anyopaque, ?*anyopaque, usize) callconv(.C) void) JSC__JSValue;
 pub extern fn ZigString__toValue(arg0: [*c]const ZigString, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toValueGC(arg0: [*c]const ZigString, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
-pub extern fn WebCore__DOMURL__cast(JSValue0: JSC__JSValue) ?*WebCore__DOMURL;
+pub extern fn WebCore__DOMURL__cast_(JSValue0: JSC__JSValue, arg1: [*c]JSC__VM) ?*WebCore__DOMURL;
 pub extern fn WebCore__DOMURL__href_(arg0: ?*WebCore__DOMURL, arg1: [*c]ZigString) void;
 pub extern fn WebCore__DOMURL__pathname_(arg0: ?*WebCore__DOMURL, arg1: [*c]ZigString) void;
+pub extern fn WebCore__FetchHeaders__append(arg0: ?*WebCore__FetchHeaders, arg1: [*c]const ZigString, arg2: [*c]const ZigString) void;
+pub extern fn WebCore__FetchHeaders__cast_(JSValue0: JSC__JSValue, arg1: [*c]JSC__VM) ?*WebCore__FetchHeaders;
+pub extern fn WebCore__FetchHeaders__clone(arg0: ?*WebCore__FetchHeaders, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
+pub extern fn WebCore__FetchHeaders__cloneThis(arg0: ?*WebCore__FetchHeaders) ?*WebCore__FetchHeaders;
+pub extern fn WebCore__FetchHeaders__copyTo(arg0: ?*WebCore__FetchHeaders, arg1: [*c]StringPointer, arg2: [*c]StringPointer, arg3: [*c]u8) void;
+pub extern fn WebCore__FetchHeaders__count(arg0: ?*WebCore__FetchHeaders, arg1: [*c]u32, arg2: [*c]u32) void;
+pub extern fn WebCore__FetchHeaders__createFromJS(arg0: [*c]JSC__JSGlobalObject, JSValue1: JSC__JSValue) ?*WebCore__FetchHeaders;
+pub extern fn WebCore__FetchHeaders__createFromPicoHeaders_(arg0: [*c]JSC__JSGlobalObject, arg1: ?*const anyopaque) JSC__JSValue;
+pub extern fn WebCore__FetchHeaders__createFromUWS(arg0: [*c]JSC__JSGlobalObject, arg1: ?*anyopaque) JSC__JSValue;
+pub extern fn WebCore__FetchHeaders__createValue(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]StringPointer, arg2: [*c]StringPointer, arg3: [*c]const ZigString, arg4: u32) JSC__JSValue;
+pub extern fn WebCore__FetchHeaders__deref(arg0: ?*WebCore__FetchHeaders) void;
+pub extern fn WebCore__FetchHeaders__get_(arg0: ?*WebCore__FetchHeaders, arg1: [*c]const ZigString, arg2: [*c]ZigString) void;
+pub extern fn WebCore__FetchHeaders__has(arg0: ?*WebCore__FetchHeaders, arg1: [*c]const ZigString) bool;
+pub extern fn WebCore__FetchHeaders__keyCount(arg0: ?*WebCore__FetchHeaders) u32;
+pub extern fn WebCore__FetchHeaders__put_(arg0: ?*WebCore__FetchHeaders, arg1: [*c]const ZigString, arg2: [*c]const ZigString) void;
+pub extern fn WebCore__FetchHeaders__remove(arg0: ?*WebCore__FetchHeaders, arg1: [*c]const ZigString) void;
+pub extern fn WebCore__FetchHeaders__toJS(arg0: ?*WebCore__FetchHeaders, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
+pub extern fn WebCore__FetchHeaders__toUWSResponse(arg0: ?*WebCore__FetchHeaders, arg1: bool, arg2: ?*anyopaque) void;
 pub extern fn SystemError__toErrorInstance(arg0: [*c]const SystemError, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSCell__getObject(arg0: [*c]JSC__JSCell) [*c]JSC__JSObject;
 pub extern fn JSC__JSCell__getString(arg0: [*c]JSC__JSCell, arg1: [*c]JSC__JSGlobalObject) bWTF__String;

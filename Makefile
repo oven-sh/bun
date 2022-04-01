@@ -200,8 +200,10 @@ MAC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders \
 LINUX_INCLUDE_DIRS := -I$(JSC_INCLUDE_DIR) \
 					  -Isrc/javascript/jsc/bindings/
 
-INCLUDE_DIRS := -I$(BUN_DEPS_DIR)/uws
+UWS_INCLUDE_DIR := -I$(BUN_DEPS_DIR)/uws/uSockets/src -I$(BUN_DEPS_DIR)/uws/src -I$(BUN_DEPS_DIR)
 
+
+INCLUDE_DIRS := $(UWS_INCLUDE_DIR)
 
 
 ifeq ($(OS_NAME),linux)
@@ -456,7 +458,7 @@ build-obj-wasm-small:
 build-obj-safe: 
 	$(ZIG) build obj -Drelease-safe
 
-UWS_CC_FLAGS = -pthread -DUWS_HTTPRESPONSE_NO_WRITEMARK=1  -DLIBUS_USE_OPENSSL=1 -DLIBUS_USE_BORINGSSL=1 -DWITH_BORINGSSL=1 -Wpedantic -Wall -Wextra -Wsign-conversion -Wconversion -Isrc -IuSockets/src -DUWS_WITH_PROXY
+UWS_CC_FLAGS = -pthread  -DLIBUS_USE_OPENSSL=1 -DUWS_HTTPRESPONSE_NO_WRITEMARK=1  -DLIBUS_USE_BORINGSSL=1 -DWITH_BORINGSSL=1 -Wpedantic -Wall -Wextra -Wsign-conversion -Wconversion $(UWS_INCLUDE) -DUWS_WITH_PROXY
 UWS_CXX_FLAGS = $(UWS_CC_FLAGS) -std=gnu++17
 UWS_LDFLAGS = -I$(BUN_DEPS_DIR)/boringssl/include
 
@@ -1032,7 +1034,7 @@ wasm-return1:
 # We do this outside of build.zig for performance reasons
 # The C compilation stuff with build.zig is really slow and we don't need to run this as often as the rest
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX) $(CLANG_FLAGS) $(UWS_INCLUDE) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \

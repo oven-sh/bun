@@ -1695,11 +1695,6 @@ pub const ZigConsoleClient = struct {
                                 response.writeFormat(this, writer_, enable_ansi_colors) catch {};
                                 return;
                             },
-                            @field(JSPrivateDataPtr.Tag, @typeName(JSC.WebCore.Headers.RefCountedHeaders)) => {
-                                var obj = priv_data.as(JSC.WebCore.Headers.RefCountedHeaders);
-                                obj.leak().writeFormat(this, writer_, enable_ansi_colors) catch {};
-                                return;
-                            },
                             .Request => {
                                 this.printAs(.JSON, Writer, writer_, value, .Object, enable_ansi_colors);
                                 return;

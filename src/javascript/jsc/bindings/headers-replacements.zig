@@ -60,3 +60,5 @@ pub const Bun__Readable = bindings.NodeReadableStream;
 pub const Bun__Writable = bindings.NodeWritableStream;
 pub const Bun__ArrayBuffer = bindings.ArrayBuffer;
 pub const struct_WebCore__DOMURL = bindings.DOMURL;
+pub const struct_WebCore__FetchHeaders = bindings.FetchHeaders;
+pub const StringPointer = @import("../../../api/schema.zig").Api.StringPointer;

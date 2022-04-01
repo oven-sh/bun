@@ -217,7 +217,7 @@ pub const HTMLRewriter = struct {
     pub fn returnEmptyResponse(this: *HTMLRewriter, global: *JSGlobalObject, response: *Response) JSValue {
         var result = bun.default_allocator.create(Response) catch unreachable;
 
-        response.cloneInto(result, getAllocator(global.ref()));
+        response.cloneInto(result, getAllocator(global.ref()), global);
         this.finalizeWithoutDestroy();
         return JSValue.fromRef(Response.makeMaybePooled(global.ref(), result));
     }
@@ -280,7 +280,6 @@ pub const HTMLRewriter = struct {
                 .body = .{
                     .init = .{
                         .status_code = 200,
-                        .headers = null,
                     },
                     .value = .{
                         .Locked = .{

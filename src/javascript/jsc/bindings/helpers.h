@@ -125,6 +125,36 @@ static const WTF::String toString(ZigString str)
             reinterpret_cast<const UChar*>(untag(str.ptr)), str.len));
 }
 
+static const WTF::String toString(ZigString str, StringPointer ptr)
+{
+    if (str.len == 0 || str.ptr == nullptr || ptr.len == 0) {
+        return WTF::String();
+    }
+    if (UNLIKELY(isTaggedUTF8Ptr(str.ptr))) {
+        return WTF::String::fromUTF8(&untag(str.ptr)[ptr.off], ptr.len);
+    }
+
+    return !isTaggedUTF16Ptr(str.ptr)
+        ? WTF::String(WTF::StringImpl::createWithoutCopying(&untag(str.ptr)[ptr.off], ptr.len))
+        : WTF::String(WTF::StringImpl::createWithoutCopying(
+            &reinterpret_cast<const UChar*>(untag(str.ptr))[ptr.off], ptr.len));
+}
+
+static const WTF::String toStringCopy(ZigString str, StringPointer ptr)
+{
+    if (str.len == 0 || str.ptr == nullptr || ptr.len == 0) {
+        return WTF::String();
+    }
+    if (UNLIKELY(isTaggedUTF8Ptr(str.ptr))) {
+        return WTF::String::fromUTF8(&untag(str.ptr)[ptr.off], ptr.len);
+    }
+
+    return !isTaggedUTF16Ptr(str.ptr)
+        ? WTF::String(WTF::StringImpl::create(&untag(str.ptr)[ptr.off], ptr.len))
+        : WTF::String(WTF::StringImpl::create(
+            &reinterpret_cast<const UChar*>(untag(str.ptr))[ptr.off], ptr.len));
+}
+
 static const WTF::String toStringCopy(ZigString str)
 {
     if (str.len == 0 || str.ptr == nullptr) {

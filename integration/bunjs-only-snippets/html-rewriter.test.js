@@ -26,10 +26,6 @@ describe("HTMLRewriter", () => {
     expect(await res.text()).toBe("<div><span>replace</span></div>");
   });
 
-  it("exists globally", async () => {
-    expect(typeof HTMLRewriter).toBe("function");
-    expect(typeof HTMLRewriter.constructor).toBe("function");
-  });
   it("supports element handlers", async () => {
     var rewriter = new HTMLRewriter();
     rewriter.on("div", {

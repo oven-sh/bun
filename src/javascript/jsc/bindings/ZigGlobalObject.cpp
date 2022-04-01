@@ -86,10 +86,11 @@
 #include "JSCustomEvent.h"
 #include "JSAbortController.h"
 #include "JSEvent.h"
+#include "JSFetchHeaders.h"
 
 #include "Process.h"
 
-#include "JavaScriptCore/RemoteInspectorServer.h"
+#include <JavaScriptCore/RemoteInspectorServer.h>
 
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
@@ -370,6 +371,17 @@ JSC_DEFINE_CUSTOM_GETTER(JSCustomEvent_getter,
     Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     return JSC::JSValue::encode(
         WebCore::JSCustomEvent::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
+}
+
+JSC_DECLARE_CUSTOM_GETTER(JSFetchHeaders_getter);
+
+JSC_DEFINE_CUSTOM_GETTER(JSFetchHeaders_getter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return JSC::JSValue::encode(
+        WebCore::JSFetchHeaders::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
 }
 
 JSC_DECLARE_CUSTOM_GETTER(JSEventTarget_getter);
@@ -849,11 +861,14 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "CustomEvent"), JSC::CustomGetterSetter::create(vm, JSCustomEvent_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Headers"), JSC::CustomGetterSetter::create(vm, JSFetchHeaders_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
     extraStaticGlobals.releaseBuffer();
 
-    // this->setRemoteDebuggingEnabled(true);
+    this->setRemoteDebuggingEnabled(true);
     // auto& server = Inspector::RemoteInspectorServer::singleton();
-    // if (server.start("127.0.0.1", 9222)) {
+    // if (server.start("localhost", 9222)) {
     // }
 }
 

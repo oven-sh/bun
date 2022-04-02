@@ -301,8 +301,7 @@ pub const PathLike = union(Tag) {
                 if (exception.* != null) return null;
                 if (!Valid.pathBuffer(buffer, ctx, exception)) return null;
 
-                JSC.C.JSValueProtect(ctx, arg.asObjectRef());
-                arguments.eat();
+                arguments.protectEat();
                 return PathLike{ .buffer = buffer };
             },
 
@@ -311,8 +310,7 @@ pub const PathLike = union(Tag) {
                 if (exception.* != null) return null;
                 if (!Valid.pathBuffer(buffer, ctx, exception)) return null;
 
-                JSC.C.JSValueProtect(ctx, arg.asObjectRef());
-                arguments.eat();
+                arguments.protectEat();
 
                 return PathLike{ .buffer = buffer };
             },
@@ -326,8 +324,7 @@ pub const PathLike = union(Tag) {
 
                 if (!Valid.pathString(zig_str, ctx, exception)) return null;
 
-                JSC.C.JSValueProtect(ctx, arg.asObjectRef());
-                arguments.eat();
+                arguments.protectEat();
 
                 if (zig_str.is16Bit()) {
                     var printed = std.mem.span(std.fmt.allocPrintZ(arguments.arena.allocator(), "{}", .{zig_str}) catch unreachable);
@@ -341,8 +338,7 @@ pub const PathLike = union(Tag) {
                     var zig_str = domurl.pathname();
                     if (!Valid.pathString(zig_str, ctx, exception)) return null;
 
-                    JSC.C.JSValueProtect(ctx, arg.asObjectRef());
-                    arguments.eat();
+                    arguments.protectEat();
 
                     if (zig_str.is16Bit()) {
                         var printed = std.mem.span(std.fmt.allocPrintZ(arguments.arena.allocator(), "{}", .{zig_str}) catch unreachable);
@@ -421,6 +417,37 @@ pub const ArgumentsSlice = struct {
     arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator),
     all: []const JSC.JSValue,
     threw: bool = false,
+    protected: std.bit_set.IntegerBitSet(32) = std.bit_set.IntegerBitSet(32).initEmpty(),
+
+    pub fn unprotect(this: *ArgumentsSlice) void {
+        var iter = this.protected.iterator(.{});
+        var ctx = JSC.VirtualMachine.vm.global.ref();
+        while (iter.next()) |i| {
+            JSC.C.JSValueUnprotect(ctx, this.all[i].asObjectRef());
+        }
+        this.protected = std.bit_set.IntegerBitSet(32).initEmpty();
+    }
+
+    pub fn deinit(this: *ArgumentsSlice) void {
+        this.unprotect();
+        this.arena.deinit();
+    }
+
+    pub fn protectEat(this: *ArgumentsSlice) void {
+        if (this.remaining.len == 0) return;
+        const index = this.all.len - this.remaining.len;
+        this.protected.set(index);
+        JSC.C.JSValueProtect(JSC.VirtualMachine.vm.global.ref(), this.all[index].asObjectRef());
+        this.eat();
+    }
+
+    pub fn protectEatNext(this: *ArgumentsSlice) ?JSC.JSValue {
+        if (this.remaining.len == 0) return null;
+        const index = this.all.len - this.remaining.len;
+        this.protected.set(index);
+        JSC.C.JSValueProtect(JSC.VirtualMachine.vm.global.ref(), this.all[index].asObjectRef());
+        return this.nextEat();
+    }
 
     pub fn from(arguments: []const JSC.JSValueRef) ArgumentsSlice {
         return init(@ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);

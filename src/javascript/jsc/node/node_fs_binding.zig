@@ -42,14 +42,7 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
             exception: JSC.C.ExceptionRef,
         ) JSC.C.JSValueRef {
             var slice = ArgumentsSlice.init(@ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);
-
-            defer {
-                // TODO: fix this
-                for (arguments) |arg| {
-                    JSC.C.JSValueUnprotect(ctx, arg);
-                }
-                slice.arena.deinit();
-            }
+            defer slice.deinit();
 
             const args = if (comptime Arguments != void)
                 (Arguments.fromJS(ctx, &slice, exception) orelse return null)

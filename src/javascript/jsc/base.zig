@@ -2690,7 +2690,7 @@ pub fn wrap(
                         args[i] = ctx.ptr();
                     },
                     ZigString => {
-                        var string_value = iter.nextEat() orelse {
+                        var string_value = iter.protectEatNext() orelse {
                             JSC.throwInvalidArguments("Missing argument", .{}, ctx, exception);
                             return null;
                         };
@@ -2712,7 +2712,7 @@ pub fn wrap(
                         }
                     },
                     *Response => {
-                        args[i] = (iter.nextEat() orelse {
+                        args[i] = (iter.protectEatNext() orelse {
                             JSC.throwInvalidArguments("Missing Response object", .{}, ctx, exception);
                             return null;
                         }).as(Response) orelse {
@@ -2721,7 +2721,7 @@ pub fn wrap(
                         };
                     },
                     *Request => {
-                        args[i] = (iter.nextEat() orelse {
+                        args[i] = (iter.protectEatNext() orelse {
                             JSC.throwInvalidArguments("Missing Request object", .{}, ctx, exception);
                             return null;
                         }).as(Request) orelse {
@@ -2740,7 +2740,7 @@ pub fn wrap(
                         args[i] = exception;
                     },
                     JSValue => {
-                        const val = iter.nextEat() orelse {
+                        const val = iter.protectEatNext() orelse {
                             JSC.throwInvalidArguments("Missing argument", .{}, ctx, exception);
                             return null;
                         };
@@ -2753,6 +2753,7 @@ pub fn wrap(
             var result: JSValue = @call(.{}, @field(Container, name), args);
             if (result.isError()) {
                 exception.* = result.asObjectRef();
+                iter.deinit();
                 return null;
             }
 
@@ -2777,6 +2778,8 @@ pub fn wrap(
                     },
                 }
             }
+
+            iter.deinit();
 
             return result.asObjectRef();
         }

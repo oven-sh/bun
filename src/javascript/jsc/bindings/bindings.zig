@@ -2402,13 +2402,13 @@ pub const JSValue = enum(u64) {
         return cppFn("toInt64", .{this});
     }
 
-    pub fn isUndefined(this: JSValue) bool {
+    pub inline fn isUndefined(this: JSValue) bool {
         return @enumToInt(this) == 0xa;
     }
-    pub fn isNull(this: JSValue) bool {
+    pub inline fn isNull(this: JSValue) bool {
         return @enumToInt(this) == 0x2;
     }
-    pub fn isEmptyOrUndefinedOrNull(this: JSValue) bool {
+    pub inline fn isEmptyOrUndefinedOrNull(this: JSValue) bool {
         return switch (@enumToInt(this)) {
             0, 0xa, 0x2 => true,
             else => false,
@@ -2421,7 +2421,7 @@ pub const JSValue = enum(u64) {
         };
     }
     /// Empty as in "JSValue {}" rather than an empty string
-    pub fn isEmpty(this: JSValue) bool {
+    pub inline fn isEmpty(this: JSValue) bool {
         return switch (@enumToInt(this)) {
             0 => true,
             else => false,

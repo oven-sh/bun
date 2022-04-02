@@ -1817,7 +1817,7 @@ pub const Blob = struct {
                 }
 
                 const fd = this.getFd() catch return;
-                const needs_close = this.file_store.pathlike == .path;
+                const needs_close = this.file_store.pathlike == .path and fd != 0;
                 const stat: std.os.Stat = switch (JSC.Node.Syscall.fstat(fd)) {
                     .result => |result| result,
                     .err => |err| {
@@ -1963,6 +1963,7 @@ pub const Blob = struct {
                 file_offset: u64,
             ) AsyncIO.WriteError!SizeType {
                 var aio = &AsyncIO.global;
+                this.wrote = 0;
                 aio.write(
                     *WriteFile,
                     this,
@@ -2047,6 +2048,7 @@ pub const Blob = struct {
                         if (needs_close) {
                             this.doClose() catch {};
                         }
+                        this.wrote = @truncate(SizeType, total_written);
                         return;
                     };
                     remain = remain[wrote_len..];

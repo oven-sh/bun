@@ -2249,6 +2249,7 @@ pub const ArrayBuffer = extern struct {
     }
 
     pub fn toJS(this: ArrayBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.JSValue {
+        if (!this.value.isEmpty()) {
             return this.value;
         }
 

@@ -553,6 +553,7 @@ pub fn openInEditor(
     var edit = &VirtualMachine.vm.rareData().editor_context;
 
     var arguments = JSC.Node.ArgumentsSlice.from(args);
+    defer arguments.deinit();
     var path: string = "";
     var editor_choice: ?Editor = null;
     var line: ?string = null;
@@ -755,7 +756,8 @@ fn doResolve(
     exception: js.ExceptionRef,
 ) ?JSC.JSValue {
     var args = JSC.Node.ArgumentsSlice.from(arguments);
-    const specifier = args.nextEat() orelse {
+    defer args.deinit();
+    const specifier = args.protectEatNext() orelse {
         JSC.throwInvalidArguments("Expected a specifier and a from path", .{}, ctx, exception);
         return null;
     };
@@ -765,7 +767,7 @@ fn doResolve(
         return null;
     }
 
-    const from = args.nextEat() orelse {
+    const from = args.protectEatNext() orelse {
         JSC.throwInvalidArguments("Expected a from path", .{}, ctx, exception);
         return null;
     };

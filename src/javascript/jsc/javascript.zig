@@ -261,7 +261,7 @@ pub fn IOTask(comptime Context: type) type {
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
             var this = try allocator.create(This);
             this.* = .{
-                .event_loop = VirtualMachine.vm.event_loop,
+                .event_loop = VirtualMachine.vm.eventLoop(),
                 .ctx = value,
                 .allocator = allocator,
                 .globalThis = globalThis,
@@ -289,7 +289,9 @@ pub fn IOTask(comptime Context: type) type {
         }
 
         pub fn deinit(this: *This) void {
-            this.allocator.destroy(this);
+            var allocator = this.allocator;
+            this.* = undefined;
+            allocator.destroy(this);
         }
     };
 }
@@ -550,21 +552,28 @@ pub const VirtualMachine = struct {
                         var transform_task: *BunTimerTimeoutTask = task.get(BunTimerTimeoutTask).?;
                         transform_task.*.runFromJS();
                         finished += 1;
+                        vm_.active_tasks -|= 1;
                     },
                     @field(Task.Tag, @typeName(ReadFileTask)) => {
                         var transform_task: *ReadFileTask = task.get(ReadFileTask).?;
                         transform_task.*.runFromJS();
+                        transform_task.deinit();
                         finished += 1;
+                        vm_.active_tasks -|= 1;
                     },
                     @field(Task.Tag, @typeName(OpenAndStatFileTask)) => {
                         var transform_task: *OpenAndStatFileTask = task.get(OpenAndStatFileTask).?;
                         transform_task.*.runFromJS();
+                        transform_task.deinit();
                         finished += 1;
+                        vm_.active_tasks -|= 1;
                     },
                     @field(Task.Tag, @typeName(WriteFileTask)) => {
                         var transform_task: *WriteFileTask = task.get(WriteFileTask).?;
                         transform_task.*.runFromJS();
+                        transform_task.deinit();
                         finished += 1;
+                        vm_.active_tasks -|= 1;
                     },
                     else => unreachable,
                 }

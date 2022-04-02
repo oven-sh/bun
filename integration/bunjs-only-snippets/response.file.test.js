@@ -1,19 +1,7 @@
 import fs from "fs";
 import { it, expect } from "bun:test";
 import path from "path";
-
-function gc() {
-  Bun.gc(true);
-}
-
-// we must ensure that finalizers are run
-// so that the reference-counting logic is exercised
-function gcTick() {
-  gc();
-  return new Promise((resolve) => {
-    setTimeout(resolve, 0);
-  });
-}
+import { gcTick } from "./gc";
 
 it("Bun.file not found returns ENOENT", async () => {
   try {

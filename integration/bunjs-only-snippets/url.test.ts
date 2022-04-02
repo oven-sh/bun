@@ -84,19 +84,5 @@ describe("url", () => {
       expect(result.search).toBe(values.search);
       expect(result.username).toBe(values.username);
     }
-
-    expect(new URL("example.com").pathname).toBe("/");
-    expect(new URL("https://example.com").protocol).toBe("https:");
-    expect(new URL("http://example.com").protocol).toBe("http:");
-    expect(new URL("example.com/foo").pathname).toBe("/foo");
-    expect(new URL("example.com/foo/bar/").pathname).toBe("/foo/bar/");
-    expect(new URL("example.com/foo/bar/?search=true").search).toBe(
-      "?search=true"
-    );
-    expect(new URL("example.com/foo/bar/?search=true#fragment").search).toBe(
-      "?search=true"
-    );
-    expect(new URL("https://example.com").href).toBe("https://example.com/");
-    expect(new URL("example.com").hostname).toBe("example.com");
   });
 });

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "bun:test";
+import { gcTick } from "./gc";
 
 var setTimeoutAsync = (fn, delay) => {
   return new Promise((resolve, reject) => {
@@ -14,6 +15,7 @@ var setTimeoutAsync = (fn, delay) => {
 
 describe("HTMLRewriter", () => {
   it("HTMLRewriter: async replacement", async () => {
+    await gcTick();
     const res = new HTMLRewriter()
       .on("div", {
         async element(element) {
@@ -23,7 +25,9 @@ describe("HTMLRewriter", () => {
         },
       })
       .transform(new Response("<div>example.com</div>"));
+    await gcTick();
     expect(await res.text()).toBe("<div><span>replace</span></div>");
+    await gcTick();
   });
 
   it("supports element handlers", async () => {

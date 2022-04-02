@@ -2228,6 +2228,7 @@ pub const ArrayBuffer = extern struct {
     len: u32,
     byte_len: u32,
     typed_array_type: JSC.JSValue.JSType,
+    value: JSC.JSValue = JSC.JSValue.zero,
 
     pub const name = "Bun__ArrayBuffer";
     pub const Stream = std.io.FixedBufferStream([]u8);
@@ -2239,6 +2240,7 @@ pub const ArrayBuffer = extern struct {
     pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue, _: JSC.C.ExceptionRef) ArrayBuffer {
         var out = std.mem.zeroes(ArrayBuffer);
         std.debug.assert(value.asArrayBuffer_(ctx.ptr(), &out));
+        out.value = value;
         return out;
     }
 
@@ -2247,6 +2249,33 @@ pub const ArrayBuffer = extern struct {
     }
 
     pub fn toJS(this: ArrayBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.JSValue {
+            return this.value;
+        }
+
+        // If it's not a mimalloc heap buffer, we're not going to call a deallocator
+        if (!bun.Global.Mimalloc.mi_is_in_heap_region(this.ptr)) {
+            if (this.typed_array_type == .ArrayBuffer) {
+                return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(
+                    ctx,
+                    this.ptr,
+                    this.byte_len,
+                    null,
+                    null,
+                    exception,
+                ));
+            }
+
+            return JSC.JSValue.fromRef(JSC.C.JSObjectMakeTypedArrayWithBytesNoCopy(
+                ctx,
+                this.typed_array_type.toC(),
+                this.ptr,
+                this.byte_len,
+                null,
+                null,
+                exception,
+            ));
+        }
+
         if (this.typed_array_type == .ArrayBuffer) {
             return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(
                 ctx,
@@ -2276,6 +2305,10 @@ pub const ArrayBuffer = extern struct {
         callback: JSC.C.JSTypedArrayBytesDeallocator,
         exception: JSC.C.ExceptionRef,
     ) JSC.JSValue {
+        if (!this.value.isEmpty()) {
+            return this.value;
+        }
+
         if (this.typed_array_type == .ArrayBuffer) {
             return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(
                 ctx,
@@ -2349,12 +2382,9 @@ pub const MarkedArrayBuffer = struct {
         return MarkedArrayBuffer.fromBytes(buf, allocator, JSC.JSValue.JSType.Uint8Array);
     }
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?MarkedArrayBuffer {
-        return switch (value.jsType()) {
-            JSC.JSValue.JSType.Uint16Array, JSC.JSValue.JSType.Uint32Array, JSC.JSValue.JSType.Uint8Array, JSC.JSValue.JSType.DataView => fromTypedArray(global.ref(), value, exception),
-            JSC.JSValue.JSType.ArrayBuffer => fromArrayBuffer(global.ref(), value, exception),
-            else => null,
-        };
+    pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue, _: JSC.C.ExceptionRef) ?MarkedArrayBuffer {
+        const array_buffer = value.asArrayBuffer(global) orelse return null;
+        return MarkedArrayBuffer{ .buffer = array_buffer, .allocator = null };
     }
 
     pub fn fromBytes(bytes: []u8, allocator: std.mem.Allocator, typed_array_type: JSC.JSValue.JSType) MarkedArrayBuffer {

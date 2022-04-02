@@ -2874,7 +2874,9 @@ pub const Blob = struct {
     /// and increment the reference count
     pub fn dupe(this: *const Blob) Blob {
         if (this.store != null) this.store.?.ref();
-        return this.*;
+        var duped = this.*;
+        duped.allocator = null;
+        return duped;
     }
 
     pub fn deinit(this: *Blob) void {

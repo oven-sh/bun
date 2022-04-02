@@ -1084,6 +1084,8 @@ const PathOrBlob = union(enum) {
 pub const Blob = struct {
     size: SizeType = 0,
     offset: SizeType = 0,
+    /// When set, the blob will be freed on finalization callbacks
+    /// If the blob is contained in Response or Request, this must be null
     allocator: ?std.mem.Allocator = null,
     store: ?*Store = null,
     content_type: string = "",
@@ -1552,7 +1554,6 @@ pub const Blob = struct {
 
             onCompleteCtx: *anyopaque = undefined,
             onCompleteCallback: OnCompleteCallback = undefined,
-            runAsyncFrame: @Frame(OpenAndStatFile.runAsync) = undefined,
 
             task: HTTPClient.NetworkThread.Task = undefined,
 
@@ -1587,7 +1588,16 @@ pub const Blob = struct {
             pub const OpenAndStatFileTask = JSC.IOTask(@This());
 
             pub fn run(this: *OpenAndStatFile, task: *OpenAndStatFileTask) void {
-                this.runAsyncFrame = async this.runAsync(task);
+                var frame = HTTPClient.getAllocator().create(@Frame(runAsync)) catch unreachable;
+                _ = @asyncCall(std.mem.asBytes(frame), undefined, runAsync, .{ this, task });
+            }
+
+            fn runAsync(this: *OpenAndStatFile, task: *OpenAndStatFileTask) void {
+                this._runAsync();
+                task.onFinish();
+                suspend {
+                    HTTPClient.getAllocator().destroy(@frame());
+                }
             }
 
             pub fn then(this: *OpenAndStatFile, globalThis: *JSC.JSGlobalObject) void {
@@ -1606,8 +1616,7 @@ pub const Blob = struct {
                 }
             }
 
-            pub fn runAsync(this: *OpenAndStatFile, task: *OpenAndStatFileTask) void {
-                defer task.onFinish();
+            fn _runAsync(this: *OpenAndStatFile) void {
                 this.opened_fd = 0;
                 if (this.file_store.pathlike == .fd) {
                     this.opened_fd = this.file_store.pathlike.fd;
@@ -1797,7 +1806,8 @@ pub const Blob = struct {
                 store.deref();
             }
             pub fn run(this: *ReadFile, task: *ReadFileTask) void {
-                this.runAsyncFrame = async this.runAsync(task);
+                var frame = HTTPClient.getAllocator().create(@Frame(runAsync)) catch unreachable;
+                _ = @asyncCall(std.mem.asBytes(frame), undefined, runAsync, .{ this, task });
             }
 
             pub fn onRead(this: *ReadFile, _: *HTTPClient.NetworkThread.Completion, result: AsyncIO.ReadError!usize) void {
@@ -1812,8 +1822,16 @@ pub const Blob = struct {
                 resume this.read_frame;
             }
 
-            pub fn runAsync(this: *ReadFile, task: *ReadFileTask) void {
-                defer task.onFinish();
+            fn runAsync(this: *ReadFile, task: *ReadFileTask) void {
+                this.runAsync_();
+                task.onFinish();
+
+                suspend {
+                    HTTPClient.getAllocator().destroy(@frame());
+                }
+            }
+
+            fn runAsync_(this: *ReadFile) void {
                 if (this.file_store.pathlike == .fd) {
                     this.opened_fd = this.file_store.pathlike.fd;
                 }
@@ -1901,7 +1919,6 @@ pub const Blob = struct {
             open_completion: HTTPClient.NetworkThread.Completion = undefined,
 
             write_completion: HTTPClient.NetworkThread.Completion = undefined,
-            runAsyncFrame: @Frame(WriteFile.runAsync) = undefined,
             close_completion: HTTPClient.NetworkThread.Completion = undefined,
             task: HTTPClient.NetworkThread.Task = undefined,
 
@@ -2013,7 +2030,16 @@ pub const Blob = struct {
                 cb(cb_ctx, .{ .result = @truncate(SizeType, wrote) });
             }
             pub fn run(this: *WriteFile, task: *WriteFileTask) void {
-                this.runAsyncFrame = async this.runAsync(task);
+                var frame = HTTPClient.getAllocator().create(@Frame(runAsync)) catch unreachable;
+                _ = @asyncCall(std.mem.asBytes(frame), undefined, runAsync, .{ this, task });
+            }
+
+            fn runAsync(this: *WriteFile, task: *WriteFileTask) void {
+                this._runAsync();
+                task.onFinish();
+                suspend {
+                    HTTPClient.getAllocator().destroy(@frame());
+                }
             }
 
             pub fn onWrite(this: *WriteFile, _: *HTTPClient.NetworkThread.Completion, result: AsyncIO.WriteError!usize) void {
@@ -2027,8 +2053,7 @@ pub const Blob = struct {
                 resume this.write_frame;
             }
 
-            pub fn runAsync(this: *WriteFile, task: *WriteFileTask) void {
-                defer task.onFinish();
+            fn _runAsync(this: *WriteFile) void {
                 const file = this.file_blob.store.?.data.file;
                 if (file.pathlike == .fd) {
                     this.opened_fd = file.pathlike.fd;
@@ -2172,6 +2197,7 @@ pub const Blob = struct {
 
                 promise.resolve(this.globalThis, JSC.JSValue.jsNumberFromUint64(this.read_len));
             }
+
             pub fn run(this: *CopyFile) void {
                 this.runAsync();
             }
@@ -3287,6 +3313,7 @@ pub const Blob = struct {
                                 var blob: *Blob = data.as(Blob);
                                 if (comptime move) {
                                     var _blob = blob.*;
+                                    _blob.allocator = null;
                                     blob.transfer();
                                     return _blob;
                                 } else {
@@ -3657,6 +3684,7 @@ pub const Body = struct {
             switch (this.*) {
                 .Blob => {
                     var new_blob = this.Blob;
+                    std.debug.assert(new_blob.allocator == null); // owned by Body
                     this.* = .{ .Used = .{} };
                     return new_blob;
                 },
@@ -3800,6 +3828,8 @@ pub const Body = struct {
                 return body;
             },
         };
+
+        std.debug.assert(body.value.Blob.allocator == null); // owned by Body
 
         return body;
     }

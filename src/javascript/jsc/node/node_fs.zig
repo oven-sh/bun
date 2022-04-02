@@ -69,7 +69,7 @@ const Arguments = struct {
             const old_path = PathLike.fromJS(ctx, arguments, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
-                        "oldPath must be a string or Buffer",
+                        "oldPath must be a string or TypedArray",
                         .{},
                         ctx,
                         exception,
@@ -81,7 +81,7 @@ const Arguments = struct {
             const new_path = PathLike.fromJS(ctx, arguments, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
-                        "newPath must be a string or Buffer",
+                        "newPath must be a string or TypedArray",
                         .{},
                         ctx,
                         exception,
@@ -103,7 +103,7 @@ const Arguments = struct {
             const path = PathOrFileDescriptor.fromJS(ctx, arguments, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
-                        "path must be a string or Buffer",
+                        "path must be a string or TypedArray",
                         .{},
                         ctx,
                         exception,
@@ -181,7 +181,7 @@ const Arguments = struct {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
-                        "path must be a string or Buffer",
+                        "path must be a string or TypedArray",
                         .{},
                         ctx,
                         exception,
@@ -307,7 +307,7 @@ const Arguments = struct {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
-                        "path must be a string or Buffer",
+                        "path must be a string or TypedArray",
                         .{},
                         ctx,
                         exception,
@@ -378,7 +378,7 @@ const Arguments = struct {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
-                        "path must be a string or Buffer",
+                        "path must be a string or TypedArray",
                         .{},
                         ctx,
                         exception,
@@ -483,7 +483,7 @@ const Arguments = struct {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
-                        "path must be a string or Buffer",
+                        "path must be a string or TypedArray",
                         .{},
                         ctx,
                         exception,
@@ -573,7 +573,7 @@ const Arguments = struct {
             const old_path = PathLike.fromJS(ctx, arguments, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
-                        "oldPath must be a string or Buffer",
+                        "oldPath must be a string or TypedArray",
                         .{},
                         ctx,
                         exception,
@@ -587,7 +587,7 @@ const Arguments = struct {
             const new_path = PathLike.fromJS(ctx, arguments, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
-                        "newPath must be a string or Buffer",
+                        "newPath must be a string or TypedArray",
                         .{},
                         ctx,
                         exception,
@@ -610,7 +610,7 @@ const Arguments = struct {
             const old_path = PathLike.fromJS(ctx, arguments, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
-                        "target must be a string or Buffer",
+                        "target must be a string or TypedArray",
                         .{},
                         ctx,
                         exception,
@@ -624,7 +624,7 @@ const Arguments = struct {
             const new_path = PathLike.fromJS(ctx, arguments, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
-                        "path must be a string or Buffer",
+                        "path must be a string or TypedArray",
                         .{},
                         ctx,
                         exception,
@@ -662,7 +662,7 @@ const Arguments = struct {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
-                        "path must be a string or Buffer",
+                        "path must be a string or TypedArray",
                         .{},
                         ctx,
                         exception,
@@ -702,7 +702,7 @@ const Arguments = struct {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
-                        "path must be a string or Buffer",
+                        "path must be a string or TypedArray",
                         .{},
                         ctx,
                         exception,
@@ -741,7 +741,7 @@ const Arguments = struct {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
-                        "path must be a string or Buffer",
+                        "path must be a string or TypedArray",
                         .{},
                         ctx,
                         exception,
@@ -789,7 +789,7 @@ const Arguments = struct {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
-                        "path must be a string or Buffer",
+                        "path must be a string or TypedArray",
                         .{},
                         ctx,
                         exception,
@@ -874,7 +874,7 @@ const Arguments = struct {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
-                        "path must be a string or Buffer",
+                        "path must be a string or TypedArray",
                         .{},
                         ctx,
                         exception,
@@ -960,7 +960,7 @@ const Arguments = struct {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
-                        "path must be a string or Buffer",
+                        "path must be a string or TypedArray",
                         .{},
                         ctx,
                         exception,

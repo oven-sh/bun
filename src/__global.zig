@@ -51,9 +51,10 @@ pub const AllocatorConfiguration = struct {
     long_running: bool = false,
 };
 
+pub const Mimalloc = @import("./allocators/mimalloc.zig");
+
 pub inline fn mimalloc_cleanup(force: bool) void {
     if (comptime use_mimalloc) {
-        const Mimalloc = @import("./allocators/mimalloc.zig");
         Mimalloc.mi_collect(force);
     }
 }

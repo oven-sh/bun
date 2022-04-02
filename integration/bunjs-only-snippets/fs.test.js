@@ -5,6 +5,11 @@ import {
   readFileSync,
   writeFileSync,
   readFile,
+  read,
+  openSync,
+  readSync,
+  closeSync,
+  writeSync,
 } from "node:fs";
 
 const Buffer = globalThis.Buffer || Uint8Array;
@@ -21,6 +26,57 @@ describe("mkdirSync", () => {
       true
     );
     expect(existsSync(tempdir)).toBe(true);
+  });
+});
+
+describe("readSync", () => {
+  const firstFourBytes = new Uint32Array(
+    new TextEncoder().encode("File").buffer
+  )[0];
+  it("works with a position set to 0", () => {
+    const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
+    const four = new Uint8Array(4);
+
+    {
+      const count = readSync(fd, four, 0, 4, 0);
+      const u32 = new Uint32Array(four.buffer)[0];
+      expect(u32).toBe(firstFourBytes);
+      expect(count).toBe(4);
+    }
+    closeSync(fd);
+  });
+  it("works without position set", () => {
+    const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
+    const four = new Uint8Array(4);
+    {
+      const count = readSync(fd, four);
+      const u32 = new Uint32Array(four.buffer)[0];
+      expect(u32).toBe(firstFourBytes);
+      expect(count).toBe(4);
+    }
+    closeSync(fd);
+  });
+});
+
+describe("writeSync", () => {
+  it("works with a position set to 0", () => {
+    const fd = openSync(import.meta.dir + "/writeFileSync.txt", "w+");
+    const four = new Uint8Array(4);
+
+    {
+      const count = writeSync(fd, new TextEncoder().encode("File"), 0, 4, 0);
+      expect(count).toBe(4);
+    }
+    closeSync(fd);
+  });
+  it("works without position set", () => {
+    const fd = openSync(import.meta.dir + "/writeFileSync.txt", "w+");
+    const four = new Uint8Array(4);
+    {
+      const count = writeSync(fd, new TextEncoder().encode("File"));
+      expect(count).toBe(4);
+    }
+    closeSync(fd);
   });
 });
 

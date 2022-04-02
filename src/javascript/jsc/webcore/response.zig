@@ -1269,7 +1269,7 @@ pub const Blob = struct {
         exception: js.ExceptionRef,
     ) js.JSObjectRef {
         var args = JSC.Node.ArgumentsSlice.from(arguments);
-
+        defer args.deinit();
         var path = JSC.Node.PathOrFileDescriptor.fromJS(ctx, &args, exception) orelse {
             exception.* = JSC.toInvalidArguments("Expected file path string or file descriptor", .{}, ctx).asObjectRef();
             return js.JSValueMakeUndefined(ctx);

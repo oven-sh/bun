@@ -62,6 +62,13 @@ pub const Category = enum {
             else => false,
         };
     }
+
+    pub fn autosetFilename(this: Category) bool {
+        return switch (this) {
+            .wasm, .font, .image, .audio, .video, .javascript, .html, .text, .css, .json => false,
+            else => true,
+        };
+    }
 };
 
 pub const other = MimeType.initComptime("application/octet-stream", .other);
@@ -106,11 +113,21 @@ pub fn init(str_: string) MimeType {
                         return json;
                     }
                 }
+
+                if (strings.eqlComptimeIgnoreLen(str, "octet-stream")) {
+                    return other;
+                }
+
+                if (strings.eqlComptime(str, "wasm")) {
+                    return wasm;
+                }
+
+                return MimeType{ .value = str_, .category = .application };
             },
             "font".len => {
                 if (strings.eqlComptimeIgnoreLen(category_, "font")) {
                     return MimeType{
-                        .value = str,
+                        .value = str_,
                         .category = .font,
                     };
                 }
@@ -129,15 +146,31 @@ pub fn init(str_: string) MimeType {
                     }
 
                     if (strings.eqlComptime(str, "plain")) {
-                        return MimeType{ .value = "text/plain", .category = .text };
+                        return all.@"text/plain";
                     }
+
+                    return MimeType{ .value = str_, .category = .text };
                 }
             },
             "image".len => {
                 if (strings.eqlComptimeIgnoreLen(category_, "image")) {
                     return MimeType{
-                        .value = str,
+                        .value = str_,
                         .category = .image,
+                    };
+                }
+
+                if (strings.eqlComptimeIgnoreLen(category_, "audio")) {
+                    return MimeType{
+                        .value = str_,
+                        .category = .audio,
+                    };
+                }
+
+                if (strings.eqlComptimeIgnoreLen(category_, "video")) {
+                    return MimeType{
+                        .value = str_,
+                        .category = .video,
                     };
                 }
             },
@@ -145,7 +178,7 @@ pub fn init(str_: string) MimeType {
         }
     }
 
-    return MimeType{ .value = str, .category = .other };
+    return MimeType{ .value = str_, .category = .other };
 }
 
 // TODO: improve this

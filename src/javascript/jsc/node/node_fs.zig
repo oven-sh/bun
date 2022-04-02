@@ -1160,6 +1160,7 @@ const Arguments = struct {
     pub const Write = struct {
         fd: FileDescriptor,
         buffer: StringOrBuffer,
+        // buffer_val: JSC.JSValue = JSC.JSValue.zero,
         offset: u64 = 0,
         length: u64 = std.math.maxInt(u64),
         position: ?ReadPosition = null,
@@ -1205,7 +1206,7 @@ const Arguments = struct {
             }, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
-                        "data must be a string or Buffer",
+                        "data must be a string or TypedArray",
                         .{},
                         ctx,
                         exception,
@@ -1215,8 +1216,6 @@ const Arguments = struct {
             };
             if (exception.* != null) return null;
 
-            arguments.eat();
-
             var args = Write{
                 .fd = fd,
                 .buffer = buffer,
@@ -1225,6 +1224,8 @@ const Arguments = struct {
                     .buffer => Encoding.buffer,
                 },
             };
+
+            arguments.eat();
 
             // TODO: make this faster by passing argument count at comptime
             if (arguments.next()) |current_| {
@@ -1319,7 +1320,7 @@ const Arguments = struct {
             }, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
-                        "buffer must be a Buffer",
+                        "buffer must be a TypedArray",
                         .{},
                         ctx,
                         exception,
@@ -1341,7 +1342,6 @@ const Arguments = struct {
                 arguments.eat();
                 if (current.isNumber()) {
                     args.offset = current.toU32();
-                    arguments.eat();
 
                     if (arguments.remaining.len < 2) {
                         JSC.throwInvalidArguments(
@@ -1384,7 +1384,7 @@ const Arguments = struct {
                     }
 
                     if (current.getIfPropertyExists(ctx.ptr(), "position")) |num| {
-                        const position: i32 = if (num.isUndefinedOrNull()) -1 else num.toInt32();
+                        const position: i32 = if (num.isEmptyOrUndefinedOrNull()) -1 else num.toInt32();
                         if (position > -1) {
                             args.position = @intCast(ReadPosition, position);
                         }
@@ -1516,7 +1516,7 @@ const Arguments = struct {
             }, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
-                        "data must be a string or Buffer",
+                        "data must be a string or TypedArray",
                         .{},
                         ctx,
                         exception,
@@ -2341,26 +2341,37 @@ const Return = struct {
     pub const Open = FileDescriptor;
     pub const WriteFile = void;
     pub const Read = struct {
-        bytes_read: u32,
-        buffer: Buffer,
+        bytes_read: u52,
+
+        pub fn toJS(this: Read, _: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+            return JSC.JSValue.jsNumberFromUint64(this.bytes_read).asObjectRef();
+        }
+    };
+    pub const ReadPromise = struct {
+        bytes_read: u52,
+        buffer_val: JSC.JSValue = JSC.JSValue.zero,
         const fields = .{
             .@"bytesRead" = JSC.ZigString.init("bytesRead"),
             .@"buffer" = JSC.ZigString.init("buffer"),
         };
-        // Excited for the issue that's like "cannot read file bigger than 2 GB"
-        pub fn toJS(this: Read, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+        pub fn toJS(this: Read, ctx: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+            defer if (!this.buffer_val.isEmptyOrUndefinedOrNull())
+                JSC.C.JSValueUnprotect(ctx, this.buffer_val.asObjectRef());
+
             return JSC.JSValue.createObject2(
                 ctx.ptr(),
                 &fields.bytesRead,
                 &fields.buffer,
-                JSC.JSValue.jsNumberFromInt32(@intCast(i32, @minimum(std.math.maxInt(i32), this.bytes_read))),
-                JSC.JSValue.fromRef(this.buffer.toJS(ctx, exception)),
+                JSC.JSValue.jsNumberFromUint64(@intCast(u52, @minimum(std.math.maxInt(u52), this.bytes_read))),
+                this.buffer_val,
             ).asObjectRef();
         }
     };
-    pub const Write = struct {
-        bytes_written: u32,
+
+    pub const WritePromise = struct {
+        bytes_written: u52,
         buffer: StringOrBuffer,
+        buffer_val: JSC.JSValue = JSC.JSValue.zero,
         const fields = .{
             .@"bytesWritten" = JSC.ZigString.init("bytesWritten"),
             .@"buffer" = JSC.ZigString.init("buffer"),
@@ -2368,13 +2379,30 @@ const Return = struct {
 
         // Excited for the issue that's like "cannot read file bigger than 2 GB"
         pub fn toJS(this: Write, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+            defer if (!this.buffer_val.isEmptyOrUndefinedOrNull() and this.buffer == .buffer)
+                JSC.C.JSValueUnprotect(ctx, this.buffer_val.asObjectRef());
+
             return JSC.JSValue.createObject2(
                 ctx.ptr(),
                 &fields.bytesWritten,
                 &fields.buffer,
-                JSC.JSValue.jsNumberFromInt32(@intCast(i32, @minimum(std.math.maxInt(i32), this.bytes_written))),
-                JSC.JSValue.fromRef(this.buffer.toJS(ctx, exception)),
+                JSC.JSValue.jsNumberFromUint64(@intCast(u52, @minimum(std.math.maxInt(u52), this.bytes_written))),
+                if (this.buffer == .buffer)
+                    this.buffer_val
+                else
+                    JSC.JSValue.fromRef(this.buffer.toJS(ctx, exception)),
             ).asObjectRef();
+        }
+    };
+    pub const Write = struct {
+        bytes_written: u52,
+        const fields = .{
+            .@"bytesWritten" = JSC.ZigString.init("bytesWritten"),
+        };
+
+        // Excited for the issue that's like "cannot read file bigger than 2 GB"
+        pub fn toJS(this: Write, _: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+            return JSC.JSValue.jsNumberFromUint64(this.bytes_written).asObjectRef();
         }
     };
 
@@ -3067,7 +3095,9 @@ pub const NodeFS = struct {
                         .err = err,
                     },
                     .result => |amt| .{
-                        .result = .{ .bytes_read = @truncate(u32, amt), .buffer = args.buffer },
+                        .result = .{
+                            .bytes_read = @truncate(u52, amt),
+                        },
                     },
                 };
             },
@@ -3078,12 +3108,9 @@ pub const NodeFS = struct {
     }
 
     fn _pread(this: *NodeFS, args: Arguments.Read, comptime flavor: Flavor) Maybe(Return.Read) {
-        _ = args;
         _ = this;
-        _ = flavor;
 
         switch (comptime flavor) {
-            // The sync version does no allocation except when returning the path
             .sync => {
                 var buf = args.buffer.slice();
                 buf = buf[@minimum(args.offset, buf.len)..];
@@ -3094,7 +3121,9 @@ pub const NodeFS = struct {
                         .err = err,
                     },
                     .result => |amt| .{
-                        .result = .{ .bytes_read = @truncate(u32, amt), .buffer = args.buffer },
+                        .result = .{
+                            .bytes_read = @truncate(u52, amt),
+                        },
                     },
                 };
             },
@@ -3136,7 +3165,9 @@ pub const NodeFS = struct {
                         .err = err,
                     },
                     .result => |amt| .{
-                        .result = .{ .bytes_written = @truncate(u32, amt), .buffer = args.buffer },
+                        .result = .{
+                            .bytes_written = @truncate(u52, amt),
+                        },
                     },
                 };
             },
@@ -3163,7 +3194,9 @@ pub const NodeFS = struct {
                     .err => |err| .{
                         .err = err,
                     },
-                    .result => |amt| .{ .result = .{ .bytes_written = @truncate(u32, amt), .buffer = args.buffer } },
+                    .result => |amt| .{ .result = .{
+                        .bytes_written = @truncate(u52, amt),
+                    } },
                 };
             },
             else => {},

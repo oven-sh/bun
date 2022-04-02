@@ -985,6 +985,12 @@ const Arguments = struct {
                     if (val.getIfPropertyExists(ctx.ptr(), "mode")) |mode_| {
                         mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse mode;
                     }
+                } else if (!val.isEmpty()) {
+                    flags = FileSystemFlags.fromJS(ctx, val, exception) orelse flags;
+
+                    if (arguments.nextEat()) |next| {
+                        mode = JSC.Node.modeFromJS(ctx, next, exception) orelse mode;
+                    }
                 }
             }
 

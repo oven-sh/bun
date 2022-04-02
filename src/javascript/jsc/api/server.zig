@@ -326,10 +326,647 @@ pub const ServerConfig = struct {
     }
 };
 
-pub fn NewServer(comptime ssl_enabled: bool, comptime debug_mode: bool) type {
+// This is defined separately partially to work-around an LLVM debugger bug.
+fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comptime ThisServer: type) type {
     return struct {
+        const RequestContext = @This();
+        const App = uws.NewApp(ssl_enabled);
+
+        server: *ThisServer,
+        resp: *App.Response,
+        req: *uws.Request,
+        url: string,
+        method: HTTP.Method,
+        aborted: bool = false,
+        response_jsvalue: JSC.JSValue = JSC.JSValue.zero,
+        response_ptr: ?*JSC.WebCore.Response = null,
+        blob: JSC.WebCore.Blob = JSC.WebCore.Blob{},
+        promise: ?*JSC.JSValue = null,
+        response_headers: ?*JSC.FetchHeaders = null,
+        has_abort_handler: bool = false,
+        has_sendfile_ctx: bool = false,
+        has_called_error_handler: bool = false,
+        needs_content_length: bool = false,
+        sendfile: SendfileContext = undefined,
+        request_js_object: JSC.C.JSObjectRef = null,
+        request_body_buf: std.ArrayListUnmanaged(u8) = .{},
+        fallback_buf: std.ArrayListUnmanaged(u8) = .{},
+
+        pub const RequestContextStackAllocator = std.heap.StackFallbackAllocator(@sizeOf(RequestContext) * 2048 + 4096);
+
+        pub threadlocal var pool: *RequestContextStackAllocator = undefined;
+
+        pub fn setAbortHandler(this: *RequestContext) void {
+            if (this.has_abort_handler) return;
+            this.has_abort_handler = true;
+            this.resp.onAborted(*RequestContext, RequestContext.onAbort, this);
+        }
+
+        pub fn onResolve(
+            ctx: *RequestContext,
+            _: *JSC.JSGlobalObject,
+            arguments: []const JSC.JSValue,
+        ) void {
+            if (ctx.aborted) {
+                ctx.finalize();
+                return;
+            }
+
+            if (arguments.len == 0 or arguments[0].isEmptyOrUndefinedOrNull()) {
+                ctx.renderMissing();
+                return;
+            }
+
+            var response = arguments[0].as(JSC.WebCore.Response) orelse {
+                Output.prettyErrorln("Expected a Response object", .{});
+                Output.flush();
+                ctx.renderMissing();
+                return;
+            };
+            ctx.render(response);
+        }
+
+        pub fn onReject(
+            ctx: *RequestContext,
+            _: *JSC.JSGlobalObject,
+            arguments: []const JSC.JSValue,
+        ) void {
+            if (ctx.aborted) {
+                ctx.finalize();
+                return;
+            }
+
+            ctx.runErrorHandler(
+                if (arguments.len > 0) arguments[0] else JSC.JSValue.jsUndefined(),
+            );
+
+            if (ctx.aborted) {
+                ctx.finalize();
+                return;
+            }
+
+            if (!ctx.resp.hasResponded()) {
+                ctx.renderMissing();
+            }
+        }
+
+        pub fn renderMissing(ctx: *RequestContext) void {
+            if (debug_mode) {
+                ctx.resp.writeStatus("204 No Content");
+                ctx.resp.endWithoutBody();
+                ctx.finalize();
+            } else {
+                ctx.resp.writeStatus("200 OK");
+                ctx.resp.end("Welcome to Bun! To get started, return a Response object.", false);
+                ctx.finalize();
+            }
+        }
+
+        pub fn renderDefaultError(
+            this: *RequestContext,
+            log: *logger.Log,
+            err: anyerror,
+            exceptions: []Api.JsException,
+            comptime fmt: string,
+            args: anytype,
+        ) void {
+            this.resp.writeStatus("500 Internal Server Error");
+            this.resp.writeHeader("content-type", MimeType.html.value);
+
+            var allocator = bun.default_allocator;
+
+            var fallback_container = allocator.create(Api.FallbackMessageContainer) catch unreachable;
+            defer allocator.destroy(fallback_container);
+            fallback_container.* = Api.FallbackMessageContainer{
+                .message = std.fmt.allocPrint(allocator, fmt, args) catch unreachable,
+                .router = null,
+                .reason = .fetch_event_handler,
+                .cwd = VirtualMachine.vm.bundler.fs.top_level_dir,
+                .problems = Api.Problems{
+                    .code = @truncate(u16, @errorToInt(err)),
+                    .name = @errorName(err),
+                    .exceptions = exceptions,
+                    .build = log.toAPI(allocator) catch unreachable,
+                },
+            };
+
+            if (comptime fmt.len > 0) Output.prettyErrorln(fmt, args);
+            Output.flush();
+
+            var bb = std.ArrayList(u8).init(allocator);
+            var bb_writer = bb.writer();
+
+            Fallback.renderBackend(
+                allocator,
+                fallback_container,
+                @TypeOf(bb_writer),
+                bb_writer,
+            ) catch unreachable;
+            if (this.resp.tryEnd(bb.items, bb.items.len)) {
+                bb.clearAndFree();
+                this.finalizeWithoutDeinit();
+                return;
+            }
+
+            this.fallback_buf = std.ArrayListUnmanaged(u8){ .items = bb.items, .capacity = bb.capacity };
+            this.resp.onWritable(*RequestContext, onWritableFallback, this);
+        }
+
+        pub fn onWritableFallback(this: *RequestContext, write_offset: c_ulong, resp: *App.Response) callconv(.C) bool {
+            if (this.aborted) {
+                return false;
+            }
+
+            return this.sendWritableBytes(this.fallback_buf.items, write_offset, resp);
+        }
+
+        pub fn create(this: *RequestContext, server: *ThisServer, req: *uws.Request, resp: *App.Response) void {
+            this.* = .{
+                .resp = resp,
+                .req = req,
+                .url = req.url(),
+                .method = HTTP.Method.which(req.method()) orelse .GET,
+                .server = server,
+            };
+        }
+
+        pub fn onAbort(this: *RequestContext, _: *App.Response) void {
+            this.aborted = true;
+            this.finalizeWithoutDeinit();
+        }
+
+        // This function may be called multiple times
+        // so it's important that we can safely do that
+        pub fn finalizeWithoutDeinit(this: *RequestContext) void {
+            this.blob.detach();
+            this.request_body_buf.clearAndFree(bun.default_allocator);
+
+            if (!this.response_jsvalue.isEmpty()) {
+                this.server.response_objects_pool.push(this.server.globalThis, this.response_jsvalue);
+                this.response_jsvalue = JSC.JSValue.zero;
+            }
+
+            if (this.request_js_object != null) {
+                // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
+                // but we received nothing
+                if (JSC.JSValue.fromRef(this.request_js_object).as(Request)) |req| {
+                    if (req.body == .Locked and req.body.Locked.action != .none and req.body.Locked.promise != null) {
+                        var old_body = req.body;
+                        req.body = JSC.WebCore.Body.Value.empty;
+                        old_body.Locked.callback = null;
+                        old_body.resolve(&req.body, this.server.globalThis);
+                        VirtualMachine.vm.tick();
+                    }
+                    req.uws_request = null;
+                    JSC.C.JSValueUnprotect(this.server.globalThis.ref(), this.request_js_object);
+                    this.request_js_object = null;
+                }
+            }
+
+            if (this.promise != null) {
+                JSC.C.JSValueUnprotect(this.server.globalThis.ref(), this.promise.?.asObjectRef());
+                this.promise = null;
+            }
+
+            if (this.response_headers != null) {
+                this.response_headers.?.deref();
+                this.response_headers = null;
+            }
+
+            this.fallback_buf.clearAndFree(bun.default_allocator);
+        }
+        pub fn finalize(this: *RequestContext) void {
+            this.finalizeWithoutDeinit();
+
+            this.server.request_pool_allocator.destroy(this);
+        }
+
+        fn writeHeaders(
+            this: *RequestContext,
+            headers: *JSC.FetchHeaders,
+        ) void {
+            headers.remove(&ZigString.init("content-length"));
+            headers.toUWSResponse(ssl_enabled, this.resp);
+        }
+
+        pub fn writeStatus(this: *RequestContext, status: u16) void {
+            var status_text_buf: [48]u8 = undefined;
+
+            if (status == 302) {
+                this.resp.writeStatus("302 Found");
+            } else {
+                this.resp.writeStatus(std.fmt.bufPrint(&status_text_buf, "{d} HM", .{status}) catch unreachable);
+            }
+        }
+
+        fn cleanupAfterSendfile(this: *RequestContext) void {
+            this.resp.setWriteOffset(this.sendfile.offset);
+            this.resp.endWithoutBody();
+            // use node syscall so that we don't segfault on BADF
+            _ = JSC.Node.Syscall.close(this.sendfile.fd);
+            this.sendfile = undefined;
+            this.finalize();
+        }
+        const separator: string = "\r\n";
+        const separator_iovec = [1]std.os.iovec_const{.{
+            .iov_base = separator.ptr,
+            .iov_len = separator.len,
+        }};
+
+        pub fn onSendfile(this: *RequestContext) bool {
+            const adjusted_count_temporary = @minimum(@as(u64, this.sendfile.remain), @as(u63, std.math.maxInt(u63)));
+            // TODO we should not need this int cast; improve the return type of `@minimum`
+            const adjusted_count = @intCast(u63, adjusted_count_temporary);
+
+            if (Environment.isLinux) {
+                var signed_offset = @intCast(i64, this.sendfile.offset);
+                const start = this.sendfile.offset;
+                const val =
+                    // this does the syscall directly, without libc
+                    linux.sendfile(this.sendfile.socket_fd, this.sendfile.fd, &signed_offset, this.sendfile.remain);
+                this.sendfile.offset = @intCast(Blob.SizeType, signed_offset);
+
+                const errcode = linux.getErrno(val);
+
+                this.sendfile.remain -= @intCast(Blob.SizeType, this.sendfile.offset - start);
+
+                if (errcode != .SUCCESS or this.aborted or this.sendfile.remain == 0 or val == 0) {
+                    if (errcode != .SUCCESS) {
+                        Output.prettyErrorln("Error: {s}", .{@tagName(errcode)});
+                        Output.flush();
+                    }
+                    this.cleanupAfterSendfile();
+                    return errcode != .SUCCESS;
+                }
+            } else {
+                var sbytes: std.os.off_t = adjusted_count;
+                const signed_offset = @bitCast(i64, @as(u64, this.sendfile.offset));
+
+                const errcode = std.c.getErrno(std.c.sendfile(
+                    this.sendfile.fd,
+                    this.sendfile.socket_fd,
+
+                    signed_offset,
+                    &sbytes,
+                    null,
+                    0,
+                ));
+                const wrote = @intCast(Blob.SizeType, sbytes);
+                this.sendfile.offset += wrote;
+                this.sendfile.remain -= wrote;
+                if (errcode != .AGAIN or this.aborted or this.sendfile.remain == 0 or sbytes == 0) {
+                    if (errcode != .AGAIN and errcode != .SUCCESS) {
+                        Output.prettyErrorln("Error: {s}", .{@tagName(errcode)});
+                        Output.flush();
+                    }
+                    this.cleanupAfterSendfile();
+                    return errcode == .SUCCESS;
+                }
+            }
+
+            if (!this.sendfile.has_set_on_writable) {
+                this.sendfile.has_set_on_writable = true;
+                this.resp.onWritable(*RequestContext, onWritableSendfile, this);
+            }
+
+            this.resp.markNeedsMore();
+
+            return true;
+        }
+
+        pub fn onWritableBytes(this: *RequestContext, write_offset: c_ulong, resp: *App.Response) callconv(.C) bool {
+            if (this.aborted)
+                return false;
+
+            var bytes = this.blob.sharedView();
+            return this.sendWritableBytes(bytes, write_offset, resp);
+        }
+
+        pub fn sendWritableBytes(this: *RequestContext, bytes_: []const u8, write_offset: c_ulong, resp: *App.Response) bool {
+            var bytes = bytes_[@minimum(bytes_.len, @truncate(usize, write_offset))..];
+            if (resp.tryEnd(bytes, bytes_.len)) {
+                this.finalize();
+                return true;
+            } else {
+                this.resp.onWritable(*RequestContext, onWritableBytes, this);
+                return true;
+            }
+        }
+
+        pub fn onWritableSendfile(this: *RequestContext, _: c_ulong, _: *App.Response) callconv(.C) bool {
+            return this.onSendfile();
+        }
+
+        pub fn onWritablePrepareSendfile(this: *RequestContext, _: c_ulong, _: *App.Response) callconv(.C) bool {
+            this.renderSendFile(this.blob);
+
+            return true;
+        }
+
+        pub fn onPrepareSendfileWrap(this: *anyopaque, fd: i32, size: anyerror!Blob.SizeType, _: *JSGlobalObject) void {
+            onPrepareSendfile(bun.cast(*RequestContext, this), fd, size);
+        }
+
+        fn onPrepareSendfile(this: *RequestContext, fd: i32, size: anyerror!Blob.SizeType) void {
+            this.setAbortHandler();
+            if (this.aborted) return;
+            const size_ = size catch {
+                this.req.setYield(true);
+                this.finalize();
+                return;
+            };
+            this.blob.size = size_;
+            this.needs_content_length = true;
+            this.sendfile = .{
+                .fd = fd,
+                .remain = size_,
+                .socket_fd = this.resp.getNativeHandle(),
+            };
+
+            this.resp.runCorked(*RequestContext, renderMetadata, this);
+
+            if (size_ == 0) {
+                this.cleanupAfterSendfile();
+                this.finalize();
+
+                return;
+            }
+
+            // TODO: fix this to be MSGHDR
+            _ = std.os.write(this.sendfile.socket_fd, "\r\n") catch 0;
+
+            _ = this.onSendfile();
+        }
+
+        pub fn renderSendFile(this: *RequestContext, blob: JSC.WebCore.Blob) void {
+            if (this.has_sendfile_ctx) return;
+            this.has_sendfile_ctx = true;
+            this.setAbortHandler();
+
+            JSC.WebCore.Blob.doOpenAndStatFile(
+                &this.blob,
+                *RequestContext,
+                this,
+                onPrepareSendfileWrap,
+                blob.globalThis,
+            );
+        }
+
+        pub fn doRender(this: *RequestContext) void {
+            if (this.aborted) {
+                return;
+            }
+            var response = this.response_ptr.?;
+            var body = &response.body;
+
+            switch (body.value) {
+                .Error => {
+                    const err = body.value.Error;
+                    _ = response.body.use();
+                    this.runErrorHandler(err);
+                    return;
+                },
+                .Blob => {
+                    this.blob = response.body.use();
+
+                    if (this.blob.needsToReadFile()) {
+                        this.req.setYield(false);
+                        this.setAbortHandler();
+                        if (!this.has_sendfile_ctx) this.renderSendFile(this.blob);
+                        return;
+                    }
+                },
+                .Locked => {
+                    // response.body.value.resolve(new: *Value, global: *JSGlobalObject)
+                },
+                else => {},
+            }
+
+            if (this.has_abort_handler)
+                this.resp.runCorked(*RequestContext, renderMetadata, this)
+            else
+                this.renderMetadata();
+
+            this.renderBytes();
+        }
+
+        pub fn renderProductionError(this: *RequestContext) void {
+            this.resp.writeStatus("500 Internal Server Error");
+            this.resp.writeHeader("content-type", "text/plain");
+            this.resp.end("Something went wrong!", true);
+
+            this.finalize();
+        }
+
+        pub fn runErrorHandler(this: *RequestContext, value: JSC.JSValue) void {
+            if (this.resp.hasResponded()) return;
+
+            var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(bun.default_allocator);
+
+            if (!this.server.config.onError.isEmpty() and !this.has_called_error_handler) {
+                this.has_called_error_handler = true;
+                var args = [_]JSC.C.JSValueRef{value.asObjectRef()};
+                const result = JSC.C.JSObjectCallAsFunctionReturnValue(this.server.globalThis.ref(), this.server.config.onError.asObjectRef(), null, 1, &args);
+
+                if (!result.isEmptyOrUndefinedOrNull()) {
+                    JSC.C.JSValueProtect(this.server.globalThis.ref(), result.asObjectRef());
+                    if (result.isError() or result.isAggregateError(this.server.globalThis)) {
+                        this.runErrorHandler(result);
+                        JSC.C.JSValueUnprotect(this.server.globalThis.ref(), result.asObjectRef());
+                        return;
+                    } else if (result.as(Response)) |response| {
+                        this.render(response);
+                        return;
+                    }
+                }
+            }
+
+            if (comptime debug_mode) {
+                JSC.VirtualMachine.vm.defaultErrorHandler(value, &exception_list);
+
+                this.renderDefaultError(
+                    JSC.VirtualMachine.vm.log,
+                    error.ExceptionOcurred,
+                    exception_list.toOwnedSlice(),
+                    "Unhandled exception in request handler",
+                    .{},
+                );
+            } else {
+                JSC.VirtualMachine.vm.defaultErrorHandler(value, &exception_list);
+                this.renderProductionError();
+            }
+            JSC.VirtualMachine.vm.log.reset();
+            return;
+        }
+
+        pub fn renderMetadata(this: *RequestContext) void {
+            var response: *JSC.WebCore.Response = this.response_ptr.?;
+            var status = response.statusCode();
+            const size = this.blob.size;
+            status = if (status == 200 and size == 0)
+                204
+            else
+                status;
+
+            this.writeStatus(status);
+            var needs_content_type = true;
+            const content_type: MimeType = brk: {
+                if (response.body.init.headers) |headers_| {
+                    if (headers_.get("content-type")) |content| {
+                        needs_content_type = false;
+                        break :brk MimeType.init(content);
+                    }
+                }
+                break :brk if (this.blob.content_type.len > 0)
+                    MimeType.init(this.blob.content_type)
+                else if (MimeType.sniff(this.blob.sharedView())) |content|
+                    content
+                else
+                    MimeType.other;
+            };
+
+            var has_content_disposition = false;
+
+            if (response.body.init.headers) |headers_| {
+                this.writeHeaders(headers_);
+                has_content_disposition = headers_.has(&ZigString.init("content-disposition"));
+                headers_.deref();
+                response.body.init.headers = null;
+            }
+
+            if (needs_content_type) {
+                this.resp.writeHeader("content-type", content_type.value);
+            }
+
+            // automatically include the filename when:
+            // 1. Bun.file("foo")
+            // 2. The content-disposition header is not present
+            if (!has_content_disposition and content_type.category.autosetFilename()) {
+                if (this.blob.store) |store| {
+                    if (store.data == .file) {
+                        if (store.data.file.pathlike == .path) {
+                            const basename = std.fs.path.basename(store.data.file.pathlike.path.slice());
+                            if (basename.len > 0) {
+                                var filename_buf: [1024]u8 = undefined;
+
+                                this.resp.writeHeader(
+                                    "content-disposition",
+                                    std.fmt.bufPrint(&filename_buf, "filename=\"{s}\"", .{basename}) catch "",
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (this.needs_content_length) {
+                this.resp.writeHeaderInt("content-length", size);
+                this.needs_content_length = false;
+            }
+        }
+
+        pub fn renderBytes(this: *RequestContext) void {
+            const bytes = this.blob.sharedView();
+
+            if (!this.resp.tryEnd(
+                bytes,
+                bytes.len,
+            )) {
+                this.resp.onWritable(*RequestContext, onWritableBytes, this);
+                return;
+            }
+
+            this.finalize();
+        }
+
+        pub fn render(this: *RequestContext, response: *JSC.WebCore.Response) void {
+            this.response_ptr = response;
+
+            this.doRender();
+        }
+
+        pub fn resolveRequestBody(this: *RequestContext) void {
+            if (this.aborted)
+                return;
+            if (JSC.JSValue.fromRef(this.request_js_object).as(Request)) |req| {
+                var bytes = this.request_body_buf.toOwnedSlice(bun.default_allocator);
+                var old = req.body;
+                req.body = .{
+                    .Blob = if (bytes.len > 0)
+                        Blob.init(bytes, bun.default_allocator, this.server.globalThis)
+                    else
+                        Blob.initEmpty(this.server.globalThis),
+                };
+                old.resolve(&req.body, this.server.globalThis);
+                VirtualMachine.vm.tick();
+                return;
+            }
+        }
+
+        pub fn onBodyChunk(this: *RequestContext, _: *App.Response, chunk: []const u8, last: bool) void {
+            if (this.aborted) return;
+            this.request_body_buf.appendSlice(bun.default_allocator, chunk) catch @panic("Out of memory while allocating request body");
+
+            if (last) {
+                if (JSC.JSValue.fromRef(this.request_js_object).as(Request) != null) {
+                    uws.Loop.get().?.nextTick(*RequestContext, this, resolveRequestBody);
+                } else {
+                    this.request_body_buf.deinit(bun.default_allocator);
+                    this.request_body_buf = .{};
+                }
+            }
+        }
+
+        pub fn onRequestData(this: *RequestContext) void {
+            if (this.req.header("content-length")) |content_length| {
+                const len = std.fmt.parseInt(usize, content_length, 10) catch 0;
+                if (len == 0) {
+                    if (JSC.JSValue.fromRef(this.request_js_object).as(Request)) |req| {
+                        var old = req.body;
+                        old.Locked.callback = null;
+                        req.body = .{ .Empty = .{} };
+                        old.resolve(&req.body, this.server.globalThis);
+                        VirtualMachine.vm.tick();
+                        return;
+                    }
+                }
+
+                if (len >= this.server.config.max_request_body_size) {
+                    if (JSC.JSValue.fromRef(this.request_js_object).as(Request)) |req| {
+                        var old = req.body;
+                        old.Locked.callback = null;
+                        req.body = .{ .Empty = .{} };
+                        old.toError(error.RequestBodyTooLarge, this.server.globalThis);
+                        VirtualMachine.vm.tick();
+                        return;
+                    }
+
+                    this.resp.writeStatus("413 Request Entity Too Large");
+                    this.resp.endWithoutBody();
+                    this.finalize();
+                    return;
+                }
+
+                this.request_body_buf.ensureTotalCapacityPrecise(bun.default_allocator, len) catch @panic("Out of memory while allocating request body buffer");
+            }
+            this.setAbortHandler();
+
+            this.resp.onData(*RequestContext, onBodyChunk, this);
+        }
+
+        pub fn onRequestDataCallback(this: *anyopaque) void {
+            onRequestData(bun.cast(*RequestContext, this));
+        }
+    };
+}
+
+pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
+    return struct {
+        const ssl_enabled = ssl_enabled_;
+        const debug_mode = debug_mode_;
+
         const ThisServer = @This();
-        const RequestContextStackAllocator = std.heap.StackFallbackAllocator(@sizeOf(RequestContext) * 2048 + 4096);
+        pub const RequestContext = NewRequestContext(ssl_enabled, debug_mode, @This());
 
         pub const App = uws.NewApp(ssl_enabled);
 
@@ -348,7 +985,7 @@ pub fn NewServer(comptime ssl_enabled: bool, comptime debug_mode: bool) type {
                 .globalThis = globalThis,
                 .config = config,
             };
-            RequestContext.pool = bun.default_allocator.create(RequestContextStackAllocator) catch @panic("Out of memory!");
+            RequestContext.pool = bun.default_allocator.create(RequestContext.RequestContextStackAllocator) catch @panic("Out of memory!");
             server.request_pool_allocator = RequestContext.pool.get();
             return server;
         }
@@ -365,571 +1002,6 @@ pub fn NewServer(comptime ssl_enabled: bool, comptime debug_mode: bool) type {
 
             this.app.run();
         }
-
-        pub const RequestContext = struct {
-            server: *ThisServer,
-            resp: *App.Response,
-            req: *uws.Request,
-            url: string,
-            method: HTTP.Method,
-            aborted: bool = false,
-            response_jsvalue: JSC.JSValue = JSC.JSValue.zero,
-            response_ptr: ?*JSC.WebCore.Response = null,
-            blob: JSC.WebCore.Blob = JSC.WebCore.Blob{},
-            promise: ?*JSC.JSValue = null,
-            response_headers: ?*JSC.FetchHeaders = null,
-            has_abort_handler: bool = false,
-            has_sendfile_ctx: bool = false,
-            has_called_error_handler: bool = false,
-            sendfile: SendfileContext = undefined,
-            request_js_object: JSC.C.JSObjectRef = null,
-            request_body_buf: std.ArrayListUnmanaged(u8) = .{},
-            fallback_buf: std.ArrayListUnmanaged(u8) = .{},
-
-            pub threadlocal var pool: *RequestContextStackAllocator = undefined;
-
-            pub fn setAbortHandler(this: *RequestContext) void {
-                if (this.has_abort_handler) return;
-                this.has_abort_handler = true;
-                this.resp.onAborted(*RequestContext, RequestContext.onAbort, this);
-            }
-
-            pub fn onResolve(
-                ctx: *RequestContext,
-                _: *JSC.JSGlobalObject,
-                arguments: []const JSC.JSValue,
-            ) void {
-                if (ctx.aborted) {
-                    ctx.finalize();
-                    return;
-                }
-
-                if (arguments.len == 0) {
-                    ctx.req.setYield(true);
-                    ctx.finalize();
-                    return;
-                }
-
-                var response = arguments[0].as(JSC.WebCore.Response) orelse {
-                    Output.prettyErrorln("Expected a Response object", .{});
-                    Output.flush();
-                    ctx.req.setYield(true);
-                    ctx.finalize();
-                    return;
-                };
-                ctx.render(response);
-            }
-
-            pub fn onReject(
-                ctx: *RequestContext,
-                _: *JSC.JSGlobalObject,
-                arguments: []const JSC.JSValue,
-            ) void {
-                ctx.runErrorHandler(
-                    if (arguments.len > 0) arguments[0] else JSC.JSValue.jsUndefined(),
-                );
-
-                if (ctx.aborted) {
-                    ctx.finalize();
-                    return;
-                }
-
-                ctx.req.setYield(true);
-                ctx.finalize();
-            }
-
-            pub fn renderDefaultError(
-                this: *RequestContext,
-                log: *logger.Log,
-                err: anyerror,
-                exceptions: []Api.JsException,
-                comptime fmt: string,
-                args: anytype,
-            ) void {
-                this.resp.writeStatus("500 Internal Server Error");
-                this.resp.writeHeader("content-type", MimeType.html.value);
-
-                var allocator = bun.default_allocator;
-
-                var fallback_container = allocator.create(Api.FallbackMessageContainer) catch unreachable;
-                defer allocator.destroy(fallback_container);
-                fallback_container.* = Api.FallbackMessageContainer{
-                    .message = std.fmt.allocPrint(allocator, fmt, args) catch unreachable,
-                    .router = null,
-                    .reason = .fetch_event_handler,
-                    .cwd = VirtualMachine.vm.bundler.fs.top_level_dir,
-                    .problems = Api.Problems{
-                        .code = @truncate(u16, @errorToInt(err)),
-                        .name = @errorName(err),
-                        .exceptions = exceptions,
-                        .build = log.toAPI(allocator) catch unreachable,
-                    },
-                };
-
-                if (comptime fmt.len > 0) Output.prettyErrorln(fmt, args);
-                Output.flush();
-
-                var bb = std.ArrayList(u8).init(allocator);
-                var bb_writer = bb.writer();
-
-                Fallback.renderBackend(
-                    allocator,
-                    fallback_container,
-                    @TypeOf(bb_writer),
-                    bb_writer,
-                ) catch unreachable;
-                if (this.resp.tryEnd(bb.items, bb.items.len)) {
-                    bb.clearAndFree();
-                    this.finalizeWithoutDeinit();
-                    return;
-                }
-
-                this.fallback_buf = std.ArrayListUnmanaged(u8){ .items = bb.items, .capacity = bb.capacity };
-                this.resp.onWritable(*RequestContext, onWritableFallback, this);
-            }
-
-            pub fn onWritableFallback(this: *RequestContext, write_offset: c_ulong, resp: *App.Response) callconv(.C) bool {
-                if (this.aborted) {
-                    return false;
-                }
-
-                return this.sendWritableBytes(this.fallback_buf.items, write_offset, resp);
-            }
-
-            pub fn create(this: *RequestContext, server: *ThisServer, req: *uws.Request, resp: *App.Response) void {
-                this.* = .{
-                    .resp = resp,
-                    .req = req,
-                    .url = req.url(),
-                    .method = HTTP.Method.which(req.method()) orelse .GET,
-                    .server = server,
-                };
-            }
-
-            pub fn onAbort(this: *RequestContext, _: *App.Response) void {
-                this.aborted = true;
-                this.finalizeWithoutDeinit();
-            }
-
-            // This function may be called multiple times
-            // so it's important that we can safely do that
-            pub fn finalizeWithoutDeinit(this: *RequestContext) void {
-                this.blob.detach();
-                this.request_body_buf.clearAndFree(bun.default_allocator);
-
-                if (!this.response_jsvalue.isEmpty()) {
-                    this.server.response_objects_pool.push(this.server.globalThis, this.response_jsvalue);
-                    this.response_jsvalue = JSC.JSValue.zero;
-                }
-
-                if (this.request_js_object != null) {
-                    // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
-                    // but we received nothing
-                    if (JSC.JSValue.fromRef(this.request_js_object).as(Request)) |req| {
-                        if (req.body == .Locked and req.body.Locked.action != .none and req.body.Locked.promise != null) {
-                            var old_body = req.body;
-                            req.body = JSC.WebCore.Body.Value.empty;
-                            old_body.Locked.callback = null;
-                            old_body.resolve(&req.body, this.server.globalThis);
-                            VirtualMachine.vm.tick();
-                        }
-                        req.uws_request = null;
-                        JSC.C.JSValueUnprotect(this.server.globalThis.ref(), this.request_js_object);
-                        this.request_js_object = null;
-                    }
-                }
-
-                if (this.promise != null) {
-                    JSC.C.JSValueUnprotect(this.server.globalThis.ref(), this.promise.?.asObjectRef());
-                    this.promise = null;
-                }
-
-                if (this.response_headers != null) {
-                    this.response_headers.?.deref();
-                    this.response_headers = null;
-                }
-
-                this.fallback_buf.clearAndFree(bun.default_allocator);
-            }
-            pub fn finalize(this: *RequestContext) void {
-                this.finalizeWithoutDeinit();
-
-                this.server.request_pool_allocator.destroy(this);
-            }
-
-            fn writeHeaders(
-                this: *RequestContext,
-                headers: *JSC.FetchHeaders,
-            ) void {
-                headers.remove(&ZigString.init("content-length"));
-                if (!headers.has(&ZigString.init("content-type"))) {
-                    if (this.blob.content_type.len > 0) {
-                        this.resp.writeHeader("content-type", this.blob.content_type);
-                    } else if (MimeType.sniff(this.blob.sharedView())) |content| {
-                        this.resp.writeHeader("content-type", content.value);
-                    }
-                }
-
-                headers.toUWSResponse(ssl_enabled, this.resp);
-            }
-
-            pub fn writeStatus(this: *RequestContext, status: u16) void {
-                var status_text_buf: [48]u8 = undefined;
-
-                if (status == 302) {
-                    this.resp.writeStatus("302 Found");
-                } else {
-                    this.resp.writeStatus(std.fmt.bufPrint(&status_text_buf, "{d} HM", .{status}) catch unreachable);
-                }
-            }
-
-            fn cleanupAfterSendfile(this: *RequestContext) void {
-                this.resp.setWriteOffset(this.sendfile.offset);
-                this.resp.endWithoutBody();
-                // use node syscall so that we don't segfault on BADF
-                _ = JSC.Node.Syscall.close(this.sendfile.fd);
-                this.sendfile = undefined;
-                this.finalize();
-            }
-            const separator: string = "\r\n";
-            const separator_iovec = [1]std.os.iovec_const{.{
-                .iov_base = separator.ptr,
-                .iov_len = separator.len,
-            }};
-
-            pub fn onSendfile(this: *RequestContext) bool {
-                const adjusted_count_temporary = @minimum(@as(u64, this.sendfile.remain), @as(u63, std.math.maxInt(u63)));
-                // TODO we should not need this int cast; improve the return type of `@minimum`
-                const adjusted_count = @intCast(u63, adjusted_count_temporary);
-
-                if (Environment.isLinux) {
-                    var signed_offset = @intCast(i64, this.sendfile.offset);
-                    const start = this.sendfile.offset;
-                    const val =
-                        // this does the syscall directly, without libc
-                        linux.sendfile(this.sendfile.socket_fd, this.sendfile.fd, &signed_offset, this.sendfile.remain);
-                    this.sendfile.offset = @intCast(Blob.SizeType, signed_offset);
-
-                    const errcode = linux.getErrno(val);
-
-                    this.sendfile.remain -= @intCast(Blob.SizeType, this.sendfile.offset - start);
-
-                    if (errcode != .SUCCESS or this.aborted or this.sendfile.remain == 0 or val == 0) {
-                        if (errcode != .SUCCESS) {
-                            Output.prettyErrorln("Error: {s}", .{@tagName(errcode)});
-                            Output.flush();
-                        }
-                        this.cleanupAfterSendfile();
-                        return errcode != .SUCCESS;
-                    }
-                } else {
-                    var sbytes: std.os.off_t = adjusted_count;
-                    const signed_offset = @bitCast(i64, @as(u64, this.sendfile.offset));
-
-                    const errcode = std.c.getErrno(std.c.sendfile(
-                        this.sendfile.fd,
-                        this.sendfile.socket_fd,
-
-                        signed_offset,
-                        &sbytes,
-                        null,
-                        0,
-                    ));
-                    const wrote = @intCast(Blob.SizeType, sbytes);
-                    this.sendfile.offset += wrote;
-                    this.sendfile.remain -= wrote;
-                    if (errcode != .AGAIN or this.aborted or this.sendfile.remain == 0 or sbytes == 0) {
-                        if (errcode != .AGAIN and errcode != .SUCCESS) {
-                            Output.prettyErrorln("Error: {s}", .{@tagName(errcode)});
-                            Output.flush();
-                        }
-                        this.cleanupAfterSendfile();
-                        return errcode != .SUCCESS;
-                    }
-                }
-
-                if (!this.sendfile.has_set_on_writable) {
-                    this.sendfile.has_set_on_writable = true;
-                    this.resp.onWritable(*RequestContext, onWritableSendfile, this);
-                }
-
-                this.resp.markNeedsMore();
-
-                return true;
-            }
-
-            pub fn onWritableBytes(this: *RequestContext, write_offset: c_ulong, resp: *App.Response) callconv(.C) bool {
-                if (this.aborted)
-                    return false;
-
-                var bytes = this.blob.sharedView();
-                return this.sendWritableBytes(bytes, write_offset, resp);
-            }
-
-            pub fn sendWritableBytes(this: *RequestContext, bytes_: []const u8, write_offset: c_ulong, resp: *App.Response) bool {
-                var bytes = bytes_[@minimum(bytes_.len, @truncate(usize, write_offset))..];
-                if (resp.tryEnd(bytes, bytes_.len)) {
-                    this.finalize();
-                    return true;
-                } else {
-                    this.resp.onWritable(*RequestContext, onWritableBytes, this);
-                    return true;
-                }
-            }
-
-            pub fn onWritableSendfile(this: *RequestContext, _: c_ulong, _: *App.Response) callconv(.C) bool {
-                return this.onSendfile();
-            }
-
-            pub fn onWritablePrepareSendfile(this: *RequestContext, _: c_ulong, _: *App.Response) callconv(.C) bool {
-                this.renderSendFile(this.blob);
-
-                return true;
-            }
-
-            pub fn onPrepareSendfileWrap(this: *anyopaque, fd: i32, size: anyerror!Blob.SizeType, _: *JSGlobalObject) void {
-                onPrepareSendfile(bun.cast(*RequestContext, this), fd, size);
-            }
-
-            fn onPrepareSendfile(this: *RequestContext, fd: i32, size: anyerror!Blob.SizeType) void {
-                this.setAbortHandler();
-                if (this.aborted) return;
-                const size_ = size catch {
-                    this.req.setYield(true);
-                    this.finalize();
-                    return;
-                };
-                this.blob.size = size_;
-
-                this.sendfile = .{
-                    .fd = fd,
-                    .remain = size_,
-                    .socket_fd = this.resp.getNativeHandle(),
-                };
-
-                this.resp.runCorked(*RequestContext, renderMetadata, this);
-
-                if (size_ == 0) {
-                    this.cleanupAfterSendfile();
-                    this.finalize();
-
-                    return;
-                }
-
-                // TODO: fix this to be MSGHDR
-                _ = std.os.write(this.sendfile.socket_fd, "\r\n") catch 0;
-
-                _ = this.onSendfile();
-            }
-
-            pub fn renderSendFile(this: *RequestContext, blob: JSC.WebCore.Blob) void {
-                if (this.has_sendfile_ctx) return;
-                this.has_sendfile_ctx = true;
-                this.setAbortHandler();
-
-                JSC.WebCore.Blob.doOpenAndStatFile(
-                    &this.blob,
-                    *RequestContext,
-                    this,
-                    onPrepareSendfileWrap,
-                    blob.globalThis,
-                );
-            }
-
-            pub fn doRender(this: *RequestContext) void {
-                if (this.aborted) {
-                    return;
-                }
-                var response = this.response_ptr.?;
-                var body = &response.body;
-                this.blob = response.body.use();
-
-                if (body.value == .Error) {
-                    this.resp.writeStatus("500 Internal Server Error");
-                    this.resp.writeHeader("content-type", "text/plain");
-                    this.resp.endWithoutBody();
-                    JSC.VirtualMachine.vm.defaultErrorHandler(body.value.Error, null);
-                    body.value = JSC.WebCore.Body.Value.empty;
-                    this.finalize();
-                    return;
-                }
-
-                if (body.value == .Blob) {
-                    if (body.value.Blob.needsToReadFile()) {
-                        this.req.setYield(false);
-                        this.setAbortHandler();
-                        if (!this.has_sendfile_ctx) this.renderSendFile(this.blob);
-                        return;
-                    }
-                }
-
-                if (this.has_abort_handler)
-                    this.resp.runCorked(*RequestContext, renderMetadata, this)
-                else
-                    this.renderMetadata();
-
-                this.renderBytes();
-            }
-
-            pub fn renderProductionError(this: *RequestContext) void {
-                this.resp.writeStatus("500 Internal Server Error");
-                this.resp.writeHeader("content-type", "text/plain");
-                this.resp.end("Something went wrong!", true);
-
-                this.finalize();
-            }
-
-            pub fn runErrorHandler(this: *RequestContext, value: JSC.JSValue) void {
-                if (this.resp.hasResponded()) return;
-
-                var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(bun.default_allocator);
-
-                if (!this.server.config.onError.isEmpty() and !this.has_called_error_handler) {
-                    this.has_called_error_handler = true;
-                    var args = [_]JSC.C.JSValueRef{value.asObjectRef()};
-                    const result = JSC.C.JSObjectCallAsFunctionReturnValue(this.server.globalThis.ref(), this.server.config.onError.asObjectRef(), null, 1, &args);
-                    if (!result.isUndefinedOrNull()) {
-                        if (result.isError() or result.isAggregateError(this.server.globalThis)) {
-                            JSC.VirtualMachine.vm.defaultErrorHandler(result, &exception_list);
-                        } else if (result.as(Response)) |response| {
-                            this.render(response);
-                            return;
-                        }
-                    }
-                }
-
-                if (comptime debug_mode) {
-                    JSC.VirtualMachine.vm.defaultErrorHandler(value, &exception_list);
-
-                    this.renderDefaultError(
-                        JSC.VirtualMachine.vm.log,
-                        error.ExceptionOcurred,
-                        exception_list.toOwnedSlice(),
-                        "Unhandled exception in request handler",
-                        .{},
-                    );
-                } else {
-                    JSC.VirtualMachine.vm.defaultErrorHandler(value, &exception_list);
-                    this.renderProductionError();
-                }
-                JSC.VirtualMachine.vm.log.reset();
-                return;
-            }
-
-            pub fn renderMetadata(this: *RequestContext) void {
-                var response: *JSC.WebCore.Response = this.response_ptr.?;
-                var status = response.statusCode();
-                const size = this.blob.size;
-                status = if (status == 200 and size == 0)
-                    204
-                else
-                    status;
-
-                this.writeStatus(status);
-
-                if (response.body.init.headers) |headers_| {
-                    this.writeHeaders(headers_);
-                    headers_.deref();
-                } else if (this.blob.content_type.len > 0) {
-                    this.resp.writeHeader("content-type", this.blob.content_type);
-                } else if (MimeType.sniff(this.blob.sharedView())) |content| {
-                    this.resp.writeHeader("content-type", content.value);
-                }
-            }
-
-            pub fn renderBytes(this: *RequestContext) void {
-                const bytes = this.blob.sharedView();
-
-                if (!this.resp.tryEnd(
-                    bytes,
-                    bytes.len,
-                )) {
-                    this.resp.onWritable(*RequestContext, onWritableBytes, this);
-                    return;
-                }
-
-                this.finalize();
-            }
-
-            pub fn render(this: *RequestContext, response: *JSC.WebCore.Response) void {
-                this.response_ptr = response;
-
-                this.doRender();
-            }
-
-            pub fn resolveRequestBody(this: *RequestContext) void {
-                if (this.aborted)
-                    return;
-                if (JSC.JSValue.fromRef(this.request_js_object).as(Request)) |req| {
-                    var bytes = this.request_body_buf.toOwnedSlice(bun.default_allocator);
-                    var old = req.body;
-                    req.body = .{
-                        .Blob = if (bytes.len > 0)
-                            Blob.init(bytes, bun.default_allocator, this.server.globalThis)
-                        else
-                            Blob.initEmpty(this.server.globalThis),
-                    };
-                    old.resolve(&req.body, this.server.globalThis);
-                    VirtualMachine.vm.tick();
-                    return;
-                }
-            }
-
-            pub fn onBodyChunk(this: *RequestContext, _: *App.Response, chunk: []const u8, last: bool) void {
-                if (this.aborted) return;
-                this.request_body_buf.appendSlice(bun.default_allocator, chunk) catch @panic("Out of memory while allocating request body");
-
-                if (last) {
-                    if (JSC.JSValue.fromRef(this.request_js_object).as(Request) != null) {
-                        uws.Loop.get().?.nextTick(*RequestContext, this, resolveRequestBody);
-                    } else {
-                        this.request_body_buf.deinit(bun.default_allocator);
-                        this.request_body_buf = .{};
-                    }
-                }
-            }
-
-            pub fn onRequestData(this: *RequestContext) void {
-                if (this.req.header("content-length")) |content_length| {
-                    const len = std.fmt.parseInt(usize, content_length, 10) catch 0;
-                    if (len == 0) {
-                        if (JSC.JSValue.fromRef(this.request_js_object).as(Request)) |req| {
-                            var old = req.body;
-                            old.Locked.callback = null;
-                            req.body = .{ .Empty = .{} };
-                            old.resolve(&req.body, this.server.globalThis);
-                            VirtualMachine.vm.tick();
-                            return;
-                        }
-                    }
-
-                    if (len >= this.server.config.max_request_body_size) {
-                        if (JSC.JSValue.fromRef(this.request_js_object).as(Request)) |req| {
-                            var old = req.body;
-                            old.Locked.callback = null;
-                            req.body = .{ .Empty = .{} };
-                            old.toError(error.RequestBodyTooLarge, this.server.globalThis);
-                            VirtualMachine.vm.tick();
-                            return;
-                        }
-
-                        this.resp.writeStatus("413 Request Entity Too Large");
-                        this.resp.endWithoutBody();
-                        this.finalize();
-                        return;
-                    }
-
-                    this.request_body_buf.ensureTotalCapacityPrecise(bun.default_allocator, len) catch @panic("Out of memory while allocating request body buffer");
-                }
-                this.setAbortHandler();
-
-                this.resp.onData(*RequestContext, onBodyChunk, this);
-            }
-
-            pub fn onRequestDataCallback(this: *anyopaque) void {
-                onRequestData(bun.cast(*RequestContext, this));
-            }
-        };
 
         pub fn onBunInfoRequest(_: *ThisServer, req: *uws.Request, resp: *App.Response) void {
             if (comptime JSC.is_bindgen) return undefined;
@@ -1016,14 +1088,14 @@ pub fn NewServer(comptime ssl_enabled: bool, comptime debug_mode: bool) type {
                 return;
             }
 
-            if (ctx.response_jsvalue.isUndefinedOrNull()) {
-                req.setYield(true);
-                ctx.finalize();
+            if (ctx.response_jsvalue.isEmptyOrUndefinedOrNull() and !ctx.resp.hasResponded()) {
+                ctx.renderMissing();
                 return;
             }
 
             if (ctx.response_jsvalue.isError() or ctx.response_jsvalue.isAggregateError(this.globalThis) or ctx.response_jsvalue.isException(this.globalThis.vm())) {
                 ctx.runErrorHandler(ctx.response_jsvalue);
+                return;
             }
 
             JSC.C.JSValueProtect(this.globalThis.ref(), ctx.response_jsvalue.asObjectRef());
@@ -1046,11 +1118,6 @@ pub fn NewServer(comptime ssl_enabled: bool, comptime debug_mode: bool) type {
                     RequestContext.onReject,
                 );
                 return;
-            }
-
-            if (!ctx.resp.hasResponded()) {
-                ctx.resp.writeStatus("200 OK");
-                ctx.resp.end("Welcome to Bun! To get started, ", false);
             }
 
             // switch (ctx.response_jsvalue.jsTypeLoose()) {

@@ -2448,6 +2448,12 @@ pub const JSValue = enum(u64) {
     pub fn isError(this: JSValue) bool {
         return cppFn("isError", .{this});
     }
+
+    pub fn isAnyError(this: JSValue, global: *JSGlobalObject) bool {
+        if (this.isEmptyOrUndefinedOrNull()) return false;
+
+        return this.isError() or this.isException(global.vm()) or this.isAggregateError(global);
+    }
     pub fn isString(this: JSValue) bool {
         return cppFn("isString", .{this});
     }

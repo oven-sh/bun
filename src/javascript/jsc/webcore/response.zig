@@ -1963,7 +1963,6 @@ pub const Blob = struct {
                 file_offset: u64,
             ) AsyncIO.WriteError!SizeType {
                 var aio = &AsyncIO.global;
-                this.wrote = 0;
                 aio.write(
                     *WriteFile,
                     this,
@@ -2006,15 +2005,16 @@ pub const Blob = struct {
                     return;
                 }
 
+                const wrote = this.wrote;
                 bun.default_allocator.destroy(this);
-                cb(cb_ctx, .{ .result = @truncate(SizeType, this.wrote) });
+                cb(cb_ctx, .{ .result = @truncate(SizeType, wrote) });
             }
             pub fn run(this: *WriteFile, task: *WriteFileTask) void {
                 this.runAsyncFrame = async this.runAsync(task);
             }
 
             pub fn onWrite(this: *WriteFile, _: *HTTPClient.NetworkThread.Completion, result: AsyncIO.WriteError!usize) void {
-                this.wrote = @truncate(SizeType, result catch |err| {
+                this.wrote += @truncate(SizeType, result catch |err| {
                     this.errno = err;
                     this.wrote = 0;
                     resume this.write_frame;

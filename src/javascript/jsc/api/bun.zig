@@ -1179,24 +1179,26 @@ pub fn mmapFile(
 
     var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     const path = getFilePath(ctx, arguments[0..@minimum(1, arguments.len)], &buf, exception) orelse return null;
+    args.eat();
 
     buf[path.len] = 0;
 
     const buf_z: [:0]const u8 = buf[0..path.len :0];
 
-    const flags = v: {
-        _ = args.nextEat();
-        const opts = args.nextEat() orelse break :v std.os.MAP.SHARED;
+    const sync_flags: u32 = if (@hasDecl(std.os.MAP, "SYNC")) std.os.MAP.SYNC | std.os.MAP.SHARED_VALIDATE else 0;
+    const file_flags: u32 = if (@hasDecl(std.os.MAP, "FILE")) std.os.MAP.FILE else 0;
+
+    // Conforming applications must specify either MAP_PRIVATE or MAP_SHARED.
+    var flags = file_flags;
+
+    if (args.nextEat()) |opts| {
         const sync = opts.get(ctx.ptr(), "sync") orelse JSC.JSValue.jsBoolean(false);
         const shared = opts.get(ctx.ptr(), "shared") orelse JSC.JSValue.jsBoolean(true);
-        const sync_flags = if (@hasDecl(std.os, "SYNC")) std.os.MAP.SYNC | std.os.MAP.SHARED_VALIDATE else 0;
-
-        var flags: u32 = 0;
-        if (sync.toBoolean()) flags |= sync_flags;
-        if (shared.toBoolean()) flags |= std.os.MAP.SHARED else flags |= std.os.MAP.PRIVATE;
-
-        break :v flags;
-    };
+        flags |= @as(u32, if (sync.toBoolean()) sync_flags else 0);
+        flags |= @as(u32, if (shared.toBoolean()) std.os.MAP.SHARED else std.os.MAP.PRIVATE);
+    } else {
+        flags |= std.os.MAP.SHARED;
+    }
 
     const map = switch (JSC.Node.Syscall.mmapFile(buf_z, flags)) {
         .result => |map| map,

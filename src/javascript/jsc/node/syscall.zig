@@ -104,19 +104,19 @@ pub fn chdir(destination: [:0]const u8) Maybe(void) {
 }
 
 pub fn stat(path: [:0]const u8) Maybe(os.Stat) {
-    var stat_ = comptime mem.zeroes(os.Stat);
+    var stat_ = mem.zeroes(os.Stat);
     if (Maybe(os.Stat).errnoSys(sys.stat(path, &stat_), .stat)) |err| return err;
     return Maybe(os.Stat){ .result = stat_ };
 }
 
 pub fn lstat(path: [:0]const u8) Maybe(os.Stat) {
-    var stat_ = comptime mem.zeroes(os.Stat);
+    var stat_ = mem.zeroes(os.Stat);
     if (Maybe(os.Stat).errnoSys(C.lstat(path, &stat_), .lstat)) |err| return err;
     return Maybe(os.Stat){ .result = stat_ };
 }
 
 pub fn fstat(fd: JSC.Node.FileDescriptor) Maybe(os.Stat) {
-    var stat_ = comptime mem.zeroes(os.Stat);
+    var stat_ = mem.zeroes(os.Stat);
     if (Maybe(os.Stat).errnoSys(fstat_sym(fd, &stat_), .fstat)) |err| return err;
     return Maybe(os.Stat){ .result = stat_ };
 }
@@ -404,7 +404,7 @@ pub fn getFdPath(fd: fd_t, out_buffer: *[MAX_PATH_BYTES]u8) Maybe([]u8) {
 /// Use of a mapped region can result in these signals:
 /// * SIGSEGV - Attempted write into a region mapped as read-only.
 /// * SIGBUS - Attempted  access to a portion of the buffer that does not correspond to the file
-fn sysmmap(
+fn mmap(
     ptr: ?[*]align(mem.page_size) u8,
     length: usize,
     prot: u32,
@@ -416,20 +416,16 @@ fn sysmmap(
         system.mmap64
     else
         system.mmap;
-
     const ioffset = @bitCast(i64, offset); // the OS treats this as unsigned
     const rc = mmap_sym(ptr, length, prot, flags, fd, ioffset);
 
-    _ = if (builtin.link_libc) blk: {
-        if (rc != std.c.MAP.FAILED) return .{ .result = @ptrCast([*]align(mem.page_size) u8, @alignCast(mem.page_size, rc))[0..length] };
-        break :blk rc;
-    } else blk: {
-        const err = os.errno(rc);
-        if (err == .SUCCESS) return .{ .result = @intToPtr([*]align(mem.page_size) u8, rc)[0..length] };
-        break :blk rc;
-    };
-
-    return Maybe([]align(mem.page_size) u8).errnoSys(@ptrToInt(rc), .mmap).?;
+    if (rc == std.c.MAP.FAILED) {
+        return Maybe([]align(mem.page_size) u8){
+            .err = .{ .errno = @truncate(Syscall.Error.Int, @enumToInt(std.c.getErrno(@bitCast(i64, @ptrToInt(std.c.MAP.FAILED))))), .syscall = .mmap },
+        };
+    } 
+            
+    return Maybe([]align(mem.page_size) u8){.result =  @ptrCast([*]align(mem.page_size) u8, @alignCast(mem.page_size, rc))[0..length] };
 }
 
 pub fn mmapFile(path: [:0]const u8, flags: u32) Maybe([]align(mem.page_size) u8) {
@@ -438,15 +434,15 @@ pub fn mmapFile(path: [:0]const u8, flags: u32) Maybe([]align(mem.page_size) u8)
         .err => |err| return .{ .err = err },
     };
 
-    const size = switch (stat(path)) {
-        .result => |stat| stat.size,
+    const size = switch (fstat(fd)) {
+        .result => |result| result.size,
         .err => |err| {
             _ = close(fd);
             return .{ .err = err };
         },
     };
 
-    const map = switch (sysmmap(null, @intCast(usize, size), os.PROT.READ | os.PROT.WRITE, flags, fd, 0)) {
+    const map = switch (mmap(null, @intCast(usize, size), os.PROT.READ | os.PROT.WRITE, flags, fd, 0)) {
         .result => |map| map,
 
         .err => |err| {

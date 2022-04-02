@@ -34,7 +34,7 @@ it("Bun.write('out.txt', 'string')", async () => {
       } catch (e) {}
     }
     await gcTick();
-    await Bun.write("/tmp/out.txt", "string");
+    expect(await Bun.write("/tmp/out.txt", "string")).toBe("string".length);
     await gcTick();
     const out = Bun.file("/tmp/out.txt");
     await gcTick();

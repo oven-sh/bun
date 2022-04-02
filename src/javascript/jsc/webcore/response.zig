@@ -1298,7 +1298,9 @@ pub const Blob = struct {
             };
         }
 
-        return Blob.initWithStore(Blob.Store.initFile(path, null, bun.default_allocator) catch unreachable, globalThis);
+        const result = Blob.initWithStore(Blob.Store.initFile(path, null, bun.default_allocator) catch unreachable, globalThis);
+        VirtualMachine.vm.putFileBlob(path, result.store.?) catch unreachable;
+        return result;
     }
 
     pub const Store = struct {

@@ -89,10 +89,10 @@ public:
     void setGuard(Guard);
     Guard guard() const { return m_guard; }
 
-private:
     FetchHeaders(Guard, HTTPHeaderMap&&);
     explicit FetchHeaders(const FetchHeaders&);
 
+private:
     Guard m_guard;
     HTTPHeaderMap m_headers;
 };

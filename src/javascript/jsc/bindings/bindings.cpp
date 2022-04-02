@@ -110,6 +110,11 @@ void WebCore__FetchHeaders__toUWSResponse(WebCore__FetchHeaders* arg0, bool is_s
     }
 }
 
+WebCore__FetchHeaders* WebCore__FetchHeaders__createEmpty()
+{
+    RefPtr<WebCore::FetchHeaders> headers = adoptRef(*new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} }));
+    return headers.leakRef();
+}
 void WebCore__FetchHeaders__append(WebCore__FetchHeaders* headers, const ZigString* arg1, const ZigString* arg2)
 {
     headers->append(Zig::toString(*arg1), Zig::toString(*arg2));
@@ -128,9 +133,10 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC__JSGlobalObject* 
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
     auto init = argument0.value().isUndefined() ? std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>() : std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>(convert<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>(*lexicalGlobalObject, argument0.value()));
     RETURN_IF_EXCEPTION(throwScope, nullptr);
-    return WebCoreCast<WebCore::JSFetchHeaders, WebCore__FetchHeaders>(
-        JSC::JSValue::encode(WebCore::toJSNewlyCreated(lexicalGlobalObject, globalObject, WebCore::FetchHeaders::create(WTFMove(init)).releaseReturnValue())),
-        &lexicalGlobalObject->vm());
+    RefPtr<WebCore::FetchHeaders> headers = adoptRef(*new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} }));
+    if (init)
+        headers->fill(WTFMove(init.value()));
+    return headers.leakRef();
 }
 
 JSC__JSValue WebCore__FetchHeaders__toJS(WebCore__FetchHeaders* headers, JSC__JSGlobalObject* lexicalGlobalObject)
@@ -143,24 +149,19 @@ JSC__JSValue WebCore__FetchHeaders__clone(WebCore__FetchHeaders* headers, JSC__J
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg1);
     auto clone = WebCore::FetchHeaders::create();
-    if (headers->size() > 0) {
-        auto iter = headers->createIterator();
-        uint32_t i = 0;
-        unsigned count = 0;
-        for (auto pair = iter.next(); pair; pair = iter.next()) {
-            auto name = pair->key;
-            auto value = pair->value;
-            clone->append(name.isolatedCopy(), value.isolatedCopy());
-        }
-    }
+    clone->fill(*headers);
     return JSC::JSValue::encode(WebCore::toJSNewlyCreated(arg1, globalObject, WTFMove(clone)));
 }
 
-// WebCore__FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore__FetchHeaders* headers)
-// {
+WebCore__FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore__FetchHeaders* headers)
+{
+    RefPtr<WebCore::FetchHeaders> clone = adoptRef(*new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} }));
+    if (headers->size() > 0) {
+        clone->fill(*headers);
+    }
 
-//     return JSC::JSValue::encode(WebCore::toJSNewlyCreated(globalObject, globalObject, WebCore::FetchHeaders::create(*headers)));
-// }
+    return clone.leakRef();
+}
 
 void WebCore__FetchHeaders__copyTo(WebCore__FetchHeaders* headers, StringPointer* names, StringPointer* values, unsigned char* buf)
 {
@@ -201,7 +202,7 @@ typedef struct PicoHTTPHeaders {
     const PicoHTTPHeader* ptr;
     size_t len;
 } PicoHTTPHeaders;
-JSC__JSValue WebCore__FetchHeaders__createFromPicoHeaders_(JSC__JSGlobalObject* arg0, const void* arg1)
+WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(JSC__JSGlobalObject* arg0, const void* arg1)
 {
     PicoHTTPHeaders pico_headers = *reinterpret_cast<const PicoHTTPHeaders*>(arg1);
     Vector<KeyValuePair<String, String>> pairs;
@@ -212,12 +213,12 @@ JSC__JSValue WebCore__FetchHeaders__createFromPicoHeaders_(JSC__JSGlobalObject* 
         pairs.uncheckedAppend(KeyValuePair<String, String>(name, value));
     }
 
-    Ref<WebCore::FetchHeaders> headers = WebCore::FetchHeaders::create();
-    headers->fill(WebCore::FetchHeaders::Init(pairs));
+    RefPtr<WebCore::FetchHeaders> headers = adoptRef(*new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} }));
+    headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs)));
     pairs.releaseBuffer();
-    return JSC::JSValue::encode(WebCore::toJSNewlyCreated(arg0, reinterpret_cast<Zig::GlobalObject*>(arg0), WTFMove(headers)));
+    return headers.leakRef();
 }
-JSC__JSValue WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject* arg0, void* arg1)
+WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject* arg0, void* arg1)
 {
     uWS::HttpRequest req = *reinterpret_cast<uWS::HttpRequest*>(arg1);
     Vector<KeyValuePair<String, String>> pairs;
@@ -228,14 +229,15 @@ JSC__JSValue WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject* arg0, voi
         pairs.uncheckedAppend(KeyValuePair<String, String>(name, value));
     }
 
-    Ref<WebCore::FetchHeaders> headers = WebCore::FetchHeaders::create();
-    headers->fill(WebCore::FetchHeaders::Init(pairs));
+    RefPtr<WebCore::FetchHeaders> headers = adoptRef(*new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} }));
+    headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs)));
     pairs.releaseBuffer();
-    return JSC::JSValue::encode(WebCore::toJS(arg0, reinterpret_cast<Zig::GlobalObject*>(arg0), headers));
+    return headers.leakRef();
 }
 void WebCore__FetchHeaders__deref(WebCore__FetchHeaders* arg0)
 {
-    arg0->deref();
+    RefPtr<WebCore::FetchHeaders> clone = arg0;
+    clone->deref();
 }
 
 JSC__JSValue WebCore__FetchHeaders__createValue(JSC__JSGlobalObject* arg0, StringPointer* arg1, StringPointer* arg2, const ZigString* arg3, uint32_t count)
@@ -250,9 +252,9 @@ JSC__JSValue WebCore__FetchHeaders__createValue(JSC__JSGlobalObject* arg0, Strin
     }
 
     Ref<WebCore::FetchHeaders> headers = WebCore::FetchHeaders::create();
-    headers->fill(WebCore::FetchHeaders::Init(pairs));
+    headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs)));
     pairs.releaseBuffer();
-    return JSC::JSValue::encode(WebCore::toJS(arg0, reinterpret_cast<Zig::GlobalObject*>(arg0), headers));
+    return JSC::JSValue::encode(WebCore::toJSNewlyCreated(arg0, reinterpret_cast<Zig::GlobalObject*>(arg0), WTFMove(headers)));
 }
 void WebCore__FetchHeaders__get_(WebCore__FetchHeaders* headers, const ZigString* arg1, ZigString* arg2)
 {

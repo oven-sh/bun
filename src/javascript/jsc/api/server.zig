@@ -827,7 +827,7 @@ pub fn NewServer(comptime ssl_enabled: bool, comptime debug_mode: bool) type {
 
                 this.writeStatus(status);
 
-                if (response.body.init.headers.as(JSC.FetchHeaders)) |headers_| {
+                if (response.body.init.headers) |headers_| {
                     this.writeHeaders(headers_);
                     headers_.deref();
                 } else if (this.blob.content_type.len > 0) {

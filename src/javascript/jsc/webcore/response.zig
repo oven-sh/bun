@@ -173,8 +173,7 @@ pub const Response = struct {
     }
 
     pub fn header(this: *const Response, comptime name: []const u8) ?[]const u8 {
-        const headers_ = (this.body.init.headers.as(FetchHeaders) orelse return null);
-        return headers_.get(name);
+        return (this.body.init.headers orelse return null).get(name);
     }
 
     pub const Props = struct {};
@@ -281,25 +280,21 @@ pub const Response = struct {
         return js.JSValueMakeBoolean(ctx, this.isOK());
     }
 
-    fn getOrCreateHeaders(this: *Response, globalThis: *JSGlobalObject) *FetchHeaders {
-        if (this.body.init.headers.isEmpty()) {
-            this.body.init.headers = FetchHeaders.createEmpty(globalThis).as(FetchHeaders);
+    fn getOrCreateHeaders(this: *Response) *FetchHeaders {
+        if (this.body.init.headers == null) {
+            this.body.init.headers = FetchHeaders.createEmpty();
         }
-        return this.body.init.headers;
+        return this.body.init.headers.?;
     }
 
     pub fn getHeaders(
         this: *Response,
         ctx: js.JSContextRef,
-        obj: js.JSValueRef,
+        _: js.JSValueRef,
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        var headers_symbol = &ZigString.init("headers_");
-        const thisValue = JSC.JSValue.fromRef(obj);
-        const headers_symbol_ = JSC.JSValue.symbolFor(ctx.ptr(), headers_symbol);
-        this.body.init.headers = JSC.JSValue.get(headers_symbol_) orelse FetchHeaders.createEmpty(ctx.ptr());
-        return this.body.init.headers.asObjectRef();
+        return this.getOrCreateHeaders().toJS(ctx.ptr()).asObjectRef();
     }
 
     pub fn doClone(
@@ -312,11 +307,8 @@ pub const Response = struct {
     ) js.JSValueRef {
         var cloned = this.clone(getAllocator(ctx), ctx.ptr());
         var val = Response.makeMaybePooled(ctx, cloned);
-        if (!cloned.body.init.headers.isEmpty()) {
-            var headers_symbol = &ZigString.init("headers_");
-            const thisValue = JSC.JSValue.fromRef(val);
-            const headers_symbol_ = JSC.JSValue.symbolFor(ctx.ptr(), headers_symbol);
-            cloned.body.init.headers = thisValue.get(headers_symbol_) orelse FetchHeaders.createEmpty(ctx.ptr());
+        if (this.body.init.headers) |headers| {
+            cloned.body.init.headers = headers.cloneThis();
         }
 
         return val;
@@ -472,7 +464,7 @@ pub const Response = struct {
             }
         }
 
-        var headers_ref = response.getOrCreateHeaders(ctx.ptr());
+        var headers_ref = response.getOrCreateHeaders();
         headers_ref.putDefault("content-type", MimeType.json.value);
         var ptr = response.allocator.create(Response) catch unreachable;
         ptr.* = response;
@@ -521,7 +513,7 @@ pub const Response = struct {
             }
         }
 
-        response.body.init.headers = response.getOrCreateHeaders(ctx.ptr());
+        response.body.init.headers = response.getOrCreateHeaders();
         response.body.init.status_code = 302;
         var headers_ref = response.body.init.headers.?;
         headers_ref.put("location", url_string_slice.slice());
@@ -963,7 +955,7 @@ pub const Fetch = struct {
         } else if (first_arg.asCheckLoaded(Request)) |request| {
             url = ZigURL.parse(request.url.dupe(getAllocator(ctx)) catch unreachable);
             method = request.method;
-            if (request.headers.as(FetchHeaders)) |head| {
+            if (request.headers) |head| {
                 headers = Headers.from(head, bun.default_allocator) catch unreachable;
             }
             var blob = request.body.use();
@@ -3490,18 +3482,23 @@ pub const Body = struct {
     }
 
     pub fn deinit(this: *Body, _: std.mem.Allocator) void {
+        if (this.init.headers) |headers| {
+            headers.deref();
+            this.init.headers = null;
+        }
         this.value.deinit();
     }
 
     pub const Init = struct {
-        headers: JSValue = JSValue.zero,
+        headers: ?*FetchHeaders = null,
         status_code: u16,
         method: Method = Method.GET,
 
-        pub fn clone(this: Init, globalThis: *JSGlobalObject) Init {
+        pub fn clone(this: Init, _: *JSGlobalObject) Init {
             var that = this;
-            if (this.headers.as(FetchHeaders)) |head| {
-                that.headers = head.clone(globalThis);
+            var headers = this.headers;
+            if (headers) |head| {
+                that.headers = head.cloneThis();
             }
 
             return that;
@@ -3523,12 +3520,9 @@ pub const Body = struct {
                             if (js.JSObjectGetProperty(ctx, init_ref, property_name_ref, null)) |header_prop| {
                                 const header_val = JSValue.fromRef(header_prop);
                                 if (header_val.as(FetchHeaders)) |orig| {
-                                    result.headers = orig.clone(ctx.ptr());
+                                    result.headers = orig.cloneThis();
                                 } else {
-                                    result.headers = if (FetchHeaders.createFromJS(ctx.ptr(), header_val)) |headers|
-                                        headers.toJS(ctx.ptr())
-                                    else
-                                        result.headers;
+                                    result.headers = FetchHeaders.createFromJS(ctx.ptr(), header_val);
                                 }
                             }
                         }
@@ -3551,7 +3545,7 @@ pub const Body = struct {
                 }
             }
 
-            if (result.headers.isEmptyOrUndefinedOrNull() and result.status_code < 200) return null;
+            if (result.headers == null and result.status_code < 200) return null;
             return result;
         }
     };
@@ -3776,7 +3770,7 @@ pub const Body = struct {
         exception: js.ExceptionRef,
     ) Body {
         var body = Body{
-            .init = Init{ .status_code = 200 },
+            .init = Init{ .headers = null, .status_code = 200 },
         };
         const value = JSC.JSValue.fromRef(body_ref);
         var allocator = getAllocator(ctx);
@@ -3808,7 +3802,7 @@ pub const Body = struct {
 // https://developer.mozilla.org/en-US/docs/Web/API/Request
 pub const Request = struct {
     url: ZigString = ZigString.Empty,
-    headers: JSValue = JSValue.zero,
+    headers: ?*FetchHeaders = null,
     body: Body.Value = Body.Value{ .Empty = .{} },
     method: Method = Method.GET,
     uws_request: ?*uws.Request = null,
@@ -3825,7 +3819,7 @@ pub const Request = struct {
     }
 
     pub fn mimeType(this: *const Request) string {
-        if (this.headers.as(FetchHeaders)) |headers| {
+        if (this.headers) |headers| {
             // Remember, we always lowercase it
             // hopefully doesn't matter here tho
             if (headers.get("content-type")) |content_type| {
@@ -4021,7 +4015,7 @@ pub const Request = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        if (this.headers.as(FetchHeaders)) |headers_ref| {
+        if (this.headers) |headers_ref| {
             if (headers_ref.get("referrer")) |referrer| {
                 return ZigString.init(referrer).toValueGC(ctx.ptr()).asRef();
             }
@@ -4132,15 +4126,15 @@ pub const Request = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        if (this.headers.isEmptyOrUndefinedOrNull()) {
+        if (this.headers == null) {
             if (this.uws_request) |req| {
                 this.headers = FetchHeaders.createFromUWS(ctx.ptr(), req);
             } else {
-                this.headers = FetchHeaders.createEmpty(ctx.ptr());
+                this.headers = FetchHeaders.createEmpty();
             }
         }
 
-        return this.headers.asObjectRef();
+        return this.headers.?.toJS(ctx.ptr()).asObjectRef();
     }
 
     pub fn cloneInto(
@@ -4154,8 +4148,8 @@ pub const Request = struct {
             .url = ZigString.init(allocator.dupe(u8, this.url.slice()) catch unreachable),
             .method = this.method,
         };
-        if (this.headers.as(FetchHeaders)) |head| {
-            req.headers = head.clone(globalThis);
+        if (this.headers) |head| {
+            req.headers = head.cloneThis();
         } else if (this.uws_request) |uws_req| {
             req.headers = FetchHeaders.createFromUWS(globalThis, uws_req);
         }
@@ -4403,7 +4397,7 @@ pub const FetchEvent = struct {
         var needs_mime_type = true;
         var content_length: ?usize = null;
 
-        if (response.body.init.headers.as(JSC.FetchHeaders)) |headers_ref| {
+        if (response.body.init.headers) |headers_ref| {
             var headers = Headers.from(headers_ref, request_context.allocator) catch unreachable;
 
             var i: usize = 0;

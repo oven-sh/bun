@@ -160,14 +160,14 @@ pub extern fn WebCore__FetchHeaders__clone(arg0: ?*WebCore__FetchHeaders, arg1: 
 pub extern fn WebCore__FetchHeaders__cloneThis(arg0: ?*WebCore__FetchHeaders) ?*WebCore__FetchHeaders;
 pub extern fn WebCore__FetchHeaders__copyTo(arg0: ?*WebCore__FetchHeaders, arg1: [*c]StringPointer, arg2: [*c]StringPointer, arg3: [*c]u8) void;
 pub extern fn WebCore__FetchHeaders__count(arg0: ?*WebCore__FetchHeaders, arg1: [*c]u32, arg2: [*c]u32) void;
+pub extern fn WebCore__FetchHeaders__createEmpty(...) ?*WebCore__FetchHeaders;
 pub extern fn WebCore__FetchHeaders__createFromJS(arg0: [*c]JSC__JSGlobalObject, JSValue1: JSC__JSValue) ?*WebCore__FetchHeaders;
-pub extern fn WebCore__FetchHeaders__createFromPicoHeaders_(arg0: [*c]JSC__JSGlobalObject, arg1: ?*const anyopaque) JSC__JSValue;
-pub extern fn WebCore__FetchHeaders__createFromUWS(arg0: [*c]JSC__JSGlobalObject, arg1: ?*anyopaque) JSC__JSValue;
+pub extern fn WebCore__FetchHeaders__createFromPicoHeaders_(arg0: [*c]JSC__JSGlobalObject, arg1: ?*const anyopaque) ?*WebCore__FetchHeaders;
+pub extern fn WebCore__FetchHeaders__createFromUWS(arg0: [*c]JSC__JSGlobalObject, arg1: ?*anyopaque) ?*WebCore__FetchHeaders;
 pub extern fn WebCore__FetchHeaders__createValue(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]StringPointer, arg2: [*c]StringPointer, arg3: [*c]const ZigString, arg4: u32) JSC__JSValue;
 pub extern fn WebCore__FetchHeaders__deref(arg0: ?*WebCore__FetchHeaders) void;
 pub extern fn WebCore__FetchHeaders__get_(arg0: ?*WebCore__FetchHeaders, arg1: [*c]const ZigString, arg2: [*c]ZigString) void;
 pub extern fn WebCore__FetchHeaders__has(arg0: ?*WebCore__FetchHeaders, arg1: [*c]const ZigString) bool;
-pub extern fn WebCore__FetchHeaders__keyCount(arg0: ?*WebCore__FetchHeaders) u32;
 pub extern fn WebCore__FetchHeaders__put_(arg0: ?*WebCore__FetchHeaders, arg1: [*c]const ZigString, arg2: [*c]const ZigString) void;
 pub extern fn WebCore__FetchHeaders__remove(arg0: ?*WebCore__FetchHeaders, arg1: [*c]const ZigString) void;
 pub extern fn WebCore__FetchHeaders__toJS(arg0: ?*WebCore__FetchHeaders, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;

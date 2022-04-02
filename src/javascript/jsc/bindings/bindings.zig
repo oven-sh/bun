@@ -435,8 +435,11 @@ const Api = @import("../../../api/schema.zig").Api;
 pub const FetchHeaders = opaque {
     pub const shim = Shimmer("WebCore", "FetchHeaders", @This());
 
-    const cppFn = shim.cppFn;
     pub const name = "WebCore::FetchHeaders";
+    pub const include = "FetchHeaders.h";
+    pub const namespace = "WebCore";
+
+    const cppFn = shim.cppFn;
 
     pub fn createValue(
         global: *JSGlobalObject,
@@ -491,7 +494,7 @@ pub const FetchHeaders = opaque {
     pub fn createFromUWS(
         global: *JSGlobalObject,
         uws_request: *anyopaque,
-    ) JSValue {
+    ) *FetchHeaders {
         return shim.cppFn("createFromUWS", .{
             global,
             uws_request,
@@ -515,20 +518,14 @@ pub const FetchHeaders = opaque {
         len: usize,
     };
 
-    pub fn createEmpty(
-        global: *JSGlobalObject,
-    ) JSValue {
-        const pico_ = PicoHeaders{ .ptr = undefined, .len = 0 };
-        return shim.cppFn("createFromPicoHeaders_", .{
-            global,
-            &pico_,
-        });
+    pub fn createEmpty() *FetchHeaders {
+        return shim.cppFn("createEmpty", .{});
     }
 
     pub fn createFromPicoHeaders(
         global: *JSGlobalObject,
         pico_headers: anytype,
-    ) JSValue {
+    ) *FetchHeaders {
         const out = PicoHeaders{ .ptr = pico_headers.ptr, .len = pico_headers.len };
         const result = shim.cppFn("createFromPicoHeaders_", .{
             global,
@@ -540,7 +537,7 @@ pub const FetchHeaders = opaque {
     pub fn createFromPicoHeaders_(
         global: *JSGlobalObject,
         pico_headers: *const anyopaque,
-    ) JSValue {
+    ) *FetchHeaders {
         return shim.cppFn("createFromPicoHeaders_", .{
             global,
             pico_headers,
@@ -696,6 +693,7 @@ pub const FetchHeaders = opaque {
         "copyTo",
         "count",
         "createFromJS",
+        "createEmpty",
         "createFromPicoHeaders_",
         "createFromUWS",
         "createValue",
@@ -1990,10 +1988,6 @@ pub const String = extern struct {
     };
 };
 
-pub const BuiltinName = enum(u8) {
-    headers,
-};
-
 pub const JSValue = enum(u64) {
     _,
 
@@ -2586,10 +2580,6 @@ pub const JSValue = enum(u64) {
         return cppFn("getIfPropertyExistsImpl", .{ this, global, ptr, len });
     }
 
-    pub fn getHiddenIfPropertyExistsImpl(this: JSValue, global: *JSGlobalObject, ptr: [*]const u8, len: u32) JSValue {
-        return cppFn("getHiddenIfPropertyExistsImpl", .{ this, global, ptr, len });
-    }
-
     pub fn getSymbolDescription(this: JSValue, global: *JSGlobalObject, str: *ZigString) void {
         cppFn("getSymbolDescription", .{ this, global, str });
     }
@@ -2651,11 +2641,6 @@ pub const JSValue = enum(u64) {
     }
 
     pub fn get(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
-        const value = getIfPropertyExistsImpl(this, global, property.ptr, @intCast(u32, property.len));
-        return if (@enumToInt(value) != 0) value else return null;
-    }
-
-    pub fn getHidden(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
         const value = getIfPropertyExistsImpl(this, global, property.ptr, @intCast(u32, property.len));
         return if (@enumToInt(value) != 0) value else return null;
     }

@@ -2,7 +2,6 @@ import { it, describe, expect } from "bun:test";
 import fs from "fs";
 
 function gc() {
-  // console.trace();
   Bun.gc(true);
 }
 

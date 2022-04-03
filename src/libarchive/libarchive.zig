@@ -14,6 +14,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
 const struct_archive = lib.struct_archive;
+const JSC = @import("javascript_core");
 pub const Seek = enum(c_int) {
     set = std.os.SEEK_SET,
     current = std.os.SEEK_CUR,
@@ -515,7 +516,7 @@ pub const Archive = struct {
                             std.os.mkdiratZ(dir.fd, pathname, perm) catch |err| {
                                 if (err == error.PathAlreadyExists or err == error.NotDir) break;
                                 try dir.makePath(std.fs.path.dirname(slice) orelse return err);
-                                try std.os.mkdiratZ(dir.fd, pathname, perm);
+                                try std.os.mkdiratZ(dir.fd, pathname, 0o777);
                             };
                         },
                         Kind.SymLink => {
@@ -523,8 +524,8 @@ pub const Archive = struct {
 
                             std.os.symlinkatZ(link_target, dir.fd, pathname) catch |err| brk: {
                                 switch (err) {
-                                    error.FileNotFound => {
-                                        try dir.makePath(std.fs.path.dirname(slice) orelse return err);
+                                    error.AccessDenied, error.FileNotFound => {
+                                        dir.makePath(std.fs.path.dirname(slice) orelse return err) catch {};
                                         break :brk try std.os.symlinkatZ(link_target, dir.fd, pathname);
                                     },
                                     else => {
@@ -536,9 +537,11 @@ pub const Archive = struct {
                         Kind.File => {
                             const file = dir.createFileZ(pathname, .{ .truncate = true, .mode = @intCast(std.os.mode_t, lib.archive_entry_perm(entry)) }) catch |err| brk: {
                                 switch (err) {
-                                    error.FileNotFound => {
-                                        try dir.makePath(std.fs.path.dirname(slice) orelse return err);
-                                        break :brk try dir.createFileZ(pathname, .{ .truncate = true });
+                                    error.AccessDenied, error.FileNotFound => {
+                                        dir.makePath(std.fs.path.dirname(slice) orelse return err) catch {};
+                                        break :brk try dir.createFileZ(pathname, .{
+                                            .truncate = true,
+                                        });
                                     },
                                     else => {
                                         return err;

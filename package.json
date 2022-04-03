@@ -8,9 +8,8 @@
     "build-fallback": "esbuild --target=esnext  --bundle src/fallback.ts --format=iife --platform=browser --minify > src/fallback.out.js"
   },
   "devDependencies": {
-    "@types/node": "^16.9.2",
-    "@types/puppeteer": "^5.4.4",
-    "prettier": "^2.4.1"
+    "prettier": "^2.4.1",
+    "typescript": "4.6.3"
   },
   "version": "0.0.0"
 }

@@ -9,19 +9,21 @@ const Allocator = mem.Allocator;
 const assert = std.debug.assert;
 
 pub const Arena = struct {
-    heap: *mimalloc.mi_heap_t = undefined,
+    heap: ?*mimalloc.mi_heap_t = null,
 
     pub fn backingAllocator(this: Arena) Allocator {
-        var arena = Arena{ .heap = this.heap.backing() };
+        var arena = Arena{ .heap = this.heap.?.backing() };
         return arena.allocator();
     }
 
     pub fn allocator(this: Arena) Allocator {
-        return Allocator{ .ptr = this.heap, .vtable = &c_allocator_vtable };
+        @setRuntimeSafety(false);
+        return Allocator{ .ptr = this.heap.?, .vtable = &c_allocator_vtable };
     }
 
     pub fn deinit(this: *Arena) void {
         mimalloc.mi_heap_destroy(this.heap);
+        this.heap = null;
     }
 
     pub fn reset(this: *Arena) void {

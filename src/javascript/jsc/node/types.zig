@@ -232,7 +232,6 @@ pub fn CallbackTask(comptime Result: type) type {
         callback: JSC.C.JSObjectRef,
         option: Option,
         success: bool = false,
-        completion: AsyncIO.Completion,
 
         pub const Option = union {
             err: JSC.SystemError,

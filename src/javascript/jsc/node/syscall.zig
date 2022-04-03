@@ -210,7 +210,6 @@ else
 
 pub fn pread(fd: os.fd_t, buf: []u8, offset: i64) Maybe(usize) {
     const adjusted_len = @minimum(buf.len, max_count);
-
     const ioffset = @bitCast(i64, offset); // the OS treats this as unsigned
     while (true) {
         const rc = pread_sym(fd, buf.ptr, adjusted_len, ioffset);
@@ -378,6 +377,7 @@ pub fn getFdPath(fd: fd_t, out_buffer: *[MAX_PATH_BYTES]u8) Maybe([]u8) {
             return .{ .result = out_buffer[0..len] };
         },
         .linux => {
+            // TODO: alpine linux may not have /proc/self
             var procfs_buf: ["/proc/self/fd/-2147483648".len:0]u8 = undefined;
             const proc_path = std.fmt.bufPrintZ(procfs_buf[0..], "/proc/self/fd/{d}\x00", .{fd}) catch unreachable;
 
@@ -423,9 +423,9 @@ fn mmap(
         return Maybe([]align(mem.page_size) u8){
             .err = .{ .errno = @truncate(Syscall.Error.Int, @enumToInt(std.c.getErrno(@bitCast(i64, @ptrToInt(std.c.MAP.FAILED))))), .syscall = .mmap },
         };
-    } 
-            
-    return Maybe([]align(mem.page_size) u8){.result =  @ptrCast([*]align(mem.page_size) u8, @alignCast(mem.page_size, rc))[0..length] };
+    }
+
+    return Maybe([]align(mem.page_size) u8){ .result = @ptrCast([*]align(mem.page_size) u8, @alignCast(mem.page_size, rc))[0..length] };
 }
 
 pub fn mmapFile(path: [:0]const u8, flags: u32) Maybe([]align(mem.page_size) u8) {

@@ -292,8 +292,44 @@
       "request": "launch",
       "name": "bun test",
       "program": "bun-debug",
-      "args": ["wiptest", "transpiler"],
+      "args": ["wiptest"],
       "cwd": "${workspaceFolder}/integration",
+      "env": {
+        "FORCE_COLOR": "1"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun test current",
+      "program": "bun-debug",
+      "args": ["wiptest", "response.file"],
+      "cwd": "${workspaceFolder}/integration",
+      "env": {
+        "FORCE_COLOR": "1"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun http example",
+      "program": "bun-debug",
+      "args": ["run", "examples/bun/http.ts"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "FORCE_COLOR": "1"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun http file example",
+      "program": "bun-debug",
+      "args": ["run", "examples/bun/http-file.ts"],
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1"
       },
@@ -304,13 +340,14 @@
       "request": "launch",
       "name": "bun tes2t",
       "program": "bun-debug",
-      "args": ["build", "hello.jsx", "--platform=bun"],
-      "cwd": "/Users/jarred/Desktop/",
+      "args": ["add", "imagemin-webpack-plugin"],
+      "cwd": "/tmp/testfoo",
       "env": {
         "FORCE_COLOR": "1"
       },
       "console": "internalConsole"
     },
+
     {
       "type": "lldb",
       "request": "launch",

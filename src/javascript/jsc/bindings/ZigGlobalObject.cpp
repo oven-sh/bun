@@ -88,6 +88,7 @@
 #include "JSEvent.h"
 #include "JSErrorEvent.h"
 #include "JSFetchHeaders.h"
+#include "JSImageData.h"
 
 #include "Process.h"
 
@@ -394,6 +395,17 @@ JSC_DEFINE_CUSTOM_GETTER(JSFetchHeaders_getter,
     Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     return JSC::JSValue::encode(
         WebCore::JSFetchHeaders::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
+}
+
+JSC_DECLARE_CUSTOM_GETTER(JSImageData_getter);
+
+JSC_DEFINE_CUSTOM_GETTER(JSImageData_getter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return JSC::JSValue::encode(
+        WebCore::JSImageData::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
 }
 
 JSC_DECLARE_CUSTOM_GETTER(JSEventTarget_getter);
@@ -877,6 +889,9 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "ErrorEvent"_s), JSC::CustomGetterSetter::create(vm, JSErrorEvent_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "ImageData"_s), JSC::CustomGetterSetter::create(vm, JSImageData_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     extraStaticGlobals.releaseBuffer();

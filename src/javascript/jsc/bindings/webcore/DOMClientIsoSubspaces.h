@@ -541,7 +541,7 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForHTMLUnknownElement;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForHTMLVideoElement;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForImageBitmap;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForImageData;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForImageData;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMediaController;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMediaEncryptedEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMediaError;

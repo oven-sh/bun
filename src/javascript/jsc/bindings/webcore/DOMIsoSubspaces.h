@@ -532,7 +532,7 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForHTMLUnknownElement;
     // std::unique_ptr<IsoSubspace> m_subspaceForHTMLVideoElement;
     // std::unique_ptr<IsoSubspace> m_subspaceForImageBitmap;
-    // std::unique_ptr<IsoSubspace> m_subspaceForImageData;
+    std::unique_ptr<IsoSubspace> m_subspaceForImageData;
     // std::unique_ptr<IsoSubspace> m_subspaceForMediaController;
     // std::unique_ptr<IsoSubspace> m_subspaceForMediaEncryptedEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForMediaError;

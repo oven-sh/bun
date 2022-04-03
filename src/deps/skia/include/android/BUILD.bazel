@@ -1,0 +1,24 @@
+load("//bazel:macros.bzl", "generated_cc_atom")
+
+generated_cc_atom(
+    name = "SkAndroidFrameworkUtils_hdr",
+    hdrs = ["SkAndroidFrameworkUtils.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/core:SkRefCnt_hdr",
+        "//include/core:SkTypes_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "SkAnimatedImage_hdr",
+    hdrs = ["SkAnimatedImage.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/codec:SkCodecAnimation_hdr",
+        "//include/core:SkBitmap_hdr",
+        "//include/core:SkDrawable_hdr",
+        "//include/core:SkMatrix_hdr",
+        "//include/core:SkRect_hdr",
+    ],
+)

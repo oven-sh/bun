@@ -1,0 +1,91 @@
+load("//bazel:macros.bzl", "generated_cc_atom")
+
+generated_cc_atom(
+    name = "sk_canvas_hdr",
+    hdrs = ["sk_canvas.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [":sk_types_hdr"],
+)
+
+generated_cc_atom(
+    name = "sk_colorspace_hdr",
+    hdrs = ["sk_colorspace.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [":sk_types_hdr"],
+)
+
+generated_cc_atom(
+    name = "sk_data_hdr",
+    hdrs = ["sk_data.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [":sk_types_hdr"],
+)
+
+generated_cc_atom(
+    name = "sk_image_hdr",
+    hdrs = ["sk_image.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [":sk_types_hdr"],
+)
+
+generated_cc_atom(
+    name = "sk_imageinfo_hdr",
+    hdrs = ["sk_imageinfo.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [":sk_types_hdr"],
+)
+
+generated_cc_atom(
+    name = "sk_maskfilter_hdr",
+    hdrs = ["sk_maskfilter.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [":sk_types_hdr"],
+)
+
+generated_cc_atom(
+    name = "sk_matrix_hdr",
+    hdrs = ["sk_matrix.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [":sk_types_hdr"],
+)
+
+generated_cc_atom(
+    name = "sk_paint_hdr",
+    hdrs = ["sk_paint.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [":sk_types_hdr"],
+)
+
+generated_cc_atom(
+    name = "sk_path_hdr",
+    hdrs = ["sk_path.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [":sk_types_hdr"],
+)
+
+generated_cc_atom(
+    name = "sk_picture_hdr",
+    hdrs = ["sk_picture.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [":sk_types_hdr"],
+)
+
+generated_cc_atom(
+    name = "sk_shader_hdr",
+    hdrs = ["sk_shader.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [":sk_types_hdr"],
+)
+
+generated_cc_atom(
+    name = "sk_surface_hdr",
+    hdrs = ["sk_surface.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [":sk_types_hdr"],
+)
+
+generated_cc_atom(
+    name = "sk_types_hdr",
+    hdrs = ["sk_types.h"],
+    visibility = ["//:__subpackages__"],
+)

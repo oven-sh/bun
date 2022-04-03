@@ -1,0 +1,13 @@
+load("//bazel:macros.bzl", "generated_cc_atom")
+
+generated_cc_atom(
+    name = "SkCGUtils_hdr",
+    hdrs = ["SkCGUtils.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/core:SkImageInfo_hdr",
+        "//include/core:SkImage_hdr",
+        "//include/core:SkPixmap_hdr",
+        "//include/core:SkSize_hdr",
+    ],
+)

@@ -1,0 +1,18 @@
+load("//bazel:macros.bzl", "generated_cc_atom")
+
+generated_cc_atom(
+    name = "GrMtlBackendContext_hdr",
+    hdrs = ["GrMtlBackendContext.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [":GrMtlTypes_hdr"],
+)
+
+generated_cc_atom(
+    name = "GrMtlTypes_hdr",
+    hdrs = ["GrMtlTypes.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/gpu:GrTypes_hdr",
+        "//include/ports:SkCFObject_hdr",
+    ],
+)

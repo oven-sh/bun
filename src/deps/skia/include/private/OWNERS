@@ -1,0 +1,4 @@
+# include/ has a restricted set of reviewers (to limit changes to public API)
+# Files in this directory follow the same rules as the rest of Skia, though:
+
+file:../../OWNERS

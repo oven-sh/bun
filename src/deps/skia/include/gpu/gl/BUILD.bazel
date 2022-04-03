@@ -1,0 +1,70 @@
+load("//bazel:macros.bzl", "generated_cc_atom")
+
+generated_cc_atom(
+    name = "GrGLAssembleHelpers_hdr",
+    hdrs = ["GrGLAssembleHelpers.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [":GrGLAssembleInterface_hdr"],
+)
+
+generated_cc_atom(
+    name = "GrGLAssembleInterface_hdr",
+    hdrs = ["GrGLAssembleInterface.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [":GrGLInterface_hdr"],
+)
+
+generated_cc_atom(
+    name = "GrGLConfig_chrome_hdr",
+    hdrs = ["GrGLConfig_chrome.h"],
+    visibility = ["//:__subpackages__"],
+)
+
+generated_cc_atom(
+    name = "GrGLConfig_hdr",
+    hdrs = ["GrGLConfig.h"],
+    visibility = ["//:__subpackages__"],
+    deps = ["//include/gpu:GrTypes_hdr"],
+)
+
+generated_cc_atom(
+    name = "GrGLExtensions_hdr",
+    hdrs = ["GrGLExtensions.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":GrGLFunctions_hdr",
+        "//include/core:SkString_hdr",
+        "//include/private:SkTArray_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "GrGLFunctions_hdr",
+    hdrs = ["GrGLFunctions.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":GrGLTypes_hdr",
+        "//include/private:SkTLogic_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "GrGLInterface_hdr",
+    hdrs = ["GrGLInterface.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":GrGLExtensions_hdr",
+        ":GrGLFunctions_hdr",
+        "//include/core:SkRefCnt_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "GrGLTypes_hdr",
+    hdrs = ["GrGLTypes.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":GrGLConfig_hdr",
+        "//include/core:SkRefCnt_hdr",
+    ],
+)

@@ -1,0 +1,2 @@
+# The auto-roller directly checks in skcms, so give it ownership as well:
+skia-autoroll@skia-public.iam.gserviceaccount.com

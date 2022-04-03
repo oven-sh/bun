@@ -176,6 +176,8 @@ typedef struct {
     uint64_t _value;
 } Bun__ArrayBuffer;
 
+typedef struct Bun__Blob Bun__Blob;
+
 #ifndef STRING_POINTER
 #define STRING_POINTER
 typedef struct StringPointer {

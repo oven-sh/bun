@@ -1,0 +1,8 @@
+load("//bazel:macros.bzl", "generated_cc_atom")
+
+generated_cc_atom(
+    name = "SkSVGCanvas_hdr",
+    hdrs = ["SkSVGCanvas.h"],
+    visibility = ["//:__subpackages__"],
+    deps = ["//include/core:SkCanvas_hdr"],
+)

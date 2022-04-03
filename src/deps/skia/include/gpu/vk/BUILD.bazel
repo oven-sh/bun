@@ -1,0 +1,56 @@
+load("//bazel:macros.bzl", "generated_cc_atom")
+
+generated_cc_atom(
+    name = "GrVkBackendContext_hdr",
+    hdrs = ["GrVkBackendContext.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":GrVkMemoryAllocator_hdr",
+        ":GrVkTypes_hdr",
+        "//include/core:SkRefCnt_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "GrVkExtensions_hdr",
+    hdrs = ["GrVkExtensions.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":GrVkTypes_hdr",
+        "//include/core:SkString_hdr",
+        "//include/private:SkTArray_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "GrVkMemoryAllocator_hdr",
+    hdrs = ["GrVkMemoryAllocator.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":GrVkTypes_hdr",
+        "//include/core:SkRefCnt_hdr",
+        "//include/gpu:GrTypes_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "GrVkTypes_hdr",
+    hdrs = ["GrVkTypes.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":GrVkVulkan_hdr",
+        "//include/core:SkTypes_hdr",
+        "//include/gpu:GrTypes_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "GrVkVulkan_hdr",
+    hdrs = ["GrVkVulkan.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/core:SkTypes_hdr",
+        "//include/third_party/vulkan/vulkan:vulkan_android_hdr",
+        "//include/third_party/vulkan/vulkan:vulkan_core_hdr",
+    ],
+)

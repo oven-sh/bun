@@ -1,0 +1,49 @@
+load("//bazel:macros.bzl", "generated_cc_atom")
+
+generated_cc_atom(
+    name = "vk_platform_hdr",
+    hdrs = ["vk_platform.h"],
+    visibility = ["//:__subpackages__"],
+)
+
+generated_cc_atom(
+    name = "vulkan_android_hdr",
+    hdrs = ["vulkan_android.h"],
+    visibility = ["//:__subpackages__"],
+)
+
+generated_cc_atom(
+    name = "vulkan_core_hdr",
+    hdrs = ["vulkan_core.h"],
+    visibility = ["//:__subpackages__"],
+)
+
+generated_cc_atom(
+    name = "vulkan_hdr",
+    hdrs = ["vulkan.h"],
+    visibility = ["//:__subpackages__"],
+)
+
+generated_cc_atom(
+    name = "vulkan_ios_hdr",
+    hdrs = ["vulkan_ios.h"],
+    visibility = ["//:__subpackages__"],
+)
+
+generated_cc_atom(
+    name = "vulkan_macos_hdr",
+    hdrs = ["vulkan_macos.h"],
+    visibility = ["//:__subpackages__"],
+)
+
+generated_cc_atom(
+    name = "vulkan_win32_hdr",
+    hdrs = ["vulkan_win32.h"],
+    visibility = ["//:__subpackages__"],
+)
+
+generated_cc_atom(
+    name = "vulkan_xcb_hdr",
+    hdrs = ["vulkan_xcb.h"],
+    visibility = ["//:__subpackages__"],
+)

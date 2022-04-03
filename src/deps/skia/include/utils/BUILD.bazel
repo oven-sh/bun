@@ -1,0 +1,155 @@
+load("//bazel:macros.bzl", "generated_cc_atom")
+
+generated_cc_atom(
+    name = "SkAnimCodecPlayer_hdr",
+    hdrs = ["SkAnimCodecPlayer.h"],
+    visibility = ["//:__subpackages__"],
+    deps = ["//include/codec:SkCodec_hdr"],
+)
+
+generated_cc_atom(
+    name = "SkBase64_hdr",
+    hdrs = ["SkBase64.h"],
+    visibility = ["//:__subpackages__"],
+    deps = ["//include/core:SkTypes_hdr"],
+)
+
+generated_cc_atom(
+    name = "SkCamera_hdr",
+    hdrs = ["SkCamera.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/core:SkM44_hdr",
+        "//include/core:SkMatrix_hdr",
+        "//include/private:SkNoncopyable_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "SkCanvasStateUtils_hdr",
+    hdrs = ["SkCanvasStateUtils.h"],
+    visibility = ["//:__subpackages__"],
+    deps = ["//include/core:SkCanvas_hdr"],
+)
+
+generated_cc_atom(
+    name = "SkCustomTypeface_hdr",
+    hdrs = ["SkCustomTypeface.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/core:SkFontMetrics_hdr",
+        "//include/core:SkFontStyle_hdr",
+        "//include/core:SkImage_hdr",
+        "//include/core:SkPaint_hdr",
+        "//include/core:SkPath_hdr",
+        "//include/core:SkPicture_hdr",
+        "//include/core:SkTypeface_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "SkEventTracer_hdr",
+    hdrs = ["SkEventTracer.h"],
+    visibility = ["//:__subpackages__"],
+    deps = ["//include/core:SkTypes_hdr"],
+)
+
+generated_cc_atom(
+    name = "SkNWayCanvas_hdr",
+    hdrs = ["SkNWayCanvas.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":SkNoDrawCanvas_hdr",
+        "//include/core:SkCanvasVirtualEnforcer_hdr",
+        "//include/private:SkTDArray_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "SkNoDrawCanvas_hdr",
+    hdrs = ["SkNoDrawCanvas.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/core:SkCanvasVirtualEnforcer_hdr",
+        "//include/core:SkCanvas_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "SkNullCanvas_hdr",
+    hdrs = ["SkNullCanvas.h"],
+    visibility = ["//:__subpackages__"],
+    deps = ["//include/core:SkCanvas_hdr"],
+)
+
+generated_cc_atom(
+    name = "SkOrderedFontMgr_hdr",
+    hdrs = ["SkOrderedFontMgr.h"],
+    visibility = ["//:__subpackages__"],
+    deps = ["//include/core:SkFontMgr_hdr"],
+)
+
+generated_cc_atom(
+    name = "SkPaintFilterCanvas_hdr",
+    hdrs = ["SkPaintFilterCanvas.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":SkNWayCanvas_hdr",
+        "//include/core:SkCanvasVirtualEnforcer_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "SkParsePath_hdr",
+    hdrs = ["SkParsePath.h"],
+    visibility = ["//:__subpackages__"],
+    deps = ["//include/core:SkPath_hdr"],
+)
+
+generated_cc_atom(
+    name = "SkParse_hdr",
+    hdrs = ["SkParse.h"],
+    visibility = ["//:__subpackages__"],
+    deps = ["//include/core:SkColor_hdr"],
+)
+
+generated_cc_atom(
+    name = "SkRandom_hdr",
+    hdrs = ["SkRandom.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/core:SkScalar_hdr",
+        "//include/private:SkFixed_hdr",
+        "//include/private:SkFloatBits_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "SkShadowUtils_hdr",
+    hdrs = ["SkShadowUtils.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/core:SkColor_hdr",
+        "//include/core:SkPoint3_hdr",
+        "//include/core:SkScalar_hdr",
+        "//include/private:SkShadowFlags_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "SkTextUtils_hdr",
+    hdrs = ["SkTextUtils.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/core:SkCanvas_hdr",
+        "//include/core:SkFont_hdr",
+        "//include/core:SkPaint_hdr",
+        "//include/core:SkString_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "SkTraceEventPhase_hdr",
+    hdrs = ["SkTraceEventPhase.h"],
+    visibility = ["//:__subpackages__"],
+)

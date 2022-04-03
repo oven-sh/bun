@@ -1,0 +1,11 @@
+load("//bazel:macros.bzl", "generated_cc_atom")
+
+generated_cc_atom(
+    name = "GrGLMakeEGLInterface_hdr",
+    hdrs = ["GrGLMakeEGLInterface.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/core:SkRefCnt_hdr",
+        "//include/gpu:GrTypes_hdr",
+    ],
+)

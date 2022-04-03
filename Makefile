@@ -195,10 +195,12 @@ MAC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders \
 		-Isrc/javascript/jsc/bindings/ \
 		-Isrc/javascript/jsc/bindings/webcore \
 		-I$(WEBKIT_DIR)/Source/bmalloc  \
-		-I$(WEBKIT_DIR)/Source
+		-I$(WEBKIT_DIR)/Source \
+		-I$(BUN_DEPS_DIR)/skia
 
 LINUX_INCLUDE_DIRS := -I$(JSC_INCLUDE_DIR) \
-					  -Isrc/javascript/jsc/bindings/
+					  -Isrc/javascript/jsc/bindings/ \
+					  -I$(BUN_DEPS_DIR)/skia
 
 UWS_INCLUDE_DIR := -I$(BUN_DEPS_DIR)/uws/uSockets/src -I$(BUN_DEPS_DIR)/uws/src -I$(BUN_DEPS_DIR)
 
@@ -295,7 +297,8 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MIMALLOC_FILE_PATH) \
 		$(BUN_DEPS_OUT_DIR)/picohttpparser.o \
 		$(BUN_DEPS_OUT_DIR)/liblolhtml.a \
 		$(BUN_DEPS_OUT_DIR)/uSockets.a \
-		$(BUN_DEPS_OUT_DIR)/libuwsockets.o
+		$(BUN_DEPS_OUT_DIR)/libuwsockets.o \
+		$(BUN_DEPS_OUT_DIR)/skia.a
 
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) $(BUN_DEPS_OUT_DIR)/libcrypto.boring.a
 

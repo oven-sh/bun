@@ -1,0 +1,159 @@
+load("//bazel:macros.bzl", "generated_cc_atom")
+
+generated_cc_atom(
+    name = "SkCFObject_hdr",
+    hdrs = ["SkCFObject.h"],
+    visibility = ["//:__subpackages__"],
+    deps = ["//include/core:SkTypes_hdr"],
+)
+
+generated_cc_atom(
+    name = "SkFontConfigInterface_hdr",
+    hdrs = ["SkFontConfigInterface.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/core:SkFontStyle_hdr",
+        "//include/core:SkRefCnt_hdr",
+        "//include/core:SkStream_hdr",
+        "//include/core:SkTypeface_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "SkFontMgr_FontConfigInterface_hdr",
+    hdrs = ["SkFontMgr_FontConfigInterface.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/core:SkRefCnt_hdr",
+        "//include/core:SkTypes_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "SkFontMgr_android_hdr",
+    hdrs = ["SkFontMgr_android.h"],
+    visibility = ["//:__subpackages__"],
+    deps = ["//include/core:SkRefCnt_hdr"],
+)
+
+generated_cc_atom(
+    name = "SkFontMgr_directory_hdr",
+    hdrs = ["SkFontMgr_directory.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/core:SkRefCnt_hdr",
+        "//include/core:SkTypes_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "SkFontMgr_empty_hdr",
+    hdrs = ["SkFontMgr_empty.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/core:SkRefCnt_hdr",
+        "//include/core:SkTypes_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "SkFontMgr_fontconfig_hdr",
+    hdrs = ["SkFontMgr_fontconfig.h"],
+    visibility = ["//:__subpackages__"],
+    deps = ["//include/core:SkRefCnt_hdr"],
+)
+
+generated_cc_atom(
+    name = "SkFontMgr_fuchsia_hdr",
+    hdrs = ["SkFontMgr_fuchsia.h"],
+    visibility = ["//:__subpackages__"],
+    deps = ["//include/core:SkRefCnt_hdr"],
+)
+
+generated_cc_atom(
+    name = "SkFontMgr_indirect_hdr",
+    hdrs = ["SkFontMgr_indirect.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":SkRemotableFontMgr_hdr",
+        "//include/core:SkFontMgr_hdr",
+        "//include/core:SkRefCnt_hdr",
+        "//include/core:SkTypeface_hdr",
+        "//include/core:SkTypes_hdr",
+        "//include/private:SkMutex_hdr",
+        "//include/private:SkOnce_hdr",
+        "//include/private:SkTArray_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "SkFontMgr_mac_ct_hdr",
+    hdrs = ["SkFontMgr_mac_ct.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/core:SkRefCnt_hdr",
+        "//include/core:SkTypes_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "SkImageGeneratorCG_hdr",
+    hdrs = ["SkImageGeneratorCG.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/core:SkData_hdr",
+        "//include/core:SkImageGenerator_hdr",
+        "//include/core:SkTypes_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "SkImageGeneratorNDK_hdr",
+    hdrs = ["SkImageGeneratorNDK.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/core:SkData_hdr",
+        "//include/core:SkImageGenerator_hdr",
+        "//include/core:SkTypes_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "SkImageGeneratorWIC_hdr",
+    hdrs = ["SkImageGeneratorWIC.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/core:SkData_hdr",
+        "//include/core:SkImageGenerator_hdr",
+        "//include/core:SkTypes_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "SkRemotableFontMgr_hdr",
+    hdrs = ["SkRemotableFontMgr.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/core:SkFontStyle_hdr",
+        "//include/core:SkRefCnt_hdr",
+        "//include/core:SkTypes_hdr",
+        "//include/private:SkTemplates_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "SkTypeface_mac_hdr",
+    hdrs = ["SkTypeface_mac.h"],
+    visibility = ["//:__subpackages__"],
+    deps = ["//include/core:SkTypeface_hdr"],
+)
+
+generated_cc_atom(
+    name = "SkTypeface_win_hdr",
+    hdrs = ["SkTypeface_win.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/core:SkTypeface_hdr",
+        "//include/core:SkTypes_hdr",
+    ],
+)

@@ -1,0 +1,36 @@
+load("//bazel:macros.bzl", "generated_cc_atom")
+
+generated_cc_atom(
+    name = "SkEncoder_hdr",
+    hdrs = ["SkEncoder.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/core:SkPixmap_hdr",
+        "//include/private:SkNoncopyable_hdr",
+        "//include/private:SkTemplates_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "SkJpegEncoder_hdr",
+    hdrs = ["SkJpegEncoder.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [":SkEncoder_hdr"],
+)
+
+generated_cc_atom(
+    name = "SkPngEncoder_hdr",
+    hdrs = ["SkPngEncoder.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":SkEncoder_hdr",
+        "//include/core:SkDataTable_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "SkWebpEncoder_hdr",
+    hdrs = ["SkWebpEncoder.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [":SkEncoder_hdr"],
+)

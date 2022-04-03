@@ -7,6 +7,19 @@
 #include "CanvasRenderingContext2DSettings.h"
 #include "CanvasDirection.h"
 #include "CanvasPath.h"
+#include "CanvasTextAlign.h"
+#include "CanvasLineCap.h"
+#include "CanvasLineJoin.h"
+#include "CanvasGradient.h"
+#include "CanvasPattern.h"
+#include "CanvasTextBaseline.h"
+#include "ImageSmoothingQuality.h"
+#include "CanvasFillRule.h"
+#include "ImageData.h"
+#include "CanvasImageSource.h"
+
+#include "include/core/SKPaint.h"
+#include "include/core/SKColor.h"
 
 namespace WebCore {
 
@@ -154,8 +167,6 @@ public:
     void setPath(Path2D&);
     Ref<Path2D> getPath() const;
 
-    void setUsesDisplayListDrawing(bool flag) { m_usesDisplayListDrawing = flag; };
-
     String font() const { return state().fontString(); }
 
     CanvasTextAlign textAlign() const { return state().canvasTextAlign(); }
@@ -168,10 +179,55 @@ public:
     void setDirection(Direction);
 
 private:
+    using LineCap = SKPaint::Cap;
+    using LineJoin = SKPaint::Join;
+    using CanvasStyle = SKPaint::Style;
+    using Color = SKColor;
+
+    struct State final {
+        State();
+
+        String unparsedStrokeColor;
+        String unparsedFillColor;
+        CanvasStyle strokeStyle;
+        CanvasStyle fillStyle;
+        double lineWidth;
+        LineCap lineCap;
+        LineJoin lineJoin;
+        double miterLimit;
+        FloatSize shadowOffset;
+        float shadowBlur;
+        Color shadowColor;
+        double globalAlpha;
+        CompositeOperator globalComposite;
+        SkBlendMode globalBlend;
+        // AffineTransform transform;
+        bool hasInvertibleTransform;
+        Vector<double> lineDash;
+        double lineDashOffset;
+        bool imageSmoothingEnabled;
+        ImageSmoothingQuality imageSmoothingQuality;
+        TextAlign textAlign;
+        TextBaseline textBaseline;
+        Direction direction;
+
+        String unparsedFont;
+        FontProxy font;
+
+        CanvasLineCap canvasLineCap() const;
+        CanvasLineJoin canvasLineJoin() const;
+        CanvasTextAlign canvasTextAlign() const;
+        CanvasTextBaseline canvasTextBaseline() const;
+        String fontString() const;
+        String globalCompositeOperationString() const;
+        String shadowColorString() const;
+    };
+    State state() const { return m_state; }
     bool isOffscreen2d() const { return true; }
     // const FontProxy* fontProxy() final;
 
     Ref<OffscreenCanvas> m_canvas;
+    State m_state;
 };
 
 } // namespace WebCore

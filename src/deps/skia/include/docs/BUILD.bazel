@@ -1,0 +1,26 @@
+load("//bazel:macros.bzl", "generated_cc_atom")
+
+generated_cc_atom(
+    name = "SkPDFDocument_hdr",
+    hdrs = ["SkPDFDocument.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/core:SkColor_hdr",
+        "//include/core:SkDocument_hdr",
+        "//include/core:SkMilestone_hdr",
+        "//include/core:SkScalar_hdr",
+        "//include/core:SkString_hdr",
+        "//include/core:SkTime_hdr",
+        "//include/private:SkNoncopyable_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "SkXPSDocument_hdr",
+    hdrs = ["SkXPSDocument.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/core:SkDocument_hdr",
+        "//include/core:SkTypes_hdr",
+    ],
+)

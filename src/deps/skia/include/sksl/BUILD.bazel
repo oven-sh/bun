@@ -1,0 +1,176 @@
+load("//bazel:macros.bzl", "generated_cc_atom")
+
+generated_cc_atom(
+    name = "DSLBlock_hdr",
+    hdrs = ["DSLBlock.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":DSLExpression_hdr",
+        ":DSLStatement_hdr",
+        "//include/private:SkSLDefines_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "DSLCase_hdr",
+    hdrs = ["DSLCase.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":DSLExpression_hdr",
+        ":DSLStatement_hdr",
+        "//include/private:SkSLDefines_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "DSLCore_hdr",
+    hdrs = ["DSLCore.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":DSLBlock_hdr",
+        ":DSLCase_hdr",
+        ":DSLExpression_hdr",
+        ":DSLFunction_hdr",
+        ":DSLStatement_hdr",
+        ":DSLType_hdr",
+        ":DSLVar_hdr",
+        ":DSLWrapper_hdr",
+        ":SkSLErrorReporter_hdr",
+        "//include/private:SkSLProgramKind_hdr",
+        "//include/private:SkTArray_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "DSLExpression_hdr",
+    hdrs = ["DSLExpression.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":DSLWrapper_hdr",
+        ":SkSLErrorReporter_hdr",
+        "//include/core:SkStringView_hdr",
+        "//include/core:SkTypes_hdr",
+        "//include/private:SkTArray_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "DSLFunction_hdr",
+    hdrs = ["DSLFunction.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":DSLBlock_hdr",
+        ":DSLExpression_hdr",
+        ":DSLType_hdr",
+        ":DSLVar_hdr",
+        ":DSLWrapper_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "DSLLayout_hdr",
+    hdrs = ["DSLLayout.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":SkSLErrorReporter_hdr",
+        "//include/private:SkSLLayout_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "DSLModifiers_hdr",
+    hdrs = ["DSLModifiers.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":DSLLayout_hdr",
+        "//include/core:SkSpan_hdr",
+        "//include/private:SkSLModifiers_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "DSLRuntimeEffects_hdr",
+    hdrs = ["DSLRuntimeEffects.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":DSL_hdr",
+        "//include/effects:SkRuntimeEffect_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "DSLStatement_hdr",
+    hdrs = ["DSLStatement.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":SkSLErrorReporter_hdr",
+        "//include/core:SkString_hdr",
+        "//include/core:SkTypes_hdr",
+        "//include/private:SkSLStatement_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "DSLSymbols_hdr",
+    hdrs = ["DSLSymbols.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":DSLExpression_hdr",
+        "//include/core:SkStringView_hdr",
+        "//include/private:SkSLString_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "DSLType_hdr",
+    hdrs = ["DSLType.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":DSLExpression_hdr",
+        ":DSLModifiers_hdr",
+        "//include/core:SkSpan_hdr",
+        "//include/private:SkSLString_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "DSLVar_hdr",
+    hdrs = ["DSLVar.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":DSLExpression_hdr",
+        ":DSLModifiers_hdr",
+        ":DSLType_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "DSLWrapper_hdr",
+    hdrs = ["DSLWrapper.h"],
+    visibility = ["//:__subpackages__"],
+)
+
+generated_cc_atom(
+    name = "DSL_hdr",
+    hdrs = ["DSL.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [":DSLCore_hdr"],
+)
+
+generated_cc_atom(
+    name = "SkSLErrorReporter_hdr",
+    hdrs = ["SkSLErrorReporter.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/core:SkStringView_hdr",
+        "//include/core:SkTypes_hdr",
+        "//include/private:SkSLString_hdr",
+    ],
+)
+
+generated_cc_atom(
+    name = "SkSLDebugTrace_hdr",
+    hdrs = ["SkSLDebugTrace.h"],
+    visibility = ["//:__subpackages__"],
+    deps = ["//include/core:SkRefCnt_hdr"],
+)

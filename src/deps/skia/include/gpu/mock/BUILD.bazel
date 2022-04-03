@@ -1,0 +1,11 @@
+load("//bazel:macros.bzl", "generated_cc_atom")
+
+generated_cc_atom(
+    name = "GrMockTypes_hdr",
+    hdrs = ["GrMockTypes.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//include/gpu:GrTypes_hdr",
+        "//include/private:GrTypesPriv_hdr",
+    ],
+)

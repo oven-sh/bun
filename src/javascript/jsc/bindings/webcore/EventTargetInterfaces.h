@@ -58,9 +58,9 @@ enum EventTargetInterface {
 #if ENABLE(NOTIFICATIONS)
     NotificationEventTargetInterfaceType = 12,
 #endif
-#if ENABLE(OFFSCREEN_CANVAS)
+    // #if ENABLE(OFFSCREEN_CANVAS)
     OffscreenCanvasEventTargetInterfaceType = 13,
-#endif
+// #endif
 #if ENABLE(PAYMENT_REQUEST)
     PaymentRequestEventTargetInterfaceType = 14,
     PaymentResponseEventTargetInterfaceType = 15,

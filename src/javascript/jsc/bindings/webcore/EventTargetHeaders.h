@@ -115,8 +115,8 @@
 // #include "Notification.h"
 // #endif
 // #if ENABLE(OFFSCREEN_CANVAS)
-// #include "JSOffscreenCanvas.h"
-// #include "OffscreenCanvas.h"
+#include "JSOffscreenCanvas.h"
+#include "OffscreenCanvas.h"
 // #endif
 // #if ENABLE(PAYMENT_REQUEST)
 // #include "JSPaymentRequest.h"

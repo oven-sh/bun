@@ -37,9 +37,9 @@
 // #include "JSWorkerGlobalScope.h"
 // #include "WorkerGlobalScope.h"
 
-#if ENABLE(OFFSCREEN_CANVAS)
+// #if ENABLE(OFFSCREEN_CANVAS)
 #include "OffscreenCanvas.h"
-#endif
+// #endif
 
 namespace WebCore {
 using namespace JSC;

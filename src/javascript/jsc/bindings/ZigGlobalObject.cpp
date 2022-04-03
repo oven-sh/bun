@@ -89,6 +89,8 @@
 #include "JSErrorEvent.h"
 #include "JSFetchHeaders.h"
 #include "JSImageData.h"
+#include "JSOffscreenCanvas.h"
+#include "JSOffscreenCanvasRenderingContext2D.h"
 
 #include "Process.h"
 
@@ -406,6 +408,28 @@ JSC_DEFINE_CUSTOM_GETTER(JSImageData_getter,
     Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     return JSC::JSValue::encode(
         WebCore::JSImageData::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
+}
+
+JSC_DECLARE_CUSTOM_GETTER(JSOffscreenCanvas_getter);
+
+JSC_DEFINE_CUSTOM_GETTER(JSOffscreenCanvas_getter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return JSC::JSValue::encode(
+        WebCore::JSOffscreenCanvas::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
+}
+
+JSC_DECLARE_CUSTOM_GETTER(JSOffscreenCanvasRenderingContext2D_getter);
+
+JSC_DEFINE_CUSTOM_GETTER(JSOffscreenCanvasRenderingContext2D_getter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return JSC::JSValue::encode(
+        WebCore::JSOffscreenCanvasRenderingContext2D::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
 }
 
 JSC_DECLARE_CUSTOM_GETTER(JSEventTarget_getter);
@@ -892,6 +916,11 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "ImageData"_s), JSC::CustomGetterSetter::create(vm, JSImageData_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "OffscreenCanvas"_s), JSC::CustomGetterSetter::create(vm, JSOffscreenCanvas_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "OffscreenCanvasRenderingContext2D"_s), JSC::CustomGetterSetter::create(vm, JSOffscreenCanvasRenderingContext2D_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     extraStaticGlobals.releaseBuffer();

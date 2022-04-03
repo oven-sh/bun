@@ -126,8 +126,8 @@ JSC::JSValue toJS(JSC::JSGlobalObject* state, JSDOMGlobalObject* globalObject, E
         //         return toJS(state, globalObject, static_cast<Notification&>(impl));
         // #endif
         // #if ENABLE(OFFSCREEN_CANVAS)
-        //     case OffscreenCanvasEventTargetInterfaceType:
-        //         return toJS(state, globalObject, static_cast<OffscreenCanvas&>(impl));
+    case OffscreenCanvasEventTargetInterfaceType:
+        return toJS(state, globalObject, static_cast<OffscreenCanvas&>(impl));
         // #endif
         // #if ENABLE(PAYMENT_REQUEST)
         //     case PaymentRequestEventTargetInterfaceType:

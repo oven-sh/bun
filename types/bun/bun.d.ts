@@ -1,3 +1,7 @@
+interface VoidFunction {
+  (): void;
+}
+
 declare global {
   export interface EncodeIntoResult {
     /**
@@ -63,7 +67,25 @@ declare global {
     endings?: "transparent" | "native";
   }
 
-  type HeadersInit = string[][] | Record<string, string> | Headers;
+  /** This Fetch API interface allows you to perform various actions on HTTP request and response headers. These actions include retrieving, setting, adding to, and removing. A Headers object has an associated header list, which is initially empty and consists of zero or more name and value pairs.  You can add to this using methods like append() (see Examples.) In all methods of this interface, header names are matched by case-insensitive byte sequence. */
+  export interface Headers {
+    append(name: string, value: string): void;
+    delete(name: string): void;
+    get(name: string): string | null;
+    has(name: string): boolean;
+    set(name: string, value: string): void;
+    forEach(
+      callbackfn: (value: string, key: string, parent: Headers) => void,
+      thisArg?: any
+    ): void;
+  }
+
+  var Headers: {
+    prototype: Headers;
+    new (init?: HeadersInit): Headers;
+  };
+
+  type HeadersInit = [string, string][] | Record<string, string> | Headers;
 
   export class Blob implements BlobInterface {
     slice(begin?: number, end?: number): Blob;
@@ -75,8 +97,10 @@ declare global {
   export class Response implements BlobInterface {
     constructor(
       body: BlobPart | BlobPart[] | Blob,
-      options: {
+      options?: {
         headers?: HeadersInit;
+        /** @default 200 */
+        status?: number;
       }
     );
     headers: Headers;
@@ -502,6 +526,46 @@ declare global {
       fileDescriptor: number,
       options?: BlobPropertyBag
     ): FileBlob;
+
+    /**
+     * Pretty-print an object the same as console.log()
+     * Except, it returns a string instead of printing it.
+     * @param args
+     */
+    export function inspect(...args: any): string;
+
+    interface MMapOptions {
+      /**
+       * Sets MAP_SYNC flag on Linux. macOS doesn't support this flag
+       */
+      sync?: boolean;
+      /**
+       * Allow other processes to see results instantly?
+       * This enables MAP_SHARED. If false, it enables MAP_PRIVATE.
+       * @default true
+       */
+      shared?: boolean;
+    }
+    /**
+     * Open a file as a live-updating `Uint8Array` without copying memory
+     * - Writing to the array writes to the file.
+     * - Reading from the array reads from the file.
+     *
+     * This uses the [`mmap()`](https://man7.org/linux/man-pages/man2/mmap.2.html) syscall under the hood.
+     *
+     * ---
+     *
+     * This API inherently has some rough edges:
+     * - It does not support empty files. It will throw a `SystemError` with `EINVAL`
+     * - Usage on shared/networked filesystems is discouraged. It will be very slow.
+     * - If you delete or truncate the file, that will crash bun. This is called a segmentation fault.
+     *
+     * ---
+     *
+     * To close the file, set the array to `null` and it will be garbage collected eventually.
+     *
+     */
+    export function mmap(path: PathLike, opts?: MMapOptions): Uint8Array;
   }
 
   export interface Blob {
@@ -550,5 +614,355 @@ declare global {
     /** Currently, "name" is not exposed because it may or may not exist */
     name: never;
   }
+
+  // -----------------------
+  // -----------------------
+  // --- libdom.d.ts
+
+  interface ErrorEventInit extends EventInit {
+    colno?: number;
+    error?: any;
+    filename?: string;
+    lineno?: number;
+    message?: string;
+  }
+
+  interface EventInit {
+    bubbles?: boolean;
+    cancelable?: boolean;
+    composed?: boolean;
+  }
+
+  interface EventListenerOptions {
+    capture?: boolean;
+  }
+
+  interface UIEventInit extends EventInit {
+    detail?: number;
+    view?: null;
+    /** @deprecated */
+    which?: number;
+  }
+
+  interface EventModifierInit extends UIEventInit {
+    altKey?: boolean;
+    ctrlKey?: boolean;
+    metaKey?: boolean;
+    modifierAltGraph?: boolean;
+    modifierCapsLock?: boolean;
+    modifierFn?: boolean;
+    modifierFnLock?: boolean;
+    modifierHyper?: boolean;
+    modifierNumLock?: boolean;
+    modifierScrollLock?: boolean;
+    modifierSuper?: boolean;
+    modifierSymbol?: boolean;
+    modifierSymbolLock?: boolean;
+    shiftKey?: boolean;
+  }
+
+  interface EventSourceInit {
+    withCredentials?: boolean;
+  }
+
+  /** A controller object that allows you to abort one or more DOM requests as and when desired. */
+  interface AbortController {
+    /**
+     * Returns the AbortSignal object associated with this object.
+     */
+    readonly signal: AbortSignal;
+    /**
+     * Invoking this method will set this object's AbortSignal's aborted flag and signal to any observers that the associated activity is to be aborted.
+     */
+    abort(): void;
+  }
+
+  /** EventTarget is a DOM interface implemented by objects that can receive events and may have listeners for them. */
+  interface EventTarget {
+    /**
+     * Appends an event listener for events whose type attribute value is type. The callback argument sets the callback that will be invoked when the event is dispatched.
+     *
+     * The options argument sets listener-specific options. For compatibility this can be a boolean, in which case the method behaves exactly as if the value was specified as options's capture.
+     *
+     * When set to true, options's capture prevents callback from being invoked when the event's eventPhase attribute value is BUBBLING_PHASE. When false (or not present), callback will not be invoked when event's eventPhase attribute value is CAPTURING_PHASE. Either way, callback will be invoked if event's eventPhase attribute value is AT_TARGET.
+     *
+     * When set to true, options's passive indicates that the callback will not cancel the event by invoking preventDefault(). This is used to enable performance optimizations described in § 2.8 Observing event listeners.
+     *
+     * When set to true, options's once indicates that the callback will only be invoked once after which the event listener will be removed.
+     *
+     * If an AbortSignal is passed for options's signal, then the event listener will be removed when signal is aborted.
+     *
+     * The event listener is appended to target's event listener list and is not appended if it has the same type, callback, and capture.
+     */
+    addEventListener(
+      type: string,
+      callback: EventListenerOrEventListenerObject | null,
+      options?: AddEventListenerOptions | boolean
+    ): void;
+    /** Dispatches a synthetic event event to target and returns true if either event's cancelable attribute value is false or its preventDefault() method was not invoked, and false otherwise. */
+    dispatchEvent(event: Event): boolean;
+    /** Removes the event listener in target's event listener list with the same type, callback, and options. */
+    removeEventListener(
+      type: string,
+      callback: EventListenerOrEventListenerObject | null,
+      options?: EventListenerOptions | boolean
+    ): void;
+  }
+
+  var EventTarget: {
+    prototype: EventTarget;
+    new (): EventTarget;
+  };
+
+  /** An event which takes place in the DOM. */
+  interface Event {
+    /** Returns true or false depending on how event was initialized. True if event goes through its target's ancestors in reverse tree order, and false otherwise. */
+    readonly bubbles: boolean;
+    cancelBubble: boolean;
+    /** Returns true or false depending on how event was initialized. Its return value does not always carry meaning, but true can indicate that part of the operation during which event was dispatched, can be canceled by invoking the preventDefault() method. */
+    readonly cancelable: boolean;
+    /** Returns true or false depending on how event was initialized. True if event invokes listeners past a ShadowRoot node that is the root of its target, and false otherwise. */
+    readonly composed: boolean;
+    /** Returns the object whose event listener's callback is currently being invoked. */
+    readonly currentTarget: EventTarget | null;
+    /** Returns true if preventDefault() was invoked successfully to indicate cancelation, and false otherwise. */
+    readonly defaultPrevented: boolean;
+    /** Returns the event's phase, which is one of NONE, CAPTURING_PHASE, AT_TARGET, and BUBBLING_PHASE. */
+    readonly eventPhase: number;
+    /** Returns true if event was dispatched by the user agent, and false otherwise. */
+    readonly isTrusted: boolean;
+    /** @deprecated */
+    returnValue: boolean;
+    /** @deprecated */
+    readonly srcElement: EventTarget | null;
+    /** Returns the object to which event is dispatched (its target). */
+    readonly target: EventTarget | null;
+    /** Returns the event's timestamp as the number of milliseconds measured relative to the time origin. */
+    readonly timeStamp: DOMHighResTimeStamp;
+    /** Returns the type of event, e.g. "click", "hashchange", or "submit". */
+    readonly type: string;
+    /** Returns the invocation target objects of event's path (objects on which listeners will be invoked), except for any nodes in shadow trees of which the shadow root's mode is "closed" that are not reachable from event's currentTarget. */
+    composedPath(): EventTarget[];
+    /** @deprecated */
+    initEvent(type: string, bubbles?: boolean, cancelable?: boolean): void;
+    /** If invoked when the cancelable attribute value is true, and while executing a listener for the event with passive set to false, signals to the operation that caused event to be dispatched that it needs to be canceled. */
+    preventDefault(): void;
+    /** Invoking this method prevents event from reaching any registered event listeners after the current one finishes running and, when dispatched in a tree, also prevents event from reaching any other objects. */
+    stopImmediatePropagation(): void;
+    /** When dispatched in a tree, invoking this method prevents event from reaching any objects other than the current object. */
+    stopPropagation(): void;
+    readonly AT_TARGET: number;
+    readonly BUBBLING_PHASE: number;
+    readonly CAPTURING_PHASE: number;
+    readonly NONE: number;
+  }
+
+  var Event: {
+    prototype: Event;
+    new (type: string, eventInitDict?: EventInit): Event;
+    readonly AT_TARGET: number;
+    readonly BUBBLING_PHASE: number;
+    readonly CAPTURING_PHASE: number;
+    readonly NONE: number;
+  };
+
+  /** Events providing information related to errors in scripts or in files. */
+  interface ErrorEvent extends Event {
+    readonly colno: number;
+    readonly error: any;
+    readonly filename: string;
+    readonly lineno: number;
+    readonly message: string;
+  }
+
+  var ErrorEvent: {
+    prototype: ErrorEvent;
+    new (type: string, eventInitDict?: ErrorEventInit): ErrorEvent;
+  };
+
+  /** The URL interface represents an object providing static methods used for creating object URLs. */
+  interface URL {
+    hash: string;
+    host: string;
+    hostname: string;
+    href: string;
+    toString(): string;
+    readonly origin: string;
+    password: string;
+    pathname: string;
+    port: string;
+    protocol: string;
+    search: string;
+    readonly searchParams: URLSearchParams;
+    username: string;
+    toJSON(): string;
+  }
+
+  interface URLSearchParams {
+    /** Appends a specified key/value pair as a new search parameter. */
+    append(name: string, value: string): void;
+    /** Deletes the given search parameter, and its associated value, from the list of all search parameters. */
+    delete(name: string): void;
+    /** Returns the first value associated to the given search parameter. */
+    get(name: string): string | null;
+    /** Returns all the values association with a given search parameter. */
+    getAll(name: string): string[];
+    /** Returns a Boolean indicating if such a search parameter exists. */
+    has(name: string): boolean;
+    /** Sets the value associated to a given search parameter to the given value. If there were several values, delete the others. */
+    set(name: string, value: string): void;
+    sort(): void;
+    /** Returns a string containing a query string suitable for use in a URL. Does not include the question mark. */
+    toString(): string;
+    forEach(
+      callbackfn: (value: string, key: string, parent: URLSearchParams) => void,
+      thisArg?: any
+    ): void;
+  }
+
+  var URLSearchParams: {
+    prototype: URLSearchParams;
+    new (
+      init?: string[][] | Record<string, string> | string | URLSearchParams
+    ): URLSearchParams;
+    toString(): string;
+  };
+
+  var URL: {
+    prototype: URL;
+    new (url: string | URL, base?: string | URL): URL;
+    /** Not implemented yet */
+    createObjectURL(obj: Blob): string;
+    /** Not implemented yet */
+    revokeObjectURL(url: string): void;
+  };
+
+  type TimerHandler = Function;
+
+  interface EventListener {
+    (evt: Event): void;
+  }
+
+  interface EventListenerObject {
+    handleEvent(object: Event): void;
+  }
+
+  var AbortController: {
+    prototype: AbortController;
+    new (): AbortController;
+  };
+
+  interface FetchEvent extends Event {
+    readonly request: Request;
+    readonly url: string;
+
+    waitUntil(promise: Promise<any>): void;
+    respondWith(response: Response): void;
+    respondWith(response: Promise<Response>): void;
+  }
+
+  interface EventMap {
+    fetch: FetchEvent;
+    // exit: Event;
+  }
+
+  interface AbortSignalEventMap {
+    abort: Event;
+  }
+
+  interface AddEventListenerOptions extends EventListenerOptions {
+    once?: boolean;
+    passive?: boolean;
+    signal?: AbortSignal;
+  }
+
+  /** A signal object that allows you to communicate with a DOM request (such as a Fetch) and abort it if required via an AbortController object. */
+  interface AbortSignal extends EventTarget {
+    /**
+     * Returns true if this AbortSignal's AbortController has signaled to abort, and false otherwise.
+     */
+    readonly aborted: boolean;
+    onabort: ((this: AbortSignal, ev: Event) => any) | null;
+    addEventListener<K extends keyof AbortSignalEventMap>(
+      type: K,
+      listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any,
+      options?: boolean | AddEventListenerOptions
+    ): void;
+    addEventListener(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions
+    ): void;
+    removeEventListener<K extends keyof AbortSignalEventMap>(
+      type: K,
+      listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any,
+      options?: boolean | EventListenerOptions
+    ): void;
+    removeEventListener(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | EventListenerOptions
+    ): void;
+  }
+
+  var AbortSignal: {
+    prototype: AbortSignal;
+    new (): AbortSignal;
+  };
+
+  function clearInterval(id?: number): void;
+  function clearTimeout(id?: number): void;
+  // declare function createImageBitmap(image: ImageBitmapSource, options?: ImageBitmapOptions): Promise<ImageBitmap>;
+  // declare function createImageBitmap(image: ImageBitmapSource, sx: number, sy: number, sw: number, sh: number, options?: ImageBitmapOptions): Promise<ImageBitmap>;
+  // declare function fetch(input: RequestInfo, init?: RequestInit): Promise<Response>;
+  function queueMicrotask(callback: VoidFunction): void;
+  function reportError(e: any): void;
+  function setInterval(
+    handler: TimerHandler,
+    timeout?: number,
+    ...arguments: any[]
+  ): number;
+  function setTimeout(
+    handler: TimerHandler,
+    timeout?: number,
+    ...arguments: any[]
+  ): number;
+  function addEventListener<K extends keyof EventMap>(
+    type: K,
+    listener: (this: Object, ev: EventMap[K]) => any,
+    options?: boolean | AddEventListenerOptions
+  ): void;
+  function addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: boolean | AddEventListenerOptions
+  ): void;
+  function removeEventListener<K extends keyof EventMap>(
+    type: K,
+    listener: (this: Object, ev: EventMap[K]) => any,
+    options?: boolean | EventListenerOptions
+  ): void;
+  function removeEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: boolean | EventListenerOptions
+  ): void;
+
+  // type AlgorithmIdentifier = Algorithm | string;
+  type BigInteger = Uint8Array;
+  type BinaryData = ArrayBuffer | ArrayBufferView;
+  // type BodyInit = ReadableStream | XMLHttpRequestBodyInit;
+  type BufferSource = ArrayBufferView | ArrayBuffer;
+  type COSEAlgorithmIdentifier = number;
+  type CSSNumberish = number;
+  // type CanvasImageSource =
+  //   | HTMLOrSVGImageElement
+  //   | HTMLVideoElement
+  //   | HTMLCanvasElement
+  //   | ImageBitmap;
+  type DOMHighResTimeStamp = number;
+  type EpochTimeStamp = number;
+  type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
 }
+
 export {};

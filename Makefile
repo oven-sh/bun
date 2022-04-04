@@ -321,7 +321,8 @@ PLATFORM_LINKER_FLAGS = $(CFLAGS) \
 		${STATIC_MUSL_FLAG}  \
 		-Wl,-Bsymbolic-functions \
 		-fno-semantic-interposition \
-		-flto
+		-flto \
+		--allow-multiple-definition
 
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO += $(BUN_DEPS_OUT_DIR)/libbacktrace.a
 endif

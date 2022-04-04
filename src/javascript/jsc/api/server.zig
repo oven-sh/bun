@@ -81,6 +81,7 @@ const uws = @import("uws");
 const Fallback = Runtime.Fallback;
 const MimeType = HTTP.MimeType;
 const Blob = JSC.WebCore.Blob;
+const BoringSSL = @import("boringssl");
 const SendfileContext = struct {
     fd: i32,
     socket_fd: i32 = 0,
@@ -102,15 +103,15 @@ pub const ServerConfig = struct {
     onRequest: JSC.JSValue = JSC.JSValue.zero,
 
     pub const SSLConfig = struct {
-        server_name: [*:0]const u8 = "",
+        server_name: [*c]const u8 = null,
 
-        key_file_name: [*:0]const u8 = "",
-        cert_file_name: [*:0]const u8 = "",
+        key_file_name: [*c]const u8 = null,
+        cert_file_name: [*c]const u8 = null,
 
-        ca_file_name: [*:0]const u8 = "",
-        dh_params_file_name: [*:0]const u8 = "",
+        ca_file_name: [*c]const u8 = null,
+        dh_params_file_name: [*c]const u8 = null,
 
-        passphrase: [*:0]const u8 = "",
+        passphrase: [*c]const u8 = null,
         low_memory_mode: bool = false,
 
         pub fn deinit(this: *SSLConfig) void {
@@ -140,10 +141,11 @@ pub const ServerConfig = struct {
             // Required
             if (obj.getTruthy(global, "keyFile")) |key_file_name| {
                 var sliced = key_file_name.toSlice(global, bun.default_allocator);
+                defer sliced.deinit();
                 if (sliced.len > 0) {
                     result.key_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
                     if (std.os.system.access(result.key_file_name, std.os.F_OK) != 0) {
-                        JSC.throwInvalidArguments("Invalid keyFile path", .{}, global.ref(), exception);
+                        JSC.throwInvalidArguments("Unable to access keyFile path", .{}, global.ref(), exception);
                         result.deinit();
 
                         return null;
@@ -153,10 +155,11 @@ pub const ServerConfig = struct {
             }
             if (obj.getTruthy(global, "certFile")) |cert_file_name| {
                 var sliced = cert_file_name.toSlice(global, bun.default_allocator);
+                defer sliced.deinit();
                 if (sliced.len > 0) {
                     result.cert_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
                     if (std.os.system.access(result.cert_file_name, std.os.F_OK) != 0) {
-                        JSC.throwInvalidArguments("Invalid certFile path", .{}, global.ref(), exception);
+                        JSC.throwInvalidArguments("Unable to access certFile path", .{}, global.ref(), exception);
                         result.deinit();
                         return null;
                     }
@@ -168,6 +171,7 @@ pub const ServerConfig = struct {
             if (any) {
                 if (obj.getTruthy(global, "serverName")) |key_file_name| {
                     var sliced = key_file_name.toSlice(global, bun.default_allocator);
+                    defer sliced.deinit();
                     if (sliced.len > 0) {
                         result.server_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
                     }
@@ -175,6 +179,7 @@ pub const ServerConfig = struct {
 
                 if (obj.getTruthy(global, "caFile")) |ca_file_name| {
                     var sliced = ca_file_name.toSlice(global, bun.default_allocator);
+                    defer sliced.deinit();
                     if (sliced.len > 0) {
                         result.ca_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
                         if (std.os.system.access(result.ca_file_name, std.os.F_OK) != 0) {
@@ -186,6 +191,7 @@ pub const ServerConfig = struct {
                 }
                 if (obj.getTruthy(global, "dhParamsFile")) |dh_params_file_name| {
                     var sliced = dh_params_file_name.toSlice(global, bun.default_allocator);
+                    defer sliced.deinit();
                     if (sliced.len > 0) {
                         result.dh_params_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
                         if (std.os.system.access(result.dh_params_file_name, std.os.F_OK) != 0) {
@@ -198,6 +204,7 @@ pub const ServerConfig = struct {
 
                 if (obj.getTruthy(global, "passphrase")) |passphrase| {
                     var sliced = passphrase.toSlice(global, bun.default_allocator);
+                    defer sliced.deinit();
                     if (sliced.len > 0) {
                         result.passphrase = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
                     }
@@ -943,7 +950,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn onBodyChunk(this: *RequestContext, _: *App.Response, chunk: []const u8, last: bool) void {
             if (this.aborted) return;
             this.request_body_buf.appendSlice(bun.default_allocator, chunk) catch @panic("Out of memory while allocating request body");
-
             if (last) {
                 if (JSC.JSValue.fromRef(this.request_js_object).as(Request) != null) {
                     uws.Loop.get().?.nextTick(*RequestContext, this, resolveRequestBody);
@@ -1027,10 +1033,68 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             return server;
         }
 
+        noinline fn onListenFailed(this: *ThisServer) void {
+            var zig_str: ZigString = ZigString.init("Failed to start server");
+            if (comptime ssl_enabled) {
+                var output_buf: [4096]u8 = undefined;
+                output_buf[0] = 0;
+                var written: usize = 0;
+                var ssl_error = BoringSSL.ERR_get_error();
+                while (ssl_error != 0 and written < output_buf.len) : (ssl_error = BoringSSL.ERR_get_error()) {
+                    if (written > 0) {
+                        output_buf[written] = '\n';
+                        written += 1;
+                    }
+
+                    if (BoringSSL.ERR_reason_error_string(
+                        ssl_error,
+                    )) |reason_ptr| {
+                        const reason = std.mem.span(reason_ptr);
+                        if (reason.len == 0) {
+                            break;
+                        }
+                        @memcpy(output_buf[written..].ptr, reason.ptr, reason.len);
+                        written += reason.len;
+                    }
+
+                    if (BoringSSL.ERR_func_error_string(
+                        ssl_error,
+                    )) |reason_ptr| {
+                        const reason = std.mem.span(reason_ptr);
+                        if (reason.len > 0) {
+                            output_buf[written..][0.." via ".len].* = " via ".*;
+                            written += " via ".len;
+                            @memcpy(output_buf[written..].ptr, reason.ptr, reason.len);
+                            written += reason.len;
+                        }
+                    }
+
+                    if (BoringSSL.ERR_lib_error_string(
+                        ssl_error,
+                    )) |reason_ptr| {
+                        const reason = std.mem.span(reason_ptr);
+                        if (reason.len > 0) {
+                            output_buf[written..][0] = ' ';
+                            written += 1;
+                            @memcpy(output_buf[written..].ptr, reason.ptr, reason.len);
+                            written += reason.len;
+                        }
+                    }
+                }
+
+                if (written > 0) {
+                    var message = output_buf[0..written];
+                    zig_str = ZigString.init(std.fmt.allocPrint(bun.default_allocator, "OpenSSL {s}", .{message}) catch unreachable);
+                    zig_str.withEncoding().mark();
+                }
+            }
+            JSC.VirtualMachine.vm.defaultErrorHandler(zig_str.toErrorInstance(this.globalThis), null);
+            return;
+        }
+
         pub fn onListen(this: *ThisServer, socket: ?*App.ListenSocket, _: uws.uws_app_listen_config_t) void {
             if (socket == null) {
-                JSC.VirtualMachine.vm.defaultErrorHandler(ZigString.init("Bun.serve failed to start").toErrorInstance(this.globalThis), null);
-                return;
+                return this.onListenFailed();
             }
 
             this.listener = socket;
@@ -1166,6 +1230,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
         pub fn listen(this: *ThisServer) void {
             if (ssl_enabled) {
+                BoringSSL.load();
                 const ssl_config = this.config.ssl_config orelse @panic("Assertion failure: ssl_config");
                 this.app = App.create(.{
                     .key_file_name = ssl_config.key_file_name,
@@ -1176,7 +1241,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                     .ssl_prefer_low_memory_usage = @as(c_int, @boolToInt(ssl_config.low_memory_mode)),
                 });
 
-                if (std.mem.span(ssl_config.server_name).len > 0) {
+                if (ssl_config.server_name != null and std.mem.span(ssl_config.server_name).len > 0) {
                     this.app.addServerName(ssl_config.server_name);
                 }
             } else {

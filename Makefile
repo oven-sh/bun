@@ -101,7 +101,7 @@ AR=llvm-ar-13
 endif
 
 OPTIMIZATION_LEVEL=-O3
-CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE) -ffunction-sections -fdata-sections -g $(OPTIMIZATION_LEVEL)
+CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE) -fembed-bitcode=all -g $(OPTIMIZATION_LEVEL)
 BUN_TMP_DIR := /tmp/make-bun
 BUN_DEPLOY_DIR = /tmp/bun-v$(PACKAGE_JSON_VERSION)/$(PACKAGE_NAME)
 
@@ -265,9 +265,7 @@ PLATFORM_LINKER_FLAGS =
 ifeq ($(OS_NAME), darwin)
 PLATFORM_LINKER_FLAGS += -DDU_DISABLE_RENAMING=1 \
 		-lstdc++ \
-		-fno-keep-static-consts \
-		-ffunction-sections \
-		-fdata-sections
+		-fno-keep-static-consts
 endif
 
 
@@ -294,11 +292,14 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MIMALLOC_FILE_PATH) \
 		$(BUN_DEPS_OUT_DIR)/libssl.a \
 		$(BUN_DEPS_OUT_DIR)/picohttpparser.o \
 		$(BUN_DEPS_OUT_DIR)/liblolhtml.a \
-		$(BUN_DEPS_OUT_DIR)/uSockets.a \
-		$(BUN_DEPS_OUT_DIR)/libuwsockets.o
 
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) $(BUN_DEPS_OUT_DIR)/libcrypto.boring.a
 
+ifeq ($(OS_NAME), darwin)
+	ARCHIVE_FILES += $(wildcard $(BUN_DEPS_DIR)/uws/uSockets/src/*.o) $(wildcard $(BUN_DEPS_DIR)/uws/uSockets/src/**/*.o) $(BUN_DEPS_OUT_DIR)/libuwsockets.o
+else
+	ARCHIVE_FILES += $(BUN_DEPS_OUT_DIR)/uSockets.a $(BUN_DEPS_OUT_DIR)/libuwsockets.o
+endif
 
 STATIC_MUSL_FLAG ?= 
 
@@ -333,7 +334,7 @@ BUN_LLD_FLAGS_WITHOUT_JSC = $(ARCHIVE_FILES) \
 		
 
 
-BUN_LLD_FLAGS = $(JSC_BINDINGS) ${ICU_FLAGS} $(BUN_LLD_FLAGS_WITHOUT_JSC)
+BUN_LLD_FLAGS = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(JSC_BINDINGS) ${ICU_FLAGS}
 
 CLANG_VERSION = $(shell $(CC) --version | awk '/version/ {for(i=1; i<=NF; i++){if($$i=="version"){split($$(i+1),v,".");print v[1]}}}')
 
@@ -463,14 +464,21 @@ UWS_CXX_FLAGS = $(UWS_CC_FLAGS) -std=gnu++17
 UWS_LDFLAGS = -I$(BUN_DEPS_DIR)/boringssl/include
 
 usockets:
-	rm -rf $(BUN_DEPS_DIR)/uws/uSockets/*.o $(BUN_DEPS_DIR)/uws/uSockets/*.a
-	cd $(BUN_DEPS_DIR)/uws/uSockets && \
-		$(CC) $(CFLAGS) $(UWS_CC_FLAGS)  $(UWS_LDFLAGS)  $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c -c src/*.c src/eventing/*.c src/crypto/*.c -flto && \
-		$(CXX) $(CXXFLAGS) $(UWS_CXX_FLAGS) $(UWS_LDFLAGS) $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c src/crypto/*.cpp && \
-		$(AR) rvs $(BUN_DEPS_OUT_DIR)/uSockets.a *.o
+	rm -rf $(BUN_DEPS_DIR)/uws/uSockets/*.o $(BUN_DEPS_DIR)/uws/uSockets/**/*.o $(BUN_DEPS_DIR)/uws/uSockets/*.a
+
+		cd $(BUN_DEPS_DIR)/uws/uSockets/src && \
+			$(CC) -fPIC $(CFLAGS) $(UWS_CC_FLAGS)   -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g  $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c *.c && \
+		cd $(BUN_DEPS_DIR)/uws/uSockets/src/eventing && \
+			$(CC) -fPIC $(CFLAGS) $(UWS_CC_FLAGS)   -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g  $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c *.c && \
+		cd $(BUN_DEPS_DIR)/uws/uSockets/src/crypto && \
+			$(CC) -fPIC $(CFLAGS) $(UWS_CC_FLAGS)   -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g  $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c *.c && \
+			$(CXX) -fPIC $(CXXFLAGS) $(UWS_CXX_FLAGS) -Isrc $(UWS_LDFLAGS) -g $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c *.cpp;
+
+		cd $(BUN_DEPS_DIR)/uws/uSockets && \
+			$(AR) rcvs $(BUN_DEPS_OUT_DIR)/uSockets.a src/*.o src/eventing/*.o src/crypto/*.o
 
 uws: usockets
-	$(CXX) -I$(BUN_DEPS_DIR)/uws/uSockets/src $(CLANG_FLAGS) $(UWS_CXX_FLAGS) $(UWS_LDFLAGS) $(PLATFORM_LINKER_FLAGS) -c -flto -I$(BUN_DEPS_DIR) $(BUN_DEPS_OUT_DIR)/uSockets.a $(BUN_DEPS_DIR)/libuwsockets.cpp -o $(BUN_DEPS_OUT_DIR)/libuwsockets.o
+	$(CXX) -fPIC -I$(BUN_DEPS_DIR)/uws/uSockets/src $(CLANG_FLAGS) $(CFLAGS) $(UWS_CXX_FLAGS) $(UWS_LDFLAGS) $(PLATFORM_LINKER_FLAGS) -c -I$(BUN_DEPS_DIR) $(BUN_DEPS_OUT_DIR)/uSockets.a $(BUN_DEPS_DIR)/libuwsockets.cpp -o $(BUN_DEPS_OUT_DIR)/libuwsockets.o
 
 
 
@@ -958,6 +966,7 @@ mimalloc:
 			-DMI_OSX_ZONE=OFF \
 			-DMI_OSX_INTERPOSE=OFF \
 			-DMI_BUILD_OBJECT=ON \
+			-DCMAKE_C_FLAGS="$(CFLAGS)" \
 			${MIMALLOC_OVERRIDE_FLAG} \
 			-DMI_USE_CXX=OFF .\
 			&& make -j $(CPUS); 

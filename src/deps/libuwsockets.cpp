@@ -1,3 +1,6 @@
+// This file is not included directly
+// It is included in bindings.cpp
+
 #include "_libusockets.h"
 #include <string_view>
 #include <uws/src/App.h>
@@ -7,14 +10,10 @@ extern "C" {
 
 uws_app_t *uws_create_app(int ssl, struct us_socket_context_options_t options) {
   if (ssl) {
-    uWS::SocketContextOptions sco;
-    sco.ca_file_name = options.ca_file_name;
-    sco.cert_file_name = options.cert_file_name;
-    sco.dh_params_file_name = options.dh_params_file_name;
-    sco.key_file_name = options.key_file_name;
-    sco.passphrase = options.passphrase;
-    sco.ssl_prefer_low_memory_usage = options.ssl_prefer_low_memory_usage;
-    return (uws_app_t *)new uWS::SSLApp(sco);
+    uWS::SocketContextOptions socket_context_options;
+    memcpy(&socket_context_options, &options,
+           sizeof(uWS::SocketContextOptions));
+    return (uws_app_t *)new uWS::SSLApp(socket_context_options);
   }
 
   return (uws_app_t *)new uWS::App();

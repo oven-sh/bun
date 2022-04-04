@@ -5,7 +5,7 @@ Bun.serve({
       return new Response(
         "Enter a path that starts with https:// or http://\n",
         {
-          status: 404,
+          status: 400,
         }
       );
     }
@@ -30,12 +30,8 @@ Bun.serve({
   },
 
   // this is called when fetch() throws or rejects
-  error(err: Error) {
-    return new Response("uh oh! :(\n" + String(err.toString()), {
-      status: 500,
-      headers: { "Content-Type": "text/plain" },
-    });
-  },
+  //   error(err: Error) {
+  //   },
 
   // this boolean enables the bun's default error handler
   // sometime after the initial release, it will auto reload as well

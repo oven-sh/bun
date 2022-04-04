@@ -2437,7 +2437,7 @@ pub const Blob = struct {
                         else => |errno| {
                             this.system_error = (JSC.Node.Syscall.Error{
                                 .errno = @intCast(JSC.Node.Syscall.Error.Int, @enumToInt(errno)),
-                                .syscall = ZigString.init("copy_file_range"),
+                                .syscall = .copy_file_range,
                             }).toSystemError();
                             return AsyncIO.asError(errno);
                         },

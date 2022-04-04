@@ -273,7 +273,7 @@ CMD make jsc-bindings-headers \
     analytics \
     bun_error \
     fallback_decoder \
-    jsc-bindings-mac && \
+    jsc-bindings-mac -j10 && \
     make \
     run-all-unit-tests
 

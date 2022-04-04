@@ -198,7 +198,8 @@ MAC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders \
 		-I$(WEBKIT_DIR)/Source
 
 LINUX_INCLUDE_DIRS := -I$(JSC_INCLUDE_DIR) \
-					  -Isrc/javascript/jsc/bindings/
+					  -Isrc/javascript/jsc/bindings/ \
+					  -Isrc/javascript/jsc/bindings/webcore
 
 UWS_INCLUDE_DIR := -I$(BUN_DEPS_DIR)/uws/uSockets/src -I$(BUN_DEPS_DIR)/uws/src -I$(BUN_DEPS_DIR)
 

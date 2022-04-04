@@ -754,6 +754,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         return;
                     }
                 },
+                // TODO: this needs to support streaming!
                 .Locked => |*lock| {
                     lock.callback = doRenderWithBodyLocked;
                     lock.task = this;

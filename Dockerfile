@@ -106,8 +106,24 @@ COPY src/deps/boringssl ${BUN_DIR}/src/deps/boringssl
 
 WORKDIR $BUN_DIR
 
+FROM bunbunbunbun/bun-base:latest as uws
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+
+COPY Makefile ${BUN_DIR}/Makefile
+COPY src/deps/uws ${BUN_DIR}/src/deps/uws
+
+WORKDIR $BUN_DIR
+
 RUN cd $BUN_DIR && \
-    make boringssl && rm -rf src/deps/boringssl Makefile
+    make uws && rm -rf src/deps/uws Makefile
 
 FROM bunbunbunbun/bun-base:latest as picohttp
 

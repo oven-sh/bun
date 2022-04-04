@@ -319,8 +319,7 @@ PLATFORM_LINKER_FLAGS = \
 		-Wl,--compress-debug-sections,zlib \
 		${STATIC_MUSL_FLAG}  \
 		-Wl,-Bsymbolic-functions \
-		-fno-semantic-interposition \
-		--allow-multiple-definition
+		-fno-semantic-interposition
 
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO += $(BUN_DEPS_OUT_DIR)/libbacktrace.a
 endif

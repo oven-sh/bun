@@ -1,12 +1,13 @@
 {
   "compilerOptions": {
     "lib": ["ESNext"],
-    "allowJs": true,
-    "checkJs": true,
-    "noEmit": true,
-    "moduleResolution": "node",
-    "downlevelIteration": true,
     "module": "esnext",
-    "types": ["../../types/bun"]
+    "target": "esnext",
+    "typeRoots": ["../../types"],
+    "types": ["bun"],
+    "baseUrl": ".",
+    "paths": {
+      "foo/bar": ["baz.js"]
+    }
   }
 }

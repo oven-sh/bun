@@ -865,8 +865,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (response.body.init.headers) |headers_| {
                 this.writeHeaders(headers_);
                 has_content_disposition = headers_.has(&ZigString.init("content-disposition"));
-                headers_.deref();
                 response.body.init.headers = null;
+                headers_.deref();
             }
 
             if (needs_content_type) {

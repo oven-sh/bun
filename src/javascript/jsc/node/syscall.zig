@@ -412,12 +412,8 @@ fn mmap(
     fd: os.fd_t,
     offset: u64,
 ) Maybe([]align(mem.page_size) u8) {
-    const mmap_sym = if (builtin.os.tag == .linux and builtin.link_libc)
-        system.mmap64
-    else
-        system.mmap;
     const ioffset = @bitCast(i64, offset); // the OS treats this as unsigned
-    const rc = mmap_sym(ptr, length, prot, flags, fd, ioffset);
+    const rc = system.mmap(ptr, length, prot, flags, fd, ioffset);
 
     if (rc == std.c.MAP.FAILED) {
         return Maybe([]align(mem.page_size) u8){

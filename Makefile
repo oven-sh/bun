@@ -199,7 +199,8 @@ MAC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders \
 
 LINUX_INCLUDE_DIRS := -I$(JSC_INCLUDE_DIR) \
 					  -Isrc/javascript/jsc/bindings/ \
-					  -Isrc/javascript/jsc/bindings/webcore
+					  -Isrc/javascript/jsc/bindings/webcore \
+					  -I$(ZLIB_INCLUDE_DIR)
 					  
 
 UWS_INCLUDE_DIR := -I$(BUN_DEPS_DIR)/uws/uSockets/src -I$(BUN_DEPS_DIR)/uws/src -I$(BUN_DEPS_DIR)
@@ -309,7 +310,6 @@ ifeq ($(OS_NAME), linux)
 PLATFORM_LINKER_FLAGS = $(CFLAGS) \
 	    -fuse-ld=lld \
 		-lc \
-		-I$(ZLIB_INCLUDE_DIR) \
 		-Wl,-z,now \
 		-Wl,--as-needed \
 		-Wl,--gc-sections \
@@ -437,6 +437,10 @@ dev-wasm: dev-build-obj-wasm
 		packages/debug-bun-freestanding-wasm32/bun-wasm.o $(OPTIMIZATION_LEVEL) --no-entry --allow-undefined  -s ASSERTIONS=0  -s ALLOW_MEMORY_GROWTH=1 -s WASM_BIGINT=1  \
 		-o packages/debug-bun-freestanding-wasm32/bun-wasm.wasm
 	cp packages/debug-bun-freestanding-wasm32/bun-wasm.wasm src/api/demo/public/bun-wasm.wasm
+
+bun-types-pkg:
+	rm -rf packages/bun-types/*.d.ts
+	cd packages/bun-types && $(NPM_CLIENT) run prepublishOnly
 
 build-obj-wasm: 
 	$(ZIG) build bun-wasm -Drelease-fast -Dtarget=wasm32-freestanding --prominent-compile-errors

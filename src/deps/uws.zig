@@ -173,20 +173,6 @@ pub const Request = opaque {
         return ptr[0..req.uws_req_get_parameter(@intCast(c_ushort, index), &ptr)];
     }
 
-    pub fn cloneHeaders(
-        req: *Request,
-        ctx: *anyopaque,
-    ) void {
-        uws_req_clone_headers(req, ctx);
-    }
-
-    extern fn uws_req_clone_headers(
-        req_: *Request,
-        ctx: *anyopaque,
-        //preallocate: fn (ctx: ?*anyopaque, len: usize, header_count: usize) callconv(.C) void,
-        //append: fn (ctx: ?*anyopaque, name: [*]const u8, name_length: usize, value: [*]const u8, value_length: usize) callconv(.C) void,
-    ) void;
-
     extern fn uws_req_is_ancient(res: *Request) bool;
     extern fn uws_req_get_yield(res: *Request) bool;
     extern fn uws_req_set_field(res: *Request, yield: bool) void;

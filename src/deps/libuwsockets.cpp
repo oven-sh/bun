@@ -1002,35 +1002,6 @@ void uws_res_write_headers(int ssl, uws_res_t *res, const StringPointer *names,
   }
 }
 
-extern "C" void Headers__preallocate(void *ctx, size_t len,
-                                     size_t header_count);
-extern "C" void Headers__appendHeaderNormalized(void *ctx, const char *name,
-                                                size_t name_length,
-                                                const char *value,
-                                                size_t value_length);
-
-void uws_req_clone_headers(uws_req_t *req_, void *ctx) {
-
-  size_t buffer_len = 0;
-  size_t header_count = 0;
-
-  uWS::HttpRequest *req = (uWS::HttpRequest *)req_;
-  uWS::HttpRequest iterator = *req;
-
-  for (const auto &header : iterator) {
-    buffer_len += header.first.length() + header.second.length();
-    header_count++;
-  }
-
-  Headers__preallocate(ctx, buffer_len, header_count);
-
-  for (const auto &header : iterator) {
-    Headers__appendHeaderNormalized(ctx, header.first.data(),
-                                    header.first.length(), header.second.data(),
-                                    header.second.length());
-  }
-}
-
 void uws_res_uncork(int ssl, uws_res_t *res) {
   // if (ssl) {
   //   uWS::HttpResponse<true> *uwsRes =

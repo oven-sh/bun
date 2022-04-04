@@ -200,6 +200,7 @@ MAC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders \
 LINUX_INCLUDE_DIRS := -I$(JSC_INCLUDE_DIR) \
 					  -Isrc/javascript/jsc/bindings/ \
 					  -Isrc/javascript/jsc/bindings/webcore
+					  
 
 UWS_INCLUDE_DIR := -I$(BUN_DEPS_DIR)/uws/uSockets/src -I$(BUN_DEPS_DIR)/uws/src -I$(BUN_DEPS_DIR)
 
@@ -308,6 +309,7 @@ ifeq ($(OS_NAME), linux)
 PLATFORM_LINKER_FLAGS = $(CFLAGS) \
 	    -fuse-ld=lld \
 		-lc \
+		-I$(ZLIB_INCLUDE_DIR) \
 		-Wl,-z,now \
 		-Wl,--as-needed \
 		-Wl,--gc-sections \

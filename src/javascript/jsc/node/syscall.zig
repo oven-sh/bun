@@ -413,11 +413,11 @@ fn mmap(
     offset: u64,
 ) Maybe([]align(mem.page_size) u8) {
     const ioffset = @bitCast(i64, offset); // the OS treats this as unsigned
-    const rc = system.mmap(ptr, length, prot, flags, fd, ioffset);
-
-    if (rc == std.c.MAP.FAILED) {
+    const rc = std.c.mmap(ptr, length, prot, flags, fd, ioffset);
+    const fail = std.c.MAP.FAILED;
+    if (rc == fail) {
         return Maybe([]align(mem.page_size) u8){
-            .err = .{ .errno = @truncate(Syscall.Error.Int, @enumToInt(std.c.getErrno(@bitCast(i64, @ptrToInt(std.c.MAP.FAILED))))), .syscall = .mmap },
+            .err = .{ .errno = @truncate(Syscall.Error.Int, @enumToInt(std.c.getErrno(@bitCast(i64, @ptrToInt(fail))))), .syscall = .mmap },
         };
     }
 

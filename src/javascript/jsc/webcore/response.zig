@@ -1129,83 +1129,93 @@ pub const Blob = struct {
         }
     };
 
-    pub fn writeFile(
-        _: void,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
+    const WriteFileWaitFromLockedValueTask = struct {
+        file_blob: Blob,
+        globalThis: *JSGlobalObject,
+        promise: *JSPromise,
+
+        pub fn thenWrap(this: *anyopaque, value: *Body.Value) void {
+            then(bun.cast(*WriteFileWaitFromLockedValueTask, this), value);
+        }
+
+        pub fn then(this: *WriteFileWaitFromLockedValueTask, value: *Body.Value) void {
+            var promise = this.promise;
+            var globalThis = this.globalThis;
+            var file_blob = this.file_blob;
+            switch (value.*) {
+                .Error => |err| {
+                    file_blob.detach();
+                    _ = value.use();
+                    bun.default_allocator.destroy(this);
+                    promise.reject(globalThis, err);
+                },
+                .Used => {
+                    file_blob.detach();
+                    _ = value.use();
+                    bun.default_allocator.destroy(this);
+                    promise.reject(globalThis, ZigString.init("Body was used after it was consumed").toErrorInstance(globalThis));
+                },
+                .Empty, .Blob => {
+                    var blob = value.use();
+                    // TODO: this should be one promise not two!
+                    const new_promise = writeFileWithSourceDestination(globalThis.ref(), &blob, &file_blob);
+                    if (JSC.JSValue.fromRef(new_promise.?).asPromise()) |_promise| {
+                        switch (_promise.status(globalThis.vm())) {
+                            .Pending => {
+                                promise.resolve(
+                                    globalThis,
+                                    JSC.JSValue.fromRef(new_promise.?),
+                                );
+                            },
+                            .Rejected => {
+                                promise.reject(globalThis, _promise.result(globalThis.vm()));
+                            },
+                            else => {
+                                promise.resolve(globalThis, _promise.result(globalThis.vm()));
+                            },
+                        }
+                    } else if (JSC.JSValue.fromRef(new_promise.?).asInternalPromise()) |_promise| {
+                        switch (_promise.status(globalThis.vm())) {
+                            .Pending => {
+                                promise.resolve(
+                                    globalThis,
+                                    JSC.JSValue.fromRef(new_promise.?),
+                                );
+                            },
+                            .Rejected => {
+                                promise.reject(globalThis, _promise.result(globalThis.vm()));
+                            },
+                            else => {
+                                promise.resolve(globalThis, _promise.result(globalThis.vm()));
+                            },
+                        }
+                    }
+
+                    file_blob.detach();
+                    bun.default_allocator.destroy(this);
+                },
+                .Locked => {
+                    value.Locked.callback = thenWrap;
+                    value.Locked.task = this;
+                },
+            }
+        }
+    };
+
+    pub fn writeFileWithSourceDestination(
+        ctx: JSC.C.JSContextRef,
+        source_blob: *Blob,
+        destination_blob: *Blob,
     ) js.JSObjectRef {
-        var args = JSC.Node.ArgumentsSlice.from(arguments);
-        // accept a path or a blob
-        var path_or_blob = PathOrBlob.fromJS(ctx, &args, exception) orelse {
-            exception.* = JSC.toInvalidArguments("Bun.write expects a path, file descriptor or a blob", .{}, ctx).asObjectRef();
-            return null;
-        };
+        const destination_type = std.meta.activeTag(destination_blob.store.?.data);
 
-        // if path_or_blob is a path, convert it into a file blob
-        const destination_blob: Blob = if (path_or_blob == .path)
-            Blob.findOrCreateFileFromPath(path_or_blob.path, ctx.ptr())
-        else
-            path_or_blob.blob.dupe();
-
-        if (destination_blob.store == null) {
-            exception.* = JSC.toInvalidArguments("Writing to an empty blob is not implemented yet", .{}, ctx).asObjectRef();
-            return null;
-        }
-
-        var data = args.nextEat() orelse {
-            exception.* = JSC.toInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{}, ctx).asObjectRef();
-            return null;
-        };
-
-        if (data.isUndefinedOrNull() or data.isEmpty()) {
-            exception.* = JSC.toInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{}, ctx).asObjectRef();
-            return null;
-        }
-
-        // TODO: implement a writeev() fast path
-        var source_blob: Blob = brk: {
-            if (data.as(Response)) |response| {
-                break :brk response.body.use();
-            }
-
-            if (data.as(Request)) |request| {
-                break :brk request.body.use();
-            }
-
-            break :brk Blob.fromJS(
-                ctx.ptr(),
-                data,
-                false,
-                false,
-            ) catch |err| {
-                if (err == error.InvalidArguments) {
-                    exception.* = JSC.toInvalidArguments(
-                        "Expected an Array",
-                        .{},
-                        ctx,
-                    ).asObjectRef();
-                    return null;
-                }
-
-                exception.* = JSC.toInvalidArguments(
-                    "Out of memory",
-                    .{},
-                    ctx,
-                ).asObjectRef();
-                return null;
-            };
-        };
-
+        // Writing an empty string to a file is a no-op
         if (source_blob.store == null) {
-            JSC.throwInvalidArguments("Writing an empty blob is not supported yet", .{}, ctx, exception);
-            return null;
+            destination_blob.detach();
+            return JSC.JSPromise.resolvedPromiseValue(ctx.ptr(), JSC.JSValue.jsNumber(0)).asObjectRef();
         }
 
         const source_type = std.meta.activeTag(source_blob.store.?.data);
-        const destination_type = std.meta.activeTag(destination_blob.store.?.data);
 
         if (destination_type == .file and source_type == .bytes) {
             var write_file_promise = bun.default_allocator.create(WriteFilePromise) catch unreachable;
@@ -1217,8 +1227,8 @@ pub const Blob = struct {
 
             var file_copier = Store.WriteFile.create(
                 bun.default_allocator,
-                destination_blob,
-                source_blob,
+                destination_blob.*,
+                source_blob.*,
                 *WriteFilePromise,
                 write_file_promise,
                 WriteFilePromise.run,
@@ -1254,12 +1264,134 @@ pub const Blob = struct {
             return JSPromise.resolvedPromiseValue(
                 ctx.ptr(),
                 JSC.JSValue.fromRef(
-                    source_blob.getSlice(ctx, undefined, undefined, &.{}, exception),
+                    source_blob.getSlice(ctx, undefined, undefined, &.{}, null),
                 ),
             ).asObjectRef();
         }
 
         unreachable;
+    }
+    pub fn writeFile(
+        _: void,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSObjectRef {
+        var args = JSC.Node.ArgumentsSlice.from(arguments);
+        // accept a path or a blob
+        var path_or_blob = PathOrBlob.fromJS(ctx, &args, exception) orelse {
+            exception.* = JSC.toInvalidArguments("Bun.write expects a path, file descriptor or a blob", .{}, ctx).asObjectRef();
+            return null;
+        };
+
+        // if path_or_blob is a path, convert it into a file blob
+        var destination_blob: Blob = if (path_or_blob == .path)
+            Blob.findOrCreateFileFromPath(path_or_blob.path, ctx.ptr())
+        else
+            path_or_blob.blob.dupe();
+
+        if (destination_blob.store == null) {
+            exception.* = JSC.toInvalidArguments("Writing to an empty blob is not implemented yet", .{}, ctx).asObjectRef();
+            return null;
+        }
+
+        var data = args.nextEat() orelse {
+            exception.* = JSC.toInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{}, ctx).asObjectRef();
+            return null;
+        };
+
+        if (data.isUndefinedOrNull() or data.isEmpty()) {
+            exception.* = JSC.toInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{}, ctx).asObjectRef();
+            return null;
+        }
+
+        // TODO: implement a writeev() fast path
+        var source_blob: Blob = brk: {
+            if (data.as(Response)) |response| {
+                switch (response.body.value) {
+                    .Used, .Empty, .Blob => {
+                        break :brk response.body.use();
+                    },
+                    .Error => {
+                        destination_blob.detach();
+                        const err = response.body.value.Error;
+                        JSC.C.JSValueUnprotect(ctx, err.asObjectRef());
+                        _ = response.body.value.use();
+                        return JSC.JSPromise.rejectedPromiseValue(ctx.ptr(), err).asObjectRef();
+                    },
+                    .Locked => {
+                        var task = bun.default_allocator.create(WriteFileWaitFromLockedValueTask) catch unreachable;
+                        var promise = JSC.JSPromise.create(ctx.ptr());
+                        task.* = WriteFileWaitFromLockedValueTask{
+                            .globalThis = ctx.ptr(),
+                            .file_blob = destination_blob,
+                            .promise = promise,
+                        };
+
+                        response.body.value.Locked.task = task;
+                        response.body.value.Locked.callback = WriteFileWaitFromLockedValueTask.thenWrap;
+
+                        return promise.asValue(ctx.ptr()).asObjectRef();
+                    },
+                }
+            }
+
+            if (data.as(Request)) |request| {
+                switch (request.body) {
+                    .Used, .Empty, .Blob => {
+                        break :brk request.body.use();
+                    },
+                    .Error => {
+                        destination_blob.detach();
+                        const err = request.body.Error;
+                        JSC.C.JSValueUnprotect(ctx, err.asObjectRef());
+                        _ = request.body.use();
+                        return JSC.JSPromise.rejectedPromiseValue(ctx.ptr(), err).asObjectRef();
+                    },
+                    .Locked => {
+                        var task = bun.default_allocator.create(WriteFileWaitFromLockedValueTask) catch unreachable;
+                        var promise = JSC.JSPromise.create(ctx.ptr());
+                        task.* = WriteFileWaitFromLockedValueTask{
+                            .globalThis = ctx.ptr(),
+                            .file_blob = destination_blob,
+                            .promise = promise,
+                        };
+
+                        request.body.Locked.task = task;
+                        request.body.Locked.callback = WriteFileWaitFromLockedValueTask.thenWrap;
+
+                        return promise.asValue(ctx.ptr()).asObjectRef();
+                    },
+                }
+            }
+
+            break :brk Blob.fromJS(
+                ctx.ptr(),
+                data,
+                false,
+                false,
+            ) catch |err| {
+                if (err == error.InvalidArguments) {
+                    exception.* = JSC.toInvalidArguments(
+                        "Expected an Array",
+                        .{},
+                        ctx,
+                    ).asObjectRef();
+                    return null;
+                }
+
+                exception.* = JSC.toInvalidArguments(
+                    "Out of memory",
+                    .{},
+                    ctx,
+                ).asObjectRef();
+                return null;
+            };
+        };
+
+        return writeFileWithSourceDestination(ctx, &source_blob, &destination_blob);
     }
 
     pub fn constructFile(

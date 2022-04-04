@@ -2213,8 +2213,9 @@ pub const JSValue = enum(u64) {
             ?*JSInternalPromise => asInternalPromise(this),
             ?*JSPromise => asPromise(this),
 
-            // TODO: BigUint64?
-            u64 => @as(u64, toU32(this)),
+            u52 => @truncate(u52, this.to(u64)),
+
+            u64 => @intCast(u64, @maximum(toInt64(this), 0)),
 
             u8 => @truncate(u8, toU32(this)),
             i16 => @truncate(i16, toInt32(this)),
@@ -2303,6 +2304,10 @@ pub const JSValue = enum(u64) {
             u64 => jsNumberFromUint64(@intCast(u64, number)),
             u32 => jsNumberFromInt32(@intCast(i32, number)),
             u52 => jsNumberFromUint64(@as(u64, number)),
+            comptime_int => switch (number) {
+                0...std.math.maxInt(i32) => jsNumberFromInt32(@intCast(i32, number)),
+                else => jsNumberFromInt64(@intCast(i64, number)),
+            },
             else => @compileError("Type transformation missing for number of type: " ++ @typeName(Number)),
         };
     }

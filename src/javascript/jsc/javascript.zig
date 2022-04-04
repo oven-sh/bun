@@ -494,6 +494,14 @@ pub const VirtualMachine = struct {
 
     rare_data: ?*JSC.RareData = null,
 
+    pub inline fn nodeFS(this: *VirtualMachine) *Node.NodeFS {
+        return this.node_fs orelse brk: {
+            this.node_fs = bun.default_allocator.create(Node.NodeFS) catch unreachable;
+            this.node_fs.?.* = Node.NodeFS{ .async_io = undefined };
+            break :brk this.node_fs.?;
+        };
+    }
+
     pub inline fn rareData(this: *VirtualMachine) *JSC.RareData {
         return this.rare_data orelse brk: {
             this.rare_data = this.allocator.create(JSC.RareData) catch unreachable;

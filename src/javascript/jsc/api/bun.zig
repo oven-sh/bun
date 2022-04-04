@@ -704,11 +704,7 @@ pub fn createNodeFS(
 ) js.JSValueRef {
     return Node.NodeFSBindings.make(
         ctx,
-        VirtualMachine.vm.node_fs orelse brk: {
-            VirtualMachine.vm.node_fs = bun.default_allocator.create(Node.NodeFS) catch unreachable;
-            VirtualMachine.vm.node_fs.?.* = Node.NodeFS{ .async_io = undefined };
-            break :brk VirtualMachine.vm.node_fs.?;
-        },
+        VirtualMachine.vm.nodeFS(),
     );
 }
 

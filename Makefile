@@ -620,9 +620,9 @@ jsc-bindings-headers:
 	cat src/javascript/jsc/bindings/headers.zig > /tmp/headers.zig
 	cat src/javascript/jsc/bindings/headers-replacements.zig /tmp/headers.zig > src/javascript/jsc/bindings/headers.zig
 	$(ZIG) fmt src/javascript/jsc/bindings/headers.zig
-	ifdef CLANG_FORMAT
+ifdef CLANG_FORMAT
 	clang-format -i src/javascript/jsc/bindings/*.{cpp,h}
-	endif
+endif
 	
 
 MIMALLOC_OVERRIDE_FLAG ?= 

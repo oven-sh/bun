@@ -91,7 +91,7 @@ pub const Response = struct {
     minor_version: usize,
     status_code: usize,
     status: []const u8,
-    headers: []const Header,
+    headers: []Header,
     bytes_read: c_int = 0,
 
     pub fn format(self: Response, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {

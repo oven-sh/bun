@@ -304,18 +304,16 @@ endif
 STATIC_MUSL_FLAG ?= 
 
 ifeq ($(OS_NAME), linux)
-PLATFORM_LINKER_FLAGS = \
+PLATFORM_LINKER_FLAGS = $(CFLAGS) \
 	    -fuse-ld=lld \
 		-lc \
 		-Wl,-z,now \
 		-Wl,--as-needed \
 		-Wl,--gc-sections \
 		-Wl,-z,stack-size=12800000 \
-		-ffunction-sections \
-		-fdata-sections \
 		-static-libstdc++ \
 		-static-libgcc \
-		-fno-omit-frame-pointer $(CFLAGS) \
+		-fno-omit-frame-pointer \
 		-Wl,--compress-debug-sections,zlib \
 		${STATIC_MUSL_FLAG}  \
 		-Wl,-Bsymbolic-functions \

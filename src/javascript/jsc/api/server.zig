@@ -854,6 +854,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     MimeType.init(this.blob.content_type)
                 else if (MimeType.sniff(this.blob.sharedView())) |content|
                     content
+                else if (this.blob.is_all_ascii orelse false)
+                    MimeType.text
                 else
                     MimeType.other;
             };

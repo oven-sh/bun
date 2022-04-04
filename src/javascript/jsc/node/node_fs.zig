@@ -97,7 +97,7 @@ const Arguments = struct {
     pub const Truncate = struct {
         /// Passing a file descriptor is deprecated and may result in an error being thrown in the future.
         path: PathOrFileDescriptor,
-        len: u32 = 0,
+        len: JSC.WebCore.Blob.SizeType = 0,
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Truncate {
             const path = PathOrFileDescriptor.fromJS(ctx, arguments, exception) orelse {
@@ -112,12 +112,12 @@ const Arguments = struct {
                 return null;
             };
 
-            const len: u32 = brk: {
+            const len: JSC.WebCore.Blob.SizeType = brk: {
                 const len_value = arguments.next() orelse break :brk 0;
 
                 if (len_value.isNumber()) {
                     arguments.eat();
-                    break :brk len_value.toU32();
+                    break :brk len_value.to(JSC.WebCore.Blob.SizeType);
                 }
 
                 break :brk 0;
@@ -129,7 +129,7 @@ const Arguments = struct {
 
     pub const FTruncate = struct {
         fd: FileDescriptor,
-        len: ?u32 = null,
+        len: ?JSC.WebCore.Blob.SizeType = null,
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?FTruncate {
             const fd = JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
@@ -158,11 +158,11 @@ const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            const len: u32 = brk: {
+            const len: JSC.WebCore.Blob.SizeType = brk: {
                 const len_value = arguments.next() orelse break :brk 0;
                 if (len_value.isNumber()) {
                     arguments.eat();
-                    break :brk len_value.toU32();
+                    break :brk len_value.to(JSC.WebCore.Blob.SizeType);
                 }
 
                 break :brk 0;
@@ -3629,7 +3629,7 @@ pub const NodeFS = struct {
         _ = flavor;
         return Maybe(Return.Symlink).todo;
     }
-    fn _truncate(this: *NodeFS, path: PathLike, len: u32, comptime flavor: Flavor) Maybe(Return.Truncate) {
+    fn _truncate(this: *NodeFS, path: PathLike, len: JSC.WebCore.Blob.SizeType, comptime flavor: Flavor) Maybe(Return.Truncate) {
         switch (comptime flavor) {
             .sync => {
                 return Maybe(Return.Truncate).errno(C.truncate(path.sliceZ(&this.sync_error_buf), len)) orelse

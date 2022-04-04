@@ -596,6 +596,9 @@ clone-submodules:
 
 devcontainer: clone-submodules mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks jsc-bindings-headers api analytics bun_error fallback_decoder jsc-bindings-mac dev runtime_js_dev
 
+CLANG_FORMAT := $(shell command -v clang-format 2> /dev/null)
+
+
 jsc-bindings-headers:
 	rm -f /tmp/build-jsc-headers src/javascript/jsc/bindings/headers.zig
 	touch src/javascript/jsc/bindings/headers.zig
@@ -617,7 +620,9 @@ jsc-bindings-headers:
 	cat src/javascript/jsc/bindings/headers.zig > /tmp/headers.zig
 	cat src/javascript/jsc/bindings/headers-replacements.zig /tmp/headers.zig > src/javascript/jsc/bindings/headers.zig
 	$(ZIG) fmt src/javascript/jsc/bindings/headers.zig
+	ifdef CLANG_FORMAT
 	clang-format -i src/javascript/jsc/bindings/*.{cpp,h}
+	endif
 	
 
 MIMALLOC_OVERRIDE_FLAG ?= 

@@ -1018,6 +1018,12 @@ pub fn processResponse(this: *HTTPClient, comptime report_progress: bool, compti
                     if (extremely_verbose)
                         this.gzip_elapsed = gzip_timer.read();
 
+                    // if it compressed with this header, it is no longer
+                    if (content_encoding_i < response.headers.len) {
+                        var mutable_headers = std.ArrayListUnmanaged(picohttp.Header){ .items = response.headers, .capacity = response.headers.len };
+                        _ = mutable_headers.swapRemove(content_encoding_i);
+                        response.headers = mutable_headers.items;
+                    }
                 },
                 else => {},
             }
@@ -1108,6 +1114,12 @@ pub fn processResponse(this: *HTTPClient, comptime report_progress: bool, compti
                     if (extremely_verbose)
                         this.gzip_elapsed = gzip_timer.read();
 
+                    // if it compressed with this header, it is no longer
+                    if (content_encoding_i < response.headers.len) {
+                        var mutable_headers = std.ArrayListUnmanaged(picohttp.Header){ .items = response.headers, .capacity = response.headers.len };
+                        _ = mutable_headers.swapRemove(content_encoding_i);
+                        response.headers = mutable_headers.items;
+                    }
                 },
                 else => {},
             }

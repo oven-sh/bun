@@ -338,6 +338,18 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "bun html-rewriter example",
+      "program": "bun-debug",
+      "args": ["run", "examples/bun/html-rewriter.ts"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "FORCE_COLOR": "1"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "bun tes2t",
       "program": "bun-debug",
       "args": ["add", "imagemin-webpack-plugin"],

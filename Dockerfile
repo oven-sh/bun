@@ -119,6 +119,7 @@ ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/uws ${BUN_DIR}/src/deps/uws
+COPY src/deps/zlib ${BUN_DIR}/src/deps/zlib
 COPY src/deps/libuwsockets.cpp ${BUN_DIR}/src/deps/libuwsockets.cpp
 COPY src/deps/_libusockets.h ${BUN_DIR}/src/deps/_libusockets.h
 
